@@ -906,12 +906,253 @@ let mark_black_iff_reachable g st roots =
 /// Mark Terminates With No Gray Objects
 /// ---------------------------------------------------------------------------
 
+/// When stack is empty, gray_objects_on_stack implies no gray objects
+let empty_stack_no_grey (g: heap) (st: seq obj_addr)
+  : Lemma (requires stack_props g st /\ Seq.length st = 0)
+          (ensures noGreyObjects g)
+  = let aux (obj: obj_addr) : Lemma (Seq.mem obj (objects 0UL g) ==> not (is_gray obj g))
+    = ()  // Follows from gray_objects_on_stack and empty st
+    in
+    FStar.Classical.forall_intro aux
+
+/// Helper: non_black_count preserved when colors are equal
+let rec non_black_count_eq_objs (g1 g2: heap) (objs: seq obj_addr)
+  : Lemma (requires (forall (obj: obj_addr). Seq.mem obj objs ==> 
+                     (is_black obj g1 <==> is_black obj g2)))
+          (ensures non_black_count g1 objs == non_black_count g2 objs)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else non_black_count_eq_objs g1 g2 (Seq.tail objs)
+
+/// After makeBlack on gray obj, non_black_count decreases by 1
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec non_black_count_makeBlack_gray (g: heap) (obj: obj_addr) (objs: seq obj_addr)
+  : Lemma (requires is_gray obj g /\ Seq.mem obj objs /\ well_formed_heap g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    is_vertex_set (HeapGraph.coerce_to_vertex_list objs))
+          (ensures (let g' = makeBlack obj g in
+                    non_black_count g' objs == non_black_count g objs - 1))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      makeBlack_eq obj g;
+      let g' = makeBlack obj g in
+      // is_vertex_set means hd ∉ tl
+      HeapGraph.coerce_cons_lemma hd tl;
+      assert (is_vertex_set (HeapGraph.coerce_to_vertex_list objs));
+      if hd = obj then begin
+        is_gray_iff obj g;
+        is_black_iff obj g;
+        colors_exhaustive_and_exclusive obj g;
+        makeBlack_is_black obj g;
+        HeapGraph.coerce_cons_lemma hd tl;
+        Seq.lemma_tl hd (HeapGraph.coerce_to_vertex_list tl);
+        // is_vertex_set (cons hd (coerce tl)) → ~(Seq.mem hd (coerce tl))
+        // hd = obj, so ~(Seq.mem obj (coerce tl))
+        // coerce_mem_lemma: Seq.mem obj (coerce tl) ↔ Seq.mem obj tl
+        HeapGraph.coerce_mem_lemma tl obj;
+        assert (~(Seq.mem obj tl));
+        let aux (x: obj_addr) : Lemma
+          (requires Seq.mem x tl)
+          (ensures is_black x g' == is_black x g)
+        = assert (x <> obj);
+          hd_address_injective x obj;
+          color_change_preserves_other_color obj x g Header.Black;
+          is_black_iff x g;
+          is_black_iff x g'
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+        non_black_count_eq_objs g g' tl
+      end else begin
+        hd_address_injective hd obj;
+        color_change_preserves_other_color obj hd g Header.Black;
+        is_black_iff hd g;
+        is_black_iff hd g';
+        Seq.mem_cons hd tl;
+        HeapGraph.coerce_cons_lemma hd tl;
+        // coerce(cons hd tl) == cons hd (coerce tl)
+        // tail of cons hd (coerce tl) == coerce tl
+        // is_vertex_set_tail gives is_vertex_set (coerce tl)
+        assert (HeapGraph.coerce_to_vertex_list objs == Seq.cons hd (HeapGraph.coerce_to_vertex_list tl));
+        is_vertex_set_tail (HeapGraph.coerce_to_vertex_list objs);
+        Seq.lemma_tl hd (HeapGraph.coerce_to_vertex_list tl);
+        assert (is_vertex_set (HeapGraph.coerce_to_vertex_list tl));
+        non_black_count_makeBlack_gray g obj tl
+      end
+    end
+#pop-options
+val push_children_preserves_non_black : (g: heap) -> (st: seq obj_addr) -> 
+                                         (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> 
+                                         (ws: U64.t) -> (objs: seq obj_addr) ->
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+                  U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  U64.v (wosize_of_object obj g) < pow2 54 /\ objects 0UL g == objs)
+        (ensures (let (g', _) = push_children g st obj i ws in
+                  objects 0UL g' == objs /\
+                  non_black_count g' objs == non_black_count g objs))
+        (decreases (U64.v ws - U64.v i))
+
+let rec push_children_preserves_non_black g st obj i ws objs =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let child : obj_addr = v in
+      if is_white child g then begin
+        let g' = makeGray child g in
+        makeGray_eq child g;
+        color_change_preserves_objects g child Header.Gray;
+        // For all x in objs: is_black x g' == is_black x g
+        // because makeGray only changes child from white to gray (both non-black)
+        let aux (x: obj_addr) : Lemma
+          (requires Seq.mem x objs)
+          (ensures is_black x g' == is_black x g)
+        = if x = child then begin
+            is_white_iff child g;
+            is_black_iff child g;
+            colors_exhaustive_and_exclusive child g;
+            assert (~(is_black child g));
+            makeGray_is_gray child g;
+            is_gray_iff child g';
+            is_black_iff child g';
+            colors_exhaustive_and_exclusive child g'
+          end else begin
+            hd_address_injective x child;
+            color_change_preserves_other_color child x g Header.Gray;
+            is_black_iff x g;
+            is_black_iff x g'
+          end
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+        non_black_count_eq_objs g g' objs;
+        let st' = Seq.cons child st in
+        if U64.v i < U64.v ws then begin
+          // Need well_formed_heap g' and child ∈ objects for recursive call
+          wosize_of_object_bound obj g;
+          FStar.Math.Lemmas.pow2_lt_compat 61 54;
+          HeapGraph.get_field_addr_eq g obj i;
+          field_read_implies_exists_pointing g obj (wosize_of_object obj g) (U64.sub i 1UL) child;
+          color_change_preserves_wf g child Header.Gray;
+          color_change_preserves_objects_mem g child Header.Gray obj;
+          set_object_color_preserves_getWosize_at_hd child g Header.Gray;
+          wosize_of_object_spec obj g; wosize_of_object_spec obj g';
+          push_children_preserves_non_black g' st' obj (U64.add i 1UL) ws objs
+        end else ()
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_preserves_non_black g st obj (U64.add i 1UL) ws objs
+        else ()
+      end
+    end else begin
+      if U64.v i < U64.v ws then
+        push_children_preserves_non_black g st obj (U64.add i 1UL) ws objs
+      else ()
+    end
+  end
+
+/// mark_step decreases total_non_black by exactly 1
+val mark_step_decreases_non_black : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st)
+        (ensures (let (g', _) = mark_step g st in
+                  let objs = objects 0UL g in
+                  objects 0UL g' == objs /\
+                  total_non_black g' == total_non_black g - 1))
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let mark_step_decreases_non_black g st =
+  let obj = Seq.head st in
+  stack_head_is_gray g st;
+  assert (is_gray obj g);
+  assert (Seq.mem obj (objects 0UL g));
+  let objs = objects 0UL g in
+  // Step 1: makeBlack obj
+  makeBlack_eq obj g;
+  let g1 = makeBlack obj g in
+  color_change_preserves_objects g obj Header.Black;
+  assert (objects 0UL g1 == objs);
+  // makeBlack decreases non_black_count by 1
+  HeapModel.objects_is_vertex_set g;
+  non_black_count_makeBlack_gray g obj objs;
+  assert (non_black_count g1 objs == non_black_count g objs - 1);
+  // Step 2: push_children preserves non_black_count
+  let ws = wosize_of_object obj g in
+  if is_no_scan obj g then begin
+    // Result is (g1, st'), total_non_black g1 == total_non_black g - 1
+    assert (fst (mark_step g st) == g1)
+  end else begin
+    color_change_preserves_wf g obj Header.Black;
+    color_change_preserves_objects_mem g obj Header.Black obj;
+    wosize_of_object_bound obj g;
+    set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+    wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+    push_children_preserves_non_black g1 (Seq.tail st) obj 1UL ws objs
+  end
+#pop-options
+
+/// mark_aux with sufficient fuel: result has no grey objects
+/// Key: total_non_black strictly decreases each step, so fuel >= total_non_black => stack empties
+val mark_aux_no_grey : (g: heap{well_formed_heap g}) -> 
+                        (st: seq obj_addr{stack_props g st}) -> 
+                        (fuel: nat) ->
+  Lemma (requires fuel >= total_non_black g)
+        (ensures noGreyObjects (mark_aux g st fuel))
+        (decreases fuel)
+
+/// Helper: if obj is non-black and in objs, then non_black_count >= 1
+let rec non_black_has_count (g: heap) (obj: obj_addr) (objs: seq obj_addr)
+  : Lemma (requires Seq.mem obj objs /\ ~(is_black obj g))
+          (ensures non_black_count g objs >= 1)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else if Seq.head objs = obj then ()
+    else begin
+      Seq.mem_cons (Seq.head objs) (Seq.tail objs);
+      non_black_has_count g obj (Seq.tail objs)
+    end
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let rec mark_aux_no_grey g st fuel =
+  if Seq.length st = 0 then
+    empty_stack_no_grey g st
+  else if fuel = 0 then begin
+    // Contradiction: stack non-empty -> head is gray (non-black) -> total_non_black >= 1 -> fuel >= 1
+    stack_head_is_gray g st;
+    let obj = Seq.head st in
+    colors_exhaustive_and_exclusive obj g;
+    non_black_has_count g obj (objects 0UL g)
+  end else begin
+    let (g', st') = mark_step g st in
+    mark_step_preserves_stack_props g st;
+    mark_step_preserves_wf g st;
+    mark_step_decreases_non_black g st;
+    mark_aux_no_grey g' st' (fuel - 1)
+  end
+#pop-options
+
+/// Helper: total_non_black g <= length of objects list
+let rec non_black_count_bound (g: heap) (objs: seq obj_addr)
+  : Lemma (ensures non_black_count g objs <= Seq.length objs)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else non_black_count_bound g (Seq.tail objs)
+
 val mark_no_grey_remains : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
         (ensures noGreyObjects (mark g st))
 
-let mark_no_grey_remains g st = 
-  admit()
+let mark_no_grey_remains g st =
+  non_black_count_bound g (objects 0UL g);
+  objects_count_le_remaining 0UL g;
+  // objects_count_le_remaining gives: Seq.length (objects 0UL g) * 8 <= Seq.length g
+  // Seq.length g = heap_size, mword = 8
+  // So: Seq.length (objects 0UL g) <= heap_size / 8 = heap_size / mword
+  // non_black_count_bound gives: total_non_black g <= Seq.length (objects 0UL g)
+  // Therefore: total_non_black g <= heap_size / mword
+  FStar.Math.Lemmas.lemma_div_le (Seq.length (objects 0UL g) * U64.v mword) (Seq.length g) (U64.v mword);
+  mark_aux_no_grey g st (heap_size / U64.v mword)
 
 /// ---------------------------------------------------------------------------
 /// Mark Preserves Tri-Color Invariant
