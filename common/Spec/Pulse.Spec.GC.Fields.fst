@@ -107,10 +107,27 @@ let rec exists_field_pointing_to_unchecked (g: heap) (h: obj_addr) (wz: U64.t{U6
       if is_pointer_field field_val && hd_address field_val = hd_address target then true
       else exists_field_pointing_to_unchecked g h idx target
 
+/// One-step unfolding: if guard passes AND field matches, function returns true
+/// Takes far and fv as explicit witnesses to avoid unification issues
+let efptu_match (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54 /\ wz <> 0UL}) (target: hp_addr)
+  (far: hp_addr) (fv: U64.t)
+  : Lemma (requires far == U64.add_mod h (U64.mul_mod (U64.sub wz 1UL) mword) /\
+                   fv == read_word g far /\
+                   (is_pointer_field fv && hd_address fv = hd_address target))
+          (ensures exists_field_pointing_to_unchecked g h wz target)
+  = ()
+
+/// One-step unfolding: if guard passes, field doesn't match, but recursive call returns true
+let efptu_recurse (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54 /\ wz <> 0UL}) (target: hp_addr)
+  (far: hp_addr) (fv: U64.t)
+  : Lemma (requires far == U64.add_mod h (U64.mul_mod (U64.sub wz 1UL) mword) /\
+                   fv == read_word g far /\
+                   ~(is_pointer_field fv && hd_address fv = hd_address target) /\
+                   exists_field_pointing_to_unchecked g h (U64.sub wz 1UL) target)
+          (ensures exists_field_pointing_to_unchecked g h wz target)
+  = ()
+
 /// If a specific field contains a pointer to target, exists_field_pointing_to_unchecked finds it
-/// k is 0-based field index within the object body
-/// ADMITTED: The solver cannot unfold exists_field_pointing_to_unchecked (recursive function)
-/// The mathematical content is: if field k reads as a matching pointer, the exists scan finds it
 val field_read_implies_exists_pointing : (g: heap) -> (h: obj_addr) -> (wz: U64.t{U64.v wz < pow2 54}) -> 
     (k: U64.t{U64.v k < U64.v wz /\ U64.v k < pow2 61}) -> (target: obj_addr) ->
   Lemma (requires well_formed_object g h /\
@@ -118,11 +135,11 @@ val field_read_implies_exists_pointing : (g: heap) -> (h: obj_addr) -> (wz: U64.
                   (let far = U64.add_mod h (U64.mul_mod k mword) in
                    U64.v far < heap_size /\ U64.v far % 8 = 0 /\
                    (let fv = read_word g (far <: hp_addr) in
-                    is_pointer_field fv /\ Pulse.Spec.GC.Heap.hd_address fv = Pulse.Spec.GC.Heap.hd_address target)))
+                    is_pointer_field fv /\ hd_address fv = hd_address target)))
         (ensures exists_field_pointing_to_unchecked g h wz target)
         (decreases U64.v wz)
 
-#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let rec field_read_implies_exists_pointing g h wz k target =
   let idx = U64.sub wz 1UL in
   FStar.Math.Lemmas.pow2_lt_compat 61 54;
@@ -136,19 +153,13 @@ let rec field_read_implies_exists_pointing g h wz k target =
   assert (U64.v far_idx < heap_size);
   FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) (FStar.Mul.(U64.v idx * 8)) 8;
   assert (U64.v far_idx % 8 = 0);
-  if idx = k then
-    admit () // Solver cannot unfold recursive GTot function to see the match at idx=k
+  let fv_idx = read_word g (far_idx <: hp_addr) in
+  if is_pointer_field fv_idx && hd_address fv_idx = hd_address target then
+    efptu_match g h wz target far_idx fv_idx
   else begin
     assert (U64.v k < U64.v idx);
-    if U64.v far_idx >= heap_size || U64.v far_idx % 8 <> 0 then
-      () // unreachable: we proved bounds above
-    else begin
-      let fv = read_word g (far_idx <: hp_addr) in
-      if is_pointer_field fv && Pulse.Spec.GC.Heap.hd_address fv = Pulse.Spec.GC.Heap.hd_address target then
-        admit () // Solver cannot see the function returns true when idx matches
-      else
-        field_read_implies_exists_pointing g h idx k target
-    end
+    field_read_implies_exists_pointing g h idx k target;
+    efptu_recurse g h wz target far_idx fv_idx
   end
 #pop-options
 
