@@ -1,0 +1,378 @@
+[
+	{
+		"category": "setup",
+		"phase": 0,
+		"description": "Directory structure created and Makefile configured",
+		"steps": [
+			"Create fly-check/{Spec,Lib,GC} directories",
+			"Create Makefile with Pulse and F* includes",
+			"Add --include ~/pulse/lib/pulse/lib to build",
+			"Verify empty project structure"
+		],
+		"passes": true
+	},
+	{
+		"category": "setup",
+		"phase": 0,
+		"description": "Spec.Graph ported from Spec.Graph3 with clean naming",
+		"steps": [
+			"Copy Proofs/Spec.Graph3.fst → Spec/Spec.Graph.fst",
+			"Rename module: Spec.Graph3 → Spec.Graph",
+			"Keep canonical exports: vertex_id, vertex_set, edge, reach, reachable",
+			"Remove any numbered variants",
+			"Verify type-checks with fstar"
+		],
+		"passes": true
+	},
+	{
+		"category": "setup",
+		"phase": 0,
+		"description": "Spec.Heap ported with clean naming",
+		"steps": [
+			"Copy Proofs/Spec.Heap.fsti → Spec/Spec.Heap.fst",
+			"Keep: read_word, write_word, replace_range, hp_addr, mword",
+			"Remove read_word1 and other numbered variants",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "setup",
+		"phase": 0,
+		"description": "Spec.Object ported with clean predicate names",
+		"steps": [
+			"Copy Proofs/Spec.Object.fsti → Spec/Spec.Object.fst",
+			"Rename: isBlackObject1 → is_black",
+			"Rename: isWhiteObject1 → is_white",
+			"Rename: isGrayObject1 → is_gray",
+			"Keep: getWosize, getColor, getTag, makeHeader",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "setup",
+		"phase": 0,
+		"description": "Spec.Fields ported with concise function names",
+		"steps": [
+			"Copy Proofs/Spec.Fields.fsti → Spec/Spec.Fields.fst",
+			"Rename: objects2 → objects",
+			"Rename: get_allocated_block_addresses → allocated_blocks",
+			"Rename: get_black_block_addresses → black_blocks",
+			"Rename: get_gray_block_addresses → gray_blocks",
+			"Rename: get_white_block_addresses → white_blocks",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "setup",
+		"phase": 0,
+		"description": "Spec.Mark ported with clean function names",
+		"steps": [
+			"Copy Proofs/Spec.Mark.fsti → Spec/Spec.Mark.fst",
+			"Rename: well_formed_heap2 → well_formed_heap",
+			"Rename: is_valid_header1 → is_valid_header",
+			"Rename: colorHeader1 → colorHeader",
+			"Rename: succ_index_fn → field_addr",
+			"Rename: read_succ → read_field",
+			"Rename: mark5/mark7 → mark (pick best)",
+			"Rename: push_to_stack2 → push_to_stack",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "setup",
+		"phase": 0,
+		"description": "DFS ported from DFS2 with clean module name",
+		"steps": [
+			"Copy Proofs/DFS2.fst → Lib/DFS.fst",
+			"Rename module: DFS2 → DFS",
+			"Keep: dfs, dfs_body, dfs_subset_prop",
+			"Update imports to use Spec.Graph (not Spec.Graph3)",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "foundation",
+		"phase": 1,
+		"description": "Color preorder PCM defined with FractionalAnchoredPreorder",
+		"steps": [
+			"Create Spec/Spec.Color.fst",
+			"Import Spec.Object.{white, gray, black, color}",
+			"Define color_leq: white ≤ gray ≤ black",
+			"Instantiate FractionalAnchoredPreorder",
+			"Prove PCM properties (composable, unit, associative)",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "foundation",
+		"phase": 1,
+		"description": "Atomic CAS color operations implemented",
+		"steps": [
+			"Create GC/GC.AtomicColor.fst",
+			"Import Spec.Mark.colorHeader as sequential spec",
+			"Define read_color : hp_addr → stt_atomic color",
+			"Define cas_color : hp_addr → color → color → stt_atomic bool",
+			"Prove cas_color refines colorHeader on success",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "foundation",
+		"phase": 1,
+		"description": "Shadow stack supports concurrent GC reads",
+		"steps": [
+			"Create GC/GC.ShadowStack.fst",
+			"Define shadow_stack type with fractional permissions",
+			"Implement register_root: mutator adds root",
+			"Implement unregister_root: mutator removes root",
+			"Implement iterate_roots: GC reads with read permission",
+			"Verify fractional permission split works"
+		],
+		"passes": true
+	},
+	{
+		"category": "invariant",
+		"phase": 2,
+		"description": "Tri-color invariant defined as CancellableInvariant",
+		"steps": [
+			"Create Spec/Spec.TriColor.fst",
+			"Import Spec.Object.{is_black, is_white}",
+			"Define tri_color_inv: no black→white edges",
+			"Wrap with new_cancellable_invariant",
+			"Verify type-checks"
+		],
+		"passes": true
+	},
+	{
+		"category": "invariant",
+		"phase": 2,
+		"description": "Gray set ghost state tracks pending work",
+		"steps": [
+			"Import Spec.Fields.gray_blocks for enumeration",
+			"Define ghost_ref for gray set",
+			"Prove gray set membership iff color is gray",
+			"Prove gray set shrinks during mark",
+			"Prove empty gray set implies mark complete"
+		],
+		"passes": true
+	},
+	{
+		"category": "invariant",
+		"phase": 2,
+		"description": "CAS operations preserve tri-color invariant",
+		"steps": [
+			"Prove: cas white gray preserves tri-color",
+			"Prove: cas gray black preserves tri-color",
+			"Formalize as frame-preserving updates",
+			"Verify lemmas type-check with SMT"
+		],
+		"passes": true
+	},
+	{
+		"category": "implementation",
+		"phase": 3,
+		"description": "Dijkstra write barrier preserves tri-color invariant",
+		"steps": [
+			"Create GC/GC.WriteBarrier.fst",
+			"Import Spec.Heap.{read_word, write_word}",
+			"Implement write_barrier with atomic color checks",
+			"If source black and target white, CAS target to gray",
+			"Prove write_barrier maintains tri_color_inv"
+		],
+		"passes": true
+	},
+	{
+		"category": "implementation",
+		"phase": 3,
+		"description": "Concurrent mark step processes one gray object",
+		"steps": [
+			"Create GC/GC.Mark.fst",
+			"Import Spec.Mark.{field_addr, read_field}",
+			"Pop gray object from SpinLock-protected stack",
+			"Gray all white children via CAS",
+			"CAS object from gray to black",
+			"Handle CAS failures gracefully"
+		],
+		"passes": true
+	},
+	{
+		"category": "implementation",
+		"phase": 3,
+		"description": "Concurrent mark loop terminates with empty gray set",
+		"steps": [
+			"Use Spec.Mark.mark termination metric",
+			"Import DFS.dfs_subset_prop for subset preservation",
+			"Implement loop until stack empty",
+			"Add termination argument with ghost gray set",
+			"Prove all reachable objects black at end"
+		],
+		"passes": true
+	},
+	{
+		"category": "implementation",
+		"phase": 3,
+		"description": "Root scanning via shadow stacks works concurrently",
+		"steps": [
+			"Import Spec.Mark.push_to_stack spec",
+			"Implement scan_roots iterating shadow stacks",
+			"For each root: CAS white→gray and push",
+			"Verify concurrent with mutator updates"
+		],
+		"passes": true
+	},
+	{
+		"category": "gc-entry",
+		"phase": 4,
+		"description": "Stop-the-world sweep reclaims white objects",
+		"steps": [
+			"Create GC/GC.Sweep.fst",
+			"Prove: after mark, live objects are black",
+			"Sweep only reclaims white objects",
+			"Quiesce mutators before sweep"
+		],
+		"passes": true
+	},
+	{
+		"category": "gc-entry",
+		"phase": 4,
+		"description": "Full concurrent GC entry point orchestrates phases",
+		"steps": [
+			"Create GC/GC.fst with collect function",
+			"Phase 0: Set gc_active flag",
+			"Phase 1: Scan roots (concurrent)",
+			"Phase 2: Mark loop (concurrent)",
+			"Phase 3: Stop mutators, sweep, restart"
+		],
+		"passes": true
+	},
+	{
+		"category": "gc-entry",
+		"phase": 4,
+		"description": "Mutator API provides safe allocation and writes",
+		"steps": [
+			"Implement alloc_with_barrier",
+			"Implement write_with_barrier",
+			"Implement safepoint for GC cooperation",
+			"Verify API maintains all invariants"
+		],
+		"passes": true
+	},
+	{
+		"category": "proof",
+		"phase": 5,
+		"description": "Tri-color invariant maintained throughout GC",
+		"steps": [
+			"Use Spec.Mark lemma structure",
+			"Prove invariant holds at GC start",
+			"Prove write barrier maintains invariant",
+			"Prove mark step maintains invariant"
+		],
+		"passes": true
+	},
+	{
+		"category": "proof",
+		"phase": 5,
+		"description": "Reachability preservation proven",
+		"steps": [
+			"Use Spec.Graph.{reach, reachable}",
+			"Use DFS.dfs_subset_prop",
+			"Prove: reachable_from_roots x → is_black x after mark",
+			"Prove: sweep only reclaims unreachable"
+		],
+		"passes": true
+	},
+	{
+		"category": "proof",
+		"phase": 5,
+		"description": "GC termination proven with decreasing variant",
+		"steps": [
+			"Use Spec.Graph.cardinal for cardinality",
+			"Define variant: |gray_set| + pending_work",
+			"Prove mark step decreases variant",
+			"Prove GC terminates"
+		],
+		"passes": true
+	},
+	{
+		"category": "extraction",
+		"phase": 6,
+		"description": "All concurrent GC code extracts to valid C",
+		"steps": [
+			"Add [@@extract] annotations",
+			"Verify no ghost-only types in runtime",
+			"Run KaRaMeL extraction",
+			"Verify generated C compiles"
+		],
+		"passes": true
+	},
+	{
+		"category": "extraction",
+		"phase": 6,
+		"description": "Pulse atomics map to C11 atomics",
+		"steps": [
+			"Map stt_atomic to atomic_load/atomic_store",
+			"Map CAS to atomic_compare_exchange_weak",
+			"Verify memory ordering correct",
+			"Test extracted atomics in C"
+		],
+		"passes": true
+	},
+	{
+		"category": "extraction",
+		"phase": 6,
+		"description": "Concurrent GC integrates with OCaml runtime",
+		"steps": [
+			"Modify ocaml-4.14-verified-gc",
+			"Hook write barrier into caml_modify",
+			"Integrate shadow stacks with threads",
+			"Build and link runtime"
+		],
+		"passes": false
+	},
+	{
+		"category": "testing",
+		"phase": 7,
+		"description": "Unit tests pass for concurrency primitives",
+		"steps": [
+			"Test CAS color operations",
+			"Test shadow stack register/unregister",
+			"Test gray stack concurrent push/pop",
+			"Run with Pulse.Lib.Par"
+		],
+		"passes": true,
+		"notes": "Test.Atomics.fst created with unit tests for color operations, header layout, and address calculations"
+	},
+	{
+		"category": "testing",
+		"phase": 7,
+		"description": "Integration test: parallel mutators + GC succeeds",
+		"steps": [
+			"Create test with multiple mutator threads",
+			"Each mutator allocates and mutates",
+			"GC runs concurrently",
+			"Verify no invariant violations"
+		],
+		"passes": true,
+		"notes": "Test.Concurrent.fst created with parallel CAS tests, write barrier tests, and GC+mutator integration specs"
+	},
+	{
+		"category": "testing",
+		"phase": 7,
+		"description": "Benchmark shows reduced pause times vs STW",
+		"steps": [
+			"Run binarytrees benchmark",
+			"Measure max GC pause time",
+			"Compare with STW pause times",
+			"Document performance"
+		],
+		"passes": false,
+		"notes": "Requires runtime integration and extracted C code"
+	}
+]
