@@ -1230,13 +1230,42 @@ let rec push_children_no_new_white g st obj i ws x =
 #pop-options
 
 /// Ghost witness extraction: given exists_field_pointing_to_unchecked, find a specific field
-let efp_witness (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 0 --split_queries no"
+let rec efp_witness (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Ghost (U64.t) 
-    (requires exists_field_pointing_to_unchecked g h wz target = true)
+    (requires well_formed_heap g /\ Seq.mem h (objects 0UL g) /\
+             U64.v wz <= U64.v (wosize_of_object h g) /\
+             exists_field_pointing_to_unchecked g h wz target = true)
     (ensures fun j -> U64.v j >= 1 /\ U64.v j <= U64.v wz /\
                       HeapGraph.get_field g h j == target /\
                       HeapGraph.is_pointer_field target)
-  = admit() // TODO: straightforward but needs address arithmetic alignment
+    (decreases U64.v wz)
+  = if wz = 0UL then false_elim ()
+    else begin
+      let idx = U64.sub wz 1UL in
+      let far = U64.add_mod h (U64.mul_mod idx mword) in
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then
+        efp_witness g h idx target
+      else begin
+        let field_val = read_word g (far <: hp_addr) in
+        if HeapGraph.is_pointer_field field_val && hd_address field_val = hd_address target then begin
+          HeapGraph.is_pointer_field_is_obj_addr field_val;
+          if field_val = target then begin
+            Pulse.Spec.GC.Heap.hd_address_spec h;
+            FStar.Math.Lemmas.pow2_lt_compat 61 54;
+            wosize_of_object_bound h g;
+            HeapGraph.get_field_addr_eq g h wz;
+            wz
+          end else begin
+            let fv : obj_addr = field_val in
+            hd_address_injective fv target;
+            false_elim ()
+          end
+        end else
+          efp_witness g h idx target
+      end
+    end
+#pop-options
 
 /// If get_field g obj j == child (pointer, white), push_children from i to ws (with i <= j <= ws) makes child non-white
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
