@@ -74,6 +74,7 @@ val end_to_end_correctness :
       stack_props h_init st /\
       root_props h_init roots /\
       free_list_props h_init fp /\
+      no_black_objects h_init /\
       (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st))
     (ensures
       (let h_mark = mark h_init st in
@@ -124,6 +125,7 @@ let end_to_end_correctness h_init st roots fp =
 val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: obj_addr) ->
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
                   root_props h_init roots /\ free_list_props h_init fp /\
+                  no_black_objects h_init /\
                   (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st) /\
                   (let graph = create_graph h_init in
                    let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -145,6 +147,7 @@ let gc_safety h_init st roots fp =
 val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: obj_addr) ->
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
                   root_props h_init roots /\ free_list_props h_init fp /\
+                  no_black_objects h_init /\
                   (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st) /\
                   (let graph = create_graph h_init in
                    let roots' = HeapGraph.coerce_to_vertex_list roots in
