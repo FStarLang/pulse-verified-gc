@@ -67,6 +67,62 @@ let stack_head_is_gray (g: heap) (st: seq obj_addr)
                     Seq.mem obj (objects 0UL g)))
   = ()
 
+/// Transfer stack_elements_valid when objects are equal
+let rec sev_transfer (g g': heap) (st: seq obj_addr)
+  : Lemma (requires objects 0UL g == objects 0UL g' /\ stack_elements_valid g st)
+          (ensures stack_elements_valid g' st) (decreases Seq.length st)
+  = if Seq.length st = 0 then () else sev_transfer g g' (Seq.tail st)
+
+/// White element not in gray stack (colors exclusive)
+let white_not_in_gray_stack (g: heap) (st: seq obj_addr) (child: obj_addr)
+  : Lemma (requires stack_points_to_gray g st /\ is_white child g) (ensures ~(Seq.mem child st))
+  = let aux (x: obj_addr) : Lemma (Seq.mem x st ==> x <> child) =
+      if Seq.mem x st then begin is_white_iff child g; is_gray_iff x g; colors_exhaustive_and_exclusive x g end
+    in FStar.Classical.forall_intro aux
+
+/// gray_objects_on_stack after makeGray step
+let pc_step_gos (g: heap) (child: obj_addr) (st: seq obj_addr) (g': heap)
+  : Lemma (requires g' == set_object_color child g Header.Gray /\
+                   is_white child g /\ Seq.mem child (objects 0UL g) /\
+                   gray_objects_on_stack g st /\ objects 0UL g' == objects 0UL g)
+          (ensures gray_objects_on_stack g' (Seq.cons child st))
+  = let st' = Seq.cons child st in
+    let aux (x: obj_addr) : Lemma
+      (requires Seq.mem x (objects 0UL g') /\ is_gray x g') (ensures Seq.mem x st')
+    = Seq.mem_cons child st;
+      if x = child then ()
+      else begin
+        hd_address_injective x child;
+        set_object_color_read_word child (hd_address x) g Header.Gray;
+        color_of_object_spec x g; color_of_object_spec x g';
+        is_gray_iff x g; is_gray_iff x g'
+      end
+    in FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+/// stack_points_to_gray after makeGray step
+let pc_step_spg (g: heap) (child: obj_addr) (st: seq obj_addr) (g': heap)
+  : Lemma (requires g' == set_object_color child g Header.Gray /\
+                   is_white child g /\ stack_points_to_gray g st)
+          (ensures stack_points_to_gray g' (Seq.cons child st))
+  = let aux (x: obj_addr) : Lemma
+      (requires Seq.mem x (Seq.cons child st)) (ensures is_gray x g')
+    = Seq.mem_cons child st;
+      if x = child then begin makeGray_eq child g; makeGray_is_gray child g end
+      else begin
+        is_gray_iff x g; is_white_iff child g;
+        hd_address_injective x child;
+        set_object_color_read_word child (hd_address x) g Header.Gray;
+        color_of_object_spec x g; color_of_object_spec x g'; is_gray_iff x g'
+      end
+    in FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+/// obj not in cons child st when obj ≠ child and obj ∉ st
+let obj_not_in_cons (obj child: obj_addr) (st: seq obj_addr)
+  : Lemma (requires obj <> child /\ ~(Seq.mem obj st))
+          (ensures ~(Seq.mem obj (Seq.cons child st)))
+  = Seq.mem_cons child st
+
+
 /// ---------------------------------------------------------------------------
 /// Root Properties
 /// ---------------------------------------------------------------------------
@@ -106,134 +162,6 @@ let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64
     else
       (g', st')
 
-/// Process one gray object: make it black and push children
-let mark_step (g: heap) (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) 
-  : GTot (heap & seq obj_addr)
-  =
-  let obj = Seq.head st in
-  let st' = Seq.tail st in
-  
-  // Make it black
-  let g' = makeBlack obj g in
-  
-  // Push white children
-  let ws = wosize_of_object obj g in
-  if is_no_scan obj g then
-    (g', st')
-  else
-    push_children g' st' obj 1UL ws
-
-/// mark_step preserves stack_props
-val mark_step_preserves_stack_props : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures (let (g', st') = mark_step g st in
-                  stack_props g' st'))
-
-let mark_step_preserves_stack_props g st =
-  let obj = Seq.head st in
-  let st_tail = Seq.tail st in
-  stack_head_is_gray g st;
-  makeBlack_eq obj g;
-  let g1 = makeBlack obj g in
-  let ws = wosize_of_object obj g in
-  
-  // After makeBlack obj:
-  // - obj is now black in g1
-  // - all other colors unchanged
-  // - objects unchanged (color_change_preserves_objects)
-  color_change_preserves_objects g obj Header.Black;
-  
-  if is_no_scan obj g then begin
-    // Result: (g1, st_tail)
-    
-    // Property 4: stack_no_dups st_tail
-    // Follows from stack_no_dups (cons obj st_tail) → stack_no_dups st_tail
-    // (stack_no_dups strips the head)
-    assert (stack_no_dups st_tail);
-    
-    // Property 1: stack_elements_valid g1 st_tail
-    // Elements of tail st are in objects 0UL g (from stack_elements_valid g st)
-    // objects 0UL g1 = objects 0UL g → they're also in objects 0UL g1
-    let rec sev_aux (st': seq obj_addr)
-      : Lemma (requires stack_elements_valid g st' /\
-                        objects 0UL g1 == objects 0UL g)
-              (ensures stack_elements_valid g1 st')
-              (decreases Seq.length st')
-      = if Seq.length st' = 0 then ()
-        else sev_aux (Seq.tail st')
-    in sev_aux st_tail;
-    
-    // Property 3: stack_points_to_gray g1 st_tail
-    // Elements of tail st are gray in g (stack_points_to_gray g st)
-    // After makeBlack obj: x ≠ obj → is_gray x g1 = is_gray x g
-    // obj ∉ tail st (from stack_no_dups)
-    let sp_aux (x: obj_addr) : Lemma
-      (requires Seq.mem x st_tail)
-      (ensures is_gray x g1)
-    = Seq.cons_head_tail st;
-      Seq.mem_cons obj st_tail;
-      assert (Seq.mem x st);
-      assert (is_gray x g);
-      assert (~ (Seq.mem obj st_tail));
-      assert (x <> obj);
-      assert (g1 == set_object_color obj g Header.Black);
-      hd_address_injective x obj;
-      set_object_color_read_word obj (hd_address x) g Header.Black;
-      color_of_object_spec x g;
-      color_of_object_spec x g1;
-      is_gray_iff x g;
-      is_gray_iff x g1
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires sp_aux);
-    
-    // Property 2: gray_objects_on_stack g1 st_tail
-    // Gray objects in g1: same as g minus {obj} (obj is now black)
-    // If x is gray in g1: x ≠ obj (obj is black), so x is gray in g
-    // From gray_objects_on_stack g st: x ∈ st = {obj} ∪ tail st
-    // Since x ≠ obj: x ∈ tail st
-    let go_aux (x: obj_addr) : Lemma
-      (requires Seq.mem x (objects 0UL g1) /\ is_gray x g1)
-      (ensures Seq.mem x st_tail)
-    = // obj is black in g1 (from makeBlack)
-      makeBlack_is_black obj g;
-      assert (is_black obj g1);
-      // x is gray in g1 (from precondition)
-      // black ≠ gray → x ≠ obj
-      is_black_iff obj g1;
-      is_gray_iff x g1;
-      assert (x <> obj);
-      // x is gray in g (color unchanged since x ≠ obj)
-      assert (g1 == set_object_color obj g Header.Black);
-      hd_address_injective x obj;
-      set_object_color_read_word obj (hd_address x) g Header.Black;
-      color_of_object_spec x g;
-      color_of_object_spec x g1;
-      is_gray_iff x g;
-      assert (is_gray x g);
-      // objects preserved
-      assert (Seq.mem x (objects 0UL g));
-      // From gray_objects_on_stack g st: x ∈ st
-      assert (Seq.mem x st);
-      // x ≠ obj = head st, so x ∈ tail st
-      Seq.cons_head_tail st;
-      Seq.mem_cons obj st_tail;
-      ()
-    in
-    let go_imp (x: obj_addr) : Lemma
-      ((Seq.mem x (objects 0UL g1) /\ is_gray x g1) ==> Seq.mem x st_tail)
-    = FStar.Classical.move_requires go_aux x
-    in
-    FStar.Classical.forall_intro go_imp
-  end else begin
-    // push_children case — much harder
-    admit()
-  end
-
-/// ---------------------------------------------------------------------------
-/// Mark Phase: Iterate Until Stack Empty
-/// ---------------------------------------------------------------------------
-
-/// ---------------------------------------------------------------------------
 /// Pillar 1: Mark Preserves Well-Formedness
 /// ---------------------------------------------------------------------------
 
@@ -363,6 +291,266 @@ let rec push_children_preserves_wf g st obj i ws =
     end
   end
 #pop-options
+/// push_children preserves all stack properties
+#push-options "--z3rlimit 800 --fuel 2 --ifuel 1"
+val push_children_preserves_stack_props :
+  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st /\
+                  is_black obj g /\ Seq.mem obj (objects 0UL g) /\
+                  U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  U64.v (wosize_of_object obj g) < pow2 54 /\
+                  ~(Seq.mem obj st))
+        (ensures (let (g', st') = push_children g st obj i ws in stack_props g' st'))
+        (decreases (U64.v ws - U64.v i))
+let rec push_children_preserves_stack_props g st obj i ws =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let child : obj_addr = v in
+      if is_white child g then begin
+        let g' = makeGray child g in
+        let st' = Seq.cons child st in
+        makeGray_eq child g;
+        is_white_iff child g; is_black_iff obj g;
+        
+        let wz = wosize_of_object obj g in
+        wosize_of_object_bound obj g; hd_address_spec obj;
+        FStar.Math.Lemmas.pow2_lt_compat 61 54;
+        HeapGraph.get_field_addr_eq g obj i;
+        field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) child;
+        
+        color_change_preserves_wf g child Header.Gray;
+        color_change_preserves_objects g child Header.Gray;
+        sev_transfer g g' st;
+        pc_step_spg g child st g';
+        pc_step_gos g child st g';
+        white_not_in_gray_stack g st child;
+        
+        // Help unfold stack_elements_valid for cons
+        assert (Seq.length st' > 0);
+        assert (Seq.head st' == child);
+        Seq.lemma_tl child st;
+        assert (Seq.tail st' == st);
+        assert (Seq.mem child (objects 0UL g'));
+        assert (stack_elements_valid g' st);
+        assert (stack_elements_valid g' st');
+        // Help unfold stack_no_dups for cons
+        assert (~(Seq.mem child st));
+        assert (stack_no_dups st);
+        assert (stack_no_dups st');
+        
+        // Recursion preconditions
+        hd_address_injective child obj;
+        color_change_preserves_other_color child obj g Header.Gray;
+        is_black_iff obj g';
+        obj_not_in_cons obj child st;
+        set_object_color_preserves_getWosize_at_hd child g Header.Gray;
+        wosize_of_object_spec obj g; wosize_of_object_spec obj g';
+        color_change_preserves_objects_mem g child Header.Gray obj;
+        
+        if U64.v i < U64.v ws then
+          push_children_preserves_stack_props g' st' obj (U64.add i 1UL) ws
+        else ()
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_preserves_stack_props g st obj (U64.add i 1UL) ws
+        else ()
+      end
+    end else begin
+      if U64.v i < U64.v ws then
+        push_children_preserves_stack_props g st obj (U64.add i 1UL) ws
+      else ()
+    end
+  end
+#pop-options
+/// Process one gray object: make it black and push children
+let mark_step (g: heap) (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) 
+  : GTot (heap & seq obj_addr)
+  =
+  let obj = Seq.head st in
+  let st' = Seq.tail st in
+  
+  // Make it black
+  let g' = makeBlack obj g in
+  
+  // Push white children
+  let ws = wosize_of_object obj g in
+  if is_no_scan obj g then
+    (g', st')
+  else
+    push_children g' st' obj 1UL ws
+
+/// mark_step preserves stack_props
+val mark_step_preserves_stack_props : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st)
+        (ensures (let (g', st') = mark_step g st in
+                  stack_props g' st'))
+
+#push-options "--z3rlimit 800"
+let mark_step_preserves_stack_props g st =
+  let obj = Seq.head st in
+  let st_tail = Seq.tail st in
+  stack_head_is_gray g st;
+  makeBlack_eq obj g;
+  let g1 = makeBlack obj g in
+  let ws = wosize_of_object obj g in
+  
+  // After makeBlack obj:
+  // - obj is now black in g1
+  // - all other colors unchanged
+  // - objects unchanged (color_change_preserves_objects)
+  color_change_preserves_objects g obj Header.Black;
+  
+  if is_no_scan obj g then begin
+    // Result: (g1, st_tail)
+    
+    // Property 4: stack_no_dups st_tail
+    // Follows from stack_no_dups (cons obj st_tail) → stack_no_dups st_tail
+    // (stack_no_dups strips the head)
+    assert (stack_no_dups st_tail);
+    
+    // Property 1: stack_elements_valid g1 st_tail
+    sev_transfer g g1 st_tail;
+    
+    // Property 3: stack_points_to_gray g1 st_tail
+    // Elements of tail st are gray in g (stack_points_to_gray g st)
+    // After makeBlack obj: x ≠ obj → is_gray x g1 = is_gray x g
+    // obj ∉ tail st (from stack_no_dups)
+    let sp_aux (x: obj_addr) : Lemma
+      (requires Seq.mem x st_tail)
+      (ensures is_gray x g1)
+    = Seq.cons_head_tail st;
+      Seq.mem_cons obj st_tail;
+      assert (Seq.mem x st);
+      assert (is_gray x g);
+      assert (~ (Seq.mem obj st_tail));
+      assert (x <> obj);
+      assert (g1 == set_object_color obj g Header.Black);
+      hd_address_injective x obj;
+      set_object_color_read_word obj (hd_address x) g Header.Black;
+      color_of_object_spec x g;
+      color_of_object_spec x g1;
+      is_gray_iff x g;
+      is_gray_iff x g1
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires sp_aux);
+    
+    // Property 2: gray_objects_on_stack g1 st_tail
+    // Gray objects in g1: same as g minus {obj} (obj is now black)
+    // If x is gray in g1: x ≠ obj (obj is black), so x is gray in g
+    // From gray_objects_on_stack g st: x ∈ st = {obj} ∪ tail st
+    // Since x ≠ obj: x ∈ tail st
+    let go_aux (x: obj_addr) : Lemma
+      (requires Seq.mem x (objects 0UL g1) /\ is_gray x g1)
+      (ensures Seq.mem x st_tail)
+    = // obj is black in g1 (from makeBlack)
+      makeBlack_is_black obj g;
+      assert (is_black obj g1);
+      // x is gray in g1 (from precondition)
+      // black ≠ gray → x ≠ obj
+      is_black_iff obj g1;
+      is_gray_iff x g1;
+      assert (x <> obj);
+      // x is gray in g (color unchanged since x ≠ obj)
+      assert (g1 == set_object_color obj g Header.Black);
+      hd_address_injective x obj;
+      set_object_color_read_word obj (hd_address x) g Header.Black;
+      color_of_object_spec x g;
+      color_of_object_spec x g1;
+      is_gray_iff x g;
+      assert (is_gray x g);
+      // objects preserved
+      assert (Seq.mem x (objects 0UL g));
+      // From gray_objects_on_stack g st: x ∈ st
+      assert (Seq.mem x st);
+      // x ≠ obj = head st, so x ∈ tail st
+      Seq.cons_head_tail st;
+      Seq.mem_cons obj st_tail;
+      ()
+    in
+    let go_imp (x: obj_addr) : Lemma
+      ((Seq.mem x (objects 0UL g1) /\ is_gray x g1) ==> Seq.mem x st_tail)
+    = FStar.Classical.move_requires go_aux x
+    in
+    FStar.Classical.forall_intro go_imp
+  end else begin
+    // push_children case: need to show stack_props for push_children g1 st_tail obj 1UL ws
+    // After makeBlack: obj is black in g1, obj ∉ st_tail (was head, stack_no_dups)
+    makeBlack_is_black obj g;
+    assert (is_black obj g1);
+    color_change_preserves_wf g obj Header.Black;
+    
+    // obj ∉ st_tail: obj was head of st, stack_no_dups gives ~(mem obj st_tail) 
+    assert (~(Seq.mem obj st_tail));
+    
+    // stack_props g1 st_tail: proved same way as is_no_scan case
+    // sev
+    sev_transfer g g1 st_tail;
+    // spg
+    let sp_aux (x: obj_addr) : Lemma (requires Seq.mem x st_tail) (ensures is_gray x g1)
+    = assert (is_gray x g);
+      makeBlack_is_black obj g;
+      is_gray_iff x g; is_black_iff obj g1;
+      assert (x <> obj);
+      hd_address_injective x obj;
+      set_object_color_read_word obj (hd_address x) g Header.Black;
+      color_of_object_spec x g; color_of_object_spec x g1;
+      is_gray_iff x g1
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires sp_aux);
+    // gos
+    let go_aux (x: obj_addr) : Lemma
+      (requires Seq.mem x (objects 0UL g1) /\ is_gray x g1)
+      (ensures Seq.mem x st_tail)
+    = makeBlack_is_black obj g;
+      is_black_iff obj g1; is_gray_iff x g1;
+      assert (x <> obj);
+      hd_address_injective x obj;
+      set_object_color_read_word obj (hd_address x) g Header.Black;
+      color_of_object_spec x g; color_of_object_spec x g1;
+      is_gray_iff x g;
+      assert (Seq.mem x (objects 0UL g));
+      assert (Seq.mem x st);
+      Seq.cons_head_tail st; Seq.mem_cons obj st_tail
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires go_aux);
+    assert (stack_no_dups st_tail);
+    
+    // wosize preserved
+    wosize_of_object_bound obj g;
+    set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+    wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+    
+    // obj ∉ st_tail: from stack_no_dups, obj = head st → obj ∉ tail st
+    assert (~(Seq.mem obj st_tail));
+    assert (well_formed_heap g1);
+    assert (stack_props g1 st_tail);
+    assert (is_black obj g1);
+    assert (Seq.mem obj (objects 0UL g1));
+    assert (U64.v ws <= U64.v (wosize_of_object obj g1));
+    assert (U64.v (wosize_of_object obj g1) < pow2 54);
+    
+    // Help the solver see push_children_preserves_stack_props's precondition
+    let pcsp_call () : Lemma
+      (requires well_formed_heap g1 /\ stack_props g1 st_tail /\
+                is_black obj g1 /\ Seq.mem obj (objects 0UL g1) /\
+                U64.v ws <= U64.v (wosize_of_object obj g1) /\
+                U64.v (wosize_of_object obj g1) < pow2 54 /\
+                ~(Seq.mem obj st_tail))
+      (ensures (let (g', st') = push_children g1 st_tail obj 1UL ws in stack_props g' st'))
+    = push_children_preserves_stack_props g1 st_tail obj 1UL ws
+    in
+    pcsp_call ()
+  end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Mark Phase: Iterate Until Stack Empty
+/// ---------------------------------------------------------------------------
+
+/// ---------------------------------------------------------------------------
 
 val mark_step_preserves_wf : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
@@ -533,8 +721,20 @@ val mark_preserves_wf : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
         (ensures well_formed_heap (mark g st))
 
+let rec mark_aux_preserves_wf (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) (fuel: nat)
+  : Lemma (ensures well_formed_heap (mark_aux g st fuel))
+          (decreases fuel)
+  = if Seq.length st = 0 then ()
+    else if fuel = 0 then ()
+    else begin
+      let (g', st') = mark_step g st in
+      mark_step_preserves_stack_props g st;
+      mark_step_preserves_wf g st;
+      mark_aux_preserves_wf g' st' (fuel - 1)
+    end
+
 let mark_preserves_wf g st =
-  admit()
+  mark_aux_preserves_wf g st (heap_size / U64.v mword)
 
 /// ---------------------------------------------------------------------------
 /// Color Exhaustiveness
