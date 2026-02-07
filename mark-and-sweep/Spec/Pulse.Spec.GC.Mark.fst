@@ -233,146 +233,6 @@ let mark_step_preserves_stack_props g st =
 /// Mark Phase: Iterate Until Stack Empty
 /// ---------------------------------------------------------------------------
 
-let rec mark_aux (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) (fuel: nat)
-  : GTot heap (decreases fuel)
-  =
-  if Seq.length st = 0 then g
-  else if fuel = 0 then g
-  else begin
-    let (g', st') = mark_step g st in
-    mark_step_preserves_stack_props g st;
-    // mark_step_preserves_wf is proved (see below) but defined after mark_aux
-    // This admit is discharged by the proof at line ~401
-    admit();
-    mark_aux g' st' (fuel - 1)
-  end
-
-let mark (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) : GTot heap =
-  mark_aux g st (heap_size / U64.v mword)
-
-/// ---------------------------------------------------------------------------
-/// Mark Phase Invariants
-/// ---------------------------------------------------------------------------
-
-/// Tri-color invariant: no black object points to white object
-let tri_color_invariant (g: heap) : prop =
-  let objs = objects 0UL g in
-  forall (obj: obj_addr). Seq.mem obj objs ==>
-    (is_black obj g ==>
-      (forall (s: obj_addr). Seq.mem s (HeapGraph.get_pointer_fields g obj) ==>
-        not (is_white s g)))
-
-/// After marking, no gray objects remain
-let noGreyObjects (g: heap) : prop =
-  let objs = objects 0UL g in
-  forall (obj: obj_addr). Seq.mem obj objs ==>
-    not (is_gray obj g)
-
-/// ---------------------------------------------------------------------------
-/// Ghost State for Mark Termination
-/// ---------------------------------------------------------------------------
-
-let rec non_black_count (g: heap) (objs: seq obj_addr) : GTot nat (decreases Seq.length objs) =
-  if Seq.length objs = 0 then 0
-  else
-    let h = Seq.head objs in
-    let rest = non_black_count g (Seq.tail objs) in
-    if is_black h g then rest else rest + 1
-
-let total_non_black (g: heap) : GTot nat =
-  non_black_count g (objects 0UL g)
-
-/// push_children preserves black color of parent
-val push_children_preserves_parent_black : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
-                                            (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires is_black obj g)
-        (ensures is_black obj (fst (push_children g st obj i ws)))
-        (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 100 --fuel 2"
-let rec push_children_preserves_parent_black g st obj i ws =
-  if U64.v i > U64.v ws then ()
-  else begin
-    let v = HeapGraph.get_field g obj i in
-    if HeapGraph.is_pointer_field v then begin
-      HeapGraph.is_pointer_field_is_obj_addr v;
-      let child : obj_addr = v in
-      if is_white child g then begin
-        let g' = makeGray child g in
-        // child is white, obj is black → child <> obj
-        is_white_iff child g;
-        is_black_iff obj g;
-        assert (child <> obj);
-        makeGray_eq child g;
-        color_change_preserves_other_color child obj g Header.Gray;
-        is_black_iff obj g;
-        is_black_iff obj g';
-        assert (is_black obj g');
-        let st' = Seq.cons child st in
-        if U64.v i < U64.v ws then
-          push_children_preserves_parent_black g' st' obj (U64.add i 1UL) ws
-        else ()
-      end else begin
-        if U64.v i < U64.v ws then
-          push_children_preserves_parent_black g st obj (U64.add i 1UL) ws
-        else ()
-      end
-    end else begin
-      if U64.v i < U64.v ws then
-        push_children_preserves_parent_black g st obj (U64.add i 1UL) ws
-      else ()
-    end
-  end
-#pop-options
-
-/// mark_step makes exactly one object black (the head of stack)
-val mark_step_makes_one_black : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures (let obj = Seq.head st in
-                  is_black obj (fst (mark_step g st)) /\
-                  is_gray obj g))
-
-#push-options "--z3rlimit 100"
-let mark_step_makes_one_black g st =
-  stack_head_is_gray g st;
-  let obj = Seq.head st in
-  assert (is_gray obj g);
-  let g' = makeBlack obj g in
-  makeBlack_is_black obj g;
-  assert (is_black obj g');
-  let ws = wosize_of_object obj g in
-  if is_no_scan obj g then ()
-  else
-    push_children_preserves_parent_black g' (Seq.tail st) obj 1UL ws
-#pop-options
-
-/// Helper: non_black_count is unchanged when makeBlack on address not in list
-val non_black_count_makeBlack_other : (g: heap) -> (obj: obj_addr) -> (objs: seq obj_addr) ->
-  Lemma (requires ~(Seq.mem obj objs) /\
-                  (forall (x: obj_addr). Seq.mem x objs ==> obj <> x))
-        (ensures non_black_count (makeBlack obj g) objs == non_black_count g objs)
-        (decreases Seq.length objs)
-
-let rec non_black_count_makeBlack_other g obj objs =
-  if Seq.length objs = 0 then ()
-  else begin
-    let hd = Seq.head objs in
-    assert (Seq.mem hd objs);
-    makeBlack_eq obj g;
-    color_change_preserves_other_color obj hd g Header.Black;
-    is_black_iff hd g;
-    is_black_iff hd (makeBlack obj g);
-    assert (is_black hd (makeBlack obj g) == is_black hd g);
-    non_black_count_makeBlack_other g obj (Seq.tail objs)
-  end
-
-let non_black_count_unfold (g: heap) (objs: seq obj_addr)
-  : Lemma (requires Seq.length objs > 0)
-          (ensures non_black_count g objs == 
-                   (if is_black (Seq.head objs) g then 0 else 1) + 
-                   non_black_count g (Seq.tail objs))
-  = ()
-
 /// ---------------------------------------------------------------------------
 /// Pillar 1: Mark Preserves Well-Formedness
 /// ---------------------------------------------------------------------------
@@ -529,6 +389,145 @@ let mark_step_preserves_wf g st =
   else
     push_children_preserves_wf g' (Seq.tail st) obj 1UL ws
 #pop-options
+
+let rec mark_aux (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) (fuel: nat)
+  : GTot heap (decreases fuel)
+  =
+  if Seq.length st = 0 then g
+  else if fuel = 0 then g
+  else begin
+    let (g', st') = mark_step g st in
+    mark_step_preserves_stack_props g st;
+    mark_step_preserves_wf g st;
+    mark_aux g' st' (fuel - 1)
+  end
+
+let mark (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) : GTot heap =
+  mark_aux g st (heap_size / U64.v mword)
+
+/// ---------------------------------------------------------------------------
+/// Mark Phase Invariants
+/// ---------------------------------------------------------------------------
+
+/// Tri-color invariant: no black object points to white object
+let tri_color_invariant (g: heap) : prop =
+  let objs = objects 0UL g in
+  forall (obj: obj_addr). Seq.mem obj objs ==>
+    (is_black obj g ==>
+      (forall (s: obj_addr). Seq.mem s (HeapGraph.get_pointer_fields g obj) ==>
+        not (is_white s g)))
+
+/// After marking, no gray objects remain
+let noGreyObjects (g: heap) : prop =
+  let objs = objects 0UL g in
+  forall (obj: obj_addr). Seq.mem obj objs ==>
+    not (is_gray obj g)
+
+/// ---------------------------------------------------------------------------
+/// Ghost State for Mark Termination
+/// ---------------------------------------------------------------------------
+
+let rec non_black_count (g: heap) (objs: seq obj_addr) : GTot nat (decreases Seq.length objs) =
+  if Seq.length objs = 0 then 0
+  else
+    let h = Seq.head objs in
+    let rest = non_black_count g (Seq.tail objs) in
+    if is_black h g then rest else rest + 1
+
+let total_non_black (g: heap) : GTot nat =
+  non_black_count g (objects 0UL g)
+
+/// push_children preserves black color of parent
+val push_children_preserves_parent_black : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
+                                            (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
+  Lemma (requires is_black obj g)
+        (ensures is_black obj (fst (push_children g st obj i ws)))
+        (decreases (U64.v ws - U64.v i))
+
+#push-options "--z3rlimit 100 --fuel 2"
+let rec push_children_preserves_parent_black g st obj i ws =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let child : obj_addr = v in
+      if is_white child g then begin
+        let g' = makeGray child g in
+        // child is white, obj is black → child <> obj
+        is_white_iff child g;
+        is_black_iff obj g;
+        assert (child <> obj);
+        makeGray_eq child g;
+        color_change_preserves_other_color child obj g Header.Gray;
+        is_black_iff obj g;
+        is_black_iff obj g';
+        assert (is_black obj g');
+        let st' = Seq.cons child st in
+        if U64.v i < U64.v ws then
+          push_children_preserves_parent_black g' st' obj (U64.add i 1UL) ws
+        else ()
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_preserves_parent_black g st obj (U64.add i 1UL) ws
+        else ()
+      end
+    end else begin
+      if U64.v i < U64.v ws then
+        push_children_preserves_parent_black g st obj (U64.add i 1UL) ws
+      else ()
+    end
+  end
+#pop-options
+
+/// mark_step makes exactly one object black (the head of stack)
+val mark_step_makes_one_black : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st)
+        (ensures (let obj = Seq.head st in
+                  is_black obj (fst (mark_step g st)) /\
+                  is_gray obj g))
+
+#push-options "--z3rlimit 100"
+let mark_step_makes_one_black g st =
+  stack_head_is_gray g st;
+  let obj = Seq.head st in
+  assert (is_gray obj g);
+  let g' = makeBlack obj g in
+  makeBlack_is_black obj g;
+  assert (is_black obj g');
+  let ws = wosize_of_object obj g in
+  if is_no_scan obj g then ()
+  else
+    push_children_preserves_parent_black g' (Seq.tail st) obj 1UL ws
+#pop-options
+
+/// Helper: non_black_count is unchanged when makeBlack on address not in list
+val non_black_count_makeBlack_other : (g: heap) -> (obj: obj_addr) -> (objs: seq obj_addr) ->
+  Lemma (requires ~(Seq.mem obj objs) /\
+                  (forall (x: obj_addr). Seq.mem x objs ==> obj <> x))
+        (ensures non_black_count (makeBlack obj g) objs == non_black_count g objs)
+        (decreases Seq.length objs)
+
+let rec non_black_count_makeBlack_other g obj objs =
+  if Seq.length objs = 0 then ()
+  else begin
+    let hd = Seq.head objs in
+    assert (Seq.mem hd objs);
+    makeBlack_eq obj g;
+    color_change_preserves_other_color obj hd g Header.Black;
+    is_black_iff hd g;
+    is_black_iff hd (makeBlack obj g);
+    assert (is_black hd (makeBlack obj g) == is_black hd g);
+    non_black_count_makeBlack_other g obj (Seq.tail objs)
+  end
+
+let non_black_count_unfold (g: heap) (objs: seq obj_addr)
+  : Lemma (requires Seq.length objs > 0)
+          (ensures non_black_count g objs == 
+                   (if is_black (Seq.head objs) g then 0 else 1) + 
+                   non_black_count g (Seq.tail objs))
+  = ()
+
 
 val mark_preserves_wf : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
