@@ -214,14 +214,45 @@ let sweep_object_resets_self_color g obj fp =
 /// Sweep Aux Lemmas
 /// ---------------------------------------------------------------------------
 
-val sweep_aux_black_survives : (g: heap) -> (objs: seq obj_addr) -> (fp: obj_addr) -> (x: obj_addr) ->
-  Lemma (requires is_black x g /\ Seq.mem x objs)
-        (ensures is_white x (fst (sweep_aux g objs fp)) \/ 
-                 not (is_blue x (fst (sweep_aux g objs fp))))
+/// sweep_aux preserves color of objects not in the sequence
+val sweep_aux_non_member_color : (g: heap) -> (objs: seq obj_addr) -> (fp: obj_addr) -> (x: obj_addr) ->
+  Lemma (requires ~(Seq.mem x objs) /\
+                  well_formed_heap g /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  Seq.mem x (objects 0UL g))
+        (ensures color_of_object x (fst (sweep_aux g objs fp)) == color_of_object x g)
         (decreases Seq.length objs)
 
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let rec sweep_aux_non_member_color g objs fp x =
+  if Seq.length objs = 0 then ()
+  else begin
+    let obj = Seq.head objs in
+    let (g', fp') = sweep_object g obj fp in
+    Seq.lemma_index_is_nth objs 0;
+    assert (Seq.mem obj objs);
+    // x ≠ obj (since x ∉ objs but obj ∈ objs)
+    assert (x <> obj);
+    sweep_object_color_locality g obj x fp;
+    sweep_object_preserves_objects g obj fp;
+    color_change_preserves_wf g obj (if is_white obj g then Header.Blue else if is_black obj g then Header.White else Header.Blue);
+    // g' preserves well_formed_heap... actually we need sweep_object_preserves_wf
+    // For now, use the fact that sweep_object = color change + field write
+    // Both preserve well_formed_heap
+    admit() // TODO: need sweep_object_preserves_wf
+  end
+#pop-options
+
+val sweep_aux_black_survives : (g: heap) -> (objs: seq obj_addr) -> (fp: obj_addr) -> (x: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ is_black x g /\ Seq.mem x objs /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)))
+        (ensures is_white x (fst (sweep_aux g objs fp)))
+        (decreases Seq.length objs)
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec sweep_aux_black_survives g objs fp x =
   admit()
+#pop-options
 
 val sweep_aux_white_freed : (g: heap) -> (objs: seq obj_addr) -> (fp: obj_addr) -> (x: obj_addr) ->
   Lemma (requires is_white x g /\ Seq.mem x objs)

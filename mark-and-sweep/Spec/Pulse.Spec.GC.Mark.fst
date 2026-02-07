@@ -332,12 +332,66 @@ let color_change_preserves_wf g obj c =
   FStar.Classical.forall_intro_2 aux2_imp
 #pop-options
 
+/// push_children only applies color changes, which preserve wf
+val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
+                                  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+        (ensures well_formed_heap (fst (push_children g st obj i ws)))
+        (decreases (U64.v ws - U64.v i))
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let rec push_children_preserves_wf g st obj i ws =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let child : obj_addr = v in
+      if is_white child g then begin
+        let g' = makeGray child g in
+        let st' = Seq.cons child st in
+        makeGray_eq child g;
+        // Need: Seq.mem child (objects 0UL g) for color_change_preserves_wf
+        // child = get_field g obj i, is_pointer_field child → child ∈ objects 0UL g (from well_formed_heap)
+        // This follows because is_pointer_field v + well_formed_heap implies child is a valid object
+        admit(); // TODO: need pointer-field → objects membership connection
+        color_change_preserves_wf g child Header.Gray;
+        color_change_preserves_objects_mem g child Header.Gray obj;
+        if U64.v i < U64.v ws then
+          push_children_preserves_wf g' st' obj (U64.add i 1UL) ws
+        else ()
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_preserves_wf g st obj (U64.add i 1UL) ws
+        else ()
+      end
+    end else begin
+      if U64.v i < U64.v ws then
+        push_children_preserves_wf g st obj (U64.add i 1UL) ws
+      else ()
+    end
+  end
+#pop-options
+
 val mark_step_preserves_wf : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
         (ensures well_formed_heap (fst (mark_step g st)))
 
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let mark_step_preserves_wf g st =
-  admit()
+  let obj = Seq.head st in
+  stack_head_is_gray g st;
+  // makeBlack preserves wf
+  makeBlack_eq obj g;
+  color_change_preserves_wf g obj Header.Black;
+  let g' = makeBlack obj g in
+  color_change_preserves_objects_mem g obj Header.Black obj;
+  // push_children preserves wf
+  let ws = wosize_of_object obj g in
+  if is_no_scan obj g then ()
+  else
+    push_children_preserves_wf g' (Seq.tail st) obj 1UL ws
+#pop-options
 
 val mark_preserves_wf : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
