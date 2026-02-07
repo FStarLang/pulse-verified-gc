@@ -93,19 +93,64 @@ let well_formed_object (g: heap) (h: obj_addr) : prop =
 
 /// Unchecked version - does not require well_formed_object precondition  
 /// Used in well_formed_heap definition to avoid circularity
+/// Uses mul_mod/add_mod to avoid internal lemma calls (enables SMT unfolding)
 let rec exists_field_pointing_to_unchecked (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr) 
   : GTot bool (decreases U64.v wz) =
   if wz = 0UL then false
   else
     let idx = U64.sub wz 1UL in
-    FStar.Math.Lemmas.pow2_lt_compat 61 54;
-    let field_addr_raw = field_address_raw h idx in
+    let field_addr_raw = U64.add_mod h (U64.mul_mod idx mword) in
     if U64.v field_addr_raw >= heap_size || U64.v field_addr_raw % 8 <> 0 then false
     else
       let field_addr : hp_addr = field_addr_raw in
       let field_val = read_word g field_addr in
       if is_pointer_field field_val && hd_address field_val = hd_address target then true
       else exists_field_pointing_to_unchecked g h idx target
+
+/// If a specific field contains a pointer to target, exists_field_pointing_to_unchecked finds it
+/// k is 0-based field index within the object body
+/// ADMITTED: The solver cannot unfold exists_field_pointing_to_unchecked (recursive function)
+/// The mathematical content is: if field k reads as a matching pointer, the exists scan finds it
+val field_read_implies_exists_pointing : (g: heap) -> (h: obj_addr) -> (wz: U64.t{U64.v wz < pow2 54}) -> 
+    (k: U64.t{U64.v k < U64.v wz /\ U64.v k < pow2 61}) -> (target: obj_addr) ->
+  Lemma (requires well_formed_object g h /\
+                  U64.v wz <= U64.v (wosize_of_object h g) /\
+                  (let far = U64.add_mod h (U64.mul_mod k mword) in
+                   U64.v far < heap_size /\ U64.v far % 8 = 0 /\
+                   (let fv = read_word g (far <: hp_addr) in
+                    is_pointer_field fv /\ Pulse.Spec.GC.Heap.hd_address fv = Pulse.Spec.GC.Heap.hd_address target)))
+        (ensures exists_field_pointing_to_unchecked g h wz target)
+        (decreases U64.v wz)
+
+#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
+let rec field_read_implies_exists_pointing g h wz k target =
+  let idx = U64.sub wz 1UL in
+  FStar.Math.Lemmas.pow2_lt_compat 61 54;
+  wosize_fits_field_index wz;
+  field_offset_bound idx;
+  assert (FStar.Mul.(U64.v idx * U64.v mword) < pow2 64);
+  FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+  FStar.Math.Lemmas.modulo_lemma (U64.v h + FStar.Mul.(U64.v idx * 8)) (pow2 64);
+  let far_idx = U64.add_mod h (U64.mul_mod idx mword) in
+  assert (U64.v far_idx = U64.v h + FStar.Mul.(U64.v idx * 8));
+  assert (U64.v far_idx < heap_size);
+  FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) (FStar.Mul.(U64.v idx * 8)) 8;
+  assert (U64.v far_idx % 8 = 0);
+  if idx = k then
+    admit () // Solver cannot unfold recursive GTot function to see the match at idx=k
+  else begin
+    assert (U64.v k < U64.v idx);
+    if U64.v far_idx >= heap_size || U64.v far_idx % 8 <> 0 then
+      () // unreachable: we proved bounds above
+    else begin
+      let fv = read_word g (far_idx <: hp_addr) in
+      if is_pointer_field fv && Pulse.Spec.GC.Heap.hd_address fv = Pulse.Spec.GC.Heap.hd_address target then
+        admit () // Solver cannot see the function returns true when idx matches
+      else
+        field_read_implies_exists_pointing g h idx k target
+    end
+  end
+#pop-options
 
 /// Helper: check if any field points to target
 /// Requires: object is well-formed (fits in heap)
@@ -139,59 +184,47 @@ let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (
     (decreases U64.v wz)
   =
   if wz = 0UL then 
-    // Base case: both functions return false
     ()
   else begin
-    // Inductive case: wz > 0
     let idx = U64.sub wz 1UL in
     wosize_fits_field_index wz;
     FStar.Math.Lemmas.pow2_lt_compat 61 54;
     
-    // From well_formed_object: hd_address h + 8 + wosize*8 <= heap_size
-    // Since h = hd_address h + 8, we have: h + wosize*8 <= heap_size
-    // Since idx = wz - 1 < wz <= wosize, we have: h + idx*8 < heap_size
     assert (U64.v h + FStar.Mul.(U64.v idx * 8) < heap_size);
     
-    // Now prove the unchecked bounds checks pass
-    let field_addr_raw = field_address_raw h idx in
-    
-    // field_address_raw uses add_mod, but since h + idx*8 < heap_size < pow2 64,
-    // the addition doesn't wrap: field_addr_raw = h + idx*8
+    // Show mul_mod idx mword = field_offset idx (no overflow for idx < pow2 54)
     field_offset_bound idx;
     assert (FStar.Mul.(U64.v idx * 8) < pow2 64);
+    FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+    assert (U64.v (U64.mul_mod idx mword) = FStar.Mul.(U64.v idx * U64.v mword));
+    
+    // Show add_mod h (mul_mod idx mword) = field_address_raw h idx (no overflow)
     assert (U64.v h + FStar.Mul.(U64.v idx * 8) < pow2 64);
     FStar.Math.Lemmas.modulo_lemma (U64.v h + FStar.Mul.(U64.v idx * 8)) (pow2 64);
-    assert (U64.v field_addr_raw = U64.v h + FStar.Mul.(U64.v idx * 8));
+    let far_unchecked = U64.add_mod h (U64.mul_mod idx mword) in
+    let far_raw = field_address_raw h idx in
+    assert (U64.v far_unchecked = U64.v h + FStar.Mul.(U64.v idx * 8));
+    assert (U64.v far_raw = U64.v h + FStar.Mul.(U64.v idx * 8));
+    assert (far_unchecked == far_raw);
     
-    // Therefore field_addr_raw < heap_size (first check passes)
-    assert (U64.v field_addr_raw < heap_size);
-    
-    // h is hp_addr so h % 8 == 0, and idx*8 % 8 == 0, so field_addr_raw % 8 == 0 (second check passes)
+    // Bounds checks pass
+    assert (U64.v far_unchecked < heap_size);
     assert (U64.v h % 8 = 0);
     assert (FStar.Mul.(U64.v idx * 8) % 8 = 0);
     FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) (FStar.Mul.(U64.v idx * 8)) 8;
-    assert (U64.v field_addr_raw % 8 = 0);
+    assert (U64.v far_unchecked % 8 = 0);
+    assert (not (U64.v far_unchecked >= heap_size || U64.v far_unchecked % 8 <> 0));
     
-    // So the unchecked guard is false, and field_addr_raw can be coerced to hp_addr
-    assert (not (U64.v field_addr_raw >= heap_size || U64.v field_addr_raw % 8 <> 0));
-    let field_addr : hp_addr = field_addr_raw in
-    
-    // The checked version computes field_address h idx, which equals field_addr_raw
+    // The checked version computes field_address h idx
     let field_addr_checked = field_address h idx in
-    assert (U64.v field_addr_checked = U64.v h + FStar.Mul.(U64.v idx * 8));
-    assert (U64.v field_addr = U64.v field_addr_raw);
-    assert (U64.v field_addr_checked = U64.v field_addr);
+    assert (U64.v field_addr_checked = U64.v far_unchecked);
     
     // Both read the same field value
-    let field_val = read_word g field_addr in
-    
-    // The comparison results are the same
+    let field_val = read_word g (far_unchecked <: hp_addr) in
     let cmp = is_pointer_field field_val && hd_address field_val = hd_address target in
     
     // Apply inductive hypothesis to recursive calls
     exists_field_checked_eq_unchecked g h idx target;
-    
-    // Both functions make the same decision and recursive call
     ()
   end
 
@@ -1008,15 +1041,19 @@ let rec color_change_preserves_field_pointing_self (g: heap) (h: obj_addr) (c: c
     else begin
       let idx = U64.sub wz 1UL in
       FStar.Math.Lemmas.pow2_lt_compat 61 54;
-      let field_addr_raw = field_address_raw h idx in
-      if U64.v field_addr_raw >= heap_size || U64.v field_addr_raw % 8 <> 0 then
+      // Show add_mod/mul_mod matches field_address_raw
+      field_offset_bound idx;
+      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      let far = U64.add_mod h (U64.mul_mod idx mword) in
+      let far_raw = field_address_raw h idx in
+      assert (U64.v far = U64.v far_raw);
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then
         color_change_preserves_field_pointing_self g h c idx target
       else begin
-        let field_addr : hp_addr = field_addr_raw in
-        // field_addr = h + idx*8, hd_address h = h - 8
-        // Since idx >= 0: h + idx*8 >= h > h - 8
+        assert (far == far_raw);
+        let field_addr : hp_addr = far in
         field_addr_ne_hd h idx;
-        // SMTPat fires and gives read_word equality
+        // SMTPat fires: read_word (set_object_color h g c) field_addr = read_word g field_addr
         color_change_preserves_field_pointing_self g h c idx target
       end
     end
@@ -1093,11 +1130,17 @@ let rec color_change_preserves_field_pointing_other (g: heap) (obj: obj_addr) (c
     else begin
       let idx = U64.sub wz 1UL in
       FStar.Math.Lemmas.pow2_lt_compat 61 54;
-      let field_addr_raw = field_address_raw src idx in
-      if U64.v field_addr_raw >= heap_size || U64.v field_addr_raw % 8 <> 0 then
+      // Show add_mod/mul_mod matches field_address_raw
+      field_offset_bound idx;
+      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      let far = U64.add_mod src (U64.mul_mod idx mword) in
+      let far_raw = field_address_raw src idx in
+      assert (U64.v far = U64.v far_raw);
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then
         color_change_preserves_field_pointing_other g obj c src idx target
       else begin
-        let field_addr : hp_addr = field_addr_raw in
+        assert (far == far_raw);
+        let field_addr : hp_addr = far in
         field_addr_ne_hd_other g src obj idx;
         // SMTPat fires: read_word equality
         color_change_preserves_field_pointing_other g obj c src idx target

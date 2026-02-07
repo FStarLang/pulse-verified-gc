@@ -61,6 +61,39 @@ let is_pointer_field_is_obj_addr (v: U64.t)
           (ensures U64.v v >= U64.v mword)
   = ()
 
+/// get_field reads from the same address as add_mod(obj, mul_mod(i-1, mword))
+/// when the object is well-formed (field fits in heap)
+let get_field_addr_eq (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+  : Lemma (requires U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <= heap_size /\
+                    U64.v i < pow2 54)
+          (ensures (let k = U64.sub i 1UL in
+                    let far = U64.add_mod obj (U64.mul_mod k mword) in
+                    U64.v far = U64.v obj + U64.v k * U64.v mword /\
+                    U64.v far < heap_size /\
+                    U64.v far % U64.v mword = 0 /\
+                    get_field g obj i == read_word g (far <: hp_addr)))
+  = let k = U64.sub i 1UL in
+    FStar.Math.Lemmas.pow2_lt_compat 61 54;
+    hd_address_spec obj;
+    assert (U64.v (hd_address obj) = U64.v obj - U64.v mword);
+    // mul_mod k mword: k < pow2 54 < pow2 61, so k * 8 < pow2 64
+    assert (U64.v k * U64.v mword < pow2 64);
+    FStar.Math.Lemmas.modulo_lemma (U64.v k * U64.v mword) (pow2 64);
+    assert (U64.v (U64.mul_mod k mword) = U64.v k * U64.v mword);
+    // add_mod obj (k*8): obj + k*8 < heap_size < pow2 64
+    assert (U64.v obj + U64.v k * U64.v mword < heap_size);
+    FStar.Math.Lemmas.modulo_lemma (U64.v obj + U64.v k * U64.v mword) (pow2 64);
+    let far = U64.add_mod obj (U64.mul_mod k mword) in
+    assert (U64.v far = U64.v obj + U64.v k * U64.v mword);
+    // far = obj + (i-1)*8 and get_field reads from (obj-8) + 8*i = obj + 8*(i-1)
+    assert (U64.v far = U64.v (hd_address obj) + U64.v mword * U64.v i);
+    // So far = field_addr used by get_field
+    let field_addr = U64.add (hd_address obj) (U64.mul mword i) in
+    assert (U64.v far = U64.v field_addr);
+    // Alignment
+    FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v obj) (U64.v k * U64.v mword) (U64.v mword);
+    ()
+
 /// Object fits in heap: header + fields all within bounds
 let object_fits_in_heap (h_addr: obj_addr) (g: heap) : GTot bool =
   U64.v (hd_address h_addr) + U64.v mword + U64.v (wosize_of_object h_addr g) * U64.v mword <= heap_size

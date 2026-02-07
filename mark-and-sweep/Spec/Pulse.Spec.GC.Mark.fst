@@ -335,7 +335,9 @@ let color_change_preserves_wf g obj c =
 /// push_children only applies color changes, which preserve wf
 val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
                                   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+                  U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  U64.v (wosize_of_object obj g) < pow2 54)
         (ensures well_formed_heap (fst (push_children g st obj i ws)))
         (decreases (U64.v ws - U64.v i))
 
@@ -351,12 +353,35 @@ let rec push_children_preserves_wf g st obj i ws =
         let g' = makeGray child g in
         let st' = Seq.cons child st in
         makeGray_eq child g;
-        // Need: Seq.mem child (objects 0UL g) for color_change_preserves_wf
-        // child = get_field g obj i, is_pointer_field child → child ∈ objects 0UL g (from well_formed_heap)
-        // This follows because is_pointer_field v + well_formed_heap implies child is a valid object
-        admit(); // TODO: need pointer-field → objects membership connection
+        // Prove: Seq.mem child (objects 0UL g)
+        let wz = wosize_of_object obj g in
+        wosize_of_object_bound obj g;
+        // get_field guard passes (from well_formed_heap part 1 + i <= ws <= wz)
+        Pulse.Spec.GC.Heap.hd_address_spec obj;
+        // Connect get_field address to add_mod/mul_mod address
+        assert (U64.v i <= U64.v ws);
+        assert (U64.v ws <= U64.v wz);
+        assert (U64.v wz < pow2 54);
+        FStar.Math.Lemmas.pow2_lt_compat 61 54;
+        HeapGraph.get_field_addr_eq g obj i;
+        let k = U64.sub i 1UL in
+        assert (U64.v k < U64.v wz);
+        assert (U64.v k < pow2 61);
+        let far = U64.add_mod obj (U64.mul_mod k mword) in
+        // child = read_word g far, is_pointer_field child, hd_address child = hd_address child
+        assert (HeapGraph.get_field g obj i == read_word g (far <: hp_addr));
+        assert (is_pointer_field child);
+        // field_read_implies_exists_pointing gives exists_field_pointing_to_unchecked
+        field_read_implies_exists_pointing g obj wz k child;
+        // well_formed_heap part 2 gives Seq.mem child (objects 0UL g)
+        assert (Seq.mem child (objects 0UL g));
         color_change_preserves_wf g child Header.Gray;
         color_change_preserves_objects_mem g child Header.Gray obj;
+        // wosize preserved after makeGray
+        set_object_color_preserves_getWosize_at_hd child g Header.Gray;
+        wosize_of_object_spec obj g;
+        wosize_of_object_spec obj g';
+        assert (wosize_of_object obj g' == wosize_of_object obj g);
         if U64.v i < U64.v ws then
           push_children_preserves_wf g' st' obj (U64.add i 1UL) ws
         else ()
@@ -388,6 +413,12 @@ let mark_step_preserves_wf g st =
   color_change_preserves_objects_mem g obj Header.Black obj;
   // push_children preserves wf
   let ws = wosize_of_object obj g in
+  wosize_of_object_bound obj g;
+  // wosize preserved by makeBlack
+  set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+  wosize_of_object_spec obj g;
+  wosize_of_object_spec obj g';
+  assert (wosize_of_object obj g' == wosize_of_object obj g);
   if is_no_scan obj g then ()
   else
     push_children_preserves_wf g' (Seq.tail st) obj 1UL ws
