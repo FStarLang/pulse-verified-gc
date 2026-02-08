@@ -98,6 +98,27 @@ let get_field_addr_eq (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1})
 let object_fits_in_heap (h_addr: obj_addr) (g: heap) : GTot bool =
   U64.v (hd_address h_addr) + U64.v mword + U64.v (wosize_of_object h_addr g) * U64.v mword <= heap_size
 
+/// Intro lemma for object_fits_in_heap (use from outside the module)
+let object_fits_in_heap_intro (h: obj_addr) (g: heap) : Lemma
+  (requires U64.v (hd_address h) + 8 + Prims.op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  (ensures object_fits_in_heap h g) 
+  = assert_norm (U64.v mword == 8)
+
+/// Intro lemma without hd_address: v h + wosize*8 <= Seq.length g suffices
+/// (Since hd_address h = h - 8, we have hd_address h + 8 = h)
+let object_fits_from_bound (h: obj_addr) (g: heap) : Lemma
+  (requires U64.v h + Prims.op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  (ensures object_fits_in_heap h g)
+  = hd_address_spec h;
+    assert_norm (U64.v mword == 8)
+
+/// Elim lemma: extract hd_address-free bound from object_fits_in_heap
+let object_fits_to_bound (h: obj_addr) (g: heap) : Lemma
+  (requires object_fits_in_heap h g)
+  (ensures U64.v h + Prims.op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  = hd_address_spec h;
+    assert_norm (U64.v mword == 8)
+
 /// Get all pointer fields of an object (for edges)
 let rec get_pointer_fields_aux (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : GTot (seq vertex_id) (decreases (U64.v ws - U64.v i + 1))

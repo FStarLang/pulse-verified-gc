@@ -635,6 +635,19 @@ let well_formed_heap (g: heap) : prop =
       exists_field_pointing_to_unchecked g src wz dst)) ==> 
     Seq.mem dst (objects 0UL g))
 
+/// Extract part 1 of well_formed_heap: object size bounds
+let wf_object_size_bound (g: heap) (h: obj_addr) : Lemma
+  (requires well_formed_heap g /\ Seq.mem h (objects 0UL g))
+  (ensures U64.v (hd_address h) + 8 + op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  = ()
+
+/// Extract part 1 without hd_address (for cross-module use with HeapGraph.object_fits_in_heap)
+/// Since hd_address h = h - 8 for obj_addr h, we get: h + wosize*8 <= Seq.length g
+let wf_object_bound (g: heap) (h: obj_addr) : Lemma
+  (requires well_formed_heap g /\ Seq.mem h (objects 0UL g))
+  (ensures U64.v h + op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  = ()
+
 /// A header is valid if it has valid color and tag
 /// Note: getColor returns algebraic type (Blue|White|Gray|Black) from Pulse.Lib.Header.color_sem
 let is_valid_header (header: U64.t) : bool =

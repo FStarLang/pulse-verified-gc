@@ -980,22 +980,25 @@ val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
 val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
                   no_black_objects g /\
-                  (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st))
-        (ensures (forall (x: obj_addr). 
-                   (let graph = create_graph g in
-                    let roots' = HeapGraph.coerce_to_vertex_list roots in
-                    graph_wf graph /\ is_vertex_set roots' /\
-                    subset_vertices roots' graph.vertices /\
-                    mem_graph_vertex graph x /\
-                    is_black x (mark g st)) ==> 
-                   Seq.mem x (reachable_set (create_graph g) (HeapGraph.coerce_to_vertex_list roots))))
+                  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
+                  (let graph = create_graph g in
+                   let roots' = HeapGraph.coerce_to_vertex_list roots in
+                   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+        (ensures (let graph = create_graph g in
+                  let roots' = HeapGraph.coerce_to_vertex_list roots in
+                  forall (x: obj_addr). 
+                    mem_graph_vertex graph x /\ is_black x (mark g st) ==> 
+                    Seq.mem x (reachable_set graph roots')))
 
 /// (defined at end of file after all infrastructure)
 
 val mark_black_iff_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
                   no_black_objects g /\ no_blue_objects g /\
-                  (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st))
+                  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
+                  (let graph = create_graph g in
+                   let roots' = HeapGraph.coerce_to_vertex_list roots in
+                   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
         (ensures True)
 
 /// (defined at end of file after all infrastructure)
@@ -2866,9 +2869,255 @@ let mark_reachable_is_black g st roots =
   FStar.Classical.forall_intro (FStar.Classical.move_requires prove_x)
 #pop-options
 
-/// mark_black_is_reachable: backward direction (TODO)
+/// ---------------------------------------------------------------------------
+/// 5.13 Backward Direction: Black Implies Reachable
+/// ---------------------------------------------------------------------------
+
+/// Bridge: well_formed_heap → object_fits_in_heap (combines Fields + HeapGraph)
+let wf_implies_object_fits (g: heap) (hd: obj_addr) : Lemma
+  (requires well_formed_heap g /\ Seq.mem hd (objects 0UL g))
+  (ensures HeapGraph.object_fits_in_heap hd g)
+  = wf_object_bound g hd;
+    HeapGraph.object_fits_from_bound hd g
+
+/// Bridge: color change preserves object_fits_in_heap
+let color_preserves_object_fits (target: obj_addr) (hd: obj_addr) (g: heap) (c: Header.color_sem) : Lemma
+  (requires HeapGraph.object_fits_in_heap hd g /\ Seq.mem target (objects 0UL g) /\
+            U64.v (wosize_of_object target g) < pow2 54)
+  (ensures HeapGraph.object_fits_in_heap hd (set_object_color target g c))
+  = HeapGraph.object_fits_to_bound hd g;
+    set_object_color_length target g c;
+    (if hd = target then
+      color_preserves_wosize hd g c
+    else
+      color_change_preserves_other_wosize target hd g c);
+    HeapGraph.object_fits_from_bound hd (set_object_color target g c)
+
+/// Lemma 1: push_children maintains reachability of stack elements
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let rec push_children_stack_reachable (g: heap) (st: seq obj_addr) (obj: obj_addr) 
+    (i: U64.t{U64.v i >= 1}) (ws: U64.t)
+    (graph: graph_state) (roots': vertex_set)
+  : Lemma 
+    (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+             is_vertex_set (HeapGraph.coerce_to_vertex_list (objects 0UL g)) /\
+             ws == wosize_of_object obj g /\
+             U64.v (wosize_of_object obj g) < pow2 54 /\
+             graph == create_graph g /\ graph_wf graph /\
+             is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
+             Seq.mem obj (reachable_set graph roots') /\
+             (forall y. Seq.mem y st ==> Seq.mem y (reachable_set graph roots')) /\
+             ~(is_no_scan obj g) /\ HeapGraph.object_fits_in_heap obj g)
+    (ensures (forall y. Seq.mem y (snd (push_children g st obj i ws)) ==> 
+                        Seq.mem y (reachable_set graph roots')))
+    (decreases (U64.v ws - U64.v i))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let v = HeapGraph.get_field g obj i in
+      if HeapGraph.is_pointer_field v then begin
+        HeapGraph.is_pointer_field_is_obj_addr v;
+        let child : obj_addr = v in
+        if is_white child g then begin
+          // child is a pointer field → graph edge obj→child
+          HeapGraph.pointer_field_is_graph_edge g (objects 0UL g) obj i;
+          assert (mem_graph_edge (create_graph g) obj child);
+          assert (mem_graph_edge graph obj child);
+          // graph_wf: edge endpoints are vertices → child is an object
+          graph_vertices_mem g child;
+          assert (Seq.mem child (objects 0UL g));
+          graph_vertices_mem g obj;
+          // obj is reachable → child is reachable (successor closure)
+          reachable_successor_closed graph roots' obj child;
+          assert (Seq.mem child (reachable_set graph roots'));
+          
+          let g' = makeGray child g in
+          let st' = Seq.cons child st in
+          // child is reachable and all st elements are reachable → all st' elements are reachable
+          let prove_st' (y: obj_addr) : Lemma (requires Seq.mem y st') (ensures Seq.mem y (reachable_set graph roots'))
+            = Seq.mem_cons child st
+          in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_st');
+          
+          if U64.v i < U64.v ws then begin
+            // Maintain invariants for recursion
+            makeGray_eq child g;
+            color_preserves_create_graph child g Header.Gray;
+            color_change_preserves_wf g child Header.Gray;
+            color_change_preserves_objects g child Header.Gray;
+            // Preserve wosize and is_no_scan of obj through child's color change
+            if child = obj then begin
+              color_preserves_wosize obj g Header.Gray;
+              color_preserves_is_no_scan obj g Header.Gray
+            end else begin
+              color_change_preserves_other_wosize child obj g Header.Gray;
+              color_change_preserves_other_is_no_scan child obj g Header.Gray
+            end;
+            objects_is_vertex_set g';
+            wosize_of_object_bound child g;
+            color_preserves_object_fits child obj g Header.Gray;
+            push_children_stack_reachable g' st' obj (U64.add i 1UL) ws graph roots'
+          end else ()
+        end else begin
+          if U64.v i < U64.v ws then
+            push_children_stack_reachable g st obj (U64.add i 1UL) ws graph roots'
+          else ()
+        end
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_stack_reachable g st obj (U64.add i 1UL) ws graph roots'
+        else ()
+      end
+    end
+#pop-options
+
+/// Lemma 2: mark_aux backward invariant - black objects are reachable
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
+let rec mark_aux_backward_inv (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) 
+    (fuel: nat) (graph: graph_state) (roots': vertex_set)
+  : Lemma 
+    (requires graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
+             graph == create_graph g /\
+             (forall x. is_black x g /\ Seq.mem x (objects 0UL g) ==> Seq.mem x (reachable_set graph roots')) /\
+             (forall x. Seq.mem x st ==> Seq.mem x (reachable_set graph roots')))
+    (ensures (forall x. Seq.mem x (objects 0UL g) /\ is_black x (mark_aux g st fuel) ==> 
+                        Seq.mem x (reachable_set graph roots')))
+    (decreases fuel)
+  = if fuel = 0 || Seq.length st = 0 then
+      // Base case: mark_aux returns g unchanged
+      ()
+    else begin
+      // Step case: mark_step + recurse
+      let (g', st') = mark_step g st in
+      let hd = Seq.head st in
+      
+      // Show: all black in g' are reachable
+      let prove_black_in_g' (x: obj_addr) 
+        : Lemma (requires Seq.mem x (objects 0UL g') /\ is_black x g')
+                (ensures Seq.mem x (reachable_set graph roots'))
+        = let g_black = set_object_color hd g Header.Black in
+          assert (Seq.mem hd (objects 0UL g));
+          wosize_of_object_bound hd g;
+          stack_head_is_gray g st;
+          makeBlack_eq hd g;
+          color_change_preserves_objects g hd Header.Black;
+          if is_no_scan hd g then begin
+            assert (objects 0UL g' == objects 0UL g)
+          end else begin
+            let ws = wosize_of_object hd g in
+            color_change_preserves_wf g hd Header.Black;
+            color_change_preserves_objects_mem g hd Header.Black hd;
+            set_object_color_preserves_getWosize_at_hd hd g Header.Black;
+            wosize_of_object_spec hd g; wosize_of_object_spec hd g_black;
+            push_children_preserves_objects g_black (Seq.tail st) hd 1UL ws;
+            assert (objects 0UL g' == objects 0UL g)
+          end;
+          if is_black x g then begin
+            assert (Seq.mem x (reachable_set graph roots'))
+          end else begin
+            mark_step_black_origin g st x;
+            assert (x == hd);
+            assert (Seq.mem hd st);
+            assert (Seq.mem x (reachable_set graph roots'))
+          end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires prove_black_in_g');
+      
+      // Show: all stack elements in st' are reachable
+      let prove_stack_reachable ()
+        : Lemma (forall x. Seq.mem x st' ==> Seq.mem x (reachable_set graph roots'))
+        = stack_head_is_gray g st;
+          makeBlack_eq hd g;
+          
+          if is_no_scan hd g then begin
+            // st' = Seq.tail st → all from original stack → reachable
+            assert (st' == Seq.tail st);
+            Seq.lemma_mem_inversion st
+          end else begin
+            // st' = snd of push_children on makeBlack'd heap
+            let ws = wosize_of_object hd g in
+            let g_black = set_object_color hd g Header.Black in
+            
+            color_preserves_create_graph hd g Header.Black;
+            color_change_preserves_wf g hd Header.Black;
+            color_change_preserves_objects g hd Header.Black;
+            color_preserves_is_no_scan hd g Header.Black;
+            color_preserves_wosize hd g Header.Black;
+            wosize_of_object_bound hd g;
+            objects_is_vertex_set g_black;
+            wf_implies_object_fits g hd;
+            color_preserves_object_fits hd hd g Header.Black;
+            
+            // Tail elements are reachable (from st)
+            let prove_tail (y: obj_addr) : Lemma (requires Seq.mem y (Seq.tail st)) 
+                                                  (ensures Seq.mem y (reachable_set graph roots'))
+              = Seq.lemma_mem_inversion st;
+                assert (Seq.mem y st)
+            in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_tail);
+            
+            push_children_stack_reachable g_black (Seq.tail st) hd 1UL ws graph roots'
+          end
+      in
+      prove_stack_reachable ();
+      
+      // Graph preserved by mark_step
+      mark_step_preserves_create_graph g st;
+      assert (create_graph g' == graph);
+      
+      // Well-formedness and stack_props preserved
+      mark_step_preserves_wf g st;
+      mark_step_preserves_stack_props g st;
+      
+      // Objects preserved (needed for recursive call postcondition connection)
+      stack_head_is_gray g st;
+      makeBlack_eq hd g;
+      color_change_preserves_objects g hd Header.Black;
+      let g_black' = set_object_color hd g Header.Black in
+      if is_no_scan hd g then ()
+      else begin
+        let ws' = wosize_of_object hd g in
+        wosize_of_object_bound hd g;
+        color_change_preserves_wf g hd Header.Black;
+        color_change_preserves_objects_mem g hd Header.Black hd;
+        set_object_color_preserves_getWosize_at_hd hd g Header.Black;
+        wosize_of_object_spec hd g; wosize_of_object_spec hd g_black';
+        push_children_preserves_objects g_black' (Seq.tail st) hd 1UL ws'
+      end;
+      assert (objects 0UL g' == objects 0UL g);
+      
+      // Recurse
+      let fuel' : nat = fuel - 1 in
+      mark_aux_backward_inv g' st' fuel' graph roots'
+    end
+#pop-options
+
+/// Lemma 3: mark_black_is_reachable - main theorem (backward direction)
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let mark_black_is_reachable g st roots = 
-  admit() // TODO: backward induction on mark_aux with compound invariant
+  let graph = create_graph g in
+  let roots' = HeapGraph.coerce_to_vertex_list roots in
+  let gm = mark g st in
+  
+  objects_is_vertex_set g;
+  reachable_set_correct graph roots';
+  
+  // Prove: stack elements are in reachable_set
+  let prove_st (y: obj_addr) : Lemma (requires Seq.mem y st) 
+    (ensures Seq.mem y (reachable_set graph roots'))
+    = assert (Seq.mem y roots);
+      HeapGraph.coerce_mem_lemma roots y;
+      graph_vertices_mem g y;
+      reach_refl graph y;
+      reachable_set_correct graph roots'
+  in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_st);
+  
+  // Main backward invariant
+  mark_aux_backward_inv g st (heap_size / U64.v mword) graph roots';
+  mark_aux_preserves_objects g st (heap_size / U64.v mword);
+  
+  // Help SMT connect to val's ensures
+  let prove_vertex_mem (x: obj_addr) : Lemma (mem_graph_vertex graph x <==> Seq.mem x (objects 0UL g))
+    = graph_vertices_mem g x
+  in FStar.Classical.forall_intro prove_vertex_mem
+#pop-options
 
 /// Combined: mark produces black = reachable
 let mark_black_iff_reachable g st roots =
