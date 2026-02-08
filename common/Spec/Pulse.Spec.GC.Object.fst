@@ -848,6 +848,12 @@ let color_preserves_is_no_scan (obj_addr: obj_addr) (g: heap) (c: color)
   : Lemma (is_no_scan obj_addr (set_object_color obj_addr g c) == is_no_scan obj_addr g) =
   color_preserves_tag obj_addr g c
 
+let color_change_preserves_other_is_no_scan (obj1: obj_addr) (obj2: obj_addr) (g: heap) (c: color)
+  : Lemma (requires obj1 <> obj2)
+          (ensures is_no_scan obj2 (set_object_color obj1 g c) == is_no_scan obj2 g) =
+  hd_address_injective obj1 obj2;
+  color_change_header_locality obj1 (hd_address obj2) g c
+
 let color_change_preserves_other_wosize (obj1: hp_addr{U64.v obj1 >= U64.v mword}) (obj2: hp_addr{U64.v obj2 >= U64.v mword}) (g: heap) (c: color)
   : Lemma (requires obj1 <> obj2)
           (ensures wosize_of_object obj2 (set_object_color obj1 g c) == wosize_of_object obj2 g) =

@@ -285,6 +285,11 @@ val set_object_color_read_word : (obj: obj_addr) -> (start: hp_addr) -> (g: heap
 val color_preserves_is_no_scan : (oa: obj_addr) -> (g: heap) -> (c: color) ->
   Lemma (is_no_scan oa (set_object_color oa g c) == is_no_scan oa g)
 
+/// Color change at obj1 preserves is_no_scan at obj2 (different objects)
+val color_change_preserves_other_is_no_scan : (obj1: obj_addr) -> (obj2: obj_addr) -> (g: heap) -> (c: color) ->
+  Lemma (requires obj1 <> obj2)
+        (ensures is_no_scan obj2 (set_object_color obj1 g c) == is_no_scan obj2 g)
+
 /// Color change at obj1 preserves wosize at obj2 (different objects)
 val color_change_preserves_other_wosize : (obj1: obj_addr) -> (obj2: obj_addr) -> (g: heap) -> (c: color) ->
   Lemma (requires obj1 <> obj2)
