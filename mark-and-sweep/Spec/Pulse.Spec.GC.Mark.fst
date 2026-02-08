@@ -2112,6 +2112,184 @@ let rec all_edges_mem_reverse g objs src dst =
   end
 #pop-options
 
+/// Helper lemma: if dst is in get_pointer_fields_aux result, then efptu finds it
+/// Connects get_pointer_fields_aux (1-indexed scan) to exists_field_pointing_to_unchecked (0-indexed scan)
+
+/// Helper: membership in Seq.cons
+let cons_mem_elim (#a:eqtype) (hd:a) (tl:seq a) (x:a)
+  : Lemma (requires Seq.mem x (Seq.cons hd tl) /\ hd <> x)
+          (ensures Seq.mem x tl)
+  = FStar.Seq.Properties.lemma_mem_append (Seq.create 1 hd) tl;
+    FStar.Seq.Properties.lemma_contains_singleton hd
+
+val get_pointer_fields_aux_mem_implies_efptu : 
+  (g: heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (dst: obj_addr) ->
+  Lemma (requires Seq.mem dst (HeapGraph.get_pointer_fields_aux g obj i ws) /\
+                  U64.v ws < pow2 54 /\
+                  U64.v (hd_address obj) + U64.v mword * (U64.v ws + 1) <= heap_size)
+        (ensures exists_field_pointing_to_unchecked g obj ws dst)
+        (decreases (U64.v ws - U64.v i + 1))
+
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let rec get_pointer_fields_aux_mem_implies_efptu g obj i ws dst =
+  if U64.v i > U64.v ws then begin
+    // Base case: i > ws, so get_pointer_fields_aux returns empty
+    // Seq.mem dst Seq.empty is false, contradiction
+    assert (Seq.mem dst Seq.empty)
+  end else begin
+    // Recursive case: i <= ws
+    let v = HeapGraph.get_field g obj i in
+    let rest = 
+      if U64.v i < U64.v ws then 
+        HeapGraph.get_pointer_fields_aux g obj (U64.add i 1UL) ws
+      else 
+        Seq.empty 
+    in
+    
+    if is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      // v is an obj_addr, get_pointer_fields_aux returns Seq.cons v rest
+      // dst is in (cons v rest), so either dst = v or dst is in rest
+      // From precondition: Seq.mem dst (HeapGraph.get_pointer_fields_aux g obj i ws)
+      // And get_pointer_fields_aux g obj i ws = Seq.cons v rest (when is_pointer_field v)
+      assert (HeapGraph.get_pointer_fields_aux g obj i ws == Seq.cons v rest);
+      
+      if v = dst then begin
+        // Found dst at field i
+        // Need to prove: exists_field_pointing_to_unchecked g obj ws dst
+        // efptu checks index ws-1 down to 0
+        // Field i (1-indexed in get_field) corresponds to index i-1 (0-indexed in efptu)
+        // Since i <= ws, we have i-1 < ws, so efptu will check this field
+        
+        // At some point efptu checks index i-1
+        // Use get_field_addr_eq to relate get_field address to efptu address
+        let idx = U64.sub i 1UL in
+        assert (U64.v idx < U64.v ws);
+        
+        // We need to show efptu finds it at index idx
+        // efptu scans from ws-1 down, so it will eventually reach idx
+        // When wz = idx+1, efptu checks index idx
+        let target_wz = U64.add idx 1UL in
+        assert (target_wz = i);
+        
+        // At that point, it reads from add_mod(obj, mul_mod(idx, mword))
+        // This equals the address get_field reads from
+        HeapGraph.get_field_addr_eq g obj i;
+        let k = U64.sub i 1UL in
+        let far = U64.add_mod obj (U64.mul_mod k mword) in
+        assert (k = idx);
+        assert (far = U64.add_mod obj (U64.mul_mod idx mword));
+        
+        // get_field g obj i reads from this address and returns v = dst
+        assert (v = read_word g (far <: hp_addr));
+        assert (v = dst);
+        
+        // Check the efptu condition: is_pointer_field v && hd_address v = hd_address dst
+        assert (is_pointer_field v);
+        assert (hd_address v = hd_address dst);
+        
+        // Use efptu_match to prove efptu returns true at wz = target_wz
+        efptu_match g obj target_wz dst far v;
+        
+        // Now need to show this implies efptu at ws
+        // Use repeated efptu_recurse to go from target_wz to ws
+        efptu_recurse_upto g obj target_wz ws dst
+        
+      end else begin
+        // dst is in rest, by membership in Seq.cons v rest and v != dst
+        cons_mem_elim v rest dst;
+        if U64.v i < U64.v ws then begin
+          // Recursive call
+          // We have rest = HeapGraph.get_pointer_fields_aux g obj (U64.add i 1UL) ws
+          // And Seq.mem dst rest
+          // So the precondition for the recursive call holds
+          assert (rest == HeapGraph.get_pointer_fields_aux g obj (U64.add i 1UL) ws);
+          get_pointer_fields_aux_mem_implies_efptu g obj (U64.add i 1UL) ws dst;
+          // Now have: exists_field_pointing_to_unchecked g obj ws dst (at some index < ws-1)
+          // This is already what we need!
+          ()
+        end else begin
+          // i = ws, rest is empty, so dst can't be in rest
+          assert (Seq.mem dst Seq.empty)
+        end
+      end
+      
+    end else begin
+      // Not a pointer field, get_pointer_fields_aux returns rest
+      assert (Seq.mem dst rest);
+      
+      if U64.v i < U64.v ws then begin
+        // Recursive call
+        get_pointer_fields_aux_mem_implies_efptu g obj (U64.add i 1UL) ws dst
+      end else begin
+        // i = ws, rest is empty
+        assert (Seq.mem dst Seq.empty)
+      end
+    end
+  end
+
+/// Helper to propagate efptu from lower index to higher
+and efptu_recurse_upto (g: heap) (obj: obj_addr) (from: U64.t{U64.v from > 0 /\ U64.v from < pow2 54}) 
+                       (to: U64.t{U64.v to < pow2 54 /\ U64.v from <= U64.v to}) (target: obj_addr)
+  : Lemma (requires exists_field_pointing_to_unchecked g obj from target /\
+                    U64.v (hd_address obj) + U64.v mword * (U64.v to + 1) <= heap_size)
+          (ensures exists_field_pointing_to_unchecked g obj to target)
+          (decreases (U64.v to - U64.v from))
+  = if from = to then ()
+    else begin
+      let next = U64.add from 1UL in
+      // Need to apply efptu_recurse: if efptu at (from) is true and check at from fails, then efptu at (from+1) is true
+      // But we know efptu at from is true, so efptu at (from+1) is true
+      // Read the field at index from
+      let idx = U64.sub next 1UL in
+      assert (idx = from);
+      let far_raw = U64.add_mod obj (U64.mul_mod idx mword) in
+      
+      // Need to prove far_raw is a valid hp_addr
+      // We have: U64.v (hd_address obj) + U64.v mword * (U64.v to + 1) <= heap_size
+      // And: from < next <= to
+      // So: U64.v (hd_address obj) + U64.v mword * (U64.v from + 1) <= heap_size
+      // far_raw = obj + idx * mword = obj + from * mword
+      // We need to show: far_raw < heap_size and far_raw % 8 = 0
+      //
+      // obj is obj_addr, so U64.v obj % 8 = 0 and U64.v obj >= 8
+      // hd_address obj = obj - 8, so U64.v obj = U64.v (hd_address obj) + 8
+      // far_raw = obj + from * 8 = (hd_address obj + 8) + from * 8 = hd_address obj + (from + 1) * 8
+      // We have: U64.v (hd_address obj) + (U64.v from + 1) * 8 <= U64.v (hd_address obj) + (U64.v to + 1) * 8 <= heap_size
+      // So far_raw < heap_size
+      // far_raw % 8 = (obj + from * 8) % 8 = (obj % 8 + (from * 8) % 8) % 8 = 0
+      hd_address_spec obj;
+      assert (U64.v obj = U64.v (hd_address obj) + U64.v mword);
+      FStar.Math.Lemmas.pow2_lt_compat 61 54;
+      assert (U64.v idx * U64.v mword < pow2 64);
+      FStar.Math.Lemmas.modulo_addition_lemma (U64.v obj) (U64.v idx) (U64.v mword);
+      assert (U64.v far_raw % U64.v mword = 0);
+      assert (U64.v far_raw = U64.v obj + U64.v idx * U64.v mword);
+      assert (U64.v far_raw = U64.v (hd_address obj) + U64.v mword + U64.v idx * U64.v mword);
+      assert (U64.v far_raw = U64.v (hd_address obj) + U64.v mword * (U64.v idx + 1));
+      assert (U64.v idx + 1 = U64.v from + 1);
+      assert (U64.v far_raw = U64.v (hd_address obj) + U64.v mword * (U64.v from + 1));
+      assert (U64.v from + 1 <= U64.v to + 1);
+      assert (U64.v far_raw <= U64.v (hd_address obj) + U64.v mword * (U64.v to + 1));
+      assert (U64.v far_raw < heap_size);
+      
+      let far : hp_addr = far_raw in
+      let fv = read_word g far in
+      
+      // Apply efptu_recurse if the check doesn't match (or even if it does, we still have efptu true)
+      if is_pointer_field fv && hd_address fv = hd_address target then begin
+        // The check matches at this level, so efptu next is true
+        efptu_match g obj next target far fv
+      end else begin
+        // The check doesn't match, use efptu_recurse
+        efptu_recurse g obj next target far fv
+      end;
+      
+      // Now have efptu at next, recurse to to
+      efptu_recurse_upto g obj next to target
+    end
+#pop-options
+
 /// Key lemma: graph edge implies points_to and not no_scan
 val edge_implies_points_to : (g: heap) -> (src: obj_addr) -> (dst: obj_addr) ->
   Lemma (requires well_formed_heap g /\
@@ -2133,13 +2311,16 @@ let edge_implies_points_to g src dst =
   // If is_no_scan src g, then pf = Seq.empty, so Seq.mem dst pf = false -> contradiction
   assert (~(is_no_scan src g));
   // Now need: points_to g src dst
-  // points_to g src dst = exists_field_pointing_to_unchecked g src wz dst
-  // get_pointer_fields_aux scans fields 1..ws and returns pointer values
-  // exists_field_pointing_to_unchecked scans wz-1..0 and checks hd_address match
-  // Both scan same fields, one returns values, other checks hd_address equality
-  // Since dst appears in get_pointer_fields, some field i has get_field g src i = dst
-  // efptu checks hd_address(field_val) = hd_address(target), which is field_val = target for obj_addrs
-  admit() // TODO: prove get_pointer_fields membership implies points_to
+  // get_pointer_fields g src = get_pointer_fields_aux g src 1UL ws (since not no_scan and fits)
+  // Since Seq.mem dst pf, we have Seq.mem dst (get_pointer_fields_aux g src 1UL ws)
+  let ws = wosize_of_object src g in
+  wosize_of_object_bound src g;
+  // Need to establish the heap bounds precondition for the helper
+  // src is in objects 0UL g, so it's well-formed and fits in heap
+  assert (Seq.mem src objs);
+  // This implies object_fits_in_heap src g (from well_formed_heap)
+  // Call the helper lemma
+  get_pointer_fields_aux_mem_implies_efptu g src 1UL ws dst
 #pop-options
 
 /// ---------------------------------------------------------------------------
