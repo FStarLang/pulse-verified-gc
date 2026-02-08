@@ -722,6 +722,99 @@ let rec push_children_preserves_other_black g st obj i ws x =
   end
 #pop-options
 
+/// push_children does not blacken any object that is not black
+val push_children_not_blackens : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
+                                 (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
+  Lemma (requires ~(is_black x g))
+        (ensures ~(is_black x (fst (push_children g st obj i ws))))
+        (decreases (U64.v ws - U64.v i))
+
+#push-options "--z3rlimit 100 --fuel 2"
+let rec push_children_not_blackens g st obj i ws x =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let child : obj_addr = v in
+      if is_white child g then begin
+        let g' = makeGray child g in
+        makeGray_eq child g;
+        if child = x then begin
+          // x was not black, makeGray makes child gray → x is gray in g'
+          makeGray_is_gray child g;
+          is_gray_iff x g';
+          is_black_iff x g';
+          colors_exhaustive_and_exclusive x g';
+          assert (~(is_black x g'))
+        end else begin
+          // x <> child, so x's color is preserved
+          color_change_preserves_other_color child x g Header.Gray;
+          is_black_iff x g;
+          is_black_iff x g';
+          assert (~(is_black x g'))
+        end;
+        let st' = Seq.cons child st in
+        if U64.v i < U64.v ws then
+          push_children_not_blackens g' st' obj (U64.add i 1UL) ws x
+        else ()
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_not_blackens g st obj (U64.add i 1UL) ws x
+        else ()
+      end
+    end else begin
+      if U64.v i < U64.v ws then
+        push_children_not_blackens g st obj (U64.add i 1UL) ws x
+      else ()
+    end
+  end
+#pop-options
+
+/// mark_step: if x is black after but not before, then x is the head
+val mark_step_black_origin : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) -> (x: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st /\ 
+                  is_black x (fst (mark_step g st)) /\ ~(is_black x g))
+        (ensures x == Seq.head st)
+
+#push-options "--z3rlimit 100"
+let mark_step_black_origin g st x =
+  let obj = Seq.head st in
+  stack_head_is_gray g st;
+  let g' = makeBlack obj g in
+  makeBlack_eq obj g;
+  let ws = wosize_of_object obj g in
+  let result_g = fst (mark_step g st) in
+  if is_no_scan obj g then begin
+    // result_g = g', only obj was blackened
+    assert (result_g == g');
+    if x = obj then () // x == head, done
+    else begin
+      // x <> obj, so x has same color in g' as in g
+      color_change_preserves_other_color obj x g Header.Black;
+      is_black_iff x g;
+      is_black_iff x g';
+      assert (is_black x g'); // contradicts ~(is_black x g)
+      ()
+    end
+  end else begin
+    // result_g = fst (push_children g' (Seq.tail st) obj 1UL ws)
+    let st' = Seq.tail st in
+    // push_children doesn't create new black objects
+    if x = obj then () // x == head, done
+    else begin
+      // If x <> obj: x not black in g → x not black in g' (since only obj was blackened)
+      color_change_preserves_other_color obj x g Header.Black;
+      is_black_iff x g;
+      is_black_iff x g';
+      assert (~(is_black x g'));
+      // push_children doesn't blacken non-black objects
+      push_children_not_blackens g' st' obj 1UL ws x
+      // Now ~(is_black x (fst(push_children ...))) contradicts our hypothesis
+    end
+  end
+#pop-options
+
 /// mark_step preserves black color of any object
 val mark_step_preserves_black : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ is_black x g)
@@ -833,10 +926,11 @@ let rec mark_aux_preserves_wf (g: heap{well_formed_heap g}) (st: seq obj_addr{st
   = if Seq.length st = 0 then ()
     else if fuel = 0 then ()
     else begin
+      let fuel' : nat = fuel - 1 in
       let (g', st') = mark_step g st in
       mark_step_preserves_stack_props g st;
       mark_step_preserves_wf g st;
-      mark_aux_preserves_wf g' st' (fuel - 1)
+      mark_aux_preserves_wf g' st' fuel'
     end
 
 let mark_preserves_wf g st =
