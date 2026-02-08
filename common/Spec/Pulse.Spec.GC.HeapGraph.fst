@@ -243,3 +243,90 @@ let set_field_preserves_other_color g obj obj2 i v =
   read_write_different g fa hd2 v;
   color_of_object_spec obj2 g;
   color_of_object_spec obj2 (set_field g obj i v)
+
+/// ---------------------------------------------------------------------------
+/// Edge Membership Lemmas
+/// ---------------------------------------------------------------------------
+
+/// If v is in succs, then (h_addr, v) is in make_edges h_addr succs
+let rec make_edges_mem (h_addr: vertex_id) (succs: seq vertex_id) (v: vertex_id)
+  : Lemma (requires Seq.mem v succs)
+          (ensures Seq.mem (h_addr, v) (make_edges h_addr succs))
+          (decreases Seq.length succs)
+  = if Seq.length succs = 0 then ()
+    else if Seq.head succs = v then 
+      Seq.mem_cons (h_addr, v) (make_edges h_addr (Seq.tail succs))
+    else begin
+      make_edges_mem h_addr (Seq.tail succs) v;
+      let hd = Seq.head succs in
+      Seq.mem_cons (h_addr, hd) (make_edges h_addr (Seq.tail succs))
+    end
+
+/// If a pointer field at index j (i <= j <= ws) exists, it's in get_pointer_fields_aux
+let rec get_pointer_fields_aux_mem (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
+  (j: U64.t{U64.v j >= 1})
+  : Lemma (requires U64.v j >= U64.v i /\ U64.v j <= U64.v ws /\
+                    is_pointer_field (get_field g obj j))
+          (ensures Seq.mem (get_field g obj j) (get_pointer_fields_aux g obj i ws))
+          (decreases (U64.v ws - U64.v i + 1))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let v = get_field g obj i in
+      let rest = 
+        if U64.v i < U64.v ws then get_pointer_fields_aux g obj (U64.add i 1UL) ws
+        else Seq.empty
+      in
+      if U64.v i = U64.v j then begin
+        assert (v == get_field g obj j);
+        if is_pointer_field v then begin
+          is_pointer_field_is_obj_addr v;
+          Seq.mem_cons v rest
+        end else ()
+      end else begin
+        assert (U64.v j > U64.v i);
+        assert (U64.v i < U64.v ws);
+        get_pointer_fields_aux_mem g obj (U64.add i 1UL) ws j;
+        assert (Seq.mem (get_field g obj j) rest);
+        if is_pointer_field v then begin
+          is_pointer_field_is_obj_addr v;
+          Seq.mem_cons v rest
+        end else ()
+      end
+    end
+
+/// object_edges of obj ⊆ all_edges when obj ∈ objs
+let rec all_edges_superset (g: heap) (objs: seq obj_addr) (obj: obj_addr)
+  : Lemma (requires Seq.mem obj objs)
+          (ensures (forall e. Seq.mem e (object_edges g obj) ==> Seq.mem e (all_edges g objs)))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else if Seq.head objs = obj then
+      let aux (e: edge) : Lemma (requires Seq.mem e (object_edges g obj))
+                                (ensures Seq.mem e (all_edges g objs))
+        = Seq.lemma_mem_append (object_edges g obj) (all_edges g (Seq.tail objs))
+      in FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    else begin
+      all_edges_superset g (Seq.tail objs) obj;
+      let edges1 = object_edges g (Seq.head objs) in
+      let aux (e: edge) : Lemma (requires Seq.mem e (object_edges g obj))
+                                (ensures Seq.mem e (all_edges g objs))
+        = Seq.lemma_mem_append edges1 (all_edges g (Seq.tail objs))
+      in FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    end
+
+/// Combined: pointer field at index j → graph edge
+let pointer_field_is_graph_edge (g: heap) (objs: seq obj_addr) (obj: obj_addr)
+    (j: U64.t{U64.v j >= 1})
+  : Lemma (requires Seq.mem obj objs /\ is_vertex_set (coerce_to_vertex_list objs) /\
+                    object_fits_in_heap obj g /\ ~(is_no_scan obj g) /\
+                    U64.v j <= U64.v (wosize_of_object obj g) /\
+                    is_pointer_field (get_field g obj j))
+          (ensures mem_graph_edge (create_graph_from_heap g objs) obj (get_field g obj j))
+  = let ws = wosize_of_object obj g in
+    let v = get_field g obj j in
+    get_pointer_fields_aux_mem g obj 1UL ws j;
+    assert (Seq.mem v (get_pointer_fields_aux g obj 1UL ws));
+    assert (Seq.mem v (get_pointer_fields g obj));
+    make_edges_mem obj (get_pointer_fields g obj) v;
+    assert (Seq.mem (obj, v) (object_edges g obj));
+    all_edges_superset g objs obj
