@@ -618,6 +618,10 @@ let noGreyObjects (g: heap) : prop =
 let no_black_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_black obj g)
 
+/// No blue objects in heap (free list empty at mark start)
+let no_blue_objects (g: heap) : prop =
+  forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_blue obj g)
+
 /// ---------------------------------------------------------------------------
 /// Ghost State for Mark Termination
 /// ---------------------------------------------------------------------------
@@ -866,6 +870,7 @@ let stack_to_vertices (st: seq obj_addr) : seq vertex_id =
 
 val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
+                  no_black_objects g /\ no_blue_objects g /\
                   (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st))
         (ensures (forall (x: obj_addr). 
                    (let graph = create_graph g in
@@ -876,8 +881,7 @@ val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
                     Seq.mem x (reachable_set graph roots')) ==> 
                    is_black x (mark g st)))
 
-let mark_reachable_is_black g st roots = 
-  admit() // filled in by mark_reachable_is_black_proof at end of file
+/// (defined at end of file after all infrastructure)
 
 val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
@@ -892,18 +896,15 @@ val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
                     is_black x (mark g st)) ==> 
                    Seq.mem x (reachable_set (create_graph g) (HeapGraph.coerce_to_vertex_list roots))))
 
-let mark_black_is_reachable g st roots = 
-  admit() // TODO: backward induction on mark_aux with compound invariant
+/// (defined at end of file after all infrastructure)
 
 val mark_black_iff_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
-                  no_black_objects g /\
+                  no_black_objects g /\ no_blue_objects g /\
                   (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st))
         (ensures True)
 
-let mark_black_iff_reachable g st roots =
-  mark_reachable_is_black g st roots;
-  mark_black_is_reachable g st roots
+/// (defined at end of file after all infrastructure)
 
 /// ---------------------------------------------------------------------------
 /// Mark Terminates With No Gray Objects
@@ -2709,3 +2710,73 @@ val mark_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_
 
 let mark_preserves_create_graph g st =
   mark_aux_preserves_create_graph g st (heap_size / U64.v mword)
+
+/// ---------------------------------------------------------------------------
+/// 5.12 Proof of mark_reachable_is_black (forward direction)
+/// ---------------------------------------------------------------------------
+
+/// Actual proof: every object reachable from roots is black after mark
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 200"
+let mark_reachable_is_black g st roots =
+  let gm = mark g st in
+  let graph = create_graph g in
+  let roots' = HeapGraph.coerce_to_vertex_list roots in
+  
+  mark_preserves_create_graph g st;
+  mark_no_grey_remains g st;
+  mark_preserves_wf g st;
+  assert (well_formed_heap gm);
+  
+  // tri_color_invariant g: vacuously true (no black objects)
+  let prove_tri (obj: obj_addr) (child: obj_addr) : Lemma
+    (requires Seq.mem obj (objects 0UL g) /\ is_black obj g /\
+              ~(is_no_scan obj g) /\ points_to g obj child)
+    (ensures ~(is_white child g)) = ()
+  in
+  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 prove_tri);
+  assert (tri_color_invariant g);
+  mark_preserves_tri_color g st;
+  
+  mark_aux_preserves_objects g st (heap_size / U64.v mword);
+  
+  let no_blue_post (x: obj_addr) : Lemma
+    (requires Seq.mem x (objects 0UL gm)) (ensures ~(is_blue x gm)) = 
+    mark_aux_no_new_blue g st (heap_size / U64.v mword) x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_blue_post);
+  
+  let root_black (r: obj_addr) : Lemma
+    (requires Seq.mem r roots) (ensures is_black r gm) =
+    gray_becomes_black g st r
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires root_black);
+  
+  let prove_x (x: obj_addr) : Lemma
+    (requires graph_wf graph /\ is_vertex_set roots' /\ 
+              subset_vertices roots' graph.vertices /\
+              mem_graph_vertex graph x /\
+              Seq.mem x (reachable_set graph roots'))
+    (ensures is_black x gm) =
+    reachable_set_correct graph roots';
+    FStar.Classical.exists_elim (is_black x gm) ()
+      (fun (r: vertex_id{mem_graph_vertex graph r /\
+                          Seq.mem r roots' /\ reachable graph r x}) ->
+        vertex_is_obj_addr g r;
+        let r' : obj_addr = r in
+        HeapGraph.coerce_mem_lemma roots r';
+        root_black r';
+        FStar.Classical.exists_elim (is_black x gm) ()
+          (fun (p: reach graph r x) ->
+            black_reach_is_black graph gm r' x p))
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires prove_x)
+#pop-options
+
+/// mark_black_is_reachable: backward direction (TODO)
+let mark_black_is_reachable g st roots = 
+  admit() // TODO: backward induction on mark_aux with compound invariant
+
+/// Combined: mark produces black = reachable
+let mark_black_iff_reachable g st roots =
+  mark_reachable_is_black g st roots;
+  mark_black_is_reachable g st roots
