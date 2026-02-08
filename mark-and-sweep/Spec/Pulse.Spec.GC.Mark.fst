@@ -2660,3 +2660,52 @@ let rec push_children_preserves_create_graph g st obj i ws =
     end
   end
 #pop-options
+
+/// mark_step preserves the abstract graph
+val mark_step_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_addr) ->
+  Lemma (requires Seq.length st > 0 /\ stack_props g st)
+        (ensures create_graph (fst (mark_step g st)) == create_graph g)
+
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+let mark_step_preserves_create_graph g st =
+  let obj = Seq.head st in
+  let st_tail = Seq.tail st in
+  stack_head_is_gray g st;
+  makeBlack_eq obj g;
+  let g' = makeBlack obj g in
+  color_preserves_create_graph obj g Header.Black;
+  assert (create_graph g' == create_graph g);
+  color_change_preserves_wf g obj Header.Black;
+  color_preserves_objects obj g Header.Black;
+  color_preserves_wosize obj g Header.Black;
+  wosize_of_object_bound obj g;
+  let ws = wosize_of_object obj g in
+  if is_no_scan obj g then ()
+  else
+    push_children_preserves_create_graph g' st_tail obj 1UL ws
+#pop-options
+
+/// mark_aux preserves the abstract graph
+val mark_aux_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) -> (fuel: nat) ->
+  Lemma (ensures create_graph (mark_aux g st fuel) == create_graph g)
+        (decreases fuel)
+
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+let rec mark_aux_preserves_create_graph g st fuel =
+  if Seq.length st = 0 then ()
+  else if fuel = 0 then ()
+  else begin
+    let (g', st') = mark_step g st in
+    mark_step_preserves_create_graph g st;
+    mark_step_preserves_stack_props g st;
+    mark_step_preserves_wf g st;
+    mark_aux_preserves_create_graph g' st' (fuel - 1)
+  end
+#pop-options
+
+/// mark preserves the abstract graph (top-level)
+val mark_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  Lemma (ensures create_graph (mark g st) == create_graph g)
+
+let mark_preserves_create_graph g st =
+  mark_aux_preserves_create_graph g st (heap_size / U64.v mword)
