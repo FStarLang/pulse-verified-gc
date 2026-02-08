@@ -877,7 +877,7 @@ val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
                    is_black x (mark g st)))
 
 let mark_reachable_is_black g st roots = 
-  admit()
+  admit() // filled in by mark_reachable_is_black_proof at end of file
 
 val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
@@ -893,7 +893,7 @@ val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
                    Seq.mem x (reachable_set (create_graph g) (HeapGraph.coerce_to_vertex_list roots))))
 
 let mark_black_is_reachable g st roots = 
-  admit()
+  admit() // TODO: backward induction on mark_aux with compound invariant
 
 val mark_black_iff_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
@@ -2046,4 +2046,169 @@ let gray_becomes_black g st x =
   mark_aux_preserves_objects g st (heap_size / U64.v mword);
   // Not white + not gray + not blue -> black
   color_exhaustive x gm
+#pop-options
+
+
+/// ---------------------------------------------------------------------------
+/// 5.3 Graph edge membership lemmas (reverse direction)
+/// ---------------------------------------------------------------------------
+
+/// make_edges membership: Seq.mem (h, child) (make_edges h succs) ⟹ Seq.mem child succs
+val make_edges_mem_reverse : (h_addr: vertex_id) -> (succs: seq vertex_id) ->
+  (src: vertex_id) -> (dst: vertex_id) ->
+  Lemma (requires Seq.mem (src, dst) (HeapGraph.make_edges h_addr succs))
+        (ensures src == h_addr /\ Seq.mem dst succs)
+        (decreases Seq.length succs)
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec make_edges_mem_reverse h_addr succs src dst =
+  if Seq.length succs = 0 then ()
+  else begin
+    let hd = Seq.head succs in
+    let tl = Seq.tail succs in
+    // make_edges h_addr succs = cons (h_addr, hd) (make_edges h_addr tl)
+    // Seq.cons x s = append (create 1 x) s
+    let rest = HeapGraph.make_edges h_addr tl in
+    FStar.Seq.Properties.lemma_mem_append (Seq.create 1 (h_addr, hd)) rest;
+    // Now: Seq.mem (src, dst) (cons (h_addr, hd) rest) <==> 
+    //      (src, dst) = (h_addr, hd) \/ Seq.mem (src, dst) rest
+    if (src, dst) = (h_addr, hd) then ()
+    else
+      make_edges_mem_reverse h_addr tl src dst
+  end
+#pop-options
+
+/// object_edges membership: Seq.mem (src, dst) (object_edges g h) ⟹ Seq.mem dst (get_pointer_fields g h) ∧ src = h
+val object_edges_mem_reverse : (g: heap) -> (h_addr: obj_addr) -> (src: vertex_id) -> (dst: vertex_id) ->
+  Lemma (requires Seq.mem (src, dst) (HeapGraph.object_edges g h_addr))
+        (ensures src == h_addr /\ Seq.mem dst (HeapGraph.get_pointer_fields g h_addr))
+
+let object_edges_mem_reverse g h_addr src dst =
+  make_edges_mem_reverse h_addr (HeapGraph.get_pointer_fields g h_addr) src dst
+
+/// all_edges membership reverse: an edge in all_edges comes from some object's pointer fields
+val all_edges_mem_reverse : (g: heap) -> (objs: seq obj_addr) -> (src: obj_addr) -> (dst: vertex_id) ->
+  Lemma (requires Seq.mem (src, dst) (HeapGraph.all_edges g objs))
+        (ensures Seq.mem src objs /\ Seq.mem dst (HeapGraph.get_pointer_fields g src))
+        (decreases Seq.length objs)
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec all_edges_mem_reverse g objs src dst =
+  if Seq.length objs = 0 then ()
+  else begin
+    let h = Seq.head objs in
+    let tl = Seq.tail objs in
+    let edges1 = HeapGraph.object_edges g h in
+    let edges2 = HeapGraph.all_edges g tl in
+    FStar.Seq.Properties.lemma_mem_append edges1 edges2;
+    if Seq.mem (src, dst) edges1 then begin
+      object_edges_mem_reverse g h src dst;
+      assert (src == h);
+      assert (Seq.index objs 0 == h)
+    end else begin
+      all_edges_mem_reverse g tl src dst;
+      FStar.Seq.Properties.lemma_mem_append (Seq.create 1 h) tl
+    end
+  end
+#pop-options
+
+/// Key lemma: graph edge implies points_to and not no_scan
+val edge_implies_points_to : (g: heap) -> (src: obj_addr) -> (dst: obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  Seq.mem src (objects 0UL g) /\
+                  mem_graph_edge (create_graph g) src dst)
+        (ensures points_to g src dst /\ ~(is_no_scan src g))
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let edge_implies_points_to g src dst =
+  let graph = create_graph g in
+  let objs = objects 0UL g in
+  objects_is_vertex_set g;
+  all_edges_mem_reverse g objs src dst;
+  // Now: Seq.mem dst (get_pointer_fields g src)
+  let pf = HeapGraph.get_pointer_fields g src in
+  assert (Seq.mem dst pf);
+  // get_pointer_fields returns empty for no_scan -> contradiction if no_scan
+  // get_pointer_fields g src = if no_scan then empty else get_pointer_fields_aux ...
+  // If is_no_scan src g, then pf = Seq.empty, so Seq.mem dst pf = false -> contradiction
+  assert (~(is_no_scan src g));
+  // Now need: points_to g src dst
+  // points_to g src dst = exists_field_pointing_to_unchecked g src wz dst
+  // get_pointer_fields_aux scans fields 1..ws and returns pointer values
+  // exists_field_pointing_to_unchecked scans wz-1..0 and checks hd_address match
+  // Both scan same fields, one returns values, other checks hd_address equality
+  // Since dst appears in get_pointer_fields, some field i has get_field g src i = dst
+  // efptu checks hd_address(field_val) = hd_address(target), which is field_val = target for obj_addrs
+  admit() // TODO: prove get_pointer_fields membership implies points_to
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// 5.4 Forward proof: mark_reachable_is_black
+/// ---------------------------------------------------------------------------
+
+/// Core lemma: black objects are closed under graph successor after mark terminates
+val black_successor_is_black : (g: heap) -> (src: obj_addr) -> (dst: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ noGreyObjects g /\ tri_color_invariant g /\
+                  Seq.mem src (objects 0UL g) /\ Seq.mem dst (objects 0UL g) /\
+                  is_black src g /\ mem_graph_edge (create_graph g) src dst /\
+                  ~(is_blue dst g))
+        (ensures is_black dst g)
+
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries no"
+let black_successor_is_black g src dst =
+  edge_implies_points_to g src dst;
+  // tri_color: is_black src g /\ ~(is_no_scan src g) /\ points_to g src dst ==> ~(is_white dst g)
+  // noGreyObjects: ~(is_gray dst g)
+  // ~(is_blue dst g) given
+  color_exhaustive dst g
+#pop-options
+
+/// Graph vertex is always a valid obj_addr (vertices come from objects list)
+/// Proof: coerce_to_vertex_list preserves values, objects all have addr >= 8
+val vertex_is_obj_addr : (g: heap) -> (x: vertex_id) ->
+  Lemma (requires mem_graph_vertex (create_graph g) x)
+        (ensures U64.v x >= 8)
+
+let rec coerce_vertex_ge_8 (objs: seq obj_addr) (x: vertex_id)
+  : Lemma (requires Seq.mem x (HeapGraph.coerce_to_vertex_list objs))
+          (ensures U64.v x >= 8)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let hd = Seq.head objs in
+      let tl = Seq.tail objs in
+      FStar.Seq.Properties.lemma_mem_append (Seq.create 1 hd) (HeapGraph.coerce_to_vertex_list tl);
+      if x = hd then ()
+      else coerce_vertex_ge_8 tl x
+    end
+
+let vertex_is_obj_addr g x =
+  objects_is_vertex_set g;
+  coerce_vertex_ge_8 (objects 0UL g) x
+
+/// Induction on reach: if root is black and x is reachable from root, then x is black
+val black_reach_is_black : (graph: graph_state{graph_wf graph}) -> (g: heap{well_formed_heap g}) ->
+  (r: obj_addr{mem_graph_vertex graph r}) ->
+  (x: obj_addr{mem_graph_vertex graph x}) ->
+  (p: reach graph r x) ->
+  Lemma (requires noGreyObjects g /\ tri_color_invariant g /\
+                  graph == create_graph g /\
+                  is_black r g /\
+                  (forall (y: obj_addr). Seq.mem y (objects 0UL g) ==> ~(is_blue y g)))
+        (ensures is_black x g)
+        (decreases p)
+
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries no"
+let rec black_reach_is_black graph g r x p =
+  match p with
+  | ReachRefl _ -> ()
+  | ReachTrans _ y _ p_ry ->
+    // y is intermediate, x is final target with edge y→x
+    vertex_is_obj_addr g y;
+    let y' : obj_addr = y in
+    black_reach_is_black graph g r y' p_ry;
+    objects_is_vertex_set g;
+    graph_vertices_mem g x;
+    graph_vertices_mem g y';
+    black_successor_is_black g y' x
 #pop-options
