@@ -1885,6 +1885,7 @@ let rec mark_aux_no_new_white g st fuel x =
   if Seq.length st = 0 then ()
   else if fuel = 0 then ()
   else begin
+    assert (fuel > 0);
     let (g', st') = mark_step g st in
     mark_step_preserves_stack_props g st;
     mark_step_preserves_wf g st;
@@ -2014,6 +2015,7 @@ let rec mark_aux_no_new_blue g st fuel x =
   if Seq.length st = 0 then ()
   else if fuel = 0 then ()
   else begin
+    assert (fuel > 0);
     let (g', st') = mark_step g st in
     mark_step_preserves_stack_props g st;
     mark_step_preserves_wf g st;
@@ -2392,4 +2394,269 @@ let rec black_reach_is_black graph g r x p =
     graph_vertices_mem g x;
     graph_vertices_mem g y';
     black_successor_is_black g y' x
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// 5.10 Color changes preserve the abstract graph
+/// ---------------------------------------------------------------------------
+
+/// Color changes preserve objects list
+val color_preserves_objects :
+  (obj: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
+  Lemma (requires Seq.mem obj (objects 0UL g))
+        (ensures objects 0UL (set_object_color obj g c) == objects 0UL g)
+
+#push-options "--z3rlimit 10"
+let color_preserves_objects obj g c =
+  color_change_preserves_objects g obj c
+#pop-options
+
+/// Color change preserves get_field for any field i within bounds
+val color_preserves_get_field :
+  (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) -> (i: U64.t{U64.v i >= 1}) ->
+  Lemma (requires Seq.mem target (objects 0UL g) /\ Seq.mem h (objects 0UL g) /\
+                  U64.v i <= U64.v (wosize_of_object h g))
+        (ensures HeapGraph.get_field (set_object_color target g c) h i == HeapGraph.get_field g h i)
+
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let color_preserves_get_field target h g c i =
+  set_object_color_length target g c;
+  let hd = hd_address h in
+  hd_address_spec h;
+  hd_address_spec target;
+  // get_field: if hd + 8*i + 8 <= heap_size then read_word g (hd + 8*i) else 0UL
+  // Lengths are the same, so the if-condition is the same for g and g'.
+  if U64.v hd + U64.v mword * U64.v i + U64.v mword <= heap_size then begin
+    // field_addr = hd + 8*i, where i >= 1
+    // Need: hd_address target <> field_addr
+    let field_addr : hp_addr = U64.add hd (U64.mul mword i) in
+    assert (U64.v field_addr = U64.v hd + 8 * U64.v i);
+    if target = h then begin
+      // hd_address target = hd, field_addr = hd + 8*i >= hd + 8 > hd
+      assert (U64.v field_addr >= U64.v hd + 8)
+    end else if U64.v h < U64.v target then begin
+      // objects_separated: target > h + wosize*8
+      objects_separated 0UL g h target;
+      // hd_address target = target - 8 > h + wosize*8 - 8
+      // field_addr = h - 8 + 8*i <= h - 8 + 8*wosize (since i <= wosize)
+      let ws = wosize_of_object h g in
+      assert (U64.v target > U64.v h + FStar.Mul.(U64.v ws * 8));
+      assert (U64.v field_addr <= U64.v h - 8 + FStar.Mul.(8 * U64.v ws))
+    end else begin
+      // target < h, so hd_address target = target - 8 < h - 8 = hd <= field_addr
+      ()
+    end;
+    assert (hd_address target <> field_addr);
+    color_change_preserves_other_read target field_addr g c
+  end else ()
+#pop-options
+
+/// Color change preserves get_pointer_fields_aux (recursive proof)
+val color_preserves_get_pointer_fields_aux :
+  (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) -> 
+  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
+  Lemma (requires Seq.mem target (objects 0UL g) /\ Seq.mem h (objects 0UL g) /\
+                  U64.v ws <= U64.v (wosize_of_object h g))
+        (ensures HeapGraph.get_pointer_fields_aux (set_object_color target g c) h i ws ==
+                 HeapGraph.get_pointer_fields_aux g h i ws)
+        (decreases (U64.v ws - U64.v i + 1))
+
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+let rec color_preserves_get_pointer_fields_aux target h g c i ws =
+  if U64.v i > U64.v ws then ()
+  else begin
+    color_preserves_get_field target h g c i;
+    if U64.v i < U64.v ws then
+      color_preserves_get_pointer_fields_aux target h g c (U64.add i 1UL) ws
+  end
+#pop-options
+
+/// Color change preserves get_pointer_fields
+val color_preserves_get_pointer_fields :
+  (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
+  Lemma (requires Seq.mem target (objects 0UL g) /\ Seq.mem h (objects 0UL g))
+        (ensures HeapGraph.get_pointer_fields (set_object_color target g c) h ==
+                 HeapGraph.get_pointer_fields g h)
+
+#push-options "--z3rlimit 10"
+let color_preserves_get_pointer_fields target h g c =
+  let g' = set_object_color target g c in
+  
+  // Preserve wosize_of_object
+  if target = h then
+    color_preserves_wosize h g c
+  else
+    color_change_preserves_other_wosize target h g c;
+  
+  // Preserve is_no_scan
+  if target = h then
+    color_preserves_is_no_scan h g c
+  else
+    color_change_preserves_other_is_no_scan target h g c;
+  
+  // Preserve heap length (for object_fits_in_heap)
+  set_object_color_length target g c;
+  
+  // Now show get_pointer_fields preserved
+  if not (HeapGraph.object_fits_in_heap h g) then ()
+  else begin
+    let ws = wosize_of_object h g in
+    if is_no_scan h g then ()
+    else
+      color_preserves_get_pointer_fields_aux target h g c 1UL ws
+  end
+#pop-options
+
+/// Color change preserves object_edges
+val color_preserves_object_edges :
+  (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
+  Lemma (requires Seq.mem target (objects 0UL g) /\ Seq.mem h (objects 0UL g))
+        (ensures HeapGraph.object_edges (set_object_color target g c) h ==
+                 HeapGraph.object_edges g h)
+
+#push-options "--z3rlimit 10"
+let color_preserves_object_edges target h g c =
+  color_preserves_get_pointer_fields target h g c
+  // object_edges = make_edges h (get_pointer_fields g h)
+  // Since get_pointer_fields preserved, make_edges produces same result
+#pop-options
+
+/// Changing an object's color preserves all edges (recursive on objs list)
+val color_preserves_all_edges :
+  (obj: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) -> (objs: seq obj_addr) ->
+  Lemma (requires Seq.mem obj (objects 0UL g) /\ 
+                  (forall (h: obj_addr). Seq.mem h objs ==> Seq.mem h (objects 0UL g)))
+        (ensures HeapGraph.all_edges (set_object_color obj g c) objs == HeapGraph.all_edges g objs)
+        (decreases Seq.length objs)
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let rec color_preserves_all_edges obj g c objs =
+  if Seq.length objs = 0 then ()
+  else begin
+    let h = Seq.head objs in
+    let tl = Seq.tail objs in
+    // Prove object_edges preserved for h
+    color_preserves_object_edges obj h g c;
+    // Recurse on tail
+    color_preserves_all_edges obj g c tl
+  end
+#pop-options
+
+/// set_object_color preserves the abstract graph
+val color_preserves_create_graph :
+  (obj: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
+  Lemma (requires Seq.mem obj (objects 0UL g))
+        (ensures create_graph (set_object_color obj g c) == create_graph g)
+
+#push-options "--z3rlimit 100"
+let color_preserves_create_graph obj g c =
+  let g' = set_object_color obj g c in
+  let objs = objects 0UL g in
+  color_preserves_objects obj g c;
+  assert (objects 0UL g' == objs);
+  color_preserves_all_edges obj g c objs;
+  assert (HeapGraph.all_edges g' objs == HeapGraph.all_edges g objs);
+  ()
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// 5.11 Graph preservation through mark operations
+/// ---------------------------------------------------------------------------
+
+/// push_children preserves the abstract graph (by induction on field scanning)
+val push_children_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_addr) -> 
+                                          (obj: obj_addr{Seq.mem obj (objects 0UL g)}) ->
+                                          (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
+  Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  U64.v (wosize_of_object obj g) < pow2 54)
+        (ensures create_graph (fst (push_children g st obj i ws)) == create_graph g)
+        (decreases (U64.v ws - U64.v i))
+
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let rec push_children_preserves_create_graph g st obj i ws =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let child : obj_addr = v in
+      if is_white child g then begin
+        // Proof strategy:
+        // 1. Establish efptu at position i using efptu_match
+        // 2. Propagate to wosize_of_object using efptu_recurse_upto
+        // 3. Use well_formed_heap to conclude child is in objects
+        
+        let idx = U64.sub i 1UL in
+        HeapGraph.get_field_addr_eq g obj i;
+        let far = U64.add_mod obj (U64.mul_mod idx mword) in
+        assert (read_word g (far <: hp_addr) = child);
+        assert (is_pointer_field child);
+        assert (hd_address child = hd_address child);
+        efptu_match g obj i child far child;
+        
+        // Propagate to wosize_of_object obj g (not just ws)
+        let wz_full = wosize_of_object obj g in
+        wosize_of_object_bound obj g;
+        
+        // Establish heap bounds precondition for efptu_recurse_upto
+        // well_formed_heap part 1: Seq.mem obj (objects 0UL g) ==>
+        //   U64.v (hd_address obj) + 8 + U64.v wz_full * 8 <= Seq.length g
+        // This equals: U64.v (hd_address obj) + U64.v mword * (U64.v wz_full + 1) <= heap_size
+        assert (Seq.mem obj (objects 0UL g));
+        assert (U64.v (hd_address obj) + 8 + FStar.Mul.(U64.v wz_full * 8) <= Seq.length g);
+        assert (U64.v mword = 8);
+        assert (Seq.length g = heap_size);
+        assert (U64.v (hd_address obj) + U64.v mword * (U64.v wz_full + 1) <= heap_size);
+        
+        if U64.v i < U64.v wz_full then
+          efptu_recurse_upto g obj i wz_full child;
+        assert (exists_field_pointing_to_unchecked g obj wz_full child);
+        
+        // Use well_formed_heap part 2 to prove child is in objects
+        // Seq.mem obj (objects 0UL g) /\ U64.v wz_full < pow2 54 /\ 
+        // efptu g obj wz_full child ==> Seq.mem child (objects 0UL g)
+        assert (Seq.mem obj (objects 0UL g));
+        assert (U64.v wz_full < pow2 54);
+        assert (exists_field_pointing_to_unchecked g obj wz_full child);
+        assert (Seq.mem child (objects 0UL g));
+        
+        let g' = makeGray child g in
+        makeGray_eq child g;
+        assert (g' == set_object_color child g Header.Gray);
+        color_preserves_create_graph child g Header.Gray;
+        assert (create_graph g' == create_graph g);
+        
+        // After coloring, well_formed_heap is preserved
+        color_change_preserves_wf g child Header.Gray;
+        assert (well_formed_heap g');
+        
+        // Objects list preserved
+        color_preserves_objects child g Header.Gray;
+        assert (objects 0UL g' == objects 0UL g);
+        assert (Seq.mem obj (objects 0UL g'));
+        
+        // wosize_of_object is preserved for obj
+        if child = obj then
+          color_preserves_wosize child g Header.Gray
+        else
+          color_change_preserves_other_wosize child obj g Header.Gray;
+        assert (wosize_of_object obj g' == wosize_of_object obj g);
+        assert (U64.v ws <= U64.v (wosize_of_object obj g'));
+        assert (U64.v (wosize_of_object obj g') < pow2 54);
+        
+        // Recursive call preserves create_graph
+        if U64.v i < U64.v ws then begin
+          push_children_preserves_create_graph g' (Seq.cons child st) obj (U64.add i 1UL) ws
+        end
+      end else begin
+        // No color change, recurse
+        if U64.v i < U64.v ws then
+          push_children_preserves_create_graph g st obj (U64.add i 1UL) ws
+      end
+    end else begin
+      // Not a pointer, recurse
+      if U64.v i < U64.v ws then
+        push_children_preserves_create_graph g st obj (U64.add i 1UL) ws
+    end
+  end
 #pop-options
