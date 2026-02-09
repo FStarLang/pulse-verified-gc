@@ -1185,3 +1185,246 @@ let color_change_preserves_points_to_other (g: heap) (obj: obj_addr) (c: color)
     wosize_of_object_spec src (set_object_color obj g c);
     wosize_of_object_bound src g;
     color_change_preserves_field_pointing_other g obj c src (wosize_of_object src g) dst
+
+/// ---------------------------------------------------------------------------
+/// Field Write Preserves well_formed_heap
+/// ---------------------------------------------------------------------------
+
+/// For src ≠ obj: objects don't overlap, so all fields of src are unchanged
+#push-options "--z3rlimit 300 --fuel 2 --ifuel 1"
+private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
+  (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr)
+  : Lemma (requires src <> obj /\
+                     Seq.mem src (objects 0UL g) /\
+                     Seq.mem obj (objects 0UL g) /\
+                     well_formed_heap g /\
+                     U64.v addr >= U64.v obj /\
+                     U64.v addr < U64.v obj + op_Multiply (U64.v (wosize_of_object obj g)) 8 /\
+                     U64.v addr % 8 = 0 /\
+                     U64.v wz <= U64.v (wosize_of_object_as_wosize src g))
+          (ensures exists_field_pointing_to_unchecked (write_word g addr v) src wz target
+                   == exists_field_pointing_to_unchecked g src wz target)
+          (decreases U64.v wz)
+  = if wz = 0UL then ()
+    else begin
+      let idx = U64.sub wz 1UL in
+      FStar.Math.Lemmas.pow2_lt_compat 61 54;
+      field_offset_bound idx;
+      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      let far = U64.add_mod src (U64.mul_mod idx mword) in
+      let far_raw = field_address_raw src idx in
+      assert (U64.v far = U64.v far_raw);
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then
+        write_word_preserves_field_pointing_other g obj addr v src idx target
+      else begin
+        assert (far == far_raw);
+        let field_addr : hp_addr = far in
+        // Objects don't overlap, so field_addr ≠ addr
+        // field_addr is in src's body: src + idx*8
+        // addr is in obj's body: obj <= addr < obj + wosize(obj)*8
+        wosize_of_object_bound src g;
+        wosize_of_object_bound obj g;
+        let ws_src = U64.v (wosize_of_object_as_wosize src g) in
+        let ws_obj = U64.v (wosize_of_object obj g) in
+        if U64.v src < U64.v obj then begin
+          objects_separated 0UL g src obj;
+          // src + ws_src*8 < obj <= addr
+          // field_addr = src + idx*8 < src + ws_src*8 (since idx < ws_src)
+          // So field_addr < obj <= addr
+          ()
+        end else begin
+          objects_separated 0UL g obj src;
+          // obj + ws_obj*8 < src <= field_addr
+          // addr < obj + ws_obj*8
+          // So addr < src <= field_addr
+          ()
+        end;
+        assert (field_addr <> addr);
+        // read_write_different applies
+        read_write_different g addr field_addr v;
+        assert (read_word (write_word g addr v) field_addr == read_word g field_addr);
+        // Recurse
+        write_word_preserves_field_pointing_other g obj addr v src idx target
+      end
+    end
+#pop-options
+
+/// For src = obj: field at addr gets value v, others unchanged
+#push-options "--z3rlimit 800 --fuel 4 --ifuel 2 --split_queries always"
+private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
+  (wz: U64.t{U64.v wz < pow2 54}) (dst: obj_addr)
+  : Lemma (requires Seq.mem obj (objects 0UL g) /\
+                     well_formed_heap g /\
+                     U64.v addr >= U64.v obj /\
+                     U64.v addr < U64.v obj + op_Multiply (U64.v (wosize_of_object obj g)) 8 /\
+                     U64.v addr % 8 = 0 /\
+                     U64.v wz <= U64.v (wosize_of_object_as_wosize obj g) /\
+                     exists_field_pointing_to_unchecked (write_word g addr v) obj wz dst /\
+                     (is_pointer_field v ==> Seq.mem v (objects 0UL g)))
+          (ensures Seq.mem dst (objects 0UL g))
+          (decreases U64.v wz)
+  = if wz = 0UL then ()
+    else begin
+      let idx = U64.sub wz 1UL in
+      FStar.Math.Lemmas.pow2_lt_compat 61 54;
+      field_offset_bound idx;
+      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      let far = U64.add_mod obj (U64.mul_mod idx mword) in
+      let far_raw = field_address_raw obj idx in
+      assert (U64.v far = U64.v far_raw);
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then begin
+        // Out of bounds: exists_field_pointing_to_unchecked returns false or recurses
+        // But we know it's true for g', so it must be true for idx
+        write_word_field_pointing_self_implies g obj addr v idx dst
+      end else begin
+        assert (far == far_raw);
+        let field_addr : hp_addr = far in
+        let g' = write_word g addr v in
+        let field_val_g' = read_word g' field_addr in
+        // exists_field_pointing_to_unchecked g' obj wz dst evaluates field at idx first
+        // It returns true if: (1) this field matches, OR (2) recursive call on idx returns true
+        if is_pointer_field field_val_g' && hd_address field_val_g' = hd_address dst then begin
+          // Case (1): This field points to dst in g'
+          if field_addr = addr then begin
+            // Modified field: field_val_g' = v
+            read_write_same g addr v;
+            assert (field_val_g' == v);
+            // v is a pointer to dst: hd_address v = hd_address dst
+            // By contrapositive of hd_address_injective: if hd_address v = hd_address dst, then v = dst
+            // (If v ≠ dst, then hd_address v ≠ hd_address dst by hd_address_injective, contradiction)
+            if v <> dst then Pulse.Spec.GC.Heap.hd_address_injective v dst;
+            assert (v == dst);
+            // From precondition: is_pointer_field v ==> Seq.mem v (objects 0UL g)
+            assert (Seq.mem dst (objects 0UL g))
+          end else begin
+            // Unmodified field: field_val_g' = read_word g field_addr  
+            // Since field_addr ≠ addr, read_write_different applies
+            assert (field_addr <> addr);
+            read_write_different g addr field_addr v;
+            let field_val_g = read_word g field_addr in
+            assert (field_val_g' == field_val_g);
+            // This field points to dst in g as well
+            assert (is_pointer_field field_val_g && hd_address field_val_g = hd_address dst);
+            // Use efptu_match to establish exists_field in original heap
+            wosize_of_object_bound obj g;
+            // field_val_g = dst by hd_address injectivity
+            if field_val_g <> dst then Pulse.Spec.GC.Heap.hd_address_injective field_val_g dst;
+            assert (field_val_g == dst);
+            // Use field_read_implies_exists_pointing with full wosize and k=idx
+            // Needs: well_formed_object g obj, idx < wosize, field pointer conditions
+            // well_formed_object follows from well_formed_heap part 1
+            assert (well_formed_object g obj);
+            let full_wz = wosize_of_object_as_wosize obj g in
+            wosize_of_object_spec obj g;
+            assert (U64.v idx < U64.v full_wz);
+            field_read_implies_exists_pointing g obj full_wz idx dst
+          end
+        end else begin
+          // Case (2): This field doesn't match, so recursive call must return true
+          // exists_field_pointing_to_unchecked g' obj idx dst = true
+          write_word_field_pointing_self_implies g obj addr v idx dst
+        end
+      end
+    end
+#pop-options
+
+/// write_word within an object's body preserves well_formed_heap,
+/// provided the written value (if pointer) points to a valid object.
+val field_write_preserves_wf : (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
+  Lemma (requires well_formed_heap g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  U64.v addr >= U64.v obj /\
+                  U64.v addr < U64.v obj + op_Multiply (U64.v (wosize_of_object obj g)) 8 /\
+                  U64.v addr % 8 = 0 /\
+                  (is_pointer_field v ==> Seq.mem v (objects 0UL g)))
+        (ensures well_formed_heap (write_word g addr v))
+
+#push-options "--z3rlimit 300"
+let field_write_preserves_wf g obj addr v =
+  let g' = write_word g addr v in
+  write_word_preserves_objects g obj addr v;
+  assert (objects 0UL g' == objects 0UL g);
+  assert (Seq.length g' == Seq.length g);
+  // Part 1: size bounds unchanged (headers unchanged)
+  let aux (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects 0UL g'))
+    (ensures (let wz = wosize_of_object h g' in
+              U64.v (hd_address h) + 8 + FStar.Mul.(U64.v wz * 8) <= Seq.length g'))
+    = wosize_of_object_spec h g;
+      wosize_of_object_spec h g';
+      Pulse.Spec.GC.Heap.hd_address_spec h;
+      wosize_of_object_bound obj g;
+      wosize_of_object_bound h g;
+      // hd_address (local) matches Pulse.Spec.GC.Heap.hd_address for obj_addr
+      assert (hd_address h == Pulse.Spec.GC.Heap.hd_address h);
+      // Prove addr ≠ hd_address h
+      if h = obj then ()
+      else begin
+        if U64.v h < U64.v obj then
+          objects_separated 0UL g h obj
+        else
+          objects_separated 0UL g obj h
+      end;
+      read_write_different g addr (Pulse.Spec.GC.Heap.hd_address h) v
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  // Part 2: pointer targets in objects
+  let aux2 (src dst: obj_addr) : Lemma
+    (requires Seq.mem src (objects 0UL g') /\
+              (let wz = wosize_of_object src g' in
+               U64.v wz < pow2 54 /\
+               exists_field_pointing_to_unchecked g' src wz dst))
+    (ensures Seq.mem dst (objects 0UL g'))
+    = wosize_of_object_spec src g;
+      wosize_of_object_spec src g';
+      wosize_of_object_bound src g;
+      wosize_of_object_bound obj g;
+      // Prove wosize unchanged: header not modified
+      // Need to prove addr ≠ hd_address src
+      Pulse.Spec.GC.Heap.hd_address_spec src;
+      if src = obj then begin
+        // hd_address obj = obj - 8, and addr >= obj
+        ()
+      end else begin
+        // src ≠ obj: objects don't overlap
+        if U64.v src < U64.v obj then begin
+          // src < obj: objects_separated gives obj > src + wosize(src)*8
+          objects_separated 0UL g src obj;
+          // addr >= obj > src + wosize(src)*8
+          // hd_address(src) = src - 8 < src < obj <= addr
+          ()
+        end else begin
+          // src > obj: objects_separated gives src > obj + wosize(obj)*8
+          objects_separated 0UL g obj src;
+          // addr < obj + wosize(obj)*8 < src
+          // So hd_address(src) = src - 8 > addr
+          ()
+        end
+      end;
+      read_write_different g addr (Pulse.Spec.GC.Heap.hd_address src) v;
+      // So wosize_of_object src g' = wosize_of_object src g
+      assert (wosize_of_object src g' == wosize_of_object src g);
+      if src = obj then begin
+        write_word_field_pointing_self_implies g obj addr v (wosize_of_object src g') dst
+      end else begin
+        write_word_preserves_field_pointing_other g obj addr v src (wosize_of_object src g') dst
+        // This shows exists_field_pointing_to_unchecked g src wz dst
+        // From well_formed_heap g, dst in objects g = objects g'
+      end
+  in
+  let aux2_flat (src: obj_addr) (dst: obj_addr) : Lemma
+    (requires Seq.mem src (objects 0UL g') /\
+              U64.v (wosize_of_object src g') < pow2 54 /\
+              exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst)
+    (ensures Seq.mem dst (objects 0UL g'))
+  = aux2 src dst
+  in
+  let aux2_imp (src: obj_addr) (dst: obj_addr) : Lemma
+    ((Seq.mem src (objects 0UL g') /\
+      U64.v (wosize_of_object src g') < pow2 54 /\
+      exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst) ==> 
+     Seq.mem dst (objects 0UL g'))
+  = FStar.Classical.move_requires (aux2_flat src) dst
+  in
+  FStar.Classical.forall_intro_2 aux2_imp
+#pop-options
