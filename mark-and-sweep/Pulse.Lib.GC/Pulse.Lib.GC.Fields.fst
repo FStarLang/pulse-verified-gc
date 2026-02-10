@@ -75,11 +75,11 @@ fn is_pointer (v: U64.t)
                                U64.v v % U64.v mword == 0))
 {
   // Check non-null
-  if U64.eq v 0UL then {
+  if (U64.eq v 0UL) {
     false
   } else {
     // Check within heap bounds
-    if U64.gte v (U64.uint_to_t heap_size) then {
+    if (U64.gte v (U64.uint_to_t heap_size)) {
       false
     } else {
       // Check word-aligned
@@ -116,7 +116,7 @@ fn for_each_successor (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
     // Check if it's a pointer
     let is_ptr = is_pointer v;
     
-    if is_ptr then {
+    if (is_ptr) {
       // Get header address of pointed object
       let succ_h_addr = hd_address v;
       
@@ -146,7 +146,7 @@ fn is_valid_header (heap: heap_t) (h_addr: hp_addr)
   // Check that object fits in heap
   let obj_end = U64.add h_addr (U64.mul (U64.add 1UL wz) mword);
   
-  if U64.gt obj_end (U64.uint_to_t heap_size) then {
+  if (U64.gt obj_end (U64.uint_to_t heap_size)) {
     false
   } else {
     // Check tag is valid (0-255)

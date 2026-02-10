@@ -118,7 +118,7 @@ fn resolve_object (heap: heap_t) (obj: hp_addr)
   // Check if it's an infix object
   let is_infix = is_infix_object heap obj;
   
-  if is_infix then {
+  if (is_infix) {
     // Get parent closure
     parent_closure_of_infix heap obj
   } else {
@@ -158,7 +158,7 @@ fn scan_closure_env (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
     // Check if it's a pointer
     let is_ptr = is_pointer v;
     
-    if is_ptr then {
+    if (is_ptr) {
       // Get header address and resolve (handle infix)
       let succ_h_addr = hd_address v;
       let resolved = resolve_object heap succ_h_addr;

@@ -54,7 +54,7 @@ fn grey_root (heap: heap_t) (st: gray_stack) (root: hp_addr)
   let hdr = read_word heap root;
   let c = getColor hdr;
   
-  if U64.eq c white then {
+  if (U64.eq c white) {
     // Color it grey
     let wz = getWosize hdr;
     let t = getTag hdr;
@@ -125,18 +125,18 @@ fn mark_phase (heap: heap_t) (st: gray_stack)
     // Check if we need to scan fields
     let should_scan = U64.lt t no_scan_tag;
     
-    if should_scan then {
+    if (should_scan) {
       // Check if it's a closure
       let is_clos = U64.eq t closure_tag;
       
-      if is_clos then {
+      if (is_clos) {
         // Scan closure environment
         scan_closure_env heap h_addr wz (fun succ -> {
           // Darken successor if white
           let succ_hdr = read_word heap succ;
           let succ_c = getColor succ_hdr;
           
-          if U64.eq succ_c white then {
+          if (U64.eq succ_c white) {
             grey_root heap st succ
           }
         })
@@ -150,7 +150,7 @@ fn mark_phase (heap: heap_t) (st: gray_stack)
           let resolved_hdr = read_word heap resolved;
           let resolved_c = getColor resolved_hdr;
           
-          if U64.eq resolved_c white then {
+          if (U64.eq resolved_c white) {
             grey_root heap st resolved
           }
         })
@@ -195,7 +195,7 @@ fn alloc (gc: gc_state) (wz: wosize) (t: tag)
   // Get free list head
   let fp = !(gc.free_list);
   
-  if U64.eq fp 0UL then {
+  if (U64.eq fp 0UL) {
     // No free memory
     None
   } else {
@@ -206,7 +206,7 @@ fn alloc (gc: gc_state) (wz: wosize) (t: tag)
     let hdr = read_word gc.heap h_addr;
     let avail_wz = getWosize hdr;
     
-    if U64.lt avail_wz wz then {
+    if (U64.lt avail_wz wz) {
       // Not enough space in this block
       // (Real impl would search free list)
       None

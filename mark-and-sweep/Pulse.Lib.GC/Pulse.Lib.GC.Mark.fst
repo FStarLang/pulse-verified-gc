@@ -68,12 +68,12 @@ fn darken_if_white (heap: heap_t) (st: gray_stack) (obj: hp_addr)
   let hdr = read_word heap obj;
   let c = getColor hdr;
   
-  if c = white then {
+  if (c = white) {
     // Check if already in stack
     let f_addr = f_address obj;
     let in_stack = mem st f_addr;
     
-    if not in_stack then {
+    if (not in_stack) {
       // Darken: color gray and push to stack
       let wz = getWosize hdr;
       let t = getTag hdr;
@@ -120,7 +120,7 @@ fn scan_fields (heap: heap_t) (st: gray_stack) (obj: hp_addr) (wz: wosize)
     let field_val = read_word !current_heap field_addr;
     
     // Check if it's a pointer
-    if isPointer field_val then {
+    if (isPointer field_val) {
       // Get header address of pointed object
       let pointed_obj = hd_address field_val;
       
@@ -165,7 +165,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   write_word heap h_addr new_hdr;
   
   // Scan fields (unless no_scan_tag)
-  if U64.lt t no_scan_tag then {
+  if (U64.lt t no_scan_tag) {
     scan_fields heap st' h_addr wz
   } else {
     (st', heap)
@@ -186,7 +186,7 @@ fn rec mark (heap: heap_t) (st: gray_stack)
 {
   let empty = is_empty st;
   
-  if empty then {
+  if (empty) {
     // No more gray objects - we're done
     free_stack st;
     heap
@@ -234,7 +234,7 @@ fn grey_roots (heap: heap_t) (roots: vec U64.t)
   {
     let root_addr = Vec.index roots !i;
     
-    if isPointer root_addr then {
+    if (isPointer root_addr) {
       let obj = hd_address root_addr;
       let (st', heap') = darken_if_white !current_heap !current_st obj;
       current_st := st';

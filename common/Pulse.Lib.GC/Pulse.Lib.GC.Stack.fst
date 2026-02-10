@@ -149,7 +149,7 @@ fn mem (st: gray_stack) (addr: U64.t)
             (vfound <==> (exists j. j < SZ.v vi /\ L.index 'l j == addr)))
   {
     let v = Vec.index st !i;
-    if v = addr then {
+    if (v = addr) {
       found := true
     };
     i := SZ.add !i 1sz

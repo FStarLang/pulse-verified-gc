@@ -47,7 +47,7 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr) (fp: free_list_ptr)
   let wz = getWosize hdr;
   let t = getTag hdr;
   
-  if U64.eq c white || U64.eq c blue then {
+  if (U64.eq c white || U64.eq c blue) {
     // White/blue object: free it (color blue, add to free list)
     
     // Color it blue
@@ -60,7 +60,7 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr) (fp: free_list_ptr)
     // Link this object into free list:
     // Set first field to point to old free list head
     let f_addr = f_address h_addr;
-    if U64.gt wz 0UL then {
+    if (U64.gt wz 0UL) {
       // Object has at least one field - use it for next pointer
       write_word heap f_addr old_fp
     };
