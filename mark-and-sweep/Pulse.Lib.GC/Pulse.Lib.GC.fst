@@ -26,6 +26,7 @@ module SZ = FStar.SizeT
 module Seq = FStar.Seq
 module SpecGCPost = Pulse.Spec.GC.GCPost
 module SpecMarkInv = Pulse.Spec.GC.MarkInv
+module SpecFields = Pulse.Spec.GC.Fields
 
 /// ---------------------------------------------------------------------------
 /// Full GC
@@ -48,18 +49,17 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
           pure (SpecGCPost.gc_postcondition s2) ** pure (Seq.length st2 == 0)
 {
   // Mark phase: process gray stack until empty
-  // mark_loop preserves mark_inv
   mark_loop heap st;
+  
+  // Extract well_formed_heap from mark_inv for sweep's precondition
+  with s_mark st_mark. assert (is_heap heap s_mark ** is_gray_stack st st_mark);
+  SpecMarkInv.mark_inv_elim_wfh s_mark st_mark;
   
   // Sweep phase: reset black to white, build free list
   let result_fp = sweep heap fp;
   
-  // Bind the existential to get the actual post-sweep ghost heap
+  // Bridge: gc_postcondition (pillars 1+4)
   with s_sweep. assert (is_heap heap s_sweep);
-  
-  // Bridge: gc_postcondition (pillars 1+4) — well_formed_heap now formally
-  // proven via mark_inv through mark_loop. Pillar 4 (all-white) still assumed
-  // pending proof that Pulse sweep matches spec sweep.
   assume (pure (SpecGCPost.gc_postcondition s_sweep));
   
   result_fp
