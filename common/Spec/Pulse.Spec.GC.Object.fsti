@@ -101,6 +101,10 @@ val color_of_object_spec : (h_addr: obj_addr) -> (g: heap) ->
 /// Get tag of object at address
 val tag_of_object (h_addr: obj_addr) (g: heap) : GTot U64.t
 
+/// tag_of_object specification: reads header and extracts tag
+val tag_of_object_spec : (h_addr: obj_addr) -> (g: heap) ->
+  Lemma (tag_of_object h_addr g == getTag (read_word g (hd_address h_addr)))
+
 /// Get wosize of object at address
 val wosize_of_object (h_addr: obj_addr) (g: heap) : GTot U64.t
 
@@ -173,6 +177,10 @@ val blue_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
 val is_closure (h_addr: obj_addr) (g: heap) : GTot bool
 val is_infix (h_addr: obj_addr) (g: heap) : GTot bool
 val is_no_scan (h_addr: obj_addr) (g: heap) : GTot bool
+
+/// is_no_scan specification: true when tag >= no_scan_tag
+val is_no_scan_spec : (h_addr: obj_addr) -> (g: heap) ->
+  Lemma (is_no_scan h_addr g == U64.gte (tag_of_object h_addr g) no_scan_tag)
 
 /// ---------------------------------------------------------------------------
 /// Color Mutation Operations

@@ -1,41 +1,48 @@
 # Common GC Infrastructure
 
-This folder contains shared F* specifications used by both GC variants:
+Shared F* specifications and Pulse infrastructure used by both GC variants:
 
-1. **Mark-and-Sweep GC** (in `../Spec/` and `../Lib/`) - Traditional stop-the-world GC
-2. **On-the-Fly GC** (from `flygc-ocaml`) - Concurrent GC with shadow stacks
+1. **Mark-and-Sweep GC** (`../mark-and-sweep/`) - Sequential stop-the-world GC
+2. **Concurrent GC** (`../concurrent/`) - Dijkstra-style on-the-fly GC extensions
 
 ## Module Overview
 
-### Spec/ - Specifications
-
-| Module | Interface | Description | Lines |
-|--------|-----------|-------------|-------|
-| `Pulse.Spec.GC.Base.fst` | `.fsti` ✓ | Core types: heap, hp_addr, mword | ~100 |
-| `Pulse.Spec.GC.Heap.fst` | `.fsti` ✓ | Heap operations: read_word, write_word | ~160 |
-| `Pulse.Spec.GC.Object.fst` | `.fsti` ✓ | Header operations, color predicates | ~450 |
-| `Pulse.Spec.GC.Graph.fst` | (self) | Graph types, DFS forest, reachability | ~870 |
-| `Pulse.Spec.GC.DFS.fst` | (self) | DFS algorithm with termination proofs | ~1000 |
-
-### Lib/ - Libraries
+### Spec/ - Pure F* Specifications
 
 | Module | Interface | Description |
 |--------|-----------|-------------|
-| `Pulse.Lib.Header.fst` | (self) | Header bitvector operations with proofs |
+| `Pulse.Spec.GC.Base.fst` | `.fsti` ✓ | Core types: heap, hp_addr, mword |
+| `Pulse.Spec.GC.Heap.fst` | `.fsti` ✓ | Heap operations: read_word, write_word |
+| `Pulse.Spec.GC.Object.fst` | `.fsti` ✓ | Header operations, color predicates (algebraic color_sem) |
+| `Pulse.Spec.GC.Graph.fst` | (self) | Graph types, vertex sets, reachability |
+| `Pulse.Spec.GC.DFS.fst` | (self) | DFS algorithm with ghost forest, soundness + completeness |
+| `Pulse.Spec.GC.Fields.fst` | (self) | Object enumeration, field traversal |
+| `Pulse.Spec.GC.HeapGraph.fst` | (self) | Bridge: heap objects → graph edges |
+| `Pulse.Spec.GC.HeapModel.fst` | (self) | Graph construction from heap, field equality |
 
-## Interface Files
+### Lib/ - Pure F* Libraries
 
-The following modules have dedicated `.fsti` interface files:
-- `Pulse.Spec.GC.Base.fsti` - Exposes core types (mword, heap, hp_addr, val_addr)
-- `Pulse.Spec.GC.Heap.fsti` - Exposes read/write operations and locality lemmas
-- `Pulse.Spec.GC.Object.fsti` - Exposes colors, header ops, and color change lemmas
+| Module | Description |
+|--------|-------------|
+| `Pulse.Lib.Header.fst` | Header bitvector operations, algebraic color_sem type |
+| `Pulse.Lib.Address.fst` | Address arithmetic, field/header separation lemmas |
 
-Graph.fst and DFS.fst are self-documenting (no separate interface needed).
+### Pulse.Lib.GC/ - Shared Pulse Implementations
 
-## Verification Status
+| Module | Description |
+|--------|-------------|
+| `Pulse.Lib.GC.Heap.fst` | Mutable heap (array-backed), read/write word |
+| `Pulse.Lib.GC.Object.fst` | Object headers, algebraic color type, slprop predicates |
+| `Pulse.Lib.GC.Stack.fst` | Gray object stack (worklist for tri-color marking) |
 
-All modules pass lax-checking (0 admits in Base, Heap, Object).
-Graph and DFS are fully verified.
+## Building
+
+```bash
+make lax          # Quick lax-check (Spec + Lib only)
+make verify       # Full SMT verification (Spec + Lib)
+make verify-pulse # Verify Pulse.Lib.GC modules (requires Pulse tooling)
+make clean
+```
 
 ## Usage
 
@@ -43,34 +50,20 @@ From either GC variant, include common modules:
 
 ```makefile
 FSTAR_FLAGS += --include ../common/Lib --include ../common/Spec
-```
-
-## Building
-
-```bash
-make lax      # Quick lax-check
-make verify   # Full verification (slow)
-make clean    # Remove .checked files
+# For Pulse modules:
+FSTAR_FLAGS += --include ../common/Pulse.Lib.GC
 ```
 
 ## Module Dependencies
 
 ```
-Header.fst
+Pulse.Lib.Header (bitvec ops, color_sem type)
     ↓
-Base.fst (+ Base.fsti)
+Pulse.Lib.Address (field/header separation)
     ↓
-Heap.fst (+ Heap.fsti)
-    ↓
-Object.fst (+ Object.fsti)
-    ↓
-Graph.fst
-    ↓
-DFS.fst
+Base.fst → Heap.fst → Object.fst → Fields.fst → Graph.fst → DFS.fst
+                                                      ↓
+                                                 HeapGraph.fst → HeapModel.fst
+
+Pulse.Lib.GC.Heap → Pulse.Lib.GC.Object → Pulse.Lib.GC.Stack
 ```
-
-## Origin
-
-- `Base.fst`, `Heap.fst`, `Object.fst`: From verified_ocaml_gc (0 admits)
-- `Graph.fst`, `DFS.fst`: From flygc-ocaml (has additional reach_subgraph lemma)
-- `Header.fst`: Shared bitvector library

@@ -868,3 +868,21 @@ let forest_successor_closed_wrt_empty (g: graph_state) (f: dfs_forest)
   : Lemma (requires forest_successor_closed_wrt g f empty_set)
           (ensures forest_successor_closed g f)
   = ()
+
+/// ---------------------------------------------------------------------------
+/// Successors Bridge Lemmas
+/// ---------------------------------------------------------------------------
+
+/// successors_aux distributes over cons
+val successors_aux_cons : (hd: edge) -> (tl: edge_list) -> (v: vertex_id) ->
+  Lemma (ensures successors_aux (Seq.cons hd tl) v ==
+                 (let (src, dst) = hd in
+                  if src = v then Seq.cons dst (successors_aux tl v)
+                  else successors_aux tl v))
+
+#push-options "--fuel 2 --ifuel 1"
+let successors_aux_cons hd tl v =
+  assert (Seq.length (Seq.cons hd tl) > 0);
+  assert (Seq.head (Seq.cons hd tl) == hd);
+  assert (Seq.equal (Seq.tail (Seq.cons hd tl)) tl)
+#pop-options

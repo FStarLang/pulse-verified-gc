@@ -1,10 +1,10 @@
 (*
-   Pulse GC - Object Module
+   Pulse GC - Object Module (Shared Infrastructure)
    
    This module defines object headers, colors, and object predicates
    for the verified garbage collector.
    
-   Based on: Proofs/Spec.Object.fsti
+   Uses algebraic color type (color_sem) from Pulse.Lib.Header.
 *)
 
 module Pulse.Lib.GC.Object
@@ -16,6 +16,7 @@ open Pulse.Lib.GC.Heap
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
+module Header = Pulse.Lib.Header
 
 /// ---------------------------------------------------------------------------
 /// Object Header Layout (64-bit word)
@@ -32,8 +33,8 @@ module Seq = FStar.Seq
 /// Object size in words (54 bits, max 2^54 - 1)
 type wosize = w:U64.t{U64.v w <= pow2 54 - 1}
 
-/// Object color (2 bits, values 0-3)
-type color = c:U64.t{U64.v c <= 3}
+/// Object color — algebraic type from Pulse.Lib.Header
+type color = Header.color_sem
 
 /// Object tag (8 bits, values 0-255)
 type tag = t:U64.t{U64.v t <= 255}
@@ -42,18 +43,21 @@ type tag = t:U64.t{U64.v t <= 255}
 /// Color constants
 /// ---------------------------------------------------------------------------
 
-let blue  : color = 0UL  // Free/unallocated
-let white : color = 1UL  // Unmarked (potentially garbage)
-let gray  : color = 2UL  // Marked but not scanned
-let black : color = 3UL  // Marked and scanned (reachable)
+let blue  : color = Header.Blue
+let white : color = Header.White
+let gray  : color = Header.Gray
+let black : color = Header.Black
+
+/// Pack color to numeric for header encoding
+let pack_color (c: color) : U64.t = U64.uint_to_t (Header.pack_color c)
 
 /// ---------------------------------------------------------------------------
 /// Special tag values
 /// ---------------------------------------------------------------------------
 
-let closure_tag  : tag = 247UL  // Closure object
-let infix_tag    : tag = 249UL  // Infix object (inside closure)
-let no_scan_tag  : tag = 251UL  // Object with no pointers to scan
+let closure_tag  : tag = 247UL
+let infix_tag    : tag = 249UL
+let no_scan_tag  : tag = 251UL
 
 /// ---------------------------------------------------------------------------
 /// Header field extraction
@@ -63,9 +67,13 @@ let no_scan_tag  : tag = 251UL  // Object with no pointers to scan
 let getWosize (hdr: U64.t) : wosize =
   U64.shift_right hdr 10ul
 
-/// Extract color from header (bits 8-9)
+/// Extract color from header (bits 8-9) — returns algebraic color
 let getColor (hdr: U64.t) : color =
-  U64.logand (U64.shift_right hdr 8ul) 3UL
+  let raw = U64.logand (U64.shift_right hdr 8ul) 3UL in
+  // raw is 0-3, so unpack always succeeds
+  match Header.unpack_color (U64.v raw) with
+  | Some c -> c
+  | None -> Header.Blue // unreachable: raw <= 3
 
 /// Extract tag from header (bits 0-7)
 let getTag (hdr: U64.t) : tag =
@@ -77,31 +85,27 @@ let getTag (hdr: U64.t) : tag =
 
 /// Create a header from wosize, color, and tag
 let makeHeader (wz: wosize) (c: color) (t: tag) : U64.t =
+  let c_num = pack_color c in
   let wz_shifted = U64.shift_left wz 10ul in
-  let c_shifted = U64.shift_left c 8ul in
+  let c_shifted = U64.shift_left c_num 8ul in
   U64.logor wz_shifted (U64.logor c_shifted t)
 
 /// ---------------------------------------------------------------------------
 /// Object color predicates
 /// ---------------------------------------------------------------------------
 
-/// Get color of object at given header address
 let color_of_object (hdr: U64.t) : color =
   getColor hdr
 
-/// Check if object is blue (free)
 let is_blue_object (hdr: U64.t) : bool =
   getColor hdr = blue
 
-/// Check if object is white (unmarked)
 let is_white_object (hdr: U64.t) : bool =
   getColor hdr = white
 
-/// Check if object is gray (marked, not scanned)
 let is_gray_object (hdr: U64.t) : bool =
   getColor hdr = gray
 
-/// Check if object is black (marked and scanned)
 let is_black_object (hdr: U64.t) : bool =
   getColor hdr = black
 
@@ -109,7 +113,6 @@ let is_black_object (hdr: U64.t) : bool =
 /// Object predicates (slprops)
 /// ---------------------------------------------------------------------------
 
-/// An object at address h with given properties
 let is_object (heap: heap_t) (h: hp_addr) 
               (wz: wosize) (c: color) (t: tag) 
     : slprop =
@@ -122,19 +125,15 @@ let is_object (heap: heap_t) (h: hp_addr)
       getTag hdr == t
     )
 
-/// Object is blue (free)
 let isBlueObject (heap: heap_t) (h: hp_addr) : slprop =
   exists* wz t. is_object heap h wz blue t
 
-/// Object is white (unmarked)
 let isWhiteObject (heap: heap_t) (h: hp_addr) : slprop =
   exists* wz t. is_object heap h wz white t
 
-/// Object is gray (to be scanned)
 let isGrayObject (heap: heap_t) (h: hp_addr) : slprop =
   exists* wz t. is_object heap h wz gray t
 
-/// Object is black (reachable)
 let isBlackObject (heap: heap_t) (h: hp_addr) : slprop =
   exists* wz t. is_object heap h wz black t
 
@@ -142,23 +141,15 @@ let isBlackObject (heap: heap_t) (h: hp_addr) : slprop =
 /// Color operations
 /// ---------------------------------------------------------------------------
 
-/// Color an object with a new color (modifies header in place)
 fn colorHeader (heap: heap_t) (h: hp_addr) (new_color: color)
   requires is_object heap h 'wz 'old_color 't
   ensures is_object heap h 'wz new_color 't
 {
-  // Read current header
   let hdr = read_word heap h;
-  
-  // Create new header with updated color
   let wz = getWosize hdr;
   let t = getTag hdr;
   let new_hdr = makeHeader wz new_color t;
-  
-  // Write new header
   write_word heap h new_hdr;
-  
-  // Fold the updated predicate
   fold (is_object heap h 'wz new_color 't)
 }
 
@@ -166,14 +157,13 @@ fn colorHeader (heap: heap_t) (h: hp_addr) (new_color: color)
 /// Pointer detection
 /// ---------------------------------------------------------------------------
 
-/// Check if a value looks like a pointer (word-aligned, within heap)
 let isPointer (v: U64.t) : bool =
   U64.v v >= U64.v mword /\
   U64.v v < heap_size /\
   U64.v v % U64.v mword == 0
 
 /// ---------------------------------------------------------------------------
-/// Semantic aliases (cleaner names)
+/// Semantic aliases
 /// ---------------------------------------------------------------------------
 
 let get_color = color_of_object

@@ -351,3 +351,163 @@ let pointer_field_is_graph_edge (g: heap) (objs: seq obj_addr) (obj: obj_addr)
     make_edges_mem obj (get_pointer_fields g obj) v;
     assert (Seq.mem (obj, v) (object_edges g obj));
     all_edges_superset g objs obj
+
+/// ---------------------------------------------------------------------------
+/// Successors Bridge: successors(create_graph g) x == get_pointer_fields g x
+/// ---------------------------------------------------------------------------
+
+/// Helper: tail of coerce = coerce of tail
+#push-options "--fuel 2 --ifuel 1"
+let coerce_tail_lemma (objs: seq obj_addr)
+  : Lemma (requires Seq.length objs > 0)
+          (ensures Seq.equal (Seq.tail (coerce_to_vertex_list objs))
+                             (coerce_to_vertex_list (Seq.tail objs)))
+  = assert (coerce_to_vertex_list objs == 
+            Seq.cons (Seq.head objs) (coerce_to_vertex_list (Seq.tail objs)))
+#pop-options
+
+/// successors_aux of make_edges: filtering for the source vertex returns all successors
+val successors_aux_make_edges_self : (h: vertex_id) -> (succs: seq vertex_id) ->
+  Lemma (ensures Seq.equal (successors_aux (make_edges h succs) h) succs)
+        (decreases Seq.length succs)
+
+#push-options "--fuel 4 --ifuel 2 --z3rlimit 200"
+let rec successors_aux_make_edges_self h succs =
+  if Seq.length succs = 0 then ()
+  else begin
+    let dst = Seq.head succs in
+    let tl = Seq.tail succs in
+    // make_edges h succs = cons (h, dst) (make_edges h tl)
+    // Use successors_aux_cons to unfold successors_aux on this cons
+    successors_aux_cons (h, dst) (make_edges h tl) h;
+    // Now: successors_aux (make_edges h succs) h == cons dst (successors_aux (make_edges h tl) h)
+    successors_aux_make_edges_self h tl
+    // IH: successors_aux (make_edges h tl) h == tl
+    // So: successors_aux (make_edges h succs) h == cons dst tl == succs
+  end
+#pop-options
+
+/// successors_aux of make_edges: filtering for a different vertex returns empty
+val successors_aux_make_edges_other : (h: vertex_id) -> (succs: seq vertex_id) -> (v: vertex_id) ->
+  Lemma (requires v <> h)
+        (ensures Seq.equal (successors_aux (make_edges h succs) v) Seq.empty)
+        (decreases Seq.length succs)
+
+#push-options "--fuel 4 --ifuel 2 --z3rlimit 200"
+let rec successors_aux_make_edges_other h succs v =
+  if Seq.length succs = 0 then ()
+  else begin
+    let dst = Seq.head succs in
+    successors_aux_cons (h, dst) (make_edges h (Seq.tail succs)) v;
+    successors_aux_make_edges_other h (Seq.tail succs) v
+  end
+#pop-options
+
+/// successors_aux distributes over append (local proof)
+private val successors_aux_append : (e1: edge_list) -> (e2: edge_list) -> (v: vertex_id) ->
+  Lemma (ensures Seq.equal (successors_aux (Seq.append e1 e2) v)
+                           (Seq.append (successors_aux e1 v) (successors_aux e2 v)))
+        (decreases Seq.length e1)
+
+#push-options "--z3rlimit 400 --fuel 4 --ifuel 2 --split_queries always"
+private let rec successors_aux_append e1 e2 v =
+  if Seq.length e1 = 0 then begin
+    assert (Seq.equal (Seq.append e1 e2) e2);
+    Seq.lemma_eq_elim (Seq.append e1 e2) e2;
+    assert (successors_aux (Seq.append e1 e2) v == successors_aux e2 v);
+    assert (Seq.equal (successors_aux e1 v) Seq.empty);
+    Seq.lemma_eq_elim (successors_aux e1 v) Seq.empty;
+    assert (Seq.equal (Seq.append Seq.empty (successors_aux e2 v)) (successors_aux e2 v));
+    Seq.lemma_eq_elim (Seq.append Seq.empty (successors_aux e2 v)) (successors_aux e2 v)
+  end
+  else begin
+    let hd = Seq.head e1 in
+    let (src, dst) = hd in
+    let tl1 = Seq.tail e1 in
+    // Establish: append e1 e2 == cons hd (append tl1 e2)
+    assert (Seq.equal (Seq.append e1 e2) (Seq.cons hd (Seq.append tl1 e2)));
+    Seq.lemma_eq_elim (Seq.append e1 e2) (Seq.cons hd (Seq.append tl1 e2));
+    assert (Seq.append e1 e2 == Seq.cons hd (Seq.append tl1 e2));
+    // Unfold successors_aux on combined
+    successors_aux_cons hd (Seq.append tl1 e2) v;
+    // Unfold successors_aux on e1
+    assert (Seq.equal e1 (Seq.cons hd tl1));
+    Seq.lemma_eq_elim e1 (Seq.cons hd tl1);
+    successors_aux_cons hd tl1 v;
+    // IH
+    successors_aux_append tl1 e2 v;
+    if src = v then begin
+      FStar.Seq.Properties.append_cons dst (successors_aux tl1 v) (successors_aux e2 v);
+      assert (Seq.equal (successors_aux (Seq.append e1 e2) v)
+                         (Seq.append (successors_aux e1 v) (successors_aux e2 v)));
+      Seq.lemma_eq_elim (successors_aux (Seq.append e1 e2) v)
+                         (Seq.append (successors_aux e1 v) (successors_aux e2 v))
+    end else begin
+      assert (Seq.equal (successors_aux (Seq.append e1 e2) v)
+                         (Seq.append (successors_aux e1 v) (successors_aux e2 v)));
+      Seq.lemma_eq_elim (successors_aux (Seq.append e1 e2) v)
+                         (Seq.append (successors_aux e1 v) (successors_aux e2 v))
+    end
+  end
+#pop-options
+
+/// Helper: successors_aux of all_edges for x ∉ objs = empty
+val successors_aux_all_edges_nonmember : (g: heap) -> (objs: seq obj_addr) -> (x: obj_addr) ->
+  Lemma (requires ~(Seq.mem x objs) /\ is_vertex_set (coerce_to_vertex_list objs))
+        (ensures Seq.equal (successors_aux (all_edges g objs) x) Seq.empty)
+        (decreases Seq.length objs)
+
+let rec successors_aux_all_edges_nonmember g objs x =
+  if Seq.length objs = 0 then ()
+  else begin
+    let h_addr = Seq.head objs in
+    let edges1 = object_edges g h_addr in
+    let rest = all_edges g (Seq.tail objs) in
+    successors_aux_append edges1 rest x;
+    successors_aux_make_edges_other h_addr (get_pointer_fields g h_addr) x;
+    is_vertex_set_tail (coerce_to_vertex_list objs);
+    coerce_tail_lemma objs;
+    successors_aux_all_edges_nonmember g (Seq.tail objs) x
+  end
+
+/// successors_aux of all_edges for x ∈ objs (vertex set) = get_pointer_fields g x
+val successors_aux_all_edges : (g: heap) -> (objs: seq obj_addr) -> (x: obj_addr) ->
+  Lemma (requires Seq.mem x objs /\ is_vertex_set (coerce_to_vertex_list objs))
+        (ensures Seq.equal (successors_aux (all_edges g objs) x)
+                           (get_pointer_fields g x))
+        (decreases Seq.length objs)
+
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec successors_aux_all_edges g objs x =
+  if Seq.length objs = 0 then ()
+  else begin
+    let h_addr = Seq.head objs in
+    let edges1 = object_edges g h_addr in
+    let rest = all_edges g (Seq.tail objs) in
+    successors_aux_append edges1 rest x;
+    if h_addr = x then begin
+      successors_aux_make_edges_self x (get_pointer_fields g x);
+      // is_vertex_set → head ∉ tail
+      coerce_tail_lemma objs;
+      coerce_mem_lemma (Seq.tail objs) x;
+      assert (~(Seq.mem x (Seq.tail objs)));
+      is_vertex_set_tail (coerce_to_vertex_list objs);
+      successors_aux_all_edges_nonmember g (Seq.tail objs) x
+    end else begin
+      successors_aux_make_edges_other h_addr (get_pointer_fields g h_addr) x;
+      is_vertex_set_tail (coerce_to_vertex_list objs);
+      coerce_tail_lemma objs;
+      Seq.lemma_mem_inversion objs;
+      successors_aux_all_edges g (Seq.tail objs) x
+    end
+  end
+#pop-options
+
+/// Top-level: successors in created graph = get_pointer_fields
+val successors_eq_pointer_fields : (g: heap) -> (objs: seq obj_addr) -> (x: obj_addr) ->
+  Lemma (requires Seq.mem x objs /\ is_vertex_set (coerce_to_vertex_list objs))
+        (ensures Seq.equal (successors (create_graph_from_heap g objs) x)
+                           (get_pointer_fields g x))
+
+let successors_eq_pointer_fields g objs x =
+  successors_aux_all_edges g objs x

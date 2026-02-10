@@ -270,6 +270,11 @@ let color_of_object_spec (h_addr: obj_addr) (g: heap)
 let tag_of_object (obj_addr: obj_addr) (g: heap) : GTot U64.t =
   getTag (read_header g obj_addr)
 
+/// tag_of_object specification: reads header and extracts tag
+let tag_of_object_spec (h_addr: obj_addr) (g: heap)
+  : Lemma (tag_of_object h_addr g == getTag (read_word g (hd_address h_addr))) = 
+  ()
+
 /// Get word size of object
 let wosize_of_object (obj_addr: obj_addr) (g: heap) : GTot U64.t =
   getWosize (read_header g obj_addr)
@@ -360,6 +365,10 @@ let is_infix (h_addr: obj_addr) (g: heap) : GTot bool =
 
 let is_no_scan (h_addr: obj_addr) (g: heap) : GTot bool =
   U64.gte (tag_of_object h_addr g) no_scan_tag
+
+let is_no_scan_spec (h_addr: obj_addr) (g: heap)
+  : Lemma (is_no_scan h_addr g == U64.gte (tag_of_object h_addr g) no_scan_tag) = 
+  ()
 
 /// ---------------------------------------------------------------------------
 /// Color Mutation Operations

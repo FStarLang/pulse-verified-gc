@@ -1,32 +1,29 @@
-# Pulse GC Implementation
+# Mark-and-Sweep GC Implementation
 
-This directory contains the Pulse implementation and specifications of the verified OCaml garbage collector, migrated from the Low*/F* implementation in `../Proofs/`.
+This directory contains the sequential stop-the-world mark-and-sweep garbage collector,
+formalized in F* (specifications) and Pulse (implementations).
 
 ## Directory Structure
 
 ```
-pulse-proofs/
+mark-and-sweep/
 ├── Spec/                             # Pure F* specifications
-│   ├── Pulse.Spec.GC.Base.fst        # Heap type, addresses, constants
-│   ├── Pulse.Spec.GC.Graph.fst       # Graph theory, reachability
-│   ├── Pulse.Spec.GC.Heap.fst        # Read/write word operations
-│   ├── Pulse.Spec.GC.Object.fst      # Colors, headers, predicates
-│   ├── Pulse.Spec.GC.Fields.fst      # Object enumeration, fields
+│   ├── Pulse.Spec.GC.SeqMemLemmas.fst # Sequence membership helpers
 │   ├── Pulse.Spec.GC.Mark.fst        # Mark phase spec + lemmas
 │   ├── Pulse.Spec.GC.Sweep.fst       # Sweep phase spec + lemmas
 │   └── Pulse.Spec.GC.Correctness.fst # END-TO-END THEOREM
 ├── Pulse.Lib.GC/                     # Pulse implementation modules
-│   ├── Pulse.Lib.GC.Heap.fst         # Heap operations
-│   ├── Pulse.Lib.GC.Object.fst       # Object header operations
 │   ├── Pulse.Lib.GC.Fields.fst       # Field access, successors
 │   ├── Pulse.Lib.GC.Closure.fst      # Closure/infix handling
-│   ├── Pulse.Lib.GC.Stack.fst        # Gray stack
 │   ├── Pulse.Lib.GC.Mark.fst         # Mark phase implementation
 │   ├── Pulse.Lib.GC.Sweep.fst        # Sweep phase implementation
 │   └── Pulse.Lib.GC.fst              # Top-level GC entry point
 ├── Makefile
 └── README.md
 ```
+
+Shared infrastructure (Heap, Object, Stack, Header, Graph, DFS, etc.) lives in `../common/`.
+Concurrent extensions (TriColor, AtomicColor, WriteBarrier, ShadowStack) live in `../concurrent/`.
 
 ## Building
 
@@ -55,32 +52,40 @@ The main theorem in `Spec/Pulse.Spec.GC.Correctness.fst` proves the **Five Pilla
 val end_to_end_correctness :
   (h_init: heap) -> (st: seq U64.t) -> (roots: seq hp_addr) -> (fp: hp_addr) ->
   Lemma
-    (requires well_formed_heap h_init /\ stack_props h_init st /\ ...)
+    (requires well_formed_heap h_init /\ graph_wf h_init /\ stack_props h_init st /\ ...)
     (ensures
-      let h_sweep = fst (sweep (mark h_init st) fp) in
-      (* Pillar 1 *) well_formed_heap h_sweep /\
-      (* Pillar 2 *) (∀ x. survives x ⟺ reachable roots x) /\
-      (* Pillar 3 *) (∀ x. survivors have same successors) /\
-      (* Pillar 4 *) (∀ x. color == white ∨ blue) /\
-      (* Pillar 5 *) (∀ x. field data unchanged))
+      let h_mark  = mark h_init st in
+      let h_sweep = fst (sweep h_mark fp) in
+      (* Pillar 1: Heap Integrity *)     well_formed_heap h_sweep /\
+      (* Pillar 2: Reachability *)       (∀ x. is_black x h_mark ⟺ reachable roots x) /\
+      (* Pillar 3: Structure *)          (∀ x. reachable x ⟹ successors preserved) /\
+      (* Pillar 4: State Reset *)        (∀ x. is_white x h_sweep) /\
+      (* Pillar 5: Data Transparency *)  (∀ x. reachable x ⟹ field data unchanged))
 ```
 
-## Status
+Two corollaries:
+- **`gc_safety`**: every reachable object survives collection.
+- **`gc_completeness`**: every unreachable object is reclaimed.
 
-| Component | Files | Lines | Admits | Status |
-|-----------|-------|-------|--------|--------|
-| Spec/ | 8 | ~1,600 | 20 | Structure complete, proofs TODO |
-| Pulse.Lib.GC/ | 8 | ~1,800 | N/A | Implementation complete (needs Pulse) |
+## Verification Status — Fully Verified ✅
 
-### Admits by File
+| Component | Files | Lines | Admits | Assumes | Status |
+|-----------|------:|------:|-------:|--------:|--------|
+| Spec/ | 5 | ~5,000 | **0** | 1 | ✅ Fully verified |
+| Pulse.Lib.GC/ | 5 | ~1,000 | N/A | N/A | Implementation (needs Pulse) |
 
-| File | Count | Key Lemmas |
-|------|-------|------------|
-| Graph.fst | 3 | reach_trans, successors_mem_edge |
-| Fields.fst | 2 | objects_valid, color_change_preserves_objects |
-| Mark.fst | 6 | mark_preserves_wf, mark_black_iff_reachable |
-| Sweep.fst | 7 | sweep_preserves_wf, sweep_black_survives |
-| Correctness.fst | 2 | gc_preserves_structure, gc_preserves_data |
+### Spec Modules
+
+| File | Lines | Admits | Assumes | Notes |
+|------|------:|-------:|--------:|-------|
+| `Pulse.Spec.GC.Mark.fst` | ~3,400 | 0 | 0 | Mark phase: DFS-based marking |
+| `Pulse.Spec.GC.Sweep.fst` | ~1,240 | 0 | 0 | Sweep phase: reclaim + free list |
+| `Pulse.Spec.GC.Correctness.fst` | ~300 | 0 | 0 | End-to-end theorem (5 pillars) |
+| `Pulse.Spec.GC.SeqMemLemmas.fst` | ~90 | 0 | 1 | Sequence membership helpers |
+
+### Color Model
+
+Mark-and-sweep uses a **3-color model**: White (initial/free), Gray (mark frontier), Black (marked/reachable). There is no Blue — this is a global invariant (`no_blue_objects`) maintained throughout mark and sweep.
 
 ## Key Differences from Low*
 
@@ -95,6 +100,4 @@ val end_to_end_correctness :
 ## References
 
 - [Pulse Documentation](https://github.com/FStarLang/pulse)
-- [Original Paper](../gc-proof.pdf)
-- [Low* Implementation](../Proofs/Impl.GC_closure_infix_ver3.fst)
-- [Original Specifications](../Proofs/Spec.*.fsti)
+- [F* Tutorial](https://fstar-lang.org/tutorial/)

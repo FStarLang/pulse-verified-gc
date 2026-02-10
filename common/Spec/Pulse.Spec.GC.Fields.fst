@@ -1098,11 +1098,12 @@ let color_change_preserves_points_to_self (g: heap) (obj: obj_addr) (c: color) (
 
 /// Field addresses of one object don't overlap with header address of another.
 /// Requires idx < wosize for the src < obj case (objects_separated).
-#push-options "--z3rlimit 200"
+#push-options "--z3rlimit 1000"
 private let field_addr_ne_hd_other (g: heap) (src: obj_addr) (obj: obj_addr) 
   (idx: U64.t{U64.v idx < pow2 54})
   : Lemma (requires src <> obj /\
                      Seq.mem src (objects 0UL g) /\ Seq.mem obj (objects 0UL g) /\
+                     well_formed_heap g /\
                      U64.v idx < U64.v (wosize_of_object_as_wosize src g) /\
                      U64.v (field_address_raw src idx) < heap_size /\
                      U64.v (field_address_raw src idx) % 8 = 0)
@@ -1112,28 +1113,17 @@ private let field_addr_ne_hd_other (g: heap) (src: obj_addr) (obj: obj_addr)
     Pulse.Spec.GC.Heap.hd_address_spec obj;
     let ws = U64.v (wosize_of_object_as_wosize src g) in
     let sum = U64.v src + FStar.Mul.(U64.v idx * 8) in
-    if sum < pow2 64 then begin
-      if U64.v src > U64.v obj then ()
-      else begin
-        // src < obj: objects_separated gives obj > src + ws*8
-        objects_separated 0UL g src obj;
-        // field_addr = src + idx*8, idx < ws, so field_addr < src + ws*8
-        // hd_address(obj) = obj - 8. obj > src + ws*8 and both 8-aligned,
-        // so obj >= src + ws*8 + 8, hence hd_address(obj) >= src + ws*8
-        // field_addr < src + ws*8 <= hd_address(obj), so they differ
-        ()
-      end
-    end else begin
-      // Overflow case: sum >= 2^64. With idx < ws < 2^54, idx*8 < 2^57.
-      // src + idx*8 >= 2^64 requires src >= 2^64 - 2^57.
-      // For equality: (sum mod 2^64) = obj - 8, i.e., idx*8 = 2^64 + obj - src - 8.
-      // RHS >= 2^64 - heap_size. Since idx*8 < ws*8 < 2^57,
-      // need 2^64 - heap_size < 2^57, i.e., heap_size > 2^64 - 2^57.
-      // Even so, objects_separated: obj > src + ws*8. With src < obj:
-      //   idx*8 = 2^64 + obj - src - 8 > 2^64 + ws*8 - 8 (not useful since ws*8 > 0)
-      // Actually: idx*8 < ws*8, but 2^64 + obj - src - 8 > 2^64 - heap_size.
-      // For very large heaps, admit this edge case.
-      admit()
+    // Prove overflow is impossible: wf_object_bound gives src + ws*8 <= heap_size.
+    // Since idx < ws, we get sum = src + idx*8 < src + ws*8 <= heap_size < pow2 64.
+    wf_object_bound g src;
+    assert (U64.v src + op_Multiply ws 8 <= heap_size);
+    assert (sum < pow2 64);
+    // Now in the non-overflow case:
+    if U64.v src > U64.v obj then ()
+    else begin
+      // src < obj: objects_separated gives obj > src + ws*8
+      objects_separated 0UL g src obj;
+      ()
     end
 #pop-options
 

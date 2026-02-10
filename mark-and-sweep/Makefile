@@ -1,9 +1,10 @@
-# Makefile for Pulse GC
+# Makefile for Pulse GC (Mark-and-Sweep)
 #
-# Verifies and extracts the verified garbage collector
-# Includes both sequential and concurrent GC modules
+# Verifies and extracts the sequential stop-the-world garbage collector.
+# Shared infrastructure (Heap, Object, Stack) lives in ../common/Pulse.Lib.GC/
+# Concurrent modules live in ../concurrent/
 
-.PHONY: all verify verify-concurrent extract clean help
+.PHONY: all verify extract clean help
 
 # ------------------------------------------------------------------------------
 # Configuration
@@ -27,58 +28,46 @@ FSTAR_BASE = fstar.exe \
 --warn_error -321
 
 # For Spec modules (pure F*, no Pulse) - includes common/
-FSTAR_SPEC = $(FSTAR_BASE) --include Spec --include Lib --include $(COMMON_DIR)/Spec --include $(COMMON_DIR)/Lib
+FSTAR_SPEC = $(FSTAR_BASE) --include Spec --include Lib \
+--include $(COMMON_DIR)/Spec --include $(COMMON_DIR)/Lib
 
-# For Lib modules (Pulse) - includes common/
-FSTAR_LIB = $(FSTAR_BASE) $(PULSE_INCLUDES) --include Pulse.Lib.GC --include Lib --include $(COMMON_DIR)/Spec --include $(COMMON_DIR)/Lib --load_cmxs pulse
+# For Lib modules (Pulse) - includes common/ (Spec + Lib + Pulse.Lib.GC)
+FSTAR_LIB = $(FSTAR_BASE) $(PULSE_INCLUDES) --include Pulse.Lib.GC --include Lib \
+--include $(COMMON_DIR)/Spec --include $(COMMON_DIR)/Lib \
+--include $(COMMON_DIR)/Pulse.Lib.GC --load_cmxs pulse
 
 # ------------------------------------------------------------------------------
 # Source files
 # ------------------------------------------------------------------------------
 
-LIB_HEADER =
-
-# Base specification modules (sequential) - uses common/ for Base, Heap, Object, Graph, DFS
+# Specification modules (sequential mark-and-sweep)
 SPEC_MODULES = \
-Spec/Pulse.Spec.GC.HeapModel.fst \
+Spec/Pulse.Spec.GC.SeqMemLemmas.fst \
 Spec/Pulse.Spec.GC.Mark.fst \
 Spec/Pulse.Spec.GC.Sweep.fst \
 Spec/Pulse.Spec.GC.Correctness.fst
 
-# Concurrent GC specification modules (NEW)
-SPEC_CONCURRENT_MODULES = \
-Spec/Pulse.Spec.GC.Color.fst \
-Spec/Pulse.Spec.GC.TriColor.fst
-
-# Base implementation modules (sequential)
+# Implementation modules (sequential mark-and-sweep)
+# Heap, Object, Stack are now in common/Pulse.Lib.GC/
 LIB_MODULES = \
-Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst \
-Pulse.Lib.GC/Pulse.Lib.GC.Object.fst \
 Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst \
 Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst \
-Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst \
 Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst \
 Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst \
 Pulse.Lib.GC/Pulse.Lib.GC.fst
 
-# Concurrent GC implementation modules (NEW)
-LIB_CONCURRENT_MODULES = \
-Pulse.Lib.GC/Pulse.Lib.GC.AtomicColor.fst \
-Pulse.Lib.GC/Pulse.Lib.GC.ShadowStack.fst \
-Pulse.Lib.GC/Pulse.Lib.GC.WriteBarrier.fst
-
-ALL_MODULES = $(LIB_HEADER) $(SPEC_MODULES) $(SPEC_CONCURRENT_MODULES) $(LIB_MODULES) $(LIB_CONCURRENT_MODULES)
+ALL_MODULES = $(SPEC_MODULES) $(LIB_MODULES)
 
 # ------------------------------------------------------------------------------
-# Default target: verify everything (full mode - no lax)
+# Default target: verify everything
 # ------------------------------------------------------------------------------
 
 all: verify
 
 verify:
-	@echo "=== Verifying Pulse GC (full mode) ==="
+	@echo "=== Verifying Mark-and-Sweep GC ==="
 	@echo ""
-	@echo "--- Specifications (Sequential) ---"
+	@echo "--- Specifications ---"
 	@for f in $(SPEC_MODULES); do \
 if [ -f "$$f" ]; then \
 echo "  $$f"; \
@@ -86,15 +75,7 @@ $(FSTAR_SPEC) $$f || exit 1; \
 fi; \
 done
 	@echo ""
-	@echo "--- Specifications (Concurrent) ---"
-	@for f in $(SPEC_CONCURRENT_MODULES); do \
-if [ -f "$$f" ]; then \
-echo "  $$f"; \
-$(FSTAR_SPEC) $$f || echo "    (errors - work in progress)"; \
-fi; \
-done
-	@echo ""
-	@echo "--- Implementation (Sequential) ---"
+	@echo "--- Implementation ---"
 	@for f in $(LIB_MODULES); do \
 if [ -f "$$f" ]; then \
 echo "  $$f"; \
@@ -102,37 +83,7 @@ $(FSTAR_LIB) $$f 2>/dev/null || echo "    (skipped - Pulse not available or erro
 fi; \
 done
 	@echo ""
-	@echo "--- Implementation (Concurrent) ---"
-	@for f in $(LIB_CONCURRENT_MODULES); do \
-if [ -f "$$f" ]; then \
-echo "  $$f"; \
-$(FSTAR_LIB) $$f 2>/dev/null || echo "    (errors - work in progress)"; \
-fi; \
-done
-	@echo ""
 	@echo "=== Verification complete ==="
-
-# Verify only concurrent modules
-verify-concurrent:
-	@echo "=== Verifying Concurrent GC Modules ==="
-	@echo ""
-	@echo "--- Specifications ---"
-	@for f in $(SPEC_CONCURRENT_MODULES); do \
-if [ -f "$$f" ]; then \
-echo "  $$f"; \
-$(FSTAR_SPEC) $$f || echo "    (errors)"; \
-fi; \
-done
-	@echo ""
-	@echo "--- Implementation ---"
-	@for f in $(LIB_CONCURRENT_MODULES); do \
-if [ -f "$$f" ]; then \
-echo "  $$f"; \
-$(FSTAR_LIB) $$f 2>/dev/null || echo "    (errors)"; \
-fi; \
-done
-	@echo ""
-	@echo "=== Done ==="
 
 # ------------------------------------------------------------------------------
 # Extraction to C via KaRaMeL
@@ -169,20 +120,17 @@ clean:
 # ------------------------------------------------------------------------------
 
 help:
-	@echo "Pulse GC Makefile"
+	@echo "Mark-and-Sweep GC Makefile"
 	@echo ""
 	@echo "Targets:"
-	@echo "  make                - Verify all (full mode, default)"
+	@echo "  make                - Verify all (default)"
 	@echo "  make verify         - Same as above"
-	@echo "  make verify-concurrent - Verify only concurrent GC modules"
 	@echo "  make extract        - Extract to C via KaRaMeL"
 	@echo "  make clean          - Remove generated files"
 	@echo ""
 	@echo "Modules:"
-	@echo "  Lib/            - Pure F* library (Header bitvector proofs)"
-	@echo "  Spec/           - Pure F* specifications"
-	@echo "    - Sequential: Base, Graph, Heap, Object, Fields, Mark, Sweep, Correctness"
-	@echo "    - Concurrent: Color, TriColor (NEW)"
-	@echo "  Pulse.Lib.GC/   - Pulse implementations"
-	@echo "    - Sequential: Heap, Object, Fields, Closure, Stack, Mark, Sweep"
-	@echo "    - Concurrent: AtomicColor, ShadowStack, WriteBarrier (NEW)"
+	@echo "  Spec/           - Pure F* specifications (Mark, Sweep, Correctness)"
+	@echo "  Pulse.Lib.GC/   - Pulse implementations (Fields, Closure, Mark, Sweep, GC)"
+	@echo ""
+	@echo "Shared infrastructure (Heap, Object, Stack) is in ../common/Pulse.Lib.GC/"
+	@echo "Concurrent modules (TriColor, AtomicColor, etc.) are in ../concurrent/"
