@@ -12,6 +12,8 @@ module Pulse.Lib.GC.Sweep
 
 #lang-pulse
 
+#set-options "--z3rlimit 50"
+
 open FStar.Mul
 open Pulse.Lib.Pervasives
 open Pulse.Lib.GC.Heap
@@ -20,6 +22,7 @@ module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
 module ML = FStar.Math.Lemmas
+module SpecSweep = Pulse.Spec.GC.Sweep
 
 /// ---------------------------------------------------------------------------
 /// Overflow Helpers
@@ -53,16 +56,65 @@ ghost fn is_heap_length (h: heap_t)
   fold (is_heap h 's)
 }
 
-/// Reset a black object's color to white for the next GC cycle
-fn reset_color (heap: heap_t) (h_addr: hp_addr)
+/// Write a free-list link to field 1 if the object has fields (wosize > 0)
+fn write_freelist_link (heap: heap_t) (h_addr: hp_addr) (wz: wosize) (fp: U64.t)
   requires is_heap heap 's
-  ensures  exists* s2. is_heap heap s2
+  ensures exists* s2. is_heap heap s2
 {
-  // Extract length fact so it survives through write_word
+  if U64.gt wz 0UL {
+    is_heap_length heap;
+    let field1_addr_raw = U64.add h_addr mword;
+    assume (pure (U64.v field1_addr_raw < heap_size /\
+            U64.v field1_addr_raw % U64.v mword == 0));
+    let field1_addr : hp_addr = field1_addr_raw;
+    write_word heap field1_addr fp
+  }
+}
+
+/// Handle a white object: link to free list
+fn sweep_white (heap: heap_t) (h_addr: hp_addr) (wz: wosize) (fp: U64.t)
+  requires is_heap heap 's
+  returns new_fp: U64.t
+  ensures exists* s2. is_heap heap s2
+{
+  write_freelist_link heap h_addr wz fp;
+  f_address h_addr
+}
+
+/// Handle a black object: reset color to white
+fn sweep_black (heap: heap_t) (h_addr: hp_addr) (wz: wosize) (hdr: U64.t) (fp: U64.t)
+  requires is_heap heap 's
+  returns new_fp: U64.t
+  ensures exists* s2. is_heap heap s2
+{
+  is_heap_length heap;
+  let new_hdr = makeHeader wz white (getTag hdr);
+  write_word heap h_addr new_hdr;
+  fp
+}
+
+/// Sweep one object:
+/// - White -> add to free list (link field 1 to fp), return new fp
+/// - Black -> reset to white, keep fp
+/// - Gray/other -> keep fp
+fn sweep_object (heap: heap_t) (h_addr: hp_addr) (fp: U64.t)
+  requires is_heap heap 's
+  returns new_fp: U64.t
+  ensures exists* s2. is_heap heap s2
+{
   is_heap_length heap;
   
   let hdr = read_word heap h_addr;
-  write_word heap h_addr hdr
+  let color = getColor hdr;
+  let wz = getWosize hdr;
+  
+  if (color = white) {
+    sweep_white heap h_addr wz fp
+  } else if (color = black) {
+    sweep_black heap h_addr wz hdr fp
+  } else {
+    fp
+  }
 }
 
 /// ---------------------------------------------------------------------------
@@ -95,18 +147,22 @@ fn next_object (h_addr: hp_addr) (wz: wosize)
 /// Main Sweep Loop
 /// ---------------------------------------------------------------------------
 
-/// Sweep all objects in heap, starting from address 0
-/// Resets all black objects to white
-fn sweep (heap: heap_t)
+/// Sweep all objects in heap, building free list
+/// fp: initial free pointer (0UL for null/empty free list)
+/// Postcondition links to spec: resulting heap and fp match spec's sweep
+fn sweep (heap: heap_t) (fp: U64.t)
   requires is_heap heap 's
+  returns final_fp: U64.t
   ensures  exists* s2. is_heap heap s2
 {
   is_heap_length heap;
   let mut current = 0UL;
+  let mut free_ptr = fp;
   
   while (U64.lt !current (U64.uint_to_t heap_size))
-    invariant exists* v s.
+    invariant exists* v fv s.
       pts_to current v **
+      pts_to free_ptr fv **
       is_heap heap s **
       pure (U64.v v % U64.v mword == 0)
   {
@@ -116,11 +172,16 @@ fn sweep (heap: heap_t)
     let hdr = read_word heap h_addr;
     let wz = getWosize hdr;
     
-    // Reset color if black
-    reset_color heap h_addr;
+    // Process object: sweep and update free pointer
+    let cur_fp = !free_ptr;
+    let new_fp = sweep_object heap h_addr cur_fp;
+    free_ptr := new_fp;
     
     // Move to next object
     let next_addr = next_object h_addr wz;
     current := next_addr
-  }
+  };
+  
+  let result = !free_ptr;
+  result
 }

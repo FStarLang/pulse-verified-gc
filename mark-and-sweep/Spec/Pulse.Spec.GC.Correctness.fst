@@ -280,3 +280,41 @@ let gc_completeness h_init st roots fp =
   // mark_black_is_reachable: is_black x h_mark ==> reachable x
   // Contrapositive: ~(reachable x) ==> ~(is_black x h_mark)
   mark_black_is_reachable h_init st roots
+
+/// ---------------------------------------------------------------------------
+/// BRIDGE TO ABSTRACT GC POSTCONDITION
+/// ---------------------------------------------------------------------------
+/// gc_postcondition (from GCPost) wraps pillars 1 and 4 as an abstract prop.
+/// This lemma derives gc_postcondition from end_to_end_correctness.
+
+open Pulse.Spec.GC.GCPost
+
+val gc_postcondition_from_correctness :
+  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: obj_addr) ->
+  Lemma
+    (requires 
+      well_formed_heap h_init /\
+      stack_props h_init st /\
+      root_props h_init roots /\
+      (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
+      no_black_objects h_init /\
+      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
+      (let graph = create_graph h_init in
+       let roots' = HeapGraph.coerce_to_vertex_list roots in
+       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+    (ensures gc_postcondition (fst (sweep (mark h_init st) fp)))
+
+let gc_postcondition_from_correctness h_init st roots fp =
+  end_to_end_correctness h_init st roots fp;
+  let h_mark = mark h_init st in
+  let h_sweep = fst (sweep h_mark fp) in
+  // end_to_end_correctness gives: well_formed_heap h_sweep
+  // and all objects white in graph vertices
+  // Bridge from graph vertices to objects 0UL:
+  mark_preserves_wf h_init st;
+  mark_no_grey_remains h_init st;
+  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  sweep_preserves_objects h_mark fp;
+  sweep_resets_colors h_mark fp;
+  sweep_preserves_wf h_mark fp;
+  gc_postcondition_intro h_sweep

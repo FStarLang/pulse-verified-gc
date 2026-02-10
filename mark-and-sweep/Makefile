@@ -31,7 +31,7 @@ FSTAR_SPEC = $(FSTAR_BASE) --include Spec --include Lib \
 --include $(COMMON_DIR)/Spec --include $(COMMON_DIR)/Lib
 
 # For Lib modules (Pulse) - includes common/ (Spec + Lib + Pulse.Lib.GC)
-FSTAR_LIB = $(FSTAR_BASE) $(PULSE_INCLUDES) --include Pulse.Lib.GC --include Lib \
+FSTAR_LIB = $(FSTAR_BASE) $(PULSE_INCLUDES) --include Spec --include Pulse.Lib.GC --include Lib \
 --include $(COMMON_DIR)/Spec --include $(COMMON_DIR)/Lib \
 --include $(COMMON_DIR)/Pulse.Lib.GC --load_cmxs pulse
 
@@ -44,7 +44,9 @@ SPEC_MODULES = \
 Spec/Pulse.Spec.GC.SeqMemLemmas.fst \
 Spec/Pulse.Spec.GC.Mark.fst \
 Spec/Pulse.Spec.GC.Sweep.fst \
-Spec/Pulse.Spec.GC.Correctness.fst
+Spec/Pulse.Spec.GC.Correctness.fst \
+Spec/Pulse.Spec.GC.GCPost.fst \
+Spec/Pulse.Spec.GC.MarkInv.fst
 
 # Implementation modules (sequential mark-and-sweep)
 # Heap, Object, Stack are now in common/Pulse.Lib.GC/
