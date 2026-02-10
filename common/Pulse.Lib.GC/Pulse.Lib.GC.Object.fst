@@ -43,7 +43,6 @@ type tag = t:U64.t{U64.v t <= 255}
 /// Color constants
 /// ---------------------------------------------------------------------------
 
-let blue  : color = Header.Blue
 let white : color = Header.White
 let gray  : color = Header.Gray
 let black : color = Header.Black
@@ -73,7 +72,7 @@ let getColor (hdr: U64.t) : color =
   // raw is 0-3, so unpack always succeeds
   match Header.unpack_color (U64.v raw) with
   | Some c -> c
-  | None -> Header.Blue // unreachable: raw <= 3
+  | None -> Header.White // unreachable: raw <= 3
 
 /// Extract tag from header (bits 0-7)
 let getTag (hdr: U64.t) : tag =
@@ -108,9 +107,6 @@ assume val makeHeader_getTag : (wz: wosize) -> (c: color) -> (t: tag) ->
 let color_of_object (hdr: U64.t) : color =
   getColor hdr
 
-let is_blue_object (hdr: U64.t) : bool =
-  getColor hdr = blue
-
 let is_white_object (hdr: U64.t) : bool =
   getColor hdr = white
 
@@ -135,9 +131,6 @@ let is_object (heap: heap_t) (h: hp_addr)
       getColor hdr == c /\
       getTag hdr == t
     )
-
-let isBlueObject (heap: heap_t) (h: hp_addr) : slprop =
-  exists* wz t. is_object heap h wz blue t
 
 let isWhiteObject (heap: heap_t) (h: hp_addr) : slprop =
   exists* wz t. is_object heap h wz white t
@@ -188,4 +181,3 @@ let get_tag = getTag
 let is_black = is_black_object
 let is_white = is_white_object
 let is_gray = is_gray_object
-let is_blue = is_blue_object

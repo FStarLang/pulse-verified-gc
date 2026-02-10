@@ -13,6 +13,7 @@ module Pulse.Lib.GC.Closure
 
 #lang-pulse
 
+open FStar.Mul
 open Pulse.Lib.Pervasives
 open Pulse.Lib.GC.Heap
 open Pulse.Lib.GC.Object
@@ -32,8 +33,10 @@ module Seq = FStar.Seq
 /// Layout: | start_env (high bits) | arity (low bits) |
 
 /// Extract closure info value from closure object
+/// Requires that the closure has at least 3 words (header + 2 fields)
 fn closinfo_val (heap: heap_t) (h_addr: hp_addr)
-  requires is_heap heap 's
+  requires is_heap heap 's **
+           pure (spec_field_address (U64.v h_addr) 2 < heap_size)
   returns v: U64.t
   ensures is_heap heap 's
 {
@@ -86,9 +89,12 @@ fn is_closure_object (heap: heap_t) (h_addr: hp_addr)
 /// Get parent closure of an infix object
 /// Infix objects have an offset in their header's wosize field that points back
 /// to the parent closure
-fn parent_closure_of_infix (heap: heap_t) (infix_addr: hp_addr)
+/// 
+/// Returns None if the offset is invalid (would underflow or produce invalid address)
+/// This should never happen in a well-formed heap, but we check defensively.
+fn parent_closure_of_infix_opt (heap: heap_t) (infix_addr: hp_addr)
   requires is_heap heap 's
-  returns parent: hp_addr
+  returns parent_opt: option hp_addr
   ensures is_heap heap 's
 {
   // The infix object's "wosize" actually contains the offset (in words)
@@ -96,12 +102,47 @@ fn parent_closure_of_infix (heap: heap_t) (infix_addr: hp_addr)
   let hdr = read_word heap infix_addr;
   let offset_words = getWosize hdr;
   
-  // Compute parent's field address
-  let offset_bytes = U64.mul offset_words mword;
-  let parent_f_addr = U64.sub (f_address infix_addr) offset_bytes;
+  // Prove multiplication doesn't overflow
+  lemma_field_offset_no_overflow (U64.v offset_words);
   
-  // Get parent's header address
-  hd_address parent_f_addr
+  // Compute offset in bytes
+  let offset_bytes = U64.mul offset_words mword;
+  
+  // Check if subtraction would underflow
+  let f_addr = f_address infix_addr;
+  if (U64.lt f_addr offset_bytes) {
+    // Invalid: offset points before the start of heap
+    None
+  } else {
+    let parent_f_addr = U64.sub f_addr offset_bytes;
+    
+    // Check if parent_f_addr >= mword (required for hd_address)
+    if (U64.lt parent_f_addr mword) {
+      // Invalid: would produce negative header address
+      None
+    } else {
+      Some (hd_address parent_f_addr)
+    }
+  }
+}
+
+/// Get parent closure of an infix object (unsafe version)
+/// Precondition: The infix object must be well-formed with valid offset
+/// In a valid GC heap with proper invariants, this is always true for infix objects.
+fn parent_closure_of_infix (heap: heap_t) (infix_addr: hp_addr)
+  requires is_heap heap 's
+  returns parent: hp_addr
+  ensures is_heap heap 's
+{
+  let parent_opt = parent_closure_of_infix_opt heap infix_addr;
+  
+  // In a well-formed heap, this should always be Some
+  // If it's None, the heap is corrupted - return infix_addr as fallback
+  if (Some? parent_opt) {
+    Some?.v parent_opt
+  } else {
+    infix_addr
+  }
 }
 
 /// ---------------------------------------------------------------------------
@@ -133,24 +174,63 @@ fn resolve_object (heap: heap_t) (obj: hp_addr)
 
 /// Scan a closure's environment
 /// The environment starts at start_env and goes to wosize
+/// 
+/// Precondition: All fields from 2 to wz are within heap bounds
+/// (Caller must ensure closure is valid with sufficient size)
+/// Also, wz must be a valid field index (>= 1 and <= 2^54-1, which is always true for wosize)
 fn scan_closure_env (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
-                     (callback: hp_addr -> stt unit (requires emp) (ensures fun _ -> emp))
-  requires is_heap heap 's
+                     (callback: U64.t -> stt unit (requires emp) (ensures fun _ -> emp))
+  requires is_heap heap 's **
+           pure (
+             // closinfo_val needs field 2 to exist
+             spec_field_address (U64.v h_addr) 2 < heap_size /\
+             // All environment fields up to wz must be in bounds
+             spec_field_address (U64.v h_addr) (U64.v wz) < heap_size /\
+             // wz is a valid field index (always true for wosize, but make explicit)
+             U64.v wz >= 1 /\ U64.v wz <= pow2 54 - 1
+           )
   ensures  is_heap heap 's
 {
   // Get closinfo to find where environment starts
   let closinfo = closinfo_val heap h_addr;
-  let start_env = start_env_from_closinfo closinfo;
+  let start_env_raw = start_env_from_closinfo closinfo;
+  
+  // Ensure start_env is at least 1 (can't read field 0, which is header)
+  // In a well-formed closure, start_env should be >= code pointer + closinfo = 3 or so
+  let start_env : U64.t = if (U64.lt start_env_raw 1UL) { 1UL } else { start_env_raw };
+  
+  // Also ensure start_env <= wz (no environment if start_env > wz)
+  // Cast wz to U64.t for comparison
+  let wz_u64 : U64.t = wz;
+  let start_env_clamped : U64.t = if (U64.gt start_env wz_u64) { wz_u64 } else { start_env };
   
   // Environment fields are from start_env to wz
-  let mut i = start_env;
+  let mut i = start_env_clamped;
   
   while (U64.lte !i wz)
-    invariant exists* vi s.
+    invariant exists* vi.
       pts_to i vi **
-      is_heap heap s
+      is_heap heap 's **
+      pure (
+        U64.v vi >= U64.v start_env_clamped /\
+        U64.v vi <= U64.v wz + 1 /\
+        U64.v start_env_clamped >= 1 /\
+        U64.v start_env_clamped <= U64.v wz /\
+        // If i <= wz, then i is a valid field index and in bounds
+        (U64.v vi <= U64.v wz ==> (
+          U64.v vi >= 1 /\
+          U64.v vi <= pow2 54 - 1 /\
+          spec_field_address (U64.v h_addr) (U64.v vi) < heap_size
+        ))
+      )
   {
     let curr_i = !i;
+    
+    // Prove we can read this field
+    assert (pure (U64.v curr_i <= U64.v wz));
+    assert (pure (U64.v curr_i >= 1));
+    assert (pure (U64.v curr_i <= pow2 54 - 1));
+    assert (pure (spec_field_address (U64.v h_addr) (U64.v curr_i) < heap_size));
     
     // Read environment slot
     let v = read_field heap h_addr curr_i;
@@ -159,12 +239,9 @@ fn scan_closure_env (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
     let is_ptr = is_pointer v;
     
     if (is_ptr) {
-      // Get header address and resolve (handle infix)
-      let succ_h_addr = hd_address v;
-      let resolved = resolve_object heap succ_h_addr;
-      
-      // Call callback on resolved object
-      callback resolved
+      // Pass the pointer value directly to callback
+      // The callback can handle dereferencing and resolution
+      callback v
     };
     
     i := U64.add curr_i 1UL

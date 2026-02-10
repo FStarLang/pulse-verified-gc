@@ -507,9 +507,9 @@ let sweep_white_stays_white g fp =
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
-/// After sweep, all objects are white (black→white, white stays white, no gray/blue by precondition)
+/// After sweep, all objects are white (black→white, white stays white, no gray by precondition)
 val sweep_resets_colors : (g: heap) -> (fp: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ noGreyObjects g /\ no_blue_objects g /\ 
+  Lemma (requires well_formed_heap g /\ noGreyObjects g /\ 
                   (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
         (ensures (forall (x: obj_addr). 
                    Seq.mem x (objects 0UL (fst (sweep g fp))) ==>
@@ -526,7 +526,6 @@ let sweep_resets_colors g fp =
   = assert (Seq.mem x (objects 0UL g));
     colors_exhaustive_and_exclusive x g;
     assert (~(is_gray x g));
-    assert (~(is_blue x g));
     if is_white x g then ()
     else if is_black x g then ()
     else ()
@@ -534,7 +533,7 @@ let sweep_resets_colors g fp =
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 val sweep_no_gray_or_black : (g: heap) -> (fp: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ noGreyObjects g /\ no_blue_objects g /\ 
+  Lemma (requires well_formed_heap g /\ noGreyObjects g /\ 
                   (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
         (ensures (forall (x: obj_addr). 
                    Seq.mem x (objects 0UL (fst (sweep g fp))) ==>
@@ -605,7 +604,7 @@ private let sweep_object_preserves_other_body_read
     
     // Now prove read_word preservation for each sweep_object case
     if is_white obj g then begin
-      // White: only set_field at obj (no makeBlue)
+      // White: only set_field at obj
       let ws_obj = wosize_of_object obj g in
       let hd_obj = Pulse.Spec.GC.Heap.hd_address obj in
       if U64.v ws_obj > 0 && U64.v hd_obj + U64.v mword * 2 <= heap_size then begin
@@ -620,7 +619,7 @@ private let sweep_object_preserves_other_body_read
       set_object_color_read_word obj a g Header.White;
       assert (read_word g' a == read_word g a)
     end else begin
-      // Blue: no-op
+      // Other: no-op
       colors_exclusive obj g;
       assert (read_word g' a == read_word g a)
     end
@@ -669,7 +668,7 @@ private let sweep_object_preserves_other_header
       assert (U64.v hd_x + 8 <= U64.v obj)
     end;
     if is_white obj g then begin
-      // White: only set_field at obj (no makeBlue), writes at obj when ws > 0
+      // White: only set_field at obj, writes at obj when ws > 0
       let ws_obj = wosize_of_object obj g in
       let hd_obj = Pulse.Spec.GC.Heap.hd_address obj in
       if U64.v ws_obj > 0 && U64.v hd_obj + U64.v mword * 2 <= heap_size then begin

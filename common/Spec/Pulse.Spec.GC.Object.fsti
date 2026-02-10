@@ -3,7 +3,7 @@
 /// ---------------------------------------------------------------------------
 ///
 /// This module provides:
-/// - Color type (color_sem: Blue | White | Gray | Black)
+/// - Color type (color_sem: White | Gray | Black)
 /// - Header field extraction (wosize, color, tag)
 /// - Color predicates (is_black, is_white, etc.)
 ///
@@ -29,7 +29,7 @@ open Pulse.Lib.Header
 /// Color Type (re-exported from Header)
 /// ---------------------------------------------------------------------------
 
-/// Color type is now algebraic (Blue | White | Gray | Black)
+/// Color type is now algebraic (White | Gray | Black)
 let color = color_sem
 
 /// ---------------------------------------------------------------------------
@@ -120,7 +120,6 @@ val wosize_of_object_spec : (h_addr: obj_addr) -> (g: heap) ->
 val is_black (h_addr: obj_addr) (g: heap) : GTot bool
 val is_white (h_addr: obj_addr) (g: heap) : GTot bool
 val is_gray (h_addr: obj_addr) (g: heap) : GTot bool
-val is_blue (h_addr: obj_addr) (g: heap) : GTot bool
 
 /// ---------------------------------------------------------------------------
 /// Color Characterization Lemmas
@@ -138,10 +137,6 @@ val is_black_iff (h_addr: obj_addr) (g: heap)
 val is_white_iff (h_addr: obj_addr) (g: heap)
   : Lemma (is_white h_addr g <==> color_of_object h_addr g = White)
 
-/// is_blue means color_of_object = Blue
-val is_blue_iff (h_addr: obj_addr) (g: heap)
-  : Lemma (is_blue h_addr g <==> color_of_object h_addr g = Blue)
-
 /// ---------------------------------------------------------------------------
 /// Color Disjointness Lemmas (trivial with algebraic type)
 /// ---------------------------------------------------------------------------
@@ -156,18 +151,6 @@ val white_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
 
 val gray_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
   : Lemma (requires is_gray x g /\ is_black y g)
-          (ensures x <> y)
-
-val blue_white_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_blue x g /\ is_white y g)
-          (ensures x <> y)
-
-val blue_gray_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_blue x g /\ is_gray y g)
-          (ensures x <> y)
-
-val blue_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_blue x g /\ is_black y g)
           (ensures x <> y)
 
 /// ---------------------------------------------------------------------------
@@ -193,7 +176,6 @@ val set_object_color (h_addr: obj_addr) (g: heap) (c: color) : GTot heap
 val makeBlack (h_addr: obj_addr) (g: heap) : GTot heap
 val makeWhite (h_addr: obj_addr) (g: heap) : GTot heap
 val makeGray (h_addr: obj_addr) (g: heap) : GTot heap
-val makeBlue (h_addr: obj_addr) (g: heap) : GTot heap
 
 /// Equation lemmas: make* = set_object_color with specific color
 val makeBlack_eq : (h_addr: obj_addr) -> (g: heap) ->
@@ -204,9 +186,6 @@ val makeWhite_eq : (h_addr: obj_addr) -> (g: heap) ->
 
 val makeGray_eq : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (makeGray h_addr g == set_object_color h_addr g Gray)
-
-val makeBlue_eq : (h_addr: obj_addr) -> (g: heap) ->
-  Lemma (makeBlue h_addr g == set_object_color h_addr g Blue)
 
 /// ---------------------------------------------------------------------------
 /// Object Enumeration
@@ -238,9 +217,6 @@ val makeWhite_is_white : (h_addr: obj_addr) -> (g: heap) ->
 
 val makeGray_is_gray : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (is_gray h_addr (makeGray h_addr g))
-
-val makeBlue_is_blue : (h_addr: obj_addr) -> (g: heap) ->
-  Lemma (is_blue h_addr (makeBlue h_addr g))
 
 /// ---------------------------------------------------------------------------
 /// Color Change Preservation Lemmas
@@ -319,6 +295,3 @@ val color_change_preserves_other_color : (obj1: obj_addr) -> (obj2: obj_addr) ->
 
 /// No grey objects in address list
 val noGreyObjects_aux (g: heap) (addrs: seq hp_addr) : GTot bool
-
-/// All objects are white or blue
-val allWhiteOrBlue_aux (g: heap) (addrs: seq hp_addr) : GTot bool

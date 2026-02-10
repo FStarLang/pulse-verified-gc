@@ -3,7 +3,7 @@
 /// ---------------------------------------------------------------------------
 ///
 /// This module provides object color predicates and header manipulation:
-/// - is_black, is_white, is_gray, is_blue: color predicates
+/// - is_black, is_white, is_gray: color predicates
 /// - getColor, getWosize, getTag: header field extraction
 /// - makeGray, makeBlack: color mutation operations
 
@@ -67,7 +67,7 @@ let getColor (header: U64.t) : color =
   get_color_bound (U64.v header);
   match unpack_color (get_color (U64.v header)) with
   | Some c -> c
-  | None -> Blue  // Invalid defaults to Blue (free)
+  | None -> White  // Invalid defaults to White
 
 /// getColor always succeeds for valid headers
 let getColor_valid (hdr: U64.t) : Lemma (Some? (unpack_color (get_color (U64.v hdr)))) =
@@ -301,10 +301,6 @@ let is_white (obj_addr: obj_addr) (g: heap) : GTot bool =
 let is_gray (obj_addr: obj_addr) (g: heap) : GTot bool =
   get_object_color g obj_addr = Gray
 
-/// Is object blue (free)?
-let is_blue (obj_addr: obj_addr) (g: heap) : GTot bool =
-  get_object_color g obj_addr = Blue
-
 /// ---------------------------------------------------------------------------
 /// Color Characterization Lemmas
 /// ---------------------------------------------------------------------------
@@ -321,10 +317,6 @@ let is_black_iff (h_addr: obj_addr) (g: heap)
 let is_white_iff (h_addr: obj_addr) (g: heap)
   : Lemma (is_white h_addr g <==> color_of_object h_addr g = White) = ()
 
-/// is_blue means color_of_object = Blue
-let is_blue_iff (h_addr: obj_addr) (g: heap)
-  : Lemma (is_blue h_addr g <==> color_of_object h_addr g = Blue) = ()
-
 /// ---------------------------------------------------------------------------
 /// Color Disjointness Lemmas (trivial with algebraic color type!)
 /// ---------------------------------------------------------------------------
@@ -339,18 +331,6 @@ let white_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
 
 let gray_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
   : Lemma (requires is_gray x g /\ is_black y g)
-          (ensures x <> y) = ()
-
-let blue_white_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_blue x g /\ is_white y g)
-          (ensures x <> y) = ()
-
-let blue_gray_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_blue x g /\ is_gray y g)
-          (ensures x <> y) = ()
-
-let blue_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_blue x g /\ is_black y g)
           (ensures x <> y) = ()
 
 /// ---------------------------------------------------------------------------
@@ -397,10 +377,6 @@ let makeWhite (obj_addr: obj_addr) (g: heap) : GTot heap =
 let makeGray (obj_addr: obj_addr) (g: heap) : GTot heap =
   set_color g obj_addr Gray
 
-/// Make object blue (free)
-let makeBlue (obj_addr: obj_addr) (g: heap) : GTot heap =
-  set_color g obj_addr Blue
-
 /// Equation lemmas connecting make* to set_object_color
 let makeBlack_eq (h_addr: obj_addr) (g: heap)
   : Lemma (makeBlack h_addr g == set_object_color h_addr g Black) = ()
@@ -410,9 +386,6 @@ let makeWhite_eq (h_addr: obj_addr) (g: heap)
 
 let makeGray_eq (h_addr: obj_addr) (g: heap)
   : Lemma (makeGray h_addr g == set_object_color h_addr g Gray) = ()
-
-let makeBlue_eq (h_addr: obj_addr) (g: heap)
-  : Lemma (makeBlue h_addr g == set_object_color h_addr g Blue) = ()
 
 /// ---------------------------------------------------------------------------
 /// Pointer Field Predicates
@@ -778,10 +751,6 @@ let makeGray_is_gray (h_addr: obj_addr) (g: heap)
   : Lemma (is_gray h_addr (makeGray h_addr g)) = 
   colorHeader_getColor (read_header g h_addr) Gray
 
-let makeBlue_is_blue (h_addr: obj_addr) (g: heap)
-  : Lemma (is_blue h_addr (makeBlue h_addr g)) = 
-  colorHeader_getColor (read_header g h_addr) Blue
-
 /// ---------------------------------------------------------------------------
 /// Color Change Preservation Lemmas (for fsti)
 /// ---------------------------------------------------------------------------
@@ -894,11 +863,3 @@ let rec noGreyObjects_aux (g: heap) (addrs: seq hp_addr) : GTot bool (decreases 
     let x = Seq.head addrs in
     if U64.v x >= U64.v mword && is_gray x g then false
     else noGreyObjects_aux g (Seq.tail addrs)
-
-/// All objects are white or blue (admits >= 8)
-let rec allWhiteOrBlue_aux (g: heap) (addrs: seq hp_addr) : GTot bool (decreases Seq.length addrs) =
-  if Seq.length addrs = 0 then true
-  else 
-    let x = Seq.head addrs in
-    if U64.v x >= U64.v mword && not (is_white x g) && not (is_blue x g) then false
-    else allWhiteOrBlue_aux g (Seq.tail addrs)

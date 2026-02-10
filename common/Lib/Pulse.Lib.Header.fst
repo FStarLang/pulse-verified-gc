@@ -4,7 +4,7 @@ module Pulse.Lib.Header
 ///
 /// Header layout (64-bit):
 ///   bits 0-7   : tag (8 bits)
-///   bits 8-9   : color (2 bits: blue=0, white=1, gray=2, black=3)
+///   bits 8-9   : color (2 bits: white=0, gray=1, black=2)
 ///   bits 10-63 : wosize (54 bits)
 
 module UInt = FStar.UInt
@@ -17,26 +17,23 @@ open FStar.Math.Lemmas
 /// ---------------------------------------------------------------------------
 
 type color_sem =
-  | Blue   // 0 - Free/unallocated
-  | White  // 1 - Not yet visited
-  | Gray   // 2 - Visited but not scanned
-  | Black  // 3 - Fully scanned
+  | White  // 0 - Not yet visited
+  | Gray   // 1 - Visited but not scanned
+  | Black  // 2 - Fully scanned
 
 let pack_color (c: color_sem) : uint_t 64 =
   match c with
-  | Blue -> 0
-  | White -> 1
-  | Gray -> 2
-  | Black -> 3
+  | White -> 0
+  | Gray -> 1
+  | Black -> 2
 
 let unpack_color (w: uint_t 64) : option color_sem =
-  if w = 0 then Some Blue
-  else if w = 1 then Some White
-  else if w = 2 then Some Gray
-  else if w = 3 then Some Black
+  if w = 0 then Some White
+  else if w = 1 then Some Gray
+  else if w = 2 then Some Black
   else None
 
-let valid_color (w: uint_t 64) : bool = w < 4
+let valid_color (w: uint_t 64) : bool = w < 3
 
 /// Pack/unpack roundtrip for colors
 let pack_unpack_color (c: color_sem) 
@@ -122,13 +119,14 @@ let get_color_bound (v: uint_t 64) : Lemma (get_color v < 4) =
   assert (mask_2bit = 3);
   logand_le #64 (shift_right #64 v 8) mask_2bit
 
-/// Therefore unpack_header always succeeds
-let unpack_header_total (w: uint_t 64) : Lemma (Some? (unpack_header w)) =
-  get_color_bound w;
+/// Therefore unpack_header succeeds when color bits are valid (not 0)
+let unpack_header_total (w: uint_t 64) : Lemma 
+  (requires valid_color (get_color w))
+  (ensures Some? (unpack_header w)) =
   valid_color_unpack (get_color w)
 
 /// Accessor for unpacked header (uses totality)
-let unpack_header_v (w: uint_t 64) : header_sem =
+let unpack_header_v (w: uint_t 64{valid_color (get_color w)}) : header_sem =
   unpack_header_total w;
   Some?.v (unpack_header w)
 

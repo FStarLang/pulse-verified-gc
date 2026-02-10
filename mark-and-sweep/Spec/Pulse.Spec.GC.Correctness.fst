@@ -3,7 +3,6 @@
 /// ---------------------------------------------------------------------------
 ///
 /// Uses obj_addr convention from common/.
-/// In the mark-and-sweep model, there are no blue objects.
 /// Colors used: White (initial/free), Gray (mark frontier), Black (marked/reachable).
 /// After mark: black = reachable, white = unreachable, no gray.
 /// After sweep: all objects white (black reset to white, white unchanged).
@@ -37,7 +36,6 @@ module HeapGraph = Pulse.Spec.GC.HeapGraph
 
 val gc_preserves_structure : (g: heap) -> (st: seq obj_addr) -> (fp: obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ 
-                  no_blue_objects g /\
                   (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
         (ensures (forall (x: obj_addr).
                    Seq.mem x (objects 0UL (fst (sweep (mark g st) fp))) /\
@@ -81,7 +79,6 @@ let gc_preserves_structure g st fp =
 
 val gc_preserves_data : (g: heap) -> (st: seq obj_addr) -> (fp: obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ 
-                  no_blue_objects g /\
                   (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
         (ensures (forall (x: obj_addr) (i: U64.t).
                    Seq.mem x (objects 0UL (fst (sweep (mark g st) fp))) /\
@@ -127,7 +124,6 @@ let gc_preserves_data g st fp =
 /// Preconditions:
 /// - Well-formed heap with valid stack and roots
 /// - No black objects initially (all objects are white or gray from root pushing)
-/// - No blue objects (3-color invariant for mark-and-sweep)
 ///
 /// Five pillars of correctness:
 /// 1. Heap integrity: well_formed_heap preserved through mark+sweep
@@ -148,7 +144,6 @@ val end_to_end_correctness :
       root_props h_init roots /\
       (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
       no_black_objects h_init /\
-      no_blue_objects h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
       (let graph = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -193,17 +188,9 @@ let end_to_end_correctness h_init st roots fp =
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
   
-  // Establish no_blue_objects h_mark
   mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
   assert (objects 0UL h_mark == objects 0UL h_init);
-  // fp is valid in h_mark
   assert (fp = 0UL \/ Seq.mem fp (objects 0UL h_mark));
-  let no_blue_mark (x: obj_addr) : Lemma
-    (requires Seq.mem x (objects 0UL h_mark)) (ensures ~(is_blue x h_mark)) =
-    mark_aux_no_new_blue h_init st (heap_size / U64.v mword) x
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires no_blue_mark);
-  assert (no_blue_objects h_mark);
   
   // PILLAR 1: well_formed_heap h_sweep
   sweep_preserves_wf h_mark fp;
@@ -242,7 +229,7 @@ val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
                   root_props h_init roots /\
                   (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
-                  no_black_objects h_init /\ no_blue_objects h_init /\
+                  no_black_objects h_init /\
                   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
                   (let graph = create_graph h_init in
                    let roots' = HeapGraph.coerce_to_vertex_list roots in

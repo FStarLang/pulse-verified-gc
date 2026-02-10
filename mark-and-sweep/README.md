@@ -87,7 +87,7 @@ Two corollaries:
 
 ### Color Model
 
-Mark-and-sweep uses a **3-color model**: White (initial/free), Gray (mark frontier), Black (marked/reachable). There is no Blue — this is a global invariant (`no_blue_objects`) maintained throughout mark and sweep.
+Mark-and-sweep uses a **3-color model**: White (initial/free), Gray (mark frontier), Black (marked/reachable).
 
 ## Key Differences from Low*
 

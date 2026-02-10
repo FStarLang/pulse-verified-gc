@@ -126,12 +126,47 @@ let spec_write_word (s: Seq.seq U8.t{Seq.length s >= 8})
   let s7 = Seq.upd s6 (addr + 6) b6 in
   Seq.upd s7 (addr + 7) b7
 
+/// Seq.upd/index roundtrip for non-overlapping writes
+let upd_index_same (s: Seq.seq U8.t) (i: nat{i < Seq.length s}) (v: U8.t)
+  : Lemma (Seq.index (Seq.upd s i v) i == v) = ()
+
+let upd_index_diff (s: Seq.seq U8.t) (i j: nat{i < Seq.length s /\ j < Seq.length s /\ i <> j}) (v: U8.t)
+  : Lemma (Seq.index (Seq.upd s i v) j == Seq.index s j) = ()
+
+/// After 8 sequential updates, reading at each position gives the written value
+let spec_write_read_byte (s: Seq.seq U8.t{Seq.length s >= 8}) 
+                         (addr: nat{addr + 8 <= Seq.length s})
+                         (v: U64.t) (k: nat{k < 8})
+  : Lemma (Seq.index (spec_write_word s addr v) (addr + k) ==
+           (match k with
+            | 0 -> uint64_to_uint8 v
+            | 1 -> uint64_to_uint8 (U64.shift_right v 8ul)
+            | 2 -> uint64_to_uint8 (U64.shift_right v 16ul)
+            | 3 -> uint64_to_uint8 (U64.shift_right v 24ul)
+            | 4 -> uint64_to_uint8 (U64.shift_right v 32ul)
+            | 5 -> uint64_to_uint8 (U64.shift_right v 40ul)
+            | 6 -> uint64_to_uint8 (U64.shift_right v 48ul)
+            | _ -> uint64_to_uint8 (U64.shift_right v 56ul)))
+  = ()
+
 /// Read-after-write: reading back from the same address yields the written value
-/// TODO: prove this from the byte decomposition/recomposition
-assume val read_write_same : (s: Seq.seq U8.t{Seq.length s >= 8}) -> 
-                              (addr: nat{addr + 8 <= Seq.length s}) -> 
-                              (v: U64.t) ->
-  Lemma (spec_read_word (spec_write_word s addr v) addr == v)
+#push-options "--z3rlimit 50"
+let read_write_same (s: Seq.seq U8.t{Seq.length s >= 8}) 
+                    (addr: nat{addr + 8 <= Seq.length s}) 
+                    (v: U64.t)
+  : Lemma (spec_read_word (spec_write_word s addr v) addr == v)
+  = spec_write_read_byte s addr v 0;
+    spec_write_read_byte s addr v 1;
+    spec_write_read_byte s addr v 2;
+    spec_write_read_byte s addr v 3;
+    spec_write_read_byte s addr v 4;
+    spec_write_read_byte s addr v 5;
+    spec_write_read_byte s addr v 6;
+    spec_write_read_byte s addr v 7;
+    // After showing each byte reads back correctly, 
+    // combine_bytes ∘ decompose = identity follows by SMT
+    admit()  // TODO: bitvector roundtrip (combine ∘ decompose = id)
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Read operations

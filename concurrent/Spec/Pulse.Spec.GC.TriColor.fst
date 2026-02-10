@@ -26,6 +26,38 @@ module HeapGraph = Pulse.Spec.GC.HeapGraph
 module Header = Pulse.Lib.Header
 
 /// ---------------------------------------------------------------------------
+/// 4-Color Type for Concurrent GC
+/// ---------------------------------------------------------------------------
+/// Extends common's 3-color color_sem (White | Gray | Black) with Blue
+/// for free/unallocated objects. Used by fly/ and concurrent/.
+
+type tricolor_sem =
+  | White  // 0 - Not yet visited
+  | Gray   // 1 - Visited but not scanned
+  | Black  // 2 - Fully scanned
+  | Blue   // 3 - Free/unallocated
+
+let tricolor_pack (c: tricolor_sem) : FStar.UInt.uint_t 64 =
+  match c with
+  | White -> 0
+  | Gray -> 1
+  | Black -> 2
+  | Blue -> 3
+
+let tricolor_unpack (w: FStar.UInt.uint_t 64) : option tricolor_sem =
+  if w = 0 then Some White
+  else if w = 1 then Some Gray
+  else if w = 2 then Some Black
+  else if w = 3 then Some Blue
+  else None
+
+let tricolor_pack_unpack (c: tricolor_sem)
+  : Lemma (tricolor_unpack (tricolor_pack c) == Some c) = ()
+
+let tricolor_unpack_pack (w: FStar.UInt.uint_t 64{w < 4})
+  : Lemma (tricolor_pack (Some?.v (tricolor_unpack w)) == w) = ()
+
+/// ---------------------------------------------------------------------------
 /// Tri-Color Invariant Definition
 /// ---------------------------------------------------------------------------
 

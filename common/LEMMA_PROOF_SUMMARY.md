@@ -115,7 +115,7 @@ module Pulse.Spec.GC.Object.Bitwise
 
 **Option 2**: Refactor `getColor` to avoid case-split
 ```fstar
-// Current: if c = 0 then blue else if c = 1 then white ...
+// Current: if c = 0 then white else if c = 1 then gray ...
 // Better: just return the raw extracted value
 let getColor (header: U64.t) : color =
   U64.logand (U64.shift_right header color_shift) 0x3UL

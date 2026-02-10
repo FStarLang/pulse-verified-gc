@@ -12,25 +12,86 @@ module Pulse.Lib.GC.Fields
 
 #lang-pulse
 
+open FStar.Mul
 open Pulse.Lib.Pervasives
 open Pulse.Lib.GC.Heap
 open Pulse.Lib.GC.Object
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
+module ML = FStar.Math.Lemmas
+
+/// ---------------------------------------------------------------------------
+/// Pure helper lemmas for overflow checking
+/// ---------------------------------------------------------------------------
+
+/// Specification: what field address should be
+let spec_field_address (h_addr: nat) (i: nat) : nat =
+  h_addr + i * 8
+
+/// Lemma: mword is 8
+let lemma_mword_is_8 () : Lemma (U64.v mword == 8) = ()
+
+/// Lemma: i <= 2^54-1 implies i*8 < 2^64
+let lemma_field_offset_no_overflow (i: nat)
+  : Lemma (requires i <= pow2 54 - 1)
+          (ensures i * 8 < pow2 64)
+= 
+  // i <= 2^54 - 1, so i * 8 <= (2^54 - 1) * 8 < 2^54 * 8 = 2^57 < 2^64
+  ML.pow2_lt_compat 64 57;
+  assert (pow2 57 <= pow2 64)
+
+/// Lemma: address + offset fits in U64 when both are bounded
+let lemma_address_add_no_overflow (addr: nat) (offset: nat)
+  : Lemma (requires addr < heap_size /\ offset <= pow2 57)
+          (ensures addr + offset < pow2 64)
+=
+  // heap_size = 1048576 = 2^20, offset <= 2^57, so sum <= 2^20 + 2^57 < 2^64
+  ML.pow2_lt_compat 64 57;
+  assert (heap_size < pow2 21);
+  assert (addr + offset <= pow2 21 + pow2 57);
+  assert (pow2 21 + pow2 57 < pow2 64)
+
+/// Lemma: (1 + wz) * 8 doesn't overflow for valid wosize
+let lemma_object_size_no_overflow (wz: nat)
+  : Lemma (requires wz <= pow2 54 - 1)
+          (ensures (1 + wz) * 8 <= pow2 57 /\ (1 + wz) * 8 < pow2 64)
+=
+  // (1 + wz) <= 2^54, so (1 + wz) * 8 <= 2^54 * 8 = 2^57 < 2^64
+  ML.pow2_lt_compat 64 57;
+  assert ((1 + wz) * 8 <= pow2 57)
+
+/// Lemma: h_addr word-aligned and i*8 is multiple of 8 => (h_addr + i*8) is word-aligned
+let lemma_field_addr_aligned (h_addr: nat) (i: nat)
+  : Lemma (requires h_addr % 8 == 0)
+          (ensures (h_addr + i * 8) % 8 == 0)
+= 
+  FStar.Math.Lemmas.lemma_mod_plus_distr_l h_addr (i * 8) 8;
+  FStar.Math.Lemmas.lemma_mod_mul_distr_r i 8 8
 
 /// ---------------------------------------------------------------------------
 /// Field Address Computation
 /// ---------------------------------------------------------------------------
 
-/// Compute address of field i (1-indexed, 0 is header)
-fn field_address (h_addr: hp_addr) (i: U64.t)
-  requires pure (U64.v i >= 1)
-  returns addr: U64.t
-  ensures pure (U64.v addr == U64.v h_addr + (U64.v i) `op_Multiply` (U64.v mword))
-{
-  let offset = U64.mul i mword;
+/// Compute address of field i (1-indexed, 0 is header) - pure version
+/// Precondition: i is in valid range and result doesn't overflow
+let field_address_pure (h_addr: hp_addr) (i: U64.t{U64.v i >= 1 /\ U64.v i <= pow2 54 - 1})
+  : Pure U64.t
+    (requires True)
+    (ensures fun addr -> U64.v addr == spec_field_address (U64.v h_addr) (U64.v i))
+=
+  lemma_field_offset_no_overflow (U64.v i);
+  let offset = U64.mul i mword in
+  lemma_address_add_no_overflow (U64.v h_addr) (U64.v offset);
   U64.add h_addr offset
+
+/// Pulse wrapper for field_address
+fn field_address (h_addr: hp_addr) (i: U64.t)
+  requires pure (U64.v i >= 1 /\ U64.v i <= pow2 54 - 1)
+  returns addr: U64.t
+  ensures emp
+{
+  field_address_pure h_addr i
 }
 
 /// ---------------------------------------------------------------------------
@@ -38,28 +99,49 @@ fn field_address (h_addr: hp_addr) (i: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Read field i of object at h_addr
+/// Requires: field address is within heap bounds (< heap_size)
 fn read_field (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
-  requires is_heap heap 's ** pure (U64.v i >= 1)
+  requires is_heap heap 's ** 
+           pure (U64.v i >= 1 /\ 
+                 U64.v i <= pow2 54 - 1 /\
+                 spec_field_address (U64.v h_addr) (U64.v i) < heap_size)
   returns v: U64.t
   ensures is_heap heap 's
 {
-  let addr = field_address h_addr i;
-  read_word heap addr
+  lemma_mword_is_8 ();
+  
+  // Use the pure function directly to get the postcondition
+  let addr = field_address_pure h_addr i;
+  
+  // Now addr has the postcondition from field_address_pure
+  assert (pure (U64.v addr == spec_field_address (U64.v h_addr) (U64.v i)));
+  assert (pure (U64.v addr == U64.v h_addr + U64.v i * 8));
+  
+  // Now prove alignment
+  lemma_field_addr_aligned (U64.v h_addr) (U64.v i);
+  assert (pure ((U64.v h_addr + U64.v i * 8) % 8 == 0));
+  assert (pure (U64.v addr % 8 == 0));
+  
+  // Prove bounds
+  assert (pure (U64.v addr >= 0));
+  assert (pure (U64.v addr < heap_size));
+  
+  let addr_hp : hp_addr = addr;
+  
+  read_word heap addr_hp
 }
 
 /// Read successor pointer at field i
 /// This is the core operation for graph traversal
 fn read_succ (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
-  requires is_heap heap 's ** pure (U64.v i >= 1)
+  requires is_heap heap 's ** 
+           pure (U64.v i >= 1 /\ 
+                 U64.v i <= pow2 54 - 1 /\
+                 spec_field_address (U64.v h_addr) (U64.v i) < heap_size)
   returns succ: U64.t
   ensures is_heap heap 's
 {
-  // Read the field value
-  let v = read_field heap h_addr i;
-  
-  // The field contains a pointer to another object's first field
-  // Return the header address
-  v
+  read_field heap h_addr i
 }
 
 /// ---------------------------------------------------------------------------
@@ -93,38 +175,42 @@ fn is_pointer (v: U64.t)
 /// Successor Iteration
 /// ---------------------------------------------------------------------------
 
-/// Get all successors of an object (for mark phase)
-/// Returns the number of successors found and processes each
-fn for_each_successor (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
-                       (callback: hp_addr -> stt unit (requires emp) (ensures fun _ -> emp))
-  requires is_heap heap 's
+/// Iterate over all successor pointers in an object
+/// Calls callback for each valid pointer found
+/// 
+/// Precondition: all fields fit in heap
+fn for_each_successor (heap: heap_t) (h_addr: hp_addr) (wz: U64.t)
+                       (callback: (U64.t -> stt unit (requires emp) (ensures fun _ -> emp)))
+  requires is_heap heap 's **
+           pure (U64.v wz <= pow2 54 - 1 /\
+                 spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size)
   ensures  is_heap heap 's
 {
+  lemma_mword_is_8 ();
   let mut i = 1UL;
   
   while (U64.lte !i wz)
-    invariant exists* vi s.
+    invariant exists* vi.
       pts_to i vi **
-      is_heap heap s **
+      is_heap heap 's **
       pure (U64.v vi >= 1 /\ U64.v vi <= U64.v wz + 1)
   {
     let curr_i = !i;
     
-    // Read field value
+    // Read field value at curr_i
     let v = read_field heap h_addr curr_i;
     
     // Check if it's a pointer
     let is_ptr = is_pointer v;
     
     if (is_ptr) {
-      // Get header address of pointed object
-      let succ_h_addr = hd_address v;
-      
-      // Call the callback
-      callback succ_h_addr
+      // Call callback with the pointer value
+      callback v
     };
     
-    i := U64.add curr_i 1UL
+    // Update loop counter
+    let _ = Pulse.Lib.Reference.replace i (U64.add curr_i 1UL);
+    ()
   }
 }
 
@@ -144,7 +230,23 @@ fn is_valid_header (heap: heap_t) (h_addr: hp_addr)
   let t = getTag hdr;
   
   // Check that object fits in heap
-  let obj_end = U64.add h_addr (U64.mul (U64.add 1UL wz) mword);
+  // Need to prove overflow for (1 + wz) * mword
+  lemma_mword_is_8 ();
+  lemma_object_size_no_overflow (U64.v wz);
+  assert (pure ((1 + U64.v wz) * 8 <= pow2 57));
+  
+  let skip = U64.add 1UL wz;
+  assert (pure (U64.v skip == 1 + U64.v wz));
+  
+  let offset = U64.mul skip mword;
+  assert (pure (U64.v offset == U64.v skip * U64.v mword));
+  assert (pure (U64.v offset == (1 + U64.v wz) * 8));
+  assert (pure (U64.v offset <= pow2 57));
+  
+  lemma_address_add_no_overflow (U64.v h_addr) (U64.v offset);
+  assert (pure (U64.v h_addr + U64.v offset < pow2 64));
+  
+  let obj_end = U64.add h_addr offset;
   
   if (U64.gt obj_end (U64.uint_to_t heap_size)) {
     false
@@ -168,7 +270,21 @@ fn next_object_addr (heap: heap_t) (h_addr: hp_addr)
   let wz = getWosize hdr;
   
   // Skip header (1 word) + fields (wz words)
+  // Need to prove overflow
+  lemma_mword_is_8 ();
+  lemma_object_size_no_overflow (U64.v wz);
+  assert (pure ((1 + U64.v wz) * 8 <= pow2 57));
+  
   let skip = U64.add 1UL wz;
+  assert (pure (U64.v skip == 1 + U64.v wz));
+  
   let offset = U64.mul skip mword;
+  assert (pure (U64.v offset == U64.v skip * U64.v mword));
+  assert (pure (U64.v offset == (1 + U64.v wz) * 8));
+  assert (pure (U64.v offset <= pow2 57));
+  
+  lemma_address_add_no_overflow (U64.v h_addr) (U64.v offset);
+  assert (pure (U64.v h_addr + U64.v offset < pow2 64));
+  
   U64.add h_addr offset
 }

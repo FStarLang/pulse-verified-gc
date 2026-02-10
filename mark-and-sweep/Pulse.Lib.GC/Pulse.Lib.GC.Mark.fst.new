@@ -1,0 +1,184 @@
+(*
+   Pulse GC - Mark Module
+   
+   This module implements the mark phase of the garbage collector.
+   Uses tri-color marking: white (unmarked), gray (marked, not scanned),
+   black (marked and scanned).
+*)
+
+module Pulse.Lib.GC.Mark
+
+#lang-pulse
+
+open FStar.Mul
+open Pulse.Lib.Pervasives
+open Pulse.Lib.GC.Heap
+open Pulse.Lib.GC.Object
+open Pulse.Lib.GC.Stack
+open Pulse.Lib.GC.Fields
+module U64 = FStar.UInt64
+module SZ = FStar.SizeT
+module Seq = FStar.Seq
+module L = FStar.List.Tot
+
+/// ---------------------------------------------------------------------------
+/// Ghost helper: extract heap length fact
+/// ---------------------------------------------------------------------------
+
+/// Extract the pure length fact from is_heap, then refold
+/// This is needed before write operations to keep the length fact through existential introduction
+ghost fn is_heap_length (h: heap_t)
+  requires is_heap h 's
+  ensures is_heap h 's ** pure (Seq.length 's == heap_size)
+{
+  unfold is_heap;
+  fold (is_heap h 's)
+}
+
+/// ---------------------------------------------------------------------------
+/// Darken if white
+/// ---------------------------------------------------------------------------
+
+/// Check if object is white and darken it (color gray + push to stack)
+fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
+  requires is_heap heap 's ** is_gray_stack st 'l
+  ensures exists* s2 l2. is_heap heap s2 ** is_gray_stack st l2
+{
+  // Read object header
+  let hdr = read_word heap h_addr;
+  let c = getColor hdr;
+  
+  // Check if white
+  if (c = white) {
+    // Extract heap length before write
+    is_heap_length heap;
+    
+    // Read header components
+    let wz = getWosize hdr;
+    let t = getTag hdr;
+    
+    // Color gray
+    let new_hdr = makeHeader wz gray t;
+    write_word heap h_addr new_hdr;
+    
+    // Push field address to stack
+    let f_addr = f_address h_addr;
+    push st f_addr
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// Field Scanning
+/// ---------------------------------------------------------------------------
+
+/// Scan all fields of an object, darkening any white objects found
+/// Precondition: all fields must fit within heap bounds
+fn scan_fields (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
+  requires is_heap heap 's ** 
+           is_gray_stack st 'l **
+           pure (U64.v wz >= 0 /\ 
+                 U64.v wz <= pow2 54 - 1 /\
+                 spec_field_address (U64.v h_addr) (U64.v wz) < heap_size)
+  ensures exists* s2 l2. is_heap heap s2 ** is_gray_stack st l2
+{
+  // Loop through all fields (1-indexed, 0 is header)
+  let mut i = 1UL;
+  
+  while (U64.lte !i wz)
+    invariant exists* vi s l.
+      pts_to i vi **
+      is_heap heap s **
+      is_gray_stack st l **
+      pure (U64.v vi >= 1 /\ U64.v vi <= U64.v wz + 1)
+  {
+    let curr_i = !i;
+    
+    // Read field value
+    let field_val = read_field heap h_addr curr_i;
+    
+    // Check if it's a pointer
+    let is_ptr = is_pointer field_val;
+    
+    if (is_ptr) {
+      // It's a pointer - darken if white
+      // field_val is a field address, need header address
+      let pointed_h_addr = U64.sub field_val mword;
+      darken_if_white heap st pointed_h_addr
+    };
+    
+    // Increment loop counter
+    i := U64.add curr_i 1UL
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// Mark Step
+/// ---------------------------------------------------------------------------
+
+/// Process one gray object: pop it, scan its fields, color it black
+fn mark_step (heap: heap_t) (st: gray_stack)
+  requires is_heap heap 's ** 
+           is_gray_stack st 'l ** 
+           pure (Cons? 'l)
+  ensures exists* s2 l2. is_heap heap s2 ** is_gray_stack st l2
+{
+  // Pop a gray object field address from stack
+  let f_addr = pop st;
+  
+  // Get header address (field address - mword)
+  let h_addr = U64.sub f_addr mword;
+  
+  // Read header to get wosize and tag
+  let hdr = read_word heap h_addr;
+  let wz = getWosize hdr;
+  let t = getTag hdr;
+  
+  // Check if we need to scan fields (tag < no_scan_tag)
+  if (U64.lt t no_scan_tag) {
+    // Scan all fields - this may darken white objects
+    // First verify that all fields fit in heap
+    // We need spec_field_address (U64.v h_addr) (U64.v wz) < heap_size
+    // Assuming this holds for valid objects in heap
+    assert (pure (spec_field_address (U64.v h_addr) (U64.v wz) < heap_size));
+    scan_fields heap st h_addr wz
+  };
+  
+  // Color the object black
+  is_heap_length heap;
+  let hdr2 = read_word heap h_addr;
+  let wz2 = getWosize hdr2;
+  let t2 = getTag hdr2;
+  let black_hdr = makeHeader wz2 black t2;
+  write_word heap h_addr black_hdr
+}
+
+/// ---------------------------------------------------------------------------
+/// Main Mark Loop
+/// ---------------------------------------------------------------------------
+
+/// Mark all reachable objects by processing the gray stack
+/// Loops while stack is not empty (NOT recursive)
+fn mark_loop (heap: heap_t) (st: gray_stack)
+  requires is_heap heap 's ** is_gray_stack st 'l
+  ensures exists* s2. is_heap heap s2 ** is_gray_stack st []
+{
+  let mut continue = true;
+  
+  while (!continue)
+    invariant exists* vc s l.
+      pts_to continue vc **
+      is_heap heap s **
+      is_gray_stack st l **
+      pure (vc == true <==> Cons? l)
+  {
+    // Check if stack is empty
+    let empty = is_empty st;
+    
+    if (empty) {
+      continue := false
+    } else {
+      // Process one gray object
+      mark_step heap st
+    }
+  }
+}

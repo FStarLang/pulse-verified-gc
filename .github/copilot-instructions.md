@@ -2,10 +2,11 @@
 
 ## Overview
 
-Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent separation logic for F\*). Two GC implementations share common infrastructure:
+Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent separation logic for F\*). Four directories share common infrastructure:
 
-- **common/** — Shared F\* specs: heap model, object headers, graph theory, DFS. Has `.fsti` interface files for Base, Heap, Object.
-- **mark-and-sweep/** — Sequential stop-the-world GC. Has its **own copies** of common spec modules (Base, Heap, Object, Graph, DFS) plus MS-specific specs (Fields, Mark, Sweep, Correctness) and Pulse implementations in `Pulse.Lib.GC/`. **Copies may diverge from `common/`** — changes in one do not propagate to the other.
+- **common/** — Shared F\* specs (heap model, object headers, graph theory, DFS, HeapGraph, HeapModel) and shared Pulse implementations (Heap, Object, Stack). Has `.fsti` interface files for Base, Heap, Object.
+- **mark-and-sweep/** — Sequential stop-the-world GC. **Imports** from `common/` via `--include ../common/Spec --include ../common/Lib`. Has its own Spec/ (Mark, Sweep, Correctness, SeqMemLemmas) and Pulse.Lib.GC/ (Fields, Closure, Mark, Sweep, GC entry point).
+- **concurrent/** — Concurrent GC extensions (tri-color spec, atomic colors, shadow stacks, write barriers). **Imports** from `common/`. No dependency on mark-and-sweep/.
 - **fly/** — Concurrent on-the-fly GC (Dijkstra-style tri-color marking). **Imports** from `common/` via `--include ../common/Spec`. Flat layout (no `Spec/` subdirectory). Has its own `.github/copilot-instructions.md` with fly-specific context.
 
 ## Build & Verification
@@ -15,29 +16,41 @@ Each subdirectory has its own Makefile. No top-level build; `cd` into the releva
 ### common/
 ```bash
 make lax          # Quick lax-check (default)
-make verify       # Full SMT verification (~30-60s)
+make verify       # Full SMT verification
+make verify-pulse # Verify Pulse.Lib.GC modules (requires Pulse tooling)
 make clean
 
 # Single module
-fstar.exe --include Spec --include Lib Spec/Pulse.Spec.GC.Graph.fst
+fstar.exe --include Spec --include Lib --cache_checked_modules \
+  Spec/Pulse.Spec.GC.Graph.fst
 ```
 
 ### mark-and-sweep/
 ```bash
-make              # Verify all (full mode, default)
-make verify-concurrent  # Only concurrent modules
+make              # Verify all (default)
 make extract      # Extract to C via KaRaMeL
 make clean
 
 # Single spec module
-fstar.exe --include Spec --include Lib --cache_checked_modules --warn_error -321 \
+fstar.exe --include Spec --include Lib --include ../common/Spec --include ../common/Lib \
+  --cache_checked_modules --warn_error -321 \
   Spec/Pulse.Spec.GC.Mark.fst
 
 # Single Pulse/Lib module (requires Pulse tooling)
 fstar.exe --cache_checked_modules --warn_error -321 \
-  --include $PULSE_HOME/lib/pulse/lib --include $PULSE_HOME/lib/pulse/core \
-  --include Pulse.Lib.GC --include Lib --load_cmxs pulse \
+  --include $PULSE_HOME/lib/pulse/lib --include $PULSE_HOME/out/lib/pulse \
+  --include Pulse.Lib.GC --include Lib \
+  --include ../common/Spec --include ../common/Lib --include ../common/Pulse.Lib.GC \
+  --load_cmxs pulse \
   Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst
+```
+
+### concurrent/
+```bash
+make              # Verify all (default)
+make verify-spec  # Verify spec modules only (TriColor)
+make verify-lib   # Verify Pulse lib modules only (AtomicColor, ShadowStack, WriteBarrier)
+make clean
 ```
 
 ### fly/
@@ -50,7 +63,7 @@ make clean
 # Single module
 fstar.exe --include $PULSE_HOME/lib/pulse/lib --include ../common/Spec \
   --include ../common/Lib --include . --cache_checked_modules \
-  --z3rlimit 100 --max_fuel 2 --max_ifuel 1 \
+  --z3rlimit 100 --max_fuel 2 --max_ifuel 1 --warn_error -331 \
   Pulse.Spec.GC.TriColor.fst
 ```
 
@@ -76,17 +89,26 @@ fstar.exe --admit_smt_queries true --include Spec --include Lib Spec/Pulse.Spec.
 ```
 Pulse.Lib.Header          (bitvector operations on 64-bit object headers)
   ↓
+Pulse.Lib.Address          (field/header separation lemmas)
+  ↓
 Pulse.Spec.GC.Base        (core types: mword, heap, hp_addr, obj_addr)
   ↓
 Pulse.Spec.GC.Heap        (read_word, write_word on byte-addressable heap)
   ↓
 Pulse.Spec.GC.Object      (header fields, color predicates, color mutations)
   ↓
+Pulse.Spec.GC.Fields      (object enumeration, field traversal)
+  ↓
 Pulse.Spec.GC.Graph       (vertex/edge types, reachability, DFS forest)
   ↓
 Pulse.Spec.GC.DFS         (DFS algorithm with termination proofs)
   ↓
-  ├── mark-and-sweep/Spec/ (Fields, Mark, Sweep, Correctness)
+Pulse.Spec.GC.HeapGraph   (bridge: heap objects → graph edges)
+  ↓
+Pulse.Spec.GC.HeapModel   (graph construction from heap, create_graph)
+  ↓
+  ├── mark-and-sweep/Spec/ (Mark, Sweep, Correctness, SeqMemLemmas)
+  ├── concurrent/Spec/     (TriColor invariant spec)
   └── fly/                 (Fields, TriColor, GraySet, CASPreservation, GraphBridge, Correctness)
 ```
 
@@ -100,7 +122,7 @@ Pulse.Spec.GC.DFS         (DFS algorithm with termination proofs)
   bits 10-63          bits 8-9         bits 0-7
 ```
 
-Colors: `Blue=0, White=1, Gray=2, Black=3` (algebraic type `color_sem` in `Pulse.Lib.Header`).
+Colors: `White=0, Gray=1, Black=2` (algebraic type `color_sem` in `Pulse.Lib.Header`). Concurrent/fly use `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst` which adds `Blue=3`.
 
 Important tags: `closure_tag = 247`, `infix_tag = 249`, `no_scan_tag = 251`. Objects with `tag >= no_scan_tag` have no pointer fields and are skipped during marking.
 
@@ -120,7 +142,7 @@ The main theorem proves five pillars: well-formedness preservation, reachability
 
 ### Naming
 - `snake_case` for predicates and lemmas: `is_black`, `color_of_object`, `color_preserves_wosize`
-- `CamelCase` for type constructors: `Blue`, `White`, `Gray`, `Black`
+- `CamelCase` for type constructors: `White`, `Gray`, `Black` (and `Blue` in `tricolor_sem`)
 - `camelCase` for header operations: `getColor`, `getTag`, `getWosize`, `colorHeader`
 
 ### Address Types
@@ -145,11 +167,13 @@ Default SMT options vary by directory:
 For stubborn proofs: increase `--z3rlimit`, add `--split_queries always`, or add intermediate `assert` statements to guide the solver.
 
 ### Cross-Directory Dependencies
-When editing `common/` modules, re-verify **fly/** since it imports from common:
+When editing `common/` modules, re-verify all downstream directories since they all import from common:
 ```bash
-cd fly && make clean && make
+cd mark-and-sweep && make clean && make
+cd ../concurrent && make clean && make
+cd ../fly && make clean && make
 ```
-Note: `mark-and-sweep/` has its own **copies** of common modules, so common/ changes do not affect it. If you need to sync a change, manually update the corresponding file in `mark-and-sweep/Spec/`.
+`fly/` and `concurrent/` and `mark-and-sweep/` all import from `common/` — changes in common affect all three.
 
 ### Proof Gaps (Admits/Assumes)
 Track proof completeness with:

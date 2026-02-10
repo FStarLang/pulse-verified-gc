@@ -68,7 +68,7 @@ mark-and-sweep/                  Sequential mark-and-sweep GC
 └── Pulse.Lib.GC/                Pulse implementation (fields, closure, mark, sweep)
 
 concurrent/                      Concurrent GC extensions
-├── Spec/                        Tri-color invariant (4-color: black|white|gray|blue)
+├── Spec/                        Tri-color invariant, tricolor_sem type (4-color: white|gray|black|blue)
 └── Pulse.Lib.GC/                Atomic colors, shadow stacks, write barriers
 
 fly/                             On-the-fly concurrent GC (imports from common/)
@@ -83,7 +83,7 @@ fly/                             On-the-fly concurrent GC (imports from common/)
   bits 10–63          bits 8–9         bits 0–7
 ```
 
-Colors: `White=1`, `Gray=2`, `Black=3` (mark-and-sweep uses 3 colors; fly/ adds `Blue=0`).
+Colors: `White=0`, `Gray=1`, `Black=2` (3-color `color_sem` in `Pulse.Lib.Header`; fly/ uses 4-color `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst` which adds `Blue=3`).
 
 ## Module Dependency Chain
 
