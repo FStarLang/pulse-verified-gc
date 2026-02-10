@@ -1,5 +1,7 @@
 # Mark-and-Sweep GC Implementation
 
+Based on [*A mechanically verified garbage collector for OCaml*](https://link.springer.com/article/10.1007/s10817-025-09721-0) by Sheera Shamsu et al.
+
 This directory contains the sequential stop-the-world mark-and-sweep garbage collector,
 formalized in F* (specifications) and Pulse (implementations).
 
