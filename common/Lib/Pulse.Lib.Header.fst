@@ -83,8 +83,10 @@ let set_color (v: uint_t 64) (c: uint_t 64{c < 4}) : uint_t 64 =
   logor #64 (logand #64 v (lognot #64 mask_color)) (shift_left #64 c 8)
 
 /// Bounds lemmas needed for unpacking
+#push-options "--z3rlimit 50"
 let get_tag_bound (v: uint_t 64) : Lemma (get_tag v < 256) =
   logand_le #64 v 255
+#pop-options
 
 let get_wosize_bound (v: uint_t 64) : Lemma (get_wosize v < pow2 54) =
   shift_right_value_lemma #64 v 10;
@@ -396,7 +398,7 @@ private let nth_mask_tag (i: nat{i < 64}) : Lemma (nth mask_tag i = (i >= 56)) =
   end
 
 #push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
-private let get_tag_pack_header (h: header_sem)
+let get_tag_pack_header (h: header_sem)
   : Lemma (get_tag (pack_header h) == h.tag)
   = let ph = pack_header h in
     let c = pack_color h.color in
@@ -415,7 +417,7 @@ private let get_tag_pack_header (h: header_sem)
 #pop-options
 
 #push-options "--z3rlimit 500 --fuel 0 --ifuel 0"  
-private let get_color_pack_header (h: header_sem)
+let get_color_pack_header (h: header_sem)
   : Lemma (get_color (pack_header h) == pack_color h.color)
   = let ph = pack_header h in
     let c = pack_color h.color in
@@ -440,7 +442,7 @@ private let get_color_pack_header (h: header_sem)
 #pop-options
 
 #push-options "--z3rlimit 800 --fuel 0 --ifuel 0"
-private let get_wosize_pack_header (h: header_sem)
+let get_wosize_pack_header (h: header_sem)
   : Lemma (get_wosize (pack_header h) == h.wosize)
   = let ph = pack_header h in
     let c = pack_color h.color in

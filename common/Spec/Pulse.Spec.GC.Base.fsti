@@ -22,8 +22,9 @@ module U8 = FStar.UInt8
 /// Machine word size in bytes (8 for 64-bit)
 let mword : U64.t = 8UL
 
-/// Heap size in bytes (abstract — proofs work for any word-aligned size that fits in U64)
-val heap_size : n:pos{n % U64.v mword == 0 /\ n < pow2 64}
+/// Heap size in bytes (abstract — proofs work for any word-aligned size up to pow2 57)
+/// The pow2 57 bound ensures h_addr + (1+wosize)*mword doesn't overflow U64.
+val heap_size : n:pos{n % U64.v mword == 0 /\ n <= pow2 57 /\ n < pow2 64}
 
 /// ---------------------------------------------------------------------------
 /// Heap Type

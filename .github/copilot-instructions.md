@@ -122,7 +122,7 @@ Pulse.Spec.GC.HeapModel   (graph construction from heap, create_graph)
   bits 10-63          bits 8-9         bits 0-7
 ```
 
-Colors: `White=0, Gray=1, Black=2` (algebraic type `color_sem` in `Pulse.Lib.Header`). Concurrent/fly use `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst` which adds `Blue=3`.
+Colors: `White=0, Gray=1, Black=2` (algebraic type `color_sem` in `Pulse.Lib.Header`). Concurrent/fly use `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst` which adds a fourth color.
 
 Important tags: `closure_tag = 247`, `infix_tag = 249`, `no_scan_tag = 251`. Objects with `tag >= no_scan_tag` have no pointer fields and are skipped during marking.
 
@@ -142,7 +142,7 @@ The main theorem proves five pillars: well-formedness preservation, reachability
 
 ### Naming
 - `snake_case` for predicates and lemmas: `is_black`, `color_of_object`, `color_preserves_wosize`
-- `CamelCase` for type constructors: `White`, `Gray`, `Black` (and `Blue` in `tricolor_sem`)
+- `CamelCase` for type constructors: `White`, `Gray`, `Black`
 - `camelCase` for header operations: `getColor`, `getTag`, `getWosize`, `colorHeader`
 
 ### Address Types

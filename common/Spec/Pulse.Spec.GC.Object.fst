@@ -69,10 +69,8 @@ let getColor (header: U64.t) : color =
   | Some c -> c
   | None -> White  // Invalid defaults to White
 
-/// getColor always succeeds for valid headers
-let getColor_valid (hdr: U64.t) : Lemma (Some? (unpack_color (get_color (U64.v hdr)))) =
-  get_color_bound (U64.v hdr);
-  valid_color_unpack (get_color (U64.v hdr))
+/// Note: getColor returns White for any header with an invalid color field
+/// (i.e., color bits == 3, which is unused)
 
 /// Get tag from header word
 let getTag (header: U64.t) : U64.t =

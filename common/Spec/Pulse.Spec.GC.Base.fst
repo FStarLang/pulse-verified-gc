@@ -21,7 +21,7 @@ module U8 = FStar.UInt8
 /// Machine Constants (implementations)
 /// ---------------------------------------------------------------------------
 
-let heap_size : n:pos{n % U64.v mword == 0 /\ n < pow2 64} = 1024
+let heap_size : n:pos{n % U64.v mword == 0 /\ n <= pow2 57 /\ n < pow2 64} = 1024
 
 /// ---------------------------------------------------------------------------
 /// Address Predicates (implementations)
