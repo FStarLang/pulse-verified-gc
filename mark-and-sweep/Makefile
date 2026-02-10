@@ -16,8 +16,7 @@ KRML_HOME ?= $(shell opam var prefix)/lib/karamel
 # Pulse includes
 PULSE_INCLUDES = \
 --include $(PULSE_HOME)/lib/pulse/lib \
---include $(PULSE_HOME)/lib/pulse/core \
---include $(PULSE_HOME)/share/pulse/examples/by-example
+--include $(PULSE_HOME)/out/lib/pulse
 
 # Common infrastructure path
 COMMON_DIR = ../common
@@ -79,7 +78,7 @@ done
 	@for f in $(LIB_MODULES); do \
 if [ -f "$$f" ]; then \
 echo "  $$f"; \
-$(FSTAR_LIB) $$f 2>/dev/null || echo "    (skipped - Pulse not available or errors)"; \
+$(FSTAR_LIB) $$f || echo "    (skipped - Pulse errors, see above)"; \
 fi; \
 done
 	@echo ""
