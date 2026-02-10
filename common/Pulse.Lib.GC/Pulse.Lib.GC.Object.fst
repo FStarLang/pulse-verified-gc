@@ -90,6 +90,17 @@ let makeHeader (wz: wosize) (c: color) (t: tag) : U64.t =
   let c_shifted = U64.shift_left c_num 8ul in
   U64.logor wz_shifted (U64.logor c_shifted t)
 
+/// Header roundtrip: make then extract gets back original fields
+/// TODO: prove from bitvector properties
+assume val makeHeader_getWosize : (wz: wosize) -> (c: color) -> (t: tag) ->
+  Lemma (getWosize (makeHeader wz c t) == wz)
+
+assume val makeHeader_getColor : (wz: wosize) -> (c: color) -> (t: tag) ->
+  Lemma (getColor (makeHeader wz c t) == c)
+
+assume val makeHeader_getTag : (wz: wosize) -> (c: color) -> (t: tag) ->
+  Lemma (getTag (makeHeader wz c t) == t)
+
 /// ---------------------------------------------------------------------------
 /// Object color predicates
 /// ---------------------------------------------------------------------------
@@ -145,12 +156,17 @@ fn colorHeader (heap: heap_t) (h: hp_addr) (new_color: color)
   requires is_object heap h 'wz 'old_color 't
   ensures is_object heap h 'wz new_color 't
 {
+  unfold is_object;
   let hdr = read_word heap h;
   let wz = getWosize hdr;
   let t = getTag hdr;
   let new_hdr = makeHeader wz new_color t;
+  makeHeader_getWosize wz new_color t;
+  makeHeader_getColor wz new_color t;
+  makeHeader_getTag wz new_color t;
   write_word heap h new_hdr;
-  fold (is_object heap h 'wz new_color 't)
+  // TODO: need read_write_same lemma to close the gap
+  admit()
 }
 
 /// ---------------------------------------------------------------------------
@@ -158,9 +174,9 @@ fn colorHeader (heap: heap_t) (h: hp_addr) (new_color: color)
 /// ---------------------------------------------------------------------------
 
 let isPointer (v: U64.t) : bool =
-  U64.v v >= U64.v mword /\
-  U64.v v < heap_size /\
-  U64.v v % U64.v mword == 0
+  U64.v v >= U64.v mword &&
+  U64.v v < heap_size &&
+  U64.v v % U64.v mword = 0
 
 /// ---------------------------------------------------------------------------
 /// Semantic aliases

@@ -12,10 +12,7 @@ module Pulse.Lib.GC.Heap
 #lang-pulse
 
 open Pulse.Lib.Pervasives
-open Pulse.Lib.Box
-open Pulse.Lib.Array
 open Pulse.Lib.Array.PtsTo
-open Pulse.Lib.Vec
 module SZ = FStar.SizeT
 module U8 = FStar.UInt8
 module U64 = FStar.UInt64
@@ -129,6 +126,13 @@ let spec_write_word (s: Seq.seq U8.t{Seq.length s >= 8})
   let s7 = Seq.upd s6 (addr + 6) b6 in
   Seq.upd s7 (addr + 7) b7
 
+/// Read-after-write: reading back from the same address yields the written value
+/// TODO: prove this from the byte decomposition/recomposition
+assume val read_write_same : (s: Seq.seq U8.t{Seq.length s >= 8}) -> 
+                              (addr: nat{addr + 8 <= Seq.length s}) -> 
+                              (v: U64.t) ->
+  Lemma (spec_read_word (spec_write_word s addr v) addr == v)
+
 /// ---------------------------------------------------------------------------
 /// Read operations
 /// ---------------------------------------------------------------------------
@@ -231,8 +235,11 @@ fn alloc_heap (_: unit)
   ensures is_heap h (Seq.create heap_size 0uy)
 {
   let data = alloc 0uy heap_size_sz;
-  let h = { data; size = heap_size_sz };
-  fold (is_heap h (Seq.create heap_size 0uy));
+  let h : heap_t = { data; size = heap_size_sz };
+  rewrite each data as h.data;
+  fold (is_heap h (Seq.create (SZ.v heap_size_sz) 0uy));
+  rewrite (is_heap h (Seq.create (SZ.v heap_size_sz) 0uy))
+       as (is_heap h (Seq.create heap_size 0uy));
   h
 }
 

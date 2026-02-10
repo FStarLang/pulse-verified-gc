@@ -131,7 +131,7 @@ fn mark_phase (heap: heap_t) (st: gray_stack)
       
       if (is_clos) {
         // Scan closure environment
-        scan_closure_env heap h_addr wz (fun succ -> {
+        scan_closure_env heap h_addr wz fn succ {
           // Darken successor if white
           let succ_hdr = read_word heap succ;
           let succ_c = getColor succ_hdr;
@@ -139,10 +139,10 @@ fn mark_phase (heap: heap_t) (st: gray_stack)
           if (U64.eq succ_c white) {
             grey_root heap st succ
           }
-        })
+        }
       } else {
         // Scan all fields
-        for_each_successor heap h_addr wz (fun succ -> {
+        for_each_successor heap h_addr wz fn succ {
           // Resolve infix objects
           let resolved = resolve_object heap succ;
           
@@ -153,7 +153,7 @@ fn mark_phase (heap: heap_t) (st: gray_stack)
           if (U64.eq resolved_c white) {
             grey_root heap st resolved
           }
-        })
+        }
       }
     }
   }

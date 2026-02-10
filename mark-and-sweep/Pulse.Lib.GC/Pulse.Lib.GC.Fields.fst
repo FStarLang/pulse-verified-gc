@@ -27,7 +27,7 @@ module Seq = FStar.Seq
 fn field_address (h_addr: hp_addr) (i: U64.t)
   requires pure (U64.v i >= 1)
   returns addr: U64.t
-  ensures pure (U64.v addr == U64.v h_addr + U64.v i * U64.v mword)
+  ensures pure (U64.v addr == U64.v h_addr + (U64.v i) `op_Multiply` (U64.v mword))
 {
   let offset = U64.mul i mword;
   U64.add h_addr offset
