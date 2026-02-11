@@ -219,6 +219,18 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   
   let new_hdr = makeHeader wz black tag;
   
+  // Prove header is valid (gray headers have valid color bits)
+  SpecObject.color_of_object_spec f_addr 's;
+  SpecObject.is_gray_iff f_addr 's;
+  // getColor (SpecHeap.read_word 's (hd_address f_addr)) == Gray
+  // since hdr == SpecHeap.read_word 's h_addr == SpecHeap.read_word 's (hd_address f_addr)
+  SpecObject.gray_or_black_valid (SpecHeap.read_word 's (SpecHeap.hd_address f_addr));
+  // valid_header64 hdr
+  
+  // Prove: new_hdr == colorHeader hdr Black (makeHeader from fields == color change)
+  SpecObject.makeHeader_eq_colorHeader (SpecHeap.read_word 's (SpecHeap.hd_address f_addr)) Pulse.Lib.Header.Black;
+  // makeHeader wz black tag == colorHeader hdr Black
+  
   // Blacken: write new header
   is_heap_length heap;
   write_word heap h_addr new_hdr;
@@ -226,11 +238,10 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   
   // Bridge: spec_write_word == SpecHeap.write_word
   spec_write_word_eq 's h_addr new_hdr;
-  // Now: spec_write_word 's (U64.v h_addr) new_hdr == SpecHeap.write_word 's h_addr new_hdr
-  
-  // makeHeader_eq_colorHeader: new_hdr == colorHeader hdr Black
-  // Requires valid_header64 hdr — header from GC heap should be valid
-  // (colors are 0/1/2, all valid)
+  // spec_write_word 's (U64.v h_addr) new_hdr == SpecHeap.write_word 's h_addr new_hdr
+  // == SpecHeap.write_word 's h_addr (colorHeader hdr Black)  [by makeHeader_eq_colorHeader]
+  // == set_color 's f_addr Black                              [by set_color definition]
+  // == makeBlack f_addr 's                                    [by makeBlack definition]
   
   maybe_push_children heap st h_addr wz tag;
   
