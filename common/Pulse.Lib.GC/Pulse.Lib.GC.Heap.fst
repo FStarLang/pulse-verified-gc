@@ -137,6 +137,12 @@ let spec_write_word (s: heap_state)
   let s7 = Seq.upd s6 (addr + 6) b6 in
   Seq.upd s7 (addr + 7) b7
 
+/// Bridge: spec_write_word matches Spec.Heap.write_word
+let spec_write_word_eq (s: heap_state) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires U64.v addr + 8 <= Seq.length s)
+          (ensures spec_write_word s (U64.v addr) v == SpecHeap.write_word s addr v)
+  = SpecHeap.write_word_spec s addr v
+
 /// Seq.upd/index roundtrip for non-overlapping writes
 let upd_index_same (s: Seq.seq U8.t) (i: nat{i < Seq.length s}) (v: U8.t)
   : Lemma (Seq.index (Seq.upd s i v) i == v) = ()

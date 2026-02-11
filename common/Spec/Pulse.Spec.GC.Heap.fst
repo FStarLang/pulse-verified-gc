@@ -199,6 +199,8 @@ let write_word (g: heap) (addr: hp_addr) (value: U64.t)
   combine_decompose_identity value;
   result
 
+let write_word_spec g addr v = ()
+
 /// ---------------------------------------------------------------------------
 /// Read/Write Lemmas
 /// ---------------------------------------------------------------------------

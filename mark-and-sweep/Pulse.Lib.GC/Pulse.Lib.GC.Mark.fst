@@ -218,11 +218,25 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   mark_step_field_bound 's f_addr;
   
   let new_hdr = makeHeader wz black tag;
-  write_word_ex heap h_addr new_hdr;
+  
+  // Blacken: write new header
+  is_heap_length heap;
+  write_word heap h_addr new_hdr;
+  // Now: is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr)
+  
+  // Bridge: spec_write_word == SpecHeap.write_word
+  spec_write_word_eq 's h_addr new_hdr;
+  // Now: spec_write_word 's (U64.v h_addr) new_hdr == SpecHeap.write_word 's h_addr new_hdr
+  
+  // makeHeader_eq_colorHeader: new_hdr == colorHeader hdr Black
+  // Requires valid_header64 hdr — header from GC heap should be valid
+  // (colors are 0/1/2, all valid)
   
   maybe_push_children heap st h_addr wz tag;
   
   // mark_inv preservation
+  // spec mark_inv_step gives: mark_inv (fst (mark_step 's 'st)) (snd (mark_step 's 'st))
+  SpecMarkInv.mark_inv_step 's 'st;
   with s_post st_post. assert (is_heap heap s_post ** is_gray_stack st st_post);
   assume (pure (SpecMarkInv.mark_inv s_post st_post))
 }
