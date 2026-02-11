@@ -132,6 +132,11 @@ let makeHeader (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256}) : U64.t =
 let colorHeader (header: U64.t) (new_color: color) : U64.t =
   set_color64 header (U64.uint_to_t (pack_color new_color))
 
+/// colorHeader definition exposed for bridging
+let colorHeader_spec (hdr: U64.t) (c: color)
+  : Lemma (colorHeader hdr c == set_color64 hdr (U64.uint_to_t (pack_color c)))
+  = ()
+
 /// setColor for backwards compatibility (takes packed color)
 let setColor (hdr: U64.t) (c: U64.t{U64.v c < 4}) : U64.t =
   set_color64 hdr c

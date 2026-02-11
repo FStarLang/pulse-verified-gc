@@ -164,6 +164,33 @@ let makeHeader_getTag (wz: wosize) (c: color) (t: tag)
     Header.mask_tag_value ()
 #pop-options
 
+/// makeHeader from extracted fields with new color == set_color64
+/// This is the key bridge: extracting wosize/tag and reconstructing with a new color
+/// equals the bitwise set_color64 operation.
+#push-options "--z3rlimit 600 --fuel 0 --ifuel 0"
+let makeHeader_eq_set_color64 (hdr: U64.t) (c: color)
+  : Lemma (requires Header.valid_header64 hdr)
+          (ensures makeHeader (getWosize hdr) c (getTag hdr) ==
+                   Header.set_color64 hdr (U64.uint_to_t (Header.pack_color c)))
+  = let wz = getWosize hdr in
+    let tag = getTag hdr in
+    // Step 2: Connect getWosize/getTag to Header.get_wosize/get_tag
+    Header.get_wosize_bound (U64.v hdr);
+    Header.get_tag_bound (U64.v hdr);
+    Header.mask_tag_value ();
+    let h_sem : Header.header_sem = { Header.wosize = Header.get_wosize (U64.v hdr);
+                                       Header.color = c;
+                                       Header.tag = Header.get_tag (U64.v hdr) } in
+    // Step 1: Lib.makeHeader → pack_header (at value level)
+    makeHeader_eq_pack_header wz c tag;
+    // Step 3: repack_set_color64 gives pack_header64{extracted fields} == set_color64
+    Header.repack_set_color64 hdr c;
+    // Step 4: pack_header64 roundtrip via U64.v
+    U64.vu_inv (Header.pack_header h_sem);
+    // Chain: U64.v (makeHeader wz c tag) == pack_header h_sem == U64.v (set_color64 ...)
+    U64.v_inj (makeHeader wz c tag) (Header.set_color64 hdr (U64.uint_to_t (Header.pack_color c)))
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Object color predicates
 /// ---------------------------------------------------------------------------

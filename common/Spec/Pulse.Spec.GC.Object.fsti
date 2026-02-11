@@ -97,6 +97,10 @@ val makeHeader (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256}) : U64.t
 /// Change color in header (takes color_sem)
 val colorHeader (header: U64.t) (new_color: color) : U64.t
 
+/// colorHeader definition: colorHeader hdr c == set_color64 hdr (uint_to_t (pack_color c))
+val colorHeader_spec : (hdr: U64.t) -> (c: color) ->
+  Lemma (colorHeader hdr c == set_color64 hdr (U64.uint_to_t (pack_color c)))
+
 /// Clear color bits and set new color (takes packed U64 for backwards compat)
 val setColor (hdr: U64.t) (c: U64.t{U64.v c < 4}) : U64.t
 

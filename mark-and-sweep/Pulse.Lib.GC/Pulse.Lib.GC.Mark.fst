@@ -69,14 +69,15 @@ let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
 #pop-options
 
 /// Bridge: Lib.makeHeader on extracted fields == Spec.colorHeader
-/// Both compute the same bitwise operation (different decomposition paths)
-/// Proof requires: makeHeader_eq_pack_header + repack_set_color64 + U64.v_inj
+/// Chain: makeHeader_eq_set_color64 + colorHeader_spec (both expose set_color64)
 let lib_makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
   : Lemma (requires Pulse.Lib.Header.valid_header64 hdr)
           (ensures makeHeader (getWosize hdr) c (getTag hdr) == SpecObject.colorHeader hdr c)
-  = admit ()
+  = makeHeader_eq_set_color64 hdr c;
+    SpecObject.colorHeader_spec hdr c
 
 /// Bridge: Pulse blacken (write_word with makeHeader Black) == spec makeBlack
+#push-options "--z3rlimit 300 --fuel 2 --ifuel 1"
 let blacken_eq (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_gray f_addr g /\
@@ -86,7 +87,20 @@ let blacken_eq (g: heap_state) (f_addr: obj_addr)
                     let hdr = SpecHeap.read_word g h_addr in
                     let new_hdr = makeHeader (getWosize hdr) black (getTag hdr) in
                     spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeBlack f_addr g))
-  = admit ()
+  = let h_addr = SpecHeap.hd_address f_addr in
+    let hdr = SpecHeap.read_word g h_addr in
+    let new_hdr = makeHeader (getWosize hdr) black (getTag hdr) in
+    // is_gray → getColor hdr == Gray → valid_header64
+    SpecObject.gray_or_black_valid hdr;
+    // makeHeader with Black == colorHeader Black
+    lib_makeHeader_eq_colorHeader hdr Pulse.Lib.Header.Black;
+    // spec_write_word == SpecHeap.write_word (need address bounds)
+    SpecHeap.hd_address_spec f_addr;
+    SpecFields.wf_object_size_bound g f_addr;
+    spec_write_word_eq g h_addr new_hdr
+    // Now: spec_write_word g (U64.v h_addr) new_hdr == SpecHeap.write_word g h_addr (colorHeader hdr Black)
+    //    == set_color g f_addr Black == makeBlack f_addr g  [by definition unfolding]
+#pop-options
 
 /// Ghost helper: extract heap length fact
 ghost fn is_heap_length (h: heap_t)
