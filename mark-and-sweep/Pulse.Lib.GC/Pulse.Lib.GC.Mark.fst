@@ -24,9 +24,17 @@ open Pulse.Lib.GC.Stack
 open Pulse.Lib.GC.Fields
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module U8 = FStar.UInt8
 module ML = FStar.Math.Lemmas
 module SpecMark = Pulse.Spec.GC.Mark
 module SpecMarkInv = Pulse.Spec.GC.MarkInv
+module SpecHeap = Pulse.Spec.GC.Heap
+module SpecObject = Pulse.Spec.GC.Object
+module SpecFields = Pulse.Spec.GC.Fields
+
+/// Bridge: Pulse getWosize == Spec getWosize (both compute shift_right 10)
+let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr) =
+  SpecObject.getWosize_spec hdr
 
 /// f_address preserves alignment and gives valid obj_addr
 let f_address_valid (h_addr: hp_addr)
@@ -37,6 +45,28 @@ let f_address_valid (h_addr: hp_addr)
                     U64.v f % U64.v mword == 0 /\
                     U64.v f >= U64.v mword))
 = ML.lemma_mod_plus_distr_l (U64.v h_addr) (U64.v mword) (U64.v mword)
+
+/// Derive spec_field_address bound from mark_inv_obj_fields_bound + spec_read_word bridge
+/// mark_inv_obj_fields_bound gives: hd_address f + 8 + wz*8 <= heap_size
+/// with wz = wosize_of_object f g = getWosize(SpecHeap.read_word g (hd_address f))
+/// The Pulse read gives: hdr == spec_read_word g (hd_address f) == SpecHeap.read_word g (hd_address f)
+/// So getWosize hdr == wosize_of_object f g, and spec_field_address hd (wz+1) <= heap_size
+#push-options "--z3rlimit 100"
+let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
+  : Lemma (requires SpecFields.well_formed_heap g /\
+                    Seq.mem f_addr (SpecFields.objects 0UL g))
+          (ensures (let h_addr = U64.v f_addr - U64.v mword in
+                    let hdr = SpecHeap.read_word g (SpecHeap.hd_address f_addr) in
+                    let wz = getWosize hdr in
+                    spec_field_address h_addr (U64.v wz + 1) <= heap_size))
+  = SpecFields.wf_object_size_bound g f_addr;
+    SpecObject.wosize_of_object_spec f_addr g;
+    SpecHeap.hd_address_spec f_addr;
+    let hdr = SpecHeap.read_word g (SpecHeap.hd_address f_addr) in
+    getWosize_eq hdr
+    // Now: getWosize hdr == SpecObject.getWosize hdr == wosize_of_object f_addr g
+    // And wf_object_size_bound + hd_address_spec give the field bound
+#pop-options
 
 /// Ghost helper: extract heap length fact
 ghost fn is_heap_length (h: heap_t)
@@ -170,22 +200,26 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   let h_addr : hp_addr = h_addr_raw;
   
   // Derive object-fits-in-heap from well_formed_heap
-  // mark_inv_obj_fields_bound: hd_address f_addr + mword + wz*mword <= heap_size
   SpecMarkInv.mark_inv_obj_fields_bound 's f_addr;
+  
+  // Prove h_addr == SpecHeap.hd_address f_addr (both are f_addr - mword)
+  SpecHeap.hd_address_spec f_addr;
+  U64.v_inj h_addr (SpecHeap.hd_address f_addr);
+  
+  // Bridge: connect Pulse read to spec read for wosize
+  hp_addr_plus_8 h_addr;
+  spec_read_word_eq 's h_addr;
   
   let hdr = read_word heap h_addr;
   let wz = getWosize hdr;
   let tag = getTag hdr;
   
+  // Derive spec_field_address bound from mark_inv + bridge
+  mark_step_field_bound 's f_addr;
+  
   let new_hdr = makeHeader wz black tag;
   write_word_ex heap h_addr new_hdr;
   
-  // spec_field_address h_addr (wz+1) = h_addr + (wz+1)*8
-  // = hd_address f_addr + (wz+1)*8 = hd_address f_addr + mword + wz*mword
-  // <= heap_size (from mark_inv_obj_fields_bound)
-  // But we need wz from the ghost state 's, not from the mutated heap
-  // The read_word returned hdr from pre-write state, so wz matches 's
-  assume (pure (spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size));
   maybe_push_children heap st h_addr wz tag;
   
   // mark_inv preservation

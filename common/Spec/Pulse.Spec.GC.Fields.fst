@@ -644,6 +644,36 @@ let wf_object_bound (g: heap) (h: obj_addr) : Lemma
   (ensures U64.v h + op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
   = ()
 
+/// When objects start g is nonempty, the first object fits in heap:
+/// start + (1 + wz) * 8 <= Seq.length g
+/// This follows directly from the objects definition (the next_start check)
+let objects_nonempty_head_fits (start: hp_addr) (g: heap) : Lemma
+  (requires Seq.length (objects start g) > 0)
+  (ensures (let wz = getWosize (read_word g start) in
+            U64.v start + FStar.Mul.((U64.v wz + 1) * 8) <= Seq.length g))
+  = ()
+
+/// When objects start g is nonempty, the head object is obj_address start
+let objects_nonempty_head (start: hp_addr) (g: heap) : Lemma
+  (requires Seq.length (objects start g) > 0)
+  (ensures (let obj = obj_address start in
+            U64.v obj == U64.v start + 8 /\
+            Seq.head (objects start g) == obj))
+  = ()
+
+/// When objects start g is nonempty, next_start is valid and objects decomposes
+let objects_nonempty_next (start: hp_addr) (g: heap) : Lemma
+  (requires Seq.length (objects start g) > 0)
+  (ensures (let wz = getWosize (read_word g start) in
+            let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+            next <= Seq.length g /\ next < pow2 64 /\
+            next % 8 == 0 /\
+            (next < heap_size ==>
+              (let next_hp : hp_addr = U64.uint_to_t next in
+               objects start g == Seq.cons (obj_address start) (objects next_hp g)))))
+  = FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v start) (FStar.Mul.((U64.v (getWosize (read_word g start)) + 1) * 8)) 8;
+    FStar.Math.Lemmas.lemma_mod_mul_distr_r (U64.v (getWosize (read_word g start)) + 1) 8 8
+
 /// A header is valid if it has valid color and tag
 /// Note: getColor returns algebraic type (White|Gray|Black) from Pulse.Lib.Header.color_sem
 let is_valid_header (header: U64.t) : bool =

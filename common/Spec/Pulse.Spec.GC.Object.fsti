@@ -53,14 +53,23 @@ val wosize_shift : U32.t
 /// Header Field Extraction
 /// ---------------------------------------------------------------------------
 
+/// wosize = U64.t refined to < pow2 54
+type wosize = w:U64.t{U64.v w < pow2 54}
+
 /// Extract color from header word (bits 8-9)
 val getColor (hdr: U64.t) : color
 
 /// Extract tag from header word (bits 0-7)
-val getTag (hdr: U64.t) : U64.t
+val getTag (hdr: U64.t) : t:U64.t{U64.v t < 256}
+
+/// getTag returns a value < 256
+val getTag_bound : (hdr: U64.t) -> Lemma (U64.v (getTag hdr) < 256)
 
 /// Extract wosize from header word (bits 10-63)
-val getWosize (hdr: U64.t) : U64.t
+val getWosize (hdr: U64.t) : wosize
+
+/// getWosize computes shift_right hdr 10
+val getWosize_spec : (hdr: U64.t) -> Lemma (getWosize hdr == U64.shift_right hdr 10ul)
 
 /// getWosize returns a value < 2^54
 val getWosize_bound : (hdr: U64.t) -> Lemma (U64.v (getWosize hdr) < pow2 54)
@@ -68,6 +77,9 @@ val getWosize_bound : (hdr: U64.t) -> Lemma (U64.v (getWosize hdr) < pow2 54)
 /// ---------------------------------------------------------------------------
 /// Header Field Modification
 /// ---------------------------------------------------------------------------
+
+/// Construct header from components
+val makeHeader (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256}) : U64.t
 
 /// Change color in header (takes color_sem)
 val colorHeader (header: U64.t) (new_color: color) : U64.t
@@ -86,6 +98,11 @@ val colorHeader_preserves_wosize : (hdr: U64.t) -> (c: color) ->
 /// colorHeader preserves getTag
 val colorHeader_preserves_tag : (hdr: U64.t) -> (c: color) ->
   Lemma (getTag (colorHeader hdr c) == getTag hdr)
+
+/// makeHeader from extracted fields with new color == colorHeader  
+val makeHeader_eq_colorHeader : (hdr: U64.t) -> (c: color) ->
+  Lemma (requires valid_header64 hdr)
+        (ensures makeHeader (getWosize hdr) c (getTag hdr) == colorHeader hdr c)
 
 /// ---------------------------------------------------------------------------
 /// Object Color Predicates

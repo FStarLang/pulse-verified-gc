@@ -601,3 +601,14 @@ let pack_unpack_header64 (h: header_sem)
 let unpack_pack_header64 (v: U64.t{valid_header64 v})
   : Lemma (pack_header64 (unpack_header64_v v) == v) =
   unpack_pack_header (U64.v v)
+
+/// makeHeader from extracted fields with new color == set_color
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+let repack_set_color64 (v: U64.t{valid_header64 v}) (c: color_sem)
+  : Lemma (requires get_wosize (U64.v v) < pow2 54 /\ get_tag (U64.v v) < 256)
+          (ensures pack_header64 { wosize = get_wosize (U64.v v); color = c; tag = get_tag (U64.v v) } ==
+                   set_color64 v (U64.uint_to_t (pack_color c)))
+  = unpack_pack_header (U64.v v);
+    let h = Some?.v (unpack_header (U64.v v)) in
+    pack_set_color h c
+#pop-options

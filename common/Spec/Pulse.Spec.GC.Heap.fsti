@@ -10,7 +10,6 @@ module Pulse.Spec.GC.Heap
 
 open FStar.Seq
 open FStar.Mul
-open FStar.Endianness
 
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8
@@ -18,11 +17,54 @@ module U8 = FStar.UInt8
 open Pulse.Spec.GC.Base
 
 /// ---------------------------------------------------------------------------
+/// Byte ↔ U64 Helpers (shared with Pulse.Lib.GC.Heap)
+/// ---------------------------------------------------------------------------
+
+let uint8_to_uint64 (x: U8.t) : U64.t = U64.uint_to_t (U8.v x)
+let uint64_to_uint8 (x: U64.t) : U8.t = U8.uint_to_t (U64.v x % 256)
+
+let combine_bytes (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) : U64.t =
+  let open U64 in
+  let v0 = uint8_to_uint64 b0 in
+  let v1 = uint8_to_uint64 b1 <<^ 8ul in
+  let v2 = uint8_to_uint64 b2 <<^ 16ul in
+  let v3 = uint8_to_uint64 b3 <<^ 24ul in
+  let v4 = uint8_to_uint64 b4 <<^ 32ul in
+  let v5 = uint8_to_uint64 b5 <<^ 40ul in
+  let v6 = uint8_to_uint64 b6 <<^ 48ul in
+  let v7 = uint8_to_uint64 b7 <<^ 56ul in
+  v0 |^ v1 |^ v2 |^ v3 |^ v4 |^ v5 |^ v6 |^ v7
+
+/// ---------------------------------------------------------------------------
 /// Word Read Operations
 /// ---------------------------------------------------------------------------
 
 /// Read a 64-bit word from heap at byte index (little-endian)
 val read_word (g: heap) (addr: hp_addr) : U64.t
+
+/// Read word characterization: read_word returns combine_bytes of individual bytes
+val read_word_spec : (g: heap) -> (addr: hp_addr) ->
+  Lemma (read_word g addr == combine_bytes
+    (Seq.index g (U64.v addr))
+    (Seq.index g (U64.v addr + 1))
+    (Seq.index g (U64.v addr + 2))
+    (Seq.index g (U64.v addr + 3))
+    (Seq.index g (U64.v addr + 4))
+    (Seq.index g (U64.v addr + 5))
+    (Seq.index g (U64.v addr + 6))
+    (Seq.index g (U64.v addr + 7)))
+
+/// Roundtrip: combine_bytes(decompose(v)) == v
+val combine_decompose_identity (v: U64.t) : Lemma (combine_bytes
+    (uint64_to_uint8 v)
+    (uint64_to_uint8 (U64.shift_right v 8ul))
+    (uint64_to_uint8 (U64.shift_right v 16ul))
+    (uint64_to_uint8 (U64.shift_right v 24ul))
+    (uint64_to_uint8 (U64.shift_right v 32ul))
+    (uint64_to_uint8 (U64.shift_right v 40ul))
+    (uint64_to_uint8 (U64.shift_right v 48ul))
+    (uint64_to_uint8 (U64.shift_right v 56ul))
+    == v)
 
 /// ---------------------------------------------------------------------------
 /// Range Replacement (for writes)

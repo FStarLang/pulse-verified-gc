@@ -35,9 +35,6 @@ let color_shift : U32.t = 8ul     // shift amount for color
 let tag_mask : U64.t = 0xFFUL     // bits 0-7
 let wosize_shift : U32.t = 10ul   // shift amount for wosize
 
-/// Word size type (value < 2^54)
-type wosize = w:U64.t{U64.v w < pow2 54}
-
 /// ---------------------------------------------------------------------------
 /// Header Field Extraction
 /// ---------------------------------------------------------------------------
@@ -73,8 +70,12 @@ let getColor (header: U64.t) : color =
 /// (i.e., color bits == 3, which is unused)
 
 /// Get tag from header word
-let getTag (header: U64.t) : U64.t =
+let getTag (header: U64.t) : (t:U64.t{U64.v t < 256}) =
+  get_tag_bound (U64.v header);
   U64.logand header tag_mask
+
+let getTag_bound (hdr: U64.t) : Lemma (U64.v (getTag hdr) < 256) =
+  get_tag_bound (U64.v hdr)
 
 /// Helper lemma: shifting right by 10 gives a value < pow2 54
 let wosize_shift_lemma (header: U64.t) 
@@ -93,6 +94,8 @@ let wosize_shift_lemma (header: U64.t)
 let getWosize (header: U64.t) : wosize =
   wosize_shift_lemma header;
   U64.shift_right header wosize_shift
+
+let getWosize_spec (hdr: U64.t) : Lemma (getWosize hdr == U64.shift_right hdr 10ul) = ()
 
 /// getWosize returns a value < 2^54
 let getWosize_bound (hdr: U64.t) : Lemma (U64.v (getWosize hdr) < pow2 54) = 
@@ -211,6 +214,17 @@ let colorHeader_preserves_tag (hdr: U64.t) (c: color)
   : Lemma (getTag (colorHeader hdr c) == getTag hdr) =
   let packed_c = U64.uint_to_t (pack_color c) in
   setColor_preserves_tag_lemma hdr packed_c
+
+/// makeHeader from extracted fields with new color == colorHeader
+/// Requires valid header (color field < 3)
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+let makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
+  : Lemma (requires valid_header64 hdr)
+          (ensures makeHeader (getWosize hdr) c (getTag hdr) == colorHeader hdr c)
+  = getWosize_Header hdr;
+    getTag_Header hdr;
+    repack_set_color64 hdr c
+#pop-options
 
 /// Helper: word-aligned addresses that differ are separated by >= 8 bytes
 /// This makes the "else" branch unreachable in read_write_different proofs

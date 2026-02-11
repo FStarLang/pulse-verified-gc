@@ -24,6 +24,7 @@ module Seq = FStar.Seq
 
 /// Re-export from Base so spec heap == Pulse heap_state
 module Base = Pulse.Spec.GC.Base
+module SpecHeap = Pulse.Spec.GC.Heap
 
 /// Machine word size in bytes (8 bytes = 64 bits)
 let mword : U64.t = Base.mword
@@ -83,41 +84,36 @@ let is_heap (h: heap_t) (s: heap_state) : slprop =
   pure (SZ.v h.size == heap_size)
 
 /// ---------------------------------------------------------------------------
-/// Pure helper functions (must be defined before fn definitions)
+/// Pure helper functions — imported from Spec.Heap for consistency
 /// ---------------------------------------------------------------------------
 
-/// Helper: convert U8 to U64
-let uint8_to_uint64 (x: U8.t) : U64.t = 
-  U64.uint_to_t (U8.v x)
+/// Helper: convert U8 to U64 (same as SpecHeap.uint8_to_uint64)
+let uint8_to_uint64 (x: U8.t) : U64.t = SpecHeap.uint8_to_uint64 x
 
-/// Helper: convert U64 to U8 (truncate to low 8 bits)
-let uint64_to_uint8 (x: U64.t) : U8.t =
-  U8.uint_to_t (U64.v x % 256)
+/// Helper: convert U64 to U8 (same as SpecHeap.uint64_to_uint8)
+let uint64_to_uint8 (x: U64.t) : U8.t = SpecHeap.uint64_to_uint8 x
 
-/// Combine 8 bytes into a 64-bit word (little-endian)
+/// Combine 8 bytes into a 64-bit word (same as SpecHeap.combine_bytes)
 let combine_bytes (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) : U64.t =
-  let open U64 in
-  let v0 = uint8_to_uint64 b0 in
-  let v1 = uint8_to_uint64 b1 <<^ 8ul in
-  let v2 = uint8_to_uint64 b2 <<^ 16ul in
-  let v3 = uint8_to_uint64 b3 <<^ 24ul in
-  let v4 = uint8_to_uint64 b4 <<^ 32ul in
-  let v5 = uint8_to_uint64 b5 <<^ 40ul in
-  let v6 = uint8_to_uint64 b6 <<^ 48ul in
-  let v7 = uint8_to_uint64 b7 <<^ 56ul in
-  v0 |^ v1 |^ v2 |^ v3 |^ v4 |^ v5 |^ v6 |^ v7
+  SpecHeap.combine_bytes b0 b1 b2 b3 b4 b5 b6 b7
 
-/// Specification for read_word
+/// Specification for read_word — same as Spec.Heap.read_word on the byte sequence
 let spec_read_word (s: heap_state) (addr: nat{addr + 8 <= Seq.length s}) : U64.t =
-  let b0 = Seq.index s addr in
-  let b1 = Seq.index s (addr + 1) in
-  let b2 = Seq.index s (addr + 2) in
-  let b3 = Seq.index s (addr + 3) in
-  let b4 = Seq.index s (addr + 4) in
-  let b5 = Seq.index s (addr + 5) in
-  let b6 = Seq.index s (addr + 6) in
-  let b7 = Seq.index s (addr + 7) in
-  combine_bytes b0 b1 b2 b3 b4 b5 b6 b7
+  combine_bytes
+    (Seq.index s addr)
+    (Seq.index s (addr + 1))
+    (Seq.index s (addr + 2))
+    (Seq.index s (addr + 3))
+    (Seq.index s (addr + 4))
+    (Seq.index s (addr + 5))
+    (Seq.index s (addr + 6))
+    (Seq.index s (addr + 7))
+
+/// Bridge: spec_read_word matches Spec.Heap.read_word
+let spec_read_word_eq (s: heap_state) (addr: hp_addr)
+  : Lemma (requires U64.v addr + 8 <= Seq.length s)
+          (ensures spec_read_word s (U64.v addr) == SpecHeap.read_word s addr)
+  = SpecHeap.read_word_spec s addr
 
 /// Specification for write_word
 let spec_write_word (s: heap_state) 
