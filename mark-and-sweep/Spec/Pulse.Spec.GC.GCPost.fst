@@ -13,6 +13,11 @@ let gc_postcondition (h_final: heap) : prop =
   well_formed_heap h_final /\
   (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> is_white x h_final)
 
+let all_objects_white (h_final: heap) : prop =
+  forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> is_white x h_final
+
 let gc_postcondition_intro h_final = ()
+
+let gc_postcondition_from_parts h_final = ()
 
 let gc_postcondition_elim h_final = ()

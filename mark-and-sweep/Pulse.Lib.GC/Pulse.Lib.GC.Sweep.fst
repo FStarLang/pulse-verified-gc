@@ -158,7 +158,7 @@ fn next_object (h_addr: hp_addr) (wz: wosize)
 fn sweep (heap: heap_t) (fp: U64.t)
   requires is_heap heap 's ** pure (SpecFields.well_formed_heap 's)
   returns final_fp: U64.t
-  ensures  exists* s2. is_heap heap s2
+  ensures  exists* s2. is_heap heap s2 ** pure (SpecFields.well_formed_heap s2)
 {
   is_heap_length heap;
   let mut current = 0UL;

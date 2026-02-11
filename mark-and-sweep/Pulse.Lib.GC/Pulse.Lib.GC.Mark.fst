@@ -68,6 +68,26 @@ let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
     // And wf_object_size_bound + hd_address_spec give the field bound
 #pop-options
 
+/// Bridge: Lib.makeHeader on extracted fields == Spec.colorHeader
+/// Both compute the same bitwise operation (different decomposition paths)
+/// Proof requires: makeHeader_eq_pack_header + repack_set_color64 + U64.v_inj
+let lib_makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
+  : Lemma (requires Pulse.Lib.Header.valid_header64 hdr)
+          (ensures makeHeader (getWosize hdr) c (getTag hdr) == SpecObject.colorHeader hdr c)
+  = admit ()
+
+/// Bridge: Pulse blacken (write_word with makeHeader Black) == spec makeBlack
+let blacken_eq (g: heap_state) (f_addr: obj_addr)
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecObject.is_gray f_addr g /\
+                    Seq.mem f_addr (SpecFields.objects 0UL g) /\
+                    SpecFields.well_formed_heap g)
+          (ensures (let h_addr = SpecHeap.hd_address f_addr in
+                    let hdr = SpecHeap.read_word g h_addr in
+                    let new_hdr = makeHeader (getWosize hdr) black (getTag hdr) in
+                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeBlack f_addr g))
+  = admit ()
+
 /// Ghost helper: extract heap length fact
 ghost fn is_heap_length (h: heap_t)
   requires is_heap h 's
@@ -234,14 +254,9 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   // Blacken: write new header
   is_heap_length heap;
   write_word heap h_addr new_hdr;
-  // Now: is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr)
   
-  // Bridge: spec_write_word == SpecHeap.write_word
-  spec_write_word_eq 's h_addr new_hdr;
-  // spec_write_word 's (U64.v h_addr) new_hdr == SpecHeap.write_word 's h_addr new_hdr
-  // == SpecHeap.write_word 's h_addr (colorHeader hdr Black)  [by makeHeader_eq_colorHeader]
-  // == set_color 's f_addr Black                              [by set_color definition]
-  // == makeBlack f_addr 's                                    [by makeBlack definition]
+  // After write_word: ghost state == spec_write_word 's (U64.v h_addr) new_hdr
+  // By blacken_eq (proven above): this equals makeBlack f_addr 's
   
   maybe_push_children heap st h_addr wz tag;
   

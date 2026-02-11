@@ -19,10 +19,18 @@ open Pulse.Spec.GC.Fields
 /// Abstract postcondition: well_formed_heap + all objects white
 val gc_postcondition (h_final: heap) : prop
 
+/// Abstract: all objects are white (pillar 4 — state reset)
+val all_objects_white (h_final: heap) : prop
+
 /// Introduce gc_postcondition from its parts
 val gc_postcondition_intro : (h_final: heap) ->
   Lemma (requires well_formed_heap h_final /\
                   (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> is_white x h_final))
+        (ensures gc_postcondition h_final)
+
+/// Introduce gc_postcondition from well_formed_heap (proven) + all_objects_white (abstract)
+val gc_postcondition_from_parts : (h_final: heap) ->
+  Lemma (requires well_formed_heap h_final /\ all_objects_white h_final)
         (ensures gc_postcondition h_final)
 
 /// Eliminate gc_postcondition to recover its parts

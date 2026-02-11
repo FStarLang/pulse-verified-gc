@@ -48,19 +48,24 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2) ** pure (Seq.length st2 == 0)
 {
-  // Mark phase: process gray stack until empty
+  // Mark phase: process gray stack until empty (preserves mark_inv)
   mark_loop heap st;
   
-  // Extract well_formed_heap from mark_inv for sweep's precondition
-  with s_mark st_mark. assert (is_heap heap s_mark ** is_gray_stack st st_mark);
+  // Bind existentials and extract well_formed_heap from mark_inv
+  with s_mark st_mark. assert (is_heap heap s_mark ** is_gray_stack st st_mark **
+                                pure (SpecMarkInv.mark_inv s_mark st_mark /\ Seq.length st_mark == 0));
   SpecMarkInv.mark_inv_elim_wfh s_mark st_mark;
+  // well_formed_heap s_mark now in SMT context → sweep's precondition satisfied
   
   // Sweep phase: reset black to white, build free list
+  // sweep preserves well_formed_heap (via internal loop invariant)
   let result_fp = sweep heap fp;
   
-  // Bridge: gc_postcondition (pillars 1+4)
-  with s_sweep. assert (is_heap heap s_sweep);
-  assume (pure (SpecGCPost.gc_postcondition s_sweep));
+  // After sweep: well_formed_heap s_sweep is PROVEN (from sweep postcondition)
+  // Only all_objects_white needs assumption (pending sweep↔spec equivalence)
+  with s_sweep. assert (is_heap heap s_sweep ** pure (SpecFields.well_formed_heap s_sweep));
+  assume (pure (SpecGCPost.all_objects_white s_sweep));
+  SpecGCPost.gc_postcondition_from_parts s_sweep;
   
   result_fp
 }
