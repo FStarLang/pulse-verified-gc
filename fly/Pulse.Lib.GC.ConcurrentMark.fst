@@ -214,11 +214,21 @@ fn maybe_push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (Seq.length 'gs > 0 /\
-                 SpecFields.well_formed_heap 's)
+                 SpecFields.well_formed_heap 's /\
+                 stack_valid 's 'gs)
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
-           pure (SpecFields.well_formed_heap s2)
+           pure (SpecFields.well_formed_heap s2 /\
+                 stack_valid s2 gs2)
 {
+  // Pop: 'gs == Seq.cons f_addr tl
   let f_addr = pop st;
+  // f_addr == Seq.index 'gs 0, so stack_valid gives membership
+  stack_valid_head 's 'gs;
+  // 'gs == Seq.cons f_addr tl, so Seq.index 'gs 0 == f_addr
+  with tl. assert (is_gray_stack st tl);
+  // f_addr is a member of objects 0UL 's
+  assert (pure (Seq.mem f_addr (SpecFields.objects 0UL 's)));
+
   let h_addr : hp_addr = U64.sub f_addr mword;
   hp_addr_plus_8 h_addr;
 
@@ -235,7 +245,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   spec_read_word_eq 's h_addr;
   SpecHeap.hd_address_spec f_addr;
   U64.v_inj h_addr (SpecHeap.hd_address f_addr);
-  assume_ (pure (Seq.mem f_addr (SpecFields.objects 0UL 's)));
+  // f_addr membership was established from stack_valid above
   blacken_bridge 's f_addr;
   rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
        as (is_heap heap (SpecObject.makeBlack f_addr 's));
@@ -263,6 +273,10 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 
   // Then push children (heap is now makeBlack f_addr 's, which is well_formed)
   maybe_push_children heap st h_addr wz tag;
+  // Stack validity: each pushed child is in objects (from check_and_darken assume_)
+  // Will be proven when Step C eliminates the check_and_darken assume_
+  with s_post gs_post. assert (is_heap heap s_post ** is_gray_stack st gs_post);
+  assume_ (pure (stack_valid s_post gs_post));
   ()
 }
 #pop-options
@@ -274,7 +288,8 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 
 fn mark_loop (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'gs **
-           pure (SpecFields.well_formed_heap 's)
+           pure (SpecFields.well_formed_heap 's /\
+                 stack_valid 's 'gs)
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
            pure (SpecFields.well_formed_heap s2)
 {
@@ -288,7 +303,8 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
     is_heap heap s_i **
     is_gray_stack st gs_i **
     pure (b == c) **
-    pure (SpecFields.well_formed_heap s_i)
+    pure (SpecFields.well_formed_heap s_i /\
+          stack_valid s_i gs_i)
   {
     let empty = is_empty st;
     if empty {

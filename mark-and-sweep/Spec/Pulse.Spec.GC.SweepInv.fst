@@ -300,20 +300,107 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
       well_formed_heap g_post /\
       U64.v h_addr + 8 < heap_size /\
       is_white (obj_address h_addr) g_post /\
-      headers_preserved_before (U64.v h_addr) g_post g_pre)
+      headers_preserved_before (U64.v h_addr) g_post g_pre /\
+      getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
+      Seq.mem (obj_address h_addr) (objects 0UL g_post))
     (ensures objects_white_before 
       (U64.v h_addr + FStar.Mul.((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
-  = // TODO: Complete the proof
-    // The key insight is:
-    // 1. For objects before h_addr: headers preserved → colors preserved → whiteness preserved
-    // 2. For the object at h_addr: explicitly white by precondition
-    // 3. No other objects exist between h_addr and next position (by well_formed_heap)
-    admit()
+  = let obj : obj_addr = obj_address h_addr in
+    let wz = getWosize (read_word g_pre h_addr) in
+    let next = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+    Pulse.Spec.GC.Heap.hd_address_spec obj;
+    assert (U64.v (hd_address obj) = U64.v h_addr);
+    let aux (x: obj_addr)
+      : Lemma (requires Seq.mem x (objects 0UL g_post) /\ U64.v (hd_address x) < next)
+              (ensures is_white x g_post)
+      = Pulse.Spec.GC.Heap.hd_address_spec x;
+        if U64.v (hd_address x) < U64.v h_addr then begin
+          // Case 1: before h_addr — preservation from g_pre
+          // headers_preserved_before gives read_word equality
+          assert (Seq.mem x (objects 0UL g_pre));
+          // From objects_white_before in g_pre:
+          assert (is_white x g_pre);
+          // Bridge via color_of_object_spec:
+          color_of_object_spec x g_pre;
+          color_of_object_spec x g_post;
+          is_white_iff x g_pre;
+          is_white_iff x g_post;
+          ()
+        end
+        else if U64.v x = U64.v obj then begin
+          // Case 2: x == obj_address h_addr
+          FStar.UInt64.v_inj x obj;
+          ()
+        end
+        else if U64.v x > U64.v obj then begin
+          // Case 3: x > obj — use objects_separated to get contradiction
+          assert (U64.v x > U64.v obj);
+          objects_separated 0UL g_post obj x;
+          // objects_separated: U64.v x > U64.v obj + wosize_of_object_as_wosize(obj, g_post) * 8
+          wosize_of_object_spec obj g_post;
+          assert (U64.v (hd_address obj) = U64.v h_addr);
+          // wosize_of_object obj g_post = getWosize(read_word g_post (hd_address obj))
+          //                              = getWosize(read_word g_post h_addr)
+          //                              = getWosize(read_word g_pre h_addr) = wz
+          assert (wosize_of_object obj g_post == wz);
+          // So: U64.v x > U64.v obj + wz * 8 = h_addr + 8 + wz * 8
+          // hd_address x = x - 8 > h_addr + wz * 8
+          // Both h_addr and hd_address x are 8-aligned, wz*8 is 8-aligned
+          // So hd_address x >= h_addr + wz * 8 + 8 = h_addr + (wz+1)*8 = next
+          // This contradicts hd_address x < next
+          assert (U64.v x > U64.v obj + FStar.Mul.(U64.v wz * 8));
+          assert (U64.v (hd_address x) = U64.v x - 8);
+          assert (U64.v (hd_address x) > U64.v h_addr + FStar.Mul.(U64.v wz * 8) - 8 + 8);
+          // hd_address x is a multiple of 8 (from hp_addr/obj_addr alignment)
+          // h_addr + wz*8 is a multiple of 8
+          // hd_address x > h_addr + wz*8 and both multiples of 8
+          // => hd_address x >= h_addr + wz*8 + 8 = next
+          assert false
+        end
+        else begin
+          // Case 4: x < obj but hd_address x >= h_addr
+          // x < obj = h_addr + 8 and hd_address x = x - 8 >= h_addr
+          // => x >= h_addr + 8 and x < h_addr + 8 => contradiction
+          assert false
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 let objects_white_before_all (pos: nat) (g: heap)
   : Lemma (requires objects_white_before pos g /\ pos >= heap_size)
           (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
-  = // Any object x has hd_address x < heap_size (from obj_addr refinement)
-    // Since pos >= heap_size, we have hd_address x < pos
-    // Therefore is_white x g follows from objects_white_before pos g
+  = ()
+
+let no_gray_objects (g: heap) : prop =
+  forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g)
+
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+let no_gray_at_preserved (obj: obj_addr) (g_init g_cur: heap)
+  : Lemma (requires no_gray_objects g_init /\
+                    Seq.mem obj (objects 0UL g_init) /\
+                    read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
+          (ensures ~(is_gray obj g_cur))
+  = color_of_object_spec obj g_init;
+    color_of_object_spec obj g_cur;
+    // Now: color_of_object obj g_init == getColor (read_word g_init (hd_address obj))
+    //      color_of_object obj g_cur  == getColor (read_word g_cur  (hd_address obj))
+    // With read_word g_cur _ == read_word g_init _, by congruence:
+    //      color_of_object obj g_cur == color_of_object obj g_init
+    is_gray_iff obj g_init;
+    is_gray_iff obj g_cur;
+    // is_gray obj g <==> color_of_object obj g = Gray
+    // no_gray_objects gives ~(is_gray obj g_init)
+    // therefore color_of_object obj g_init <> Gray
+    // therefore color_of_object obj g_cur <> Gray
+    // therefore ~(is_gray obj g_cur)
+    // Help SMT see the connection:
+    let c_init = color_of_object obj g_init in
+    let c_cur = color_of_object obj g_cur in
+    assert (c_init == getColor (read_word g_init (hd_address obj)));
     ()
+#pop-options
+
+let no_gray_intro (g: heap)
+  : Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))
+          (ensures no_gray_objects g)
+  = ()

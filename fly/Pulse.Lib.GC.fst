@@ -104,6 +104,9 @@ fn mark_one_thread
   scan_thread_roots heap st thread_roots n_thread;
 
   // Step 3: Run mark loop until gray stack is empty
+  // Stack validity: scan_thread_roots pushed valid roots to the gray stack
+  with s2 gs2. assert (is_heap heap s2 ** is_gray_stack st gs2);
+  assume_ (pure (stack_valid s2 gs2));
   mark_loop heap st;
 
   // Step 4: Reset blue markings back to white

@@ -224,6 +224,8 @@ val objects_white_before_zero : (g: heap) ->
 /// - Heap is well-formed
 /// - Current object at h_addr is white in g_post
 /// - Headers before h_addr are preserved from g_pre to g_post
+/// - Wosize at h_addr is the same in g_post and g_pre (color-only change)
+/// - obj_address h_addr is in the objects list
 val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: heap) ->
   Lemma (requires
     objects_white_before (U64.v h_addr) g_pre /\
@@ -231,7 +233,9 @@ val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: h
     well_formed_heap g_post /\
     U64.v h_addr + 8 < heap_size /\
     is_white (obj_address h_addr) g_post /\
-    headers_preserved_before (U64.v h_addr) g_post g_pre)
+    headers_preserved_before (U64.v h_addr) g_post g_pre /\
+    getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
+    Seq.mem (obj_address h_addr) (objects 0UL g_post))
   (ensures objects_white_before 
     (U64.v h_addr + FStar.Mul.((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
 
@@ -239,3 +243,24 @@ val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: h
 val objects_white_before_all : (pos: nat) -> (g: heap) ->
   Lemma (requires objects_white_before pos g /\ pos >= heap_size)
         (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
+
+/// ---------------------------------------------------------------------------
+/// No Gray Objects
+/// ---------------------------------------------------------------------------
+
+/// Abstract: no gray objects in the heap
+val no_gray_objects : heap -> prop
+
+/// Derive per-object non-gray from headers preservation + global no-gray
+/// Key insight: if headers at h_addr are preserved from g_init to g_cur,
+/// then the color at h_addr is the same, so no-gray transfers.
+val no_gray_at_preserved : (obj: obj_addr) -> (g_init: heap) -> (g_cur: heap) ->
+  Lemma (requires no_gray_objects g_init /\
+                  Seq.mem obj (objects 0UL g_init) /\
+                  read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
+        (ensures ~(is_gray obj g_cur))
+
+/// No gray from empty-stack mark_inv: all gray objects are on (empty) stack
+val no_gray_intro : (g: heap) ->
+  Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))
+        (ensures no_gray_objects g)

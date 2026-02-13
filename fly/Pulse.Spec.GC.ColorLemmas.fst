@@ -546,6 +546,64 @@ let roots_valid_raw (g: heap) (obj: obj_addr) (c: U64.t{U64.v c < 4})
           (ensures roots_valid (set_object_color_raw obj g c) roots)
   = seq_addrs_valid_preserved_raw g obj c roots
 
+/// stack_valid is preserved when popping (tail is a subsequence)
+let stack_valid_tail (g: heap) (gs: Seq.seq obj_addr)
+  : Lemma (requires stack_valid g gs /\ Seq.length gs > 0)
+          (ensures stack_valid g (Seq.tail gs))
+  = let tl = Seq.tail gs in
+    let aux (i: nat{i < Seq.length tl})
+      : Lemma (Seq.mem (Seq.index tl i) (objects 0UL g))
+      = Seq.lemma_index_slice gs 1 (Seq.length gs) i;
+        assert (Seq.index tl i == Seq.index gs (i + 1));
+        assert (i + 1 < Seq.length gs)
+    in
+    Classical.forall_intro aux
+
+/// stack_valid is preserved when pushing a valid element
+let stack_valid_cons (g: heap) (x: obj_addr) (gs: Seq.seq obj_addr)
+  : Lemma (requires stack_valid g gs /\ Seq.mem x (objects 0UL g))
+          (ensures stack_valid g (Seq.cons x gs))
+  = let s = Seq.cons x gs in
+    let aux (i: nat{i < Seq.length s})
+      : Lemma (Seq.mem (Seq.index s i) (objects 0UL g))
+      = if i = 0 then (Seq.lemma_index_is_nth s 0; ())
+        else begin
+          assert (Seq.index s i == Seq.index gs (i - 1));
+          assert (i - 1 < Seq.length gs)
+        end
+    in
+    Classical.forall_intro aux
+
+/// stack_valid head element is a member of objects
+let stack_valid_head (g: heap) (gs: Seq.seq obj_addr)
+  : Lemma (requires stack_valid g gs /\ Seq.length gs > 0)
+          (ensures Seq.mem (Seq.index gs 0) (objects 0UL g))
+  = ()
+
+/// stack_valid is transferred via objects_preserved
+let stack_valid_preserved (g1 g2: heap) (gs: Seq.seq obj_addr)
+  : Lemma (requires stack_valid g2 gs /\ objects_preserved g1 g2)
+          (ensures stack_valid g1 gs)
+  = let aux (i: nat{i < Seq.length gs})
+      : Lemma (Seq.mem (Seq.index gs i) (objects 0UL g1))
+      = objects_preserved_mem g1 g2 (Seq.index gs i)
+    in
+    Classical.forall_intro aux
+
+/// stack_valid preserved by makeBlack
+let stack_valid_makeBlack (g: heap) (obj: obj_addr) (gs: Seq.seq obj_addr)
+  : Lemma (requires stack_valid g gs /\ Seq.mem obj (objects 0UL g))
+          (ensures stack_valid (makeBlack obj g) gs)
+  = makeBlack_eq obj g;
+    seq_addrs_valid_preserved g obj Header.Black gs
+
+/// stack_valid preserved by makeGray
+let stack_valid_makeGray (g: heap) (obj: obj_addr) (gs: Seq.seq obj_addr)
+  : Lemma (requires stack_valid g gs /\ Seq.mem obj (objects 0UL g))
+          (ensures stack_valid (makeGray obj g) gs)
+  = makeGray_eq obj g;
+    seq_addrs_valid_preserved g obj Header.Gray gs
+
 /// ===========================================================================
 /// Section 10: Sweep helper lemmas (objects enumeration tracking)
 /// ===========================================================================
