@@ -40,6 +40,9 @@ val closure_tag : U64.t
 val infix_tag : U64.t
 val no_scan_tag : U64.t
 
+/// Expose tag constant values (needed for Pulse bridge lemmas)
+val no_scan_tag_val : unit -> Lemma (no_scan_tag == U64.uint_to_t 251)
+
 /// ---------------------------------------------------------------------------
 /// Header Masks and Shifts
 /// ---------------------------------------------------------------------------
@@ -67,6 +70,10 @@ val getColor_raw : (hdr: U64.t) -> Lemma (
       (c = 2 ==> getColor hdr = Black) /\
       (c = 3 ==> getColor hdr = White))
 
+/// Expose getColor definition (needed for Pulse bridge)
+val getColor_spec : (hdr: U64.t) ->
+  Lemma (getColor hdr == (match unpack_color (get_color (U64.v hdr)) with | Some c -> c | None -> White))
+
 /// Gray or Black headers are always valid
 val gray_or_black_valid : (hdr: U64.t) ->
   Lemma (requires getColor hdr == Gray \/ getColor hdr == Black)
@@ -83,6 +90,9 @@ val getWosize (hdr: U64.t) : wosize
 
 /// getWosize computes shift_right hdr 10
 val getWosize_spec : (hdr: U64.t) -> Lemma (getWosize hdr == U64.shift_right hdr 10ul)
+
+/// getTag computes logand hdr 0xFF (exposed for bridge lemmas)
+val getTag_spec : (hdr: U64.t) -> Lemma (getTag hdr == U64.logand hdr 0xFFUL)
 
 /// getWosize returns a value < 2^54
 val getWosize_bound : (hdr: U64.t) -> Lemma (U64.v (getWosize hdr) < pow2 54)
@@ -220,6 +230,18 @@ val makeWhite_eq : (h_addr: obj_addr) -> (g: heap) ->
 
 val makeGray_eq : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (makeGray h_addr g == set_object_color h_addr g Gray)
+
+/// Expose makeWhite as write_word + colorHeader (needed for Pulse bridge)
+val makeWhite_spec : (obj: obj_addr) -> (g: heap) ->
+  Lemma (makeWhite obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) White))
+
+/// Expose makeBlack as write_word + colorHeader (needed for Pulse bridge)
+val makeBlack_spec : (obj: obj_addr) -> (g: heap) ->
+  Lemma (makeBlack obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Black))
+
+/// Expose makeGray as write_word + colorHeader (needed for Pulse bridge)
+val makeGray_spec : (obj: obj_addr) -> (g: heap) ->
+  Lemma (makeGray obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Gray))
 
 /// ---------------------------------------------------------------------------
 /// Object Enumeration

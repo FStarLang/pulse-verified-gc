@@ -259,6 +259,8 @@ let hd_address_bounds (obj: obj_addr)
 let f_address (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) : obj_addr =
   U64.add h_addr mword
 
+let f_address_spec h_addr = ()
+
 let hd_f_roundtrip h = ()
 
 let f_hd_roundtrip f = 

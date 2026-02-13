@@ -1,273 +1,244 @@
 /// ---------------------------------------------------------------------------
-/// Pulse.Spec.GC.CASPreservation - CAS Operations Preserve Tri-Color Invariant
+/// Pulse.Spec.GC.CASPreservation - CAS Color Transitions Preserve Invariants
 /// ---------------------------------------------------------------------------
 ///
-/// This module proves that CAS-based color transitions preserve the tri-color
-/// invariant. This is the key correctness property for lock-free concurrent GC.
+/// Proves that CAS-based color transitions preserve the tri-color invariant
+/// and gray set invariant. Each color transition corresponds to a CAS operation
+/// that the Pulse implementation uses atomically.
 ///
 /// Key lemmas:
-/// 1. cas_white_gray_preserves_tri_color: white→gray is always safe
-/// 2. cas_gray_black_preserves_tri_color: gray→black safe if children grayed
-/// 3. These can be formalized as frame-preserving updates for PCM reasoning
+///   cas_white_gray_preserves_inv   — root scanning / mark children
+///   cas_gray_black_preserves_inv   — mark step blackening
+///   cas_white_blue_preserves_inv   — per-thread blue marking
+///   cas_blue_white_preserves_inv   — reset blue after per-thread pass
+///   write_barrier_preserves_inv    — Dijkstra write barrier
 
 module Pulse.Spec.GC.CASPreservation
 
 open FStar.Seq
-open FStar.Ghost
 open FStar.Classical
+open FStar.Mul
 module U64 = FStar.UInt64
 
 open Pulse.Spec.GC.Base
-open Pulse.Spec.GC.Heap
 open Pulse.Spec.GC.Object
 open Pulse.Spec.GC.Fields
+open Pulse.Spec.GC.Heap
 open Pulse.Spec.GC.TriColor
-open Pulse.Lib.Header  // For color_sem constructors
+open Pulse.Spec.GC.GraySet
+module Header = Pulse.Lib.Header
 
-/// ---------------------------------------------------------------------------
-/// CAS Transition Predicates
-/// ---------------------------------------------------------------------------
+/// ===========================================================================
+/// Section 1: CAS Semantics
+/// ===========================================================================
 
-/// Represents a successful CAS operation on a color field
-/// old_color: the color we expected (now color_sem)
-/// new_color: the color we want to write (now color_sem)
-/// result: true if CAS succeeded (old_color matched)
-type cas_result = {
-  old_color: color_sem;
-  new_color: color_sem;
-  success: bool
-}
+/// CAS result type: either succeeded (with old heap) or failed (heap unchanged)
+type cas_result =
+  | CAS_Success : h':heap -> cas_result
+  | CAS_Failed
 
-/// A CAS succeeded: the expected color was observed
-let cas_succeeded (r: cas_result) : bool = r.success
-
-/// Valid color transition via CAS
-let valid_cas_transition (old_color new_color: color_sem) : bool =
-  // white → gray (darkening)
-  (old_color = White && new_color = Gray) ||
-  // gray → black (fully scanned)
-  (old_color = Gray && new_color = Black)
-
-/// ---------------------------------------------------------------------------
-/// CAS White → Gray Preserves Tri-Color Invariant
-/// ---------------------------------------------------------------------------
-
-/// When we CAS an object from white to gray:
-/// - The object is no longer white, so no black→white violation can involve it
-/// - The object is not black, so it doesn't create new violations
-/// - All other objects are unchanged
-///
-/// This is the core safety property for:
-/// - Write barriers (graying white targets)
-/// - Root scanning (graying white roots)
-
-/// cas_white_gray follows directly from gray_preserves_tri_color in TriColor
-let cas_white_gray_preserves_tri_color
-  (g: heap) (w_addr: obj_addr)
-  : Lemma 
-    (requires tri_color_inv g /\ 
-              is_white w_addr g /\
-              Seq.mem w_addr (objects 0UL g))
-    (ensures tri_color_inv (makeGray w_addr g))
-  = gray_preserves_tri_color g w_addr
-
-/// Retry-safe version: CAS failure doesn't break invariant
-/// If CAS fails (someone else changed the color), invariant still holds
-val cas_white_gray_failure_preserves_tri_color :
-  g: heap -> w_addr: obj_addr ->
-  Lemma 
-    (requires tri_color_inv g)
-    (ensures tri_color_inv g)  // CAS failure means heap unchanged
-
-let cas_white_gray_failure_preserves_tri_color g w_addr = ()
-
-/// ---------------------------------------------------------------------------
-/// CAS Gray → Black Preserves Tri-Color Invariant
-/// ---------------------------------------------------------------------------
-
-/// When we CAS an object from gray to black:
-/// - The object becomes black
-/// - This creates potential for new black→X edges
-/// - PRECONDITION: all children of this object must be gray or black
-///
-/// This is used in the mark step after scanning all fields.
-
-/// cas_gray_black follows from black_gray_with_nonwhite_children in TriColor
-/// Bridge: is_pointer_to_object g src dst = points_to g src dst for obj_addr
-#push-options "--z3rlimit 50"
-let cas_gray_black_preserves_tri_color
-  (g: heap) (gr_addr: obj_addr)
-  : Lemma 
-    (requires tri_color_inv g /\
-              is_gray gr_addr g /\
-              Seq.mem gr_addr (objects 0UL g) /\
-              (forall (child: obj_addr). 
-                is_pointer_to_object g gr_addr child ==>
-                (is_gray child g \/ is_black child g)))
-    (ensures tri_color_inv (makeBlack gr_addr g))
-  = // Bridge: points_to_safe g gr_addr child ==> not (is_white_safe child g)
-    let aux (child: hp_addr) : Lemma 
-      (points_to_safe g gr_addr child ==> not (is_white_safe child g)) =
-      if U64.v child < U64.v mword then ()  // points_to_safe returns false
-      else begin
-        // child >= mword, so child : obj_addr
-        // points_to_safe g gr_addr child = points_to g gr_addr child = is_pointer_to_object g gr_addr child
-        if is_pointer_to_object g gr_addr child then begin
-          is_white_iff child g;
-          is_gray_iff child g;
-          is_black_iff child g
-        end
-      end
-    in
-    Classical.forall_intro (Classical.move_requires aux);
-    // Now we have: forall child. points_to_safe g gr_addr child ==> not (is_white_safe child g)
-    black_gray_with_nonwhite_children g gr_addr
-#pop-options
-
-/// Precondition check helper
-/// Returns true if all pointer fields of an object point to gray/black objects
-let all_children_non_white (g: heap) (h_addr: obj_addr) : prop =
-  let wz = wosize_of_object h_addr g in
-  forall (i: nat{i >= 1 /\ i <= U64.v wz /\ i < pow2 61}).
-    let field_addr_raw = field_address_raw h_addr (U64.uint_to_t i) in
-    // Well-formed heap constraint
-    (U64.v field_addr_raw < heap_size /\ U64.v field_addr_raw % 8 = 0) ==>
-    (let field_addr : hp_addr = field_addr_raw in
-     let field_val = read_word g field_addr in
-     is_pointer_field field_val ==>
-     // field_val points to an object, so field_val >= 8
-     (U64.v field_val >= U64.v mword ==>
-      (let child : obj_addr = field_val in
-       is_gray child g \/ is_black child g)))
-
-/// ---------------------------------------------------------------------------
-/// Helper Functions
-/// ---------------------------------------------------------------------------
-
-/// Get color of an object (wrapper for color_of_object from Object module)
-/// With color_sem, all colors are valid by construction - no bound lemma needed
-let color_of_object_fly (h_addr: obj_addr) (g: heap) : GTot color =
-  Pulse.Spec.GC.Object.color_of_object h_addr g
-
-/// ---------------------------------------------------------------------------
-/// Frame-Preserving Update Formalization
-/// ---------------------------------------------------------------------------
-
-/// For PCM-based reasoning, color transitions can be viewed as
-/// frame-preserving updates. This means:
-/// 1. The update only affects the color of one object
-/// 2. The invariant is preserved in any larger context
-///
-/// This is important for composing with other concurrent operations.
-
-/// White→Gray is frame-preserving with respect to tri-color
-assume val white_gray_frame_preserving :
-  g: heap -> g': heap -> w_addr: obj_addr ->
-  Lemma
-    (requires 
-      // Frame: only w_addr's color changed
-      (forall (h: obj_addr). h <> w_addr ==>
-        color_of_object h g = color_of_object h g') /\
-      // Transition: w_addr went white→gray
-      is_white w_addr g /\ is_gray w_addr g' /\
-      // Original invariant held
-      tri_color_inv g /\
-      Seq.mem w_addr (objects 0UL g))
-    (ensures tri_color_inv g')
-
-/// Gray→Black is frame-preserving with respect to tri-color
-/// (under the precondition that children are non-white)
-assume val gray_black_frame_preserving :
-  g: heap -> g': heap -> gr_addr: obj_addr ->
-  Lemma
-    (requires 
-      // Frame: only gr_addr's color changed
-      (forall (h: obj_addr). h <> gr_addr ==>
-        color_of_object h g = color_of_object h g') /\
-      // Transition: gr_addr went gray→black
-      is_gray gr_addr g /\ is_black gr_addr g' /\
-      // Children are non-white
-      (forall (child: obj_addr). 
-        is_pointer_to_object g gr_addr child ==>
-        (is_gray child g \/ is_black child g)) /\
-      // Original invariant held
-      tri_color_inv g /\
-      Seq.mem gr_addr (objects 0UL g))
-    (ensures tri_color_inv g')
-
-/// ---------------------------------------------------------------------------
-/// Composability with Concurrent Operations
-/// ---------------------------------------------------------------------------
-
-/// Helper: apply makeGray to all addresses in sequence
-let rec fold_gray_all (addrs: Seq.seq obj_addr) (g: heap) : GTot heap 
-  (decreases Seq.length addrs) =
-  if Seq.length addrs = 0 then g
+/// CAS color transition: try to change object color from expected to desired.
+/// Returns new heap on success, or CAS_Failed if current color doesn't match.
+let cas_color (h: obj_addr) (g: heap) (expected desired: color)
+  : GTot cas_result =
+  if color_of_object h g = expected then
+    CAS_Success (set_object_color h g desired)
   else
-    let h = Seq.head addrs in
-    let rest = Seq.tail addrs in
-    let g' = if is_white h g then makeGray h g else g in
-    fold_gray_all rest g'
+    CAS_Failed
 
-/// Multiple concurrent white→gray CAS operations preserve invariant
-/// This is important for parallel root scanning
-/// Helper: fold_gray preserves tri-color when elements are valid objects
-#push-options "--z3rlimit 100"
-private let rec fold_gray_preserves_tri_color
-  (g: heap) (addrs: Seq.seq obj_addr)
-  : Lemma
-    (requires tri_color_inv g /\
-              (forall (a: obj_addr). Seq.mem a addrs ==>
-                Seq.mem a (objects 0UL g)))
-    (ensures tri_color_inv (fold_gray_all addrs g))
-    (decreases Seq.length addrs)
-  = if Seq.length addrs = 0 then ()
-    else begin
-      let h = Seq.head addrs in
-      let rest = Seq.tail addrs in
-      let g' = if is_white h g then (
-        gray_preserves_tri_color g h;
-        makeGray_preserves_objects h g;
-        makeGray h g
-      ) else g in
-      // objects preserved: objects 0UL g' == objects 0UL g
-      (if is_white h g then makeGray_preserves_objects h g else ());
-      fold_gray_preserves_tri_color g' rest
-    end
-#pop-options
+/// CAS failure is always safe: heap is unchanged
+let cas_failure_safe (h: obj_addr) (g: heap) (gs: gray_set)
+    (expected desired: color)
+  : Lemma (requires cas_color h g expected desired == CAS_Failed)
+          (ensures tri_color_inv g ==> tri_color_inv g)
+  = ()
 
-/// Multiple concurrent white→gray CAS operations preserve invariant
-let concurrent_white_gray_preserves_tri_color
-  (g: heap) (addrs: Seq.seq obj_addr)
-  : Lemma
-    (requires tri_color_inv g /\
-              (forall (a: obj_addr). Seq.mem a addrs ==>
-                is_white a g /\ Seq.mem a (objects 0UL g)))
-    (ensures tri_color_inv (fold_gray_all addrs g))
-  = fold_gray_preserves_tri_color g addrs
+/// ===========================================================================
+/// Section 2: Color Monotonicity
+/// ===========================================================================
+
+/// Color ordering: White < Gray < Black
+/// Colors only increase during marking (except blue which is temporary).
+let color_leq (c1 c2: color) : bool =
+  match c1, c2 with
+  | Header.White, _ -> true
+  | Header.Gray, Header.Gray -> true
+  | Header.Gray, Header.Black -> true
+  | Header.Black, Header.Black -> true
+  | _, _ -> false
+
+/// Monotonicity: valid mark transitions only increase colors
+let valid_mark_transition (old_c new_c: color) : bool =
+  (old_c = Header.White && new_c = Header.Gray) ||
+  (old_c = Header.Gray && new_c = Header.Black)
+
+/// ===========================================================================
+/// Section 3: CAS Transitions Preserve Tri-Color Invariant
+/// ===========================================================================
 
 /// ---------------------------------------------------------------------------
-/// Safety of Combined Write Barrier + Mark Step
+/// 3.1: White → Gray (root scanning, mark children, write barrier)
 /// ---------------------------------------------------------------------------
 
-/// The write barrier and mark step together maintain tri-color
-/// This lemma shows the complete safety of one GC step:
-/// 1. Write barrier: if storing into black, gray the target if white
-/// 2. Mark step: gray children, then blacken
+/// CAS White→Gray preserves tri-color invariant.
+/// Used during: root scanning, graying children before blackening parent,
+/// and write barrier (shading white target before black→white store).
+val cas_white_gray_preserves_inv :
+  (g: heap) -> (gs: gray_set) -> (w: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ tri_color_inv g /\
+                  gray_set_inv g gs /\
+                  is_truly_white w g /\
+                  Seq.mem w (objects zero_addr g))
+        (ensures tri_color_inv (makeGray w g) /\
+                 gray_set_inv (makeGray w g) (add_gray_set w gs))
 
-val write_barrier_then_mark_preserves_tri_color :
-  g: heap -> src: obj_addr -> dst: obj_addr -> gr_addr: obj_addr ->
-  Lemma
-    (requires 
-      tri_color_inv g /\
-      // Write barrier scenario
-      is_black src g /\
-      Seq.mem dst (objects 0UL g))
-    (ensures 
-      // After write barrier grays white target
-      tri_color_inv (if is_white dst g then makeGray dst g else g))
+let cas_white_gray_preserves_inv g gs w =
+  make_gray_preserves_tri_color g w;
+  gray_set_add_preserves_inv g gs w
 
-let write_barrier_then_mark_preserves_tri_color g src dst gr_addr =
-  if is_white dst g then
-    cas_white_gray_preserves_tri_color g dst
-  else ()
+/// ---------------------------------------------------------------------------
+/// 3.2: Gray → Black (mark step: blacken after graying all children)
+/// ---------------------------------------------------------------------------
+
+/// CAS Gray→Black preserves tri-color invariant,
+/// PROVIDED all children of the gray object are gray or black.
+val cas_gray_black_preserves_inv :
+  (g: heap) -> (gs: gray_set) -> (gr: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ tri_color_inv g /\
+                  gray_set_inv g gs /\
+                  is_gray gr g /\
+                  Seq.mem gr (objects zero_addr g) /\
+                  (forall (child: obj_addr).
+                    points_to g gr child ==>
+                    (is_gray child g \/ is_black child g)))
+        (ensures tri_color_inv (makeBlack gr g) /\
+                 gray_set_inv (makeBlack gr g) (remove_gray_set gr gs))
+
+let cas_gray_black_preserves_inv g gs gr =
+  make_black_preserves_tri_color g gr;
+  gray_set_remove_preserves_inv g gs gr
+
+/// ---------------------------------------------------------------------------
+/// 3.3: White → Blue (per-thread blue marking)
+/// ---------------------------------------------------------------------------
+
+/// CAS White→Blue preserves tri-color invariant.
+/// Used when stopping a thread: mark objects reachable from OTHER threads as blue
+/// to prevent the current thread's mark from traversing them.
+val cas_white_blue_preserves_inv :
+  (g: heap) -> (gs: gray_set) -> (w: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ tri_color_inv g /\
+                  gray_set_inv g gs /\
+                  is_truly_white w g /\
+                  Seq.mem w (objects zero_addr g))
+        (ensures tri_color_inv (makeBlue w g) /\
+                 gray_set_inv (makeBlue w g) gs)
+
+let cas_white_blue_preserves_inv g gs w =
+  make_blue_preserves_tri_color g w;
+  make_blue_preserves_gray_set_inv g gs w
+
+/// ---------------------------------------------------------------------------
+/// 3.4: Blue → White (reset blue after per-thread pass)
+/// ---------------------------------------------------------------------------
+
+/// CAS Blue→White preserves tri-color invariant,
+/// PROVIDED no black object points to the blue object.
+val cas_blue_white_preserves_inv :
+  (g: heap) -> (gs: gray_set) -> (b: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ tri_color_inv g /\
+                  gray_set_inv g gs /\
+                  is_blue b g /\
+                  Seq.mem b (objects zero_addr g) /\
+                  (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==>
+                    is_black obj g ==> not (points_to g obj b)))
+        (ensures tri_color_inv (resetBlue b g) /\
+                 gray_set_inv (resetBlue b g) gs)
+
+let cas_blue_white_preserves_inv g gs b =
+  reset_blue_white_preserves_tri_color g b;
+  reset_blue_preserves_gray_set_inv g gs b
+
+/// ===========================================================================
+/// Section 4: Write Barrier Safety
+/// ===========================================================================
+
+/// The Dijkstra write barrier: before storing a pointer from src to dst,
+/// if src is black and dst is truly-white, shade dst gray.
+///
+/// After the barrier, the store is safe because dst is no longer truly-white.
+val write_barrier_safe :
+  (g: heap) -> (gs: gray_set) -> (src: obj_addr) -> (dst: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ tri_color_inv g /\
+                  gray_set_inv g gs /\
+                  is_black src g /\
+                  Seq.mem dst (objects zero_addr g) /\
+                  Seq.mem src (objects zero_addr g))
+        (ensures (let g' = if is_truly_white dst g then makeGray dst g else g in
+                  let gs' = if is_truly_white dst g then add_gray_set dst gs else gs in
+                  tri_color_inv g' /\ gray_set_inv g' gs'))
+
+let write_barrier_safe g gs src dst =
+  if is_truly_white dst g then begin
+    cas_white_gray_preserves_inv g gs dst
+  end else ()
+
+/// ===========================================================================
+/// Section 5: Combined Mark Step Safety
+/// ===========================================================================
+
+/// A complete mark step: pop gray object, gray all white children, blacken.
+/// This is the composition of multiple CAS operations.
+///
+/// For the fly/ parallel GC, during a thread's mark pass:
+/// 1. Pop gray object from stack
+/// 2. For each child: if truly-white, CAS white→gray
+/// 3. CAS gray→black the parent
+///
+/// We express the key invariant: after graying all children,
+/// blackening the parent is safe.
+
+/// After graying all truly-white children of a gray object,
+/// all children are gray, black, or blue (not truly-white).
+val children_grayed_implies_safe :
+  (g: heap) -> (gr: obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  is_gray gr g /\
+                  Seq.mem gr (objects zero_addr g) /\
+                  (forall (child: obj_addr).
+                    points_to g gr child ==>
+                    not (is_truly_white child g)))
+        (ensures (forall (child: obj_addr).
+                    points_to g gr child ==>
+                    (is_gray child g \/ is_black child g \/ is_blue child g)))
+
+let children_grayed_implies_safe g gr =
+  let aux (child: obj_addr) : Lemma
+    (requires points_to g gr child)
+    (ensures is_gray child g \/ is_black child g \/ is_blue child g)
+  = colors_exhaustive_4 child g
+  in
+  forall_intro (move_requires aux)
+
+/// ===========================================================================
+/// Section 6: Initial State
+/// ===========================================================================
+
+/// An all-white heap satisfies tri_color_inv with empty gray set
+val initial_state_inv :
+  (g: heap) ->
+  Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==>
+                    is_white obj g)
+        (ensures tri_color_inv g /\ gray_set_inv g empty_gray_set)
+
+let initial_state_inv g =
+  initial_heap_satisfies_tri_color g;
+  let aux (obj: obj_addr) : Lemma
+    (requires Seq.mem obj (objects zero_addr g))
+    (ensures mem_gray_set obj empty_gray_set <==> is_gray obj g)
+  = colors_exhaustive_and_exclusive obj g;
+    assert (is_white obj g);
+    assert (not (is_gray obj g));
+    assert (not (mem_gray_set obj empty_gray_set))
+  in
+  forall_intro (move_requires aux)

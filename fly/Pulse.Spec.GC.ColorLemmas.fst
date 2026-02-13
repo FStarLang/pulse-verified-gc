@@ -1,0 +1,610 @@
+/// ---------------------------------------------------------------------------
+/// Pulse.Spec.GC.ColorLemmas - Raw Color Change Preservation for 4-Color GC
+/// ---------------------------------------------------------------------------
+///
+/// Defines `set_object_color_raw` using Header.set_color64 which works with
+/// raw U64 color values (0-3), enabling blue (3) transitions that the standard
+/// `set_object_color` (which takes `color_sem` = White|Gray|Black) cannot express.
+///
+/// Proves that `set_object_color_raw` preserves `well_formed_heap`.
+///
+/// All helper lemmas from common/ (write_word locality, setColor64 preservation)
+/// are assembled here to avoid modifying common/.
+
+module Pulse.Spec.GC.ColorLemmas
+
+open FStar.Seq
+open FStar.Classical
+open FStar.Mul
+module U64 = FStar.UInt64
+module ML = FStar.Math.Lemmas
+
+open Pulse.Spec.GC.Base
+open Pulse.Spec.GC.Heap
+open Pulse.Spec.GC.Object
+open Pulse.Spec.GC.Fields
+module Header = Pulse.Lib.Header
+
+/// ===========================================================================
+/// Section 1: set_object_color_raw Definition
+/// ===========================================================================
+
+/// Set the color bits of an object's header to a raw U64 value (0-3).
+/// Unlike set_object_color which takes color_sem (White|Gray|Black),
+/// this handles all 4 colors including Blue (3).
+let set_object_color_raw (obj: obj_addr) (g: heap) (c: U64.t{U64.v c < 4}) : GTot heap =
+  let hd_addr = hd_address obj in
+  let old_header = read_word g hd_addr in
+  let new_header = Header.set_color64 old_header c in
+  write_word g hd_addr new_header
+
+/// ===========================================================================
+/// Section 2: Basic Properties
+/// ===========================================================================
+
+/// Length preserved
+let set_object_color_raw_length (obj: obj_addr) (g: heap) (c: U64.t{U64.v c < 4})
+  : Lemma (Seq.length (set_object_color_raw obj g c) == Seq.length g)
+  = ()
+
+/// Wosize at the modified header is preserved
+/// Bridge: Header.setColor64_preserves_wosize works at nat level (get_wosize),
+/// we need U64 level (getWosize). Prove the bridge explicitly.
+private let getWosize_nat_bridge (hdr: U64.t)
+  : Lemma (U64.v (getWosize hdr) == Header.get_wosize (U64.v hdr))
+  = getWosize_spec hdr;
+    // getWosize hdr == U64.shift_right hdr 10ul
+    // U64.v (U64.shift_right hdr 10ul) = UInt.shift_right (U64.v hdr) 10 = U64.v hdr / pow2 10
+    // Header.get_wosize n = n / pow2 10
+    ()
+
+let setColor64_preserves_getWosize (hdr: U64.t) (c: U64.t{U64.v c < 4})
+  : Lemma (getWosize (Header.set_color64 hdr c) == getWosize hdr)
+  = Header.setColor64_preserves_wosize hdr c;
+    // Nat level: get_wosize (U64.v (set_color64 hdr c)) == get_wosize (U64.v hdr)
+    getWosize_nat_bridge hdr;
+    getWosize_nat_bridge (Header.set_color64 hdr c);
+    // Now: U64.v (getWosize hdr) == get_wosize (U64.v hdr)
+    //      U64.v (getWosize (set_color64 hdr c)) == get_wosize (U64.v (set_color64 hdr c))
+    // Combined: U64.v (getWosize (set_color64 hdr c)) == U64.v (getWosize hdr)
+    U64.v_inj (getWosize (Header.set_color64 hdr c)) (getWosize hdr)
+
+let set_object_color_raw_preserves_getWosize_at_hd (obj: obj_addr) (g: heap) (c: U64.t{U64.v c < 4})
+  : Lemma (getWosize (read_word (set_object_color_raw obj g c) (hd_address obj)) ==
+           getWosize (read_word g (hd_address obj)))
+  = let hd = hd_address obj in
+    let old_hdr = read_word g hd in
+    let new_hdr = Header.set_color64 old_hdr c in
+    read_write_same g hd new_hdr;
+    setColor64_preserves_getWosize old_hdr c
+
+/// Two distinct word-aligned addresses don't overlap (local copy of private helper from common/)
+private let word_aligned_separate_local (a b: hp_addr)
+  : Lemma (requires a <> b)
+          (ensures U64.v a + 8 <= U64.v b \/ U64.v b + 8 <= U64.v a)
+  = let va = U64.v a in
+    let vb = U64.v b in
+    let eight : pos = 8 in
+    ML.lemma_mod_sub_distr vb va eight;
+    ML.lemma_mod_sub_distr va vb eight;
+    if vb > va then (
+      if vb - va < 8 then ML.small_mod (vb - va) eight
+    ) else (
+      if va - vb < 8 then ML.small_mod (va - vb) eight
+    )
+
+/// Read at a different address is unchanged (only needs <>, derives non-overlap internally)
+let set_object_color_raw_read_other (obj: obj_addr) (addr: hp_addr) (g: heap) (c: U64.t{U64.v c < 4})
+  : Lemma (requires hd_address obj <> addr)
+          (ensures read_word (set_object_color_raw obj g c) addr == read_word g addr)
+  = let hd = hd_address obj in
+    let new_hdr = Header.set_color64 (read_word g hd) c in
+    word_aligned_separate_local hd addr;
+    read_write_different g hd addr new_hdr
+
+/// Combined: read_word at any address either returns preserved wosize or unchanged value
+let set_object_color_raw_read_word (obj: obj_addr) (start: hp_addr) (g: heap) (c: U64.t{U64.v c < 4})
+  : Lemma (ensures
+    Seq.length (set_object_color_raw obj g c) == Seq.length g /\
+    (hd_address obj <> start ==>
+      read_word (set_object_color_raw obj g c) start == read_word g start) /\
+    (hd_address obj = start ==>
+      getWosize (read_word (set_object_color_raw obj g c) start) ==
+      getWosize (read_word g start)))
+  [SMTPat (read_word (set_object_color_raw obj g c) start)]
+  = set_object_color_raw_length obj g c;
+    if hd_address obj = start then
+      set_object_color_raw_preserves_getWosize_at_hd obj g c
+    else
+      set_object_color_raw_read_other obj start g c
+
+/// ===========================================================================
+/// Section 3: Objects Enumeration Preservation
+/// ===========================================================================
+
+/// Header at any position: either it's the modified object (wosize preserved)
+/// or it's at a different address (value unchanged).
+/// This is the key insight for objects preservation.
+private let header_at_preserved (obj: obj_addr) (g: heap) (c: U64.t{U64.v c < 4}) (start: hp_addr)
+  : Lemma (ensures getWosize (read_word (set_object_color_raw obj g c) start) ==
+                   getWosize (read_word g start))
+  = if hd_address obj = start then
+      set_object_color_raw_preserves_getWosize_at_hd obj g c
+    else
+      set_object_color_raw_read_other obj start g c
+
+/// Objects enumeration is preserved by raw color change
+#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
+val raw_color_change_preserves_objects_aux : (start: hp_addr) -> (g: heap) -> (obj: obj_addr) -> (c: U64.t{U64.v c < 4}) ->
+  Lemma (ensures objects start (set_object_color_raw obj g c) == objects start g)
+        (decreases (Seq.length g - U64.v start))
+
+let rec raw_color_change_preserves_objects_aux start g obj c =
+  set_object_color_raw_length obj g c;
+  if U64.v start + 8 >= Seq.length g then ()
+  else begin
+    header_at_preserved obj g c start;
+    let wz = getWosize (read_word g start) in
+    let next_start_nat = U64.v start + (U64.v wz + 1) * 8 in
+    if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()
+    else if next_start_nat >= heap_size then ()
+    else
+      raw_color_change_preserves_objects_aux (U64.uint_to_t next_start_nat) g obj c
+  end
+#pop-options
+
+let raw_color_change_preserves_objects (g: heap) (obj: obj_addr) (c: U64.t{U64.v c < 4})
+  : Lemma (objects 0UL (set_object_color_raw obj g c) == objects 0UL g)
+  = raw_color_change_preserves_objects_aux 0UL g obj c
+
+let raw_color_change_preserves_objects_mem (g: heap) (obj: obj_addr) (c: U64.t{U64.v c < 4}) (x: obj_addr)
+  : Lemma (Seq.mem x (objects 0UL (set_object_color_raw obj g c)) <==> Seq.mem x (objects 0UL g))
+  = raw_color_change_preserves_objects g obj c
+
+/// ===========================================================================
+/// Section 4: Field Address / Header Address Separation
+/// ===========================================================================
+
+/// Field address of object h at index idx: h + idx * 8
+/// Since h >= 8 (obj_addr) and hd_address h = h - 8, we have:
+///   field_addr = h + idx*8 >= h >= h - 8 + 8 = hd_address h + 8
+/// So field_addr >= hd_address h + 8, meaning they don't overlap.
+
+/// Inline version of field_offset_bound (private in common/)
+private let field_offset_bound_local (field_idx: U64.t{U64.v field_idx < pow2 61}) : Lemma
+  (FStar.UInt.size (U64.v field_idx * 8) 64)
+  = ML.pow2_plus 61 3;
+    assert (pow2 61 * pow2 3 == pow2 64);
+    assert (U64.v field_idx * 8 < pow2 64)
+
+/// Inline version of field_addr_raw_value (private in common/)
+private let field_addr_raw_value_local (h: obj_addr) (idx: U64.t{U64.v idx < pow2 61})
+  : Lemma (U64.v (field_address_raw h idx) = (U64.v h + U64.v idx * 8) % pow2 64)
+  = field_offset_bound_local idx
+
+/// Self case: computed field address of h is not at hd_address h.
+/// Takes the computed address directly to avoid field_address_raw subtyping issue.
+private let field_addr_ne_hd_self (h: obj_addr) (far: hp_addr) (idx_val: nat{idx_val < pow2 54})
+  : Lemma (requires U64.v far = (U64.v h + idx_val * 8) % pow2 64)
+          (ensures far <> hd_address h)
+  = hd_address_spec h;
+    // far = (h + idx*8) % 2^64, hd h = h - 8
+    // If equal: (h + idx*8) % 2^64 = h - 8
+    // No overflow: h + idx*8 = h - 8 => idx*8 = -8, impossible for idx >= 0
+    // Overflow: h + idx*8 - 2^64 = h - 8 => idx*8 = 2^64 - 8
+    //   But idx < pow2 54, so idx*8 < pow2 54 * 8 = pow2 57
+    //   And pow2 57 < pow2 64 - 8 (since pow2 57 < pow2 64 / 128 and 8 < pow2 64 * 127/128)
+    if U64.v h + idx_val * 8 < pow2 64 then ()
+    else begin
+      assert_norm (pow2 54 * 8 = pow2 57);
+      assert (idx_val * 8 < pow2 57);
+      assert_norm (pow2 57 < pow2 64 - 8)
+    end
+
+/// ===========================================================================
+/// Section 5: Field Pointing Preservation (Self Case)
+/// ===========================================================================
+
+/// Changing the color of object h preserves exists_field_pointing_to_unchecked
+/// when checking fields of h itself.
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let rec raw_color_change_preserves_field_pointing_self
+  (g: heap) (h: obj_addr) (c: U64.t{U64.v c < 4})
+  (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr)
+  : Lemma (ensures exists_field_pointing_to_unchecked (set_object_color_raw h g c) h wz target
+                   == exists_field_pointing_to_unchecked g h wz target)
+          (decreases U64.v wz)
+  = if wz = 0UL then ()
+    else begin
+      let idx = U64.sub wz 1UL in
+      assert_norm (pow2 54 < pow2 61);
+      field_offset_bound_local idx;
+      ML.modulo_lemma (U64.v idx * U64.v mword) (pow2 64);
+      let far = U64.add_mod h (U64.mul_mod idx mword) in
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then
+        raw_color_change_preserves_field_pointing_self g h c idx target
+      else begin
+        let field_addr : hp_addr = far in
+        // Prove far = (h + idx*8) % pow2 64 for field_addr_ne_hd_self
+        field_addr_ne_hd_self h field_addr (U64.v idx);
+        set_object_color_raw_read_other h field_addr g c;
+        raw_color_change_preserves_field_pointing_self g h c idx target
+      end
+    end
+#pop-options
+
+/// ===========================================================================
+/// Section 6: Field Pointing Preservation (Other Case)
+/// ===========================================================================
+
+/// Cross-object case: computed field address of src is not at hd_address of obj.
+/// Takes the computed address directly to avoid field_address_raw subtyping issue.
+#push-options "--z3rlimit 1000"
+private let field_addr_ne_hd_cross (g: heap) (src: obj_addr) (obj: obj_addr)
+  (far: hp_addr) (idx_val: nat{idx_val < pow2 54})
+  : Lemma (requires src <> obj /\
+                    Seq.mem src (objects 0UL g) /\ Seq.mem obj (objects 0UL g) /\
+                    well_formed_heap g /\
+                    idx_val < U64.v (wosize_of_object_as_wosize src g) /\
+                    U64.v far = (U64.v src + idx_val * 8) % pow2 64)
+          (ensures far <> hd_address obj)
+  = hd_address_spec obj;
+    let ws = U64.v (wosize_of_object_as_wosize src g) in
+    wf_object_bound g src;
+    assert (U64.v src + op_Multiply ws 8 <= heap_size);
+    let sum = U64.v src + idx_val * 8 in
+    assert_norm (pow2 54 * 8 = pow2 57);
+    assert (idx_val * 8 < pow2 57);
+    assert (sum <= heap_size);
+    ML.small_mod sum (pow2 64);
+    if U64.v src > U64.v obj then ()
+    else begin
+      objects_separated 0UL g src obj;
+      ()
+    end
+#pop-options
+
+/// Changing the color of obj preserves exists_field_pointing_to_unchecked
+/// when checking fields of a different object src.
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let rec raw_color_change_preserves_field_pointing_other
+  (g: heap) (obj: obj_addr) (c: U64.t{U64.v c < 4})
+  (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr)
+  : Lemma (requires src <> obj /\
+                    Seq.mem src (objects 0UL g) /\
+                    Seq.mem obj (objects 0UL g) /\
+                    well_formed_heap g /\
+                    U64.v wz <= U64.v (wosize_of_object_as_wosize src g))
+          (ensures exists_field_pointing_to_unchecked (set_object_color_raw obj g c) src wz target
+                   == exists_field_pointing_to_unchecked g src wz target)
+          (decreases U64.v wz)
+  = if wz = 0UL then ()
+    else begin
+      let idx = U64.sub wz 1UL in
+      assert_norm (pow2 54 < pow2 61);
+      field_offset_bound_local idx;
+      ML.modulo_lemma (U64.v idx * U64.v mword) (pow2 64);
+      let far = U64.add_mod src (U64.mul_mod idx mword) in
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then
+        raw_color_change_preserves_field_pointing_other g obj c src idx target
+      else begin
+        let field_addr : hp_addr = far in
+        field_addr_ne_hd_cross g src obj field_addr (U64.v idx);
+        set_object_color_raw_read_other obj field_addr g c;
+        raw_color_change_preserves_field_pointing_other g obj c src idx target
+      end
+    end
+#pop-options
+
+/// ===========================================================================
+/// Section 7: Main Theorem — Raw Color Change Preserves well_formed_heap
+/// ===========================================================================
+
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+val set_object_color_raw_preserves_wf :
+  (g: heap) -> (obj: obj_addr) -> (c: U64.t{U64.v c < 4}) ->
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+        (ensures well_formed_heap (set_object_color_raw obj g c))
+
+let set_object_color_raw_preserves_wf g obj c =
+  let g' = set_object_color_raw obj g c in
+  raw_color_change_preserves_objects g obj c;
+  set_object_color_raw_length obj g c;
+  // Part 1: object bounds preserved (wosize unchanged + length unchanged)
+  let aux1 (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects 0UL g))
+    (ensures (let wz = wosize_of_object h g' in
+              U64.v (hd_address h) + 8 + op_Multiply (U64.v wz) 8 <= Seq.length g'))
+  = wf_object_size_bound g h;
+    set_object_color_raw_length obj g c;
+    wosize_of_object_spec h g;
+    wosize_of_object_spec h g';
+    if h <> obj then
+      hd_address_injective h obj
+    else ()
+  in
+  forall_intro (move_requires aux1);
+  // Part 2: pointer targets preserved
+  let aux2 (src dst: obj_addr) : Lemma
+    (requires Seq.mem src (objects 0UL g') /\
+             (let wz = wosize_of_object src g' in
+              U64.v wz < pow2 54 /\
+              exists_field_pointing_to_unchecked g' src wz dst))
+    (ensures Seq.mem dst (objects 0UL g'))
+  = wosize_of_object_spec src g;
+    wosize_of_object_spec src g';
+    if src = obj then begin
+      raw_color_change_preserves_field_pointing_self g obj c (wosize_of_object src g) dst
+    end else begin
+      hd_address_injective src obj;
+      raw_color_change_preserves_field_pointing_other g obj c src (wosize_of_object src g) dst
+    end
+  in
+  let aux2_flat (src: obj_addr) (dst: obj_addr) : Lemma
+    (requires Seq.mem src (objects 0UL g') /\
+              U64.v (wosize_of_object src g') < pow2 54 /\
+              exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst)
+    (ensures Seq.mem dst (objects 0UL g'))
+  = aux2 src dst
+  in
+  let aux2_imp (src: obj_addr) (dst: obj_addr) : Lemma
+    ((Seq.mem src (objects 0UL g') /\
+      U64.v (wosize_of_object src g') < pow2 54 /\
+      exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst) ==>
+     Seq.mem dst (objects 0UL g'))
+  = move_requires (aux2_flat src) dst
+  in
+  forall_intro_2 aux2_imp
+#pop-options
+
+/// ===========================================================================
+/// Section 8: Standard Color Changes Preserve well_formed_heap
+/// ===========================================================================
+
+/// Since set_object_color is abstract, we can't prove equality with set_object_color_raw.
+/// Instead, we prove preservation directly for standard colors using the
+/// set_object_color_read_word SMTPat from Object.fsti.
+
+#push-options "--z3rlimit 600 --fuel 1 --ifuel 1"
+val set_object_color_preserves_wf :
+  (g: heap) -> (obj: obj_addr) -> (c: color) ->
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+        (ensures well_formed_heap (set_object_color obj g c))
+
+let set_object_color_preserves_wf g obj c =
+  let g' = set_object_color obj g c in
+  color_change_preserves_objects g obj c;
+  set_object_color_length obj g c;
+  let aux1 (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects 0UL g))
+    (ensures (let wz = wosize_of_object h g' in
+              U64.v (hd_address h) + 8 + op_Multiply (U64.v wz) 8 <= Seq.length g'))
+  = wf_object_size_bound g h;
+    set_object_color_length obj g c;
+    wosize_of_object_spec h g;
+    wosize_of_object_spec h g';
+    if h <> obj then
+      hd_address_injective h obj
+    else ()
+  in
+  forall_intro (move_requires aux1);
+  let aux2 (src dst: obj_addr) : Lemma
+    (requires Seq.mem src (objects 0UL g') /\
+             (let wz = wosize_of_object src g' in
+              U64.v wz < pow2 54 /\
+              exists_field_pointing_to_unchecked g' src wz dst))
+    (ensures Seq.mem dst (objects 0UL g'))
+  = wosize_of_object_spec src g;
+    wosize_of_object_spec src g';
+    if src = obj then begin
+      color_change_preserves_field_pointing_self g obj c (wosize_of_object src g) dst
+    end else begin
+      hd_address_injective src obj;
+      color_change_preserves_field_pointing_other g obj c src (wosize_of_object src g) dst
+    end
+  in
+  let aux2_flat (src: obj_addr) (dst: obj_addr) : Lemma
+    (requires Seq.mem src (objects 0UL g') /\
+              U64.v (wosize_of_object src g') < pow2 54 /\
+              exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst)
+    (ensures Seq.mem dst (objects 0UL g'))
+  = aux2 src dst
+  in
+  let aux2_imp (src: obj_addr) (dst: obj_addr) : Lemma
+    ((Seq.mem src (objects 0UL g') /\
+      U64.v (wosize_of_object src g') < pow2 54 /\
+      exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst) ==>
+     Seq.mem dst (objects 0UL g'))
+  = move_requires (aux2_flat src) dst
+  in
+  forall_intro_2 aux2_imp
+#pop-options
+
+/// Convenience: makeWhite / makeBlack preserve well_formed_heap
+let makeWhite_preserves_wf (g: heap) (obj: obj_addr)
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+          (ensures well_formed_heap (makeWhite obj g))
+  = makeWhite_eq obj g;
+    set_object_color_preserves_wf g obj Header.White
+
+let makeBlack_preserves_wf (g: heap) (obj: obj_addr)
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+          (ensures well_formed_heap (makeBlack obj g))
+  = makeBlack_eq obj g;
+    set_object_color_preserves_wf g obj Header.Black
+
+let makeGray_preserves_wf (g: heap) (obj: obj_addr)
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+          (ensures well_formed_heap (makeGray obj g))
+  = makeGray_eq obj g;
+    set_object_color_preserves_wf g obj Header.Gray
+
+/// ===========================================================================
+/// Section 9: Objects Preservation and roots_valid / stack_valid
+/// ===========================================================================
+
+/// All addresses in a sequence are members of `objects 0UL g`
+let seq_addrs_valid (g: heap) (addrs: Seq.seq obj_addr) : prop =
+  forall (i: nat). i < Seq.length addrs ==> Seq.mem (Seq.index addrs i) (objects 0UL g)
+
+/// Alias for root sequences
+let roots_valid (g: heap) (roots: Seq.seq obj_addr) : prop = seq_addrs_valid g roots
+
+/// Alias for gray stack
+let stack_valid (g: heap) (gs: Seq.seq obj_addr) : prop = seq_addrs_valid g gs
+
+/// Predicate: the objects enumeration is identical between two heaps.
+/// This is a helper to avoid inlining `objects 0UL g1 == objects 0UL g2` 
+/// inside Pulse `pure` propositions (which can cause SMT elaboration issues).
+let objects_preserved (g1 g2: heap) : prop =
+  objects 0UL g1 == objects 0UL g2
+
+/// Color change preserves objects (wrapped for Pulse)
+let objects_preserved_by_color (g: heap) (obj: obj_addr) (c: color)
+  : Lemma (requires Seq.mem obj (objects 0UL g))
+          (ensures objects_preserved (set_object_color obj g c) g)
+  = color_change_preserves_objects g obj c
+
+let objects_preserved_by_raw_color (g: heap) (obj: obj_addr) (c: U64.t{U64.v c < 4})
+  : Lemma (requires Seq.mem obj (objects 0UL g))
+          (ensures objects_preserved (set_object_color_raw obj g c) g)
+  = raw_color_change_preserves_objects g obj c
+
+let objects_preserved_makeGray (g: heap) (obj: obj_addr)
+  : Lemma (requires Seq.mem obj (objects 0UL g))
+          (ensures objects_preserved (makeGray obj g) g)
+  = makeGray_eq obj g;
+    color_change_preserves_objects g obj Header.Gray
+
+let objects_preserved_makeBlack (g: heap) (obj: obj_addr)
+  : Lemma (requires Seq.mem obj (objects 0UL g))
+          (ensures objects_preserved (makeBlack obj g) g)
+  = makeBlack_eq obj g;
+    color_change_preserves_objects g obj Header.Black
+
+let objects_preserved_makeWhite (g: heap) (obj: obj_addr)
+  : Lemma (requires Seq.mem obj (objects 0UL g))
+          (ensures objects_preserved (makeWhite obj g) g)
+  = makeWhite_eq obj g;
+    color_change_preserves_objects g obj Header.White
+
+/// objects_preserved transfers membership
+let objects_preserved_mem (g1 g2: heap) (x: obj_addr)
+  : Lemma (requires objects_preserved g1 g2)
+          (ensures Seq.mem x (objects 0UL g1) == Seq.mem x (objects 0UL g2))
+  = ()
+
+/// objects_preserved transfers roots_valid
+let objects_preserved_roots_valid (g1 g2: heap) (roots: Seq.seq obj_addr)
+  : Lemma (requires objects_preserved g1 g2 /\ roots_valid g2 roots)
+          (ensures roots_valid g1 roots)
+  = ()
+
+/// Color change preserves seq_addrs_valid (raw version)
+#push-options "--z3rlimit 200"
+let seq_addrs_valid_preserved_raw (g: heap) (obj: obj_addr) (c: U64.t{U64.v c < 4})
+    (addrs: Seq.seq obj_addr)
+  : Lemma (requires seq_addrs_valid g addrs /\ Seq.mem obj (objects 0UL g))
+          (ensures seq_addrs_valid (set_object_color_raw obj g c) addrs)
+  = raw_color_change_preserves_objects g obj c;
+    // objects are identical, so membership transfers directly
+    assert (objects 0UL (set_object_color_raw obj g c) == objects 0UL g)
+#pop-options
+
+/// Color change preserves seq_addrs_valid (standard color version)
+#push-options "--z3rlimit 200"
+let seq_addrs_valid_preserved (g: heap) (obj: obj_addr) (c: color)
+    (addrs: Seq.seq obj_addr)
+  : Lemma (requires seq_addrs_valid g addrs /\ Seq.mem obj (objects 0UL g))
+          (ensures seq_addrs_valid (set_object_color obj g c) addrs)
+  = color_change_preserves_objects g obj c;
+    assert (objects 0UL (set_object_color obj g c) == objects 0UL g)
+#pop-options
+
+/// Convenience: makeWhite/makeBlack/makeGray preserve roots_valid
+let roots_valid_makeWhite (g: heap) (obj: obj_addr) (roots: Seq.seq obj_addr)
+  : Lemma (requires roots_valid g roots /\ Seq.mem obj (objects 0UL g))
+          (ensures roots_valid (makeWhite obj g) roots)
+  = makeWhite_eq obj g;
+    seq_addrs_valid_preserved g obj Header.White roots
+
+let roots_valid_makeBlack (g: heap) (obj: obj_addr) (roots: Seq.seq obj_addr)
+  : Lemma (requires roots_valid g roots /\ Seq.mem obj (objects 0UL g))
+          (ensures roots_valid (makeBlack obj g) roots)
+  = makeBlack_eq obj g;
+    seq_addrs_valid_preserved g obj Header.Black roots
+
+let roots_valid_makeGray (g: heap) (obj: obj_addr) (roots: Seq.seq obj_addr)
+  : Lemma (requires roots_valid g roots /\ Seq.mem obj (objects 0UL g))
+          (ensures roots_valid (makeGray obj g) roots)
+  = makeGray_eq obj g;
+    seq_addrs_valid_preserved g obj Header.Gray roots
+
+let roots_valid_raw (g: heap) (obj: obj_addr) (c: U64.t{U64.v c < 4})
+    (roots: Seq.seq obj_addr)
+  : Lemma (requires roots_valid g roots /\ Seq.mem obj (objects 0UL g))
+          (ensures roots_valid (set_object_color_raw obj g c) roots)
+  = seq_addrs_valid_preserved_raw g obj c roots
+
+/// ===========================================================================
+/// Section 10: Sweep helper lemmas (objects enumeration tracking)
+/// ===========================================================================
+
+/// When objects(start, g) is non-empty and we know obj_address(start) is in
+/// objects(0, g), the object fits in the heap (from well_formed_heap).
+/// This guarantees objects returns non-empty (cases A and B ruled out).
+#push-options "--z3rlimit 200"
+let objects_nonempty_at (start: hp_addr) (g: heap) : Lemma
+  (requires U64.v start + 8 < Seq.length g /\
+            well_formed_heap g /\
+            Seq.mem (obj_address start) (objects 0UL g))
+  (ensures Seq.length (objects start g) > 0)
+  = let obj = obj_address start in
+    wf_object_size_bound g obj;
+    hd_address_spec obj;
+    wosize_of_object_spec obj g
+#pop-options
+
+/// Head of a non-empty objects sequence is a member of that sequence.
+let objects_head_is_mem (start: hp_addr) (g: heap) : Lemma
+  (requires Seq.length (objects start g) > 0)
+  (ensures Seq.mem (obj_address start) (objects start g))
+  = objects_nonempty_head start g;
+    // head == obj_address start, and head == Seq.index (objects start g) 0
+    // Seq.mem checks all indices, so head is a member
+    assert (Seq.index (objects start g) 0 == obj_address start)
+
+/// Membership in objects(start, g) implies membership in objects(0, g)
+/// when we have an established subset chain.
+let objects_tail_subset_step (start: hp_addr) (g: heap) (x: obj_addr) : Lemma
+  (requires Seq.length (objects start g) > 0)
+  (ensures (let wz = getWosize (read_word g start) in
+            let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+            next_nat < heap_size /\ next_nat < pow2 64 /\ next_nat % 8 == 0 ==>
+            (let next : hp_addr = U64.uint_to_t next_nat in
+             Seq.mem x (objects next g) ==> Seq.mem x (objects start g))))
+  = objects_later_subset start g x
+
+/// Cursor membership predicate for sweep loop invariant.
+/// Encapsulates the hp_addr typing so it can be used safely in Pulse pure assertions.
+let cursor_mem (c: U64.t) (g: heap) : prop =
+  (U64.v c < heap_size /\ U64.v c % 8 == 0 /\ U64.v c + 8 < heap_size) ==>
+  Seq.mem (obj_address c) (objects 0UL g)
+
+/// cursor_mem at 0UL from objects_head_is_mem
+let cursor_mem_init (g: heap) : Lemma
+  (requires Seq.length (objects 0UL g) > 0)
+  (ensures cursor_mem 0UL g)
+  = objects_head_is_mem 0UL g;
+    objects_later_subset 0UL g (obj_address 0UL)
+
+/// cursor_mem preserved by color change (makeWhite)
+let cursor_mem_preserved_makeWhite (g: heap) (obj: obj_addr) (c: U64.t) : Lemma
+  (requires Seq.mem obj (objects 0UL g) /\ cursor_mem c g)
+  (ensures cursor_mem c (makeWhite obj g))
+  = if U64.v c < heap_size && U64.v c % 8 = 0 && U64.v c + 8 < heap_size then begin
+      makeWhite_eq obj g;
+      let g' = makeWhite obj g in
+      color_change_preserves_objects_mem g obj Header.White (obj_address c);
+      ()
+    end

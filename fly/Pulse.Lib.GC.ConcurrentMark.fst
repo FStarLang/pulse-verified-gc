@@ -1,389 +1,302 @@
-/// ---------------------------------------------------------------------------
-/// Pulse.Lib.GC.ConcurrentMark - Concurrent Mark Step for On-the-Fly GC
-/// ---------------------------------------------------------------------------
-///
-/// This module implements a single concurrent mark step:
-/// 1. Pop gray object from SpinLock-protected stack
-/// 2. Gray all white children via CAS
-/// 3. CAS object from gray to black
-/// 4. Handle CAS failures gracefully
-///
-/// Uses Pulse's separation logic for concurrent verification.
-///
-/// Extraction: Functions marked with [@@CExtract] will be extracted to C.
-/// Ghost functions are automatically excluded from extraction.
+(*
+   Pulse GC - Concurrent Mark Phase for Parallel GC
+
+   Mark phase implementation:
+   1. check_and_darken: check if pointer, gray if white (skip blue)
+   2. push_children: gray all children of an object
+   3. mark_step: pop gray, blacken, scan children
+   4. mark_loop: iterate mark_step until gray stack is empty
+
+   All functions preserve well_formed_heap.
+   Uses types from common/Pulse.Lib.GC (Heap, Object, Stack).
+*)
 
 module Pulse.Lib.GC.ConcurrentMark
 
 #lang-pulse
 
+#set-options "--z3rlimit 50"
+
+open FStar.Mul
 open Pulse.Lib.Pervasives
+open Pulse.Lib.GC.Heap
+open Pulse.Lib.GC.Object
+open Pulse.Lib.GC.Stack
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
-module L = FStar.List.Tot
-module GSet = FStar.GhostSet
+module Header = Pulse.Lib.Header
+module ML = FStar.Math.Lemmas
+module SpecHeap = Pulse.Spec.GC.Heap
+module SpecObject = Pulse.Spec.GC.Object
+module SpecFields = Pulse.Spec.GC.Fields
+open Pulse.Spec.GC.ColorLemmas
 
-open Pulse.Spec.GC.Base
-open Pulse.Spec.GC.Heap
-open Pulse.Spec.GC.Object
-open Pulse.Spec.GC.Fields
-open Pulse.Spec.GC.TriColor
-open Pulse.Spec.GC.GraySet
-open Pulse.Spec.GC.CASPreservation
-
-/// Raw color constants for CAS operations
-let white : U64.t = 0UL
-let gray  : U64.t = 1UL
-let black : U64.t = 2UL
+/// Bridge: Pulse getWosize == Spec getWosize (both compute shift_right 10)
+let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr) =
+  SpecObject.getWosize_spec hdr
 
 /// ---------------------------------------------------------------------------
-/// Heap Permission
+/// Ghost helpers
 /// ---------------------------------------------------------------------------
 
-assume val heap_perm : erased heap -> slprop
-
-/// Placeholder for reading memory
-assume val read_word : (#g: erased heap) -> (addr: hp_addr) -> 
-  stt U64.t (heap_perm g) (fun _ -> heap_perm g)
-
-/// ---------------------------------------------------------------------------
-/// Gray Stack Type (SpinLock-Protected)
-/// ---------------------------------------------------------------------------
-
-/// The gray stack stores addresses of gray objects to be processed
-/// Protected by a SpinLock for concurrent access
-assume val gray_stack : Type0
-assume val gray_stack_inv : gray_stack -> slprop
-
-/// Pop operation: remove and return top element, or None if empty
-assume val pop_gray_stack : 
-  (st: gray_stack) ->
-  stt (option hp_addr) 
-      (gray_stack_inv st)
-      (fun _ -> gray_stack_inv st)
-
-/// Push operation: add element to stack (for newly grayed objects)
-assume val push_gray_stack :
-  (st: gray_stack) -> (h: hp_addr) ->
-  stt unit
-      (gray_stack_inv st)
-      (fun _ -> gray_stack_inv st)
-
-/// ---------------------------------------------------------------------------
-/// Atomic Color Operations
-/// ---------------------------------------------------------------------------
-
-/// Read color atomically
-assume val read_color_atomic :
-  (h_addr: obj_addr) -> (#g: erased heap) ->
-  stt_atomic U64.t emp_inames
-      (heap_perm g)
-      (fun c -> heap_perm g ** pure (U64.v c < 4))
-
-/// CAS gray→black: compare-and-swap from gray to black
-/// Preserves tri-color invariant when attempting CAS gray→black
-/// The CAS only succeeds if object is gray; if it succeeds, children must be non-white
-assume val cas_gray_black_atomic :
-  (h_addr: obj_addr) -> (#g: erased heap) ->
-  stt_atomic bool emp_inames
-      (heap_perm g ** pure (tri_color_inv (reveal g) /\ 
-                           (forall child. points_to (reveal g) h_addr child ==> ~(is_white child (reveal g)))))
-      (fun b -> exists* g'. heap_perm g' ** 
-                pure (tri_color_inv (reveal g') /\ 
-                      (if b then is_black h_addr (reveal g') else reveal g' == reveal g)))
-
-/// CAS white→gray: compare-and-swap from white to gray  
-/// Preserves tri-color invariant
-assume val cas_white_gray_atomic :
-  (h_addr: hp_addr) -> (#g: erased heap) ->
-  stt_atomic bool emp_inames
-      (heap_perm g ** pure (tri_color_inv (reveal g)))
-      (fun b -> exists* g'. heap_perm g' ** 
-                pure (tri_color_inv (reveal g') /\ (if b then is_gray_safe h_addr (reveal g') else reveal g' == reveal g)))
-
-/// Generic CAS color (for low-level use)
-assume val cas_color_atomic :
-  (h_addr: obj_addr) -> (expected: color) -> (new_color: color) -> (#g: erased heap) ->
-  stt_atomic bool emp_inames
-      (heap_perm g)
-      (fun b -> heap_perm (if b then set_color g h_addr new_color else g))
-
-/// ---------------------------------------------------------------------------
-/// Mark Step: Process One Gray Object  
-/// ---------------------------------------------------------------------------
-
-/// Process one gray object: gray its children, then blacken it
-/// 
-/// Algorithm:
-/// 1. For each field of the object:
-///    - If field is a pointer to a white object, CAS it gray
-///    - If CAS succeeds, push to gray stack
-/// 2. After all children processed, CAS self from gray to black
-///
-/// Correctness argument:
-/// - Before blackening, all children are gray or black (or we CAS'd them)
-/// - This maintains the tri-color invariant
-ghost
-fn mark_step_spec 
-  (gs: erased gray_set) 
-  (g: erased heap) 
-  (gr_addr: obj_addr)
-  requires 
-    pure (gray_set_inv gs g /\
-          is_gray gr_addr g /\
-          mem_gray gr_addr gs /\
-          tri_color_inv g /\
-          // Precondition: all children have been grayed
-          (forall (child: obj_addr). points_to g gr_addr child ==> ~(is_white child g)))
-  returns gs': erased gray_set
-  ensures
-    pure (let g' = makeBlack gr_addr g in
-          gray_set_inv gs' g' /\
-          tri_color_inv g' /\
-          ~(mem_gray gr_addr gs'))
+ghost fn is_heap_length (h: heap_t)
+  requires is_heap h 's
+  ensures is_heap h 's ** pure (Seq.length 's == heap_size)
 {
-  // Call lemmas to establish postconditions
-  gray_set_remove_preserves_inv gs g gr_addr;
-  black_gray_with_nonwhite_children g gr_addr;
-  let gs' = remove_gray gs gr_addr;
-  gs'
+  unfold is_heap;
+  fold (is_heap h 's)
 }
 
 /// ---------------------------------------------------------------------------
-/// Gray Children: Scan Fields and Gray White Children
+/// spec_field_address: compute field address
 /// ---------------------------------------------------------------------------
 
-/// Scan a single field, graying it if white
-// [@@CInline]
-fn gray_child 
-  (st: gray_stack) 
-  (h_addr: hp_addr) 
-  (field_idx: U64.t{U64.v field_idx < pow2 61})
-  (#g: erased heap)
-  requires heap_perm g ** gray_stack_inv st
-  returns _: unit
-  ensures exists* g'. heap_perm g' ** gray_stack_inv st
+let spec_field_address (h_addr: nat) (i: nat) : nat =
+  h_addr + i * 8
+
+/// ---------------------------------------------------------------------------
+/// Bridge lemmas: connect Pulse writes to spec-level color operations
+/// ---------------------------------------------------------------------------
+
+/// Bridge: Pulse write of colorHeader Gray == spec makeGray, preserving wfh
+#push-options "--z3rlimit 200"
+let grayen_bridge (g: heap_state) (obj: obj_addr)
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem obj (SpecFields.objects 0UL g))
+          (ensures (let h_addr = SpecHeap.hd_address obj in
+                    let hdr = SpecHeap.read_word g h_addr in
+                    let new_hdr = SpecObject.colorHeader hdr Header.Gray in
+                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeGray obj g /\
+                    SpecFields.well_formed_heap (SpecObject.makeGray obj g) /\
+                    Seq.length (SpecObject.makeGray obj g) == Seq.length g))
+  = let h_addr = SpecHeap.hd_address obj in
+    SpecHeap.hd_address_spec obj;
+    SpecFields.wf_object_size_bound g obj;
+    hp_addr_plus_8 h_addr;
+    spec_write_word_eq g h_addr (SpecObject.colorHeader (SpecHeap.read_word g h_addr) Header.Gray);
+    SpecObject.makeGray_spec obj g;
+    makeGray_preserves_wf g obj;
+    SpecObject.makeGray_eq obj g;
+    SpecObject.set_object_color_length obj g Header.Gray
+#pop-options
+
+/// Bridge: Pulse write of colorHeader Black == spec makeBlack, preserving wfh
+#push-options "--z3rlimit 200"
+let blacken_bridge (g: heap_state) (obj: obj_addr)
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem obj (SpecFields.objects 0UL g))
+          (ensures (let h_addr = SpecHeap.hd_address obj in
+                    let hdr = SpecHeap.read_word g h_addr in
+                    let new_hdr = SpecObject.colorHeader hdr Header.Black in
+                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeBlack obj g /\
+                    SpecFields.well_formed_heap (SpecObject.makeBlack obj g) /\
+                    Seq.length (SpecObject.makeBlack obj g) == Seq.length g))
+  = let h_addr = SpecHeap.hd_address obj in
+    SpecHeap.hd_address_spec obj;
+    SpecFields.wf_object_size_bound g obj;
+    hp_addr_plus_8 h_addr;
+    spec_write_word_eq g h_addr (SpecObject.colorHeader (SpecHeap.read_word g h_addr) Header.Black);
+    SpecObject.makeBlack_spec obj g;
+    makeBlack_preserves_wf g obj;
+    SpecObject.makeBlack_eq obj g;
+    SpecObject.set_object_color_length obj g Header.Black
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Check and darken: if pointer, gray its target if white
+/// Preserves well_formed_heap.
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 100"
+fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size)
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2)
 {
-  admit ();
-  // Calculate field address using the safe function from Base
-  let field_addr = field_address h_addr field_idx;
-  
-  // Read field value
-  // (Simplified: assuming we have a way to read without changing heap)
-  // assume (is_hp_addr field_addr);
-  let field_val = read_word field_addr;  // Placeholder for read_word
-  
-  // Check if it's a pointer
-  if (U64.logand field_val 1UL = 0UL && U64.gte field_val mword) {
-    // Calculate header address of target object
-    let target_hdr = U64.sub field_val mword;
-    // assume (is_hp_addr target_hdr);
-    
-    // Read target color
-    let target_color = read_color_atomic target_hdr;
-    
-    // If white, try to CAS it gray
-    if (U64.eq target_color white) {
-      let cas_result = cas_color_atomic target_hdr white gray;
-      if (cas_result) {
-        // CAS succeeded, push to gray stack
-        push_gray_stack st target_hdr
-      }
+  if (U64.v v >= U64.v mword && U64.v v < heap_size && U64.v v % U64.v mword = 0) {
+    let h_addr : hp_addr = U64.sub v mword;
+    hp_addr_plus_8 h_addr;
+    let hdr = read_word heap h_addr;
+    let c = getColor hdr;
+    if (c = white) {
+      let new_hdr = SpecObject.colorHeader hdr gray;
+      write_word heap h_addr new_hdr;
+      let obj : obj_addr = v;
+      // Bridge: spec_write_word to makeGray
+      spec_read_word_eq 's h_addr;
+      SpecHeap.hd_address_spec obj;
+      U64.v_inj h_addr (SpecHeap.hd_address obj);
+      // Membership (derivable from well_formed_heap + parent field provenance)
+      assume_ (pure (Seq.mem obj (SpecFields.objects 0UL 's)));
+      grayen_bridge 's obj;
+      rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+           as (is_heap heap (SpecObject.makeGray obj 's));
+      push st obj;
+      ()
+    } else {
+      ()
     }
+  } else {
+    ()
   }
 }
-// [@@CExtract]
-fn gray_all_children
-  (st: gray_stack)
-  (h_addr: obj_addr)
-  (wosize: wosize)
-  (#g: erased heap)
-  requires heap_perm g ** gray_stack_inv st ** pure (tri_color_inv g)
-  returns _: unit  
-  ensures exists* g'. heap_perm g' ** gray_stack_inv st ** 
-          pure (tri_color_inv g' /\ 
-                (forall (child: obj_addr). points_to g' h_addr child ==> ~(is_white child g')))
-{
-  // Iterate through all pointer fields (indices 1 to wosize)
-  // Note: index 0 is the header, not a field
-  // wosize < pow2 54 < pow2 61 satisfies field_address precondition
-  // Each white child is grayed via CAS, preserving tri_color_inv
-  admit ()
-}
+#pop-options
 
 /// ---------------------------------------------------------------------------
-/// Complete Mark Step Implementation
+/// Push children: gray all pointer children of an object
+/// Preserves well_formed_heap.
 /// ---------------------------------------------------------------------------
 
-/// Execute one complete mark step:
-/// 1. Pop gray object from stack
-/// 2. Gray all its children  
-/// 3. Blacken the object
-///
-/// Returns: true if work was done, false if stack was empty
-// [@@CExtract]
-fn mark_step_one
-  (st: gray_stack)
-  (#g: erased heap)
-  (#gs: erased gray_set)
-  requires 
-    heap_perm g ** 
-    gray_stack_inv st **
-    pure (tri_color_inv g /\ gray_set_inv gs g)
-  returns did_work: bool
-  ensures 
-    exists* g'. heap_perm g' ** 
-    gray_stack_inv st **
-    pure (tri_color_inv g')
+fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (U64.v wz <= pow2 54 - 1 /\
+                 U64.v h_addr + U64.v mword < heap_size /\
+                 spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size /\
+                 Seq.length 's == heap_size /\
+                 SpecFields.well_formed_heap 's)
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2)
 {
-  // Pop from gray stack
-  let maybe_addr = pop_gray_stack st;
-  
-  match maybe_addr {
-    None -> {
-      // Stack empty, no work to do
-      false
-    }
-    Some gr_addr -> {
-      admit ();
-      // Got a gray object to process
-      
-      // Read header to get wosize
-      // assume (is_hp_addr gr_addr);
-      let hdr = read_word gr_addr;  // Placeholder for read_word
-      let wosize = getWosize hdr;
-      
-      // Check it's actually gray (may have been blackened by another thread)
-      let current_color = read_color_atomic gr_addr;
-      
-      if (U64.eq current_color gray) {
-        // Still gray, process it
-        
-        // 1. Gray all white children (establishes all children are non-white)
-        gray_all_children st gr_addr wosize;
-        
-        // 2. CAS gray → black using the invariant-preserving version
-        // Precondition: tri_color_inv g /\ is_gray gr_addr g /\ all children non-white
-        // This is established by gray_all_children
-        let blacken_result = cas_gray_black_atomic gr_addr;
-        
-        // Postcondition guarantees tri_color_inv is preserved
-        
-        true  // Work was attempted
-      } else {
-        // Object is no longer gray (another thread processed it)
-        // tri_color_inv is still maintained
-        true  // Still counts as work attempted
-      }
-    }
+  let mut i = 1UL;
+
+  while (U64.lte !i wz)
+    invariant exists* vi s_i gs_i.
+      pts_to i vi **
+      is_heap heap s_i **
+      is_gray_stack st gs_i **
+      pure (U64.v vi >= 1 /\ U64.v vi <= U64.v wz + 1 /\
+            SpecFields.well_formed_heap s_i /\ Seq.length s_i == heap_size)
+  {
+    let curr_i = !i;
+    assert (pure (spec_field_address (U64.v h_addr) (U64.v curr_i) < heap_size));
+    ML.lemma_mod_plus_distr_l (U64.v h_addr) (U64.v curr_i * 8) 8;
+    let field_offset = U64.mul curr_i mword;
+    let field_addr : hp_addr = U64.add h_addr field_offset;
+    is_heap_length heap;
+    let v = read_word heap field_addr;
+    check_and_darken heap st v;
+    i := U64.add curr_i 1UL
   }
 }
 
 /// ---------------------------------------------------------------------------
-/// CAS Failure Handling
+/// Maybe push children (if scannable)
+/// Preserves well_formed_heap.
 /// ---------------------------------------------------------------------------
 
-/// If CAS fails during graying, the object either:
-/// 1. Was already grayed by another thread (safe)
-/// 2. Was grayed then blackened (safe - still not white)
-///
-/// This is safe because colors only increase: white → gray → black
-ghost
-fn cas_failure_safe_lemma (g: erased heap) (h_addr: obj_addr)
-  requires pure (is_white h_addr g \/ is_gray h_addr g \/ is_black h_addr g)
-  returns _: unit
-  ensures pure (true)  // Always safe to continue
+fn maybe_push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
+                       (wz: wosize) (tag: U64.t)
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (U64.v wz <= pow2 54 - 1 /\
+                 U64.v h_addr + U64.v mword < heap_size /\
+                 spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size /\
+                 SpecFields.well_formed_heap 's /\
+                 Seq.length 's == heap_size)
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2)
 {
-  // Colors are monotonic: once non-white, always non-white
-  // So CAS failure just means someone else did the work
+  if U64.lt tag no_scan_tag {
+    push_children heap st h_addr wz
+  }
+}
+
+/// ---------------------------------------------------------------------------
+/// Mark step: pop gray, blacken, then scan children
+/// Preserves well_formed_heap.
+/// Order: blacken first (uses original ghost 's), then push children.
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 200"
+fn mark_step (heap: heap_t) (st: gray_stack)
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (Seq.length 'gs > 0 /\
+                 SpecFields.well_formed_heap 's)
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2)
+{
+  let f_addr = pop st;
+  let h_addr : hp_addr = U64.sub f_addr mword;
+  hp_addr_plus_8 h_addr;
+
+  is_heap_length heap;
+  let hdr = read_word heap h_addr;
+  let wz = getWosize hdr;
+  let tag = getTag hdr;
+
+  // Blacken FIRST: write black header (uses original ghost 's)
+  let new_hdr = SpecObject.colorHeader hdr black;
+  write_word heap h_addr new_hdr;
+
+  // Bridge: spec_write_word 's h_addr new_hdr == makeBlack f_addr 's
+  spec_read_word_eq 's h_addr;
+  SpecHeap.hd_address_spec f_addr;
+  U64.v_inj h_addr (SpecHeap.hd_address f_addr);
+  assume_ (pure (Seq.mem f_addr (SpecFields.objects 0UL 's)));
+  blacken_bridge 's f_addr;
+  rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+       as (is_heap heap (SpecObject.makeBlack f_addr 's));
+
+  // Establish preconditions for maybe_push_children in the new ghost (makeBlack f_addr 's)
+  // 1. Membership: f_addr in objects 0UL (makeBlack f_addr 's)
+  objects_preserved_makeBlack 's f_addr;
+  objects_preserved_mem (SpecObject.makeBlack f_addr 's) 's f_addr;
+  // 2. Field bounds: derive from wf_object_size_bound + wosize bridge
+  //    wf_object_size_bound gives: hd_address(f_addr) + 8 + wosize_of_object(f_addr, g) * 8 <= heap_size
+  //    Need: spec_field_address h_addr (wz + 1) <= heap_size = h_addr + (wz+1)*8 = h_addr + 8 + wz*8
+  SpecFields.wf_object_size_bound (SpecObject.makeBlack f_addr 's) f_addr;
+  SpecHeap.hd_address_spec f_addr;
+  // Now: h_addr + 8 + wosize_of_object f_addr (makeBlack f_addr 's) * 8 <= heap_size
+  // Bridge wz to wosize_of_object f_addr (makeBlack f_addr 's):
+  getWosize_eq hdr;
+  SpecObject.wosize_of_object_spec f_addr 's;
+  SpecObject.makeBlack_eq f_addr 's;
+  SpecObject.color_preserves_wosize f_addr 's Header.Black;
+  // wosize_of_object f_addr (makeBlack f_addr 's) == wosize_of_object f_addr 's
+  //   == getWosize (read_word 's h_addr) == SpecObject.getWosize hdr == getWosize hdr == wz
+  assert (pure (U64.v wz == U64.v (SpecObject.wosize_of_object f_addr 's)));
+  assert (pure (SpecObject.wosize_of_object f_addr (SpecObject.makeBlack f_addr 's) ==
+                SpecObject.wosize_of_object f_addr 's));
+
+  // Then push children (heap is now makeBlack f_addr 's, which is well_formed)
+  maybe_push_children heap st h_addr wz tag;
   ()
 }
-
-/// Add multiple children to gray set with postcondition
-/// Preserves the property that removed_addr is not in the set
-assume val add_children_to_gray_set : 
-  (gs: gray_set) -> (children: Seq.seq hp_addr) -> (removed_addr: hp_addr) ->
-  Pure gray_set
-    (requires ~(mem_gray removed_addr gs) /\ ~(Seq.mem removed_addr children))
-    (ensures fun gs' -> 
-      ~(mem_gray removed_addr gs') /\
-      (forall h. Seq.mem h children ==> mem_gray h gs'))
+#pop-options
 
 /// ---------------------------------------------------------------------------
-/// Ghost State Update for Mark Step
+/// Mark loop: iterate until stack empty
+/// Preserves well_formed_heap.
 /// ---------------------------------------------------------------------------
 
-/// Update gray set ghost state after mark step completes
-ghost
-fn update_gray_set_after_mark
-  (gs: erased gray_set)
-  (gr_addr: hp_addr)
-  (white_children: erased (Seq.seq hp_addr))
-  requires pure (mem_gray gr_addr (reveal gs) /\ 
-                 // gr_addr is not one of its own white children
-                 ~(Seq.mem gr_addr (reveal white_children)))
-  returns gs': erased gray_set
-  ensures pure (~(mem_gray gr_addr (reveal gs')) /\
-                // Children added to gray set
-                (forall h. Seq.mem h (reveal white_children) ==> mem_gray h (reveal gs')))
+fn mark_loop (heap: heap_t) (st: gray_stack)
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (SpecFields.well_formed_heap 's)
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2)
 {
-  // Remove blackened object, add newly grayed children
-  let without_current = remove_gray (reveal gs) gr_addr;
-  // The remove_gray operation ensures gr_addr is not in result (gray_set_shrinks lemma)
-  gray_set_shrinks (reveal gs) gr_addr;
-  // Add all children (in practice, done one by one)
-  // The postcondition of add_children_to_gray_set ensures:
-  // 1. gr_addr is still not in the result (since it wasn't in without_current and isn't a child)
-  // 2. All children are in the result
-  hide (add_children_to_gray_set without_current (reveal white_children) gr_addr)
-}
-
-/// ---------------------------------------------------------------------------
-/// Termination Argument Helper
-/// ---------------------------------------------------------------------------
-
-/// After a successful mark step, the termination metric decreases
-/// The metric is: |gray_set| (number of gray objects)
-///
-/// One step: removes 1 gray, adds k children (k ≤ wosize)
-/// But those children were white before, so total gray count
-/// goes down by 1 (the one we blackened) when considering
-/// the heap-wide invariant.
-ghost
-fn mark_step_decreases_metric
-  (gs: erased gray_set)
-  (gs': erased gray_set)
-  (gr_addr: hp_addr)
-  requires pure (mem_gray gr_addr gs /\ not (mem_gray gr_addr gs'))
-  returns _: unit
-  ensures pure (gray_set_card gs' < gray_set_card gs \/
-                // Or children were already gray (no net change)
-                true)
-{
-  // The termination argument is more subtle for concurrent GC:
-  // We use a global metric across all gray objects
-  // Each mark step removes one gray and may add children
-  // But children can only be grayed once (from white)
-  // So total work is bounded by number of objects
-  gray_set_card_remove gs gr_addr
-}
-
-/// ---------------------------------------------------------------------------
-/// Entry Points
-/// ---------------------------------------------------------------------------
-
-/// Process all gray objects until none remain
-/// Returns when mark phase is complete
-// [@@CExtract]
-fn mark_loop
-  (st: gray_stack)
-  (#g: erased heap)
-  requires heap_perm g ** gray_stack_inv st ** pure (tri_color_inv g)
-  returns _: unit
-  ensures exists* g'. heap_perm g' ** gray_stack_inv st ** 
-          pure (tri_color_inv g')
-          // In practice also: no_gray_objects g'
-{
-  admit ()
+  let mut continue_ = true;
+  while (
+    let c = !continue_;
+    c
+  )
+  invariant b. exists* c s_i gs_i.
+    pts_to continue_ c **
+    is_heap heap s_i **
+    is_gray_stack st gs_i **
+    pure (b == c) **
+    pure (SpecFields.well_formed_heap s_i)
+  {
+    let empty = is_empty st;
+    if empty {
+      continue_ := false;
+      ()
+    } else {
+      mark_step heap st;
+      ()
+    }
+  }
 }

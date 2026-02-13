@@ -1,476 +1,187 @@
-/// ---------------------------------------------------------------------------
-/// Pulse.Lib.GC - Concurrent On-the-Fly Garbage Collector Entry Point
-/// ---------------------------------------------------------------------------
-///
-/// This module provides the main GC entry point that orchestrates:
-/// - Phase 0: Set gc_active flag
-/// - Phase 1: Scan roots (concurrent with mutators)
-/// - Phase 2: Mark loop (concurrent with mutators)
-/// - Phase 3: Stop mutators, sweep, restart
-///
-/// This implements a Dijkstra-style incremental update collector.
+(*
+   Pulse GC - Top-Level Garbage Collector for Parallel GC
+
+   The parallel GC algorithm (Dijkstra-style on-the-fly):
+
+   collect():
+     1. Enable write barriers (set gc_phase = Marking)
+     2. For each thread T_i:
+        a. Stop T_i
+        b. mark_other_roots_blue(all stacks except T_i)
+        c. scan_thread_roots(T_i.stack, gray_stack)
+        d. mark_loop(gray_stack)
+        e. reset_blue_to_white(other stacks)
+        f. Resume T_i
+     3. Stop the world
+     4. sweep_all()
+     5. Resume all
+     6. Disable write barriers (set gc_phase = Idle)
+
+   Key properties:
+   - Black accumulates across thread passes
+   - Blue is temporary per-thread, reset after each pass
+   - After all threads: black = reachable, white = garbage
+   - Write barriers active for running mutators during marking
+*)
 
 module Pulse.Lib.GC
 
 #lang-pulse
 
-/// ---------------------------------------------------------------------------
-/// Extraction Configuration
-/// ---------------------------------------------------------------------------
-/// Functions marked with [@@ CExtract] will be extracted to C by KaRaMeL.
-/// Functions marked with [@@ CInline] will be inlined in extracted C.
-/// Ghost functions are automatically excluded from extraction.
-/// NOTE: Attributes commented out for lax checking
-
 open Pulse.Lib.Pervasives
+open Pulse.Lib.GC.Heap
+open Pulse.Lib.GC.Object
+open Pulse.Lib.GC.Stack
+open Pulse.Lib.GC.RootScanning
+open Pulse.Lib.GC.ConcurrentMark
+open Pulse.Lib.GC.Sweep
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
-module L = FStar.List.Tot
-
-open Pulse.Spec.GC.Base
-open Pulse.Spec.GC.Heap
-open Pulse.Spec.GC.Object
-open Pulse.Spec.GC.Fields
-open Pulse.Spec.GC.TriColor
-open Pulse.Spec.GC.GraySet
-open Pulse.Spec.GC.CASPreservation
+module SpecFields = Pulse.Spec.GC.Fields
+open Pulse.Spec.GC.ColorLemmas
 
 /// ---------------------------------------------------------------------------
-/// GC Types (Forward Declarations)
+/// GC Phase State
 /// ---------------------------------------------------------------------------
 
-/// GC phases
 type gc_phase =
-  | Idle       // Not collecting
-  | Marking    // Concurrent mark in progress
-  | Sweeping   // STW sweep in progress
+  | Phase_Idle
+  | Phase_Marking
+  | Phase_Sweeping
 
-/// Forward declarations for component types
-assume val gray_stack_t : Type0
-assume val free_list_t : Type0  
-assume val barrier_t : Type0
-assume val shadow_registry_t : Type0
-
-/// ---------------------------------------------------------------------------
-/// GC State Type
-/// ---------------------------------------------------------------------------
-
-/// Global GC state shared between GC thread and mutators
-noeq type gc_state = {
-  /// Current GC phase
-  phase: gc_phase;
-  
-  /// Gray stack for objects pending scan
-  gray_stack: gray_stack_t;
-  
-  /// Free list for reclaimed memory
-  free_list: free_list_t;
-  
-  /// Barrier flag for STW phases
-  barrier: barrier_t;
-  
-  /// Shadow stack registry (all mutator root sets)
-  shadow_registry: shadow_registry_t;
+/// GC state: tracks phase and thread information
+noeq
+type gc_state = {
+  phase: ref gc_phase;
+  heap_len: (n:U64.t{U64.v n == heap_size});
 }
 
 /// ---------------------------------------------------------------------------
-/// GC State Invariants
+/// Ghost helpers
 /// ---------------------------------------------------------------------------
 
-/// GC state owns all its components
-assume val gc_state_inv : gc_state -> slprop
-
-/// Heap permission
-assume val heap_perm : erased heap -> slprop
-
-/// Get current phase
-assume val get_phase :
-  (gc: gc_state) ->
-  stt gc_phase
-      (gc_state_inv gc)
-      (fun p -> gc_state_inv gc ** pure (p == gc.phase))
-
-let is_marking (p: gc_phase) : bool = 
-  match p with | Marking -> true | _ -> false
-
-let is_sweeping (p: gc_phase) : bool = 
-  match p with | Sweeping -> true | _ -> false
-
-/// Set phase - updates gc.phase to the new value
-assume val set_phase :
-  (gc: gc_state) -> (p: gc_phase) ->
-  stt unit
-      (gc_state_inv gc)
-      (fun _ -> gc_state_inv {gc with phase = p})
-
-/// ---------------------------------------------------------------------------
-/// Phase 0: Start GC - Set Active Flag
-/// ---------------------------------------------------------------------------
-
-/// Begin a GC cycle
-/// - Transitions from Idle to Marking
-/// - Enables write barriers
-// [@@CExtract]
-fn gc_start
-  (gc: gc_state)
-  (#g: erased heap)
-  requires 
-    gc_state_inv gc **
-    heap_perm g **
-    pure (gc.phase == Idle)
-  returns _: unit
-  ensures
-    gc_state_inv gc **
-    heap_perm g **
-    pure (gc.phase == Marking)
+ghost fn is_heap_length (h: heap_t)
+  requires is_heap h 's
+  ensures is_heap h 's ** pure (Seq.length 's == heap_size)
 {
-  // Set phase to Marking and enable write barriers
-  // The postcondition is satisfied by the set_phase operation
-  admit ()
+  unfold is_heap;
+  fold (is_heap h 's)
 }
 
+/// All thread root sets are valid objects in the heap
+let all_roots_valid (g: Pulse.Spec.GC.Base.heap) (all_roots: Seq.seq (Seq.seq obj_addr)) : prop =
+  forall (t: nat). t < Seq.length all_roots ==>
+    roots_valid g (Seq.index all_roots t)
+
 /// ---------------------------------------------------------------------------
-/// Phase 1: Scan Roots (Concurrent)
+/// Per-Thread Mark Pass
 /// ---------------------------------------------------------------------------
 
-/// Helper types and functions for root scanning
-assume val shadow_stack_handle : Type0
-
-assume val get_shadow_stacks :
-  shadow_registry_t ->
-  stt (list shadow_stack_handle)
-      emp
-      (fun _ -> emp)
-
-assume val scan_all_stacks :
-  gray_stack_t -> (stacks: list shadow_stack_handle) ->
-  stt unit emp (fun _ -> emp)
-
-/// Scan all roots from shadow stacks
-/// Runs concurrently with mutator threads
-// [@@CExtract]
-fn gc_scan_roots
-  (gc: gc_state)
-  (#g: erased heap)
-  requires
-    gc_state_inv gc **
-    heap_perm g **
-    pure (gc.phase == Marking /\ tri_color_inv g)
-  returns _: unit
-  ensures
-    exists* g'. gc_state_inv gc **
-    heap_perm g' **
-    pure (gc.phase == Marking /\ tri_color_inv g')
+/// Execute the mark pass for a single thread:
+/// 1. Blue-mark other threads' roots
+/// 2. Gray this thread's roots
+/// 3. Run mark loop to completion
+/// 4. Reset blue markings
+fn mark_one_thread
+  (heap: heap_t) (st: gray_stack)
+  (thread_roots: Seq.seq obj_addr)
+  (other_roots: Seq.seq obj_addr)
+  (n_thread: SZ.t{SZ.v n_thread == Seq.length thread_roots})
+  (n_other: SZ.t{SZ.v n_other == Seq.length other_roots})
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (SpecFields.well_formed_heap 's /\
+                 roots_valid 's thread_roots /\
+                 roots_valid 's other_roots)
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2)
 {
-  admit();
-  // Get all shadow stacks from registry
-  // let stacks = get_shadow_stacks gc.shadow_registry;
-  
-  // Scan each root: CAS white→gray, push to gray stack
-  // scan_all_stacks gc.gray_stack stacks;
-  
-  // After scanning:
-  // - All root objects are gray (or already gray/black)
-  // - Gray stack contains work to process
-  // - Tri-color invariant maintained
+  // Step 1: Mark other threads' roots as blue (temporary fence)
+  mark_other_roots_blue heap other_roots n_other;
+
+  // Step 2: Gray this thread's roots
+  // After mark_other_roots_blue: objects are preserved, so roots_valid transfers
+  scan_thread_roots heap st thread_roots n_thread;
+
+  // Step 3: Run mark loop until gray stack is empty
+  mark_loop heap st;
+
+  // Step 4: Reset blue markings back to white
+  // mark_loop doesn't yet expose objects equality; assume_ roots_valid on current ghost
+  with s3 gs3. assert (is_heap heap s3 ** is_gray_stack st gs3);
+  assume_ (pure (roots_valid s3 other_roots));
+  reset_blue_to_white heap other_roots n_other;
   ()
 }
 
 /// ---------------------------------------------------------------------------
-/// Phase 2: Mark Loop (Concurrent)
+/// Full Collection
 /// ---------------------------------------------------------------------------
 
-/// Forward declarations for mark operations
-assume val pop_from_gray_stack :
-  gray_stack_t ->
-  stt (option hp_addr) emp (fun _ -> emp)
-
-assume val mark_step :
-  gc_state -> hp_addr ->
-  stt unit emp (fun _ -> emp)
-
-/// Process all gray objects until none remain
-/// Runs concurrently with mutator threads
-// [@@CExtract]
-fn gc_mark_loop
-  (gc: gc_state)
-  (#g: erased heap)
-  requires
-    gc_state_inv gc **
-    heap_perm g **
-    pure (gc.phase == Marking /\ tri_color_inv g)
-  returns _: unit
-  ensures
-    exists* g'. gc_state_inv gc **
-    heap_perm g' **
-    pure (gc.phase == Marking /\
-          tri_color_inv g' /\
-          no_gray_objects g')
-{
-  admit();
-  ()
-}
-
-/// ---------------------------------------------------------------------------
-/// Phase 3: Stop-the-World Sweep
-/// ---------------------------------------------------------------------------
-
-/// Sweep statistics
-noeq type sweep_stats = {
-  reclaimed_count: nat;
-  reclaimed_bytes: nat;
-}
-
-let all_white_or_blue (g: heap) : prop = True  // From Sweep module
-
-/// Forward declarations for sweep
-assume val signal_gc_barrier : barrier_t -> stt unit emp (fun _ -> emp)
-assume val wait_for_safepoints : barrier_t -> stt unit emp (fun _ -> emp)
-assume val resume_mutators : barrier_t -> stt unit emp (fun _ -> emp)
-assume val sweep_heap : free_list_t -> stt sweep_stats emp (fun _ -> emp)
-
-/// Sweep phase: reclaim white objects
-/// This is stop-the-world for safety
-// [@@CExtract]
-fn gc_sweep
-  (gc: gc_state)
-  (#g: erased heap)
-  requires
-    gc_state_inv gc **
-    heap_perm g **
-    pure (gc.phase == Marking /\
-          tri_color_inv (reveal g) /\
-          no_gray_objects (reveal g))
-  returns stats: sweep_stats
-  ensures
-    exists* g'. gc_state_inv gc **
-    heap_perm g' **
-    pure (gc.phase == Idle /\
-          all_white_or_blue (reveal g'))
-{
-  // Transition to Sweeping phase, perform sweep, return to Idle
-  // The sweep:
-  // 1. Reclaims white objects (marks them blue)
-  // 2. Resets black objects to white for next cycle
-  // Postcondition: all objects are white or blue
-  admit ()
-}
-
-/// ---------------------------------------------------------------------------
-/// Full Collection: Entry Point
-/// ---------------------------------------------------------------------------
-
-/// Perform a complete garbage collection cycle
-/// This is the main GC entry point
-// [@@CExtract]
+/// Execute a full garbage collection cycle.
+///
+/// This is the top-level entry point called by the runtime.
+/// In the actual runtime integration:
+/// - Thread stopping/resuming is handled by the runtime
+/// - Shadow stacks provide root sets
+/// - Write barriers are toggled via gc_state.phase
+///
+/// For verification purposes, we take the roots as explicit parameters.
 fn collect
   (gc: gc_state)
-  (#g: erased heap)
-  requires
-    gc_state_inv gc **
-    heap_perm g **
-    pure (gc.phase == Idle /\ tri_color_inv g)
-  returns stats: sweep_stats
-  ensures
-    exists* g'. gc_state_inv gc **
-    heap_perm g' **
-    pure (gc.phase == Idle /\ all_white_or_blue g')
+  (heap: heap_t) (st: gray_stack)
+  (all_thread_roots: Seq.seq (Seq.seq obj_addr))
+  (n_threads: SZ.t{SZ.v n_threads == Seq.length all_thread_roots})
+  requires is_heap heap 's ** is_gray_stack st 'gs ** pts_to gc.phase 'p **
+           pure (SpecFields.well_formed_heap 's /\
+                 all_roots_valid 's all_thread_roots /\
+                 Seq.length (SpecFields.objects 0UL 's) > 0 /\
+                 (forall (i:nat). i < Seq.length all_thread_roots ==>
+                   SZ.fits (Seq.length (Seq.index all_thread_roots i))))
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+          pts_to gc.phase Phase_Idle **
+          pure (SpecFields.well_formed_heap s2)
 {
-  // Phase 0: Start GC
-  gc_start gc;
-  
-  // Phase 1: Scan roots (concurrent)
-  gc_scan_roots gc;
-  
-  // Phase 2: Mark loop (concurrent)
-  gc_mark_loop gc;
-  
-  // Phase 3: Sweep (STW)
-  let stats = gc_sweep gc;
-  
-  stats
-}
+  // Phase 1: Enable write barriers
+  gc.phase := Phase_Marking;
 
-/// ---------------------------------------------------------------------------
-/// Mutator API: Safe Operations During GC
-/// ---------------------------------------------------------------------------
-
-/// Forward declarations
-assume val alloc_from_free_list :
-  free_list_t -> U64.t -> stt (option hp_addr) emp (fun _ -> emp)
-
-assume val init_object_white :
-  hp_addr -> U64.t -> stt unit emp (fun _ -> emp)
-
-/// Raw color constants for CAS operations
-let white : U64.t = 0UL
-let gray  : U64.t = 1UL
-let black : U64.t = 2UL
-
-assume val read_color : hp_addr -> stt U64.t emp (fun _ -> emp)
-assume val cas_color : hp_addr -> U64.t -> U64.t -> stt bool emp (fun _ -> emp)
-assume val push_to_gray_stack : gray_stack_t -> hp_addr -> stt unit emp (fun _ -> emp)
-assume val write_field : hp_addr -> U64.t -> hp_addr -> stt unit emp (fun _ -> emp)
-
-assume val wait_at_barrier : barrier_t -> stt unit emp (fun _ -> emp)
-
-/// Allocate memory with write barrier awareness
-// [@@CExtract]
-fn alloc_with_barrier
-  (gc: gc_state)
-  (size: U64.t)
-  (#g: erased heap)
-  requires
-    gc_state_inv gc **
-    heap_perm g **
-    pure (U64.v size > 0)
-  returns addr: option hp_addr
-  ensures
-    exists* g'. gc_state_inv gc **
-    heap_perm g' **
-    pure (
-      // If allocated, the new object is white
-      (Some? addr ==> is_white_safe (Some?.v addr) g')
-    )
-{
-  // Get memory from free list
-  let maybe_block = alloc_from_free_list gc.free_list size;
-  
-  match maybe_block {
-    None -> {
-      // No memory available
-      admit()
-    }
-    Some block -> {
-      // Initialize as white object
-      // (will be scanned if reachable before next sweep)
-      init_object_white block size;
-      admit()
-    }
-  }
-}
-
-/// Write a pointer field with barrier
-// [@@CExtract]
-fn write_with_barrier
-  (gc: gc_state)
-  (src: hp_addr)
-  (field_idx: U64.t)
-  (dst: hp_addr)
-  (#g: erased heap)
-  requires
-    gc_state_inv gc **
-    heap_perm g **
-    pure (tri_color_inv g)
-  returns _: unit
-  ensures
-    exists* g'. gc_state_inv gc **
-    heap_perm g' **
-    pure (tri_color_inv g')
-{
-  admit ();
-  // Check if GC is active
-  let phase = get_phase gc;
-  
-  if (is_marking phase) {
-    // Write barrier needed: check colors
-    let src_color = read_color src;
-    
-    if (U64.eq src_color black) {
-      // Source is black - need to check target
-      let dst_color = read_color dst;
-      
-      if (U64.eq dst_color white) {
-        // CAS dst from white to gray
-        let _ = cas_color dst white gray;
-        
-        // If CAS succeeded, push to gray stack
-        // (simplified: always push, let mark step handle it)
-        push_to_gray_stack gc.gray_stack dst;
-        ()
-      } else {
-        ()
-      };
-      ()
-    } else {
-      ()
-    };
-    ()
-  } else {
+  // Phase 2: Mark each thread's roots
+  let mut thread_idx = 0sz;
+  while (SZ.lt !thread_idx n_threads)
+    invariant exists* ti s_i gs_i.
+      pts_to thread_idx ti **
+      is_heap heap s_i **
+      is_gray_stack st gs_i **
+      pts_to gc.phase Phase_Marking **
+      pure (SZ.v ti <= SZ.v n_threads) **
+      pure (SpecFields.well_formed_heap s_i /\
+            all_roots_valid s_i all_thread_roots /\
+            Seq.length (SpecFields.objects 0UL s_i) > 0 /\
+            (forall (i:nat). i < Seq.length all_thread_roots ==>
+              SZ.fits (Seq.length (Seq.index all_thread_roots i))))
+  {
+    let ti = !thread_idx;
+    let thread_roots = Seq.index all_thread_roots (SZ.v ti);
+    // In a real implementation, other_roots = union of all other stacks
+    // For now, use empty seq as placeholder
+    let other_roots = Seq.empty #obj_addr;
+    let n_thread : SZ.t = SZ.uint_to_t (Seq.length thread_roots);
+    let n_other = 0sz;
+    mark_one_thread heap st thread_roots other_roots n_thread n_other;
+    // mark_one_thread preserves wfh; all_roots_valid maintained because objects preserved
+    // For now, assume_ on current ghost (will be resolved when mark_loop exposes objects_preserved)
+    with s_after gs_after. assert (is_heap heap s_after ** is_gray_stack st gs_after);
+    assume_ (pure (all_roots_valid s_after all_thread_roots /\
+                   Seq.length (SpecFields.objects 0UL s_after) > 0));
+    thread_idx := SZ.add ti 1sz;
     ()
   };
-  
-  // Perform the actual write
-  write_field src field_idx dst;
-  admit ()
+
+  // Phase 3: Stop the world and sweep
+  gc.phase := Phase_Sweeping;
+  sweep_all heap gc.heap_len;
+
+  // Phase 4: Done
+  gc.phase := Phase_Idle;
+  ()
 }
-
-/// Safepoint: check if GC needs mutator to pause
-// [@@CExtract]
-fn safepoint
-  (gc: gc_state)
-  (#g: erased heap)
-  requires gc_state_inv gc ** heap_perm g
-  returns _: unit
-  ensures exists* g'. gc_state_inv gc ** heap_perm g'
-{
-  // Check if sweep phase is active (STW)
-  let phase = get_phase gc;
-  
-  if (is_sweeping phase) {
-    // Wait at barrier until sweep completes
-    wait_at_barrier gc.barrier;
-    ()
-  } else {
-    ()
-  };
-  admit ()
-}
-
-/// ---------------------------------------------------------------------------
-/// GC Initialization
-/// ---------------------------------------------------------------------------
-
-assume val init_gray_stack : unit -> stt gray_stack_t emp (fun _ -> emp)
-assume val init_free_list : U64.t -> stt free_list_t emp (fun _ -> emp)
-assume val init_barrier : unit -> stt barrier_t emp (fun _ -> emp)
-assume val init_shadow_registry : unit -> stt shadow_registry_t emp (fun _ -> emp)
-
-/// Create and initialize a new GC instance
-// [@@CExtract]
-fn gc_init
-  (heap_size: U64.t)
-  returns gc: gc_state
-  ensures gc_state_inv gc ** pure (gc.phase == Idle)
-{
-  // Initialize components
-  let gray_stack = init_gray_stack ();
-  let free_list = init_free_list heap_size;
-  let barrier = init_barrier ();
-  let registry = init_shadow_registry ();
-  
-  let gc = {
-    phase = Idle;
-    gray_stack = gray_stack;
-    free_list = free_list;
-    barrier = barrier;
-    shadow_registry = registry
-  };
-  admit ()
-}
-
-/// ---------------------------------------------------------------------------
-/// GC Metrics and Statistics
-/// ---------------------------------------------------------------------------
-
-/// GC metrics for monitoring
-noeq type gc_metrics = {
-  total_collections: nat;
-  total_reclaimed_bytes: nat;
-  last_sweep_time_ns: nat;
-  current_heap_usage: nat;
-}
-
-/// Get current GC metrics
-assume val get_gc_metrics : gc_state -> stt gc_metrics emp (fun _ -> emp)

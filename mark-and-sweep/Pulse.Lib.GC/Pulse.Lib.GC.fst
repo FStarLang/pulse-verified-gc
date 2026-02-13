@@ -27,6 +27,9 @@ module Seq = FStar.Seq
 module SpecGCPost = Pulse.Spec.GC.GCPost
 module SpecMarkInv = Pulse.Spec.GC.MarkInv
 module SpecFields = Pulse.Spec.GC.Fields
+module SI = Pulse.Spec.GC.SweepInv
+
+let zero_hp_addr : hp_addr = 0UL
 
 /// ---------------------------------------------------------------------------
 /// Full GC
@@ -43,7 +46,7 @@ module SpecFields = Pulse.Spec.GC.Fields
 /// - Stack empty after mark phase
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (SpecMarkInv.mark_inv 's 'st)
+           pure (SpecMarkInv.mark_inv 's 'st /\ SI.fp_valid fp 's)
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2) ** pure (Seq.length st2 == 0)
@@ -53,16 +56,23 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   
   // Bind existentials and extract well_formed_heap from mark_inv
   with s_mark st_mark. assert (is_heap heap s_mark ** is_gray_stack st st_mark **
-                                pure (SpecMarkInv.mark_inv s_mark st_mark /\ Seq.length st_mark == 0));
+                                pure (SpecMarkInv.mark_inv s_mark st_mark /\ Seq.length st_mark == 0 /\
+                                      SpecFields.objects zero_hp_addr s_mark == SpecFields.objects zero_hp_addr 's));
   SpecMarkInv.mark_inv_elim_wfh s_mark st_mark;
-  // well_formed_heap s_mark now in SMT context → sweep's precondition satisfied
+  SpecMarkInv.mark_inv_elim_objects s_mark st_mark;
+  
+  // fp_valid preservation: objects list is preserved from 's to s_mark
+  SI.fp_valid_transfer fp 's s_mark;
+  
+  // Density preservation: density is part of mark_inv
+  SpecMarkInv.mark_inv_elim_density s_mark st_mark;
   
   // Sweep phase: reset black to white, build free list
   // sweep preserves well_formed_heap (via internal loop invariant)
   let result_fp = sweep heap fp;
   
   // After sweep: well_formed_heap s_sweep is PROVEN (from sweep postcondition)
-  // Only all_objects_white needs assumption (pending sweep↔spec equivalence)
+  // all_objects_white: pending sweep↔spec correspondence (sweep_resets_colors in spec)
   with s_sweep. assert (is_heap heap s_sweep ** pure (SpecFields.well_formed_heap s_sweep));
   assume (pure (SpecGCPost.all_objects_white s_sweep));
   SpecGCPost.gc_postcondition_from_parts s_sweep;

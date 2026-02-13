@@ -674,6 +674,32 @@ let objects_nonempty_next (start: hp_addr) (g: heap) : Lemma
   = FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v start) (FStar.Mul.((U64.v (getWosize (read_word g start)) + 1) * 8)) 8;
     FStar.Math.Lemmas.lemma_mod_mul_distr_r (U64.v (getWosize (read_word g start)) + 1) 8 8
 
+/// Members of objects from a later start are also members of objects from an earlier start
+/// (objects later g ⊆ objects earlier g when later is the next scan position after earlier)
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
+let objects_later_subset (start: hp_addr) (g: heap) (x: obj_addr)
+  : Lemma (requires Seq.length (objects start g) > 0)
+          (ensures (let wz = getWosize (read_word g start) in
+                    let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                    next_nat < heap_size /\ next_nat < pow2 64 /\ next_nat % 8 == 0 ==>
+                    (let next : hp_addr = U64.uint_to_t next_nat in
+                     Seq.mem x (objects next g) ==> Seq.mem x (objects start g))))
+  = if U64.v start + 8 >= Seq.length g then ()
+    else begin
+      let header = read_word g start in
+      let wz = getWosize header in
+      let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+      if next_nat > Seq.length g || next_nat >= pow2 64 then ()
+      else if next_nat >= heap_size then ()
+      else begin
+        let next : hp_addr = U64.uint_to_t next_nat in
+        let oa = obj_address start in
+        // objects start g == cons oa (objects next g), so mem in tail → mem in cons
+        mem_cons_lemma x oa (objects next g)
+      end
+    end
+#pop-options
+
 /// A header is valid if it has valid color and tag
 /// Note: getColor returns algebraic type (White|Gray|Black) from Pulse.Lib.Header.color_sem
 let is_valid_header (header: U64.t) : bool =
@@ -1019,6 +1045,26 @@ val write_word_preserves_objects : (g: heap) -> (obj: obj_addr) -> (addr: hp_add
 
 let write_word_preserves_objects g obj addr v =
   write_word_preserves_objects_aux 0UL g obj addr v
+
+/// Field write preserves objects from arbitrary start position
+val write_word_preserves_objects_from : (start: hp_addr) -> (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
+  Lemma (requires well_formed_heap g /\
+                  Seq.mem obj (objects start g) /\
+                  U64.v addr >= U64.v obj /\
+                  U64.v addr < U64.v obj + FStar.Mul.(U64.v (wosize_of_object obj g) * 8) /\
+                  U64.v addr % 8 = 0)
+        (ensures objects start (write_word g addr v) == objects start g)
+
+let write_word_preserves_objects_from start g obj addr v =
+  write_word_preserves_objects_aux start g obj addr v
+
+/// Write to address before start preserves objects from that start
+val write_word_preserves_objects_before : (start: hp_addr) -> (g: heap) -> (addr: hp_addr) -> (v: U64.t) ->
+  Lemma (requires U64.v addr < U64.v start /\ U64.v addr % 8 = 0)
+        (ensures objects start (write_word g addr v) == objects start g)
+
+let write_word_preserves_objects_before start g addr v =
+  write_word_preserves_objects_past start g addr v
 
 /// ---------------------------------------------------------------------------
 /// Color Change Preserves points_to (Self Case)

@@ -121,6 +121,10 @@ let get_color_bound (v: uint_t 64) : Lemma (get_color v < 4) =
   assert (mask_2bit = 3);
   logand_le #64 (shift_right #64 v 8) mask_2bit
 
+/// Expose get_color definition in terms of 3 (not private mask_2bit)
+let get_color_val (v: uint_t 64) : Lemma (get_color v == logand #64 (shift_right #64 v 8) 3) =
+  logor_disjoint #64 2 1 1; logor_commutative #64 1 2
+
 /// Therefore unpack_header succeeds when color bits are valid (not 0)
 let unpack_header_total (w: uint_t 64) : Lemma 
   (requires valid_color (get_color w))

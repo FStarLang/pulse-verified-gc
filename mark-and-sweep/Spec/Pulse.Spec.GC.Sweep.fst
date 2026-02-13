@@ -197,6 +197,28 @@ let sweep_object_preserves_wf g obj fp =
   end else ()
 #pop-options
 
+/// sweep_object preserves objects from arbitrary start position
+val sweep_object_preserves_objects_from : (start: hp_addr) -> (g: heap) -> (obj: obj_addr) -> (fp: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects start g))
+        (ensures objects start (fst (sweep_object g obj fp)) == objects start g)
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let sweep_object_preserves_objects_from start g obj fp =
+  if is_white obj g then begin
+    let ws = wosize_of_object obj g in
+    let hd = Pulse.Spec.GC.Heap.hd_address obj in
+    if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+      wosize_of_object_spec obj g;
+      Pulse.Spec.GC.Heap.hd_address_spec obj;
+      write_word_preserves_objects_from start g obj obj fp
+    end else ()
+  end else if is_black obj g then begin
+    colors_exclusive obj g;
+    makeWhite_eq obj g;
+    color_change_preserves_objects_aux start g obj Header.White
+  end else ()
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Sweep Aux Lemmas
 /// ---------------------------------------------------------------------------

@@ -26,6 +26,8 @@ let closure_tag : U64.t = 247UL
 let infix_tag : U64.t = 249UL
 let no_scan_tag : U64.t = 251UL
 
+let no_scan_tag_val () : Lemma (no_scan_tag == U64.uint_to_t 251) = ()
+
 /// ---------------------------------------------------------------------------
 /// Header Masks and Shifts (kept for wosize extraction)
 /// ---------------------------------------------------------------------------
@@ -65,6 +67,8 @@ let getColor (header: U64.t) : color =
   match unpack_color (get_color (U64.v header)) with
   | Some c -> c
   | None -> White  // Invalid defaults to White
+
+let getColor_spec hdr = ()
 
 /// Note: getColor returns White for any header with an invalid color field
 /// (i.e., color bits == 3, which is unused)
@@ -114,6 +118,8 @@ let getWosize (header: U64.t) : wosize =
   U64.shift_right header wosize_shift
 
 let getWosize_spec (hdr: U64.t) : Lemma (getWosize hdr == U64.shift_right hdr 10ul) = ()
+
+let getTag_spec (hdr: U64.t) : Lemma (getTag hdr == U64.logand hdr 0xFFUL) = ()
 
 /// getWosize returns a value < 2^54
 let getWosize_bound (hdr: U64.t) : Lemma (U64.v (getWosize hdr) < pow2 54) = 
@@ -421,6 +427,15 @@ let makeWhite_eq (h_addr: obj_addr) (g: heap)
 
 let makeGray_eq (h_addr: obj_addr) (g: heap)
   : Lemma (makeGray h_addr g == set_object_color h_addr g Gray) = ()
+
+let makeWhite_spec (obj: obj_addr) (g: heap)
+  : Lemma (makeWhite obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) White)) = ()
+
+let makeBlack_spec (obj: obj_addr) (g: heap)
+  : Lemma (makeBlack obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Black)) = ()
+
+let makeGray_spec (obj: obj_addr) (g: heap)
+  : Lemma (makeGray obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Gray)) = ()
 
 /// ---------------------------------------------------------------------------
 /// Pointer Field Predicates

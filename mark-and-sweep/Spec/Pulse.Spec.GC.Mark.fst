@@ -21,6 +21,7 @@ open Pulse.Spec.GC.HeapModel
 open Pulse.Spec.GC.DFS
 module HeapGraph = Pulse.Spec.GC.HeapGraph
 module Header = Pulse.Lib.Header
+module SweepInv = Pulse.Spec.GC.SweepInv
 
 /// ---------------------------------------------------------------------------
 /// Gray Stack Properties
@@ -365,6 +366,7 @@ let rec push_children_preserves_stack_props g st obj i ws =
     end
   end
 #pop-options
+
 /// Process one gray object: make it black and push children
 let mark_step (g: heap) (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) 
   : GTot (heap & seq obj_addr)
@@ -1728,6 +1730,102 @@ let rec push_children_preserves_objects g st obj i ws =
   end
 #pop-options
 
+/// mark_step preserves objects enumeration (only does color changes)
+val mark_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st)
+        (ensures objects 0UL (fst (mark_step g st)) == objects 0UL g)
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let mark_step_preserves_objects g st =
+  let obj = Seq.head st in
+  stack_head_is_gray g st;
+  makeBlack_eq obj g;
+  color_change_preserves_objects g obj Header.Black;
+  let g' = makeBlack obj g in
+  color_change_preserves_objects_mem g obj Header.Black obj;
+  let ws = wosize_of_object obj g in
+  wosize_of_object_bound obj g;
+  set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+  wosize_of_object_spec obj g; wosize_of_object_spec obj g';
+  assert (wosize_of_object obj g' == wosize_of_object obj g);
+  color_change_preserves_wf g obj Header.Black;
+  if is_no_scan obj g then ()
+  else
+    push_children_preserves_objects g' (Seq.tail st) obj 1UL ws
+#pop-options
+
+/// push_children preserves heap_objects_dense (each makeGray is a color change)
+val push_children_preserves_density : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
+  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
+  Lemma (requires well_formed_heap g /\ SweepInv.heap_objects_dense g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  U64.v ws <= U64.v (wosize_of_object obj g) /\
+                  U64.v (wosize_of_object obj g) < pow2 54)
+        (ensures SweepInv.heap_objects_dense (fst (push_children g st obj i ws)))
+        (decreases (U64.v ws - U64.v i))
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec push_children_preserves_density g st obj i ws =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let c : obj_addr = v in
+      if is_white c g then begin
+        let g' = makeGray c g in
+        makeGray_eq c g;
+        let wz = wosize_of_object obj g in
+        wosize_of_object_bound obj g;
+        Pulse.Spec.GC.Heap.hd_address_spec obj;
+        FStar.Math.Lemmas.pow2_lt_compat 61 54;
+        HeapGraph.get_field_addr_eq g obj i;
+        field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) c;
+        SweepInv.color_change_preserves_density c g Header.Gray;
+        color_change_preserves_wf g c Header.Gray;
+        color_change_preserves_objects_mem g c Header.Gray obj;
+        set_object_color_preserves_getWosize_at_hd c g Header.Gray;
+        wosize_of_object_spec obj g; wosize_of_object_spec obj g';
+        let st' = Seq.cons c st in
+        if U64.v i < U64.v ws then
+          push_children_preserves_density g' st' obj (U64.add i 1UL) ws
+        else ()
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_preserves_density g st obj (U64.add i 1UL) ws
+        else ()
+      end
+    end else begin
+      if U64.v i < U64.v ws then
+        push_children_preserves_density g st obj (U64.add i 1UL) ws
+      else ()
+    end
+  end
+#pop-options
+
+/// mark_step preserves heap_objects_dense
+val mark_step_preserves_density : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
+        (ensures SweepInv.heap_objects_dense (fst (mark_step g st)))
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let mark_step_preserves_density g st =
+  let obj = Seq.head st in
+  stack_head_is_gray g st;
+  makeBlack_eq obj g;
+  SweepInv.color_change_preserves_density obj g Header.Black;
+  let g' = makeBlack obj g in
+  color_change_preserves_objects_mem g obj Header.Black obj;
+  let ws = wosize_of_object obj g in
+  wosize_of_object_bound obj g;
+  set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+  wosize_of_object_spec obj g; wosize_of_object_spec obj g';
+  color_change_preserves_wf g obj Header.Black;
+  if is_no_scan obj g then ()
+  else
+    push_children_preserves_density g' (Seq.tail st) obj 1UL ws
+#pop-options
+
 val mark_step_preserves_tri_color : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ tri_color_invariant g)
         (ensures tri_color_invariant (fst (mark_step g st)))
@@ -1979,6 +2077,7 @@ let rec mark_aux_no_new_white g st fuel x =
   else if fuel = 0 then ()
   else begin
     assert (fuel > 0);
+    assert (Seq.length st > 0);
     let (g', st') = mark_step g st in
     mark_step_preserves_stack_props g st;
     mark_step_preserves_wf g st;

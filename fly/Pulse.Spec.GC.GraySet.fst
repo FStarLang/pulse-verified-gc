@@ -1,385 +1,272 @@
 /// ---------------------------------------------------------------------------
-/// Pulse.Spec.GC.GraySet - Gray Set Ghost State for Tracking Pending Work
+/// Pulse.Spec.GC.GraySet - Gray Set Ghost State for Parallel GC
 /// ---------------------------------------------------------------------------
 ///
-/// This module provides ghost state for tracking the set of gray objects:
-/// - gray_set: ghost reference tracking gray object addresses
-/// - Membership equivalence: in gray_set ⟺ is_gray in heap
-/// - Monotonicity: gray set shrinks during marking
-/// - Termination: empty gray set implies mark complete
+/// Tracks the set of gray objects as ghost state for the mark phase.
+/// The gray set serves as the termination metric: each mark step removes
+/// one object (by blackening it) and may add children (by graying them).
 ///
-/// Key invariants maintained:
-/// 1. gray_set_inv: membership ↔ color gray
-/// 2. gray_set_shrinks: mark step removes at least one gray object
-/// 3. gray_set_empty_implies_complete: no gray ⟹ all reachable are black
+/// Key invariant: gray_set_inv g gs <==> (obj in gs <==> is_gray obj in heap)
+///
+/// This module provides the specification-level gray set operations.
+/// The Pulse implementation uses GhostSet for the actual ghost state.
 
 module Pulse.Spec.GC.GraySet
 
 open FStar.Seq
-open FStar.Set
-open FStar.Ghost
+open FStar.Classical
+open FStar.Mul
 module U64 = FStar.UInt64
 
 open Pulse.Spec.GC.Base
-open Pulse.Spec.GC.Heap
 open Pulse.Spec.GC.Object
 open Pulse.Spec.GC.Fields
+open Pulse.Spec.GC.Heap
 open Pulse.Spec.GC.TriColor
-open Pulse.Lib.Header  // For color constructors (Gray, Black, etc.)
+module Header = Pulse.Lib.Header
 
-/// ---------------------------------------------------------------------------
-/// Gray Set Type
-/// ---------------------------------------------------------------------------
+/// ===========================================================================
+/// Section 1: Gray Set Type
+/// ===========================================================================
 
-/// A ghost set of heap addresses representing gray objects
-/// Uses FStar.Set for erased set operations
-type gray_set = Set.set hp_addr
+/// Ghost set of object addresses representing gray objects
+let gray_set = FStar.Set.set obj_addr
 
-/// Empty gray set (initial state after GC starts, before roots)
-let empty_gray_set : gray_set = Set.empty
+/// Empty gray set
+let empty_gray_set : gray_set = FStar.Set.empty #obj_addr
 
-/// Singleton set containing one address
-let singleton_gray (h: hp_addr) : gray_set = Set.singleton h
+/// Singleton gray set
+let singleton_gray_set (h: obj_addr) : gray_set = FStar.Set.singleton h
 
-/// Union of two gray sets
-let union_gray (s1 s2: gray_set) : gray_set = Set.union s1 s2
+/// Membership
+let mem_gray_set (h: obj_addr) (gs: gray_set) : GTot bool =
+  FStar.Set.mem h gs
 
-/// Set difference
-let remove_gray (s: gray_set) (h: hp_addr) : gray_set = 
-  Set.complement (Set.singleton h) `Set.intersect` s
+/// Add to gray set
+let add_gray_set (h: obj_addr) (gs: gray_set) : gray_set =
+  FStar.Set.union gs (FStar.Set.singleton h)
 
-/// Membership test
-let mem_gray (h: hp_addr) (s: gray_set) : GTot bool = Set.mem h s
+/// Remove from gray set
+let remove_gray_set (h: obj_addr) (gs: gray_set) : gray_set =
+  FStar.Set.intersect gs (FStar.Set.complement (FStar.Set.singleton h))
 
-/// ---------------------------------------------------------------------------
-/// Gray Set Invariant: Membership ⟺ Gray Color
-/// ---------------------------------------------------------------------------
+/// Union of gray sets
+let union_gray_set (gs1 gs2: gray_set) : gray_set =
+  FStar.Set.union gs1 gs2
 
-/// The gray set accurately tracks gray objects in the heap:
-/// An address is in the gray set if and only if it has gray color
-let gray_set_inv (gs: gray_set) (g: heap) : prop =
-  let objs = objects 0UL g in
-  // Every gray set member is a gray object
-  (forall (h_addr: hp_addr). mem_gray h_addr gs ==>
-    (Seq.mem h_addr objs /\ is_gray_safe h_addr g)) /\
-  // Every gray object is in the gray set
-  (forall (h_addr: hp_addr). Seq.mem h_addr objs ==>
-    (is_gray_safe h_addr g <==> mem_gray h_addr gs))
+/// ===========================================================================
+/// Section 2: Gray Set Invariant
+/// ===========================================================================
 
-/// Enumerate gray objects from heap (specification helper)
-/// Concrete definition using gray_blocks from Fields.fst
-let gray_objects (g: heap) : GTot (Seq.seq hp_addr) = gray_blocks g
+/// The gray set invariant: for all objects in the heap,
+/// an object is in the gray set iff it is gray in the heap.
+let gray_set_inv (g: heap) (gs: gray_set) : prop =
+  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==>
+    (mem_gray_set obj gs <==> is_gray obj g)
 
-/// Gray set equals the set of gray objects in heap
-let gray_set_eq_gray_objects (gs: gray_set) (g: heap) : prop =
-  forall (h_addr: hp_addr). 
-    mem_gray h_addr gs <==> Seq.mem h_addr (gray_objects g)
+/// ===========================================================================
+/// Section 3: Gray Set Preservation Lemmas
+/// ===========================================================================
 
-/// ---------------------------------------------------------------------------
-/// Preservation Lemmas for Gray Set Operations
-/// ---------------------------------------------------------------------------
+/// Graying an object and adding it to the gray set preserves the invariant
+val gray_set_add_preserves_inv :
+  (g: heap) -> (gs: gray_set) -> (w: obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  gray_set_inv g gs /\
+                  is_truly_white w g /\
+                  Seq.mem w (objects zero_addr g))
+        (ensures gray_set_inv (makeGray w g) (add_gray_set w gs))
 
-/// Adding a newly-grayed object to the gray set
-/// Requires deep heap reasoning about makeGray
-let gray_set_add_preserves_inv 
-  (gs: gray_set) (g: heap) (w_addr: obj_addr)
-  : Lemma 
-    (requires gray_set_inv gs g /\ 
-              is_white w_addr g /\
-              Seq.mem w_addr (objects 0UL g))
-    (ensures gray_set_inv (union_gray gs (singleton_gray w_addr)) 
-                          (makeGray w_addr g))
-  = let g' = makeGray w_addr g in
-    let gs' = union_gray gs (singleton_gray w_addr) in
-    
-    // Key facts about heap transformation
-    gray_makes_gray w_addr g;
-    makeGray_preserves_objects w_addr g;
-    makeGray_eq w_addr g;
-    
-    // Prove forward direction: h ∈ gs' ==> is_gray h g'
-    let forward (h_addr: hp_addr) 
-      : Lemma (requires mem_gray h_addr gs')
-              (ensures Seq.mem h_addr (objects 0UL g') /\ is_gray_safe h_addr g')
-      = if h_addr = w_addr then (
-          // w_addr is now gray
-          assert (is_gray w_addr g');
-          is_gray_iff w_addr g'
-        ) else (
-          // h_addr was in gs, so was gray in g
-          assert (mem_gray h_addr gs);
-          assert (is_gray_safe h_addr g);
-          // Color preserved for other objects
-          different_objects_different_headers h_addr w_addr;
-          is_gray_safe_color_change_other w_addr h_addr g Gray;
-          assert (is_gray_safe h_addr g')
-        )
-    in
-    
-    // Prove backward direction: is_gray h g' ==> h ∈ gs'
-    let backward (h_addr: obj_addr)
-      : Lemma (requires Seq.mem h_addr (objects 0UL g'))
-              (ensures is_gray_safe h_addr g' <==> mem_gray h_addr gs')
-      = if h_addr = w_addr then (
-          // w_addr is gray in g' and is in gs'
-          ()
-        ) else (
-          // h's color unchanged
-          different_objects_different_headers h_addr w_addr;
-          is_gray_safe_color_change_other w_addr h_addr g Gray;
-          assert (is_gray_safe h_addr g' = is_gray_safe h_addr g);
-          // By old invariant: is_gray h g <==> h ∈ gs
-          if is_gray_safe h_addr g' then (
-            assert (is_gray_safe h_addr g);
-            assert (mem_gray h_addr gs);
-            assert (mem_gray h_addr gs')
-          ) else (
-            assert (not (is_gray_safe h_addr g));
-            if mem_gray h_addr gs then (
-              assert (is_gray_safe h_addr g);
-              assert False
-            )
-          )
-        )
-    in
-    
-    // Apply lemmas to all objects
-    FStar.Classical.forall_intro (FStar.Classical.move_requires forward);
-    FStar.Classical.forall_intro (FStar.Classical.move_requires backward)
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries always"
+let gray_set_add_preserves_inv g gs w =
+  makeGray_eq w g;
+  color_change_preserves_objects g w Header.Gray;
+  let g' = makeGray w g in
+  let gs' = add_gray_set w gs in
+  let objs = objects zero_addr g in
+  let aux (obj: obj_addr) : Lemma
+    (requires Seq.mem obj objs)
+    (ensures mem_gray_set obj gs' <==> is_gray obj g')
+  = if obj = w then begin
+      makeGray_is_gray w g;
+      assert (is_gray w g');
+      assert (mem_gray_set w gs')
+    end else begin
+      color_change_preserves_other_color w obj g Header.Gray;
+      is_gray_iff obj g;
+      is_gray_iff obj g';
+      assert (is_gray obj g' == is_gray obj g);
+      // mem_gray_set obj gs' <==> mem_gray_set obj gs (since obj ≠ w)
+      assert (mem_gray_set obj gs' <==> (mem_gray_set obj gs \/ obj = w));
+      ()
+    end
+  in
+  forall_intro (move_requires aux);
+  assert (objects zero_addr g' == objs)
+#pop-options
 
-/// Removing a blackened object from the gray set
-/// Requires deep heap reasoning about makeBlack
-let gray_set_remove_preserves_inv
-  (gs: gray_set) (g: heap) (gr_addr: obj_addr)
-  : Lemma
-    (requires gray_set_inv gs g /\
-              is_gray gr_addr g /\
-              mem_gray gr_addr gs)
-    (ensures gray_set_inv (remove_gray gs gr_addr) 
-                          (makeBlack gr_addr g))
-  = let g' = makeBlack gr_addr g in
-    let gs' = remove_gray gs gr_addr in
-    
-    // Key facts about heap transformation
-    black_makes_black gr_addr g;
-    makeBlack_preserves_objects gr_addr g;
-    makeBlack_eq gr_addr g;
-    
-    // Prove forward direction: h ∈ gs' ==> is_gray h g'
-    let forward (h_addr: hp_addr)
-      : Lemma (requires mem_gray h_addr gs')
-              (ensures Seq.mem h_addr (objects 0UL g') /\ is_gray_safe h_addr g')
-      = // h_addr in gs' means h_addr in gs and h_addr <> gr_addr
-        assert (mem_gray h_addr gs);
-        assert (h_addr <> gr_addr);
-        // h_addr was gray in g
-        assert (is_gray_safe h_addr g);
-        // Color preserved for other objects
-        different_objects_different_headers h_addr gr_addr;
-        is_gray_safe_color_change_other gr_addr h_addr g Black;
-        assert (is_gray_safe h_addr g')
-    in
-    
-    // Prove backward direction: is_gray h g' ==> h ∈ gs'
-    let backward (h_addr: obj_addr)
-      : Lemma (requires Seq.mem h_addr (objects 0UL g'))
-              (ensures is_gray_safe h_addr g' <==> mem_gray h_addr gs')
-      = if h_addr = gr_addr then (
-          // gr_addr is black in g', not gray
-          assert (is_black gr_addr g');
-          is_black_iff gr_addr g';
-          is_gray_iff gr_addr g';
-          assert (not (is_gray gr_addr g'));
-          assert (not (is_gray_safe gr_addr g'));
-          // gr_addr not in gs'
-          assert (not (mem_gray gr_addr gs'))
-        ) else (
-          // h's color unchanged
-          different_objects_different_headers h_addr gr_addr;
-          is_gray_safe_color_change_other gr_addr h_addr g Black;
-          assert (is_gray_safe h_addr g' = is_gray_safe h_addr g);
-          // By old invariant: is_gray h g <==> h ∈ gs
-          if is_gray_safe h_addr g' then (
-            assert (is_gray_safe h_addr g);
-            assert (mem_gray h_addr gs);
-            assert (mem_gray h_addr gs')
-          ) else (
-            assert (not (is_gray_safe h_addr g));
-            if mem_gray h_addr gs' then (
-              assert (mem_gray h_addr gs);
-              assert (is_gray_safe h_addr g);
-              assert False
-            )
-          )
-        )
-    in
-    
-    // Apply lemmas to all objects
-    FStar.Classical.forall_intro (FStar.Classical.move_requires forward);
-    FStar.Classical.forall_intro (FStar.Classical.move_requires backward)
+/// Blackening an object and removing it from the gray set preserves the invariant
+val gray_set_remove_preserves_inv :
+  (g: heap) -> (gs: gray_set) -> (gr: obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  gray_set_inv g gs /\
+                  is_gray gr g /\
+                  Seq.mem gr (objects zero_addr g))
+        (ensures gray_set_inv (makeBlack gr g) (remove_gray_set gr gs))
 
-/// ---------------------------------------------------------------------------
-/// Gray Set Shrinks During Mark
-/// ---------------------------------------------------------------------------
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries always"
+let gray_set_remove_preserves_inv g gs gr =
+  makeBlack_eq gr g;
+  color_change_preserves_objects g gr Header.Black;
+  let g' = makeBlack gr g in
+  let gs' = remove_gray_set gr gs in
+  let objs = objects zero_addr g in
+  let aux (obj: obj_addr) : Lemma
+    (requires Seq.mem obj objs)
+    (ensures mem_gray_set obj gs' <==> is_gray obj g')
+  = if obj = gr then begin
+      makeBlack_is_black gr g;
+      colors_exhaustive_and_exclusive gr g';
+      assert (not (is_gray gr g'));
+      assert (not (mem_gray_set gr gs'))
+    end else begin
+      color_change_preserves_other_color gr obj g Header.Black;
+      is_gray_iff obj g;
+      is_gray_iff obj g';
+      assert (is_gray obj g' == is_gray obj g);
+      assert (mem_gray_set obj gs' <==> (mem_gray_set obj gs /\ obj <> gr));
+      ()
+    end
+  in
+  forall_intro (move_requires aux);
+  assert (objects zero_addr g' == objs)
+#pop-options
 
-/// Cardinality decreases when we blacken a gray object
-/// This is the key termination argument for the mark phase
-val gray_set_shrinks
-  (gs: gray_set) (gr_addr: hp_addr)
-  : Lemma
-    (requires mem_gray gr_addr gs)
-    (ensures not (mem_gray gr_addr (remove_gray gs gr_addr)))
+/// ===========================================================================
+/// Section 4: Termination and Emptiness
+/// ===========================================================================
 
-let gray_set_shrinks gs gr_addr = ()
+/// Empty gray set implies no gray objects in the heap
+val empty_gray_set_implies_no_gray :
+  (g: heap) -> (gs: gray_set) ->
+  Lemma (requires gray_set_inv g gs /\ gs == empty_gray_set)
+        (ensures no_gray_objects g)
 
-/// Mark step progress: blackening one gray object and graying its children
-/// Net effect is gray set size decreases by 1 (the blackened object)
-/// assuming children were already gray (or will be counted separately)
-val mark_step_progress
-  (gs: gray_set) (g: heap) (gr_addr: obj_addr) 
-  (white_children: Seq.seq hp_addr)
-  : Lemma
-    (requires gray_set_inv gs g /\
-              is_gray gr_addr g /\
-              mem_gray gr_addr gs)
-    (ensures (let gs_without_current = remove_gray gs gr_addr in
-              not (mem_gray gr_addr gs_without_current)))
+let empty_gray_set_implies_no_gray g gs =
+  let aux (obj: obj_addr) : Lemma
+    (requires Seq.mem obj (objects zero_addr g))
+    (ensures not (is_gray obj g))
+  = assert (not (mem_gray_set obj empty_gray_set))
+  in
+  forall_intro (move_requires aux)
 
-let mark_step_progress gs g gr_addr white_children = ()
+/// ===========================================================================
+/// Section 5: Blue-Gray Exclusion
+/// ===========================================================================
 
-/// ---------------------------------------------------------------------------
-/// Empty Gray Set Implies Mark Complete
-/// ---------------------------------------------------------------------------
+/// Blue objects are never in the gray set (given the invariant)
+val blue_not_in_gray_set :
+  (g: heap) -> (gs: gray_set) -> (h: obj_addr) ->
+  Lemma (requires gray_set_inv g gs /\
+                  is_blue h g /\
+                  Seq.mem h (objects zero_addr g))
+        (ensures not (mem_gray_set h gs))
 
-/// When the gray set is empty, no gray objects remain
-val empty_gray_set_implies_no_gray
-  (gs: gray_set) (g: heap)
-  : Lemma
-    (requires gray_set_inv gs g /\ 
-              forall (h: hp_addr). not (mem_gray h gs))
-    (ensures no_gray_objects g)
+let blue_not_in_gray_set g gs h =
+  colors_exclusive_4 h g;
+  assert (not (is_gray h g && is_blue h g));
+  assert (is_blue h g);
+  assert (not (is_gray h g))
 
-let empty_gray_set_implies_no_gray gs g =
-  // By gray_set_inv: is_gray h g <==> mem_gray h gs
-  // If forall h. not (mem_gray h gs), then forall h. not (is_gray h g)
-  // This is exactly no_gray_objects g
-  ()
+/// Black objects are never in the gray set (given the invariant)
+val black_not_in_gray_set :
+  (g: heap) -> (gs: gray_set) -> (h: obj_addr) ->
+  Lemma (requires gray_set_inv g gs /\
+                  is_black h g /\
+                  Seq.mem h (objects zero_addr g))
+        (ensures not (mem_gray_set h gs))
 
-/// Mark is complete when gray set becomes empty
-/// Combined with tri-color invariant, this means all reachable are black
-val mark_complete_when_empty
-  (gs: gray_set) (g: heap)
-  : Lemma
-    (requires gray_set_inv gs g /\
-              tri_color_inv g /\
-              (forall (h: hp_addr). not (mem_gray h gs)))
-    (ensures no_gray_objects g)
+let black_not_in_gray_set g gs h =
+  colors_exhaustive_and_exclusive h g;
+  assert (not (is_gray h g));
+  assert (not (mem_gray_set h gs))
 
-let mark_complete_when_empty gs g =
-  empty_gray_set_implies_no_gray gs g
+/// ===========================================================================
+/// Section 6: makeBlue Preserves Gray Set Invariant
+/// ===========================================================================
 
-/// ---------------------------------------------------------------------------
-/// Constructing Initial Gray Set from Roots
-/// ---------------------------------------------------------------------------
+/// Making a truly-white object blue preserves the gray set invariant.
+/// Blue is not gray, and no existing gray objects change color.
+val make_blue_preserves_gray_set_inv :
+  (g: heap) -> (gs: gray_set) -> (w: obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  gray_set_inv g gs /\
+                  is_truly_white w g /\
+                  Seq.mem w (objects zero_addr g))
+        (ensures gray_set_inv (makeBlue w g) gs)
 
-/// Build gray set from root addresses after initial root scan
-let gray_set_from_roots (roots: Seq.seq hp_addr) : gray_set =
-  List.Tot.fold_left 
-    (fun s h -> Set.union s (Set.singleton h)) 
-    Set.empty 
-    (Seq.seq_to_list roots)
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries always"
+let make_blue_preserves_gray_set_inv g gs w =
+  makeBlue_preserves_objects w g;
+  let g' = makeBlue w g in
+  let objs = objects zero_addr g in
+  let aux (obj: obj_addr) : Lemma
+    (requires Seq.mem obj objs)
+    (ensures mem_gray_set obj gs <==> is_gray obj g')
+  = if obj = w then begin
+      // is_truly_white w g ==> is_white w g && not (is_blue w g)
+      // is_white w g ==> not (is_gray w g) by exclusiveness
+      assert (is_white w g);
+      colors_exhaustive_and_exclusive w g;
+      assert (not (is_white w g && is_gray w g));
+      assert (not (is_gray w g));
+      // After makeBlue, w is blue, not gray (by exclusiveness)
+      makeBlue_is_blue w g;
+      colors_exclusive_4 w g'
+    end else begin
+      makeBlue_preserves_other_color w obj g;
+      is_gray_iff obj g;
+      is_gray_iff obj g'
+    end
+  in
+  forall_intro (move_requires aux);
+  assert (objects zero_addr g' == objs)
+#pop-options
 
-/// After root scan, gray set contains exactly the root addresses
-/// Proved by induction on the list structure
-let rec gray_set_from_roots_correct
-  (roots: Seq.seq hp_addr) (h: hp_addr)
-  : Lemma (mem_gray h (gray_set_from_roots roots) <==> Seq.mem h roots)
-  = let root_list = Seq.seq_to_list roots in
-    
-    // Induction on list
-    let rec fold_left_union_mem (acc: gray_set) (lst: list hp_addr)
-      : Lemma (requires True)
-              (ensures (let result = List.Tot.fold_left 
-                                      (fun s x -> Set.union s (Set.singleton x)) 
-                                      acc lst in
-                        forall x. mem_gray x result <==> (mem_gray x acc \/ List.Tot.mem x lst)))
-              (decreases lst)
-      = match lst with
-        | [] -> ()
-        | hd :: tl -> 
-            let acc' = Set.union acc (Set.singleton hd) in
-            fold_left_union_mem acc' tl;
-            // After processing hd, membership is: in acc' \/ in tl
-            // acc' = acc ∪ {hd}, so in acc' = in acc \/ hd = x
-            // Therefore: in result = in acc \/ hd = x \/ in tl
-            //                      = in acc \/ in (hd::tl)
-            ()
-    in
-    
-    fold_left_union_mem Set.empty root_list;
-    
-    // Convert List.mem to Seq.mem
-    FStar.Seq.Properties.lemma_seq_list_bij roots;
-    
-    // Conclude: mem_gray h (gray_set_from_roots roots) 
-    //       <==> mem_gray h empty \/ List.mem h root_list
-    //       <==> List.mem h root_list
-    //       <==> Seq.mem h roots
-    ()
+/// Resetting a blue object to white preserves the gray set invariant.
+/// Blue was not gray, and white is not gray.
+val reset_blue_preserves_gray_set_inv :
+  (g: heap) -> (gs: gray_set) -> (b: obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  gray_set_inv g gs /\
+                  is_blue b g /\
+                  Seq.mem b (objects zero_addr g))
+        (ensures gray_set_inv (resetBlue b g) gs)
 
-/// ---------------------------------------------------------------------------
-/// Gray Set Size (for Termination Metric)
-/// ---------------------------------------------------------------------------
-
-/// Abstract cardinality for FStar.Set (function representation a -> bool)
-/// FStar.Set does not provide built-in cardinality for infinite domains.
-/// 
-/// Alternative: Use Seq.length (gray_blocks g) as termination metric.
-/// Since gray_blocks uses seq_filter on objects, its length decreases
-/// when objects are blackened (removed from gray set).
-/// 
-/// Left as assume for now - termination can be proven using gray_blocks length.
-assume val gray_set_card : gray_set -> GTot nat
-
-/// Cardinality decreases when removing an element
-/// This property would follow if gray_set_card were defined as:
-///   - Convert set to finite sequence
-///   - Count elements
-/// Or use gray_blocks directly: gray_set_card gs = Seq.length (gray_blocks g)
-assume val gray_set_card_remove
-  (gs: gray_set) (h: hp_addr)
-  : Lemma
-    (requires mem_gray h gs)
-    (ensures gray_set_card (remove_gray gs h) < gray_set_card gs)
-
-/// Termination metric for mark loop: gray set cardinality
-let mark_termination_metric (gs: gray_set) : GTot nat = gray_set_card gs
-
-/// ---------------------------------------------------------------------------
-/// Ghost State Operations (Pulse Integration Points)
-/// ---------------------------------------------------------------------------
-
-/// These operations would be implemented using Pulse.Lib.GhostReference
-/// or Pulse.Lib.GhostPCMReference when integrated with Pulse code
-
-/// Allocate initial gray set ghost reference
-/// ghost fn alloc_gray_set () 
-///   requires emp
-///   returns r: ghost_ref gray_set
-///   ensures pts_to r empty_gray_set
-
-/// Read gray set (ghost)
-/// ghost fn read_gray_set (r: ghost_ref gray_set) (#gs: erased gray_set)
-///   preserves pts_to r gs
-///   returns s: erased gray_set
-///   ensures rewrites_to s gs
-
-/// Add to gray set (ghost)
-/// ghost fn add_to_gray_set (r: ghost_ref gray_set) (h: hp_addr) (#gs: erased gray_set)
-///   requires pts_to r gs
-///   ensures pts_to r (union_gray gs (singleton_gray h))
-
-/// Remove from gray set (ghost)  
-/// ghost fn remove_from_gray_set (r: ghost_ref gray_set) (h: hp_addr) (#gs: erased gray_set)
-///   requires pts_to r gs ** pure (mem_gray h gs)
-///   ensures pts_to r (remove_gray gs h)
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries always"
+let reset_blue_preserves_gray_set_inv g gs b =
+  // resetBlue = makeWhite
+  makeWhite_eq b g;
+  color_change_preserves_objects g b Header.White;
+  let g' = resetBlue b g in
+  let objs = objects zero_addr g in
+  let aux (obj: obj_addr) : Lemma
+    (requires Seq.mem obj objs)
+    (ensures mem_gray_set obj gs <==> is_gray obj g')
+  = if obj = b then begin
+      // b is blue, so not gray (by exclusiveness)
+      colors_exclusive_4 b g;
+      assert (not (is_gray b g));
+      // After resetBlue, b is white, not gray
+      makeWhite_is_white b g;
+      colors_exhaustive_and_exclusive b g'
+    end else begin
+      color_change_preserves_other_color b obj g Header.White;
+      is_gray_iff obj g;
+      is_gray_iff obj g';
+      assert (is_gray obj g' == is_gray obj g)
+    end
+  in
+  forall_intro (move_requires aux);
+  assert (objects zero_addr g' == objs)
+#pop-options

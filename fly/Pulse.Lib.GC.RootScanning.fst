@@ -1,162 +1,333 @@
-/// Pulse.Lib.GC.RootScanning - Concurrent Root Scanning via Shadow Stacks
+(*
+   Pulse GC - Root Scanning for Parallel GC
+
+   Root scanning phase for per-thread parallel marking:
+   1. gray_root: gray one root (white->gray, push to stack)
+   2. scan_thread_roots: iterate shadow stack, gray each root
+   3. mark_root_blue: mark one root blue (white->blue)
+   4. mark_other_roots_blue: mark all other threads' roots blue
+   5. reset_blue_to_white_one: reset one blue object to white
+   6. reset_blue_to_white: reset all blue markings
+
+   All functions preserve well_formed_heap.
+   Uses types from common/Pulse.Lib.GC (Heap, Object, Stack).
+*)
 
 module Pulse.Lib.GC.RootScanning
 
 #lang-pulse
 
 open Pulse.Lib.Pervasives
+open Pulse.Lib.GC.Heap
+open Pulse.Lib.GC.Object
+open Pulse.Lib.GC.Stack
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
-module L = FStar.List.Tot
-module GSet = FStar.GhostSet
+module Header = Pulse.Lib.Header
+module SpecHeap = Pulse.Spec.GC.Heap
+module SpecObject = Pulse.Spec.GC.Object
+module SpecFields = Pulse.Spec.GC.Fields
+open Pulse.Spec.GC.ColorLemmas
 
-open Pulse.Spec.GC.Base
-open Pulse.Spec.GC.Heap
-open Pulse.Spec.GC.Object
-open Pulse.Spec.GC.Fields
-open Pulse.Spec.GC.TriColor
-open Pulse.Spec.GC.GraySet
-open Pulse.Spec.GC.CASPreservation
+/// ---------------------------------------------------------------------------
+/// Ghost helpers
+/// ---------------------------------------------------------------------------
 
-/// Heap permission
-assume val heap_perm : erased heap -> slprop
-
-/// Shadow Stack Types
-assume val shadow_stack : Type0
-assume val shadow_stack_full : shadow_stack -> Seq.seq hp_addr -> slprop
-assume val shadow_stack_read : shadow_stack -> Seq.seq hp_addr -> perm -> slprop
-assume val shadow_stack_share :
-  (ss: shadow_stack) -> (#roots: erased (Seq.seq hp_addr)) ->
-  stt_ghost unit emp_inames
-      (shadow_stack_full ss roots)
-      (fun _ -> shadow_stack_read ss roots 0.5R ** shadow_stack_read ss roots 0.5R)
-assume val shadow_stack_gather :
-  (ss: shadow_stack) -> (#roots: erased (Seq.seq hp_addr)) ->
-  stt_ghost unit emp_inames
-      (shadow_stack_read ss roots 0.5R ** shadow_stack_read ss roots 0.5R)
-      (fun _ -> shadow_stack_full ss roots)
-
-/// Shadow Stack Registry
-assume val shadow_registry : Type0
-assume val shadow_registry_inv : shadow_registry -> slprop
-assume val get_all_stacks :
-  (reg: shadow_registry) ->
-  stt (list shadow_stack)
-      (shadow_registry_inv reg)
-      (fun _ -> shadow_registry_inv reg)
-
-/// Gray Stack
-assume val gray_stack : Type0
-assume val gray_stack_inv : gray_stack -> slprop
-assume val push_gray_stack :
-  (st: gray_stack) -> (h: hp_addr) ->
-  stt unit
-      (gray_stack_inv st)
-      (fun _ -> gray_stack_inv st)
-
-/// Atomic Color Operations
-assume val read_color_atomic :
-  (h_addr: obj_addr) -> (#g: erased heap) ->
-  stt_atomic U64.t emp_inames
-      (heap_perm g)
-      (fun c -> heap_perm g ** pure (U64.v c < 4))
-      
-assume val cas_color_atomic :
-  (h_addr: obj_addr) -> (expected: color) -> (new_color: color) -> (#g: erased heap) ->
-  stt_atomic bool emp_inames
-      (heap_perm g)
-      (fun b -> heap_perm (if b then set_color (reveal g) h_addr new_color else reveal g))
-
-// [@@CInline]
-fn scan_root
-  (st: gray_stack)
-  (root: hp_addr)
-  (#g: erased heap)
-  requires heap_perm g ** gray_stack_inv st ** pure (tri_color_inv g)
-  returns _: unit
-  ensures exists* g'. heap_perm g' ** gray_stack_inv st ** pure (tri_color_inv g')
+ghost fn is_heap_length (h: heap_t)
+  requires is_heap h 's
+  ensures is_heap h 's ** pure (Seq.length 's == heap_size)
 {
-  admit ()
+  unfold is_heap;
+  fold (is_heap h 's)
 }
 
-// [@@CExtract]
-fn scan_shadow_stack
-  (st: gray_stack)
-  (ss: shadow_stack)
-  (#roots: erased (Seq.seq hp_addr))
-  (#g: erased heap)
-  requires 
-    heap_perm g ** 
-    gray_stack_inv st ** 
-    shadow_stack_read ss roots 0.5R **
-    pure (tri_color_inv g)
-  returns _: unit
-  ensures
-    exists* g'. heap_perm g' ** 
-    gray_stack_inv st ** 
-    shadow_stack_read ss roots 0.5R **
-    pure (tri_color_inv g')
+/// ---------------------------------------------------------------------------
+/// Bridge lemmas
+/// ---------------------------------------------------------------------------
+
+/// Bridge: colorHeader Gray write == makeGray, preserving wfh
+#push-options "--z3rlimit 200"
+let grayen_bridge (g: heap_state) (obj: obj_addr)
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem obj (SpecFields.objects 0UL g))
+          (ensures (let h_addr = SpecHeap.hd_address obj in
+                    let hdr = SpecHeap.read_word g h_addr in
+                    let new_hdr = SpecObject.colorHeader hdr Header.Gray in
+                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeGray obj g /\
+                    SpecFields.well_formed_heap (SpecObject.makeGray obj g) /\
+                    Seq.length (SpecObject.makeGray obj g) == Seq.length g))
+  = let h_addr = SpecHeap.hd_address obj in
+    SpecHeap.hd_address_spec obj;
+    SpecFields.wf_object_size_bound g obj;
+    hp_addr_plus_8 h_addr;
+    spec_write_word_eq g h_addr (SpecObject.colorHeader (SpecHeap.read_word g h_addr) Header.Gray);
+    SpecObject.makeGray_spec obj g;
+    makeGray_preserves_wf g obj;
+    SpecObject.makeGray_eq obj g;
+    SpecObject.set_object_color_length obj g Header.Gray
+#pop-options
+
+/// Bridge: set_color64 3UL write == set_object_color_raw 3UL, preserving wfh
+#push-options "--z3rlimit 200"
+let blue_bridge (g: heap_state) (obj: obj_addr)
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem obj (SpecFields.objects 0UL g))
+          (ensures (let h_addr = SpecHeap.hd_address obj in
+                    let hdr = SpecHeap.read_word g h_addr in
+                    let new_hdr = Header.set_color64 hdr 3UL in
+                    spec_write_word g (U64.v h_addr) new_hdr == set_object_color_raw obj g 3UL /\
+                    SpecFields.well_formed_heap (set_object_color_raw obj g 3UL) /\
+                    Seq.length (set_object_color_raw obj g 3UL) == Seq.length g))
+  = let h_addr = SpecHeap.hd_address obj in
+    SpecHeap.hd_address_spec obj;
+    SpecFields.wf_object_size_bound g obj;
+    hp_addr_plus_8 h_addr;
+    spec_write_word_eq g h_addr (Header.set_color64 (SpecHeap.read_word g h_addr) 3UL);
+    set_object_color_raw_preserves_wf g obj 3UL;
+    set_object_color_raw_length obj g 3UL
+#pop-options
+
+/// Bridge: colorHeader White write == makeWhite, preserving wfh
+#push-options "--z3rlimit 200"
+let whiten_bridge (g: heap_state) (obj: obj_addr)
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem obj (SpecFields.objects 0UL g))
+          (ensures (let h_addr = SpecHeap.hd_address obj in
+                    let hdr = SpecHeap.read_word g h_addr in
+                    let new_hdr = SpecObject.colorHeader hdr Header.White in
+                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeWhite obj g /\
+                    SpecFields.well_formed_heap (SpecObject.makeWhite obj g) /\
+                    Seq.length (SpecObject.makeWhite obj g) == Seq.length g))
+  = let h_addr = SpecHeap.hd_address obj in
+    SpecHeap.hd_address_spec obj;
+    SpecFields.wf_object_size_bound g obj;
+    hp_addr_plus_8 h_addr;
+    spec_write_word_eq g h_addr (SpecObject.colorHeader (SpecHeap.read_word g h_addr) Header.White);
+    SpecObject.makeWhite_spec obj g;
+    makeWhite_preserves_wf g obj;
+    SpecObject.makeWhite_eq obj g;
+    SpecObject.set_object_color_length obj g Header.White
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Gray a single root (white -> gray, push to stack)
+/// Preserves well_formed_heap.
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 100"
+fn gray_root
+  (heap: heap_t) (st: gray_stack) (root: obj_addr)
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size /\
+                 Seq.mem root (SpecFields.objects 0UL 's))
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's)
 {
-  admit ()
+  let h_addr = hd_address root;
+  hp_addr_plus_8 h_addr;
+  let hdr = read_word heap h_addr;
+  let c = getColor hdr;
+  if (c = white) {
+    let new_hdr = SpecObject.colorHeader hdr gray;
+    write_word heap h_addr new_hdr;
+    // Bridge to makeGray
+    spec_read_word_eq 's h_addr;
+    SpecHeap.hd_address_spec root;
+    U64.v_inj h_addr (SpecHeap.hd_address root);
+    grayen_bridge 's root;
+    rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+         as (is_heap heap (SpecObject.makeGray root 's));
+    objects_preserved_makeGray 's root;
+    push st root;
+    ()
+  } else {
+    ()
+  }
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Scan one thread's roots (iterate shadow stack, gray each root)
+/// Preserves well_formed_heap.
+/// ---------------------------------------------------------------------------
+
+fn scan_thread_roots
+  (heap: heap_t) (st: gray_stack)
+  (roots: Seq.seq obj_addr)
+  (n: SZ.t{SZ.v n == Seq.length roots})
+  requires is_heap heap 's ** is_gray_stack st 'gs **
+           pure (SpecFields.well_formed_heap 's /\
+                 roots_valid 's roots)
+  ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's)
+{
+  let mut i = 0sz;
+  while (
+    let iv = !i;
+    (SZ.lt iv n)
+  )
+  invariant b. exists* iv s_i gs_i.
+    pts_to i iv **
+    is_heap heap s_i **
+    is_gray_stack st gs_i **
+    pure (SZ.v iv <= SZ.v n) **
+    pure (b == SZ.lt iv n) **
+    pure (SpecFields.well_formed_heap s_i /\
+          objects_preserved s_i 's)
+  {
+    let iv = !i;
+    is_heap_length heap;
+    let root = Seq.index roots (SZ.v iv);
+    // root ∈ objects 0UL s_i follows from roots_valid 's roots + objects equality
+    gray_root heap st root;
+    i := SZ.add iv 1sz;
+    ()
+  }
 }
 
-// [@@CExtract]
-fn scan_all_roots
-  (reg: shadow_registry)
-  (st: gray_stack)
-  (#g: erased heap)
-  requires 
-    heap_perm g ** 
-    gray_stack_inv st ** 
-    shadow_registry_inv reg **
-    pure (tri_color_inv g)
-  returns _: unit
-  ensures
-    exists* g'. heap_perm g' ** 
-    gray_stack_inv st ** 
-    shadow_registry_inv reg **
-    pure (tri_color_inv g')
+/// ---------------------------------------------------------------------------
+/// Mark one root blue (white -> blue via raw header manipulation)
+/// Preserves well_formed_heap.
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 100"
+fn mark_root_blue
+  (heap: heap_t) (root: obj_addr)
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size /\
+                 Seq.mem root (SpecFields.objects 0UL 's))
+  ensures exists* s2. is_heap heap s2 **
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's)
 {
-  admit ()
+  let h_addr = hd_address root;
+  hp_addr_plus_8 h_addr;
+  let hdr = read_word heap h_addr;
+  let c = getColor hdr;
+  if (c = white) {
+    // Blue = raw color bits 3 (not a standard color_sem)
+    let new_hdr = Header.set_color64 hdr 3UL;
+    write_word heap h_addr new_hdr;
+    // Bridge to set_object_color_raw
+    spec_read_word_eq 's h_addr;
+    SpecHeap.hd_address_spec root;
+    U64.v_inj h_addr (SpecHeap.hd_address root);
+    blue_bridge 's root;
+    rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+         as (is_heap heap (set_object_color_raw root 's 3UL));
+    objects_preserved_by_raw_color 's root 3UL;
+    ()
+  } else {
+    ()
+  }
+}
+#pop-options
+
+/// Mark all roots from other threads as blue.
+/// Preserves well_formed_heap and objects enumeration.
+fn mark_other_roots_blue
+  (heap: heap_t)
+  (other_roots: Seq.seq obj_addr)
+  (n: SZ.t{SZ.v n == Seq.length other_roots})
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap 's /\
+                 roots_valid 's other_roots)
+  ensures exists* s2. is_heap heap s2 **
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's)
+{
+  let mut i = 0sz;
+  while (
+    let iv = !i;
+    (SZ.lt iv n)
+  )
+  invariant b. exists* iv s_i.
+    pts_to i iv **
+    is_heap heap s_i **
+    pure (SZ.v iv <= SZ.v n) **
+    pure (b == SZ.lt iv n) **
+    pure (SpecFields.well_formed_heap s_i /\
+          objects_preserved s_i 's)
+  {
+    let iv = !i;
+    is_heap_length heap;
+    let root = Seq.index other_roots (SZ.v iv);
+    mark_root_blue heap root;
+    i := SZ.add iv 1sz;
+    ()
+  }
 }
 
-// [@@CExtract]
-fn scan_stack_list
-  (st: gray_stack)
-  (stacks: list shadow_stack)
-  (#g: erased heap)
-  requires heap_perm g ** gray_stack_inv st ** pure (tri_color_inv g)
-  returns _: unit
-  ensures exists* g'. heap_perm g' ** gray_stack_inv st ** pure (tri_color_inv g')
+#push-options "--z3rlimit 100"
+fn reset_blue_to_white_one
+  (heap: heap_t) (addr: obj_addr)
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size /\
+                 Seq.mem addr (SpecFields.objects 0UL 's))
+  ensures exists* s2. is_heap heap s2 **
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's)
 {
-  admit ()
+  let h_addr = hd_address addr;
+  hp_addr_plus_8 h_addr;
+  let hdr = read_word heap h_addr;
+  // Check raw color bits: blue = 3
+  let raw_color = Header.get_color64 hdr;
+  if (raw_color = 3UL) {
+    let new_hdr = SpecObject.colorHeader hdr white;
+    write_word heap h_addr new_hdr;
+    // Bridge to makeWhite
+    spec_read_word_eq 's h_addr;
+    SpecHeap.hd_address_spec addr;
+    U64.v_inj h_addr (SpecHeap.hd_address addr);
+    whiten_bridge 's addr;
+    rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+         as (is_heap heap (SpecObject.makeWhite addr 's));
+    objects_preserved_makeWhite 's addr;
+    ()
+  } else {
+    ()
+  }
 }
+#pop-options
 
-// [@@CExtract]
-fn scan_roots_in_seq
-  (st: gray_stack)
-  (roots: Seq.seq hp_addr)
-  (#g: erased heap)
-  requires heap_perm g ** gray_stack_inv st ** 
-           pure (tri_color_inv g /\ Seq.length roots < 1000)
-  returns _: unit
-  ensures exists* g'. heap_perm g' ** gray_stack_inv st ** pure (tri_color_inv g')
+/// Reset all previously-blued objects back to white.
+/// Preserves well_formed_heap and objects enumeration.
+fn reset_blue_to_white
+  (heap: heap_t)
+  (addrs: Seq.seq obj_addr)
+  (n: SZ.t{SZ.v n == Seq.length addrs})
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap 's /\
+                 roots_valid 's addrs)
+  ensures exists* s2. is_heap heap s2 **
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's)
 {
-  admit ()
+  let mut i = 0sz;
+  while (
+    let iv = !i;
+    (SZ.lt iv n)
+  )
+  invariant b. exists* iv s_i.
+    pts_to i iv **
+    is_heap heap s_i **
+    pure (SZ.v iv <= SZ.v n) **
+    pure (b == SZ.lt iv n) **
+    pure (SpecFields.well_formed_heap s_i /\
+          objects_preserved s_i 's)
+  {
+    let iv = !i;
+    is_heap_length heap;
+    let addr = Seq.index addrs (SZ.v iv);
+    reset_blue_to_white_one heap addr;
+    i := SZ.add iv 1sz;
+    ()
+  }
 }
-
-ghost
-fn concurrent_root_scan_safe
-  (g: erased heap)
-  (roots_snapshot: Seq.seq hp_addr)
-  requires pure (tri_color_inv g)
-  returns _: unit
-  ensures pure (true)
-{
-  ()
-}
-
-let initial_white_heap (g: heap) : prop =
-  let objs = objects 0UL g in
-  forall h. Seq.mem h objs ==> is_white h g

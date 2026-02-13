@@ -105,7 +105,8 @@ fn read_field (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
                  U64.v i <= pow2 54 - 1 /\
                  spec_field_address (U64.v h_addr) (U64.v i) < heap_size)
   returns v: U64.t
-  ensures is_heap heap 's
+  ensures is_heap heap 's **
+          pure (v == spec_read_word 's (spec_field_address (U64.v h_addr) (U64.v i)))
 {
   lemma_mword_is_8 ();
   

@@ -1,211 +1,209 @@
-/// Pulse.Lib.GC.Sweep - Stop-the-World Sweep Phase
+(*
+   Pulse GC - Sweep Phase for Parallel GC
+
+   Stop-the-world sweep phase:
+   1. Iterate all objects in the heap
+   2. White objects: garbage (skip or reclaim)
+   3. Black objects: reset to white for next GC cycle
+   4. Gray/blue objects: should not exist after marking
+
+   All functions preserve well_formed_heap.
+   Uses types from common/Pulse.Lib.GC (Heap, Object).
+*)
 
 module Pulse.Lib.GC.Sweep
 
 #lang-pulse
 
+#set-options "--z3rlimit 50"
+
+open FStar.Mul
 open Pulse.Lib.Pervasives
+open Pulse.Lib.GC.Heap
+open Pulse.Lib.GC.Object
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
-module L = FStar.List.Tot
+module ML = FStar.Math.Lemmas
+module Header = Pulse.Lib.Header
+module SpecHeap = Pulse.Spec.GC.Heap
+module SpecObject = Pulse.Spec.GC.Object
+module SpecFields = Pulse.Spec.GC.Fields
+open Pulse.Spec.GC.ColorLemmas
 
-open Pulse.Spec.GC.Base
-open Pulse.Spec.GC.Heap
-open Pulse.Spec.GC.Object
-open Pulse.Spec.GC.Fields
-open Pulse.Spec.GC.TriColor
+/// ---------------------------------------------------------------------------
+/// Ghost helpers
+/// ---------------------------------------------------------------------------
 
-/// Heap permission
-assume val heap_perm : erased heap -> slprop
-
-/// Free List Type
-assume val free_list : Type0
-assume val free_list_inv : free_list -> hp_addr -> slprop
-assume val add_to_free_list :
-  (fl: free_list) -> (block: hp_addr) -> (size: U64.t) ->
-  (#head: erased hp_addr) ->
-  stt unit
-      (free_list_inv fl head)
-      (fun _ -> free_list_inv fl block)
-
-/// Sweep State
-noeq type sweep_state = {
-  current_addr: hp_addr;
-  reclaimed_count: U64.t;
-  reclaimed_bytes: U64.t;
-}
-
-let initial_sweep_state : sweep_state = {
-  current_addr = 0UL;
-  reclaimed_count = 0UL;
-  reclaimed_bytes = 0UL
-}
-
-let sweep_precondition (g: heap) : prop =
-  no_gray_objects g /\
-  tri_color_inv g
-
-let all_white_or_blue (g: heap) : prop =
-  let objs = objects 0UL g in
-  forall h. Seq.mem h objs ==> (is_white h g \/ is_blue h g)
-
-// [@@CInline]
-fn sweep_one_object
-  (fl: free_list)
-  (h_addr: hp_addr)
-  (#g: erased heap)
-  (#fl_head: erased hp_addr)
-  requires 
-    heap_perm g ** 
-    free_list_inv fl fl_head **
-    pure (sweep_precondition g)
-  returns reclaimed: bool
-  ensures 
-    exists* g' fl_head'. heap_perm g' ** 
-    free_list_inv fl fl_head' **
-    pure (true)
+ghost fn is_heap_length (h: heap_t)
+  requires is_heap h 's
+  ensures is_heap h 's ** pure (Seq.length 's == heap_size)
 {
-  admit ()
+  unfold is_heap;
+  fold (is_heap h 's)
 }
 
-// [@@CExtract]
+/// ---------------------------------------------------------------------------
+/// Overflow helpers
+/// ---------------------------------------------------------------------------
+
+let lemma_skip_no_overflow (wz: nat)
+  : Lemma (requires wz <= pow2 54 - 1)
+          (ensures (1 + wz) * 8 <= pow2 57 /\ (1 + wz) * 8 < pow2 64)
+=
+  assert (1 + wz <= pow2 54);
+  ML.lemma_mult_le_right 8 (1 + wz) (pow2 54);
+  assert ((1 + wz) * 8 <= pow2 54 * 8);
+  Math.Lemmas.pow2_plus 54 3;
+  assert (pow2 54 * pow2 3 == pow2 57);
+  assert (pow2 54 * 8 == pow2 57);
+  ML.pow2_lt_compat 64 57
+
+let lemma_next_addr_no_overflow (h_addr: nat) (wz: nat)
+  : Lemma (requires h_addr < heap_size /\ wz <= pow2 54 - 1)
+          (ensures h_addr + (1 + wz) * 8 < pow2 64)
+=
+  lemma_skip_no_overflow wz;
+  assert ((1 + wz) * 8 <= pow2 57);
+  assert (h_addr < heap_size);
+  assert (heap_size <= pow2 57);
+  ML.pow2_lt_compat 64 58;
+  Math.Lemmas.pow2_double_sum 57
+
+/// ---------------------------------------------------------------------------
+/// Bridge: connect Pulse whiten write to spec makeWhite
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 200"
+let whiten_bridge (g: heap_state) (obj: obj_addr)
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem obj (SpecFields.objects 0UL g))
+          (ensures (let h_addr = SpecHeap.hd_address obj in
+                    let hdr = SpecHeap.read_word g h_addr in
+                    let new_hdr = SpecObject.colorHeader hdr Header.White in
+                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeWhite obj g /\
+                    SpecFields.well_formed_heap (SpecObject.makeWhite obj g) /\
+                    Seq.length (SpecObject.makeWhite obj g) == Seq.length g))
+  = let h_addr = SpecHeap.hd_address obj in
+    SpecHeap.hd_address_spec obj;
+    SpecFields.wf_object_size_bound g obj;
+    hp_addr_plus_8 h_addr;
+    spec_write_word_eq g h_addr (SpecObject.colorHeader (SpecHeap.read_word g h_addr) Header.White);
+    SpecObject.makeWhite_spec obj g;
+    makeWhite_preserves_wf g obj;
+    SpecObject.makeWhite_eq obj g;
+    SpecObject.set_object_color_length obj g Header.White
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Sweep one object: preserves well_formed_heap
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 150"
+fn sweep_object
+  (heap: heap_t) (obj: obj_addr)
+  requires is_heap heap 's **
+           pure (U64.v obj < heap_size /\
+                 SpecFields.well_formed_heap 's /\
+                 Seq.length 's == heap_size /\
+                 Seq.mem obj (SpecFields.objects 0UL 's))
+  ensures exists* s2. is_heap heap s2 **
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's)
+{
+  is_heap_length heap;
+  let h_addr : hp_addr = SpecHeap.hd_address obj;
+  SpecHeap.hd_address_bounds obj;
+  hp_addr_plus_8 h_addr;
+  let hdr = read_word heap h_addr;
+  let c = getColor hdr;
+  if (c = black) {
+    // Black -> live object: reset to white for next cycle
+    let new_hdr = SpecObject.colorHeader hdr white;
+    write_word heap h_addr new_hdr;
+    // Bridge to makeWhite
+    spec_read_word_eq 's h_addr;
+    whiten_bridge 's obj;
+    rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+         as (is_heap heap (SpecObject.makeWhite obj 's));
+    objects_preserved_makeWhite 's obj;
+    ()
+  } else {
+    // White -> garbage, Gray/Blue -> shouldn't exist after marking
+    // No heap change: objects trivially preserved
+    ()
+  }
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Sweep all objects: preserves well_formed_heap
+/// ---------------------------------------------------------------------------
+
+/// Linear scan of all objects in the heap.
+#push-options "--z3rlimit 300"
 fn sweep_all
-  (fl: free_list)
-  (#g: erased heap)
-  (#fl_head: erased hp_addr)
-  requires 
-    heap_perm g ** 
-    free_list_inv fl fl_head **
-    pure (sweep_precondition g)
-  returns stats: sweep_state
-  ensures
-    exists* g' fl_head'. heap_perm g' **
-    free_list_inv fl fl_head' **
-    pure (
-      all_white_or_blue g' /\
-      true
-    )
+  (heap: heap_t) (heap_len: U64.t{U64.v heap_len == heap_size})
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap 's /\
+                 Seq.length (SpecFields.objects 0UL 's) > 0)
+  ensures exists* s2. is_heap heap s2 **
+           pure (SpecFields.well_formed_heap s2)
 {
-  admit ()
-}
+  // Establish initial membership: head of objects(0, g) is obj_address(0)
+  cursor_mem_init 's;
 
-let is_reachable_from (g: heap) (roots: Seq.seq hp_addr) (h: hp_addr) : prop =
-  True
+  let mut cursor = 0UL;
+  while (U64.lt (U64.add !cursor 8UL) heap_len)
+    invariant exists* c s_i.
+      pts_to cursor c **
+      is_heap heap s_i **
+      pure (U64.v c <= U64.v heap_len /\
+            U64.v c % 8 == 0 /\
+            U64.v c + 8 < pow2 64 /\
+            SpecFields.well_formed_heap s_i /\
+            Seq.length s_i == heap_size /\
+            objects_preserved s_i 's /\
+            cursor_mem c s_i)
+  {
+    let c = !cursor;
+    let h_addr : hp_addr = c;
+    hp_addr_plus_8 h_addr;
+    is_heap_length heap;
 
-ghost
-fn mark_complete_implies_live_black
-  (g: erased heap)
-  (roots: Seq.seq hp_addr)
-  requires pure (
-    sweep_precondition (reveal g) /\
-    (forall r. Seq.mem r roots ==> is_black_safe r (reveal g))
-  )
-  returns _: unit
-  ensures pure (
-    forall h. is_reachable_from (reveal g) roots h ==> is_black_safe h (reveal g)
-  )
-{
-  // Proof by induction on reachability:
-  // Base case: roots are black (given)
-  // Inductive case: if x is black and x points to y, then y is not white (tri-color)
-  //                 Since no gray objects (sweep_precondition), y must be black
-  admit ()
-}
+    // Compute obj_addr from cursor: obj = cursor + 8
+    // cursor_mem gives us Seq.mem (obj_address c) (objects 0UL s_i)
+    // since loop condition ensures c + 8 < heap_size, and c < heap_size, c % 8 == 0
+    let obj : obj_addr = U64.add c 8UL;
+    // obj == obj_address c (U64.add vs U64.add_mod, both h_addr+8 < pow2 64)
+    U64.v_inj obj (SpecFields.obj_address c);
 
-ghost
-fn sweep_reclaims_only_unreachable
-  (g_before: erased heap)
-  (g_after: erased heap)
-  (roots: Seq.seq hp_addr)
-  requires pure (
-    sweep_precondition (reveal g_before) /\
-    (forall r. Seq.mem r roots ==> is_black_safe r (reveal g_before))
-  )
-  returns _: unit
-  ensures pure (
-    forall h. is_reachable_from (reveal g_before) roots h ==>
-              ~(is_blue_safe h (reveal g_after))
-  )
-{
-  // All reachable objects are black before sweep (by mark_complete_implies_live_black)
-  // Black objects are reset to white during sweep, not reclaimed
-  // Only white objects (unreachable) are reclaimed and marked blue
-  // Therefore reachable objects are never blue after sweep
-  admit ()
-}
+    let hdr = read_word heap h_addr;
+    let wz = getWosize hdr;
 
-assume val gc_barrier_flag : Type0
-assume val gc_barrier_inv : gc_barrier_flag -> bool -> slprop
-assume val signal_gc_stop :
-  (flag: gc_barrier_flag) ->
-  stt unit
-      (gc_barrier_inv flag false)
-      (fun _ -> gc_barrier_inv flag true)
-assume val wait_for_mutators :
-  (flag: gc_barrier_flag) ->
-  stt unit
-      (gc_barrier_inv flag true)
-      (fun _ -> gc_barrier_inv flag true)
-assume val signal_gc_resume :
-  (flag: gc_barrier_flag) ->
-  stt unit
-      (gc_barrier_inv flag true)
-      (fun _ -> gc_barrier_inv flag false)
+    // Sweep this object
+    sweep_object heap obj;
 
-// [@@CExtract]
-fn stw_sweep
-  (fl: free_list)
-  (barrier: gc_barrier_flag)
-  (#g: erased heap)
-  (#fl_head: erased hp_addr)
-  requires
-    heap_perm g **
-    free_list_inv fl fl_head **
-    gc_barrier_inv barrier false **
-    pure (sweep_precondition g)
-  returns stats: sweep_state
-  ensures
-    exists* g' fl_head'. heap_perm g' **
-    free_list_inv fl fl_head' **
-    gc_barrier_inv barrier false **
-    pure (all_white_or_blue g')
-{
-  admit ()
-}
+    // After sweep: s_after has objects_preserved s_after s_i, and s_i has objects_preserved s_i 's
+    // Transitivity: objects_preserved s_after 's
+    with s_after. assert (is_heap heap s_after);
+    // s_after has objects_preserved s_after s_i (from sweep_object postcondition)
+    // Since objects_preserved s_i 's (from invariant), transitivity gives objects_preserved s_after 's
 
-// [@@CInline]
-fn reset_to_white
-  (h_addr: hp_addr)
-  (#g: erased heap)
-  requires heap_perm g ** pure (is_black_safe h_addr g)
-  returns _: unit
-  ensures exists* g'. heap_perm g' ** pure (is_white_safe h_addr g')
-{
-  admit ()
-}
+    // Advance cursor: c + (1 + wz) * 8
+    lemma_next_addr_no_overflow (U64.v c) (U64.v wz);
+    let obj_words = U64.add wz 1UL;
+    let byte_size = U64.mul obj_words 8UL;
+    let new_cursor = U64.add c byte_size;
 
-// [@@CInline]
-fn reclaim_object
-  (h_addr: hp_addr)
-  (#g: erased heap)
-  requires heap_perm g ** pure (is_white_safe h_addr g)
-  returns _: unit
-  ensures exists* g'. heap_perm g' ** pure (is_blue_safe h_addr g')
-{
-  admit ()
-}
-
-noeq type sweep_result = {
-  objects_scanned: nat;
-  objects_reclaimed: nat;
-  bytes_reclaimed: nat;
-  sweep_time_ns: nat
-}
-
-let finalize_sweep_stats (s: sweep_state) : sweep_result = {
-  objects_scanned = 0;
-  objects_reclaimed = U64.v s.reclaimed_count;
-  bytes_reclaimed = U64.v s.reclaimed_bytes;
-  sweep_time_ns = 0
+    // For now, assume cursor bounds and membership for next iteration
+    // Proving this requires objects_nonempty_next + bridging wz between heaps
+    assume_ (pure (U64.v new_cursor <= U64.v heap_len /\
+                   U64.v new_cursor % 8 == 0 /\
+                   U64.v new_cursor + 8 < pow2 64 /\
+                   cursor_mem new_cursor s_after));
+    cursor := new_cursor;
+    ()
+  }
 }

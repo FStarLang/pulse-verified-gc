@@ -155,6 +155,10 @@ val hd_address_bounds : (obj: obj_addr) ->
 /// Field/object address from header address  
 val f_address (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) : obj_addr
 
+/// f_address arithmetic: f_address h = h + 8
+val f_address_spec : (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) ->
+  Lemma (U64.v (f_address h_addr) = U64.v h_addr + 8)
+
 /// Round-trip lemmas
 val hd_f_roundtrip : (h: hp_addr{U64.v h + U64.v mword < heap_size}) ->
   Lemma (hd_address (f_address h) == h)
