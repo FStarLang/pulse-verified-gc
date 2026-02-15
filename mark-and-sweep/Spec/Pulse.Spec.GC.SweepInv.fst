@@ -371,6 +371,23 @@ let objects_white_before_all (pos: nat) (g: heap)
           (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
   = ()
 
+module SpecHeapForExit = Pulse.Spec.GC.Heap
+
+let objects_white_before_exit (pos: nat) (g: heap)
+  : Lemma (requires objects_white_before pos g /\ pos + 8 >= heap_size)
+          (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
+  = // For any object x, hd_address_bounds gives hd_address(x) + 8 < heap_size
+    // So hd_address(x) < heap_size - 8 <= pos (since pos >= heap_size - 8)
+    // Therefore objects_white_before pos g applies
+    let aux (x: obj_addr)
+      : Lemma (requires Seq.mem x (objects 0UL g))
+              (ensures is_white x g)
+      = SpecHeapForExit.hd_address_bounds x;
+        assert (U64.v (hd_address x) + 8 < heap_size);
+        assert (U64.v (hd_address x) < pos)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
 let no_gray_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g)
 

@@ -807,12 +807,16 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
                  SI.heap_objects_dense 's /\
                  SI.fp_valid 'fv0 's /\
                  SI.headers_preserved_from (U64.v 'v0) 's 's /\
+                 SI.no_gray_objects 's /\
+                 SI.objects_white_before (U64.v 'v0) 's /\
                  (U64.v 'v0 + 8 < heap_size ==>
                    SI.obj_in_objects (U64.uint_to_t (U64.v 'v0 + 8)) 's /\
                    Seq.length (SpecFields.objects (U64.uint_to_t (U64.v 'v0)) 's) > 0))
   ensures  exists* vf fvf sf.
              pts_to current vf ** pts_to free_ptr fvf ** is_heap heap sf **
-             pure (SpecFields.well_formed_heap sf)
+             pure (SpecFields.well_formed_heap sf /\
+                   (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_hp_addr sf) ==>
+                     SpecObject.is_white x sf))
 {
   while (U64.lt (U64.add !current mword) (U64.uint_to_t heap_size))
     invariant exists* v fv s.
@@ -825,9 +829,11 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
             SpecFields.well_formed_heap s /\
             SpecFields.well_formed_heap 's /\
             SI.heap_objects_dense 's /\
+            SI.no_gray_objects 's /\
             SpecFields.objects zero_hp_addr s == SpecFields.objects zero_hp_addr 's /\
             SI.fp_valid fv s /\
             SI.headers_preserved_from (U64.v v) s 's /\
+            SI.objects_white_before (U64.v v) s /\
             (U64.v v + 8 < heap_size ==>
               SI.obj_in_objects (U64.uint_to_t (U64.v v + 8)) s /\
               Seq.length (SpecFields.objects (U64.uint_to_t (U64.v v)) s) > 0))
@@ -845,6 +851,9 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
     getWosize_eq hdr;
     ML.lemma_mod_plus_distr_l (U64.v h_addr) 8 8;
     SpecFields.objects_nonempty_head_fits h_addr s_cur;
+    // Derive ~(is_gray) for current object from no_gray_objects on initial heap
+    SI.headers_preserved_from_elim (U64.v h_addr) h_addr s_cur 's;
+    SI.no_gray_at_preserved (f_address h_addr) 's s_cur;
     
     let cur_fp = !free_ptr;
     let new_fp = sweep_object heap h_addr wz cur_fp;
@@ -862,10 +871,19 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
     fp_valid_transfer_bridge new_fp s_post s_post;
     lemma_addr_plus_8_no_overflow (U64.v next_addr);
     assert (pure (U64.v next_addr <= heap_size));
+    // Maintain objects_white_before: current object is white in s_post,
+    // headers before h_addr preserved, so all objects before next_addr are white
+    SI.objects_white_before_step h_addr s_cur s_post;
     // Combined bridge: headers chain + density → all next-iteration facts
     sweep_loop_next_bridge h_addr hdr wz s_cur s_post 's new_fp;
     ()
-  }
+  };
+  // After loop: v + 8 >= heap_size and objects_white_before (U64.v v) s
+  // Derive all objects are white
+  with v_exit. assert (pts_to current v_exit);
+  with s_exit. assert (is_heap heap s_exit);
+  SI.objects_white_before_exit (U64.v v_exit) s_exit;
+  ()
 }
 #pop-options
 
@@ -877,9 +895,13 @@ fn sweep (heap: heap_t) (fp: U64.t)
   requires is_heap heap 's ** pure (SpecFields.well_formed_heap 's /\
                                     Seq.length (SpecFields.objects zero_hp_addr 's) > 0 /\
                                     SI.heap_objects_dense 's /\
-                                    SI.fp_valid fp 's)
+                                    SI.fp_valid fp 's /\
+                                    SI.no_gray_objects 's)
   returns final_fp: U64.t
-  ensures  exists* s2. is_heap heap s2 ** pure (SpecFields.well_formed_heap s2)
+  ensures  exists* s2. is_heap heap s2 **
+    pure (SpecFields.well_formed_heap s2 /\
+          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_hp_addr s2) ==>
+            SpecObject.is_white x s2))
 {
   is_heap_length heap;
   // Establish initial obj_in_objects for head object
@@ -888,6 +910,8 @@ fn sweep (heap: heap_t) (fp: U64.t)
   lemma_addr_plus_8_no_overflow 0;
   // Initial headers_preserved_from: reflexivity
   SI.headers_preserved_from_refl (U64.v zero_hp_addr) 's;
+  // Initial objects_white_before: vacuously true at position 0
+  SI.objects_white_before_zero 's;
   let cur_init : U64.t = zero_hp_addr;
   let mut current = cur_init;
   let mut free_ptr = fp;

@@ -244,6 +244,13 @@ val objects_white_before_all : (pos: nat) -> (g: heap) ->
   Lemma (requires objects_white_before pos g /\ pos >= heap_size)
         (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
 
+/// Exit variant: when pos + 8 >= heap_size, all objects are white.
+/// At loop exit we have pos + mword >= heap_size, meaning no more objects can start at pos.
+/// All objects have hd_address(x) + 8 < heap_size (from hd_address_bounds), so hd_address(x) < pos.
+val objects_white_before_exit : (pos: nat) -> (g: heap) ->
+  Lemma (requires objects_white_before pos g /\ pos + 8 >= heap_size)
+        (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
+
 /// ---------------------------------------------------------------------------
 /// No Gray Objects
 /// ---------------------------------------------------------------------------

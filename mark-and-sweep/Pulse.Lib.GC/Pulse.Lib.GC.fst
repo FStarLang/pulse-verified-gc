@@ -27,6 +27,7 @@ module Seq = FStar.Seq
 module SpecGCPost = Pulse.Spec.GC.GCPost
 module SpecMarkInv = Pulse.Spec.GC.MarkInv
 module SpecFields = Pulse.Spec.GC.Fields
+module SpecObject = Pulse.Spec.GC.Object
 module SI = Pulse.Spec.GC.SweepInv
 
 let zero_hp_addr : hp_addr = 0UL
@@ -67,15 +68,19 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   // Density preservation: density is part of mark_inv
   SpecMarkInv.mark_inv_elim_density s_mark st_mark;
   
+  // No gray objects: from empty stack + mark_inv → no_gray_objects
+  SpecMarkInv.mark_inv_no_gray s_mark st_mark;
+  
   // Sweep phase: reset black to white, build free list
-  // sweep preserves well_formed_heap (via internal loop invariant)
+  // sweep preserves well_formed_heap and ensures all objects white
   let result_fp = sweep heap fp;
   
-  // After sweep: well_formed_heap s_sweep is PROVEN (from sweep postcondition)
-  // all_objects_white: pending sweep↔spec correspondence (sweep_resets_colors in spec)
-  with s_sweep. assert (is_heap heap s_sweep ** pure (SpecFields.well_formed_heap s_sweep));
-  assume (pure (SpecGCPost.all_objects_white s_sweep));
-  SpecGCPost.gc_postcondition_from_parts s_sweep;
+  // After sweep: well_formed_heap AND all_objects_white proven from sweep postcondition
+  with s_sweep. assert (is_heap heap s_sweep **
+    pure (SpecFields.well_formed_heap s_sweep /\
+          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_hp_addr s_sweep) ==>
+            SpecObject.is_white x s_sweep)));
+  SpecGCPost.gc_postcondition_intro s_sweep;
   
   result_fp
 }

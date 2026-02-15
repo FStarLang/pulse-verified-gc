@@ -275,6 +275,10 @@ val update_entry_preserves_addrs
 /// L1: Update color of an object in heap_l (pointer_closed preserved)
 val update_color_l (hl: heap_l) (addr: obj_addr) (c: Header.color_sem) : GTot heap_l
 
+/// L1: Color update preserves domain
+val update_color_l_preserves_domain (hl: heap_l) (addr: obj_addr) (c: Header.color_sem)
+  : Lemma (heap_l_domain (update_color_l hl addr c) == heap_l_domain hl)
+
 /// L2: Update a field of an object in heap_l
 val update_field_l (hl: heap_l) (addr: obj_addr) (i: nat) (v: U64.t)
   : Ghost heap_l
@@ -284,6 +288,15 @@ val update_field_l (hl: heap_l) (addr: obj_addr) (i: nat) (v: U64.t)
                  List.Tot.mem v (heap_l_domain hl))
               | None -> True))
     (ensures fun _ -> True)
+
+/// L2: Field update preserves domain
+val update_field_l_preserves_domain (hl: heap_l) (addr: obj_addr) (i: nat) (v: U64.t)
+  : Lemma (requires (match lookup hl addr with
+              | Some ol -> i < U64.v ol.wz /\
+                (U64.v v >= 8 && U64.v v < heap_size && U64.v v % 8 = 0 ==> 
+                 List.Tot.mem v (heap_l_domain hl))
+              | None -> True))
+          (ensures heap_l_domain (update_field_l hl addr i v) == heap_l_domain hl)
 
 /// L3: Pointer children of a single object
 val children_of (ol: object_l) : GTot (list obj_addr)
