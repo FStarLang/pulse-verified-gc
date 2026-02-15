@@ -219,9 +219,120 @@ let sweep_object_preserves_objects_from start g obj fp =
   end else ()
 #pop-options
 
+/// sweep_object preserves objects from any position beyond the current object
+/// (sweep_object writes only at h_addr or h_addr+8, both < next_addr)
+val sweep_object_preserves_objects_suffix : (h_addr: hp_addr) -> (g: heap) -> (fp: obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  Seq.length (objects h_addr g) > 0 /\
+                  Seq.mem (obj_address h_addr) (objects 0UL g))
+        (ensures (let obj = obj_address h_addr in
+                  let wz = getWosize (read_word g h_addr) in
+                  let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+                  next_nat <= heap_size /\
+                  (next_nat < heap_size ==>
+                    (let next : hp_addr = U64.uint_to_t next_nat in
+                     objects next (fst (sweep_object g obj fp)) == objects next g))))
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let sweep_object_preserves_objects_suffix h_addr g fp =
+  let obj = obj_address h_addr in
+  let wz = getWosize (read_word g h_addr) in
+  let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+  objects_nonempty_head_fits h_addr g;
+  if next_nat >= heap_size then ()
+  else begin
+    let next : hp_addr = U64.uint_to_t next_nat in
+    if is_white obj g then begin
+      let ws = wosize_of_object obj g in
+      let hd = Pulse.Spec.GC.Heap.hd_address obj in
+      Pulse.Spec.GC.Heap.hd_address_spec obj;
+      wosize_of_object_spec obj g;
+      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        // Write at obj (= h_addr + 8). obj < next since wz > 0 means next >= h_addr + 16
+        assert (U64.v obj < U64.v next);
+        write_word_preserves_objects_before next g obj fp
+      end else ()
+    end else if is_black obj g then begin
+      colors_exclusive obj g;
+      makeWhite_eq obj g;
+      color_change_preserves_objects_aux next g obj Header.White
+    end else ()
+  end
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Sweep Aux Lemmas
 /// ---------------------------------------------------------------------------
+
+/// Definitional unfolding: sweep_aux one step
+let sweep_aux_step (g: heap) (objs: seq obj_addr) (fp: obj_addr)
+  : Lemma (requires Seq.length objs > 0)
+          (ensures (let obj = Seq.head objs in
+                    let (g', fp') = sweep_object g obj fp in
+                    sweep_aux g objs fp == sweep_aux g' (Seq.tail objs) fp'))
+  = ()
+
+/// sweep_aux on empty is identity
+let sweep_aux_empty (g: heap) (fp: obj_addr)
+  : Lemma (sweep_aux g Seq.empty fp == (g, fp))
+  = ()
+
+/// obj_address (from Fields) == f_address (from Heap) when no overflow
+let obj_address_eq_f_address (h_addr: hp_addr)
+  : Lemma (requires U64.v h_addr + 8 < heap_size)
+          (ensures obj_address h_addr == f_address h_addr)
+  = f_address_spec h_addr;
+    assert (U64.v (obj_address h_addr) == U64.v h_addr + 8);
+    assert (U64.v (f_address h_addr) == U64.v h_addr + 8)
+
+/// Core invariant step: sweep_aux on objects from h_addr decomposes into
+/// sweep_object at head + sweep_aux on objects from next_addr
+/// After sweep_object at obj: sweep_aux g' (objects next g') fp' == sweep_aux g' (objects next g) fp'
+/// since objects next g' == objects next g (suffix preservation)
+#push-options "--z3rlimit 600 --fuel 3 --ifuel 1 --split_queries no"
+let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: obj_addr)
+  : Lemma (requires well_formed_heap g /\
+                    Seq.length (objects h_addr g) > 0 /\
+                    Seq.mem (obj_address h_addr) (objects 0UL g) /\
+                    U64.v h_addr + 8 < heap_size)
+          (ensures (let obj = obj_address h_addr in
+                    let wz = getWosize (read_word g h_addr) in
+                    let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+                    let (g', fp') = sweep_object g obj fp in
+                    next_nat <= heap_size /\
+                    (next_nat < heap_size ==>
+                      (let next : hp_addr = U64.uint_to_t next_nat in
+                       sweep_aux g (objects h_addr g) fp ==
+                       sweep_aux g' (objects next g') fp')) /\
+                    (next_nat >= heap_size ==> sweep_aux g (objects h_addr g) fp == (g', fp'))))
+  = let obj = obj_address h_addr in
+    let wz = getWosize (read_word g h_addr) in
+    let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+    objects_nonempty_head_fits h_addr g;
+    objects_nonempty_next h_addr g;
+    if next_nat >= heap_size then ()
+    else begin
+      let next : hp_addr = U64.uint_to_t next_nat in
+      let rest = objects next g in
+      // Step 1: objects h_addr g == cons obj rest
+      assert (objects h_addr g == Seq.cons obj rest);
+      // Step 2: sweep_aux g (cons obj rest) fp unfolds
+      assert (Seq.length (Seq.cons obj rest) > 0);
+      assert (Seq.head (Seq.cons obj rest) == obj);
+      Seq.lemma_tl obj rest;
+      assert (Seq.equal (Seq.tail (Seq.cons obj rest)) rest);
+      let (g', fp') = sweep_object g obj fp in
+      assert (sweep_aux g (Seq.cons obj rest) fp == sweep_aux g' rest fp');
+      // Step 3: objects next g' == objects next g
+      sweep_object_preserves_objects_suffix h_addr g fp;
+      assert (objects next (fst (sweep_object g obj fp)) == rest);
+      assert (g' == fst (sweep_object g obj fp));
+      assert (objects next g' == rest);
+      // Step 4: combine
+      assert (sweep_aux g (objects h_addr g) fp == sweep_aux g' rest fp');
+      assert (sweep_aux g' rest fp' == sweep_aux g' (objects next g') fp')
+    end
+#pop-options
 
 /// sweep_aux preserves color of objects not in the sequence
 val sweep_aux_non_member_color : (g: heap) -> (objs: seq obj_addr) -> (fp: obj_addr) -> (x: obj_addr) ->

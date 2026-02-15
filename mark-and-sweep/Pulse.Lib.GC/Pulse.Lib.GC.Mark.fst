@@ -495,7 +495,8 @@ fn mark_step (heap: heap_t) (st: gray_stack)
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
            pure (SpecMarkInv.mark_inv s2 st2 /\
-                 SpecFields.objects zero_hp_addr s2 == SpecFields.objects zero_hp_addr 's)
+                 SpecFields.objects zero_hp_addr s2 == SpecFields.objects zero_hp_addr 's /\
+                 (s2, st2) == SpecMark.mark_step 's 'st)
 {
   // Extract well_formed_heap and head-is-gray from mark_inv
   SpecMarkInv.mark_inv_head_gray 's 'st;
@@ -555,6 +556,30 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   
   if U64.gte tag no_scan_tag {
     with tl. assert (is_gray_stack st tl);
+    
+    // Establish equivalence to mark_step for no-scan case
+    // We have: (makeBlack f_addr 's, tl)
+    // Need to show: this == mark_step 's 'st
+    
+    // From pop postcondition: 'st == Seq.cons f_addr tl
+    // Therefore: Seq.head 'st == f_addr and Seq.tail 'st == tl
+    assert (pure (Seq.head 'st == f_addr));
+    assert (pure (Seq.tail 'st == tl));
+    
+    // From is_no_scan_eq already called above: tag >= no_scan_tag <==> is_no_scan f_addr 's
+    assert (pure (SpecObject.is_no_scan f_addr 's));
+    
+    // Extract stack_elements_valid from mark_inv
+    // mark_inv implies stack_props, which includes stack_elements_valid
+    assert (pure (SpecMark.stack_elements_valid 's 'st));
+    
+    // Call mark_step_unfold to expose what mark_step computes
+    SpecMark.mark_step_unfold 's 'st;
+    
+    // By mark_step_unfold, since is_no_scan f_addr 's:
+    // mark_step 's 'st == (makeBlack (head 'st) 's, tail 'st)
+    // == (makeBlack f_addr 's, tl)
+    
     SpecMarkInv.mark_inv_step_no_scan 's f_addr tl;
     // Objects preserved: makeBlack only changes color
     makeBlack_preserves_objects f_addr 's;
@@ -574,6 +599,31 @@ fn mark_step (heap: heap_t) (st: gray_stack)
     with tl. assert (is_gray_stack st tl);
     
     push_children heap st h_addr wz;
+    
+    // Establish equivalence to mark_step for scan case
+    // From push_children: (s2, st2) == push_children (makeBlack f_addr 's) tl f_addr 1UL wz
+    // Need to show: this == mark_step 's 'st
+    with s2 st2. assert (is_heap heap s2 ** is_gray_stack st st2);
+    
+    // From pop postcondition: 'st == Seq.cons f_addr tl
+    assert (pure (Seq.head 'st == f_addr));
+    assert (pure (Seq.tail 'st == tl));
+    
+    // From is_no_scan_eq: ~(tag >= no_scan_tag) <==> ~(is_no_scan f_addr 's)
+    assert (pure (~(SpecObject.is_no_scan f_addr 's)));
+    
+    // wz == wosize_of_object f_addr 's (already established by U64.v_inj above)
+    
+    // Extract stack_elements_valid from mark_inv
+    assert (pure (SpecMark.stack_elements_valid 's 'st));
+    
+    // Call mark_step_unfold to expose what mark_step computes
+    SpecMark.mark_step_unfold 's 'st;
+    
+    // By mark_step_unfold, since ~(is_no_scan f_addr 's):
+    // mark_step 's 'st == push_children (makeBlack (head 'st) 's) (tail 'st) (head 'st) 1UL (wosize_of_object (head 'st) 's)
+    // == push_children (makeBlack f_addr 's) tl f_addr 1UL wz
+    // == (s2, st2)
     
     // mark_inv for post-state
     SpecMarkInv.mark_inv_step_scan 's f_addr tl;

@@ -123,10 +123,14 @@ fn gray_root
   (heap: heap_t) (st: gray_stack) (root: obj_addr)
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size /\
-                 Seq.mem root (SpecFields.objects 0UL 's))
+                 Seq.mem root (SpecFields.objects 0UL 's) /\
+                 stack_valid 's 'gs /\
+                 contiguous_heap 's)
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 objects_preserved s2 's)
+                 objects_preserved s2 's /\
+                 stack_valid s2 gs2 /\
+                 contiguous_heap s2)
 {
   let h_addr = hd_address root;
   hp_addr_plus_8 h_addr;
@@ -143,7 +147,13 @@ fn gray_root
     rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
          as (is_heap heap (SpecObject.makeGray root 's));
     objects_preserved_makeGray 's root;
+    contiguous_heap_preserved_makeGray 's root;
+    // Stack validity: makeGray preserves stack_valid, then push adds a valid object
+    stack_valid_makeGray 's root 'gs;
     push st root;
+    with gs2. assert (is_gray_stack st gs2);
+    objects_preserved_mem (SpecObject.makeGray root 's) 's root;
+    stack_valid_cons (SpecObject.makeGray root 's) root 'gs;
     ()
   } else {
     ()
@@ -162,10 +172,14 @@ fn scan_thread_roots
   (n: SZ.t{SZ.v n == Seq.length roots})
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (SpecFields.well_formed_heap 's /\
-                 roots_valid 's roots)
+                 roots_valid 's roots /\
+                 stack_valid 's 'gs /\
+                 contiguous_heap 's)
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 objects_preserved s2 's)
+                 objects_preserved s2 's /\
+                 stack_valid s2 gs2 /\
+                 contiguous_heap s2)
 {
   let mut i = 0sz;
   while (
@@ -179,7 +193,9 @@ fn scan_thread_roots
     pure (SZ.v iv <= SZ.v n) **
     pure (b == SZ.lt iv n) **
     pure (SpecFields.well_formed_heap s_i /\
-          objects_preserved s_i 's)
+          objects_preserved s_i 's /\
+          stack_valid s_i gs_i /\
+          contiguous_heap s_i)
   {
     let iv = !i;
     is_heap_length heap;
@@ -201,10 +217,12 @@ fn mark_root_blue
   (heap: heap_t) (root: obj_addr)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size /\
-                 Seq.mem root (SpecFields.objects 0UL 's))
+                 Seq.mem root (SpecFields.objects 0UL 's) /\
+                 contiguous_heap 's)
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 objects_preserved s2 's)
+                 objects_preserved s2 's /\
+                 contiguous_heap s2)
 {
   let h_addr = hd_address root;
   hp_addr_plus_8 h_addr;
@@ -222,6 +240,7 @@ fn mark_root_blue
     rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
          as (is_heap heap (set_object_color_raw root 's 3UL));
     objects_preserved_by_raw_color 's root 3UL;
+    contiguous_heap_preserved_raw_color 's root 3UL;
     ()
   } else {
     ()
@@ -237,10 +256,12 @@ fn mark_other_roots_blue
   (n: SZ.t{SZ.v n == Seq.length other_roots})
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\
-                 roots_valid 's other_roots)
+                 roots_valid 's other_roots /\
+                 contiguous_heap 's)
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 objects_preserved s2 's)
+                 objects_preserved s2 's /\
+                 contiguous_heap s2)
 {
   let mut i = 0sz;
   while (
@@ -253,7 +274,8 @@ fn mark_other_roots_blue
     pure (SZ.v iv <= SZ.v n) **
     pure (b == SZ.lt iv n) **
     pure (SpecFields.well_formed_heap s_i /\
-          objects_preserved s_i 's)
+          objects_preserved s_i 's /\
+          contiguous_heap s_i)
   {
     let iv = !i;
     is_heap_length heap;
@@ -269,10 +291,12 @@ fn reset_blue_to_white_one
   (heap: heap_t) (addr: obj_addr)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size /\
-                 Seq.mem addr (SpecFields.objects 0UL 's))
+                 Seq.mem addr (SpecFields.objects 0UL 's) /\
+                 contiguous_heap 's)
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 objects_preserved s2 's)
+                 objects_preserved s2 's /\
+                 contiguous_heap s2)
 {
   let h_addr = hd_address addr;
   hp_addr_plus_8 h_addr;
@@ -290,6 +314,7 @@ fn reset_blue_to_white_one
     rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
          as (is_heap heap (SpecObject.makeWhite addr 's));
     objects_preserved_makeWhite 's addr;
+    contiguous_heap_preserved_makeWhite 's addr;
     ()
   } else {
     ()
@@ -305,10 +330,12 @@ fn reset_blue_to_white
   (n: SZ.t{SZ.v n == Seq.length addrs})
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\
-                 roots_valid 's addrs)
+                 roots_valid 's addrs /\
+                 contiguous_heap 's)
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 objects_preserved s2 's)
+                 objects_preserved s2 's /\
+                 contiguous_heap s2)
 {
   let mut i = 0sz;
   while (
@@ -321,7 +348,8 @@ fn reset_blue_to_white
     pure (SZ.v iv <= SZ.v n) **
     pure (b == SZ.lt iv n) **
     pure (SpecFields.well_formed_heap s_i /\
-          objects_preserved s_i 's)
+          objects_preserved s_i 's /\
+          contiguous_heap s_i)
   {
     let iv = !i;
     is_heap_length heap;

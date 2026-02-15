@@ -384,6 +384,16 @@ let mark_step (g: heap) (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_va
   else
     push_children g' st' obj 1UL ws
 
+/// Unfold what mark_step computes
+let mark_step_unfold (g: heap{well_formed_heap g}) (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st})
+  : Lemma (let obj = Seq.head st in
+           let st' = Seq.tail st in
+           let g' = makeBlack obj g in
+           let ws = wosize_of_object obj g in
+           (if is_no_scan obj g then mark_step g st == (g', st')
+            else mark_step g st == push_children g' st' obj 1UL ws))
+  = ()
+
 /// mark_step preserves stack_props
 val mark_step_preserves_stack_props : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
@@ -594,6 +604,22 @@ let rec mark_aux (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g s
 
 let mark (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) : GTot heap =
   mark_aux g st (heap_size / U64.v mword)
+
+/// mark_aux unfolds one step: mark_aux g st (fuel+1) == mark_aux g' st' fuel
+/// where (g', st') = mark_step g st, when st is nonempty
+let mark_aux_unfold (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) (fuel: nat)
+  : Lemma (requires Seq.length st > 0)
+          (ensures (let (g', st') = mark_step g st in
+                    well_formed_heap g' /\ stack_props g' st' /\
+                    mark_aux g st (fuel + 1) == mark_aux g' st' fuel))
+  = mark_step_preserves_stack_props g st;
+    mark_step_preserves_wf g st
+
+/// mark_aux on empty stack is identity
+let mark_aux_empty (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) (fuel: nat)
+  : Lemma (requires Seq.length st = 0)
+          (ensures mark_aux g st fuel == g)
+  = ()
 
 /// ---------------------------------------------------------------------------
 /// Mark Phase Invariants

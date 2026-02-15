@@ -374,30 +374,25 @@ let objects_white_before_all (pos: nat) (g: heap)
 let no_gray_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g)
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+module SpecHeap = Pulse.Spec.GC.Heap
+
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let no_gray_at_preserved (obj: obj_addr) (g_init g_cur: heap)
   : Lemma (requires no_gray_objects g_init /\
                     Seq.mem obj (objects 0UL g_init) /\
                     read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
           (ensures ~(is_gray obj g_cur))
-  = color_of_object_spec obj g_init;
-    color_of_object_spec obj g_cur;
-    // Now: color_of_object obj g_init == getColor (read_word g_init (hd_address obj))
-    //      color_of_object obj g_cur  == getColor (read_word g_cur  (hd_address obj))
-    // With read_word g_cur _ == read_word g_init _, by congruence:
-    //      color_of_object obj g_cur == color_of_object obj g_init
-    is_gray_iff obj g_init;
-    is_gray_iff obj g_cur;
-    // is_gray obj g <==> color_of_object obj g = Gray
-    // no_gray_objects gives ~(is_gray obj g_init)
-    // therefore color_of_object obj g_init <> Gray
-    // therefore color_of_object obj g_cur <> Gray
-    // therefore ~(is_gray obj g_cur)
-    // Help SMT see the connection:
-    let c_init = color_of_object obj g_init in
-    let c_cur = color_of_object obj g_cur in
-    assert (c_init == getColor (read_word g_init (hd_address obj)));
-    ()
+  = // Bridge: Fields.hd_address and Heap.hd_address agree for obj_addr
+    SpecHeap.hd_address_spec obj;
+    assert (U64.v (Pulse.Spec.GC.Fields.hd_address obj) = U64.v obj - 8);
+    assert (U64.v (SpecHeap.hd_address obj) = U64.v obj - 8);
+    U64.v_inj (Pulse.Spec.GC.Fields.hd_address obj) (SpecHeap.hd_address obj);
+    color_of_header_eq obj g_cur g_init
+
+let no_gray_elim (obj: obj_addr) (g: heap)
+  : Lemma (requires no_gray_objects g /\ Seq.mem obj (objects 0UL g))
+          (ensures ~(is_gray obj g))
+  = ()
 #pop-options
 
 let no_gray_intro (g: heap)

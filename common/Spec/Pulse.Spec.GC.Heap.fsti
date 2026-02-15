@@ -174,3 +174,119 @@ val hd_address_spec : (obj: obj_addr) ->
 val hd_address_injective : (f1: obj_addr) -> (f2: obj_addr) ->
   Lemma (requires f1 <> f2)
         (ensures hd_address f1 <> hd_address f2)
+
+/// ---------------------------------------------------------------------------
+/// Logical Heap Types and Pack/Unpack
+/// ---------------------------------------------------------------------------
+
+module Header = Pulse.Lib.Header
+
+/// Wosize: number of fields (< pow2 54)
+type wosize = w:U64.t{U64.v w < pow2 54}
+
+/// Logical object: parsed header fields + field values
+type object_l = {
+  tag    : t:U64.t{U64.v t < 256};
+  color  : Header.color_sem;
+  wz     : wosize;
+  fields : s:seq U64.t{Seq.length s == U64.v wz};
+}
+
+/// Total color extraction (maps 3→White; color 3 never occurs in OCaml)
+val unpack_color_total (c: FStar.UInt.uint_t 64) : Header.color_sem
+
+/// Parse one object at header address
+val unpack_object (g: heap) (h_addr: hp_addr) : GTot (option (obj_addr & object_l))
+
+/// unpack_object succeeds when object walk position is valid and object fits
+val unpack_object_succeeds (g: heap) (h_addr: hp_addr) : Lemma
+  (requires U64.v h_addr + 8 < heap_size /\  
+            (let hdr = read_word g h_addr in
+             let wz = Header.get_wosize (U64.v hdr) in
+             U64.v h_addr + (wz + 1) * 8 <= heap_size))
+  (ensures Some? (unpack_object g h_addr))
+
+/// When unpack_object succeeds, the object address is h_addr + 8
+val unpack_object_addr (g: heap) (h_addr: hp_addr) : Lemma
+  (requires Some? (unpack_object g h_addr))
+  (ensures fst (Some?.v (unpack_object g h_addr)) == U64.uint_to_t (U64.v h_addr + 8))
+
+/// When unpack_object succeeds, parsed wosize matches raw header
+val unpack_object_wz (g: heap) (h_addr: hp_addr) : Lemma
+  (requires Some? (unpack_object g h_addr))
+  (ensures U64.v (snd (Some?.v (unpack_object g h_addr))).wz == 
+           Header.get_wosize (U64.v (read_word g h_addr)))
+
+/// When unpack_object succeeds, parsed tag matches raw header
+val unpack_object_tag (g: heap) (h_addr: hp_addr) : Lemma
+  (requires Some? (unpack_object g h_addr))
+  (ensures U64.v (snd (Some?.v (unpack_object g h_addr))).tag == 
+           Header.get_tag (U64.v (read_word g h_addr)))
+
+/// When unpack_object succeeds, parsed color matches raw header  
+val unpack_object_color (g: heap) (h_addr: hp_addr) : Lemma
+  (requires Some? (unpack_object g h_addr))
+  (ensures (snd (Some?.v (unpack_object g h_addr))).color == 
+           unpack_color_total (Header.get_color (U64.v (read_word g h_addr))))
+
+/// Recursive walk: parse all objects from h_addr (always succeeds)
+val unpack_objects (g: heap) (h_addr: hp_addr) 
+  : GTot (list (obj_addr & object_l))
+
+/// Check pointer closure
+val pointer_closed (entries: list (obj_addr & object_l)) : GTot bool
+
+/// Logical heap: well-formed list of objects with pointer closure
+type heap_l = entries:list (obj_addr & object_l){pointer_closed entries}
+
+/// Top-level unpack: parse raw heap into logical form
+val unpack (g: heap) : GTot (option heap_l)
+
+/// Lookup an object by address
+val lookup (l: heap_l) (obj: obj_addr) : GTot (option object_l)
+
+/// Domain: all object addresses
+val heap_l_domain (l: heap_l) : GTot (list obj_addr)
+
+/// Construct header word from object_l components
+val make_header_word (ol: object_l) : U64.t
+
+/// Pack: reconstruct raw heap from logical form
+val pack (l: heap_l) 
+  : Ghost heap
+    (requires (forall (e: (obj_addr & object_l)). List.Tot.mem e l ==>
+                U64.v (hd_address (fst e)) + (U64.v (snd e).wz + 1) * 8 <= heap_size))
+    (ensures fun r -> Seq.length r == heap_size)
+
+/// ---------------------------------------------------------------------------
+/// Logical Heap Operations (L1–L3)
+/// ---------------------------------------------------------------------------
+
+/// Replace the object_l at a given address, preserving list structure
+val update_entry (entries: list (obj_addr & object_l)) (addr: obj_addr) (ol': object_l)
+  : GTot (list (obj_addr & object_l))
+
+/// update_entry preserves the address list
+val update_entry_preserves_addrs 
+  (entries: list (obj_addr & object_l)) (addr: obj_addr) (ol': object_l)
+  : Lemma (ensures List.Tot.map fst (update_entry entries addr ol') == 
+                   List.Tot.map fst entries)
+
+/// L1: Update color of an object in heap_l (pointer_closed preserved)
+val update_color_l (hl: heap_l) (addr: obj_addr) (c: Header.color_sem) : GTot heap_l
+
+/// L2: Update a field of an object in heap_l
+val update_field_l (hl: heap_l) (addr: obj_addr) (i: nat) (v: U64.t)
+  : Ghost heap_l
+    (requires (match lookup hl addr with
+              | Some ol -> i < U64.v ol.wz /\
+                (U64.v v >= 8 && U64.v v < heap_size && U64.v v % 8 = 0 ==> 
+                 List.Tot.mem v (heap_l_domain hl))
+              | None -> True))
+    (ensures fun _ -> True)
+
+/// L3: Pointer children of a single object
+val children_of (ol: object_l) : GTot (list obj_addr)
+
+/// L3: Pointer children of an object address in the heap
+val children (hl: heap_l) (addr: obj_addr) : GTot (list obj_addr)

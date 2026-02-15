@@ -74,6 +74,17 @@ let all_roots_valid (g: Pulse.Spec.GC.Base.heap) (all_roots: Seq.seq (Seq.seq ob
   forall (t: nat). t < Seq.length all_roots ==>
     roots_valid g (Seq.index all_roots t)
 
+/// all_roots_valid transfers via objects_preserved (equality of objects)
+let all_roots_valid_preserved (g1 g2: Pulse.Spec.GC.Base.heap)
+    (all_roots: Seq.seq (Seq.seq obj_addr))
+  : Lemma (requires all_roots_valid g2 all_roots /\ objects_preserved g1 g2)
+          (ensures all_roots_valid g1 all_roots)
+  = let aux (t: nat{t < Seq.length all_roots})
+      : Lemma (roots_valid g1 (Seq.index all_roots t))
+      = objects_preserved_roots_valid g1 g2 (Seq.index all_roots t)
+    in
+    Classical.forall_intro aux
+
 /// ---------------------------------------------------------------------------
 /// Per-Thread Mark Pass
 /// ---------------------------------------------------------------------------
@@ -92,28 +103,37 @@ fn mark_one_thread
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (SpecFields.well_formed_heap 's /\
                  roots_valid 's thread_roots /\
-                 roots_valid 's other_roots)
+                 roots_valid 's other_roots /\
+                 stack_valid 's 'gs /\
+                 contiguous_heap 's)
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
-           pure (SpecFields.well_formed_heap s2)
+           pure (SpecFields.well_formed_heap s2 /\
+                 objects_preserved s2 's /\
+                 stack_valid s2 gs2 /\
+                 contiguous_heap s2)
 {
   // Step 1: Mark other threads' roots as blue (temporary fence)
   mark_other_roots_blue heap other_roots n_other;
 
   // Step 2: Gray this thread's roots
-  // After mark_other_roots_blue: objects are preserved, so roots_valid transfers
+  // After mark_other_roots_blue: objects_preserved, so roots_valid + stack_valid transfer
+  with s_blue. assert (is_heap heap s_blue);
+  objects_preserved_roots_valid s_blue 's thread_roots;
+  stack_valid_preserved s_blue 's 'gs;
   scan_thread_roots heap st thread_roots n_thread;
 
   // Step 3: Run mark loop until gray stack is empty
-  // Stack validity: scan_thread_roots pushed valid roots to the gray stack
-  with s2 gs2. assert (is_heap heap s2 ** is_gray_stack st gs2);
-  assume_ (pure (stack_valid s2 gs2));
   mark_loop heap st;
 
   // Step 4: Reset blue markings back to white
-  // mark_loop doesn't yet expose objects equality; assume_ roots_valid on current ghost
+  // mark_loop exposes objects_preserved + stack_valid
   with s3 gs3. assert (is_heap heap s3 ** is_gray_stack st gs3);
-  assume_ (pure (roots_valid s3 other_roots));
+  // s3 has: objects_preserved s3 's, stack_valid s3 gs3
+  objects_preserved_roots_valid s3 's other_roots;
   reset_blue_to_white heap other_roots n_other;
+  // Transfer stack_valid to new heap: objects_preserved s4 s3 + stack_valid s3 gs3
+  with s4. assert (is_heap heap s4);
+  stack_valid_preserved s4 s3 gs3;
   ()
 }
 
@@ -139,6 +159,8 @@ fn collect
            pure (SpecFields.well_formed_heap 's /\
                  all_roots_valid 's all_thread_roots /\
                  Seq.length (SpecFields.objects 0UL 's) > 0 /\
+                 stack_valid 's 'gs /\
+                 contiguous_heap 's /\
                  (forall (i:nat). i < Seq.length all_thread_roots ==>
                    SZ.fits (Seq.length (Seq.index all_thread_roots i))))
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
@@ -160,6 +182,9 @@ fn collect
       pure (SpecFields.well_formed_heap s_i /\
             all_roots_valid s_i all_thread_roots /\
             Seq.length (SpecFields.objects 0UL s_i) > 0 /\
+            stack_valid s_i gs_i /\
+            objects_preserved s_i 's /\
+            contiguous_heap s_i /\
             (forall (i:nat). i < Seq.length all_thread_roots ==>
               SZ.fits (Seq.length (Seq.index all_thread_roots i))))
   {
@@ -171,11 +196,9 @@ fn collect
     let n_thread : SZ.t = SZ.uint_to_t (Seq.length thread_roots);
     let n_other = 0sz;
     mark_one_thread heap st thread_roots other_roots n_thread n_other;
-    // mark_one_thread preserves wfh; all_roots_valid maintained because objects preserved
-    // For now, assume_ on current ghost (will be resolved when mark_loop exposes objects_preserved)
+    // mark_one_thread returns objects_preserved: transfer all_roots_valid + objects length
     with s_after gs_after. assert (is_heap heap s_after ** is_gray_stack st gs_after);
-    assume_ (pure (all_roots_valid s_after all_thread_roots /\
-                   Seq.length (SpecFields.objects 0UL s_after) > 0));
+    all_roots_valid_preserved s_after 's all_thread_roots;
     thread_idx := SZ.add ti 1sz;
     ()
   };

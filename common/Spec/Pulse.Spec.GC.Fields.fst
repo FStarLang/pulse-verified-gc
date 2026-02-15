@@ -1465,3 +1465,81 @@ let field_write_preserves_wf g obj addr v =
   in
   FStar.Classical.forall_intro_2 aux2_imp
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Bridge Lemma: well_formed_heap implies unpack succeeds
+/// ---------------------------------------------------------------------------
+
+/// Helper: getWosize and Pulse.Lib.Header.get_wosize are equivalent
+let getWosize_eq_header (hdr: U64.t) 
+  : Lemma (U64.v (getWosize hdr) == Pulse.Lib.Header.get_wosize (U64.v hdr))
+  = getWosize_spec hdr;
+    // getWosize hdr == U64.shift_right hdr 10ul
+    // Pulse.Lib.Header.get_wosize (U64.v hdr) = shift_right #64 (U64.v hdr) 10
+    // U64.shift_right hdr 10ul = U64.uint_to_t (shift_right #64 (U64.v hdr) 10)
+    ()
+
+/// Helper lemma: when objects is non-empty at start, unpack_object succeeds there
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 50"
+let objects_unpack_succeeds (g: heap) (start: hp_addr)
+  : Lemma 
+    (requires well_formed_heap g /\ Seq.length (objects start g) > 0)
+    (ensures Some? (unpack_object g start))
+  = // Objects is non-empty, so the terminal condition doesn't apply
+    assert (U64.v start + 8 < heap_size);
+    
+    let hdr = read_word g start in
+    let wz = getWosize hdr in
+    
+    // Use existing lemma: when objects is non-empty, the head object fits
+    objects_nonempty_head_fits start g;
+    assert (U64.v start + FStar.Mul.((U64.v wz + 1) * 8) <= heap_size);
+    
+    // Bridge the two wosize representations
+    getWosize_eq_header hdr;
+    assert (U64.v wz == Pulse.Lib.Header.get_wosize (U64.v hdr));
+    
+    // Therefore unpack_object succeeds
+    unpack_object_succeeds g start
+#pop-options
+
+/// Bridge lemma: well_formed_heap implies unpack succeeds
+///
+/// Proof strategy:
+/// 1. Show that when objects is non-empty, unpack_object succeeds
+/// 2. This ensures unpack_objects follows the same walk structure as objects
+/// 3. Show pointer_closed holds (admitted - complex pointer closure proof)
+/// 4. Therefore unpack g returns Some
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+let wfh_implies_unpack (g: heap) : Lemma
+  (requires well_formed_heap g)
+  (ensures Some? (Pulse.Spec.GC.Heap.unpack g))
+  = // Step 1: Establish that unpack_object succeeds whenever objects is non-empty
+    // This is proven by objects_unpack_succeeds for the start position
+    if Seq.length (objects 0UL g) > 0 then
+      objects_unpack_succeeds g 0UL;
+    
+    // Step 2: Show pointer_closed holds on unpack_objects g 0UL
+    // This requires proving that the pointer closure property from well_formed_heap
+    // transfers to the pointer_closed predicate on the unpack_objects result.
+    // 
+    // The full proof would need to show:
+    // - For every (obj, ol) in unpack_objects g 0UL
+    // - For every field value fv in ol.fields  
+    // - If fv looks like a pointer (fv >= 8, fv < heap_size, fv % 8 = 0)
+    // - Then fv is in the address list of unpack_objects g 0UL
+    //
+    // This follows from well_formed_heap's pointer closure property because:
+    // - obj is in objects 0UL g (by structural correspondence)
+    // - fv is a field value, so exists_field_pointing_to_unchecked g obj wz fv holds
+    // - Therefore fv ∈ objects 0UL g (by well_formed_heap)
+    // - Therefore fv ∈ addresses of unpack_objects g 0UL (by structural correspondence)
+    //
+    // However, this requires:
+    // - Converting between Seq.mem and List.Tot.mem
+    // - Connecting field values in object_l.fields with exists_field_pointing_to_unchecked
+    // - Proving the recursive correspondence for the entire list
+    //
+    // For now, we admit this complex proof
+    admit()
+#pop-options

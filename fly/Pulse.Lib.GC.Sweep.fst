@@ -47,6 +47,12 @@ ghost fn is_heap_length (h: heap_t)
 /// Overflow helpers
 /// ---------------------------------------------------------------------------
 
+/// Bridge: Pulse.Lib.GC.Object.getWosize == Pulse.Spec.GC.Object.getWosize
+let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr) =
+  SpecObject.getWosize_spec hdr;
+  // Both are U64.shift_right hdr 10ul
+  assert (getWosize hdr == U64.shift_right hdr 10ul)
+
 let lemma_skip_no_overflow (wz: nat)
   : Lemma (requires wz <= pow2 54 - 1)
           (ensures (1 + wz) * 8 <= pow2 57 /\ (1 + wz) * 8 < pow2 64)
@@ -107,10 +113,12 @@ fn sweep_object
            pure (U64.v obj < heap_size /\
                  SpecFields.well_formed_heap 's /\
                  Seq.length 's == heap_size /\
-                 Seq.mem obj (SpecFields.objects 0UL 's))
+                 Seq.mem obj (SpecFields.objects 0UL 's) /\
+                 contiguous_heap 's)
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 objects_preserved s2 's)
+                 objects_preserved s2 's /\
+                 contiguous_heap s2)
 {
   is_heap_length heap;
   let h_addr : hp_addr = SpecHeap.hd_address obj;
@@ -128,6 +136,7 @@ fn sweep_object
     rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
          as (is_heap heap (SpecObject.makeWhite obj 's));
     objects_preserved_makeWhite 's obj;
+    contiguous_heap_preserved_makeWhite 's obj;
     ()
   } else {
     // White -> garbage, Gray/Blue -> shouldn't exist after marking
@@ -142,12 +151,13 @@ fn sweep_object
 /// ---------------------------------------------------------------------------
 
 /// Linear scan of all objects in the heap.
-#push-options "--z3rlimit 300"
+#push-options "--z3rlimit 500"
 fn sweep_all
   (heap: heap_t) (heap_len: U64.t{U64.v heap_len == heap_size})
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\
-                 Seq.length (SpecFields.objects 0UL 's) > 0)
+                 Seq.length (SpecFields.objects 0UL 's) > 0 /\
+                 contiguous_heap 's)
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2)
 {
@@ -165,6 +175,7 @@ fn sweep_all
             SpecFields.well_formed_heap s_i /\
             Seq.length s_i == heap_size /\
             objects_preserved s_i 's /\
+            contiguous_heap s_i /\
             cursor_mem c s_i)
   {
     let c = !cursor;
@@ -182,28 +193,27 @@ fn sweep_all
     let hdr = read_word heap h_addr;
     let wz = getWosize hdr;
 
+    // Compute cursor advancement BEFORE sweep (using current ghost s_i)
+    // Bridge wz: Pulse getWosize == Spec getWosize, hdr == read_word s_i c
+    with s_i. assert (is_heap heap s_i);
+    spec_read_word_eq s_i c;
+    getWosize_eq hdr;
+    cursor_mem_advance s_i c;
+    lemma_next_addr_no_overflow (U64.v c) (U64.v wz);
+
     // Sweep this object
     sweep_object heap obj;
-
-    // After sweep: s_after has objects_preserved s_after s_i, and s_i has objects_preserved s_i 's
-    // Transitivity: objects_preserved s_after 's
     with s_after. assert (is_heap heap s_after);
-    // s_after has objects_preserved s_after s_i (from sweep_object postcondition)
-    // Since objects_preserved s_i 's (from invariant), transitivity gives objects_preserved s_after 's
 
-    // Advance cursor: c + (1 + wz) * 8
-    lemma_next_addr_no_overflow (U64.v c) (U64.v wz);
+    // Advance cursor
     let obj_words = U64.add wz 1UL;
     let byte_size = U64.mul obj_words 8UL;
     let new_cursor = U64.add c byte_size;
 
-    // For now, assume cursor bounds and membership for next iteration
-    // Proving this requires objects_nonempty_next + bridging wz between heaps
-    assume_ (pure (U64.v new_cursor <= U64.v heap_len /\
-                   U64.v new_cursor % 8 == 0 /\
-                   U64.v new_cursor + 8 < pow2 64 /\
-                   cursor_mem new_cursor s_after));
+    // Transfer cursor_mem from s_i to s_after via objects_preserved
+    cursor_mem_from_objects_preserved s_after s_i new_cursor;
     cursor := new_cursor;
     ()
   }
 }
+#pop-options

@@ -605,6 +605,90 @@ let stack_valid_makeGray (g: heap) (obj: obj_addr) (gs: Seq.seq obj_addr)
     seq_addrs_valid_preserved g obj Header.Gray gs
 
 /// ===========================================================================
+/// Section 9b: Color change preserves wosize of ALL objects
+/// ===========================================================================
+
+/// set_object_color preserves wosize of any object (same or different from target).
+/// For same object: uses color_preserves_wosize.
+/// For different object: uses color_change_header_locality + wosize_of_object_spec.
+let set_color_preserves_wosize_all (g: heap) (obj parent: obj_addr) (c: color)
+  : Lemma (requires Seq.length g == heap_size)
+          (ensures wosize_of_object parent (set_object_color obj g c) == wosize_of_object parent g)
+  = if obj = parent then
+      color_preserves_wosize parent g c
+    else begin
+      // hd_address is obj - 8, injective for obj_addr (both >= 8)
+      hd_address_spec obj;
+      hd_address_spec parent;
+      assert (hd_address obj <> hd_address parent);
+      color_change_header_locality obj (hd_address parent) g c;
+      wosize_of_object_spec parent g;
+      wosize_of_object_spec parent (set_object_color obj g c);
+      ()
+    end
+
+/// makeGray preserves wosize of any object
+let makeGray_preserves_wosize_all (g: heap) (obj parent: obj_addr)
+  : Lemma (requires Seq.mem obj (objects 0UL g) /\ Seq.length g == heap_size)
+          (ensures wosize_of_object parent (makeGray obj g) == wosize_of_object parent g)
+  = makeGray_eq obj g;
+    set_color_preserves_wosize_all g obj parent Header.Gray
+
+/// ===========================================================================
+/// Section 9c: Pointer field membership (for check_and_darken)
+/// ===========================================================================
+
+/// Key lemma: any pointer-valued field of a known object points to a known object.
+/// Wraps field_read_implies_exists_pointing + well_formed_heap part 2.
+///
+/// Given parent ∈ objects(0, g), field index k < wosize(parent),
+/// and read_word g (parent + k*8) is a pointer, then that field value ∈ objects(0, g).
+#push-options "--z3rlimit 200"
+let pointer_field_in_objects (g: heap) (parent: obj_addr) (k: nat) (field_addr: hp_addr)
+  : Lemma (requires well_formed_heap g /\
+                    Seq.mem parent (objects 0UL g) /\
+                    Seq.length g == heap_size /\
+                    k < U64.v (wosize_of_object parent g) /\
+                    U64.v field_addr == U64.v parent + k * 8 /\
+                    is_pointer_field (read_word g field_addr))
+          (ensures Seq.mem (read_word g field_addr) (objects 0UL g))
+  = let wz = wosize_of_object parent g in
+    let fv = read_word g field_addr in
+    // fv is a pointer: U64.v fv >= 8, < heap_size, % 8 == 0
+    let target : obj_addr = fv in
+    // 1. well_formed_object g parent (from wfh part 1)
+    wf_object_size_bound g parent;
+    // 2. wosize bound for exists_field_pointing_to_unchecked
+    wosize_of_object_bound parent g;
+    assert (U64.v wz < pow2 54);
+    // 3. Build k as U64 for field_read_implies_exists_pointing
+    ML.pow2_lt_compat 61 54;
+    let k_u64 : U64.t = FStar.UInt64.uint_to_t k in
+    // 4. Show add_mod/mul_mod don't overflow, so far == field_addr
+    ML.pow2_plus 54 3;
+    ML.pow2_lt_compat 64 57;
+    FStar.Math.Lemmas.modulo_lemma (k * 8) (pow2 64);
+    assert (U64.v (U64.mul_mod k_u64 mword) == k * 8);
+    wf_object_bound g parent;
+    assert (U64.v parent + k * 8 < heap_size);
+    FStar.Math.Lemmas.modulo_lemma (U64.v parent + k * 8) (pow2 64);
+    let far = U64.add_mod parent (U64.mul_mod k_u64 mword) in
+    assert (U64.v far == U64.v field_addr);
+    // 5. far is a valid hp_addr with the right properties
+    ML.lemma_mod_plus_distr_l (U64.v parent) (k * 8) 8;
+    assert (U64.v far % 8 == 0);
+    assert (U64.v far < heap_size);
+    // 6. read_word g far == read_word g field_addr (same index)
+    assert (read_word g (far <: hp_addr) == fv);
+    // 7. hd_address fv = hd_address target (trivially, target = fv)
+    // 8. Call field_read_implies_exists_pointing
+    field_read_implies_exists_pointing g parent wz k_u64 target;
+    // 9. Instantiate wfh part 2
+    assert (exists_field_pointing_to_unchecked g parent wz target);
+    ()
+#pop-options
+
+/// ===========================================================================
 /// Section 10: Sweep helper lemmas (objects enumeration tracking)
 /// ===========================================================================
 
@@ -666,3 +750,203 @@ let cursor_mem_preserved_makeWhite (g: heap) (obj: obj_addr) (c: U64.t) : Lemma
       color_change_preserves_objects_mem g obj Header.White (obj_address c);
       ()
     end
+
+/// ===========================================================================
+/// Section 11: Objects suffix membership (for cursor advancement in sweep)
+/// ===========================================================================
+
+/// Key structural lemma: if obj_address(c) is in objects(start, g) and
+/// x is in objects(c, g), then x is in objects(start, g).
+/// Proof by induction: objects(start, g) = cons (obj_address start) (objects next g).
+/// Either c == start (trivial), or obj_address c is in objects(next, g) (by IH).
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 400"
+let rec objects_suffix_mem (start: hp_addr) (c: hp_addr) (g: heap) (x: obj_addr)
+  : Lemma (requires U64.v c + 8 < heap_size /\
+                    Seq.mem (obj_address c) (objects start g) /\
+                    Seq.mem x (objects c g))
+          (ensures Seq.mem x (objects start g))
+          (decreases Seq.length g - U64.v start)
+  = if U64.v start + 8 >= Seq.length g then ()  // objects start g = empty, contradiction
+    else begin
+      let header = read_word g start in
+      let wz = U64.v (getWosize header) in
+      let next_nat = U64.v start + (wz + 1) * 8 in
+      if next_nat > Seq.length g || next_nat >= pow2 64 then ()  // objects start g = empty
+      else begin
+        let oa : obj_addr = obj_address start in
+        let oc : obj_addr = obj_address c in
+        if next_nat >= heap_size then begin
+          // objects start g = singleton [oa]
+          mem_cons_lemma oc oa Seq.empty;
+          assert (oc == oa);
+          mem_cons_lemma x oa Seq.empty;
+          ()
+        end
+        else begin
+          let next : hp_addr = U64.uint_to_t next_nat in
+          let rest = objects next g in
+          mem_cons_lemma oc oa rest;
+          if oc = oa then begin
+            assert (U64.v c = U64.v start);
+            ()
+          end
+          else begin
+            // oc ∈ rest = objects next g
+            // By IH: x ∈ objects c g ∧ oc ∈ objects next g ⟹ x ∈ objects next g
+            objects_suffix_mem next c g x;
+            mem_cons_lemma x oa rest;
+            ()
+          end
+        end
+      end
+    end
+#pop-options
+
+/// Cursor advancement bounds: computes next position bounds from well_formed_heap.
+/// cursor_mem cannot be proven without a stronger heap well-formedness (see note below).
+#push-options "--z3rlimit 300"
+let cursor_advance_bounds (g: heap) (c: hp_addr) : Lemma
+  (requires well_formed_heap g /\ Seq.length g == heap_size /\
+            U64.v c + 8 < heap_size /\ cursor_mem c g)
+  (ensures (let wz = getWosize (read_word g c) in
+            let next_nat = U64.v c + (U64.v wz + 1) * 8 in
+            next_nat <= heap_size /\
+            next_nat % 8 == 0 /\
+            next_nat + 8 < pow2 64))
+  = assert (Seq.mem (obj_address c) (objects 0UL g));
+    objects_nonempty_at c g;
+    objects_nonempty_next c g;
+    let wz = getWosize (read_word g c) in
+    let next_nat = U64.v c + (U64.v wz + 1) * 8 in
+    assert (next_nat <= heap_size);
+    assert (next_nat % 8 == 0);
+    ML.pow2_lt_compat 64 58;
+    Math.Lemmas.pow2_double_sum 57
+#pop-options
+
+/// ===========================================================================
+/// Section 12: Contiguous heap and cursor advancement
+/// ===========================================================================
+
+/// A heap is "contiguous" if the objects enumeration has no gaps: for every
+/// enumerated position c, if the next position has room for a header (nn + 8
+/// < heap_size), then that next position is also enumerated.
+/// This is true for OCaml heaps (contiguously packed) but not provable from
+/// well_formed_heap alone.
+let contiguous_heap (g: heap) : prop =
+  forall (c: hp_addr).
+    U64.v c + 8 < heap_size ==>
+    Seq.mem (obj_address c) (objects 0UL g) ==>
+    (let wz = getWosize (read_word g c) in
+     let nn = U64.v c + (U64.v wz + 1) * 8 in
+     nn + 8 < heap_size /\ nn < pow2 64 /\ nn % 8 == 0 ==>
+     Seq.mem (obj_address (U64.uint_to_t nn)) (objects 0UL g))
+
+/// contiguous_heap is preserved by makeWhite.
+/// Proof: color change preserves objects enumeration at every position and
+/// preserves getWosize at every position. So the same positions are enumerated
+/// and the same next-position computations hold.
+#push-options "--z3rlimit 200"
+let contiguous_heap_preserved_makeWhite (g: heap) (obj: obj_addr) : Lemma
+  (requires contiguous_heap g /\ Seq.mem obj (objects 0UL g))
+  (ensures contiguous_heap (makeWhite obj g))
+  = let g' = makeWhite obj g in
+    makeWhite_eq obj g;
+    color_change_preserves_objects g obj Header.White;
+    let aux (c: hp_addr) : Lemma
+      (requires U64.v c + 8 < heap_size /\
+               Seq.mem (obj_address c) (objects 0UL g'))
+      (ensures (let wz = getWosize (read_word g' c) in
+                let nn = U64.v c + (U64.v wz + 1) * 8 in
+                nn + 8 < heap_size /\ nn < pow2 64 /\ nn % 8 == 0 ==>
+                Seq.mem (obj_address (U64.uint_to_t nn)) (objects 0UL g')))
+      = ()
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// contiguous_heap is preserved by makeGray.
+#push-options "--z3rlimit 200"
+let contiguous_heap_preserved_makeGray (g: heap) (obj: obj_addr) : Lemma
+  (requires contiguous_heap g /\ Seq.mem obj (objects 0UL g))
+  (ensures contiguous_heap (makeGray obj g))
+  = let g' = makeGray obj g in
+    makeGray_eq obj g;
+    color_change_preserves_objects g obj Header.Gray;
+    let aux (c: hp_addr) : Lemma
+      (requires U64.v c + 8 < heap_size /\
+               Seq.mem (obj_address c) (objects 0UL g'))
+      (ensures (let wz = getWosize (read_word g' c) in
+                let nn = U64.v c + (U64.v wz + 1) * 8 in
+                nn + 8 < heap_size /\ nn < pow2 64 /\ nn % 8 == 0 ==>
+                Seq.mem (obj_address (U64.uint_to_t nn)) (objects 0UL g')))
+      = ()
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// contiguous_heap is preserved by makeBlack.
+#push-options "--z3rlimit 200"
+let contiguous_heap_preserved_makeBlack (g: heap) (obj: obj_addr) : Lemma
+  (requires contiguous_heap g /\ Seq.mem obj (objects 0UL g))
+  (ensures contiguous_heap (makeBlack obj g))
+  = let g' = makeBlack obj g in
+    makeBlack_eq obj g;
+    color_change_preserves_objects g obj Header.Black;
+    let aux (c: hp_addr) : Lemma
+      (requires U64.v c + 8 < heap_size /\
+               Seq.mem (obj_address c) (objects 0UL g'))
+      (ensures (let wz = getWosize (read_word g' c) in
+                let nn = U64.v c + (U64.v wz + 1) * 8 in
+                nn + 8 < heap_size /\ nn < pow2 64 /\ nn % 8 == 0 ==>
+                Seq.mem (obj_address (U64.uint_to_t nn)) (objects 0UL g')))
+      = ()
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// contiguous_heap is preserved by set_object_color_raw (covers blue and all colors).
+#push-options "--z3rlimit 200"
+let contiguous_heap_preserved_raw_color (g: heap) (obj: obj_addr) (col: U64.t{U64.v col < 4}) : Lemma
+  (requires contiguous_heap g /\ Seq.mem obj (objects 0UL g))
+  (ensures contiguous_heap (set_object_color_raw obj g col))
+  = let g' = set_object_color_raw obj g col in
+    raw_color_change_preserves_objects g obj col;
+    let aux (c: hp_addr) : Lemma
+      (requires U64.v c + 8 < heap_size /\
+               Seq.mem (obj_address c) (objects 0UL g'))
+      (ensures (let wz = getWosize (read_word g' c) in
+                let nn = U64.v c + (U64.v wz + 1) * 8 in
+                nn + 8 < heap_size /\ nn < pow2 64 /\ nn % 8 == 0 ==>
+                Seq.mem (obj_address (U64.uint_to_t nn)) (objects 0UL g')))
+      = header_at_preserved obj g col c
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// cursor_mem_advance: the key lemma for sweep cursor advancement.
+/// Given contiguous_heap and cursor_mem at c, proves cursor_mem at the next position.
+#push-options "--z3rlimit 300"
+let cursor_mem_advance (g: heap) (c: hp_addr) : Lemma
+  (requires contiguous_heap g /\ well_formed_heap g /\ Seq.length g == heap_size /\
+            cursor_mem c g /\ U64.v c + 8 < heap_size)
+  (ensures (let wz = getWosize (read_word g c) in
+            let nn = U64.v c + (U64.v wz + 1) * 8 in
+            nn < pow2 64 /\ nn % 8 == 0 /\ nn <= heap_size /\
+            nn + 8 < pow2 64 /\
+            cursor_mem (U64.uint_to_t nn) g))
+  = assert (Seq.mem (obj_address c) (objects 0UL g));
+    objects_nonempty_at c g;
+    cursor_advance_bounds g c;
+    let wz = getWosize (read_word g c) in
+    let nn = U64.v c + (U64.v wz + 1) * 8 in
+    // If nn + 8 >= heap_size: cursor_mem (uint_to_t nn) g is vacuously true
+    // If nn + 8 < heap_size: contiguous_heap gives obj_address(nn) ∈ objects 0UL g
+    ()
+#pop-options
+
+/// Transfer cursor_mem across objects_preserved (objects lists are equal).
+let cursor_mem_from_objects_preserved (g1 g2: heap) (c: U64.t) : Lemma
+  (requires objects_preserved g1 g2 /\ cursor_mem c g2)
+  (ensures cursor_mem c g1)
+  = ()

@@ -197,6 +197,14 @@ val gray_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
   : Lemma (requires is_gray x g /\ is_black y g)
           (ensures x <> y)
 
+/// Color depends only on the header word — if read_word at hd_address is the same,
+/// then color predicates are the same.
+val color_of_header_eq : (obj: obj_addr) -> (g1: heap) -> (g2: heap) ->
+  Lemma (requires read_word g1 (hd_address obj) == read_word g2 (hd_address obj))
+        (ensures is_gray obj g1 == is_gray obj g2 /\
+                 is_white obj g1 == is_white obj g2 /\
+                 is_black obj g1 == is_black obj g2)
+
 /// ---------------------------------------------------------------------------
 /// Tag Predicates
 /// ---------------------------------------------------------------------------

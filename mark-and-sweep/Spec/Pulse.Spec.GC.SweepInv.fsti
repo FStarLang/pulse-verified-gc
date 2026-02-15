@@ -260,6 +260,11 @@ val no_gray_at_preserved : (obj: obj_addr) -> (g_init: heap) -> (g_cur: heap) ->
                   read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
         (ensures ~(is_gray obj g_cur))
 
+/// Eliminate: extract per-object non-gray from no_gray_objects
+val no_gray_elim : (obj: obj_addr) -> (g: heap) ->
+  Lemma (requires no_gray_objects g /\ Seq.mem obj (objects 0UL g))
+        (ensures ~(is_gray obj g))
+
 /// No gray from empty-stack mark_inv: all gray objects are on (empty) stack
 val no_gray_intro : (g: heap) ->
   Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))

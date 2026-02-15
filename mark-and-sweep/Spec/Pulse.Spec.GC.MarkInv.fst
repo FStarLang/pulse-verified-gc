@@ -52,3 +52,7 @@ let mark_inv_step_preserves_objects g st =
   mark_step_preserves_objects g st
 
 let mark_inv_elim_density g st = ()
+
+let mark_inv_no_gray g st =
+  empty_stack_no_grey g st;
+  SweepInv.no_gray_intro g

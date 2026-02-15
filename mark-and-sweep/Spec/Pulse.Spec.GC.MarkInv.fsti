@@ -101,3 +101,11 @@ val mark_inv_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length 
 val mark_inv_elim_density : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
         (ensures SweepInv.heap_objects_dense g)
+
+/// ---------------------------------------------------------------------------
+/// No-gray elimination (empty stack => no gray objects)
+/// ---------------------------------------------------------------------------
+
+val mark_inv_no_gray : (g: heap) -> (st: seq obj_addr) ->
+  Lemma (requires mark_inv g st /\ Seq.length st = 0)
+        (ensures SweepInv.no_gray_objects g)

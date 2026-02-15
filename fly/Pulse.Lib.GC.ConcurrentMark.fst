@@ -48,6 +48,19 @@ ghost fn is_heap_length (h: heap_t)
   fold (is_heap h 's)
 }
 
+/// Establish conditional pointer-field membership via pointer_field_in_objects.
+/// Called inside push_children loop. Uses move_requires for conditional form.
+let pointer_field_conditional (g: Pulse.Spec.GC.Base.heap) (parent: obj_addr) (k: nat)
+  (field_addr: hp_addr) (v: U64.t)
+  : Lemma (requires SpecFields.well_formed_heap g /\ Seq.length g == heap_size /\
+                    Seq.mem parent (SpecFields.objects 0UL g) /\
+                    k < U64.v (SpecObject.wosize_of_object parent g) /\
+                    U64.v field_addr == U64.v parent + k * 8 /\
+                    v == SpecHeap.read_word g field_addr /\
+                    SpecFields.is_pointer_field v)
+          (ensures Seq.mem v (SpecFields.objects 0UL g))
+  = pointer_field_in_objects g parent k field_addr
+
 /// ---------------------------------------------------------------------------
 /// spec_field_address: compute field address
 /// ---------------------------------------------------------------------------
@@ -110,14 +123,29 @@ let blacken_bridge (g: heap_state) (obj: obj_addr)
 /// Preserves well_formed_heap.
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100"
-fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
+#push-options "--z3rlimit 200"
+fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t) (parent: obj_addr)
+                    (k: nat) (field_addr: hp_addr)
   requires is_heap heap 's ** is_gray_stack st 'gs **
-           pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size)
+           pure (SpecFields.well_formed_heap 's /\ Seq.length 's == heap_size /\
+                 contiguous_heap 's /\
+                 stack_valid 's 'gs /\
+                 Seq.mem parent (SpecFields.objects 0UL 's) /\
+                 k < U64.v (SpecObject.wosize_of_object parent 's) /\
+                 U64.v field_addr == U64.v parent + k * 8 /\
+                 v == spec_read_word 's (U64.v field_addr))
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
-           pure (SpecFields.well_formed_heap s2)
+           pure (SpecFields.well_formed_heap s2 /\
+                 contiguous_heap s2 /\
+                 stack_valid s2 gs2 /\
+                 objects_preserved s2 's /\
+                 SpecObject.wosize_of_object parent s2 == SpecObject.wosize_of_object parent 's)
 {
   if (U64.v v >= U64.v mword && U64.v v < heap_size && U64.v v % U64.v mword = 0) {
+    // v is a pointer (is_pointer_field v holds): establish membership
+    spec_read_word_eq 's field_addr;
+    pointer_field_conditional 's parent k field_addr v;
+    // Now: Seq.mem v (objects 0UL 's)
     let h_addr : hp_addr = U64.sub v mword;
     hp_addr_plus_8 h_addr;
     let hdr = read_word heap h_addr;
@@ -130,12 +158,20 @@ fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
       spec_read_word_eq 's h_addr;
       SpecHeap.hd_address_spec obj;
       U64.v_inj h_addr (SpecHeap.hd_address obj);
-      // Membership (derivable from well_formed_heap + parent field provenance)
-      assume_ (pure (Seq.mem obj (SpecFields.objects 0UL 's)));
       grayen_bridge 's obj;
       rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
            as (is_heap heap (SpecObject.makeGray obj 's));
+      // Contiguous heap preservation
+      contiguous_heap_preserved_makeGray 's obj;
+      // Stack validity: stack_valid preserved through makeGray, then cons
+      stack_valid_makeGray 's obj 'gs;
       push st obj;
+      with gs2. assert (is_gray_stack st gs2);
+      objects_preserved_makeGray 's obj;
+      objects_preserved_mem (SpecObject.makeGray obj 's) 's obj;
+      stack_valid_cons (SpecObject.makeGray obj 's) obj 'gs;
+      // Wosize preservation
+      makeGray_preserves_wosize_all 's obj parent;
       ()
     } else {
       ()
@@ -151,15 +187,25 @@ fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
 /// Preserves well_formed_heap.
 /// ---------------------------------------------------------------------------
 
-fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
+#push-options "--z3rlimit 300"
+fn push_children (heap: heap_t) (st: gray_stack) (parent: obj_addr)
+                 (h_addr: hp_addr) (wz: wosize)
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (U64.v wz <= pow2 54 - 1 /\
                  U64.v h_addr + U64.v mword < heap_size /\
                  spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size /\
                  Seq.length 's == heap_size /\
-                 SpecFields.well_formed_heap 's)
+                 SpecFields.well_formed_heap 's /\
+                 contiguous_heap 's /\
+                 stack_valid 's 'gs /\
+                 Seq.mem parent (SpecFields.objects 0UL 's) /\
+                 SpecHeap.hd_address parent == h_addr /\
+                 U64.v wz == U64.v (SpecObject.wosize_of_object parent 's))
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
-           pure (SpecFields.well_formed_heap s2)
+           pure (SpecFields.well_formed_heap s2 /\
+                 contiguous_heap s2 /\
+                 stack_valid s2 gs2 /\
+                 objects_preserved s2 's)
 {
   let mut i = 1UL;
 
@@ -169,7 +215,12 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
       is_heap heap s_i **
       is_gray_stack st gs_i **
       pure (U64.v vi >= 1 /\ U64.v vi <= U64.v wz + 1 /\
-            SpecFields.well_formed_heap s_i /\ Seq.length s_i == heap_size)
+            SpecFields.well_formed_heap s_i /\ Seq.length s_i == heap_size /\
+            contiguous_heap s_i /\
+            stack_valid s_i gs_i /\
+            objects_preserved s_i 's /\
+            Seq.mem parent (SpecFields.objects 0UL s_i) /\
+            U64.v (SpecObject.wosize_of_object parent s_i) == U64.v wz)
   {
     let curr_i = !i;
     assert (pure (spec_field_address (U64.v h_addr) (U64.v curr_i) < heap_size));
@@ -178,29 +229,43 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
     let field_addr : hp_addr = U64.add h_addr field_offset;
     is_heap_length heap;
     let v = read_word heap field_addr;
-    check_and_darken heap st v;
+    // field_addr = h_addr + curr_i * 8 = (parent - 8) + curr_i * 8 = parent + (curr_i - 1) * 8
+    // field index k = curr_i - 1, k < wosize since curr_i <= wz == wosize
+    SpecHeap.hd_address_spec parent;
+    check_and_darken heap st v parent (U64.v curr_i - 1) field_addr;
+    // check_and_darken guarantees: wfh, stack_valid, objects_preserved, wosize preserved
+    // Parent membership in new ghost follows from objects_preserved + old membership (SMT)
     i := U64.add curr_i 1UL
   }
 }
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Maybe push children (if scannable)
 /// Preserves well_formed_heap.
 /// ---------------------------------------------------------------------------
 
-fn maybe_push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
-                       (wz: wosize) (tag: U64.t)
+fn maybe_push_children (heap: heap_t) (st: gray_stack) (parent: obj_addr)
+                       (h_addr: hp_addr) (wz: wosize) (tag: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (U64.v wz <= pow2 54 - 1 /\
                  U64.v h_addr + U64.v mword < heap_size /\
                  spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size /\
                  SpecFields.well_formed_heap 's /\
-                 Seq.length 's == heap_size)
+                 Seq.length 's == heap_size /\
+                 contiguous_heap 's /\
+                 stack_valid 's 'gs /\
+                 Seq.mem parent (SpecFields.objects 0UL 's) /\
+                 SpecHeap.hd_address parent == h_addr /\
+                 U64.v wz == U64.v (SpecObject.wosize_of_object parent 's))
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
-           pure (SpecFields.well_formed_heap s2)
+           pure (SpecFields.well_formed_heap s2 /\
+                 contiguous_heap s2 /\
+                 stack_valid s2 gs2 /\
+                 objects_preserved s2 's)
 {
   if U64.lt tag no_scan_tag {
-    push_children heap st h_addr wz
+    push_children heap st parent h_addr wz
   }
 }
 
@@ -215,10 +280,13 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (Seq.length 'gs > 0 /\
                  SpecFields.well_formed_heap 's /\
+                 contiguous_heap 's /\
                  stack_valid 's 'gs)
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
            pure (SpecFields.well_formed_heap s2 /\
-                 stack_valid s2 gs2)
+                 contiguous_heap s2 /\
+                 stack_valid s2 gs2 /\
+                 objects_preserved s2 's)
 {
   // Pop: 'gs == Seq.cons f_addr tl
   let f_addr = pop st;
@@ -250,6 +318,9 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
        as (is_heap heap (SpecObject.makeBlack f_addr 's));
 
+  // Contiguous heap preservation
+  contiguous_heap_preserved_makeBlack 's f_addr;
+
   // Establish preconditions for maybe_push_children in the new ghost (makeBlack f_addr 's)
   // 1. Membership: f_addr in objects 0UL (makeBlack f_addr 's)
   objects_preserved_makeBlack 's f_addr;
@@ -272,11 +343,13 @@ fn mark_step (heap: heap_t) (st: gray_stack)
                 SpecObject.wosize_of_object f_addr 's));
 
   // Then push children (heap is now makeBlack f_addr 's, which is well_formed)
-  maybe_push_children heap st h_addr wz tag;
-  // Stack validity: each pushed child is in objects (from check_and_darken assume_)
-  // Will be proven when Step C eliminates the check_and_darken assume_
-  with s_post gs_post. assert (is_heap heap s_post ** is_gray_stack st gs_post);
-  assume_ (pure (stack_valid s_post gs_post));
+  // Establish stack_valid for the post-blacken, post-pop state
+  // After pop: gray stack is tl where 'gs == Seq.cons f_addr tl
+  // stack_valid 's 'gs ==> stack_valid 's tl (by stack_valid_tail)
+  // ==> stack_valid (makeBlack f_addr 's) tl (by stack_valid_makeBlack)
+  stack_valid_tail 's 'gs;
+  stack_valid_makeBlack 's f_addr tl;
+  maybe_push_children heap st f_addr h_addr wz tag;
   ()
 }
 #pop-options
@@ -289,9 +362,13 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 fn mark_loop (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'gs **
            pure (SpecFields.well_formed_heap 's /\
+                 contiguous_heap 's /\
                  stack_valid 's 'gs)
   ensures exists* s2 gs2. is_heap heap s2 ** is_gray_stack st gs2 **
-           pure (SpecFields.well_formed_heap s2)
+           pure (SpecFields.well_formed_heap s2 /\
+                 contiguous_heap s2 /\
+                 objects_preserved s2 's /\
+                 stack_valid s2 gs2)
 {
   let mut continue_ = true;
   while (
@@ -304,7 +381,9 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
     is_gray_stack st gs_i **
     pure (b == c) **
     pure (SpecFields.well_formed_heap s_i /\
-          stack_valid s_i gs_i)
+          contiguous_heap s_i /\
+          stack_valid s_i gs_i /\
+          objects_preserved s_i 's)
   {
     let empty = is_empty st;
     if empty {
