@@ -392,7 +392,7 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
 
 /// All objects in objects list have addresses >= 8
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 150"
-let rec objects_addresses_ge_8 (g: heap) (x: obj_addr)
+let objects_addresses_ge_8 (g: heap) (x: obj_addr)
   : Lemma (requires Seq.mem x (objects 0UL g))
           (ensures U64.v x >= 8)
           (decreases Seq.length g)

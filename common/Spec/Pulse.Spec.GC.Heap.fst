@@ -334,6 +334,11 @@ let unpack_object (g: heap) (h_addr: hp_addr)
       else
         let wz : wosize = U64.uint_to_t wz_raw in
         let obj_nat = U64.v h_addr + 8 in
+        assert (obj_nat >= 8);
+        assert (obj_nat < heap_size);
+        assert (U64.v h_addr % 8 == 0);
+        FStar.Math.Lemmas.lemma_mod_plus (U64.v h_addr) 1 8;
+        assert (obj_nat % 8 == 0);
         let obj : obj_addr = U64.uint_to_t obj_nat in
         let obj_end = obj_nat + U64.v wz * 8 in
         if obj_end > heap_size then None
@@ -361,6 +366,12 @@ let unpack_object_succeeds (g: heap) (h_addr: hp_addr) : Lemma
     let wz = Header.get_wosize (U64.v hdr) in
     let obj_nat = U64.v h_addr + 8 in
     assert (obj_nat + wz * 8 <= heap_size);
+    assert (obj_nat >= 8);
+    assert (obj_nat < heap_size);
+    // h_addr is hp_addr so U64.v h_addr % 8 == 0, hence (h_addr + 8) % 8 == 0
+    assert (U64.v h_addr % 8 == 0);
+    FStar.Math.Lemmas.lemma_mod_plus (U64.v h_addr) 1 8;
+    assert (obj_nat % 8 == 0);
     let obj : obj_addr = U64.uint_to_t obj_nat in
     read_fields_succeeds g obj wz 0
 
@@ -536,7 +547,10 @@ let rec update_entry_preserves_addrs
       if a = addr then ()
       else update_entry_preserves_addrs rest addr ol'
 
-/// Color-only update preserves pointer_closed (fields unchanged)
+/// Color-only update preserves pointer_closed (fields unchanged).
+/// Proof: color update preserves wz, fields, and address list,
+/// so pointer_closed evaluates identically.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 2"
 let rec update_color_preserves_closed
   (entries: list (obj_addr & object_l)) (addr: obj_addr) (c: Header.color_sem)
   : Lemma (requires pointer_closed entries)
@@ -548,14 +562,14 @@ let rec update_color_preserves_closed
     | [] -> ()
     | (a, ol) :: rest ->
       if a = addr then begin
-        // The updated entry has same fields as ol, so for_all on fields is identical
-        // The address list is preserved by update_entry_preserves_addrs
         update_entry_preserves_addrs entries addr {ol with color = c};
-        // pointer_closed checks: (1) addrs = map fst, (2) for_all on fields
-        // Both are unchanged since only color differs
-        admit ()  // TODO: unfold pointer_closed definition to show field checks unchanged
+        assert (({ol with color = c}).wz == ol.wz);
+        assert (({ol with color = c}).fields == ol.fields);
+        assert (List.Tot.map fst ((a, {ol with color = c}) :: rest) == 
+                List.Tot.map fst ((a, ol) :: rest))
       end else
         update_color_preserves_closed rest addr c
+#pop-options
 
 /// L1: Update the color of an object in heap_l
 let update_color_l (hl: heap_l) (addr: obj_addr) (c: Header.color_sem) 
