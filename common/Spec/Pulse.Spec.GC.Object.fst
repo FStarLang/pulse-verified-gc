@@ -68,8 +68,6 @@ let getColor (header: U64.t) : color =
   | Some c -> c
   | None -> White  // Invalid defaults to White
 
-let getColor_spec hdr = ()
-
 /// Note: getColor returns White for any header with an invalid color field
 /// (i.e., color bits == 3, which is unused)
 
@@ -82,6 +80,8 @@ let getColor_raw (hdr: U64.t)
       (c = 2 ==> getColor hdr = Black) /\
       (c = 3 ==> getColor hdr = White))
   = get_color_bound (U64.v hdr)
+
+let getColor_spec hdr = ()
 
 /// Gray or Black headers are always valid (have valid color bits)
 let gray_or_black_valid (hdr: U64.t)

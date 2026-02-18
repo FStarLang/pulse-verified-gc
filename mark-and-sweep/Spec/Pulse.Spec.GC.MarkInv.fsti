@@ -90,7 +90,7 @@ val mark_inv_step_scan : (g: heap) -> (obj: obj_addr) -> (tl: seq obj_addr) ->
 /// Objects preservation through mark_step
 /// ---------------------------------------------------------------------------
 
-val mark_inv_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
+val mark_inv_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) ->
   Lemma (requires mark_inv g st)
         (ensures objects 0UL (fst (mark_step g st)) == objects 0UL g)
 

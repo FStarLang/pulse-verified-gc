@@ -97,8 +97,19 @@ val write_word (g: heap) (addr: hp_addr) (value: U64.t)
            Seq.length result == Seq.length g /\
            read_word result addr == value)
 
-/// Write word characterization: byte-level expansion available as
-/// write_word_spec in the .fst (internal lemma, proof is () by definitional equality)
+/// Write word characterization: write_word produces per-byte updates
+val write_word_spec : (g: heap) -> (addr: hp_addr) -> (v: U64.t) ->
+  Lemma (let a = U64.v addr in
+         a + 8 <= Seq.length g /\
+         write_word g addr v ==
+    (let s = Seq.upd g a (uint64_to_uint8 v) in
+     let s = Seq.upd s (a+1) (uint64_to_uint8 (U64.shift_right v 8ul)) in
+     let s = Seq.upd s (a+2) (uint64_to_uint8 (U64.shift_right v 16ul)) in
+     let s = Seq.upd s (a+3) (uint64_to_uint8 (U64.shift_right v 24ul)) in
+     let s = Seq.upd s (a+4) (uint64_to_uint8 (U64.shift_right v 32ul)) in
+     let s = Seq.upd s (a+5) (uint64_to_uint8 (U64.shift_right v 40ul)) in
+     let s = Seq.upd s (a+6) (uint64_to_uint8 (U64.shift_right v 48ul)) in
+     Seq.upd s (a+7) (uint64_to_uint8 (U64.shift_right v 56ul))))
 
 /// ---------------------------------------------------------------------------
 /// Read/Write Lemmas

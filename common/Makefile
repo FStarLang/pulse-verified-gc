@@ -1,7 +1,7 @@
 # Makefile for common GC infrastructure
 #
-# Uses F*'s --dep full for dependency tracking and incremental builds.
-# Default target: verify all modules.
+# Hand-written dependency graph for parallel-safe builds (make -j8).
+# Default target: verify all spec+lib modules.
 
 FSTAR ?= fstar.exe
 PULSE_HOME ?= $(HOME)/pulse
@@ -30,9 +30,27 @@ FSTAR_PULSE_FLAGS = $(FSTAR_BASE) \
   --load_cmxs pulse \
   --already_cached 'FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address'
 
-# Source files
-SPEC_FILES  = $(wildcard Spec/*.fst Spec/*.fsti Lib/*.fst)
-PULSE_FILES = $(wildcard Pulse.Lib.GC/*.fst)
+# Spec+Lib checked files (explicit list)
+SPEC_CHECKED = \
+  Lib/Pulse.Lib.Header.fst.checked \
+  Lib/Pulse.Lib.Address.fst.checked \
+  Spec/Pulse.Spec.GC.Base.fsti.checked \
+  Spec/Pulse.Spec.GC.Base.fst.checked \
+  Spec/Pulse.Spec.GC.Heap.fsti.checked \
+  Spec/Pulse.Spec.GC.Heap.fst.checked \
+  Spec/Pulse.Spec.GC.Object.fsti.checked \
+  Spec/Pulse.Spec.GC.Object.fst.checked \
+  Spec/Pulse.Spec.GC.Graph.fst.checked \
+  Spec/Pulse.Spec.GC.Fields.fst.checked \
+  Spec/Pulse.Spec.GC.DFS.fst.checked \
+  Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
+  Spec/Pulse.Spec.GC.HeapModel.fst.checked
+
+# Pulse checked files (explicit list)
+PULSE_CHECKED = \
+  Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked \
+  Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
+  Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked
 
 # ------------------------------------------------------------------------------
 # Targets
@@ -42,34 +60,111 @@ PULSE_FILES = $(wildcard Pulse.Lib.GC/*.fst)
 
 all: verify
 
-# Spec dependency tracking (pure F*, no Pulse plugin)
-.depend.spec: $(SPEC_FILES)
-	$(FSTAR) --dep full $(FSTAR_SPEC_INCLUDES) $(FSTAR_SPEC_FLAGS) $^ > $@
-
-# Pulse dependency tracking (requires Pulse plugin)
-.depend.pulse: $(PULSE_FILES)
-	$(FSTAR) --dep full $(FSTAR_PULSE_INCLUDES) $(FSTAR_PULSE_FLAGS) $^ > $@
-
--include .depend.spec
--include .depend.pulse
-
-# Filter out external (absolute-path) entries — only build local modules
-LOCAL_CHECKED = $(filter-out /%, $(ALL_CHECKED_FILES))
-
-# Verify all modules (spec always, pulse if plugin available)
 verify: verify-spec
 	@echo "=== common: all modules verified ==="
 
-# Verify spec modules only (pure F*, no Pulse needed)
-verify-spec: .depend.spec
-	@$(MAKE) --no-print-directory $(filter Spec/% Lib/%, $(LOCAL_CHECKED))
+verify-spec: $(SPEC_CHECKED)
 
-# Verify Pulse modules (requires Pulse plugin)
-verify-pulse: .depend.pulse verify-spec
-	@$(MAKE) --no-print-directory $(filter Pulse.Lib.GC/%, $(LOCAL_CHECKED))
+verify-pulse: verify-spec $(PULSE_CHECKED)
 	@echo "=== common: Pulse modules verified ==="
 
-# Pattern rules for incremental verification
+# ------------------------------------------------------------------------------
+# Spec+Lib module dependencies (from module graph, validated against --dep full)
+# ------------------------------------------------------------------------------
+
+Lib/Pulse.Lib.Header.fst.checked: \
+	Lib/Pulse.Lib.Header.fst
+
+Lib/Pulse.Lib.Address.fst.checked: \
+	Lib/Pulse.Lib.Address.fst \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.Base.fsti.checked: \
+	Spec/Pulse.Spec.GC.Base.fsti
+
+Spec/Pulse.Spec.GC.Base.fst.checked: \
+	Spec/Pulse.Spec.GC.Base.fst \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.Heap.fsti.checked: \
+	Spec/Pulse.Spec.GC.Heap.fsti \
+	Lib/Pulse.Lib.Header.fst.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.Heap.fst.checked: \
+	Spec/Pulse.Spec.GC.Heap.fst \
+	Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	Lib/Pulse.Lib.Header.fst.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.Object.fsti.checked: \
+	Spec/Pulse.Spec.GC.Object.fsti \
+	Lib/Pulse.Lib.Header.fst.checked \
+	Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.Object.fst.checked: \
+	Spec/Pulse.Spec.GC.Object.fst \
+	Spec/Pulse.Spec.GC.Object.fsti.checked \
+	Lib/Pulse.Lib.Header.fst.checked \
+	Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.Graph.fst.checked: \
+	Spec/Pulse.Spec.GC.Graph.fst \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.Fields.fst.checked: \
+	Spec/Pulse.Spec.GC.Fields.fst \
+	Lib/Pulse.Lib.Header.fst.checked \
+	Spec/Pulse.Spec.GC.Object.fsti.checked \
+	Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.DFS.fst.checked: \
+	Spec/Pulse.Spec.GC.DFS.fst \
+	Spec/Pulse.Spec.GC.Graph.fst.checked
+
+Spec/Pulse.Spec.GC.HeapGraph.fst.checked: \
+	Spec/Pulse.Spec.GC.HeapGraph.fst \
+	Lib/Pulse.Lib.Address.fst.checked \
+	Spec/Pulse.Spec.GC.Graph.fst.checked \
+	Spec/Pulse.Spec.GC.Object.fsti.checked \
+	Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Spec/Pulse.Spec.GC.HeapModel.fst.checked: \
+	Spec/Pulse.Spec.GC.HeapModel.fst \
+	Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
+	Spec/Pulse.Spec.GC.Fields.fst.checked \
+	Spec/Pulse.Spec.GC.Graph.fst.checked \
+	Spec/Pulse.Spec.GC.Object.fsti.checked \
+	Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+# ------------------------------------------------------------------------------
+# Pulse module dependencies (from module graph, validated against --dep full)
+# ------------------------------------------------------------------------------
+
+Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked: \
+	Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst \
+	Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	Spec/Pulse.Spec.GC.Base.fsti.checked
+
+Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked: \
+	Pulse.Lib.GC/Pulse.Lib.GC.Object.fst \
+	Lib/Pulse.Lib.Header.fst.checked \
+	Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+
+Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked: \
+	Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst \
+	Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
+	Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+
+# ------------------------------------------------------------------------------
+# Pattern rules (recipes for verification)
+# ------------------------------------------------------------------------------
+
 Spec/%.fst.checked: Spec/%.fst
 	$(FSTAR) $(FSTAR_SPEC_INCLUDES) $(FSTAR_SPEC_FLAGS) $<
 
@@ -82,6 +177,10 @@ Lib/%.fst.checked: Lib/%.fst
 Pulse.Lib.GC/%.fst.checked: Pulse.Lib.GC/%.fst
 	$(FSTAR) $(FSTAR_PULSE_INCLUDES) $(FSTAR_PULSE_FLAGS) $<
 
+# ------------------------------------------------------------------------------
+# Cleanup
+# ------------------------------------------------------------------------------
+
 clean:
 	rm -f Spec/*.checked* Lib/*.checked* Pulse.Lib.GC/*.checked*
-	rm -f .depend.spec .depend.pulse
+	rm -f .depend .depend.spec .depend.pulse

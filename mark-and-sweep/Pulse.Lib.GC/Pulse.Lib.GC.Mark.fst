@@ -637,29 +637,55 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 
 /// Main mark loop: process gray objects until stack is empty
 /// Precondition: mark_inv (well_formed_heap + stack_props)
-/// Postcondition: mark_inv preserved, stack empty, objects list preserved
+/// Postcondition: mark_inv preserved, stack empty, objects list preserved, s2 == mark 's 'st
 fn mark_loop (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecMarkInv.mark_inv s2 st2 /\ Seq.length st2 == 0 /\
-                SpecFields.objects zero_hp_addr s2 == SpecFields.objects zero_hp_addr 's)
+                SpecFields.objects zero_hp_addr s2 == SpecFields.objects zero_hp_addr 's /\
+                s2 == SpecMark.mark 's 'st)
 {
+  SpecMarkInv.mark_inv_elim_wfh 's 'st;
+  SpecMarkInv.mark_inv_elim_sev 's 'st;
+  
+  let fuel_init : U64.t = U64.div (U64.uint_to_t heap_size) mword;
   let mut go = true;
+  let mut fuel_ref = fuel_init;
   
   while (!go)
-    invariant exists* vc s st_cur.
+    invariant exists* vc s st_cur (fv: U64.t).
       pts_to go vc **
+      pts_to fuel_ref fv **
       is_heap heap s **
       is_gray_stack st st_cur **
       pure (SpecMarkInv.mark_inv s st_cur /\
             (~vc ==> (Seq.length st_cur == 0)) /\
-            SpecFields.objects zero_hp_addr s == SpecFields.objects zero_hp_addr 's)
+            SpecFields.objects zero_hp_addr s == SpecFields.objects zero_hp_addr 's /\
+            SpecMark.mark_aux s st_cur (U64.v fv) == SpecMark.mark 's 'st)
   {
     let empty = is_empty st;
     if empty {
+      with _vc s_cur st_cur fv. assert (
+        pts_to go _vc **
+        pts_to fuel_ref fv **
+        is_heap heap s_cur **
+        is_gray_stack st st_cur);
+      SpecMarkInv.mark_inv_elim_wfh s_cur st_cur;
+      SpecMarkInv.mark_inv_elim_sev s_cur st_cur;
+      SpecMark.mark_aux_empty s_cur st_cur (U64.v fv);
       go := false
     } else {
+      let cur_fuel = !fuel_ref;
+      fuel_ref := U64.sub cur_fuel 1UL;
+      with _vc s_cur st_cur fv. assert (
+        pts_to go _vc **
+        pts_to fuel_ref fv **
+        is_heap heap s_cur **
+        is_gray_stack st st_cur);
+      SpecMarkInv.mark_inv_elim_wfh s_cur st_cur;
+      SpecMarkInv.mark_inv_elim_sev s_cur st_cur;
+      SpecMark.mark_aux_unfold s_cur st_cur (U64.v fv);
       mark_step heap st
     }
   }
