@@ -3,3 +3,4 @@
 *.smt2
 .cache/
 .depend
+.depend.*
