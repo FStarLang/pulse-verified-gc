@@ -4,3 +4,4 @@
 .cache/
 .depend
 .depend.*
+mark-and-sweep/.common-stamp
