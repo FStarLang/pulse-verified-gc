@@ -369,6 +369,40 @@ fn write_with_barrier
     heap_perm g' **
     pure (tri_color_inv g')
 {
+  admit ();
+  // Check if GC is active
+  let phase = get_phase gc;
+  
+  if (is_marking phase) {
+    // Write barrier needed: check colors
+    let src_color = read_color src;
+    
+    if (U64.eq src_color black) {
+      // Source is black - need to check target
+      let dst_color = read_color dst;
+      
+      if (U64.eq dst_color white) {
+        // CAS dst from white to gray
+        let _ = cas_color dst white gray;
+        
+        // If CAS succeeded, push to gray stack
+        // (simplified: always push, let mark step handle it)
+        push_to_gray_stack gc.gray_stack dst;
+        ()
+      } else {
+        ()
+      };
+      ()
+    } else {
+      ()
+    };
+    ()
+  } else {
+    ()
+  };
+  
+  // Perform the actual write
+  write_field src field_idx dst;
   admit ()
 }
 
