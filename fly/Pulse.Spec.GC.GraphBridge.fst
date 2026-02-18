@@ -596,7 +596,7 @@ let points_to (g: heap) (src dst: obj_addr) : GTot bool =
 val points_to_graph_equiv : (g: heap{well_formed_heap g /\ all_objects_well_formed g}) -> (src: obj_addr) -> (dst: obj_addr) ->
   Lemma (points_to g src dst <==> mem_graph_edge (heap_to_graph g) src dst)
 
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 80"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 150"
 let points_to_graph_equiv g src dst =
   let gr = heap_to_graph g in
   let objs = objects 0UL g in
@@ -625,6 +625,7 @@ let points_to_graph_equiv g src dst =
       (mem_graph_edge gr src dst)
       #nat
       #(fun i -> i < U64.v wz_src /\ i < pow2 61 /\
+                 U64.v src + FStar.Mul.(i * 8) < heap_size /\
                  (let field_addr = field_address src (U64.uint_to_t i) in
                   let field_val = read_word g field_addr in
                   is_pointer_field field_val /\ field_val = dst))

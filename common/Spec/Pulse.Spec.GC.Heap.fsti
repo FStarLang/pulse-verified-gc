@@ -8,6 +8,8 @@
 
 module Pulse.Spec.GC.Heap
 
+#set-options "--z3rlimit 10"
+
 open FStar.Seq
 open FStar.Mul
 

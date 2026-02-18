@@ -99,11 +99,11 @@ fn mark_complete_implies_live_black
   (roots: Seq.seq hp_addr)
   requires pure (
     sweep_precondition (reveal g) /\
-    (forall r. Seq.mem r roots ==> is_black r (reveal g))
+    (forall r. Seq.mem r roots ==> is_black_safe r (reveal g))
   )
   returns _: unit
   ensures pure (
-    forall h. is_reachable_from (reveal g) roots h ==> is_black h (reveal g)
+    forall h. is_reachable_from (reveal g) roots h ==> is_black_safe h (reveal g)
   )
 {
   // Proof by induction on reachability:
@@ -120,12 +120,12 @@ fn sweep_reclaims_only_unreachable
   (roots: Seq.seq hp_addr)
   requires pure (
     sweep_precondition (reveal g_before) /\
-    (forall r. Seq.mem r roots ==> is_black r (reveal g_before))
+    (forall r. Seq.mem r roots ==> is_black_safe r (reveal g_before))
   )
   returns _: unit
   ensures pure (
     forall h. is_reachable_from (reveal g_before) roots h ==>
-              ~(is_blue h (reveal g_after))
+              ~(is_blue_safe h (reveal g_after))
   )
 {
   // All reachable objects are black before sweep (by mark_complete_implies_live_black)
@@ -178,9 +178,9 @@ fn stw_sweep
 fn reset_to_white
   (h_addr: hp_addr)
   (#g: erased heap)
-  requires heap_perm g ** pure (is_black h_addr g)
+  requires heap_perm g ** pure (is_black_safe h_addr g)
   returns _: unit
-  ensures exists* g'. heap_perm g' ** pure (is_white h_addr g')
+  ensures exists* g'. heap_perm g' ** pure (is_white_safe h_addr g')
 {
   admit ()
 }
@@ -189,9 +189,9 @@ fn reset_to_white
 fn reclaim_object
   (h_addr: hp_addr)
   (#g: erased heap)
-  requires heap_perm g ** pure (is_white h_addr g)
+  requires heap_perm g ** pure (is_white_safe h_addr g)
   returns _: unit
-  ensures exists* g'. heap_perm g' ** pure (is_blue h_addr g')
+  ensures exists* g'. heap_perm g' ** pure (is_blue_safe h_addr g')
 {
   admit ()
 }

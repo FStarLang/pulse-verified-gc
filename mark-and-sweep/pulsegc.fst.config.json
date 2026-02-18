@@ -1,0 +1,19 @@
+{
+  "fstar_exe": "fstar.exe",
+  "options": [
+    "--cache_checked_modules",
+    "--load_cmxs", "pulse",
+    "--warn_error", "-321",
+    "--already_cached", "FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address -Pulse.Lib.Bitvec"
+  ],
+  "include_dirs": [
+    "Spec",
+    "Lib",
+    "Pulse.Lib.GC",
+    "../common/Spec",
+    "../common/Lib",
+    "../common/Pulse.Lib.GC",
+    "${PULSE_HOME}/lib/pulse/lib",
+    "${PULSE_HOME}/out/lib/pulse"
+  ]
+}

@@ -161,6 +161,7 @@ let replace_range (g: heap)
 /// Word Write Operations
 /// ---------------------------------------------------------------------------
 
+#push-options "--z3rlimit 100"
 let write_word (g: heap) (addr: hp_addr) (value: U64.t) 
   : Pure heap
          (requires True)
@@ -200,6 +201,7 @@ let write_word (g: heap) (addr: hp_addr) (value: U64.t)
   result
 
 let write_word_spec g addr v = ()
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Read/Write Lemmas

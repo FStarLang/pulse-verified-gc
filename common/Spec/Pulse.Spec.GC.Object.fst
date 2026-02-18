@@ -69,6 +69,16 @@ let getColor (header: U64.t) : color =
 /// Note: getColor returns White for any header with an invalid color field
 /// (i.e., color bits == 3, which is unused)
 
+/// getColor characterization in terms of raw color bits
+let getColor_raw (hdr: U64.t)
+  : Lemma (
+      let c = get_color (U64.v hdr) in
+      (c = 0 ==> getColor hdr = White) /\
+      (c = 1 ==> getColor hdr = Gray) /\
+      (c = 2 ==> getColor hdr = Black) /\
+      (c = 3 ==> getColor hdr = White))
+  = get_color_bound (U64.v hdr)
+
 /// Gray or Black headers are always valid (have valid color bits)
 let gray_or_black_valid (hdr: U64.t)
   : Lemma (requires getColor hdr == Gray \/ getColor hdr == Black)
@@ -76,9 +86,11 @@ let gray_or_black_valid (hdr: U64.t)
   = valid_color_unpack (get_color (U64.v hdr))
 
 /// Get tag from header word
+#push-options "--z3rlimit 50"
 let getTag (header: U64.t) : (t:U64.t{U64.v t < 256}) =
   get_tag_bound (U64.v header);
   U64.logand header tag_mask
+#pop-options
 
 let getTag_bound (hdr: U64.t) : Lemma (U64.v (getTag hdr) < 256) =
   get_tag_bound (U64.v hdr)

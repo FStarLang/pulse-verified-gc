@@ -37,6 +37,11 @@ val mark_inv_elim_wfh : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
         (ensures well_formed_heap g)
 
+/// Elimination (stack_elements_valid)
+val mark_inv_elim_sev : (g: heap) -> (st: seq obj_addr) ->
+  Lemma (requires mark_inv g st)
+        (ensures stack_elements_valid g st)
+
 /// ---------------------------------------------------------------------------
 /// Non-quantified extraction lemmas for Pulse use
 /// ---------------------------------------------------------------------------
@@ -57,6 +62,6 @@ val mark_inv_obj_fields_bound : (g: heap) -> (obj: obj_addr) ->
 /// Preservation through mark_step
 /// ---------------------------------------------------------------------------
 
-val mark_inv_step : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
+val mark_inv_step : (g: heap) -> (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) ->
   Lemma (requires mark_inv g st)
         (ensures mark_inv (fst (mark_step g st)) (snd (mark_step g st)))

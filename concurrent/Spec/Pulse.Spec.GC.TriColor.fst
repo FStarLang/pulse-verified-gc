@@ -57,6 +57,10 @@ let tricolor_pack_unpack (c: tricolor_sem)
 let tricolor_unpack_pack (w: FStar.UInt.uint_t 64{w < 4})
   : Lemma (tricolor_pack (Some?.v (tricolor_unpack w)) == w) = ()
 
+/// Is object blue (free/unallocated)? Checks raw color bits for value 3.
+let is_blue (obj: obj_addr) (g: heap) : GTot bool =
+  Header.get_color (U64.v (read_word g (hd_address obj))) = 3
+
 /// ---------------------------------------------------------------------------
 /// Tri-Color Invariant Definition
 /// ---------------------------------------------------------------------------

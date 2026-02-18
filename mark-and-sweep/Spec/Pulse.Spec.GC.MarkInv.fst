@@ -19,6 +19,8 @@ let mark_inv_intro g st = ()
 
 let mark_inv_elim_wfh g st = ()
 
+let mark_inv_elim_sev g st = ()
+
 let mark_inv_head_gray g st =
   stack_head_is_gray g st
 

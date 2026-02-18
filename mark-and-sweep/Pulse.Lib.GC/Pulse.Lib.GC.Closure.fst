@@ -116,9 +116,13 @@ fn parent_closure_of_infix_opt (heap: heap_t) (infix_addr: hp_addr)
   } else {
     let parent_f_addr = U64.sub f_addr offset_bytes;
     
-    // Check if parent_f_addr >= mword (required for hd_address)
+    // Check all preconditions for hd_address:
+    // parent_f_addr >= mword, < heap_size, and word-aligned
     if (U64.lt parent_f_addr mword) {
-      // Invalid: would produce negative header address
+      None
+    } else if (U64.gte parent_f_addr (U64.uint_to_t heap_size)) {
+      None
+    } else if (U64.rem parent_f_addr mword <> 0UL) {
       None
     } else {
       Some (hd_address parent_f_addr)
