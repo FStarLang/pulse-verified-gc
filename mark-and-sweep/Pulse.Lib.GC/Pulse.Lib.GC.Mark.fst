@@ -246,6 +246,8 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   maybe_push_children heap st h_addr wz tag;
   
   // mark_inv preservation
+  // Extract stack_elements_valid for mark_step's refinement
+  SpecMarkInv.mark_inv_elim_sev 's 'st;
   // spec mark_inv_step gives: mark_inv (fst (mark_step 's 'st)) (snd (mark_step 's 'st))
   SpecMarkInv.mark_inv_step 's 'st;
   with s_post st_post. assert (is_heap heap s_post ** is_gray_stack st st_post);

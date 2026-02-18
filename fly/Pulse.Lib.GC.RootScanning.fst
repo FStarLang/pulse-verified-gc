@@ -57,13 +57,13 @@ assume val push_gray_stack :
 
 /// Atomic Color Operations
 assume val read_color_atomic :
-  (h_addr: hp_addr) -> (#g: erased heap) ->
+  (h_addr: obj_addr) -> (#g: erased heap) ->
   stt_atomic U64.t emp_inames
       (heap_perm g)
-      (fun c -> heap_perm g ** pure (c == get_object_color (reveal g) h_addr))
+      (fun c -> heap_perm g ** pure (U64.v c < 4))
       
 assume val cas_color_atomic :
-  (h_addr: hp_addr) -> (expected: color) -> (new_color: color) -> (#g: erased heap) ->
+  (h_addr: obj_addr) -> (expected: color) -> (new_color: color) -> (#g: erased heap) ->
   stt_atomic bool emp_inames
       (heap_perm g)
       (fun b -> heap_perm (if b then set_color (reveal g) h_addr new_color else reveal g))

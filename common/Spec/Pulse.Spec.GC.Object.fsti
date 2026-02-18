@@ -59,6 +59,14 @@ type wosize = w:U64.t{U64.v w < pow2 54}
 /// Extract color from header word (bits 8-9)
 val getColor (hdr: U64.t) : color
 
+/// getColor characterization in terms of raw color bits (Header.get_color)
+val getColor_raw : (hdr: U64.t) -> Lemma (
+      let c = get_color (U64.v hdr) in
+      (c = 0 ==> getColor hdr = White) /\
+      (c = 1 ==> getColor hdr = Gray) /\
+      (c = 2 ==> getColor hdr = Black) /\
+      (c = 3 ==> getColor hdr = White))
+
 /// Gray or Black headers are always valid
 val gray_or_black_valid : (hdr: U64.t) ->
   Lemma (requires getColor hdr == Gray \/ getColor hdr == Black)

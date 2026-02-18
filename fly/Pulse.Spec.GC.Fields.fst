@@ -16,6 +16,7 @@ module U64 = FStar.UInt64
 open Pulse.Spec.GC.Base
 open Pulse.Spec.GC.Heap
 open Pulse.Spec.GC.Object
+module Header = Pulse.Lib.Header
 
 /// ---------------------------------------------------------------------------
 /// Type Aliases
@@ -600,6 +601,23 @@ let rec seq_filter_mem_implies_pred (#a:eqtype) (f: a -> GTot bool) (s: Seq.seq 
   end
 #pop-options
 
+/// Is object blue (free/unallocated)? Checks raw color bits for value 3.
+let is_blue (obj: obj_addr) (g: heap) : GTot bool =
+  Header.get_color (U64.v (read_word g (hd_address obj))) = 3
+
+/// is_blue means color bits are 3, which getColor maps to White.
+/// Hence is_blue implies ~is_black and ~is_gray, and implies is_white.
+let is_blue_iff (obj: obj_addr) (g: heap)
+  : Lemma (is_blue obj g ==> (is_black obj g == false /\
+                               is_gray obj g == false /\
+                               is_white obj g == true)) =
+  let hdr = read_word g (hd_address obj) in
+  getColor_raw hdr;
+  color_of_object_spec obj g;
+  is_black_iff obj g;
+  is_gray_iff obj g;
+  is_white_iff obj g
+
 /// Helper: check if object is black
 let is_black_safe (h: hp_addr) (g: heap) : GTot bool =
   if U64.v h >= U64.v mword then
@@ -609,8 +627,10 @@ let is_black_safe (h: hp_addr) (g: heap) : GTot bool =
 let is_gray_safe (h: hp_addr) (g: heap) : GTot bool =
   if U64.v h >= U64.v mword then is_gray h g else false
 
+/// In the 4-color model, "white safe" means truly white (color bits = 0),
+/// excluding blue objects (color bits = 3) which getColor also maps to White.
 let is_white_safe (h: hp_addr) (g: heap) : GTot bool =
-  if U64.v h >= U64.v mword then is_white h g else false
+  if U64.v h >= U64.v mword then is_white h g && not (is_blue h g) else false
 
 let is_blue_safe (h: hp_addr) (g: heap) : GTot bool =
   if U64.v h >= U64.v mword then is_blue h g else false

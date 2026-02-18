@@ -46,11 +46,10 @@ let lemma_address_add_no_overflow (addr: nat) (offset: nat)
   : Lemma (requires addr < heap_size /\ offset <= pow2 57)
           (ensures addr + offset < pow2 64)
 =
-  // heap_size = 1048576 = 2^20, offset <= 2^57, so sum <= 2^20 + 2^57 < 2^64
-  ML.pow2_lt_compat 64 57;
-  assert (heap_size < pow2 21);
-  assert (addr + offset <= pow2 21 + pow2 57);
-  assert (pow2 21 + pow2 57 < pow2 64)
+  // heap_size <= pow2 57, offset <= pow2 57, so sum < pow2 57 + pow2 57 = pow2 58 < pow2 64
+  ML.pow2_lt_compat 64 58;
+  ML.pow2_double_sum 57;
+  assert (addr + offset < pow2 58)
 
 /// Lemma: (1 + wz) * 8 doesn't overflow for valid wosize
 let lemma_object_size_no_overflow (wz: nat)

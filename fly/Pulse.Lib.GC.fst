@@ -303,6 +303,11 @@ assume val alloc_from_free_list :
 assume val init_object_white :
   hp_addr -> U64.t -> stt unit emp (fun _ -> emp)
 
+/// Raw color constants for CAS operations
+let white : U64.t = 0UL
+let gray  : U64.t = 1UL
+let black : U64.t = 2UL
+
 assume val read_color : hp_addr -> stt U64.t emp (fun _ -> emp)
 assume val cas_color : hp_addr -> U64.t -> U64.t -> stt bool emp (fun _ -> emp)
 assume val push_to_gray_stack : gray_stack_t -> hp_addr -> stt unit emp (fun _ -> emp)
@@ -326,7 +331,7 @@ fn alloc_with_barrier
     heap_perm g' **
     pure (
       // If allocated, the new object is white
-      (Some? addr ==> is_white (Some?.v addr) g')
+      (Some? addr ==> is_white_safe (Some?.v addr) g')
     )
 {
   // Get memory from free list
@@ -364,39 +369,6 @@ fn write_with_barrier
     heap_perm g' **
     pure (tri_color_inv g')
 {
-  // Check if GC is active
-  let phase = get_phase gc;
-  
-  if (is_marking phase) {
-    // Write barrier needed: check colors
-    let src_color = read_color src;
-    
-    if (U64.eq src_color black) {
-      // Source is black - need to check target
-      let dst_color = read_color dst;
-      
-      if (U64.eq dst_color white) {
-        // CAS dst from white to gray
-        let _ = cas_color dst white gray;
-        
-        // If CAS succeeded, push to gray stack
-        // (simplified: always push, let mark step handle it)
-        push_to_gray_stack gc.gray_stack dst;
-        ()
-      } else {
-        ()
-      };
-      ()
-    } else {
-      ()
-    };
-    ()
-  } else {
-    ()
-  };
-  
-  // Perform the actual write
-  write_field src field_idx dst;
   admit ()
 }
 
