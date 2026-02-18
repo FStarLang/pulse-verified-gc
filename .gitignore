@@ -2,3 +2,4 @@
 *.checked.lax
 *.smt2
 .cache/
+.depend
