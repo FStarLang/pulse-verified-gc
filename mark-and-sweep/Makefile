@@ -36,6 +36,28 @@ FST_FILES = $(wildcard Spec/*.fst Spec/*.fsti Pulse.Lib.GC/*.fst)
 # Targets
 # ------------------------------------------------------------------------------
 
+# Specification modules (sequential mark-and-sweep)
+SPEC_MODULES = \
+Spec/Pulse.Spec.GC.SeqMemLemmas.fst \
+Spec/Pulse.Spec.GC.Mark.fst \
+Spec/Pulse.Spec.GC.Sweep.fst \
+Spec/Pulse.Spec.GC.SweepInv.fst \
+Spec/Pulse.Spec.GC.Correctness.fst \
+Spec/Pulse.Spec.GC.GCPost.fst \
+Spec/Pulse.Spec.GC.MarkInv.fst \
+Spec/Pulse.Spec.GC.Logical.fst
+
+# Implementation modules (sequential mark-and-sweep)
+# Heap, Object, Stack are now in common/Pulse.Lib.GC/
+LIB_MODULES = \
+Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst \
+Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst \
+Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst \
+Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst \
+Pulse.Lib.GC/Pulse.Lib.GC.fst
+
+ALL_MODULES = $(SPEC_MODULES) $(LIB_MODULES)
+
 .PHONY: all verify extract clean
 
 all: verify

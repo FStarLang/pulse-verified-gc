@@ -97,18 +97,8 @@ val write_word (g: heap) (addr: hp_addr) (value: U64.t)
            Seq.length result == Seq.length g /\
            read_word result addr == value)
 
-/// Write word characterization: write_word produces per-byte updates
-val write_word_spec : (g: heap) -> (addr: hp_addr) -> (v: U64.t) ->
-  Lemma (write_word g addr v ==
-    (let a = U64.v addr in
-     let s = Seq.upd g a (uint64_to_uint8 v) in
-     let s = Seq.upd s (a+1) (uint64_to_uint8 (U64.shift_right v 8ul)) in
-     let s = Seq.upd s (a+2) (uint64_to_uint8 (U64.shift_right v 16ul)) in
-     let s = Seq.upd s (a+3) (uint64_to_uint8 (U64.shift_right v 24ul)) in
-     let s = Seq.upd s (a+4) (uint64_to_uint8 (U64.shift_right v 32ul)) in
-     let s = Seq.upd s (a+5) (uint64_to_uint8 (U64.shift_right v 40ul)) in
-     let s = Seq.upd s (a+6) (uint64_to_uint8 (U64.shift_right v 48ul)) in
-     Seq.upd s (a+7) (uint64_to_uint8 (U64.shift_right v 56ul))))
+/// Write word characterization: byte-level expansion available as
+/// write_word_spec in the .fst (internal lemma, proof is () by definitional equality)
 
 /// ---------------------------------------------------------------------------
 /// Read/Write Lemmas
@@ -192,8 +182,34 @@ type object_l = {
   fields : s:seq U64.t{Seq.length s == U64.v wz};
 }
 
+/// Read field values from object starting at obj address
+val read_fields (g: heap) (obj: obj_addr) (wz: nat) (i: nat)
+  : Ghost (option (seq U64.t))
+          (requires i <= wz)
+          (ensures fun r -> match r with
+                         | Some s -> Seq.length s == wz - i
+                         | None -> True)
+
 /// Total color extraction (maps 3→White; color 3 never occurs in OCaml)
 val unpack_color_total (c: FStar.UInt.uint_t 64) : Header.color_sem
+
+/// read_fields succeeds when object fits in heap
+val read_fields_succeeds (g: heap) (obj: obj_addr) (wz: nat) (i: nat)
+  : Lemma 
+    (requires i <= wz /\ U64.v obj + wz * 8 <= heap_size /\ U64.v obj % 8 == 0)
+    (ensures Some? (read_fields g obj wz i))
+
+/// read_fields_index: the j-th element equals read_word at the right address
+val read_fields_index (g: heap) (obj: obj_addr) (wz: nat) (start: nat) (j: nat)
+  : Lemma
+    (requires start <= wz /\ j >= start /\ j < wz /\
+             U64.v obj + wz * 8 <= heap_size /\ U64.v obj % 8 == 0 /\
+             Some? (read_fields g obj wz start))
+    (ensures (let addr_nat = U64.v obj + j * 8 in
+              addr_nat < heap_size /\ addr_nat % 8 == 0 /\
+              addr_nat < pow2 64 /\
+              Seq.index (Some?.v (read_fields g obj wz start)) (j - start) ==
+              read_word g (U64.uint_to_t addr_nat <: hp_addr)))
 
 /// Parse one object at header address
 val unpack_object (g: heap) (h_addr: hp_addr) : GTot (option (obj_addr & object_l))
@@ -229,18 +245,137 @@ val unpack_object_color (g: heap) (h_addr: hp_addr) : Lemma
   (ensures (snd (Some?.v (unpack_object g h_addr))).color == 
            unpack_color_total (Header.get_color (U64.v (read_word g h_addr))))
 
+/// When unpack_object succeeds, fields match read_fields output
+val unpack_object_fields (g: heap) (h_addr: hp_addr) : Lemma
+  (requires Some? (unpack_object g h_addr))
+  (ensures (let (obj, ol) = Some?.v (unpack_object g h_addr) in
+            Some? (read_fields g obj (U64.v ol.wz) 0) /\
+            ol.fields == Some?.v (read_fields g obj (U64.v ol.wz) 0)))
+
 /// Recursive walk: parse all objects from h_addr (always succeeds)
 val unpack_objects (g: heap) (h_addr: hp_addr) 
   : GTot (list (obj_addr & object_l))
 
-/// Check pointer closure
+/// Unfolding: unpack_objects returns [] when start is past heap end
+val unpack_objects_empty_start (g: heap) (h_addr: hp_addr) : Lemma
+  (requires U64.v h_addr + 8 >= heap_size)
+  (ensures unpack_objects g h_addr == [])
+
+/// Unfolding: unpack_objects returns [] when object overflows heap
+val unpack_objects_empty_overflow (g: heap) (h_addr: hp_addr) : Lemma
+  (requires U64.v h_addr + 8 < heap_size /\
+            (None? (unpack_object g h_addr) \/
+             (Some? (unpack_object g h_addr) /\
+              (let (_, ol) = Some?.v (unpack_object g h_addr) in
+               let next_nat = U64.v h_addr + (U64.v ol.wz + 1) * 8 in
+               next_nat > heap_size \/ next_nat >= pow2 64))))
+  (ensures unpack_objects g h_addr == [])
+
+/// Unfolding: when unpack_object succeeds and next is within heap, unpack_objects returns cons
+val unpack_objects_cons (g: heap) (h_addr: hp_addr) : Lemma
+  (requires U64.v h_addr + 8 < heap_size /\
+            Some? (unpack_object g h_addr) /\
+            (let (_, ol) = Some?.v (unpack_object g h_addr) in
+             let next_nat = U64.v h_addr + (U64.v ol.wz + 1) * 8 in
+             next_nat <= heap_size /\ next_nat < pow2 64 /\
+             next_nat < heap_size /\ next_nat % 8 == 0))
+  (ensures (let (obj, ol) = Some?.v (unpack_object g h_addr) in
+            let next_nat = U64.v h_addr + (U64.v ol.wz + 1) * 8 in
+            let next : hp_addr = U64.uint_to_t next_nat in
+            unpack_objects g h_addr == (obj, ol) :: unpack_objects g next))
+
+/// Unfolding: terminal object (next >= heap_size)
+val unpack_objects_singleton (g: heap) (h_addr: hp_addr) : Lemma
+  (requires U64.v h_addr + 8 < heap_size /\
+            Some? (unpack_object g h_addr) /\
+            (let (_, ol) = Some?.v (unpack_object g h_addr) in
+             let next_nat = U64.v h_addr + (U64.v ol.wz + 1) * 8 in
+             next_nat <= heap_size /\ next_nat < pow2 64 /\
+             next_nat >= heap_size))
+  (ensures (let (obj, ol) = Some?.v (unpack_object g h_addr) in
+            unpack_objects g h_addr == [(obj, ol)]))
+
+/// Head element is in unpack_objects addresses
+val unpack_objects_head (g: heap) (h_addr: hp_addr) : Lemma
+  (requires U64.v h_addr + 8 < heap_size /\
+            Some? (unpack_object g h_addr) /\
+            (let (_, ol) = Some?.v (unpack_object g h_addr) in
+             let next_nat = U64.v h_addr + (U64.v ol.wz + 1) * 8 in
+             next_nat <= heap_size /\ next_nat < pow2 64))
+  (ensures (let (obj, _) = Some?.v (unpack_object g h_addr) in
+            List.Tot.mem obj (List.Tot.map fst (unpack_objects g h_addr))))
+
+/// Tail membership monotonicity
+val unpack_objects_mem_tail (g: heap) (h_addr: hp_addr) (x: obj_addr) : Lemma
+  (requires U64.v h_addr + 8 < heap_size /\
+            Some? (unpack_object g h_addr) /\
+            (let (_, ol) = Some?.v (unpack_object g h_addr) in
+             let next_nat = U64.v h_addr + (U64.v ol.wz + 1) * 8 in
+             next_nat <= heap_size /\ next_nat < pow2 64 /\
+             next_nat < heap_size /\ next_nat % 8 == 0 /\
+             List.Tot.mem x (List.Tot.map fst (unpack_objects g (U64.uint_to_t next_nat)))))
+  (ensures List.Tot.mem x (List.Tot.map fst (unpack_objects g h_addr)))
+
+/// Per-entry pointer check
+let entry_check (ol: object_l) (addrs: list obj_addr) : Tot bool =
+  if U64.v ol.wz = 0 then true
+  else
+    List.Tot.for_all (fun (fv: U64.t) ->
+      if U64.v fv >= 8 && U64.v fv < heap_size && U64.v fv % 8 = 0
+      then List.Tot.mem fv addrs
+      else true
+    ) (Seq.seq_to_list ol.fields)
+
+/// Safe per-entry pointer check at a heap address (total, handles None)
+let entry_check_at (g: heap) (h: hp_addr) (addrs: list obj_addr) : GTot bool =
+  match unpack_object g h with
+  | None -> true
+  | Some (_, ol) -> entry_check ol addrs
+
+/// Check pointer closure against an external address list
+val pointer_closed_ext (entries: list (obj_addr & object_l)) (addrs: list obj_addr) : GTot bool
+
+/// Check pointer closure (defined as pointer_closed_ext with map fst)
 val pointer_closed (entries: list (obj_addr & object_l)) : GTot bool
+
+/// pointer_closed == pointer_closed_ext with map fst
+val pointer_closed_ext_eq (entries: list (obj_addr & object_l))
+  : Lemma (pointer_closed entries == pointer_closed_ext entries (List.Tot.map fst entries))
+
+/// pointer_closed_ext unfolds on cons
+val pointer_closed_ext_cons (entry: (obj_addr & object_l)) (rest: list (obj_addr & object_l)) (addrs: list obj_addr)
+  : Lemma (pointer_closed_ext (entry :: rest) addrs ==
+           (entry_check (snd entry) addrs && pointer_closed_ext rest addrs))
+
+/// pointer_closed_ext on empty list
+val pointer_closed_ext_nil (addrs: list obj_addr)
+  : Lemma (pointer_closed_ext [] addrs = true)
+
+/// pointer_closed from universal entry_check_at at position 0UL
+/// Uses entry_check_at (total/safe) instead of entry_check+Some?.v to avoid subtyping issues
+val pointer_closed_from_universal_0 (g: heap) (addrs: list obj_addr) : Lemma
+  (requires addrs == List.Tot.map fst (unpack_objects g zero_addr) /\
+    (forall (h: hp_addr). 
+      (U64.v h + 8 < heap_size /\
+       (match unpack_object g h with
+        | None -> True
+        | Some (_, ol) ->
+          let next_nat = U64.v h + (U64.v ol.wz + 1) * 8 in
+          next_nat <= heap_size /\ next_nat < pow2 64 /\
+          List.Tot.mem (U64.uint_to_t (U64.v h + 8)) addrs)) ==>
+      entry_check_at g h addrs = true))
+  (ensures pointer_closed (unpack_objects g zero_addr) = true)
 
 /// Logical heap: well-formed list of objects with pointer closure
 type heap_l = entries:list (obj_addr & object_l){pointer_closed entries}
 
 /// Top-level unpack: parse raw heap into logical form
 val unpack (g: heap) : GTot (option heap_l)
+
+/// Bridge: pointer_closed implies unpack succeeds
+val pointer_closed_implies_unpack (g: heap) : Lemma
+  (requires pointer_closed (unpack_objects g 0UL) = true)
+  (ensures Some? (unpack g))
 
 /// Lookup an object by address
 val lookup (l: heap_l) (obj: obj_addr) : GTot (option object_l)
@@ -279,13 +414,18 @@ val update_color_l (hl: heap_l) (addr: obj_addr) (c: Header.color_sem) : GTot he
 val update_color_l_preserves_domain (hl: heap_l) (addr: obj_addr) (c: Header.color_sem)
   : Lemma (heap_l_domain (update_color_l hl addr c) == heap_l_domain hl)
 
+/// Check if a field value is valid w.r.t. an address list (computational, avoids subtyping)
+let valid_field_value (v: U64.t) (addrs: list obj_addr) : Tot bool =
+  if U64.v v >= 8 && U64.v v < heap_size && U64.v v % 8 = 0
+  then List.Tot.mem v addrs
+  else true
+
 /// L2: Update a field of an object in heap_l
 val update_field_l (hl: heap_l) (addr: obj_addr) (i: nat) (v: U64.t)
   : Ghost heap_l
     (requires (match lookup hl addr with
               | Some ol -> i < U64.v ol.wz /\
-                (U64.v v >= 8 && U64.v v < heap_size && U64.v v % 8 = 0 ==> 
-                 List.Tot.mem v (heap_l_domain hl))
+                valid_field_value v (heap_l_domain hl) = true
               | None -> True))
     (ensures fun _ -> True)
 
@@ -293,8 +433,7 @@ val update_field_l (hl: heap_l) (addr: obj_addr) (i: nat) (v: U64.t)
 val update_field_l_preserves_domain (hl: heap_l) (addr: obj_addr) (i: nat) (v: U64.t)
   : Lemma (requires (match lookup hl addr with
               | Some ol -> i < U64.v ol.wz /\
-                (U64.v v >= 8 && U64.v v < heap_size && U64.v v % 8 = 0 ==> 
-                 List.Tot.mem v (heap_l_domain hl))
+                valid_field_value v (heap_l_domain hl) = true
               | None -> True))
           (ensures heap_l_domain (update_field_l hl addr i v) == heap_l_domain hl)
 

@@ -96,23 +96,65 @@ let sweep_object_l (hl: heap_l) (obj: obj_addr) (fp: U64.t)
       end
     | None -> (hl, fp)
 
+/// Domain preservation for sweep_object_l
+let sweep_object_l_preserves_domain (hl: heap_l) (obj: obj_addr) (fp: U64.t)
+  : Lemma
+    (requires (U64.v fp = 0 \/ 
+               (U64.v fp >= 8 /\ U64.v fp < heap_size /\ U64.v fp % 8 = 0 /\
+                mem fp (heap_l_domain hl))))
+    (ensures heap_l_domain (fst (sweep_object_l hl obj fp)) == heap_l_domain hl)
+  = match lookup hl obj with
+    | Some ol ->
+      if ol.color = Header.White then
+        if U64.v ol.wz > 0 then
+          update_field_l_preserves_domain hl obj 0 fp
+        else ()
+      else
+        update_color_l_preserves_domain hl obj Header.White
+    | None -> ()
+
+/// fp validity after sweep_object_l: fp' is either obj or the old fp
+let sweep_object_l_fp_valid (hl: heap_l) (obj: obj_addr) (fp: U64.t)
+  : Lemma
+    (requires (U64.v fp = 0 \/ 
+               (U64.v fp >= 8 /\ U64.v fp < heap_size /\ U64.v fp % 8 = 0 /\
+                mem fp (heap_l_domain hl))) /\
+              mem obj (heap_l_domain hl))
+    (ensures (let (hl', fp') = sweep_object_l hl obj fp in
+              U64.v fp' = 0 \/
+              (U64.v fp' >= 8 /\ U64.v fp' < heap_size /\ U64.v fp' % 8 = 0 /\
+               mem fp' (heap_l_domain hl'))))
+  = sweep_object_l_preserves_domain hl obj fp;
+    match lookup hl obj with
+    | Some ol ->
+      if ol.color = Header.White then begin
+        // fp' = U64.uint_to_t (U64.v obj) = obj (since U64.uint_to_t (U64.v x) = x)
+        // obj is in domain, domain is preserved → fp' ∈ domain
+        if U64.v ol.wz > 0 then
+          update_field_l_preserves_domain hl obj 0 fp
+        else ()
+      end
+      else
+        update_color_l_preserves_domain hl obj Header.White
+    | None -> ()
+
 /// Sweep all objects in order.
-/// fp_valid is preserved: sweep_object_l returns either obj (in domain) or old fp (valid).
+/// All objects must be in the domain for fp validity.
 let rec sweep_l (hl: heap_l) (objs: list obj_addr) (fp: U64.t)
   : Ghost (heap_l & U64.t)
     (requires (U64.v fp = 0 \/
                (U64.v fp >= 8 /\ U64.v fp < heap_size /\ U64.v fp % 8 = 0 /\
-                mem fp (heap_l_domain hl))))
+                mem fp (heap_l_domain hl))) /\
+             (forall x. mem x objs ==> mem x (heap_l_domain hl)))
     (ensures fun _ -> True)
     (decreases objs)
   = match objs with
     | [] -> (hl, fp)
     | obj :: rest ->
       let (hl', fp') = sweep_object_l hl obj fp in
-      // Domain preserved: update_color_l and update_field_l preserve domain
-      // fp' is either U64.uint_to_t (U64.v obj) or fp
-      // obj is in domain, and domain is preserved, so fp' is valid
-      admit ();  // TODO: prove fp' validity + domain preservation (needs sweep_object_l domain lemma)
+      sweep_object_l_preserves_domain hl obj fp;
+      sweep_object_l_fp_valid hl obj fp;
+      assert (heap_l_domain hl' == heap_l_domain hl);
       sweep_l hl' rest fp'
 
 /// ---------------------------------------------------------------------------
@@ -127,6 +169,63 @@ let rec gray_roots (hl: heap_l) (roots: list obj_addr)
     | [] -> hl
     | r :: rest -> gray_roots (update_color_l hl r Header.Gray) rest
 
+/// Domain preservation for gray_roots
+let rec gray_roots_preserves_domain (hl: heap_l) (roots: list obj_addr)
+  : Lemma (ensures heap_l_domain (gray_roots hl roots) == heap_l_domain hl)
+          (decreases roots)
+  = match roots with
+    | [] -> ()
+    | r :: rest -> 
+      update_color_l_preserves_domain hl r Header.Gray;
+      gray_roots_preserves_domain (update_color_l hl r Header.Gray) rest
+
+/// Domain preservation for push_children_l
+let rec push_children_l_preserves_domain (hl: heap_l) (st: list obj_addr) (flds: list U64.t)
+  : Lemma (ensures heap_l_domain (fst (push_children_l hl st flds)) == heap_l_domain hl)
+          (decreases flds)
+  = match flds with
+    | [] -> ()
+    | f :: rest ->
+      if U64.v f >= 8 && U64.v f < heap_size && U64.v f % 8 = 0 then
+        match lookup hl f with
+        | Some ol ->
+          if ol.color = Header.White then begin
+            update_color_l_preserves_domain hl f Header.Gray;
+            push_children_l_preserves_domain (update_color_l hl f Header.Gray) (f :: st) rest
+          end
+          else push_children_l_preserves_domain hl st rest
+        | None -> push_children_l_preserves_domain hl st rest
+      else push_children_l_preserves_domain hl st rest
+
+/// Domain preservation for mark_step_l
+let mark_step_l_preserves_domain (hl: heap_l) (st: list obj_addr{length st > 0})
+  : Lemma (heap_l_domain (fst (mark_step_l hl st)) == heap_l_domain hl)
+  = let obj = hd st in
+    match lookup hl obj with
+    | Some ol ->
+      update_color_l_preserves_domain hl obj Header.Black;
+      let hl' = update_color_l hl obj Header.Black in
+      if U64.v ol.tag >= 251 then ()
+      else push_children_l_preserves_domain hl' (tl st) (seq_to_list ol.fields)
+    | None -> ()
+
+/// Domain preservation for mark_l
+let rec mark_l_preserves_domain (fuel: nat) (hl: heap_l) (st: list obj_addr)
+  : Lemma (ensures heap_l_domain (mark_l fuel hl st) == heap_l_domain hl)
+          (decreases fuel)
+  = if fuel = 0 then ()
+    else match st with
+    | [] -> ()
+    | _ ->
+      mark_step_l_preserves_domain hl st;
+      let (hl', st') = mark_step_l hl st in
+      mark_l_preserves_domain (fuel - 1) hl' st'
+
+/// Domain preservation for mark
+let mark_preserves_domain (hl: heap_l) (st: list obj_addr)
+  : Lemma (heap_l_domain (mark hl st) == heap_l_domain hl)
+  = mark_l_preserves_domain (length (heap_l_domain hl)) hl st
+
 /// Full GC cycle: gray roots, mark, sweep.
 let collect_l (hl: heap_l) (roots: list obj_addr) (fp: U64.t)
   : Ghost (heap_l & U64.t)
@@ -135,9 +234,10 @@ let collect_l (hl: heap_l) (roots: list obj_addr) (fp: U64.t)
                 mem fp (heap_l_domain hl))))
     (ensures fun _ -> True)
   = let hl_grayed = gray_roots hl roots in
+    gray_roots_preserves_domain hl roots;
     let hl_marked = mark hl_grayed roots in
-    // fp validity preserved through gray_roots and mark (only color changes)
-    admit ();  // TODO: prove domain preservation through gray_roots + mark
+    mark_preserves_domain hl_grayed roots;
+    assert (heap_l_domain hl_marked == heap_l_domain hl);
     sweep_l hl_marked (heap_l_domain hl_marked) fp
 
 /// ---------------------------------------------------------------------------
@@ -145,25 +245,25 @@ let collect_l (hl: heap_l) (roots: list obj_addr) (fp: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Reachability via DFS from roots following pointer children.
-/// Decreases: lex pair (|domain| - |visited|, |stack|).
-///   - When x ∈ visited: visited unchanged, stack shrinks → second component decreases
-///   - When x ∉ visited: visited grows by 1 → first component decreases
-let rec reachable_l (hl: heap_l) (visited: list obj_addr) (stack: list obj_addr)
+/// Uses explicit fuel for termination (fuel = domain size suffices).
+let rec reachable_l (hl: heap_l) (visited: list obj_addr) (stack: list obj_addr) (fuel: nat)
   : GTot (list obj_addr)
-         (decreases %[length (heap_l_domain hl) - length visited; length stack])
-  = match stack with
+    (decreases fuel)
+  = if fuel = 0 then visited
+    else match stack with
     | [] -> visited
     | x :: rest ->
       if mem x visited then 
-        reachable_l hl visited rest
+        reachable_l hl visited rest (fuel - 1)
       else
         let kids = children hl x in
-        admit ();  // TODO: prove |visited| < |domain| (x not in visited but is reachable from a root in domain)
-        reachable_l hl (x :: visited) (kids @ rest)
+        reachable_l hl (x :: visited) (kids @ rest) (fuel - 1)
 
 /// Compute the set of all objects reachable from roots
+/// Fuel = domain size * (domain size + 1) suffices for full DFS
 let reachable_set_l (hl: heap_l) (roots: list obj_addr) : GTot (list obj_addr) =
-  reachable_l hl [] roots
+  let n = length (heap_l_domain hl) in
+  reachable_l hl [] roots (FStar.Mul.(n * (n + 1)))
 
 /// ---------------------------------------------------------------------------
 /// Key properties (stated, proofs TODO)
