@@ -21,7 +21,7 @@ FSTAR_PULSE_INCLUDES = $(COMMON_INCLUDES) \
   --include $(PULSE_HOME)/out/lib/pulse
 
 # F* base options
-FSTAR_BASE = --cache_checked_modules
+FSTAR_BASE = --cache_checked_modules --report_assumes warn
 
 FSTAR_SPEC_FLAGS = $(FSTAR_BASE) \
   --already_cached 'FStar -Pulse.Spec.GC -Pulse.Lib.Header -Pulse.Lib.Address'

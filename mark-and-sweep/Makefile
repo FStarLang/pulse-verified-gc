@@ -29,7 +29,8 @@ FSTAR_LIB_INCLUDES = $(COMMON_INCLUDES) \
 # F* base options
 FSTAR_BASE = \
   --cache_checked_modules \
-  --warn_error -321
+  --warn_error -321 \
+  --report_assumes warn
 
 FSTAR_SPEC_FLAGS = $(FSTAR_BASE) \
   --already_cached 'FStar -Pulse.Spec.GC'
