@@ -42,7 +42,6 @@ FSTAR_LIB_FLAGS = $(FSTAR_BASE) \
 # Spec checked files (explicit list)
 SPEC_CHECKED = \
   Spec/Pulse.Spec.GC.SeqMemLemmas.fst.checked \
-  Spec/Pulse.Spec.GC.Logical.fst.checked \
   Spec/Pulse.Spec.GC.GCPost.fsti.checked \
   Spec/Pulse.Spec.GC.GCPost.fst.checked \
   Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
@@ -110,12 +109,6 @@ $(C)/Pulse.Lib.GC/%.checked: | .common-pulse-stamp
 
 Spec/Pulse.Spec.GC.SeqMemLemmas.fst.checked: \
 	Spec/Pulse.Spec.GC.SeqMemLemmas.fst
-
-Spec/Pulse.Spec.GC.Logical.fst.checked: \
-	Spec/Pulse.Spec.GC.Logical.fst \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked \
-	$(C)/Lib/Pulse.Lib.Header.fst.checked
 
 Spec/Pulse.Spec.GC.GCPost.fsti.checked: \
 	Spec/Pulse.Spec.GC.GCPost.fsti \
