@@ -570,8 +570,55 @@ let rec sweep_aux_white_in_objs_becomes_blue g objs fp x =
   end
 #pop-options
 
-/// ---------------------------------------------------------------------------
-/// Sweep Top-Level Lemmas
+/// sweep_aux: blue objects stay blue (sweep_object is identity for blue)
+val sweep_aux_blue_stays_blue : (g: heap) -> (objs: seq obj_addr) -> (fp: obj_addr) -> (x: obj_addr) ->
+  Lemma (requires is_blue x g /\ Seq.mem x objs /\
+                  well_formed_heap g /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
+                  (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
+        (ensures is_blue x (fst (sweep_aux g objs fp)))
+        (decreases Seq.length objs)
+
+#push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
+let rec sweep_aux_blue_stays_blue g objs fp x =
+  if Seq.length objs = 0 then ()
+  else begin
+    let obj = Seq.head objs in
+    let (g', fp') = sweep_object g obj fp in
+    Seq.lemma_index_is_nth objs 0;
+    sweep_object_preserves_objects g obj fp;
+    sweep_object_preserves_wf g obj fp;
+    coerce_tail_lemma objs;
+    assert (is_vertex_set (HeapGraph.coerce_to_vertex_list (Seq.tail objs)));
+    if x = obj then begin
+      // x is blue → sweep_object is identity: (g, fp)
+      colors_exclusive x g;
+      assert (~(is_white x g));
+      assert (~(is_black x g));
+      assert (g' == g);
+      assert (fp' == fp);
+      // x ∉ tail (vertex set)
+      HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
+      assert (~(Seq.mem x (Seq.tail objs)));
+      // x still blue in g', use non_member_color for tail
+      is_blue_iff x g';
+      sweep_aux_non_member_color g' (Seq.tail objs) fp' x;
+      is_blue_iff x (fst (sweep_aux g' (Seq.tail objs) fp'))
+    end else begin
+      // x ≠ obj: color_locality preserves x's color
+      sweep_object_color_locality g obj x fp;
+      is_blue_iff x g;
+      is_blue_iff x g';
+      assert (is_blue x g');
+      Seq.lemma_mem_inversion objs;
+      if is_white obj g then assert (Seq.mem fp' (objects 0UL g'))
+      else assert (fp' == fp);
+      sweep_aux_blue_stays_blue g' (Seq.tail objs) fp' x
+    end
+  end
+#pop-options
+
 /// ---------------------------------------------------------------------------
 
 // Helper lemma: sweep_aux preserves objects
@@ -678,6 +725,23 @@ let sweep_white_becomes_blue g fp =
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
+/// After sweep, blue objects stay blue (sweep_object is identity for blue)
+val sweep_blue_stays_blue : (g: heap) -> (fp: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ noGreyObjects g /\ (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
+        (ensures (forall (x: obj_addr). 
+                   Seq.mem x (objects 0UL g) /\ is_blue x g ==> 
+                   is_blue x (fst (sweep g fp))))
+
+let sweep_blue_stays_blue g fp = 
+  sweep_preserves_objects g fp;
+  objects_is_vertex_set g;
+  let aux (x: obj_addr) : Lemma 
+    (requires Seq.mem x (objects 0UL g) /\ is_blue x g)
+    (ensures is_blue x (fst (sweep g fp)))
+  = sweep_aux_blue_stays_blue g (objects 0UL g) fp x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
 /// After sweep: all objects are white or blue
 val sweep_resets_colors : (g: heap) -> (fp: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\
@@ -689,6 +753,7 @@ val sweep_resets_colors : (g: heap) -> (fp: obj_addr) ->
 let sweep_resets_colors g fp = 
   sweep_black_survives g fp;
   sweep_white_becomes_blue g fp;
+  sweep_blue_stays_blue g fp;
   sweep_preserves_objects g fp;
   let g' = fst (sweep g fp) in
   let aux (x: obj_addr) : Lemma 
@@ -699,7 +764,7 @@ let sweep_resets_colors g fp =
     if is_black x g then ()
     else if is_white x g then ()
     else if is_gray x g then ()
-    else admit() // blue stays blue — sweep_object is identity for blue
+    else () // blue stays blue — proven by sweep_blue_stays_blue
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 

@@ -2244,16 +2244,6 @@ let mark_preserves_no_blue g st =
   in
   Classical.forall_intro (Classical.move_requires aux)
 
-/// mark preserves no_pointer_to_blue (field data unchanged + no new blue)
-val mark_preserves_no_pointer_to_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  Lemma (requires no_pointer_to_blue g)
-        (ensures no_pointer_to_blue (mark g st))
-
-let mark_preserves_no_pointer_to_blue g st =
-  mark_aux_preserves_objects g st (heap_size / U64.v mword);
-  mark_preserves_wf g st;
-  admit() // TODO: mark preserves fields, so points_to unchanged; mark doesn't create blue
-
 /// ---------------------------------------------------------------------------
 /// 5.3 Gray objects become black after mark
 /// ---------------------------------------------------------------------------
@@ -3207,9 +3197,78 @@ val mark_preserves_wosize : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{s
 let mark_preserves_wosize g st x =
   mark_aux_preserves_wosize g st (heap_size / U64.v mword) x
 
-/// ---------------------------------------------------------------------------
-/// 5.12 Proof of mark_reachable_is_black (forward direction)
-/// ---------------------------------------------------------------------------
+/// mark preserves exists_field_pointing_to_unchecked (field data unchanged)
+val mark_preserves_efptu : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  (src: obj_addr) -> (wz: U64.t{U64.v wz < pow2 54}) -> (dst: hp_addr) ->
+  Lemma (requires Seq.mem src (objects 0UL g) /\ U64.v wz <= U64.v (wosize_of_object src g))
+        (ensures exists_field_pointing_to_unchecked (mark g st) src wz dst ==
+                 exists_field_pointing_to_unchecked g src wz dst)
+        (decreases U64.v wz)
+
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let rec mark_preserves_efptu g st src wz dst =
+  if wz = 0UL then ()
+  else begin
+    let gm = mark g st in
+    let idx = U64.sub wz 1UL in
+    let field_addr_raw = U64.add_mod src (U64.mul_mod idx mword) in
+    // get_field_addr_eq bridges: get_field g src wz == read_word g far
+    // where far = add_mod src (mul_mod (wz-1) mword) = field_addr_raw
+    // Need: hd_address(src) + mword * wz + mword <= heap_size
+    wf_implies_object_fits g src;
+    mark_preserves_wf g st;
+    mark_aux_preserves_objects g st (heap_size / U64.v mword);
+    wf_implies_object_fits gm src;
+    HeapGraph.get_field_addr_eq g src wz;
+    HeapGraph.get_field_addr_eq gm src wz;
+    mark_preserves_get_field g st src wz;
+    mark_preserves_wosize g st src;
+    if U64.v field_addr_raw >= heap_size || U64.v field_addr_raw % 8 <> 0 then ()
+    else begin
+      // read_word gm far == get_field gm src wz == get_field g src wz == read_word g far
+      assert (read_word gm field_addr_raw == read_word g field_addr_raw);
+      mark_preserves_efptu g st src idx dst
+    end
+  end
+#pop-options
+
+/// mark preserves points_to
+val mark_preserves_points_to : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  (src: obj_addr) -> (dst: obj_addr) ->
+  Lemma (requires Seq.mem src (objects 0UL g))
+        (ensures points_to (mark g st) src dst == points_to g src dst)
+
+let mark_preserves_points_to g st src dst =
+  let gm = mark g st in
+  mark_preserves_wosize g st src;
+  let wz = wosize_of_object src g in
+  let wz_m = wosize_of_object src gm in
+  assert (wz == wz_m);
+  wosize_of_object_bound src g;
+  wosize_of_object_bound src gm;
+  mark_preserves_efptu g st src wz dst
+
+/// mark preserves no_pointer_to_blue (field data unchanged + no new blue)
+val mark_preserves_no_pointer_to_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  Lemma (requires no_pointer_to_blue g)
+        (ensures no_pointer_to_blue (mark g st))
+
+#push-options "--z3rlimit 400 --fuel 0 --ifuel 0"
+let mark_preserves_no_pointer_to_blue g st =
+  let gm = mark g st in
+  mark_aux_preserves_objects g st (heap_size / U64.v mword);
+  mark_preserves_wf g st;
+  let aux (src: obj_addr) (dst: obj_addr) : Lemma
+    (Seq.mem src (objects 0UL gm) /\ points_to gm src dst ==> ~(is_blue dst gm))
+  = if Seq.mem src (objects 0UL gm) && points_to gm src dst then begin
+      assert (Seq.mem src (objects 0UL g));
+      mark_preserves_points_to g st src dst;
+      wosize_of_object_bound src g;
+      mark_aux_no_new_blue g st (heap_size / U64.v mword) dst
+    end
+  in
+  Classical.forall_intro_2 aux
+#pop-options
 
 /// Actual proof: every object reachable from roots is black after mark
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 200"
