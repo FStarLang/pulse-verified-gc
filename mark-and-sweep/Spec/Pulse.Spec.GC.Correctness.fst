@@ -144,6 +144,7 @@ val end_to_end_correctness :
       root_props h_init roots /\
       (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
       no_black_objects h_init /\
+      no_pointer_to_blue h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
       (let graph = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -169,9 +170,12 @@ val end_to_end_correctness :
          Seq.mem x g_sweep.vertices /\ is_black x h_mark ==>
          successors g_init x == successors g_sweep x) /\
       
-       (* PILLAR 4: STATE RESET — all objects white after sweep *)
+       (* PILLAR 4: COLOR RESET — no gray or black after sweep, reachable objects white *)
        (forall (x: obj_addr). 
          Seq.mem x g_sweep.vertices ==>
+         (is_white x h_sweep \/ is_blue x h_sweep)) /\
+       (forall (x: obj_addr).
+         Seq.mem x g_sweep.vertices /\ is_black x h_mark ==>
          is_white x h_sweep) /\
       
        (* PILLAR 5: DATA TRANSPARENCY for reachable objects *)
@@ -215,8 +219,9 @@ let end_to_end_correctness h_init st roots fp =
     = graph_vertices_mem h_init x
   in FStar.Classical.forall_intro bridge_init;
   
-  // PILLAR 4: All white after sweep
+  // PILLAR 4: Colors after sweep (white or blue; reachable objects white)
   sweep_resets_colors h_mark fp;
+  sweep_resets_black_to_white h_mark fp;
   
   // PILLAR 5: Data preservation
   gc_preserves_data h_init st fp
@@ -230,6 +235,7 @@ val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
                   root_props h_init roots /\
                   (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
                   no_black_objects h_init /\
+                  no_pointer_to_blue h_init /\
                   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
                   (let graph = create_graph h_init in
                    let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -264,6 +270,7 @@ val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_ad
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
                   root_props h_init roots /\
                   no_black_objects h_init /\
+                  no_pointer_to_blue h_init /\
                   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
                   (let graph = create_graph h_init in
                    let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -298,6 +305,7 @@ val gc_postcondition_from_correctness :
       root_props h_init roots /\
       (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
       no_black_objects h_init /\
+      no_pointer_to_blue h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
       (let graph = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in

@@ -16,25 +16,27 @@ open Pulse.Spec.GC.Base
 open Pulse.Spec.GC.Object
 open Pulse.Spec.GC.Fields
 
-/// Abstract postcondition: well_formed_heap + all objects white
+/// Abstract postcondition: well_formed_heap + no gray or black objects
 val gc_postcondition (h_final: heap) : prop
 
-/// Abstract: all objects are white (pillar 4 — state reset)
-val all_objects_white (h_final: heap) : prop
+/// Abstract: no gray or black objects (pillar 4 — color reset)
+val no_gray_or_black_objects (h_final: heap) : prop
 
 /// Introduce gc_postcondition from its parts
 val gc_postcondition_intro : (h_final: heap) ->
   Lemma (requires well_formed_heap h_final /\
-                  (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> is_white x h_final))
+                  (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> 
+                    is_white x h_final \/ is_blue x h_final))
         (ensures gc_postcondition h_final)
 
-/// Introduce gc_postcondition from well_formed_heap (proven) + all_objects_white (abstract)
+/// Introduce gc_postcondition from well_formed_heap (proven) + no_gray_or_black_objects (abstract)
 val gc_postcondition_from_parts : (h_final: heap) ->
-  Lemma (requires well_formed_heap h_final /\ all_objects_white h_final)
+  Lemma (requires well_formed_heap h_final /\ no_gray_or_black_objects h_final)
         (ensures gc_postcondition h_final)
 
 /// Eliminate gc_postcondition to recover its parts
 val gc_postcondition_elim : (h_final: heap) ->
   Lemma (requires gc_postcondition h_final)
         (ensures well_formed_heap h_final /\
-                 (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> is_white x h_final))
+                 (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> 
+                   is_white x h_final \/ is_blue x h_final))

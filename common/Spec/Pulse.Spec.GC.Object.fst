@@ -68,8 +68,7 @@ let getColor (header: U64.t) : color =
   | Some c -> c
   | None -> White  // Invalid defaults to White
 
-/// Note: getColor returns White for any header with an invalid color field
-/// (i.e., color bits == 3, which is unused)
+/// Color encoding: White=0, Gray=1, Blue=2, Black=3 (matches OCaml 4.14)
 
 /// getColor characterization in terms of raw color bits
 let getColor_raw (hdr: U64.t)
@@ -77,8 +76,8 @@ let getColor_raw (hdr: U64.t)
       let c = get_color (U64.v hdr) in
       (c = 0 ==> getColor hdr = White) /\
       (c = 1 ==> getColor hdr = Gray) /\
-      (c = 2 ==> getColor hdr = Black) /\
-      (c = 3 ==> getColor hdr = White))
+      (c = 2 ==> getColor hdr = Blue) /\
+      (c = 3 ==> getColor hdr = Black))
   = get_color_bound (U64.v hdr)
 
 let getColor_spec hdr = ()
@@ -342,6 +341,10 @@ let is_white (obj_addr: obj_addr) (g: heap) : GTot bool =
 let is_gray (obj_addr: obj_addr) (g: heap) : GTot bool =
   get_object_color g obj_addr = Gray
 
+/// Is object blue (free-list)?
+let is_blue (obj_addr: obj_addr) (g: heap) : GTot bool =
+  get_object_color g obj_addr = Blue
+
 /// ---------------------------------------------------------------------------
 /// Color Characterization Lemmas
 /// ---------------------------------------------------------------------------
@@ -357,6 +360,10 @@ let is_black_iff (h_addr: obj_addr) (g: heap)
 /// is_white means color_of_object = White  
 let is_white_iff (h_addr: obj_addr) (g: heap)
   : Lemma (is_white h_addr g <==> color_of_object h_addr g = White) = ()
+
+/// is_blue means color_of_object = Blue
+let is_blue_iff (h_addr: obj_addr) (g: heap)
+  : Lemma (is_blue h_addr g <==> color_of_object h_addr g = Blue) = ()
 
 /// ---------------------------------------------------------------------------
 /// Color Disjointness Lemmas (trivial with algebraic color type!)
@@ -425,6 +432,10 @@ let makeWhite (obj_addr: obj_addr) (g: heap) : GTot heap =
 let makeGray (obj_addr: obj_addr) (g: heap) : GTot heap =
   set_color g obj_addr Gray
 
+/// Make object blue (free-list)
+let makeBlue (obj_addr: obj_addr) (g: heap) : GTot heap =
+  set_color g obj_addr Blue
+
 /// Equation lemmas connecting make* to set_object_color
 let makeBlack_eq (h_addr: obj_addr) (g: heap)
   : Lemma (makeBlack h_addr g == set_object_color h_addr g Black) = ()
@@ -434,6 +445,9 @@ let makeWhite_eq (h_addr: obj_addr) (g: heap)
 
 let makeGray_eq (h_addr: obj_addr) (g: heap)
   : Lemma (makeGray h_addr g == set_object_color h_addr g Gray) = ()
+
+let makeBlue_eq (h_addr: obj_addr) (g: heap)
+  : Lemma (makeBlue h_addr g == set_object_color h_addr g Blue) = ()
 
 let makeWhite_spec (obj: obj_addr) (g: heap)
   : Lemma (makeWhite obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) White)) = ()
@@ -807,6 +821,20 @@ let makeWhite_is_white (h_addr: obj_addr) (g: heap)
 let makeGray_is_gray (h_addr: obj_addr) (g: heap)
   : Lemma (is_gray h_addr (makeGray h_addr g)) = 
   colorHeader_getColor (read_header g h_addr) Gray
+
+let makeBlue_is_blue (h_addr: obj_addr) (g: heap)
+  : Lemma (is_blue h_addr (makeBlue h_addr g)) = 
+  colorHeader_getColor (read_header g h_addr) Blue
+
+/// set_object_color with non-Blue color preserves ~(is_blue x) for all x
+let set_color_preserves_not_blue (obj: obj_addr) (x: obj_addr) (g: heap) (c: color)
+  : Lemma (requires c <> Blue /\ ~(is_blue x g))
+          (ensures ~(is_blue x (set_object_color obj g c)))
+  = if x = obj then colorHeader_getColor (read_header g obj) c
+    else begin
+      hd_address_injective obj x;
+      color_change_other_object g obj x c
+    end
 
 /// ---------------------------------------------------------------------------
 /// Color Change Preservation Lemmas (for fsti)

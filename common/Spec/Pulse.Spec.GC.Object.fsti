@@ -67,8 +67,8 @@ val getColor_raw : (hdr: U64.t) -> Lemma (
       let c = get_color (U64.v hdr) in
       (c = 0 ==> getColor hdr = White) /\
       (c = 1 ==> getColor hdr = Gray) /\
-      (c = 2 ==> getColor hdr = Black) /\
-      (c = 3 ==> getColor hdr = White))
+      (c = 2 ==> getColor hdr = Blue) /\
+      (c = 3 ==> getColor hdr = Black))
 
 /// Expose getColor definition (needed for Pulse bridge)
 val getColor_spec : (hdr: U64.t) ->
@@ -164,6 +164,7 @@ val wosize_of_object_spec : (h_addr: obj_addr) -> (g: heap) ->
 val is_black (h_addr: obj_addr) (g: heap) : GTot bool
 val is_white (h_addr: obj_addr) (g: heap) : GTot bool
 val is_gray (h_addr: obj_addr) (g: heap) : GTot bool
+val is_blue (h_addr: obj_addr) (g: heap) : GTot bool
 
 /// ---------------------------------------------------------------------------
 /// Color Characterization Lemmas
@@ -180,6 +181,10 @@ val is_black_iff (h_addr: obj_addr) (g: heap)
 /// is_white means color_of_object = White  
 val is_white_iff (h_addr: obj_addr) (g: heap)
   : Lemma (is_white h_addr g <==> color_of_object h_addr g = White)
+
+/// is_blue means color_of_object = Blue
+val is_blue_iff (h_addr: obj_addr) (g: heap)
+  : Lemma (is_blue h_addr g <==> color_of_object h_addr g = Blue)
 
 /// ---------------------------------------------------------------------------
 /// Color Disjointness Lemmas (trivial with algebraic type)
@@ -228,6 +233,7 @@ val set_object_color (h_addr: obj_addr) (g: heap) (c: color) : GTot heap
 val makeBlack (h_addr: obj_addr) (g: heap) : GTot heap
 val makeWhite (h_addr: obj_addr) (g: heap) : GTot heap
 val makeGray (h_addr: obj_addr) (g: heap) : GTot heap
+val makeBlue (h_addr: obj_addr) (g: heap) : GTot heap
 
 /// Equation lemmas: make* = set_object_color with specific color
 val makeBlack_eq : (h_addr: obj_addr) -> (g: heap) ->
@@ -238,6 +244,9 @@ val makeWhite_eq : (h_addr: obj_addr) -> (g: heap) ->
 
 val makeGray_eq : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (makeGray h_addr g == set_object_color h_addr g Gray)
+
+val makeBlue_eq : (h_addr: obj_addr) -> (g: heap) ->
+  Lemma (makeBlue h_addr g == set_object_color h_addr g Blue)
 
 /// Expose makeWhite as write_word + colorHeader (needed for Pulse bridge)
 val makeWhite_spec : (obj: obj_addr) -> (g: heap) ->
@@ -281,6 +290,14 @@ val makeWhite_is_white : (h_addr: obj_addr) -> (g: heap) ->
 
 val makeGray_is_gray : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (is_gray h_addr (makeGray h_addr g))
+
+val makeBlue_is_blue : (h_addr: obj_addr) -> (g: heap) ->
+  Lemma (is_blue h_addr (makeBlue h_addr g))
+
+/// set_object_color with non-Blue color preserves ~(is_blue x) for all x
+val set_color_preserves_not_blue : (obj: obj_addr) -> (x: obj_addr) -> (g: heap) -> (c: color) ->
+  Lemma (requires c <> Blue /\ ~(is_blue x g))
+        (ensures ~(is_blue x (set_object_color obj g c)))
 
 /// ---------------------------------------------------------------------------
 /// Color Change Preservation Lemmas

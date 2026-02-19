@@ -103,10 +103,12 @@ fn read_field (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
   requires is_heap heap 's ** 
            pure (U64.v i >= 1 /\ 
                  U64.v i <= pow2 54 - 1 /\
-                 spec_field_address (U64.v h_addr) (U64.v i) < heap_size)
+                 spec_field_address (U64.v h_addr) (U64.v i) + 8 <= heap_size)
   returns v: U64.t
   ensures is_heap heap 's **
-          pure (v == spec_read_word 's (spec_field_address (U64.v h_addr) (U64.v i)))
+          pure (U64.v i >= 1 /\
+                spec_field_address (U64.v h_addr) (U64.v i) + 8 <= Seq.length 's /\
+                v == spec_read_word 's (spec_field_address (U64.v h_addr) (U64.v i)))
 {
   lemma_mword_is_8 ();
   
@@ -137,7 +139,7 @@ fn read_succ (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
   requires is_heap heap 's ** 
            pure (U64.v i >= 1 /\ 
                  U64.v i <= pow2 54 - 1 /\
-                 spec_field_address (U64.v h_addr) (U64.v i) < heap_size)
+                 spec_field_address (U64.v h_addr) (U64.v i) + 8 <= heap_size)
   returns succ: U64.t
   ensures is_heap heap 's
 {

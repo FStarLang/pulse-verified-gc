@@ -303,8 +303,8 @@ let rec read_fields (g: heap) (obj: obj_addr) (wz: nat) (i: nat)
 let unpack_color_total (c: FStar.UInt.uint_t 64) : Header.color_sem =
   if c = 0 then Header.White
   else if c = 1 then Header.Gray
-  else if c = 2 then Header.Black
-  else Header.White  // unreachable for valid OCaml headers
+  else if c = 2 then Header.Blue
+  else Header.Black  // c = 3; color is 2 bits so always in [0,3]
 
 /// read_fields succeeds when the object fits within the heap
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"

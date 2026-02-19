@@ -45,6 +45,7 @@ type tag = t:U64.t{U64.v t <= 255}
 
 let white : color = Header.White
 let gray  : color = Header.Gray
+let blue  : color = Header.Blue
 let black : color = Header.Black
 
 /// Pack color to numeric for header encoding

@@ -11,10 +11,12 @@ open Pulse.Spec.GC.Fields
 
 let gc_postcondition (h_final: heap) : prop =
   well_formed_heap h_final /\
-  (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> is_white x h_final)
+  (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> 
+    is_white x h_final \/ is_blue x h_final)
 
-let all_objects_white (h_final: heap) : prop =
-  forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> is_white x h_final
+let no_gray_or_black_objects (h_final: heap) : prop =
+  forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==> 
+    is_white x h_final \/ is_blue x h_final
 
 let gc_postcondition_intro h_final = ()
 

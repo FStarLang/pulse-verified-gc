@@ -19,21 +19,24 @@ open FStar.Math.Lemmas
 type color_sem =
   | White  // 0 - Not yet visited
   | Gray   // 1 - Visited but not scanned
-  | Black  // 2 - Fully scanned
+  | Blue   // 2 - Free-list block
+  | Black  // 3 - Fully scanned
 
 let pack_color (c: color_sem) : uint_t 64 =
   match c with
   | White -> 0
   | Gray -> 1
-  | Black -> 2
+  | Blue -> 2
+  | Black -> 3
 
 let unpack_color (w: uint_t 64) : option color_sem =
   if w = 0 then Some White
   else if w = 1 then Some Gray
-  else if w = 2 then Some Black
+  else if w = 2 then Some Blue
+  else if w = 3 then Some Black
   else None
 
-let valid_color (w: uint_t 64) : bool = w < 3
+let valid_color (w: uint_t 64) : bool = w < 4
 
 /// Pack/unpack roundtrip for colors
 let pack_unpack_color (c: color_sem) 

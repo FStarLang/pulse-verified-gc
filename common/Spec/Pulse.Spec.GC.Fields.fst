@@ -569,6 +569,10 @@ let gray_blocks (g: heap) : GTot (Seq.seq obj_addr) =
 let white_blocks (g: heap) : GTot (Seq.seq obj_addr) =
   seq_filter (fun h -> is_white h g) (objects 0UL g)
 
+/// Get all blue objects (free-list blocks)
+let blue_blocks (g: heap) : GTot (Seq.seq obj_addr) =
+  seq_filter (fun h -> is_blue h g) (objects 0UL g)
+
 /// ---------------------------------------------------------------------------
 /// No Gray Objects Predicate
 /// ---------------------------------------------------------------------------
@@ -802,22 +806,19 @@ let object_count_bound g =
 let colors_exhaustive_and_exclusive (h: obj_addr) (g: heap)
   : Lemma (
       // Exhaustive: exactly one is true
-      (is_black h g \/ is_white h g \/ is_gray h g) /\
+      (is_black h g \/ is_white h g \/ is_gray h g \/ is_blue h g) /\
       // Mutually exclusive
       (not (is_black h g && is_white h g)) /\
       (not (is_black h g && is_gray h g)) /\
-      (not (is_white h g && is_gray h g))
+      (not (is_black h g && is_blue h g)) /\
+      (not (is_white h g && is_gray h g)) /\
+      (not (is_white h g && is_blue h g)) /\
+      (not (is_gray h g && is_blue h g))
     )
-  = // Use characterization lemmas to connect is_* to color_of_object
-    is_black_iff h g;
+  = is_black_iff h g;
     is_white_iff h g;
     is_gray_iff h g;
-    // Now the SMT solver knows:
-    // is_black h g <==> color_of_object h g = Black
-    // is_white h g <==> color_of_object h g = White
-    // is_gray h g <==> color_of_object h g = Gray
-    // color_of_object returns color_sem which has 3 constructors
-    // So exactly one equality holds, proving exhaustive and exclusive
+    is_blue_iff h g;
     ()
 
 /// Helper: partition sequence by 3 mutually exclusive, exhaustive predicates
@@ -864,20 +865,56 @@ let rec seq_filter_partition_3
     end
 #pop-options
 
-/// Black + gray + white = total objects
+/// Helper: partition sequence by 4 mutually exclusive, exhaustive predicates
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 50"
+let rec seq_filter_partition_4 
+  (#a:eqtype)
+  (p1 p2 p3 p4: a -> GTot bool) 
+  (s: Seq.seq a)
+  : Lemma 
+    (requires 
+      (forall x. Seq.mem x s ==> 
+        ((p1 x \/ p2 x \/ p3 x \/ p4 x) /\
+         (not (p1 x && p2 x)) /\
+         (not (p1 x && p3 x)) /\
+         (not (p1 x && p4 x)) /\
+         (not (p2 x && p3 x)) /\
+         (not (p2 x && p4 x)) /\
+         (not (p3 x && p4 x)))))
+    (ensures 
+      Seq.length (seq_filter p1 s) + 
+      Seq.length (seq_filter p2 s) + 
+      Seq.length (seq_filter p3 s) + 
+      Seq.length (seq_filter p4 s) = 
+      Seq.length s)
+    (decreases Seq.length s)
+  = if Seq.length s = 0 then ()
+    else begin
+      let hd = Seq.head s in
+      let tl = Seq.tail s in
+      assert (Seq.mem hd s);
+      assert (forall x. Seq.mem x tl ==> Seq.mem x s);
+      seq_filter_partition_4 p1 p2 p3 p4 tl;
+      ()
+    end
+#pop-options
+
+/// Black + gray + white + blue = total objects
 val color_partition : (g: heap) ->
   Lemma (Seq.length (black_blocks g) + 
          Seq.length (gray_blocks g) + 
-         Seq.length (white_blocks g) = 
+         Seq.length (white_blocks g) + 
+         Seq.length (blue_blocks g) = 
          Seq.length (objects 0UL g))
 
 let color_partition g = 
   Classical.forall_intro (fun h -> colors_exhaustive_and_exclusive h g);
   
-  seq_filter_partition_3 
+  seq_filter_partition_4 
     (fun h -> is_black h g)
     (fun h -> is_gray h g)
     (fun h -> is_white h g)
+    (fun h -> is_blue h g)
     (objects 0UL g)
 
 /// ---------------------------------------------------------------------------
