@@ -23,6 +23,8 @@ let mark_inv_elim_wfh g st = ()
 
 let mark_inv_elim_sev g st = ()
 
+let mark_inv_elim_sp g st = ()
+
 let mark_inv_elim_objects g st = ()
 
 let mark_inv_head_gray g st =

@@ -650,7 +650,8 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
                 s2 == SpecMark.mark 's 'st)
 {
   SpecMarkInv.mark_inv_elim_wfh 's 'st;
-  SpecMarkInv.mark_inv_elim_sev 's 'st;
+  SpecMarkInv.mark_inv_elim_sp 's 'st;
+  SpecMark.mark_no_grey_remains 's 'st;
   
   let fuel_init : U64.t = U64.div (U64.uint_to_t heap_size) mword;
   let mut go = true;
@@ -665,7 +666,8 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
       pure (SpecMarkInv.mark_inv s st_cur /\
             (~vc ==> (Seq.length st_cur == 0)) /\
             SpecFields.objects zero_hp_addr s == SpecFields.objects zero_hp_addr 's /\
-            SpecMark.mark_aux s st_cur (U64.v fv) == SpecMark.mark 's 'st)
+            SpecMark.mark_aux s st_cur (U64.v fv) == SpecMark.mark 's 'st /\
+            SpecMark.noGreyObjects (SpecMark.mark 's 'st))
   {
     let empty = is_empty st;
     if empty {
@@ -677,19 +679,37 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
       SpecMarkInv.mark_inv_elim_wfh s_cur st_cur;
       SpecMarkInv.mark_inv_elim_sev s_cur st_cur;
       SpecMark.mark_aux_empty s_cur st_cur (U64.v fv);
+      forget_init go;
       go := false
     } else {
-      let cur_fuel = !fuel_ref;
-      fuel_ref := U64.sub cur_fuel 1UL;
       with _vc s_cur st_cur fv. assert (
         pts_to go _vc **
         pts_to fuel_ref fv **
         is_heap heap s_cur **
         is_gray_stack st st_cur);
       SpecMarkInv.mark_inv_elim_wfh s_cur st_cur;
-      SpecMarkInv.mark_inv_elim_sev s_cur st_cur;
-      SpecMark.mark_aux_unfold s_cur st_cur (U64.v fv);
-      mark_step heap st
+      SpecMarkInv.mark_inv_elim_sp s_cur st_cur;
+      SpecMark.mark_aux_fuel_pos s_cur st_cur (U64.v fv);
+      SpecMark.mark_aux_unfold s_cur st_cur (U64.v fv - 1);
+      mark_step heap st;
+      let cur_fuel = !fuel_ref;
+      forget_init fuel_ref;
+      fuel_ref := U64.sub cur_fuel 1UL
     }
-  }
+  };
+  // Post-loop: vc = false, so Seq.length st_cur == 0
+  with _vc s_fin st_fin fv_fin. assert (
+    pts_to go _vc **
+    pts_to fuel_ref fv_fin **
+    is_heap heap s_fin **
+    is_gray_stack st st_fin **
+    pure (SpecMarkInv.mark_inv s_fin st_fin /\
+          (~_vc ==> (Seq.length st_fin == 0)) /\
+          SpecFields.objects zero_hp_addr s_fin == SpecFields.objects zero_hp_addr 's /\
+          SpecMark.mark_aux s_fin st_fin (U64.v fv_fin) == SpecMark.mark 's 'st /\
+          SpecMark.noGreyObjects (SpecMark.mark 's 'st)));
+  SpecMark.mark_aux_empty s_fin st_fin (U64.v fv_fin);
+  assert (pure (s_fin == SpecMark.mark 's 'st))
 }
+
+#pop-options

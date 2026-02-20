@@ -657,6 +657,16 @@ let no_pointer_to_blue (g: heap) : prop =
     Seq.mem src (objects 0UL g) /\ points_to g src dst ==>
     ~(is_blue dst g)
 
+/// Fuel must be positive when stack is non-empty and mark_aux converges
+let mark_aux_fuel_pos (g: heap) (st: seq obj_addr) (fuel: nat)
+  : Lemma (requires stack_props g st /\ Seq.length st > 0 /\
+                    noGreyObjects (mark_aux g st fuel))
+          (ensures fuel > 0)
+  = if fuel = 0 then begin
+      stack_head_is_gray g st;
+      assert (not (is_gray (Seq.head st) g))
+    end
+
 /// ---------------------------------------------------------------------------
 /// Ghost State for Mark Termination
 /// ---------------------------------------------------------------------------

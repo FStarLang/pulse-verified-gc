@@ -44,6 +44,11 @@ val mark_inv_elim_sev : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
         (ensures stack_elements_valid g st)
 
+/// Elimination (stack_props)
+val mark_inv_elim_sp : (g: heap) -> (st: seq obj_addr) ->
+  Lemma (requires mark_inv g st)
+        (ensures stack_props g st)
+
 /// ---------------------------------------------------------------------------
 /// Non-quantified extraction lemmas for Pulse use
 /// ---------------------------------------------------------------------------
