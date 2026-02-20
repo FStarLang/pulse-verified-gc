@@ -143,14 +143,6 @@ let bluen_eq (g: heap_state) (f_addr: obj_addr)
 
 let zero_hp_addr : hp_addr = 0UL
 
-/// Bridge: Lib f_address == Spec f_address (both are U64.add h_addr mword)
-let f_address_bridge (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
-  : Lemma (f_address h_addr == SpecHeap.f_address h_addr)
-  = SpecHeap.f_address_spec h_addr;
-    assert (U64.v (f_address h_addr) == U64.v h_addr + 8);
-    assert (U64.v (SpecHeap.f_address h_addr) == U64.v h_addr + 8);
-    assert (U64.v (f_address h_addr) == U64.v (SpecHeap.f_address h_addr))
-
 /// Bridge: sweep_post_intro using zero_hp_addr to avoid 0UL <: hp_addr subtyping in Pulse WP
 let sweep_post_intro_bridge (g_pre g_post: Pulse.Spec.GC.Base.heap) (new_fp: U64.t)
   : Lemma (requires SpecFields.well_formed_heap g_post /\
@@ -211,14 +203,14 @@ let density_next_bridge (h_addr: hp_addr) (g_init g_post: Pulse.Spec.GC.Base.hea
 /// into a single call to avoid --split_queries isolation.
 #push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 let derive_objects_nonempty_bridge
-    (h_addr: hp_addr) (g_cur g_init: Pulse.Spec.GC.Base.heap)
-  : Lemma (requires SI.obj_in_objects (f_address h_addr) g_cur /\
+    (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (g_cur g_init: Pulse.Spec.GC.Base.heap)
+  : Lemma (requires SI.obj_in_objects (SpecHeap.f_address h_addr) g_cur /\
                     SpecFields.objects zero_hp_addr g_cur == SpecFields.objects zero_hp_addr g_init /\
                     SpecFields.well_formed_heap g_init /\
                     U64.v h_addr + 8 < heap_size)
           (ensures Seq.length (SpecFields.objects h_addr g_init) > 0)
-  = SI.obj_in_objects_transfer (f_address h_addr) g_cur g_init;
-    SI.obj_in_objects_elim (f_address h_addr) g_init;
+  = SI.obj_in_objects_transfer (SpecHeap.f_address h_addr) g_cur g_init;
+    SI.obj_in_objects_elim (SpecHeap.f_address h_addr) g_init;
     SI.member_implies_objects_nonempty h_addr g_init
 #pop-options
 
@@ -228,7 +220,7 @@ let derive_objects_nonempty_bridge
 /// Density/membership conclusions are conditional on next_v + 8 < heap_size.
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 1 --split_queries always"
 let sweep_loop_next_bridge
-    (h_addr: hp_addr)
+    (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
     (hdr: U64.t)
     (wz: U64.t)
     (s_cur s_post g_init: Pulse.Spec.GC.Base.heap)
@@ -236,7 +228,7 @@ let sweep_loop_next_bridge
   : Lemma (requires
       // From invariant (about s_cur)
       SI.headers_preserved_from (U64.v h_addr) s_cur g_init /\
-      SI.obj_in_objects (f_address h_addr) s_cur /\
+      SI.obj_in_objects (SpecHeap.f_address h_addr) s_cur /\
       Seq.length (SpecFields.objects (U64.uint_to_t (U64.v h_addr)) s_cur) > 0 /\
       SpecFields.objects zero_hp_addr s_cur == SpecFields.objects zero_hp_addr g_init /\
       // Invariant properties of g_init
@@ -272,8 +264,8 @@ let sweep_loop_next_bridge
       SI.headers_preserved_from_elim (U64.v h_addr) h_addr s_cur g_init;
       assert (wz == SpecObject.getWosize (SpecHeap.read_word g_init h_addr));
       // Transfer obj_in_objects to g_init and derive membership
-      SI.obj_in_objects_transfer (f_address h_addr) s_cur g_init;
-      SI.obj_in_objects_elim (f_address h_addr) g_init;
+      SI.obj_in_objects_transfer (SpecHeap.f_address h_addr) s_cur g_init;
+      SI.obj_in_objects_elim (SpecHeap.f_address h_addr) g_init;
       SI.member_implies_objects_nonempty h_addr g_init;
       // Density step on g_init: gives conditional result
       SI.objects_dense_obj_in h_addr g_init;
@@ -312,10 +304,10 @@ let headers_preserved_before_spec_write (start: nat) (g: Pulse.Spec.GC.Base.heap
 /// Bridge: whiten via spec_write_word preserves wfh + objects
 /// Takes EXACTLY the terms from the Pulse context to avoid SMT unification
 #push-options "--z3rlimit 300 --fuel 2 --ifuel 1"
-let sweep_black_preserves (g: Pulse.Spec.GC.Base.heap) (h_addr: hp_addr) (hdr: U64.t) (wz: wosize)
+let sweep_black_preserves (g: Pulse.Spec.GC.Base.heap) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (hdr: U64.t) (wz: wosize)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
-                    Seq.mem (f_address h_addr) (SpecFields.objects 0UL g) /\
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects 0UL g) /\
                     SpecFields.well_formed_heap g /\
                     hdr == spec_read_word g (U64.v h_addr) /\
                     getColor hdr == black /\
@@ -324,7 +316,7 @@ let sweep_black_preserves (g: Pulse.Spec.GC.Base.heap) (h_addr: hp_addr) (hdr: U
                     let s2 = spec_write_word g (U64.v h_addr) new_hdr in
                     SpecFields.well_formed_heap s2 /\
                     SpecFields.objects 0UL s2 == SpecFields.objects 0UL g))
-  = let obj : obj_addr = f_address h_addr in
+  = let obj : obj_addr = SpecHeap.f_address h_addr in
     SpecHeap.hd_address_spec obj;
     spec_read_word_eq g h_addr;
     getWosize_eq hdr;
@@ -352,20 +344,20 @@ let is_black_bridge (g: heap_state) (f_addr: obj_addr) (h_addr: hp_addr) (hdr: U
 /// Combined white-case preservation: writing to field 1 preserves wfh + objects.
 /// Uses h_addr (outer scope) not field1_addr in ensures.
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
-let sweep_white_write_preserves (g: heap_state) (h_addr: hp_addr) (wz: U64.t) (fp: U64.t)
+let sweep_white_write_preserves (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecFields.well_formed_heap g /\
                     U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                     U64.v wz > 0 /\
-                    SI.obj_in_objects (f_address h_addr) g /\
+                    SI.obj_in_objects (SpecHeap.f_address h_addr) g /\
                     wz == SpecObject.getWosize (SpecHeap.read_word g h_addr) /\
                     SI.fp_valid fp g)
           (ensures (let s2 = spec_write_word g (U64.v h_addr + 8) fp in
                     SpecFields.well_formed_heap s2 /\
                     SpecFields.objects 0UL s2 == SpecFields.objects 0UL g))
-  = SI.obj_in_objects_elim (f_address h_addr) g;
+  = SI.obj_in_objects_elim (SpecHeap.f_address h_addr) g;
     SI.fp_valid_elim fp g;
-    let obj = f_address h_addr in
+    let obj = SpecHeap.f_address h_addr in
     let field1_addr : hp_addr = U64.add h_addr mword in
     SpecHeap.hd_address_spec obj;
     SpecObject.wosize_of_object_spec obj g;
@@ -441,15 +433,15 @@ fn write_freelist_link (heap: heap_t) (h_addr: hp_addr) (wz: wosize) (fp: U64.t)
 /// set_field g obj 1 fp = write_word g (hd_address obj + mword * 1) fp = write_word g obj fp
 /// spec_write_word g (h_addr + 8) fp = spec_write_word g (U64.v obj) fp = write_word g obj fp
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let set_field_1_eq (g: heap_state) (h_addr: hp_addr) (fp: U64.t)
+let set_field_1_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + U64.v mword < heap_size /\
                     U64.v h_addr + 16 <= heap_size)
-          (ensures (let obj : obj_addr = f_address h_addr in
+          (ensures (let obj : obj_addr = SpecHeap.f_address h_addr in
                     U64.v (SpecHeap.hd_address obj) + U64.v mword * 2 <= heap_size /\
                     spec_write_word g (U64.v h_addr + 8) fp ==
                     SpecHeapGraph.set_field g obj 1UL fp))
-  = let obj : obj_addr = f_address h_addr in
+  = let obj : obj_addr = SpecHeap.f_address h_addr in
     SpecHeap.hd_f_roundtrip h_addr;
     SpecHeap.hd_address_spec obj;
     spec_write_word_eq g obj fp
@@ -458,20 +450,20 @@ let set_field_1_eq (g: heap_state) (h_addr: hp_addr) (fp: U64.t)
 /// Bridge: sweep_object spec equivalence for white case (wz > 0 branch)
 /// After field write + makeBlue, the result matches sweep_object
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
-let sweep_object_white_write_eq (g: heap_state) (h_addr: hp_addr) (wz: U64.t) (fp: U64.t)
+let sweep_object_white_write_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + U64.v mword < heap_size /\
                     U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                     SpecFields.well_formed_heap g /\
-                    SI.obj_in_objects (f_address h_addr) g /\
+                    SI.obj_in_objects (SpecHeap.f_address h_addr) g /\
                     wz == SpecObject.getWosize (SpecHeap.read_word g h_addr) /\
-                    SpecObject.is_white (f_address h_addr) g /\
+                    SpecObject.is_white (SpecHeap.f_address h_addr) g /\
                     U64.v wz > 0)
-          (ensures (let obj = f_address h_addr in
+          (ensures (let obj = SpecHeap.f_address h_addr in
                     let g1 = spec_write_word g (U64.v h_addr + 8) fp in
                     (SpecObject.makeBlue obj g1, obj) ==
                     SpecSweep.sweep_object g obj fp))
-  = let obj : obj_addr = f_address h_addr in
+  = let obj : obj_addr = SpecHeap.f_address h_addr in
     set_field_1_eq g h_addr fp;
     SpecHeap.hd_address_spec obj;
     SpecObject.wosize_of_object_spec obj g;
@@ -482,18 +474,18 @@ let sweep_object_white_write_eq (g: heap_state) (h_addr: hp_addr) (wz: U64.t) (f
 /// Bridge: sweep_object spec equivalence for white case (wz == 0 branch)
 /// Just makeBlue (no field write), result matches sweep_object
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
-let sweep_object_white_noop_eq (g: heap_state) (h_addr: hp_addr) (wz: U64.t) (fp: U64.t)
+let sweep_object_white_noop_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + U64.v mword < heap_size /\
                     U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                     SpecFields.well_formed_heap g /\
-                    SI.obj_in_objects (f_address h_addr) g /\
+                    SI.obj_in_objects (SpecHeap.f_address h_addr) g /\
                     wz == SpecObject.getWosize (SpecHeap.read_word g h_addr) /\
-                    SpecObject.is_white (f_address h_addr) g /\
+                    SpecObject.is_white (SpecHeap.f_address h_addr) g /\
                     U64.v wz == 0)
-          (ensures (let obj = f_address h_addr in
+          (ensures (let obj = SpecHeap.f_address h_addr in
                     (SpecObject.makeBlue obj g, obj) == SpecSweep.sweep_object g obj fp))
-  = let obj : obj_addr = f_address h_addr in
+  = let obj : obj_addr = SpecHeap.f_address h_addr in
     SpecHeap.hd_address_spec obj;
     SpecObject.wosize_of_object_spec obj g;
     spec_read_word_eq g h_addr;
@@ -507,28 +499,27 @@ fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                  SpecFields.well_formed_heap 's /\
-                 SI.obj_in_objects (f_address h_addr) 's /\
+                 SI.obj_in_objects (SpecHeap.f_address h_addr) 's /\
                  wz == SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 SpecObject.is_white (f_address h_addr) 's /\
+                 SpecObject.is_white (SpecHeap.f_address h_addr) 's /\
                  SI.fp_valid fp 's)
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2 /\
                  SpecFields.objects zero_hp_addr s2 == SpecFields.objects zero_hp_addr 's /\
-                 new_fp == f_address h_addr /\
+                 new_fp == SpecHeap.f_address h_addr /\
                  SI.headers_preserved_from
                    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
                    s2 's /\
-                 SpecObject.is_blue (f_address h_addr) s2 /\
+                 SpecObject.is_blue (SpecHeap.f_address h_addr) s2 /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
                  SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
                  SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 s2 == fst (SpecSweep.sweep_object 's (f_address h_addr) fp))
+                 s2 == fst (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp))
 {
   if U64.gt wz 0UL {
     is_heap_length heap;
-    f_address_bridge h_addr;
-    let obj : obj_addr = f_address h_addr;
+    let obj : obj_addr = SpecHeap.f_address h_addr;
     SI.obj_in_objects_elim obj 's;
     // Step 1: Write free-list link at field 1
     let field1_addr : hp_addr = U64.add h_addr mword;
@@ -572,11 +563,10 @@ fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
     // headers_preserved_before: both writes at >= h_addr, positions before h_addr preserved
     headers_preserved_before_spec_write (U64.v h_addr) s1 h_addr blue_hdr;
     SI.headers_preserved_before_trans (U64.v h_addr) 's s1 s2;
-    f_address h_addr
+    SpecHeap.f_address h_addr
   } else {
     is_heap_length heap;
-    f_address_bridge h_addr;
-    let obj : obj_addr = f_address h_addr;
+    let obj : obj_addr = SpecHeap.f_address h_addr;
     SI.obj_in_objects_elim obj 's;
     // Step 1: Just write blue header (no field write needed)
     let hdr = read_word heap h_addr;
@@ -594,7 +584,7 @@ fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
       (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
       's h_addr blue_hdr;
     headers_preserved_before_spec_write (U64.v h_addr) 's h_addr blue_hdr;
-    f_address h_addr
+    SpecHeap.f_address h_addr
   }
 }
 #pop-options
@@ -602,19 +592,19 @@ fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
 /// Bridge: after sweep_black writes makeHeader wz White tag at h_addr,
 /// the object is white and wosize is preserved.
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries always"
-let sweep_black_whiteness (g: heap_state) (h_addr: hp_addr) (hdr: U64.t) (wz: wosize)
+let sweep_black_whiteness (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (hdr: U64.t) (wz: wosize)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
-                    Seq.mem (f_address h_addr) (SpecFields.objects 0UL g) /\
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects 0UL g) /\
                     SpecFields.well_formed_heap g /\
                     hdr == spec_read_word g (U64.v h_addr) /\
                     getColor hdr == black /\
                     wz == getWosize hdr)
-          (ensures (let obj : obj_addr = f_address h_addr in
+          (ensures (let obj : obj_addr = SpecHeap.f_address h_addr in
                     SpecObject.is_white obj (SpecObject.makeWhite obj g) /\
                     spec_write_word g (U64.v h_addr) (makeHeader wz white (getTag hdr)) ==
                     SpecObject.makeWhite obj g))
-  = let obj : obj_addr = f_address h_addr in
+  = let obj : obj_addr = SpecHeap.f_address h_addr in
     SpecHeap.hd_address_spec obj;
     spec_read_word_eq g h_addr;
     is_black_bridge g obj h_addr hdr;
@@ -624,20 +614,20 @@ let sweep_black_whiteness (g: heap_state) (h_addr: hp_addr) (hdr: U64.t) (wz: wo
 
 /// Bridge: sweep_object spec equivalence for black case
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries always"
-let sweep_object_black_eq (g: heap_state) (h_addr: hp_addr) (hdr: U64.t) (wz: wosize) (fp: U64.t)
+let sweep_object_black_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (hdr: U64.t) (wz: wosize) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
                     SpecFields.well_formed_heap g /\
-                    Seq.mem (f_address h_addr) (SpecFields.objects 0UL g) /\
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects 0UL g) /\
                     hdr == spec_read_word g (U64.v h_addr) /\
                     getColor hdr == black /\
                     wz == getWosize hdr /\
-                    ~(SpecObject.is_white (f_address h_addr) g))
-          (ensures (let obj : obj_addr = f_address h_addr in
+                    ~(SpecObject.is_white (SpecHeap.f_address h_addr) g))
+          (ensures (let obj : obj_addr = SpecHeap.f_address h_addr in
                     let new_hdr = makeHeader wz white (getTag hdr) in
                     (spec_write_word g (U64.v h_addr) new_hdr, fp) ==
                     SpecSweep.sweep_object g obj fp))
-  = let obj : obj_addr = f_address h_addr in
+  = let obj : obj_addr = SpecHeap.f_address h_addr in
     is_black_bridge g obj h_addr hdr;
     whiten_eq g obj
 #pop-options
@@ -650,11 +640,11 @@ fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                  Seq.length 's == heap_size /\
                  SpecFields.well_formed_heap 's /\
-                 SI.obj_in_objects (f_address h_addr) 's /\
+                 SI.obj_in_objects (SpecHeap.f_address h_addr) 's /\
                  hdr == spec_read_word 's (U64.v h_addr) /\
                  getColor hdr == black /\
                  wz == getWosize hdr /\
-                 ~(SpecObject.is_white (f_address h_addr) 's))
+                 ~(SpecObject.is_white (SpecHeap.f_address h_addr) 's))
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
            pure (SpecFields.well_formed_heap s2 /\
@@ -662,13 +652,13 @@ fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
                  SI.headers_preserved_from
                    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
                    s2 's /\
-                 SpecObject.is_white (f_address h_addr) s2 /\
+                 SpecObject.is_white (SpecHeap.f_address h_addr) s2 /\
                  SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
                  SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 s2 == fst (SpecSweep.sweep_object 's (f_address h_addr) fp) /\
-                 new_fp == snd (SpecSweep.sweep_object 's (f_address h_addr) fp))
+                 s2 == fst (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp) /\
+                 new_fp == snd (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp))
 {
-  SI.obj_in_objects_elim (f_address h_addr) 's;
+  SI.obj_in_objects_elim (SpecHeap.f_address h_addr) 's;
   sweep_black_preserves 's h_addr hdr wz;
   sweep_black_whiteness 's h_addr hdr wz;
   sweep_object_black_eq 's h_addr hdr wz fp;
@@ -697,62 +687,62 @@ fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
 let sweep_else_contradiction (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (g: heap_state)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecFields.well_formed_heap g /\
-                    Seq.mem (f_address h_addr) (SpecFields.objects 0UL g) /\
-                    ~(SpecObject.is_gray (f_address h_addr) g) /\
-                    ~(SpecObject.is_white (f_address h_addr) g) /\
-                    ~(SpecObject.is_black (f_address h_addr) g))
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects 0UL g) /\
+                    ~(SpecObject.is_gray (SpecHeap.f_address h_addr) g) /\
+                    ~(SpecObject.is_white (SpecHeap.f_address h_addr) g) /\
+                    ~(SpecObject.is_black (SpecHeap.f_address h_addr) g))
           (ensures False)
-  = SpecFields.colors_exhaustive_and_exclusive (f_address h_addr) g
+  = SpecFields.colors_exhaustive_and_exclusive (SpecHeap.f_address h_addr) g
 #pop-options
 
 /// Bridge: connect Lib-level getColor to Spec-level is_white/is_black
-let is_white_from_color (h_addr: hp_addr) (g: heap_state)
+let is_white_from_color (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (g: heap_state)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
                     getColor (spec_read_word g (U64.v h_addr)) == white)
-          (ensures SpecObject.is_white (f_address h_addr) g)
+          (ensures SpecObject.is_white (SpecHeap.f_address h_addr) g)
   = let hdr = spec_read_word g (U64.v h_addr) in
     spec_read_word_eq g h_addr;
     getColor_eq hdr;
-    SpecObject.color_of_object_spec (f_address h_addr) g;
+    SpecObject.color_of_object_spec (SpecHeap.f_address h_addr) g;
     SpecHeap.hd_f_roundtrip h_addr;
-    SpecObject.is_white_iff (f_address h_addr) g
+    SpecObject.is_white_iff (SpecHeap.f_address h_addr) g
 
-let is_black_from_color (h_addr: hp_addr) (g: heap_state)
+let is_black_from_color (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (g: heap_state)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
                     getColor (spec_read_word g (U64.v h_addr)) == black)
-          (ensures SpecObject.is_black (f_address h_addr) g)
+          (ensures SpecObject.is_black (SpecHeap.f_address h_addr) g)
   = let hdr = spec_read_word g (U64.v h_addr) in
     spec_read_word_eq g h_addr;
     getColor_eq hdr;
-    SpecObject.color_of_object_spec (f_address h_addr) g;
+    SpecObject.color_of_object_spec (SpecHeap.f_address h_addr) g;
     SpecHeap.hd_f_roundtrip h_addr;
-    SpecObject.is_black_iff (f_address h_addr) g
+    SpecObject.is_black_iff (SpecHeap.f_address h_addr) g
 
-let is_not_white_from_color (h_addr: hp_addr) (g: heap_state)
+let is_not_white_from_color (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (g: heap_state)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
                     getColor (spec_read_word g (U64.v h_addr)) <> white)
-          (ensures ~(SpecObject.is_white (f_address h_addr) g))
+          (ensures ~(SpecObject.is_white (SpecHeap.f_address h_addr) g))
   = let hdr = spec_read_word g (U64.v h_addr) in
     spec_read_word_eq g h_addr;
     getColor_eq hdr;
-    SpecObject.color_of_object_spec (f_address h_addr) g;
+    SpecObject.color_of_object_spec (SpecHeap.f_address h_addr) g;
     SpecHeap.hd_f_roundtrip h_addr;
-    SpecObject.is_white_iff (f_address h_addr) g
+    SpecObject.is_white_iff (SpecHeap.f_address h_addr) g
 
-let is_not_black_from_color (h_addr: hp_addr) (g: heap_state)
+let is_not_black_from_color (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (g: heap_state)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
                     getColor (spec_read_word g (U64.v h_addr)) <> black)
-          (ensures ~(SpecObject.is_black (f_address h_addr) g))
+          (ensures ~(SpecObject.is_black (SpecHeap.f_address h_addr) g))
   = let hdr = spec_read_word g (U64.v h_addr) in
     spec_read_word_eq g h_addr;
     getColor_eq hdr;
-    SpecObject.color_of_object_spec (f_address h_addr) g;
+    SpecObject.color_of_object_spec (SpecHeap.f_address h_addr) g;
     SpecHeap.hd_f_roundtrip h_addr;
-    SpecObject.is_black_iff (f_address h_addr) g
+    SpecObject.is_black_iff (SpecHeap.f_address h_addr) g
 
 /// Helper: handle white case — write free list link + blue header, return object address
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
@@ -760,9 +750,9 @@ fn sweep_white_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                  SpecFields.well_formed_heap 's /\
-                 SI.obj_in_objects (f_address h_addr) 's /\
+                 SI.obj_in_objects (SpecHeap.f_address h_addr) 's /\
                  wz == SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 SpecObject.is_white (f_address h_addr) 's /\
+                 SpecObject.is_white (SpecHeap.f_address h_addr) 's /\
                  SI.fp_valid fp 's)
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
@@ -770,17 +760,17 @@ fn sweep_white_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
                  SI.headers_preserved_from
                    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
                    s2 's /\
-                 (SpecObject.is_white (f_address h_addr) s2 \/ SpecObject.is_blue (f_address h_addr) s2) /\
+                 (SpecObject.is_white (SpecHeap.f_address h_addr) s2 \/ SpecObject.is_blue (SpecHeap.f_address h_addr) s2) /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
                  SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
                  SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 s2 == fst (SpecSweep.sweep_object 's (f_address h_addr) fp) /\
-                 new_fp == snd (SpecSweep.sweep_object 's (f_address h_addr) fp))
+                 s2 == fst (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp) /\
+                 new_fp == snd (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp))
 {
   let r = sweep_white_spec heap h_addr wz fp;
   with s2. assert (is_heap heap s2);
-  obj_in_objects_transfer_bridge (f_address h_addr) 's s2;
-  SI.fp_valid_from_obj (f_address h_addr) s2;
+  obj_in_objects_transfer_bridge (SpecHeap.f_address h_addr) 's s2;
+  SI.fp_valid_from_obj (SpecHeap.f_address h_addr) s2;
   sweep_post_intro_bridge 's s2 r;
   r
 }
@@ -792,10 +782,10 @@ fn sweep_black_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                  SpecFields.well_formed_heap 's /\
-                 SI.obj_in_objects (f_address h_addr) 's /\
+                 SI.obj_in_objects (SpecHeap.f_address h_addr) 's /\
                  wz == SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
                  SpecObject.getColor (SpecHeap.read_word 's h_addr) == black /\
-                 ~(SpecObject.is_white (f_address h_addr) 's) /\
+                 ~(SpecObject.is_white (SpecHeap.f_address h_addr) 's) /\
                  SI.fp_valid fp 's)
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
@@ -803,12 +793,12 @@ fn sweep_black_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
                  SI.headers_preserved_from
                    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
                    s2 's /\
-                 SpecObject.is_white (f_address h_addr) s2 /\
+                 SpecObject.is_white (SpecHeap.f_address h_addr) s2 /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
                  SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
                  SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 s2 == fst (SpecSweep.sweep_object 's (f_address h_addr) fp) /\
-                 new_fp == snd (SpecSweep.sweep_object 's (f_address h_addr) fp))
+                 s2 == fst (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp) /\
+                 new_fp == snd (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp))
 {
   is_heap_length heap;
   let hdr = read_word heap h_addr;
@@ -830,9 +820,9 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < hea
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
                  SpecFields.well_formed_heap 's /\
-                 SI.obj_in_objects (f_address h_addr) 's /\
+                 SI.obj_in_objects (SpecHeap.f_address h_addr) 's /\
                  wz == SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 ~(SpecObject.is_gray (f_address h_addr) 's) /\
+                 ~(SpecObject.is_gray (SpecHeap.f_address h_addr) 's) /\
                  SI.fp_valid fp 's)
   returns new_fp: U64.t
   ensures exists* s2. is_heap heap s2 **
@@ -840,12 +830,12 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < hea
                  SI.headers_preserved_from
                    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
                    s2 's /\
-                 (SpecObject.is_white (f_address h_addr) s2 \/ SpecObject.is_blue (f_address h_addr) s2) /\
+                 (SpecObject.is_white (SpecHeap.f_address h_addr) s2 \/ SpecObject.is_blue (SpecHeap.f_address h_addr) s2) /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
                  SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
                  SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
-                 s2 == fst (SpecSweep.sweep_object 's (f_address h_addr) fp) /\
-                 new_fp == snd (SpecSweep.sweep_object 's (f_address h_addr) fp))
+                 s2 == fst (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp) /\
+                 new_fp == snd (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp))
 {
   is_heap_length heap;
   
@@ -863,7 +853,7 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < hea
     is_not_white_from_color h_addr 's;
     sweep_black_case heap h_addr wz fp
   } else {
-    SI.obj_in_objects_elim (f_address h_addr) 's;
+    SI.obj_in_objects_elim (SpecHeap.f_address h_addr) 's;
     is_not_white_from_color h_addr 's;
     is_not_black_from_color h_addr 's;
     sweep_else_contradiction h_addr 's;
@@ -968,7 +958,7 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
     SpecFields.objects_nonempty_head_fits h_addr s_cur;
     // Derive ~(is_gray) for current object from no_gray_objects on initial heap
     SI.headers_preserved_from_elim (U64.v h_addr) h_addr s_cur 's;
-    SI.no_gray_at_preserved (f_address h_addr) 's s_cur;
+    SI.no_gray_at_preserved (SpecHeap.f_address h_addr) 's s_cur;
     
     let cur_fp = !free_ptr;
     let new_fp = sweep_object heap h_addr wz cur_fp;
