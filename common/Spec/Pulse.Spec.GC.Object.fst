@@ -386,7 +386,8 @@ let color_of_header_eq (obj: obj_addr) (g1 g2: heap)
   : Lemma (requires read_word g1 (hd_address obj) == read_word g2 (hd_address obj))
           (ensures is_gray obj g1 == is_gray obj g2 /\
                    is_white obj g1 == is_white obj g2 /\
-                   is_black obj g1 == is_black obj g2) = ()
+                   is_black obj g1 == is_black obj g2 /\
+                   is_blue obj g1 == is_blue obj g2) = ()
 
 /// ---------------------------------------------------------------------------
 /// Tag Predicates
@@ -457,6 +458,9 @@ let makeBlack_spec (obj: obj_addr) (g: heap)
 
 let makeGray_spec (obj: obj_addr) (g: heap)
   : Lemma (makeGray obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Gray)) = ()
+
+let makeBlue_spec (obj: obj_addr) (g: heap)
+  : Lemma (makeBlue obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Blue)) = ()
 
 /// ---------------------------------------------------------------------------
 /// Pointer Field Predicates

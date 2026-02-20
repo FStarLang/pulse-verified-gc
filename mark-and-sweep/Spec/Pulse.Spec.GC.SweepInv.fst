@@ -288,7 +288,7 @@ let headers_preserved_before_trans (limit: nat) (g1 g2 g3: heap)
 
 let objects_white_before (pos: nat) (g: heap) : prop =
   forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
-    U64.v (hd_address x) < pos ==> is_white x g
+    U64.v (hd_address x) < pos ==> (is_white x g \/ is_blue x g)
 
 let objects_white_before_zero (g: heap)
   : Lemma (ensures objects_white_before 0 g) = ()
@@ -299,7 +299,7 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
       objects 0UL g_post == objects 0UL g_pre /\
       well_formed_heap g_post /\
       U64.v h_addr + 8 < heap_size /\
-      is_white (obj_address h_addr) g_post /\
+      (is_white (obj_address h_addr) g_post \/ is_blue (obj_address h_addr) g_post) /\
       headers_preserved_before (U64.v h_addr) g_post g_pre /\
       getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
       Seq.mem (obj_address h_addr) (objects 0UL g_post))
@@ -312,55 +312,36 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
     assert (U64.v (hd_address obj) = U64.v h_addr);
     let aux (x: obj_addr)
       : Lemma (requires Seq.mem x (objects 0UL g_post) /\ U64.v (hd_address x) < next)
-              (ensures is_white x g_post)
+              (ensures is_white x g_post \/ is_blue x g_post)
       = Pulse.Spec.GC.Heap.hd_address_spec x;
         if U64.v (hd_address x) < U64.v h_addr then begin
           // Case 1: before h_addr — preservation from g_pre
-          // headers_preserved_before gives read_word equality
           assert (Seq.mem x (objects 0UL g_pre));
-          // From objects_white_before in g_pre:
-          assert (is_white x g_pre);
-          // Bridge via color_of_object_spec:
+          assert (is_white x g_pre \/ is_blue x g_pre);
           color_of_object_spec x g_pre;
           color_of_object_spec x g_post;
           is_white_iff x g_pre;
           is_white_iff x g_post;
+          is_blue_iff x g_pre;
+          is_blue_iff x g_post;
           ()
         end
         else if U64.v x = U64.v obj then begin
-          // Case 2: x == obj_address h_addr
           FStar.UInt64.v_inj x obj;
           ()
         end
         else if U64.v x > U64.v obj then begin
-          // Case 3: x > obj — use objects_separated to get contradiction
           assert (U64.v x > U64.v obj);
           objects_separated 0UL g_post obj x;
-          // objects_separated: U64.v x > U64.v obj + wosize_of_object_as_wosize(obj, g_post) * 8
           wosize_of_object_spec obj g_post;
           assert (U64.v (hd_address obj) = U64.v h_addr);
-          // wosize_of_object obj g_post = getWosize(read_word g_post (hd_address obj))
-          //                              = getWosize(read_word g_post h_addr)
-          //                              = getWosize(read_word g_pre h_addr) = wz
           assert (wosize_of_object obj g_post == wz);
-          // So: U64.v x > U64.v obj + wz * 8 = h_addr + 8 + wz * 8
-          // hd_address x = x - 8 > h_addr + wz * 8
-          // Both h_addr and hd_address x are 8-aligned, wz*8 is 8-aligned
-          // So hd_address x >= h_addr + wz * 8 + 8 = h_addr + (wz+1)*8 = next
-          // This contradicts hd_address x < next
           assert (U64.v x > U64.v obj + FStar.Mul.(U64.v wz * 8));
           assert (U64.v (hd_address x) = U64.v x - 8);
           assert (U64.v (hd_address x) > U64.v h_addr + FStar.Mul.(U64.v wz * 8) - 8 + 8);
-          // hd_address x is a multiple of 8 (from hp_addr/obj_addr alignment)
-          // h_addr + wz*8 is a multiple of 8
-          // hd_address x > h_addr + wz*8 and both multiples of 8
-          // => hd_address x >= h_addr + wz*8 + 8 = next
           assert false
         end
         else begin
-          // Case 4: x < obj but hd_address x >= h_addr
-          // x < obj = h_addr + 8 and hd_address x = x - 8 >= h_addr
-          // => x >= h_addr + 8 and x < h_addr + 8 => contradiction
           assert false
         end
     in
@@ -368,20 +349,17 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
 
 let objects_white_before_all (pos: nat) (g: heap)
   : Lemma (requires objects_white_before pos g /\ pos >= heap_size)
-          (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
+          (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> (is_white x g \/ is_blue x g))
   = ()
 
 module SpecHeapForExit = Pulse.Spec.GC.Heap
 
 let objects_white_before_exit (pos: nat) (g: heap)
   : Lemma (requires objects_white_before pos g /\ pos + 8 >= heap_size)
-          (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
-  = // For any object x, hd_address_bounds gives hd_address(x) + 8 < heap_size
-    // So hd_address(x) < heap_size - 8 <= pos (since pos >= heap_size - 8)
-    // Therefore objects_white_before pos g applies
-    let aux (x: obj_addr)
+          (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> (is_white x g \/ is_blue x g))
+  = let aux (x: obj_addr)
       : Lemma (requires Seq.mem x (objects 0UL g))
-              (ensures is_white x g)
+              (ensures is_white x g \/ is_blue x g)
       = SpecHeapForExit.hd_address_bounds x;
         assert (U64.v (hd_address x) + 8 < heap_size);
         assert (U64.v (hd_address x) < pos)

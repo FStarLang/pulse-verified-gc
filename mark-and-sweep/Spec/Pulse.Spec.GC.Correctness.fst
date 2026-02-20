@@ -34,9 +34,9 @@ module HeapGraph = Pulse.Spec.GC.HeapGraph
 /// their graph successors. This is because sweep only does set_field on white
 /// objects (to link into free list) and makeWhite on black objects (header-only).
 
-val gc_preserves_structure : (g: heap) -> (st: seq obj_addr) -> (fp: obj_addr) ->
+val gc_preserves_structure : (g: heap) -> (st: seq obj_addr) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ 
-                  (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
+                  fp_in_heap fp g)
         (ensures (forall (x: obj_addr).
                    Seq.mem x (objects 0UL (fst (sweep (mark g st) fp))) /\
                    is_black x (mark g st) ==>
@@ -77,9 +77,9 @@ let gc_preserves_structure g st fp =
 /// ---------------------------------------------------------------------------
 /// For objects that were black after mark, sweep preserves their field data.
 
-val gc_preserves_data : (g: heap) -> (st: seq obj_addr) -> (fp: obj_addr) ->
+val gc_preserves_data : (g: heap) -> (st: seq obj_addr) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ 
-                  (fp = 0UL \/ Seq.mem fp (objects 0UL g)))
+                  fp_in_heap fp g)
         (ensures (forall (x: obj_addr) (i: U64.t).
                    Seq.mem x (objects 0UL (fst (sweep (mark g st) fp))) /\
                    is_black x (mark g st) /\
@@ -136,13 +136,13 @@ val end_to_end_correctness :
   (h_init: heap) ->
   (st: seq obj_addr) ->
   (roots: seq obj_addr) ->
-  (fp: obj_addr) ->
+  (fp: U64.t) ->
   Lemma
     (requires 
       well_formed_heap h_init /\
       stack_props h_init st /\
       root_props h_init roots /\
-      (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
+      fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
@@ -194,7 +194,7 @@ let end_to_end_correctness h_init st roots fp =
   
   mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
   assert (objects 0UL h_mark == objects 0UL h_init);
-  assert (fp = 0UL \/ Seq.mem fp (objects 0UL h_mark));
+  assert (fp_in_heap fp h_mark);
   
   // PILLAR 1: well_formed_heap h_sweep
   sweep_preserves_wf h_mark fp;
@@ -230,10 +230,10 @@ let end_to_end_correctness h_init st roots fp =
 /// COROLLARY: GC is safe (reachable objects survive)
 /// ---------------------------------------------------------------------------
 
-val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: obj_addr) ->
+val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
                   root_props h_init roots /\
-                  (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
+                  fp_in_heap fp h_init /\
                   no_black_objects h_init /\
                   no_pointer_to_blue h_init /\
                   (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
@@ -266,7 +266,7 @@ let gc_safety h_init st roots fp =
 /// never marked). White objects with ws>0 have their field 1 linked into the
 /// free list by sweep.
 
-val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: obj_addr) ->
+val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
                   root_props h_init roots /\
                   no_black_objects h_init /\
@@ -297,13 +297,13 @@ let gc_completeness h_init st roots fp =
 open Pulse.Spec.GC.GCPost
 
 val gc_postcondition_from_correctness :
-  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: obj_addr) ->
+  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
   Lemma
     (requires 
       well_formed_heap h_init /\
       stack_props h_init st /\
       root_props h_init roots /\
-      (fp = 0UL \/ Seq.mem fp (objects 0UL h_init)) /\
+      fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\

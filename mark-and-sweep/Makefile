@@ -265,7 +265,7 @@ Spec/%.fsti.checked: Spec/%.fsti
 	$(FSTAR) $(FSTAR_SPEC_INCLUDES) $(FSTAR_SPEC_FLAGS) $<
 
 Pulse.Lib.GC/%.fst.checked: Pulse.Lib.GC/%.fst
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_LIB_FLAGS) $<
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_LIB_FLAGS) --z3refresh $<
 
 # ------------------------------------------------------------------------------
 # Extraction to C via KaRaMeL

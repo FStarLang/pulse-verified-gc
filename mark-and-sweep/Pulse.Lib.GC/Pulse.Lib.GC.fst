@@ -79,11 +79,11 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   // sweep now proves (s2, fp2) == sweep s_mark fp
   let result_fp = sweep heap fp;
   
-  // After sweep: well_formed_heap AND all_objects_white AND spec equality
+  // After sweep: well_formed_heap AND all_objects_white_or_blue AND spec equality
   with s_sweep. assert (is_heap heap s_sweep **
     pure (SpecFields.well_formed_heap s_sweep /\
           (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_hp_addr s_sweep) ==>
-            SpecObject.is_white x s_sweep) /\
+            (SpecObject.is_white x s_sweep \/ SpecObject.is_blue x s_sweep)) /\
           (s_sweep, result_fp) == SpecSweep.sweep s_mark fp));
   SpecGCPost.gc_postcondition_intro s_sweep;
   

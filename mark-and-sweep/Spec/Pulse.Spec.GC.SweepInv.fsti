@@ -210,19 +210,19 @@ val headers_preserved_before_trans : (limit: nat) -> (g1: heap) -> (g2: heap) ->
   Lemma (requires headers_preserved_before limit g2 g1 /\ headers_preserved_before limit g3 g2)
         (ensures headers_preserved_before limit g3 g1)
 
-/// All objects with header position < pos are white in the given heap
+/// All objects with header position < pos are white or blue in the given heap
 val objects_white_before : nat -> heap -> prop
 
 /// Vacuously true at the start (no objects before position 0)
 val objects_white_before_zero : (g: heap) ->
   Lemma (ensures objects_white_before 0 g)
 
-/// Step: extend whiteness region from h_addr to h_addr + (wz+1)*8
+/// Step: extend swept region from h_addr to h_addr + (wz+1)*8
 /// Requires:
-/// - All objects before h_addr are white in g_pre
+/// - All objects before h_addr are white or blue in g_pre
 /// - Objects list is preserved
 /// - Heap is well-formed
-/// - Current object at h_addr is white in g_post
+/// - Current object at h_addr is white or blue in g_post
 /// - Headers before h_addr are preserved from g_pre to g_post
 /// - Wosize at h_addr is the same in g_post and g_pre (color-only change)
 /// - obj_address h_addr is in the objects list
@@ -232,24 +232,24 @@ val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: h
     objects 0UL g_post == objects 0UL g_pre /\
     well_formed_heap g_post /\
     U64.v h_addr + 8 < heap_size /\
-    is_white (obj_address h_addr) g_post /\
+    (is_white (obj_address h_addr) g_post \/ is_blue (obj_address h_addr) g_post) /\
     headers_preserved_before (U64.v h_addr) g_post g_pre /\
     getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
     Seq.mem (obj_address h_addr) (objects 0UL g_post))
   (ensures objects_white_before 
     (U64.v h_addr + FStar.Mul.((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
 
-/// Final: when pos covers all of heap_size, all objects are white
+/// Final: when pos covers all of heap_size, all objects are white or blue
 val objects_white_before_all : (pos: nat) -> (g: heap) ->
   Lemma (requires objects_white_before pos g /\ pos >= heap_size)
-        (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
+        (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> (is_white x g \/ is_blue x g))
 
-/// Exit variant: when pos + 8 >= heap_size, all objects are white.
+/// Exit variant: when pos + 8 >= heap_size, all objects are white or blue.
 /// At loop exit we have pos + mword >= heap_size, meaning no more objects can start at pos.
 /// All objects have hd_address(x) + 8 < heap_size (from hd_address_bounds), so hd_address(x) < pos.
 val objects_white_before_exit : (pos: nat) -> (g: heap) ->
   Lemma (requires objects_white_before pos g /\ pos + 8 >= heap_size)
-        (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> is_white x g)
+        (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> (is_white x g \/ is_blue x g))
 
 /// ---------------------------------------------------------------------------
 /// No Gray Objects
