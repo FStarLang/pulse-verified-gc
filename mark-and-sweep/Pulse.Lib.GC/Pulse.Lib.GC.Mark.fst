@@ -501,6 +501,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   // Extract well_formed_heap and head-is-gray from mark_inv
   SpecMarkInv.mark_inv_head_gray 's 'st;
   SpecMarkInv.mark_inv_elim_wfh 's 'st;
+  SpecMarkInv.mark_inv_elim_sev 's 'st;
   
   let f_addr = pop st;
   // f_addr : obj_addr from pop = head of 'st
@@ -563,6 +564,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
     
     // From pop postcondition: 'st == Seq.cons f_addr tl
     // Therefore: Seq.head 'st == f_addr and Seq.tail 'st == tl
+    Seq.lemma_tl f_addr tl;
     assert (pure (Seq.head 'st == f_addr));
     assert (pure (Seq.tail 'st == tl));
     
@@ -606,6 +608,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
     with s2 st2. assert (is_heap heap s2 ** is_gray_stack st st2);
     
     // From pop postcondition: 'st == Seq.cons f_addr tl
+    Seq.lemma_tl f_addr tl;
     assert (pure (Seq.head 'st == f_addr));
     assert (pure (Seq.tail 'st == tl));
     

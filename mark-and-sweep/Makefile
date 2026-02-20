@@ -68,7 +68,7 @@ LIB_CHECKED = \
 
 all: verify
 
-verify: verify-spec
+verify: verify-lib
 
 verify-spec: $(SPEC_CHECKED)
 	@echo "=== mark-and-sweep: spec modules verified ==="
