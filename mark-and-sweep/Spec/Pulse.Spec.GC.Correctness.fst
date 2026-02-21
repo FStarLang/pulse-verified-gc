@@ -326,3 +326,32 @@ let gc_postcondition_from_correctness h_init st roots fp =
   sweep_resets_colors h_mark fp;
   sweep_preserves_wf h_mark fp;
   gc_postcondition_intro h_sweep
+
+/// ---------------------------------------------------------------------------
+/// BRIDGE TO FULL GC CORRECTNESS (ALL 5 PILLARS)
+/// ---------------------------------------------------------------------------
+/// Derives full_gc_correctness from end_to_end_correctness.
+/// Clients holding s2 == fst (sweep (mark h_init st) fp) can use this
+/// to get all 5 pillars as an abstract predicate.
+
+val full_gc_correctness_from_end_to_end :
+  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires
+      well_formed_heap h_init /\
+      stack_props h_init st /\
+      root_props h_init roots /\
+      fp_in_heap fp h_init /\
+      no_black_objects h_init /\
+      no_pointer_to_blue h_init /\
+      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
+      (let graph = create_graph h_init in
+       let roots' = HeapGraph.coerce_to_vertex_list roots in
+       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+    (ensures full_gc_correctness h_init (fst (sweep (mark h_init st) fp)) roots)
+
+let full_gc_correctness_from_end_to_end h_init st roots fp =
+  end_to_end_correctness h_init st roots fp;
+  let h_mark = mark h_init st in
+  let h_sweep = fst (sweep h_mark fp) in
+  full_gc_correctness_intro h_init h_mark h_sweep roots

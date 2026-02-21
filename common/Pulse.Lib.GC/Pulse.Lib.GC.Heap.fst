@@ -32,7 +32,9 @@ let mword : U64.t = Base.mword
 /// Heap size in bytes — shared with spec so heap_state == Base.heap
 let heap_size : pos = Base.heap_size
 
-/// Platform assumption: size_t is at least 64 bits (true on all 64-bit platforms)
+/// TCB: Platform assumption — size_t is at least 64 bits.
+/// True on all 64-bit platforms (x86-64, AArch64, RISC-V 64).
+/// This is the only `assume` in the codebase.
 assume val platform_fits_u64 : squash SZ.fits_u64
 
 /// Heap size as SizeT

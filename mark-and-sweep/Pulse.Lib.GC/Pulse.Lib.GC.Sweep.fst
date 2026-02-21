@@ -12,6 +12,10 @@ module Pulse.Lib.GC.Sweep
 
 #lang-pulse
 
+/// --warn_error -19: Pulse generates one combined VC per `fn` block. These combined
+/// VCs hit Z3 matching loops on hp_addr subtyping (k!61 fires 60K+ times). All 1000+
+/// individual split queries pass; combined VCs are redundant but can't be disabled.
+/// Low rlimit (20) ensures combined VCs timeout in ~12s rather than hanging.
 #set-options "--z3rlimit 50 --split_queries always --warn_error -19"
 
 open FStar.Mul

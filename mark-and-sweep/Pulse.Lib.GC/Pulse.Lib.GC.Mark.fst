@@ -55,6 +55,14 @@ let is_pointer_eq (v: U64.t)
              <==> HeapGraph.is_pointer_field v))
   = ()
 
+/// Compute field address as hp_addr: avoids subtyping check in split queries
+let field_addr_of (hd: hp_addr) (i: U64.t{U64.v i >= 1})
+  : Pure hp_addr
+    (requires U64.v hd + U64.v mword * U64.v i + U64.v mword <= heap_size)
+    (ensures fun r -> U64.v r == U64.v hd + U64.v mword * U64.v i)
+  = ML.lemma_mod_plus_distr_l (U64.v hd) (U64.v mword * U64.v i) (U64.v mword);
+    U64.add hd (U64.mul mword i)
+
 /// Bridge: spec_read_word at field address == HeapGraph.get_field
 /// Both read from hd_address obj + mword * i
 #push-options "--z3rlimit 100"
@@ -66,9 +74,7 @@ let read_field_get_field_eq (g: heap_state) (obj: obj_addr) (i: U64.t{U64.v i >=
                     HeapGraph.get_field g obj i))
   = let hd = SpecHeap.hd_address obj in
     SpecHeap.hd_address_spec obj;
-    // Construct field_addr : hp_addr matching spec_field_address
-    ML.lemma_mod_plus_distr_l (U64.v hd) (U64.v mword * U64.v i) (U64.v mword);
-    let field_addr : hp_addr = U64.add hd (U64.mul mword i) in
+    let field_addr = field_addr_of hd i in
     // U64.v field_addr == spec_field_address (U64.v hd) (U64.v i) by commutativity
     assert (U64.v field_addr == U64.v hd + U64.v mword * U64.v i);
     // spec_read_word g (U64.v field_addr) == SpecHeap.read_word g field_addr
