@@ -43,14 +43,13 @@ FSTAR_LIB_FLAGS = $(FSTAR_BASE) \
 # Spec checked files (explicit list)
 SPEC_CHECKED = \
   Spec/Pulse.Spec.GC.SeqMemLemmas.fst.checked \
-  Spec/Pulse.Spec.GC.GCPost.fsti.checked \
-  Spec/Pulse.Spec.GC.GCPost.fst.checked \
   Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
   Spec/Pulse.Spec.GC.SweepInv.fst.checked \
   Spec/Pulse.Spec.GC.Mark.fst.checked \
   Spec/Pulse.Spec.GC.MarkInv.fsti.checked \
   Spec/Pulse.Spec.GC.MarkInv.fst.checked \
   Spec/Pulse.Spec.GC.Sweep.fst.checked \
+  Spec/Pulse.Spec.GC.Correctness.fsti.checked \
   Spec/Pulse.Spec.GC.Correctness.fst.checked
 
 # Lib checked files (explicit list)
@@ -111,17 +110,31 @@ $(C)/Pulse.Lib.GC/%.checked: | .common-pulse-stamp
 Spec/Pulse.Spec.GC.SeqMemLemmas.fst.checked: \
 	Spec/Pulse.Spec.GC.SeqMemLemmas.fst
 
-Spec/Pulse.Spec.GC.GCPost.fsti.checked: \
-	Spec/Pulse.Spec.GC.GCPost.fsti \
+Spec/Pulse.Spec.GC.Correctness.fsti.checked: \
+	Spec/Pulse.Spec.GC.Correctness.fsti \
+	Spec/Pulse.Spec.GC.Sweep.fst.checked \
+	Spec/Pulse.Spec.GC.Mark.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.DFS.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.HeapModel.fst.checked \
 	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.Graph.fst.checked \
 	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
+	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
 	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.GCPost.fst.checked: \
-	Spec/Pulse.Spec.GC.GCPost.fst \
-	Spec/Pulse.Spec.GC.GCPost.fsti.checked \
+Spec/Pulse.Spec.GC.Correctness.fst.checked: \
+	Spec/Pulse.Spec.GC.Correctness.fst \
+	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
+	Spec/Pulse.Spec.GC.Sweep.fst.checked \
+	Spec/Pulse.Spec.GC.Mark.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.DFS.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.HeapModel.fst.checked \
 	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.Graph.fst.checked \
 	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
+	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
 	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
 
 Spec/Pulse.Spec.GC.SweepInv.fsti.checked: \
@@ -183,19 +196,6 @@ Spec/Pulse.Spec.GC.Sweep.fst.checked: \
 	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
 	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.Correctness.fst.checked: \
-	Spec/Pulse.Spec.GC.Correctness.fst \
-	Spec/Pulse.Spec.GC.GCPost.fsti.checked \
-	Spec/Pulse.Spec.GC.Sweep.fst.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.DFS.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapModel.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Graph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
 
 # ------------------------------------------------------------------------------
 # Lib module dependencies (from module graph, validated against --dep full)
@@ -229,7 +229,7 @@ Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst.checked: \
 
 Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked: \
 	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst \
-	Spec/Pulse.Spec.GC.GCPost.fsti.checked \
+	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
 	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
 	Spec/Pulse.Spec.GC.Sweep.fst.checked \
 	Spec/Pulse.Spec.GC.Mark.fst.checked \
@@ -248,7 +248,7 @@ Pulse.Lib.GC/Pulse.Lib.GC.fst.checked: \
 	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked \
 	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
 	Spec/Pulse.Spec.GC.MarkInv.fsti.checked \
-	Spec/Pulse.Spec.GC.GCPost.fsti.checked \
+	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
 	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
 	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
 	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked \

@@ -2,7 +2,9 @@
 /// Pulse.Spec.GC.Correctness - End-to-End GC Correctness
 /// ---------------------------------------------------------------------------
 ///
-/// Uses obj_addr convention from common/.
+/// Defines abstract GC postcondition predicates and proves the full
+/// end-to-end correctness theorem with 5 pillars.
+///
 /// Colors used: White (initial/free), Gray (mark frontier), Black (marked/reachable).
 /// After mark: black = reachable, white = unreachable, no gray.
 /// After sweep: all objects white (black reset to white, white unchanged).
@@ -26,6 +28,76 @@ open Pulse.Spec.GC.Mark
 open Pulse.Spec.GC.Sweep
 open Pulse.Spec.GC.DFS
 module HeapGraph = Pulse.Spec.GC.HeapGraph
+
+/// ---------------------------------------------------------------------------
+/// Abstract GC Postcondition (Pillars 1 + 4)
+/// ---------------------------------------------------------------------------
+
+let gc_postcondition (h_final: heap) : prop =
+  well_formed_heap h_final /\
+  (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==>
+    is_white x h_final \/ is_blue x h_final)
+
+let no_gray_or_black_objects (h_final: heap) : prop =
+  forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==>
+    is_white x h_final \/ is_blue x h_final
+
+let gc_postcondition_intro h_final = ()
+
+let gc_postcondition_from_parts h_final = ()
+
+let gc_postcondition_elim h_final = ()
+
+/// ---------------------------------------------------------------------------
+/// Full GC Correctness -- All 5 pillars
+/// ---------------------------------------------------------------------------
+
+let full_gc_correctness (h_init h_final: heap) (roots: seq obj_addr) : prop =
+  exists (h_mark: heap).
+  (let g_init = create_graph h_init in
+   let g_final = create_graph h_final in
+   let roots' = HeapGraph.coerce_to_vertex_list roots in
+   // Pillar 1
+   well_formed_heap h_final /\
+   // Pillar 2
+   (graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
+     (forall (x: obj_addr). mem_graph_vertex g_init x ==>
+       (is_black x h_mark <==> Seq.mem x (reachable_set g_init roots')))) /\
+   // Pillar 3
+   (forall (x: obj_addr).
+     Seq.mem x g_final.vertices /\ is_black x h_mark ==>
+     successors g_init x == successors g_final x) /\
+   // Pillar 4
+   (forall (x: obj_addr).
+     Seq.mem x g_final.vertices ==>
+     (is_white x h_final \/ is_blue x h_final)) /\
+   (forall (x: obj_addr).
+     Seq.mem x g_final.vertices /\ is_black x h_mark ==>
+     is_white x h_final) /\
+   // Pillar 5
+   (forall (x: obj_addr) (i: U64.t).
+     Seq.mem x g_final.vertices /\ is_black x h_mark /\
+     U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
+     HeapGraph.get_field h_init x i == HeapGraph.get_field h_final x i))
+
+let full_gc_correctness_intro h_init h_mark h_final roots = ()
+
+let full_gc_correctness_elim_wfh h_init h_final roots = ()
+
+let full_gc_correctness_elim_colors h_init h_final roots =
+  let aux () : Lemma
+    (requires full_gc_correctness h_init h_final roots)
+    (ensures well_formed_heap h_final /\
+             (forall (x: obj_addr). Seq.mem x (objects 0UL h_final) ==>
+               is_white x h_final \/ is_blue x h_final))
+  = let bridge (x: obj_addr) : Lemma
+      (Seq.mem x (objects 0UL h_final) <==> Seq.mem x (create_graph h_final).vertices)
+    = graph_vertices_mem h_final x
+    in
+    FStar.Classical.forall_intro bridge
+  in
+  aux ();
+  gc_postcondition_intro h_final
 
 /// ---------------------------------------------------------------------------
 /// Pillar 3: Structural Preservation
@@ -121,70 +193,12 @@ let gc_preserves_data g st fp =
 /// THE END-TO-END CORRECTNESS THEOREM
 /// ---------------------------------------------------------------------------
 /// 
-/// Preconditions:
-/// - Well-formed heap with valid stack and roots
-/// - No black objects initially (all objects are white or gray from root pushing)
-///
 /// Five pillars of correctness:
 /// 1. Heap integrity: well_formed_heap preserved through mark+sweep
-/// 2. Reachability: black after mark ⟺ reachable from roots
+/// 2. Reachability: black after mark -- reachable from roots
 /// 3. Structure: successors preserved for reachable objects
 /// 4. State reset: all objects white after sweep
 /// 5. Data: field data preserved for reachable objects
-
-val end_to_end_correctness :
-  (h_init: heap) ->
-  (st: seq obj_addr) ->
-  (roots: seq obj_addr) ->
-  (fp: U64.t) ->
-  Lemma
-    (requires 
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures
-      (let h_mark = mark h_init st in
-       let h_sweep = fst (sweep h_mark fp) in
-       let g_init = create_graph h_init in
-       let g_sweep = create_graph h_sweep in
-      
-       (* PILLAR 1: HEAP INTEGRITY *)
-       well_formed_heap h_sweep /\
-      
-       (* PILLAR 2: REACHABILITY — black after mark ⟺ reachable *)
-       (let roots' = HeapGraph.coerce_to_vertex_list roots in
-        graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
-        (forall (x: obj_addr). 
-          mem_graph_vertex g_init x ==>
-          (is_black x h_mark <==> Seq.mem x (reachable_set g_init roots')))) /\
-      
-       (* PILLAR 3: STRUCTURAL PRESERVATION for reachable objects *)
-       (forall (x: obj_addr). 
-         Seq.mem x g_sweep.vertices /\ is_black x h_mark ==>
-         successors g_init x == successors g_sweep x) /\
-      
-       (* PILLAR 4: COLOR RESET — no gray or black after sweep, reachable objects white *)
-       (forall (x: obj_addr). 
-         Seq.mem x g_sweep.vertices ==>
-         (is_white x h_sweep \/ is_blue x h_sweep)) /\
-       (forall (x: obj_addr).
-         Seq.mem x g_sweep.vertices /\ is_black x h_mark ==>
-         is_white x h_sweep) /\
-      
-       (* PILLAR 5: DATA TRANSPARENCY for reachable objects *)
-       (forall (x: obj_addr) (i: U64.t).
-         Seq.mem x g_sweep.vertices /\ 
-         is_black x h_mark /\
-         U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
-         HeapGraph.get_field h_init x i == HeapGraph.get_field h_sweep x i)
-      ))
 
 let end_to_end_correctness h_init st roots fp =
   let h_mark = mark h_init st in
@@ -227,26 +241,34 @@ let end_to_end_correctness h_init st roots fp =
   gc_preserves_data h_init st fp
 
 /// ---------------------------------------------------------------------------
-/// COROLLARY: GC is safe (reachable objects survive)
+/// BRIDGE: gc_postcondition from end_to_end_correctness
 /// ---------------------------------------------------------------------------
 
-val gc_safety : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
-                  root_props h_init roots /\
-                  fp_in_heap fp h_init /\
-                  no_black_objects h_init /\
-                  no_pointer_to_blue h_init /\
-                  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-                  (let graph = create_graph h_init in
-                   let roots' = HeapGraph.coerce_to_vertex_list roots in
-                   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-        (ensures (let graph = create_graph h_init in
-                  let roots' = HeapGraph.coerce_to_vertex_list roots in
-                  let h_sweep = fst (sweep (mark h_init st) fp) in
-                  forall (x: obj_addr).
-                    mem_graph_vertex graph x /\
-                    Seq.mem x (reachable_set graph roots') ==>
-                    Seq.mem x (objects 0UL h_sweep)))
+let gc_postcondition_from_correctness h_init st roots fp =
+  end_to_end_correctness h_init st roots fp;
+  let h_mark = mark h_init st in
+  let h_sweep = fst (sweep h_mark fp) in
+  mark_preserves_wf h_init st;
+  mark_no_grey_remains h_init st;
+  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  sweep_preserves_objects h_mark fp;
+  sweep_resets_colors h_mark fp;
+  sweep_preserves_wf h_mark fp;
+  gc_postcondition_intro h_sweep
+
+/// ---------------------------------------------------------------------------
+/// BRIDGE: full_gc_correctness from end_to_end_correctness
+/// ---------------------------------------------------------------------------
+
+let full_gc_correctness_from_end_to_end h_init st roots fp =
+  end_to_end_correctness h_init st roots fp;
+  let h_mark = mark h_init st in
+  let h_sweep = fst (sweep h_mark fp) in
+  full_gc_correctness_intro h_init h_mark h_sweep roots
+
+/// ---------------------------------------------------------------------------
+/// COROLLARY: GC is safe (reachable objects survive)
+/// ---------------------------------------------------------------------------
 
 let gc_safety h_init st roots fp =
   end_to_end_correctness h_init st roots fp;
@@ -262,96 +284,6 @@ let gc_safety h_init st roots fp =
 /// ---------------------------------------------------------------------------
 /// COROLLARY: GC is complete (unreachable objects are freed)
 /// ---------------------------------------------------------------------------
-/// After GC, unreachable objects remain white but are NOT black (they were
-/// never marked). White objects with ws>0 have their field 1 linked into the
-/// free list by sweep.
-
-val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma (requires well_formed_heap h_init /\ stack_props h_init st /\ 
-                  root_props h_init roots /\
-                  no_black_objects h_init /\
-                  no_pointer_to_blue h_init /\
-                  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-                  (let graph = create_graph h_init in
-                   let roots' = HeapGraph.coerce_to_vertex_list roots in
-                   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-        (ensures (let graph = create_graph h_init in
-                  let roots' = HeapGraph.coerce_to_vertex_list roots in
-                  let h_mark = mark h_init st in
-                  forall (x: obj_addr).
-                    mem_graph_vertex graph x /\
-                    ~(Seq.mem x (reachable_set graph roots')) ==>
-                    ~(is_black x h_mark)))
 
 let gc_completeness h_init st roots fp =
-  // mark_black_is_reachable: is_black x h_mark ==> reachable x
-  // Contrapositive: ~(reachable x) ==> ~(is_black x h_mark)
   mark_black_is_reachable h_init st roots
-
-/// ---------------------------------------------------------------------------
-/// BRIDGE TO ABSTRACT GC POSTCONDITION
-/// ---------------------------------------------------------------------------
-/// gc_postcondition (from GCPost) wraps pillars 1 and 4 as an abstract prop.
-/// This lemma derives gc_postcondition from end_to_end_correctness.
-
-open Pulse.Spec.GC.GCPost
-
-val gc_postcondition_from_correctness :
-  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires 
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures gc_postcondition (fst (sweep (mark h_init st) fp)))
-
-let gc_postcondition_from_correctness h_init st roots fp =
-  end_to_end_correctness h_init st roots fp;
-  let h_mark = mark h_init st in
-  let h_sweep = fst (sweep h_mark fp) in
-  // end_to_end_correctness gives: well_formed_heap h_sweep
-  // and all objects white in graph vertices
-  // Bridge from graph vertices to objects 0UL:
-  mark_preserves_wf h_init st;
-  mark_no_grey_remains h_init st;
-  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
-  sweep_preserves_objects h_mark fp;
-  sweep_resets_colors h_mark fp;
-  sweep_preserves_wf h_mark fp;
-  gc_postcondition_intro h_sweep
-
-/// ---------------------------------------------------------------------------
-/// BRIDGE TO FULL GC CORRECTNESS (ALL 5 PILLARS)
-/// ---------------------------------------------------------------------------
-/// Derives full_gc_correctness from end_to_end_correctness.
-/// Clients holding s2 == fst (sweep (mark h_init st) fp) can use this
-/// to get all 5 pillars as an abstract predicate.
-
-val full_gc_correctness_from_end_to_end :
-  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
-  Lemma
-    (requires
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures full_gc_correctness h_init (fst (sweep (mark h_init st) fp)) roots)
-
-let full_gc_correctness_from_end_to_end h_init st roots fp =
-  end_to_end_correctness h_init st roots fp;
-  let h_mark = mark h_init st in
-  let h_sweep = fst (sweep h_mark fp) in
-  full_gc_correctness_intro h_init h_mark h_sweep roots

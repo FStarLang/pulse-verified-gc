@@ -24,7 +24,7 @@ open Pulse.Lib.GC.Sweep
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
-module SpecGCPost = Pulse.Spec.GC.GCPost
+module SpecGCPost = Pulse.Spec.GC.Correctness
 module SpecMark = Pulse.Spec.GC.Mark
 module SpecMarkInv = Pulse.Spec.GC.MarkInv
 module SpecSweep = Pulse.Spec.GC.Sweep

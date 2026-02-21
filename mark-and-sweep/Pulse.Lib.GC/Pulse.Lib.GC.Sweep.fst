@@ -33,7 +33,7 @@ module SpecObject = Pulse.Spec.GC.Object
 module SpecMark = Pulse.Spec.GC.Mark
 module SpecHeapGraph = Pulse.Spec.GC.HeapGraph
 module SI = Pulse.Spec.GC.SweepInv
-module SpecGCPost = Pulse.Spec.GC.GCPost
+module SpecGCPost = Pulse.Spec.GC.Correctness
 
 /// ---------------------------------------------------------------------------
 /// Overflow Helpers
