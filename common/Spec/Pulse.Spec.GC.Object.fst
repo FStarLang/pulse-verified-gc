@@ -54,9 +54,6 @@ let field_offset (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t =
   field_offset_bound field_idx;
   U64.mul field_idx mword
 
-/// Get object address from header address  
-let obj_address (hd_addr: hp_addr) : U64.t = U64.add_mod hd_addr mword
-
 /// Field address calculation
 let field_address (obj_addr: U64.t) (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t =
   U64.add_mod obj_addr (field_offset field_idx)
@@ -597,17 +594,10 @@ let rec objects (start: hp_addr) (g: heap) : GTot (Seq.seq hp_addr) (decreases (
   else
     let header = read_word g start in
     let wz = getWosize header in
-    let obj_addr_raw = obj_address start in
-    // start + 8 < heap_size (from guard + Seq.length g == heap_size)
-    // start + 8 < heap_size < pow2 64, so add_mod doesn't wrap
-    assert (U64.v start + 8 < Seq.length g);
-    assert (Seq.length g == heap_size);
-    assert (U64.v start + 8 < heap_size);
-    assert (U64.v start + 8 < pow2 64);
-    assert (U64.v obj_addr_raw = (U64.v start + 8) % pow2 64);
+    let obj_addr_raw = f_address start in
+    // f_address uses U64.add — gives start + 8 directly
+    f_address_spec start;
     assert (U64.v obj_addr_raw = U64.v start + 8);
-    assert (U64.v obj_addr_raw < heap_size);
-    assert (U64.v obj_addr_raw % U64.v mword == 0);
     let obj_addr : hp_addr = obj_addr_raw in
     // Calculate next_start in nat arithmetic to avoid overflow issues
     let obj_size_nat = U64.v wz + 1 in  // wosize + 1 word for header
@@ -635,8 +625,8 @@ let allocated_blocks (g: heap) : GTot (Seq.seq hp_addr) =
 /// Used to convert addresses from objects list to obj_addr
 let hp_to_obj (h: hp_addr{U64.v h >= U64.v mword}) : obj_addr = h
 
-/// All object addresses in objects are > start (strictly greater, using obj_address)
-/// Key insight: obj_address start = start + 8, so objects start at start + 8 or later
+/// All object addresses in objects are > start (strictly greater, using f_address)
+/// Key insight: f_address start = start + 8, so objects start at start + 8 or later
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
 let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: hp_addr)
   : Lemma (ensures Seq.mem x (objects start g) ==> U64.v x > U64.v start)
@@ -645,15 +635,8 @@ let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: hp_addr)
     else begin
       let header = read_word g start in
       let wz = getWosize header in
-      let obj_addr_raw = obj_address start in
-      // Prove obj_addr_raw is valid (same as in objects)
-      assert (U64.v start + 8 < Seq.length g);
-      assert (Seq.length g == heap_size);
-      assert (U64.v start + 8 < heap_size);
-      assert (U64.v start + 8 < pow2 64);
-      assert (U64.v obj_addr_raw = U64.v start + 8);
-      assert (U64.v obj_addr_raw < heap_size);
-      assert (U64.v obj_addr_raw % U64.v mword == 0);
+      let obj_addr_raw = f_address start in
+      f_address_spec start;
       let obj_addr : hp_addr = obj_addr_raw in
       let obj_size_nat = U64.v wz + 1 in
       let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
@@ -699,11 +682,11 @@ let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: hp_addr)
 /// Object address not in later objects (for no-duplicates proof)
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
 let objects_addr_not_in_rest (start: hp_addr) (g: heap)
-  : Lemma (requires U64.v start + 8 <= Seq.length g)
+  : Lemma (requires U64.v start + 8 < Seq.length g)
           (ensures (
             let header = read_word g start in
             let wz = getWosize header in
-            let obj_addr = obj_address start in
+            let obj_addr = f_address start in
             let obj_size_nat = U64.v wz + 1 in
             let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
             next_start_nat <= Seq.length g /\ next_start_nat < pow2 64 ==>
@@ -712,7 +695,7 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
              ~(Seq.mem (obj_addr <: hp_addr) (objects ((U64.uint_to_t next_start_nat) <: hp_addr) g)))))
   = let header = read_word g start in
     let wz = getWosize header in
-    let obj_addr = obj_address start in
+    let obj_addr = f_address start in
     let obj_size_nat = U64.v wz + 1 in
     let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
     if next_start_nat <= Seq.length g && next_start_nat < pow2 64 then (
@@ -733,6 +716,7 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
         // Contradiction, so obj_addr not in (objects next_start g)
         objects_addresses_gt_start next_start g obj_addr_hp;
         assert (Seq.mem obj_addr_hp (objects next_start g) ==> U64.v obj_addr > U64.v next_start);
+        f_address_spec start;
         assert (U64.v obj_addr = U64.v start + 8);
         assert (U64.v next_start >= U64.v start + 8);
         assert (U64.v obj_addr <= U64.v next_start)
@@ -741,8 +725,8 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
 #pop-options
 
 /// All objects in objects list have addresses >= 8
-/// Proof: obj_address start = start + 8 (no overflow when start + 8 <= heap size < 2^64)
-/// For objects 0UL g, first object is at obj_address 0 = 8, rest are higher
+/// Proof: f_address start = start + 8 (no overflow when start + 8 <= heap size < 2^64)
+/// For objects 0UL g, first object is at f_address 0 = 8, rest are higher
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 150"
 let rec objects_addresses_ge_8 (g: heap) (x: hp_addr)
   : Lemma (requires Seq.mem x (objects 0UL g))
@@ -756,15 +740,10 @@ let rec objects_addresses_ge_8 (g: heap) (x: hp_addr)
     else begin
       let header = read_word g start in
       let wz = getWosize header in
-      let obj_addr_raw = obj_address start in
-      // obj_address 0 = add_mod 0 8 = 8
-      assert (U64.v obj_addr_raw = (U64.v start + 8) % pow2 64);
-      assert (U64.v obj_addr_raw = 8);
-      // Prove obj_addr is valid
-      assert (U64.v start + 8 < Seq.length g);
-      assert (Seq.length g == heap_size);
-      assert (U64.v obj_addr_raw < heap_size);
-      assert (U64.v obj_addr_raw % U64.v mword == 0);
+      let obj_addr_raw = f_address start in
+      // f_address 0 = 0 + 8 = 8
+      f_address_spec start;
+      assert (U64.v obj_addr_raw = U64.v start + 8);
       let obj_addr : hp_addr = obj_addr_raw in
       let obj_size_nat = U64.v wz + 1 in
       let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in

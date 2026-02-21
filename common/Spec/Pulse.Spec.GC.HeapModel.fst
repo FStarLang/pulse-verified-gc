@@ -41,14 +41,12 @@ let rec objects_is_vertex_set_aux (start: hp_addr) (g: heap)
       if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then
         is_vertex_set_empty ()
       else begin
-        let obj_raw = obj_address start in
-        assert (U64.v obj_raw = (U64.v start + 8) % pow2 64);
-        assert (U64.v start + 8 < heap_size);
-        assert (U64.v obj_raw = U64.v start + 8);
-        assert (U64.v obj_raw < heap_size);
-        assert (U64.v obj_raw % 8 = 0);
-        assert (U64.v obj_raw >= U64.v mword);
-        let obj : obj_addr = obj_raw in
+        f_address_spec start;
+        let obj : obj_addr = f_address start in
+        assert (U64.v obj = U64.v start + 8);
+        assert (U64.v obj < heap_size);
+        assert (U64.v obj % 8 = 0);
+        assert (U64.v obj >= U64.v mword);
         if next_start_nat >= heap_size then begin
           // Singleton: Seq.cons obj Seq.empty
           is_vertex_set_singleton obj

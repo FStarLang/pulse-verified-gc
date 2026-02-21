@@ -37,6 +37,7 @@ FSTAR_SPEC_FLAGS = $(FSTAR_BASE) \
 
 FSTAR_LIB_FLAGS = $(FSTAR_BASE) \
   --load_cmxs pulse \
+  --split_queries always \
   --already_cached 'FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address -Pulse.Lib.Bitvec'
 
 # Spec checked files (explicit list)

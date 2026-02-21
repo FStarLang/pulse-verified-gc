@@ -2,7 +2,7 @@
 /// Pulse.Spec.GC.Sweep - Sweep phase specification
 /// ---------------------------------------------------------------------------
 ///
-/// Uses obj_addr convention from common/.
+/// Uses f_address convention from common/.
 
 module Pulse.Spec.GC.Sweep
 
@@ -274,8 +274,8 @@ let sweep_object_preserves_objects_from start g obj fp =
 val sweep_object_preserves_objects_suffix : (h_addr: hp_addr) -> (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
                   Seq.length (objects h_addr g) > 0 /\
-                  Seq.mem (obj_address h_addr) (objects 0UL g))
-        (ensures (let obj = obj_address h_addr in
+                  Seq.mem (f_address h_addr) (objects 0UL g))
+        (ensures (let obj = f_address h_addr in
                   let wz = getWosize (read_word g h_addr) in
                   let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
                   next_nat <= heap_size /\
@@ -285,7 +285,8 @@ val sweep_object_preserves_objects_suffix : (h_addr: hp_addr) -> (g: heap) -> (f
 
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let sweep_object_preserves_objects_suffix h_addr g fp =
-  let obj = obj_address h_addr in
+  let obj = f_address h_addr in
+  f_address_spec h_addr;
   let wz = getWosize (read_word g h_addr) in
   let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
   objects_nonempty_head_fits h_addr g;
@@ -331,14 +332,6 @@ let sweep_aux_empty (g: heap) (fp: U64.t)
   : Lemma (sweep_aux g Seq.empty fp == (g, fp))
   = ()
 
-/// obj_address (from Fields) == f_address (from Heap) when no overflow
-let obj_address_eq_f_address (h_addr: hp_addr)
-  : Lemma (requires U64.v h_addr + 8 < heap_size)
-          (ensures obj_address h_addr == f_address h_addr)
-  = f_address_spec h_addr;
-    assert (U64.v (obj_address h_addr) == U64.v h_addr + 8);
-    assert (U64.v (f_address h_addr) == U64.v h_addr + 8)
-
 /// Core invariant step: sweep_aux on objects from h_addr decomposes into
 /// sweep_object at head + sweep_aux on objects from next_addr
 /// After sweep_object at obj: sweep_aux g' (objects next g') fp' == sweep_aux g' (objects next g) fp'
@@ -347,9 +340,9 @@ let obj_address_eq_f_address (h_addr: hp_addr)
 let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\
                     Seq.length (objects h_addr g) > 0 /\
-                    Seq.mem (obj_address h_addr) (objects 0UL g) /\
+                    Seq.mem (f_address h_addr) (objects 0UL g) /\
                     U64.v h_addr + 8 < heap_size)
-          (ensures (let obj = obj_address h_addr in
+          (ensures (let obj = f_address h_addr in
                     let wz = getWosize (read_word g h_addr) in
                     let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
                     let (g', fp') = sweep_object g obj fp in
@@ -359,7 +352,8 @@ let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
                        sweep_aux g (objects h_addr g) fp ==
                        sweep_aux g' (objects next g') fp')) /\
                     (next_nat >= heap_size ==> sweep_aux g (objects h_addr g) fp == (g', fp'))))
-  = let obj = obj_address h_addr in
+  = let obj = f_address h_addr in
+    f_address_spec h_addr;
     let wz = getWosize (read_word g h_addr) in
     let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
     objects_nonempty_head_fits h_addr g;

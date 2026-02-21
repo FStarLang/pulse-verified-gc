@@ -155,7 +155,7 @@ val color_change_preserves_density : (obj: obj_addr) -> (g: heap) -> (c: color) 
 /// This avoids needing suffix preservation — we only need global membership.
 val member_implies_objects_nonempty : (h: hp_addr{U64.v h + 8 < heap_size}) -> (g: heap) ->
   Lemma (requires well_formed_heap g /\
-                  Seq.mem (obj_address h) (objects 0UL g))
+                  Seq.mem (f_address h) (objects 0UL g))
         (ensures Seq.length (objects h g) > 0)
 
 /// ---------------------------------------------------------------------------
@@ -225,17 +225,17 @@ val objects_white_before_zero : (g: heap) ->
 /// - Current object at h_addr is white or blue in g_post
 /// - Headers before h_addr are preserved from g_pre to g_post
 /// - Wosize at h_addr is the same in g_post and g_pre (color-only change)
-/// - obj_address h_addr is in the objects list
+/// - f_address h_addr is in the objects list
 val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: heap) ->
   Lemma (requires
     objects_white_before (U64.v h_addr) g_pre /\
     objects 0UL g_post == objects 0UL g_pre /\
     well_formed_heap g_post /\
     U64.v h_addr + 8 < heap_size /\
-    (is_white (obj_address h_addr) g_post \/ is_blue (obj_address h_addr) g_post) /\
+    (is_white (f_address h_addr) g_post \/ is_blue (f_address h_addr) g_post) /\
     headers_preserved_before (U64.v h_addr) g_post g_pre /\
     getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
-    Seq.mem (obj_address h_addr) (objects 0UL g_post))
+    Seq.mem (f_address h_addr) (objects 0UL g_post))
   (ensures objects_white_before 
     (U64.v h_addr + FStar.Mul.((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
 
