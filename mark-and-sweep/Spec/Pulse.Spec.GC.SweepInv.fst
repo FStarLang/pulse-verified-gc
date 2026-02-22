@@ -312,7 +312,6 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
     let next = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
     Pulse.Spec.GC.Heap.hd_address_spec obj;
     f_address_spec h_addr;
-    U64.v_inj (Pulse.Spec.GC.Fields.hd_address obj) (Pulse.Spec.GC.Heap.hd_address obj);
     assert (U64.v (hd_address obj) = U64.v h_addr);
     let aux (x: obj_addr)
       : Lemma (requires Seq.mem x (objects 0UL g_post) /\ U64.v (hd_address x) < next)
@@ -381,11 +380,7 @@ let no_gray_at_preserved (obj: obj_addr) (g_init g_cur: heap)
                     Seq.mem obj (objects 0UL g_init) /\
                     read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
           (ensures ~(is_gray obj g_cur))
-  = // Bridge: Fields.hd_address and Heap.hd_address agree for obj_addr
-    SpecHeap.hd_address_spec obj;
-    assert (U64.v (Pulse.Spec.GC.Fields.hd_address obj) = U64.v obj - 8);
-    assert (U64.v (SpecHeap.hd_address obj) = U64.v obj - 8);
-    U64.v_inj (Pulse.Spec.GC.Fields.hd_address obj) (SpecHeap.hd_address obj);
+  = SpecHeap.hd_address_spec obj;
     color_of_header_eq obj g_cur g_init
 
 let no_gray_elim (obj: obj_addr) (g: heap)

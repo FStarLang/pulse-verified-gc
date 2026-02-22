@@ -3210,7 +3210,7 @@ let mark_preserves_wosize g st x =
 
 /// mark preserves exists_field_pointing_to_unchecked (field data unchanged)
 val mark_preserves_efptu : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  (src: obj_addr) -> (wz: U64.t{U64.v wz < pow2 54}) -> (dst: hp_addr) ->
+  (src: obj_addr) -> (wz: U64.t{U64.v wz < pow2 54}) -> (dst: obj_addr) ->
   Lemma (requires Seq.mem src (objects 0UL g) /\ U64.v wz <= U64.v (wosize_of_object src g))
         (ensures exists_field_pointing_to_unchecked (mark g st) src wz dst ==
                  exists_field_pointing_to_unchecked g src wz dst)

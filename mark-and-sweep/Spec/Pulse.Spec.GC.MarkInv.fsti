@@ -12,6 +12,7 @@ module Pulse.Spec.GC.MarkInv
 
 open FStar.Seq
 open Pulse.Spec.GC.Base
+open Pulse.Spec.GC.Heap
 open Pulse.Spec.GC.Object
 open Pulse.Spec.GC.Fields
 open Pulse.Spec.GC.Mark

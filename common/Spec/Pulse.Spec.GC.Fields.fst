@@ -32,14 +32,6 @@ let wosize_of_object_as_wosize (h_addr: obj_addr) (g: heap) : GTot wosize =
   wosize_of_object_bound h_addr g;
   wosize_of_object h_addr g
 
-/// ---------------------------------------------------------------------------
-/// Header/Object Address Conversion
-/// ---------------------------------------------------------------------------
-
-/// Header address from object address (subtract 8 bytes for header)
-let hd_address (obj_addr: hp_addr) : hp_addr = 
-  if U64.v obj_addr >= 8 then U64.sub obj_addr mword else 0UL
-
 /// Helper: prove multiplication bound for field offset
 private let field_offset_bound (field_idx: U64.t{U64.v field_idx < pow2 61}) : Lemma 
   (FStar.UInt.size FStar.Mul.(U64.v field_idx * 8) 64)
@@ -78,6 +70,13 @@ let is_pointer (v: U64.t) : bool =
 /// Check if field value looks like a pointer
 let is_pointer_field (field_val: U64.t) : bool = is_pointer field_val
 
+/// Check if field value points to the same object as target (header comparison).
+/// Uses if-then-else to establish obj_addr refinement from is_pointer_field.
+let is_pointer_to (fv: U64.t) (target: obj_addr) : GTot bool =
+  if is_pointer_field fv then
+    hd_address fv = hd_address target
+  else false
+
 /// Helper: wosize is always < pow2 61
 let wosize_fits_field_index (wz: wosize) 
   : Lemma (U64.v wz < pow2 61)
@@ -91,7 +90,7 @@ let well_formed_object (g: heap) (h: obj_addr) : prop =
 /// Unchecked version - does not require well_formed_object precondition  
 /// Used in well_formed_heap definition to avoid circularity
 /// Uses mul_mod/add_mod to avoid internal lemma calls (enables SMT unfolding)
-let rec exists_field_pointing_to_unchecked (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr) 
+let rec exists_field_pointing_to_unchecked (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr) 
   : GTot bool (decreases U64.v wz) =
   if wz = 0UL then false
   else
@@ -101,25 +100,25 @@ let rec exists_field_pointing_to_unchecked (g: heap) (h: obj_addr) (wz: U64.t{U6
     else
       let field_addr : hp_addr = field_addr_raw in
       let field_val = read_word g field_addr in
-      if is_pointer_field field_val && hd_address field_val = hd_address target then true
+      if is_pointer_to field_val target then true
       else exists_field_pointing_to_unchecked g h idx target
 
 /// One-step unfolding: if guard passes AND field matches, function returns true
 /// Takes far and fv as explicit witnesses to avoid unification issues
-let efptu_match (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54 /\ wz <> 0UL}) (target: hp_addr)
+let efptu_match (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54 /\ wz <> 0UL}) (target: obj_addr)
   (far: hp_addr) (fv: U64.t)
   : Lemma (requires far == U64.add_mod h (U64.mul_mod (U64.sub wz 1UL) mword) /\
                    fv == read_word g far /\
-                   (is_pointer_field fv && hd_address fv = hd_address target))
+                   is_pointer_to fv target)
           (ensures exists_field_pointing_to_unchecked g h wz target)
   = ()
 
 /// One-step unfolding: if guard passes, field doesn't match, but recursive call returns true
-let efptu_recurse (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54 /\ wz <> 0UL}) (target: hp_addr)
+let efptu_recurse (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54 /\ wz <> 0UL}) (target: obj_addr)
   (far: hp_addr) (fv: U64.t)
   : Lemma (requires far == U64.add_mod h (U64.mul_mod (U64.sub wz 1UL) mword) /\
                    fv == read_word g far /\
-                   ~(is_pointer_field fv && hd_address fv = hd_address target) /\
+                   ~(is_pointer_to fv target) /\
                    exists_field_pointing_to_unchecked g h (U64.sub wz 1UL) target)
           (ensures exists_field_pointing_to_unchecked g h wz target)
   = ()
@@ -132,7 +131,7 @@ val field_read_implies_exists_pointing : (g: heap) -> (h: obj_addr) -> (wz: U64.
                   (let far = U64.add_mod h (U64.mul_mod k mword) in
                    U64.v far < heap_size /\ U64.v far % 8 = 0 /\
                    (let fv = read_word g (far <: hp_addr) in
-                    is_pointer_field fv /\ hd_address fv = hd_address target)))
+                    is_pointer_to fv target)))
         (ensures exists_field_pointing_to_unchecked g h wz target)
         (decreases U64.v wz)
 
@@ -144,14 +143,25 @@ let rec field_read_implies_exists_pointing g h wz k target =
   field_offset_bound idx;
   assert (FStar.Mul.(U64.v idx * U64.v mword) < pow2 64);
   FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+  // Prove sum fits in U64 for modulo_lemma: h < heap_size < 2^30, idx*8 < 2^57
+  assert (U64.v h < heap_size);
+  FStar.Math.Lemmas.pow2_lt_compat 57 54;
+  assert (FStar.Mul.(U64.v idx * 8) < pow2 57);
+  // heap_size <= pow2 57, so h + idx*8 < pow2 57 + pow2 57 = pow2 58 < pow2 64
+  assert (U64.v h < pow2 57);
+  FStar.Math.Lemmas.pow2_double_sum 57;
+  assert (U64.v h + FStar.Mul.(U64.v idx * 8) < pow2 58);
+  FStar.Math.Lemmas.pow2_lt_compat 64 58;
   FStar.Math.Lemmas.modulo_lemma (U64.v h + FStar.Mul.(U64.v idx * 8)) (pow2 64);
   let far_idx = U64.add_mod h (U64.mul_mod idx mword) in
   assert (U64.v far_idx = U64.v h + FStar.Mul.(U64.v idx * 8));
+  // well_formed_object: hd_address h + 8 + wz*8 <= heap_size, i.e. h + wz*8 <= heap_size
+  hd_address_spec h;
   assert (U64.v far_idx < heap_size);
   FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) (FStar.Mul.(U64.v idx * 8)) 8;
   assert (U64.v far_idx % 8 = 0);
   let fv_idx = read_word g (far_idx <: hp_addr) in
-  if is_pointer_field fv_idx && hd_address fv_idx = hd_address target then
+  if is_pointer_to fv_idx target then
     efptu_match g h wz target far_idx fv_idx
   else begin
     assert (U64.v k < U64.v idx);
@@ -162,7 +172,7 @@ let rec field_read_implies_exists_pointing g h wz k target =
 
 /// Helper: check if any field points to target
 /// Requires: object is well-formed (fits in heap)
-let rec exists_field_pointing_to (g: heap) (h: obj_addr) (wz: wosize) (target: hp_addr) 
+let rec exists_field_pointing_to (g: heap) (h: obj_addr) (wz: wosize) (target: obj_addr) 
   : Ghost bool 
     (requires well_formed_object g h /\ U64.v wz <= U64.v (wosize_of_object h g))
     (ensures fun _ -> True)
@@ -175,17 +185,18 @@ let rec exists_field_pointing_to (g: heap) (h: obj_addr) (wz: wosize) (target: h
     // From well_formed_object: hd_address h + 8 + wz*8 <= heap_size
     // h = hd_address h + 8, so h + wz*8 <= heap_size
     // idx = wz - 1, so h + idx*8 < h + wz*8 <= heap_size
+    hd_address_spec h;
     assert (U64.v h + FStar.Mul.(U64.v idx * 8) < heap_size);
     let field_addr = field_address h idx in
     let field_val = read_word g field_addr in
-    if is_pointer_field field_val && hd_address field_val = hd_address target then true
+    if is_pointer_to field_val target then true
     else exists_field_pointing_to g h idx target
   end
 
 /// The checked and unchecked versions are equivalent when object is well-formed
 /// Proof: when well_formed_object g h, all field addresses are valid hp_addrs,
 /// so the unchecked version's bounds check always passes
-let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (target: hp_addr)
+let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (target: obj_addr)
   : Lemma 
     (requires well_formed_object g h /\ U64.v wz <= U64.v (wosize_of_object h g))
     (ensures exists_field_pointing_to g h wz target == exists_field_pointing_to_unchecked g h wz target)
@@ -198,6 +209,7 @@ let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (
     wosize_fits_field_index wz;
     FStar.Math.Lemmas.pow2_lt_compat 61 54;
     
+    hd_address_spec h;
     assert (U64.v h + FStar.Mul.(U64.v idx * 8) < heap_size);
     
     // Show mul_mod idx mword = field_offset idx (no overflow for idx < pow2 54)
@@ -229,7 +241,7 @@ let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (
     
     // Both read the same field value
     let field_val = read_word g (far_unchecked <: hp_addr) in
-    let cmp = is_pointer_field field_val && hd_address field_val = hd_address target in
+    let cmp = is_pointer_to field_val target in
     
     // Apply inductive hypothesis to recursive calls
     exists_field_checked_eq_unchecked g h idx target;
@@ -238,13 +250,13 @@ let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (
 
 /// Check if object h points to object target
 /// Uses wosize_of_object_bound to ensure valid wosize
-let is_pointer_to_object (g: heap) (h: obj_addr) (target: hp_addr) : GTot bool =
+let is_pointer_to_object (g: heap) (h: obj_addr) (target: obj_addr) : GTot bool =
   let wz = wosize_of_object h g in
   wosize_of_object_bound h g;
   exists_field_pointing_to_unchecked g h wz target
 
 /// is_pointer_to_object implies exists_field_pointing_to when well_formed
-let is_pointer_to_object_implies_exists_field (g: heap) (h: obj_addr) (target: hp_addr)
+let is_pointer_to_object_implies_exists_field (g: heap) (h: obj_addr) (target: obj_addr)
   : Lemma 
     (requires well_formed_object g h /\ is_pointer_to_object g h target)
     (ensures exists_field_pointing_to g h (wosize_of_object_as_wosize h g) target)
@@ -436,8 +448,7 @@ let rec objects_separated (start: hp_addr) (g: heap) (src y: obj_addr)
             assert (next_start_nat = U64.v first + FStar.Mul.(U64.v wz * 8));
             // wosize_of_object first g = getWosize(read_word g (hd_address first))
             // hd_address first = first - 8 = start (since first = start + 8)
-            // But hd_address is from Fields (line 40), not from Heap
-            // For first: obj_addr with v >= 8, so hd_address first = first - 8 = start
+            hd_address_spec first;
             assert (U64.v (hd_address first) = U64.v start);
             // read_word g start = header (already computed above)
             // getWosize header = wz
@@ -636,7 +647,7 @@ let wf_object_size_bound (g: heap) (h: obj_addr) : Lemma
 let wf_object_bound (g: heap) (h: obj_addr) : Lemma
   (requires well_formed_heap g /\ Seq.mem h (objects 0UL g))
   (ensures U64.v h + op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
-  = ()
+  = hd_address_spec h
 
 /// When objects start g is nonempty, the first object fits in heap:
 /// start + (1 + wz) * 8 <= Seq.length g
@@ -1133,7 +1144,7 @@ private let field_addr_ne_hd (h: obj_addr) (idx: U64.t{U64.v idx < pow2 54})
 
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec color_change_preserves_field_pointing_self (g: heap) (h: obj_addr) (c: color)
-  (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr)
+  (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Lemma (ensures exists_field_pointing_to_unchecked (set_object_color h g c) h wz target
                    == exists_field_pointing_to_unchecked g h wz target)
           (decreases U64.v wz)
@@ -1207,7 +1218,7 @@ private let field_addr_ne_hd_other (g: heap) (src: obj_addr) (obj: obj_addr)
 /// This handles the case where src ≠ obj (cross-object case)
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec color_change_preserves_field_pointing_other (g: heap) (obj: obj_addr) (c: color)
-  (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr)
+  (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Lemma (requires src <> obj /\
                      Seq.mem src (objects 0UL g) /\
                      Seq.mem obj (objects 0UL g) /\
@@ -1259,7 +1270,7 @@ let color_change_preserves_points_to_other (g: heap) (obj: obj_addr) (c: color)
 /// For src ≠ obj: objects don't overlap, so all fields of src are unchanged
 #push-options "--z3rlimit 300 --fuel 2 --ifuel 1"
 private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
-  (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: hp_addr)
+  (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Lemma (requires src <> obj /\
                      Seq.mem src (objects 0UL g) /\
                      Seq.mem obj (objects 0UL g) /\
@@ -1290,6 +1301,8 @@ private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_ad
         // addr is in obj's body: obj <= addr < obj + wosize(obj)*8
         wosize_of_object_bound src g;
         wosize_of_object_bound obj g;
+        hd_address_spec src;
+        hd_address_spec obj;
         let ws_src = U64.v (wosize_of_object_as_wosize src g) in
         let ws_obj = U64.v (wosize_of_object obj g) in
         if U64.v src < U64.v obj then begin
@@ -1349,7 +1362,7 @@ private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr)
         let field_val_g' = read_word g' field_addr in
         // exists_field_pointing_to_unchecked g' obj wz dst evaluates field at idx first
         // It returns true if: (1) this field matches, OR (2) recursive call on idx returns true
-        if is_pointer_field field_val_g' && hd_address field_val_g' = hd_address dst then begin
+        if is_pointer_to field_val_g' dst then begin
           // Case (1): This field points to dst in g'
           if field_addr = addr then begin
             // Modified field: field_val_g' = v
@@ -1370,7 +1383,7 @@ private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr)
             let field_val_g = read_word g field_addr in
             assert (field_val_g' == field_val_g);
             // This field points to dst in g as well
-            assert (is_pointer_field field_val_g && hd_address field_val_g = hd_address dst);
+            assert (is_pointer_to field_val_g dst);
             // Use efptu_match to establish exists_field in original heap
             wosize_of_object_bound obj g;
             // field_val_g = dst by hd_address injectivity
@@ -1421,8 +1434,6 @@ let field_write_preserves_wf g obj addr v =
       Pulse.Spec.GC.Heap.hd_address_spec h;
       wosize_of_object_bound obj g;
       wosize_of_object_bound h g;
-      // hd_address (local) matches Pulse.Spec.GC.Heap.hd_address for obj_addr
-      assert (hd_address h == Pulse.Spec.GC.Heap.hd_address h);
       // Prove addr ≠ hd_address h
       if h = obj then ()
       else begin
