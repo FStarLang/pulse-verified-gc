@@ -57,6 +57,9 @@ type heap_t = {
 /// Heap pointer address - alias for Base.hp_addr (word-aligned, within bounds)
 let hp_addr = Base.hp_addr
 
+/// Zero address as hp_addr (avoids Z3 matching loops from bare 0UL)
+let zero_addr : hp_addr = Base.zero_addr
+
 /// Predicate form for backward compatibility
 let is_hp_addr (addr: U64.t) : prop =
   U64.v addr >= 0 /\
@@ -435,12 +438,7 @@ fn alloc_heap (_: unit)
 // free_heap omitted: Pulse.Lib.Array.PtsTo.free requires is_full_array
 // which is not easily provable from is_heap. Not used by any module.
 
-/// ---------------------------------------------------------------------------
-/// Address arithmetic helpers
-/// ---------------------------------------------------------------------------
-
 /// Compute header address from field address
-/// field_addr = header_addr + mword, so header_addr = field_addr - mword
 let hd_address (f_addr: U64.t{U64.v f_addr >= U64.v mword /\ U64.v f_addr < heap_size /\ U64.v f_addr % U64.v mword == 0}) : hp_addr =
   U64.sub f_addr mword
 

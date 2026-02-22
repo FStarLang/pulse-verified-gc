@@ -33,7 +33,6 @@ module SpecObject = Pulse.Spec.GC.Object
 module SpecFields = Pulse.Spec.GC.Fields
 module HeapGraph = Pulse.Spec.GC.HeapGraph
 
-let zero_hp_addr : hp_addr = 0UL
 
 /// Bridge: Pulse getWosize == Spec getWosize (both compute shift_right 10)
 let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr) =
@@ -501,7 +500,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
            pure (SpecMarkInv.mark_inv s2 st2 /\
-                 SpecFields.objects zero_hp_addr s2 == SpecFields.objects zero_hp_addr 's /\
+                 SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
                  (s2, st2) == SpecMark.mark_step 's 'st)
 {
   // Extract well_formed_heap and head-is-gray from mark_inv
@@ -652,7 +651,7 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
            pure (SpecMarkInv.mark_inv 's 'st)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecMarkInv.mark_inv s2 st2 /\ Seq.length st2 == 0 /\
-                SpecFields.objects zero_hp_addr s2 == SpecFields.objects zero_hp_addr 's /\
+                SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
                 s2 == SpecMark.mark 's 'st)
 {
   SpecMarkInv.mark_inv_elim_wfh 's 'st;
@@ -671,7 +670,7 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
       is_gray_stack st st_cur **
       pure (SpecMarkInv.mark_inv s st_cur /\
             (~vc ==> (Seq.length st_cur == 0)) /\
-            SpecFields.objects zero_hp_addr s == SpecFields.objects zero_hp_addr 's /\
+            SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's /\
             SpecMark.mark_aux s st_cur (U64.v fv) == SpecMark.mark 's 'st /\
             SpecMark.noGreyObjects (SpecMark.mark 's 'st))
   {
@@ -711,7 +710,7 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
     is_gray_stack st st_fin **
     pure (SpecMarkInv.mark_inv s_fin st_fin /\
           (~_vc ==> (Seq.length st_fin == 0)) /\
-          SpecFields.objects zero_hp_addr s_fin == SpecFields.objects zero_hp_addr 's /\
+          SpecFields.objects zero_addr s_fin == SpecFields.objects zero_addr 's /\
           SpecMark.mark_aux s_fin st_fin (U64.v fv_fin) == SpecMark.mark 's 'st /\
           SpecMark.noGreyObjects (SpecMark.mark 's 'st)));
   SpecMark.mark_aux_empty s_fin st_fin (U64.v fv_fin);

@@ -32,7 +32,6 @@ module SpecFields = Pulse.Spec.GC.Fields
 module SpecObject = Pulse.Spec.GC.Object
 module SI = Pulse.Spec.GC.SweepInv
 
-let zero_hp_addr : hp_addr = 0UL
 
 /// ---------------------------------------------------------------------------
 /// Full GC
@@ -61,7 +60,7 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   // Bind existentials and extract well_formed_heap from mark_inv
   with s_mark st_mark. assert (is_heap heap s_mark ** is_gray_stack st st_mark **
                                 pure (SpecMarkInv.mark_inv s_mark st_mark /\ Seq.length st_mark == 0 /\
-                                      SpecFields.objects zero_hp_addr s_mark == SpecFields.objects zero_hp_addr 's /\
+                                      SpecFields.objects zero_addr s_mark == SpecFields.objects zero_addr 's /\
                                       s_mark == SpecMark.mark 's 'st));
   SpecMarkInv.mark_inv_elim_wfh s_mark st_mark;
   SpecMarkInv.mark_inv_elim_objects s_mark st_mark;
@@ -82,7 +81,7 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   // After sweep: well_formed_heap AND all_objects_white_or_blue AND spec equality
   with s_sweep. assert (is_heap heap s_sweep **
     pure (SpecFields.well_formed_heap s_sweep /\
-          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_hp_addr s_sweep) ==>
+          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr s_sweep) ==>
             (SpecObject.is_white x s_sweep \/ SpecObject.is_blue x s_sweep)) /\
           (s_sweep, result_fp) == SpecSweep.sweep s_mark fp));
   SpecGCPost.gc_postcondition_intro s_sweep;

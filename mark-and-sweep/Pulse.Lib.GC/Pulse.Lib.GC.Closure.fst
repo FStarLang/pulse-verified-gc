@@ -109,7 +109,7 @@ fn parent_closure_of_infix_opt (heap: heap_t) (infix_addr: hp_addr)
   let offset_bytes = U64.mul offset_words mword;
   
   // Check if subtraction would underflow
-  let f_addr = f_address infix_addr;
+  let f_addr = U64.add infix_addr mword;
   if (U64.lt f_addr offset_bytes) {
     // Invalid: offset points before the start of heap
     None
