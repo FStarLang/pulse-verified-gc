@@ -154,6 +154,7 @@ Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked: \
 Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked: \
 	Pulse.Lib.GC/Pulse.Lib.GC.Object.fst \
 	Lib/Pulse.Lib.Header.fst.checked \
+	Spec/Pulse.Spec.GC.Object.fsti.checked \
 	Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
 
 Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked: \

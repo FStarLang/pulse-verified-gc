@@ -229,6 +229,7 @@ Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst.checked: \
 
 Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked: \
 	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst \
+	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
 	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
 	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
 	Spec/Pulse.Spec.GC.Sweep.fst.checked \

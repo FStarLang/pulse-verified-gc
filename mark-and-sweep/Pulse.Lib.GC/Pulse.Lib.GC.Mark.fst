@@ -34,18 +34,6 @@ module SpecFields = Pulse.Spec.GC.Fields
 module HeapGraph = Pulse.Spec.GC.HeapGraph
 
 
-/// Bridge: Pulse getWosize == Spec getWosize (both compute shift_right 10)
-let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr) =
-  SpecObject.getWosize_spec hdr
-
-/// Bridge: Pulse getTag == Spec getTag (both compute logand with 0xFF)
-let getTag_eq (hdr: U64.t) : Lemma (getTag hdr == SpecObject.getTag hdr) =
-  SpecObject.getTag_spec hdr
-
-/// Bridge: Pulse getColor == Spec getColor (both extract bits 8-9 and unpack)
-let getColor_eq (hdr: U64.t) : Lemma (getColor hdr == SpecObject.getColor hdr) =
-  SpecObject.getColor_spec hdr;
-  Pulse.Lib.Header.get_color_val (U64.v hdr)
 
 /// Bridge: Pulse is_pointer result ↔ spec is_pointer_field
 /// Both check: v % 8 == 0 ∧ v > 0 ∧ v < heap_size
@@ -199,14 +187,6 @@ let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
     // Now: getWosize hdr == SpecObject.getWosize hdr == wosize_of_object f_addr g
     // And wf_object_size_bound + hd_address_spec give the field bound
 #pop-options
-
-/// Bridge: Lib.makeHeader on extracted fields == Spec.colorHeader
-/// Chain: makeHeader_eq_set_color64 + colorHeader_spec (both expose set_color64)
-let lib_makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
-  : Lemma (requires Pulse.Lib.Header.valid_header64 hdr)
-          (ensures makeHeader (getWosize hdr) c (getTag hdr) == SpecObject.colorHeader hdr c)
-  = makeHeader_eq_set_color64 hdr c;
-    SpecObject.colorHeader_spec hdr c
 
 /// Bridge: Pulse blacken (write_word with makeHeader Black) == spec makeBlack
 #push-options "--z3rlimit 500 --fuel 2 --ifuel 1"

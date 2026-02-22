@@ -22,6 +22,7 @@ open FStar.Mul
 open Pulse.Lib.Pervasives
 open Pulse.Lib.GC.Heap
 open Pulse.Lib.GC.Object
+open Pulse.Lib.GC.Fields
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
@@ -39,25 +40,12 @@ module SpecGCPost = Pulse.Spec.GC.Correctness
 /// Overflow Helpers
 /// ---------------------------------------------------------------------------
 
-/// Helper: (1+wz)*8 doesn't overflow for valid wosize
-let lemma_skip_no_overflow (wz: nat)
-  : Lemma (requires wz <= pow2 54 - 1)
-          (ensures (1 + wz) * 8 <= pow2 57 /\ (1 + wz) * 8 < pow2 64)
-=
-  assert (1 + wz <= pow2 54);
-  ML.lemma_mult_le_right 8 (1 + wz) (pow2 54);
-  assert ((1 + wz) * 8 <= pow2 54 * 8);
-  Math.Lemmas.pow2_plus 54 3;
-  assert (pow2 54 * pow2 3 == pow2 57);
-  assert (pow2 54 * 8 == pow2 57);
-  ML.pow2_lt_compat 64 57
-
 /// Helper: h_addr + (1+wz)*8 doesn't overflow
 let lemma_next_addr_no_overflow (h_addr: nat) (wz: nat)
   : Lemma (requires h_addr < heap_size /\ wz <= pow2 54 - 1)
           (ensures h_addr + (1 + wz) * 8 < pow2 64)
 =
-  lemma_skip_no_overflow wz;
+  lemma_object_size_no_overflow wz;
   assert ((1 + wz) * 8 <= pow2 57);
   assert (h_addr < heap_size);
   assert (heap_size <= pow2 57);
@@ -76,22 +64,6 @@ let lemma_addr_plus_8_no_overflow (addr: nat)
 /// ---------------------------------------------------------------------------
 /// Sweep: Reset Black Objects to White
 /// ---------------------------------------------------------------------------
-
-/// Bridge: Lib.getWosize == Spec.getWosize
-let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr) =
-  SpecObject.getWosize_spec hdr
-
-/// Bridge: Lib.getColor == Spec.getColor
-let getColor_eq (hdr: U64.t) : Lemma (getColor hdr == SpecObject.getColor hdr) =
-  SpecObject.getColor_spec hdr;
-  Pulse.Lib.Header.get_color_val (U64.v hdr)
-
-/// Bridge: Lib.makeHeader on extracted fields == Spec.colorHeader
-let lib_makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
-  : Lemma (requires Pulse.Lib.Header.valid_header64 hdr)
-          (ensures makeHeader (getWosize hdr) c (getTag hdr) == SpecObject.colorHeader hdr c)
-  = makeHeader_eq_set_color64 hdr c;
-    SpecObject.colorHeader_spec hdr c
 
 
 /// field1_addr as hp_addr: avoids subtyping check in combined SMT queries
@@ -903,7 +875,7 @@ fn next_object (h_addr: hp_addr) (wz: wosize)
   ensures pure (U64.v addr % 8 == 0 /\
                 U64.v addr == U64.v h_addr + (1 + U64.v wz) * 8)
 {
-  lemma_skip_no_overflow (U64.v wz);
+  lemma_object_size_no_overflow (U64.v wz);
   lemma_next_addr_no_overflow (U64.v h_addr) (U64.v wz);
   lemma_next_addr_aligned (U64.v h_addr) (U64.v wz);
   let skip = U64.add 1UL wz;

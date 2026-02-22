@@ -17,6 +17,7 @@ module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
 module Header = Pulse.Lib.Header
+module SpecObject = Pulse.Spec.GC.Object
 
 /// ---------------------------------------------------------------------------
 /// Object Header Layout (64-bit word)
@@ -292,3 +293,29 @@ let get_tag = getTag
 let is_black = is_black_object
 let is_white = is_white_object
 let is_gray = is_gray_object
+
+/// ---------------------------------------------------------------------------
+/// Bridge lemmas: Pulse Lib.Object ↔ Spec.Object
+/// ---------------------------------------------------------------------------
+
+/// Lib.getWosize == Spec.getWosize (both compute shift_right 10)
+let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr) =
+  SpecObject.getWosize_spec hdr
+
+/// Lib.getTag == Spec.getTag (both compute logand with 0xFF)
+let getTag_eq (hdr: U64.t) : Lemma (getTag hdr == SpecObject.getTag hdr) =
+  SpecObject.getTag_spec hdr
+
+/// Lib.getColor == Spec.getColor (both extract bits 8-9 and unpack)
+#push-options "--z3rlimit 20"
+let getColor_eq (hdr: U64.t) : Lemma (getColor hdr == SpecObject.getColor hdr) =
+  SpecObject.getColor_spec hdr;
+  Header.get_color_val (U64.v hdr)
+#pop-options
+
+/// Lib.makeHeader on extracted fields == Spec.colorHeader
+let lib_makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
+  : Lemma (requires Header.valid_header64 hdr)
+          (ensures makeHeader (getWosize hdr) c (getTag hdr) == SpecObject.colorHeader hdr c)
+  = makeHeader_eq_set_color64 hdr c;
+    SpecObject.colorHeader_spec hdr c
