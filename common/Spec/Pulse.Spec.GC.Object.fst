@@ -89,6 +89,8 @@ let gray_or_black_valid (hdr: U64.t)
 #push-options "--z3rlimit 50"
 let getTag (header: U64.t) : (t:U64.t{U64.v t < 256}) =
   get_tag_bound (U64.v header);
+  mask_tag_value ();
+  assert (U64.v (U64.logand header tag_mask) == UInt.logand #64 (U64.v header) (U64.v tag_mask));
   U64.logand header tag_mask
 #pop-options
 

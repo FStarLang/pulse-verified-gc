@@ -3,8 +3,8 @@
 # Hand-written dependency graph for parallel-safe builds (make -j8).
 # Default target: verify all spec+lib modules.
 
-FSTAR ?= fstar.exe
-PULSE_HOME ?= $(HOME)/pulse
+FSTAR_HOME ?= $(CURDIR)/../FStar
+FSTAR ?= $(FSTAR_HOME)/bin/fstar.exe
 
 # Include paths (shared)
 COMMON_INCLUDES = \
@@ -14,11 +14,9 @@ COMMON_INCLUDES = \
 # Spec/Lib: pure F*, no Pulse plugin needed
 FSTAR_SPEC_INCLUDES = $(COMMON_INCLUDES)
 
-# Pulse.Lib.GC: needs Pulse plugin
+# Pulse.Lib.GC: fstar2 stage3 has Pulse baked in
 FSTAR_PULSE_INCLUDES = $(COMMON_INCLUDES) \
-  --include Pulse.Lib.GC \
-  --include $(PULSE_HOME)/lib/pulse/lib \
-  --include $(PULSE_HOME)/out/lib/pulse
+  --include Pulse.Lib.GC
 
 # F* base options
 FSTAR_BASE = --cache_checked_modules --report_assumes warn
@@ -27,7 +25,6 @@ FSTAR_SPEC_FLAGS = $(FSTAR_BASE) \
   --already_cached 'FStar -Pulse.Spec.GC -Pulse.Lib.Header -Pulse.Lib.Address'
 
 FSTAR_PULSE_FLAGS = $(FSTAR_BASE) \
-  --load_cmxs pulse \
   --already_cached 'FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address'
 
 # Spec+Lib checked files (explicit list)

@@ -62,11 +62,10 @@ let read_field_get_field_eq (g: heap_state) (obj: obj_addr) (i: U64.t{U64.v i >=
   = let hd = SpecHeap.hd_address obj in
     SpecHeap.hd_address_spec obj;
     let field_addr = field_addr_of hd i in
-    // U64.v field_addr == spec_field_address (U64.v hd) (U64.v i) by commutativity
     assert (U64.v field_addr == U64.v hd + U64.v mword * U64.v i);
-    // spec_read_word g (U64.v field_addr) == SpecHeap.read_word g field_addr
+    assert (U64.v mword == 8);
+    assert (U64.v field_addr + 8 <= Seq.length g);
     spec_read_word_eq g field_addr
-    // get_field g obj i unfolds to read_word g (U64.add hd (U64.mul mword i)) when bounds hold
 #pop-options
 
 /// Bridge: Pulse tag check matches spec is_no_scan

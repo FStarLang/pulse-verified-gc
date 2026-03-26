@@ -4,8 +4,8 @@
 # Hand-written dependency graph for parallel-safe builds (make -j8).
 # Shared infrastructure (Heap, Object, Stack) lives in ../common/
 
-FSTAR ?= fstar.exe
-PULSE_HOME ?= $(HOME)/pulse
+FSTAR_HOME ?= $(CURDIR)/../FStar
+FSTAR ?= $(FSTAR_HOME)/bin/fstar.exe
 KRML_HOME ?= $(shell opam var prefix)/lib/karamel
 
 C = ../common
@@ -19,12 +19,10 @@ COMMON_INCLUDES = \
 # Spec: pure F*, no Pulse plugin needed
 FSTAR_SPEC_INCLUDES = $(COMMON_INCLUDES)
 
-# Lib: needs Pulse plugin and includes
+# Lib: fstar2 stage3 has Pulse baked in
 FSTAR_LIB_INCLUDES = $(COMMON_INCLUDES) \
   --include Pulse.Lib.GC \
-  --include $(C)/Pulse.Lib.GC \
-  --include $(PULSE_HOME)/lib/pulse/lib \
-  --include $(PULSE_HOME)/out/lib/pulse
+  --include $(C)/Pulse.Lib.GC
 
 # F* base options
 FSTAR_BASE = \
@@ -36,7 +34,6 @@ FSTAR_SPEC_FLAGS = $(FSTAR_BASE) \
   --already_cached 'FStar -Pulse.Spec.GC'
 
 FSTAR_LIB_FLAGS = $(FSTAR_BASE) \
-  --load_cmxs pulse \
   --split_queries always \
   --already_cached 'FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address -Pulse.Lib.Bitvec'
 
