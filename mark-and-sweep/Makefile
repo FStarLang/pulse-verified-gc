@@ -295,6 +295,7 @@ KRML_FLAGS = \
   -library Pulse.Lib.Header \
   -library Pulse.Lib.Address \
   -bundle 'Pulse.Lib.GC=Pulse.Lib.GC.*,Pulse.Lib.LinkedList' \
+  -bundle 'FStar.Pervasives.Native' \
   -bundle 'Pulse.Spec.GC.*,Pulse.Lib.Header,Pulse.Lib.Address' \
   -no-prefix Pulse.Lib.GC \
   -no-prefix Pulse.Lib.GC.Mark \
@@ -430,7 +431,7 @@ snapshot: extract
 	@cp $(KRML_HOME)/include/krml/*.h $(SNAPSHOT_DIR)/krmllib/krml/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krml/internal/*.h $(SNAPSHOT_DIR)/krmllib/krml/internal/ 2>/dev/null || true
 	@if ! grep -q '^#include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/Pulse_Lib_GC.c 2>/dev/null; then \
-	  sed -i '/#include "internal\/Pulse_Lib_GC.h"/a #include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/Pulse_Lib_GC.c; \
+	  sed -i '/#include "internal\/Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"/a #include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/Pulse_Lib_GC.c; \
 	fi
 	@echo "=== Snapshot updated: $(SNAPSHOT_DIR)/ ==="
 	@echo "    Hand-maintained: pulsegc_compat.h, pulsegc_runtime.c, Makefile"
