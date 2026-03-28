@@ -1,10 +1,9 @@
 (*
    Pulse GC - Stack Module
-   
-   This module defines the gray stack used during the mark phase.
-   Gray objects are objects that have been marked but not yet scanned.
-   
-   Based on: Proofs/Spec.Mark.fsti stack operations
+
+   Gray stack implemented using Pulse.Lib.LinkedList for C extraction.
+   The interface exposes Seq.seq obj_addr as ghost state; internally
+   we maintain a ref (llist obj_addr) and bridge via Seq.seq_of_list.
 *)
 
 module Pulse.Lib.GC.Stack
@@ -13,28 +12,53 @@ module Pulse.Lib.GC.Stack
 
 open Pulse.Lib.Pervasives
 open Pulse.Lib.Reference
+open Pulse.Lib.LinkedList
 open Pulse.Lib.GC.Heap
-open Pulse.Lib.GC.Object
-module U64 = FStar.UInt64
-module SZ = FStar.SizeT
 module Seq = FStar.Seq
+module L = FStar.List.Tot
 
 /// ---------------------------------------------------------------------------
 /// Gray Stack Type
 /// ---------------------------------------------------------------------------
 
-/// The gray stack holds object addresses (obj_addr) of gray objects
-/// (objects marked but not yet scanned).
-/// Using obj_addr enables direct use of spec functions (stack_props, mark, etc.)
-type gray_stack = ref (Seq.seq obj_addr)
+/// A mutable reference to a linked list of obj_addr
+type gray_stack = ref (llist obj_addr)
 
 /// ---------------------------------------------------------------------------
 /// Stack Predicate
 /// ---------------------------------------------------------------------------
 
-/// Gray stack predicate: stack contains seq of gray object addresses
+/// Bridge between the linked list (ghost: list) and the interface (ghost: Seq.seq).
 let is_gray_stack (st: gray_stack) (s: Seq.seq obj_addr) : slprop =
-  pts_to st s
+  exists* (ll: llist obj_addr) (l: list obj_addr).
+    pts_to st ll **
+    is_list ll l **
+    pure (s == Seq.seq_of_list l)
+
+/// ---------------------------------------------------------------------------
+/// Helper lemmas for Seq ↔ list conversion
+/// ---------------------------------------------------------------------------
+
+let seq_of_list_nil ()
+  : Lemma (Seq.seq_of_list #obj_addr [] == Seq.empty #obj_addr)
+  = Seq.lemma_seq_of_list_induction #obj_addr []
+
+let seq_of_list_cons (x: obj_addr) (l: list obj_addr)
+  : Lemma (Seq.seq_of_list (x :: l) == Seq.cons x (Seq.seq_of_list l))
+  = Seq.lemma_seq_of_list_induction (x :: l)
+
+let seq_of_list_length (l: list obj_addr)
+  : Lemma (Seq.length (Seq.seq_of_list l) == L.length l)
+  = ()  // follows from the refinement on seq_of_list
+
+let seq_of_list_empty_iff (l: list obj_addr)
+  : Lemma ((l == []) <==> (Seq.length (Seq.seq_of_list l) == 0))
+  = seq_of_list_length l
+
+let seq_of_list_nonempty (l: list obj_addr)
+  : Lemma (requires Seq.length (Seq.seq_of_list l) > 0)
+          (ensures Cons? l)
+  = seq_of_list_length l
 
 /// ---------------------------------------------------------------------------
 /// Stack Operations
@@ -46,7 +70,9 @@ fn create_stack ()
   returns st: gray_stack
   ensures is_gray_stack st (Seq.empty #obj_addr)
 {
-  let st = alloc #(Seq.seq obj_addr) (Seq.empty #obj_addr);
+  let ll = create obj_addr;
+  let st = alloc ll;
+  seq_of_list_nil ();
   fold (is_gray_stack st (Seq.empty #obj_addr));
   st
 }
@@ -58,9 +84,14 @@ fn is_empty (st: gray_stack)
   ensures is_gray_stack st 's ** pure (b <==> (Seq.length 's == 0))
 {
   unfold is_gray_stack;
-  let s = !st;
+  with ll l. _;
+  let curr = !st;
+  rewrite (is_list ll l) as (is_list curr l);
+  let b = Pulse.Lib.LinkedList.is_empty curr;
+  seq_of_list_empty_iff l;
+  rewrite (is_list curr l) as (is_list ll l);
   fold (is_gray_stack st 's);
-  Seq.length s = 0
+  b
 }
 
 /// Push an object address onto the gray stack
@@ -69,8 +100,12 @@ fn push (st: gray_stack) (addr: obj_addr)
   ensures is_gray_stack st (Seq.cons addr 's)
 {
   unfold is_gray_stack;
-  let old = !st;
-  st := Seq.cons addr old;
+  with ll l. _;
+  let curr = !st;
+  rewrite (is_list ll l) as (is_list curr l);
+  let new_ll = cons addr curr;
+  st := new_ll;
+  seq_of_list_cons addr l;
   fold (is_gray_stack st (Seq.cons addr 's))
 }
 
@@ -82,18 +117,16 @@ fn pop (st: gray_stack)
   ensures exists* tl. is_gray_stack st tl ** pure ('s == Seq.cons v tl)
 {
   unfold is_gray_stack;
-  let s = !st;
-  rewrite (pts_to st s) as (pts_to st 's);
-  let hd = Seq.head s;
-  let tl = Seq.tail s;
-  st := tl;
-  fold (is_gray_stack st tl);
-  hd
+  with ll l. _;
+  seq_of_list_nonempty l;
+  let curr = !st;
+  rewrite (is_list ll l) as (is_list curr l);
+  let r = Pulse.Lib.LinkedList.pop curr;
+  let new_ll = fst r;
+  let v = snd r;
+  rewrite (is_list (fst r) (L.tl l)) as (is_list new_ll (L.tl l));
+  st := new_ll;
+  seq_of_list_cons v (L.tl l);
+  fold (is_gray_stack st (Seq.seq_of_list (L.tl l)));
+  v
 }
-
-/// ---------------------------------------------------------------------------
-/// Stack-Heap Pair Type
-/// ---------------------------------------------------------------------------
-
-/// Result type for operations that modify both stack and heap
-type stack_heap_pair = gray_stack & heap_t

@@ -14,9 +14,13 @@ COMMON_INCLUDES = \
 # Spec/Lib: pure F*, no Pulse plugin needed
 FSTAR_SPEC_INCLUDES = $(COMMON_INCLUDES)
 
+# Pulse library sources (for Pulse.Lib.LinkedList etc.)
+PULSE_LIB ?= $(FSTAR_HOME)/pulse/lib/pulse/lib
+
 # Pulse.Lib.GC: fstar2 stage3 has Pulse baked in
 FSTAR_PULSE_INCLUDES = $(COMMON_INCLUDES) \
-  --include Pulse.Lib.GC
+  --include Pulse.Lib.GC \
+  --include $(PULSE_LIB)
 
 # F* base options
 FSTAR_BASE = --cache_checked_modules --report_assumes warn
@@ -47,6 +51,7 @@ SPEC_CHECKED = \
 PULSE_CHECKED = \
   Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked \
   Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
+  Pulse.Lib.GC/Pulse.Lib.GC.Stack.fsti.checked \
   Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked
 
 # ------------------------------------------------------------------------------
@@ -154,9 +159,13 @@ Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked: \
 	Spec/Pulse.Spec.GC.Object.fsti.checked \
 	Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
 
+Pulse.Lib.GC/Pulse.Lib.GC.Stack.fsti.checked: \
+	Pulse.Lib.GC/Pulse.Lib.GC.Stack.fsti \
+	Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+
 Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked: \
 	Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst \
-	Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
+	Pulse.Lib.GC/Pulse.Lib.GC.Stack.fsti.checked \
 	Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
 
 # ------------------------------------------------------------------------------
@@ -173,6 +182,9 @@ Lib/%.fst.checked: Lib/%.fst
 	$(FSTAR) $(FSTAR_SPEC_INCLUDES) $(FSTAR_SPEC_FLAGS) $<
 
 Pulse.Lib.GC/%.fst.checked: Pulse.Lib.GC/%.fst
+	$(FSTAR) $(FSTAR_PULSE_INCLUDES) $(FSTAR_PULSE_FLAGS) $<
+
+Pulse.Lib.GC/%.fsti.checked: Pulse.Lib.GC/%.fsti
 	$(FSTAR) $(FSTAR_PULSE_INCLUDES) $(FSTAR_PULSE_FLAGS) $<
 
 # ------------------------------------------------------------------------------
