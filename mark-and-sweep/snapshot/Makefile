@@ -1,30 +1,27 @@
-# Makefile for PulseGC snapshot (standalone, no F*/KaRaMeL required)
+# Snapshot Makefile for extracted Pulse GC
 #
-# This directory contains C code extracted from the verified Pulse GC
-# implementation. It can be compiled without the F* toolchain.
+# Build: make
+# Clean: make clean
 #
-# Usage:
-#   make            Build libpulsegc.a
-#   make clean      Remove build artifacts
+# This builds the verified GC as a static library (libpulsegc.a).
+# Requires: a C99 compiler (gcc/clang)
 
-CC     ?= gcc
-AR     ?= ar
-CFLAGS ?= -O2 -Wall -Wno-unused-variable -Wno-unused-but-set-variable
-CFLAGS += -I. -Ikrmllib
+CC       ?= gcc
+CFLAGS   ?= -std=c99 -Wall -Wextra -O2
+CPPFLAGS  = -I. -Ikrmllib -Ikrmllib/krml -Ikrmllib/krml/internal
 
-SRCS = PulseGC.c PulseGC_stubs.c
+SRCS = Pulse_Lib_GC.c krmlinit.c pulsegc_runtime.c
 OBJS = $(SRCS:.c=.o)
-LIB  = libpulsegc.a
 
-.PHONY: all clean
+all: libpulsegc.a
 
-all: $(LIB)
-
-$(LIB): $(OBJS)
+libpulsegc.a: $(OBJS)
 	$(AR) rcs $@ $^
 
-%.o: %.c PulseGC.h PulseGC_compat.h
-	$(CC) $(CFLAGS) -c $< -o $@
+%.o: %.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJS) $(LIB)
+	rm -f $(OBJS) libpulsegc.a
+
+.PHONY: all clean
