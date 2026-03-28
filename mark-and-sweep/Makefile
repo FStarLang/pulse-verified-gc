@@ -5,8 +5,9 @@
 # Shared infrastructure (Heap, Object, Stack) lives in ../common/
 
 FSTAR_HOME ?= $(CURDIR)/../FStar
-FSTAR ?= $(FSTAR_HOME)/bin/fstar.exe
-KRML_HOME ?= $(shell opam var prefix)/lib/karamel
+FSTAR      ?= $(FSTAR_HOME)/bin/fstar.exe
+KRML_HOME  ?= $(FSTAR_HOME)/karamel
+KRML       ?= $(KRML_HOME)/krml
 
 C = ../common
 
@@ -61,7 +62,7 @@ LIB_CHECKED = \
 # Targets
 # ------------------------------------------------------------------------------
 
-.PHONY: all verify verify-spec verify-lib extract clean
+.PHONY: all verify verify-spec verify-lib extract snapshot clean
 
 all: verify
 
@@ -267,30 +268,114 @@ Pulse.Lib.GC/%.fst.checked: Pulse.Lib.GC/%.fst
 	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_LIB_FLAGS) --z3refresh $<
 
 # ------------------------------------------------------------------------------
-# Extraction to C via KaRaMeL
+# Extraction to C via KaRaMeL (two-phase pipeline)
+#
+# Phase 1: fstar.exe --codegen krml → .krml  (one per module)
+# Phase 2: krml .krml → PulseGC.c/.h         (bundle into single C file)
 # ------------------------------------------------------------------------------
 
-EXTRACT_DIR = dist
+KRML_OUTPUT_DIR = _output
+EXTRACT_DIR     = _extract
 
-LIB_MODULES = \
-  Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst \
-  Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst \
-  Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst \
-  Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst \
-  Pulse.Lib.GC/Pulse.Lib.GC.fst
+# F* flags for extraction (reuses lib flags + codegen)
+FSTAR_EXTRACT_FLAGS = $(FSTAR_BASE) \
+  --split_queries always \
+  --already_cached 'FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address -Pulse.Lib.Bitvec'
 
-extract: verify-lib
-	@echo "=== Extracting to C ==="
-	@mkdir -p $(EXTRACT_DIR)
-	krml \
-		-tmpdir $(EXTRACT_DIR) \
-		-skip-linking \
-		-bundle 'Pulse.Lib.GC.*' \
-		-bundle 'Pulse.Spec.GC.*' \
-		-minimal \
-		-add-include '"krml/internal/target.h"' \
-		$(LIB_MODULES)
-	@echo "=== Extraction complete: $(EXTRACT_DIR)/ ==="
+# KaRaMeL flags: bundle all GC modules into PulseGC.c/.h
+KRML_FLAGS = \
+  -tmpdir $(EXTRACT_DIR) \
+  -skip-compilation \
+  -warn-error -2-9-11-15-17 \
+  -bundle 'Pulse.Lib.GC+Pulse.Lib.GC.Mark+Pulse.Lib.GC.Sweep+Pulse.Lib.GC.Fields+Pulse.Lib.GC.Closure+Pulse.Lib.GC.Heap+Pulse.Lib.GC.Object+Pulse.Lib.GC.Stack=Pulse.Lib.GC.*[rename=PulseGC]' \
+  -bundle 'FStar.*,Pulse.*,PulseCore.*,Prims' \
+  -no-prefix Pulse.Lib.GC \
+  -no-prefix Pulse.Lib.GC.Mark \
+  -no-prefix Pulse.Lib.GC.Sweep \
+  -no-prefix Pulse.Lib.GC.Fields \
+  -no-prefix Pulse.Lib.GC.Closure \
+  -no-prefix Pulse.Lib.GC.Heap \
+  -no-prefix Pulse.Lib.GC.Object \
+  -no-prefix Pulse.Lib.GC.Stack
+
+ALL_KRML = \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Fields.krml \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Closure.krml \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Mark.krml \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Sweep.krml \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC.krml \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Heap.krml \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Object.krml \
+  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Stack.krml
+
+$(KRML_OUTPUT_DIR):
+	@mkdir -p $@
+
+$(EXTRACT_DIR):
+	@mkdir -p $@
+
+# Phase 1: extract mark-and-sweep modules to .krml
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Fields.krml: Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC.Fields --odir $(KRML_OUTPUT_DIR) $<
+
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Closure.krml: Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC.Closure --odir $(KRML_OUTPUT_DIR) $<
+
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Mark.krml: Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC.Mark --odir $(KRML_OUTPUT_DIR) $<
+
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Sweep.krml: Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC.Sweep --odir $(KRML_OUTPUT_DIR) $<
+
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC.krml: Pulse.Lib.GC/Pulse.Lib.GC.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC --odir $(KRML_OUTPUT_DIR) $<
+
+# Phase 1: extract common modules to .krml
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Heap.krml: $(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC.Heap --odir $(KRML_OUTPUT_DIR) $<
+
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Object.krml: $(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC.Object --odir $(KRML_OUTPUT_DIR) $<
+
+$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Stack.krml: $(C)/Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module Pulse.Lib.GC.Stack --odir $(KRML_OUTPUT_DIR) $<
+
+# Phase 2: .krml → C via KaRaMeL
+$(EXTRACT_DIR)/PulseGC.c: $(ALL_KRML) | $(EXTRACT_DIR)
+	$(KRML) $(KRML_FLAGS) $(KRML_OUTPUT_DIR)/*.krml
+
+extract: verify-lib $(EXTRACT_DIR)/PulseGC.c
+	@echo "=== Extraction complete: $(EXTRACT_DIR)/PulseGC.{c,h} ==="
+
+# ------------------------------------------------------------------------------
+# Snapshot: self-contained extracted C for CI without F*/KaRaMeL
+# ------------------------------------------------------------------------------
+
+SNAPSHOT_DIR = snapshot
+
+snapshot: extract
+	@echo "=== Creating snapshot ==="
+	@mkdir -p $(SNAPSHOT_DIR)/krmllib/krml/internal $(SNAPSHOT_DIR)/internal
+	@cp $(EXTRACT_DIR)/PulseGC.c $(SNAPSHOT_DIR)/
+	@cp $(EXTRACT_DIR)/PulseGC.h $(SNAPSHOT_DIR)/
+	@cp $(KRML_HOME)/include/krmllib.h $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
+	@cp -r $(KRML_HOME)/krmllib/dist/minimal/* $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
+	@cp $(KRML_HOME)/include/krml/*.h $(SNAPSHOT_DIR)/krmllib/krml/ 2>/dev/null || true
+	@cp $(KRML_HOME)/include/krml/internal/*.h $(SNAPSHOT_DIR)/krmllib/krml/internal/ 2>/dev/null || true
+	@if ! grep -q PulseGC_compat.h $(SNAPSHOT_DIR)/PulseGC.h; then \
+	  sed -i '/#include "krmllib.h"/a #include "PulseGC_compat.h"' $(SNAPSHOT_DIR)/PulseGC.h; \
+	fi
+	@echo "=== Snapshot updated: $(SNAPSHOT_DIR)/ ==="
+	@echo "    Hand-maintained files preserved: PulseGC_compat.h, PulseGC_stubs.c, Makefile, README.md"
+	@echo "    internal/FStar_Pulse_PulseCore_Prims.h must be manually updated if extraction changes"
 
 # ------------------------------------------------------------------------------
 # Cleanup
@@ -299,4 +384,4 @@ extract: verify-lib
 clean:
 	rm -f Spec/*.checked* Pulse.Lib.GC/*.checked*
 	rm -f .depend .depend.spec .depend.lib .common-stamp .common-pulse-stamp
-	rm -rf $(EXTRACT_DIR)
+	rm -rf $(KRML_OUTPUT_DIR) $(EXTRACT_DIR) $(SNAPSHOT_DIR)

@@ -112,34 +112,38 @@ Pulse.Spec.GC.HeapModel        graph construction from heap (create_graph)
 
 ## Building & Verification
 
-Each subdirectory has its own Makefile. There is no top-level build.
+The FStar/ submodule (fstar2 branch) provides F*, Pulse, and KaRaMeL.
 
-### common/
+### First-time setup
+
 ```bash
-cd common
-make lax          # Quick lax-check (default)
-make verify       # Full SMT verification
+git submodule update --init --recursive
+make prep       # Build fstar.exe (stage3) and KaRaMeL (~30 min)
 ```
 
-### mark-and-sweep/
-```bash
-cd mark-and-sweep
-make              # Verify all (lax mode, default)
-make verify-full  # Full verification (no lax)
-make extract      # Extract to C via KaRaMeL
+### Verification
 
-# Verify a single spec module
-fstar.exe --cache_checked_modules --warn_error -321 \
-  --include Spec --include Lib --include ../common/Spec --include ../common/Lib \
-  Spec/Pulse.Spec.GC.Correctness.fst
+```bash
+make            # Verify common/ then mark-and-sweep/ (default)
+
+# Or verify individual directories:
+cd common && make
+cd mark-and-sweep && make
 ```
 
-### fly/
+### Extraction to C
+
 ```bash
-cd fly
-make              # Verify spec modules (full SMT)
-make verify-tests # Lax-check test modules
-make extract      # Verify + extract to C via KaRaMeL
+make extract    # Verify + extract mark-and-sweep to C
+make snapshot   # Verify + extract + update snapshot/
+```
+
+The extracted C code lives in `mark-and-sweep/snapshot/` and can be
+built standalone without F*:
+
+```bash
+cd mark-and-sweep/snapshot
+make            # Produces libpulsegc.a
 ```
 
 ## Verification Status
@@ -163,10 +167,12 @@ Spec modules are verified. Pulse implementation modules use `assume` for concurr
 
 ## Prerequisites
 
-- [F*](https://github.com/FStarLang/FStar) (tested with latest)
-- [Pulse](https://github.com/FStarLang/pulse) (for `Pulse.Lib.GC` modules)
-- Z3 SMT solver (bundled with F* or via opam)
-- [KaRaMeL](https://github.com/FStarLang/karamel) (optional, for C extraction)
+- [F*](https://github.com/FStarLang/FStar) fstar2 branch (included as Git submodule)
+- OCaml 4.14+ (for building F* and KaRaMeL)
+- Z3 SMT solver (bundled with F* build)
+
+The FStar/ submodule includes both Pulse (baked into stage3) and
+KaRaMeL (for C extraction). Run `make prep` to build everything.
 
 ## References
 
