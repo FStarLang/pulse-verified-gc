@@ -910,7 +910,7 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
                      (SpecObject.is_white x sf \/ SpecObject.is_blue x sf)) /\
                    (sf, fvf) == SpecSweep.sweep 's 'fv0)
 {
-  while (U64.lt (U64.add !current mword) (U64.uint_to_t heap_size))
+  while (U64.lt (U64.add !current mword) heap_size_u64)
     invariant exists* v fv s.
       pts_to current v **
       pts_to free_ptr fv **

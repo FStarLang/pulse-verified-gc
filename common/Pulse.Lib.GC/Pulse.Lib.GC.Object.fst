@@ -285,10 +285,11 @@ fn colorHeader (heap: heap_t) (h: hp_addr) (new_color: color)
 /// Pointer detection
 /// ---------------------------------------------------------------------------
 
+inline_for_extraction
 let isPointer (v: U64.t) : bool =
-  U64.v v >= U64.v mword &&
-  U64.v v < heap_size &&
-  U64.v v % U64.v mword = 0
+  U64.gte v mword &&
+  U64.lt v heap_size_u64 &&
+  U64.rem v mword = 0UL
 
 /// ---------------------------------------------------------------------------
 /// Semantic aliases

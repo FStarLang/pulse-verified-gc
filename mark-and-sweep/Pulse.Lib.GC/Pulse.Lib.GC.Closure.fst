@@ -120,7 +120,7 @@ fn parent_closure_of_infix_opt (heap: heap_t) (infix_addr: hp_addr)
     // parent_f_addr >= mword, < heap_size, and word-aligned
     if (U64.lt parent_f_addr mword) {
       None
-    } else if (U64.gte parent_f_addr (U64.uint_to_t heap_size)) {
+    } else if (U64.gte parent_f_addr heap_size_u64) {
       None
     } else if (U64.rem parent_f_addr mword <> 0UL) {
       None

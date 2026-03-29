@@ -42,6 +42,10 @@ let heap_size_sz : (n:SZ.t{SZ.v n == heap_size}) =
   SZ.fits_u64_implies_fits heap_size;
   SZ.uint_to_t heap_size
 
+/// Heap size as U64 — use this in extractable code instead of the nat-typed heap_size
+let heap_size_u64 : (n:U64.t{U64.v n == heap_size}) =
+  U64.uint_to_t heap_size
+
 /// ---------------------------------------------------------------------------
 /// Types
 /// ---------------------------------------------------------------------------

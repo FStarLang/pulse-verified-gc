@@ -163,7 +163,7 @@ fn is_pointer (v: U64.t)
     false
   } else {
     // Check within heap bounds
-    if (U64.gte v (U64.uint_to_t heap_size)) {
+    if (U64.gte v heap_size_u64) {
       false
     } else {
       // Check word-aligned
@@ -250,7 +250,7 @@ fn is_valid_header (heap: heap_t) (h_addr: hp_addr)
   
   let obj_end = U64.add h_addr offset;
   
-  if (U64.gt obj_end (U64.uint_to_t heap_size)) {
+  if (U64.gt obj_end heap_size_u64) {
     false
   } else {
     // Check tag is valid (0-255)

@@ -637,7 +637,7 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
   SpecMarkInv.mark_inv_elim_sp 's 'st;
   SpecMark.mark_no_grey_remains 's 'st;
   
-  let fuel_init : U64.t = U64.div (U64.uint_to_t heap_size) mword;
+  let fuel_init : U64.t = U64.div heap_size_u64 mword;
   let mut go = true;
   let mut fuel_ref = fuel_init;
   
