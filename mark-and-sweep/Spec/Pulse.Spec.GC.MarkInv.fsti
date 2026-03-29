@@ -109,8 +109,17 @@ val mark_inv_elim_density : (g: heap) -> (st: seq obj_addr) ->
         (ensures SweepInv.heap_objects_dense g)
 
 /// ---------------------------------------------------------------------------
-/// No-gray elimination (empty stack => no gray objects)
+/// Stack length bound (proof gap — provable from stack_no_dups + stack_elements_valid)
 /// ---------------------------------------------------------------------------
+
+/// The gray stack length is bounded by the number of heap objects.
+/// Proof: stack_no_dups + stack_elements_valid imply the stack is a
+/// duplicate-free subsequence of (objects 0UL g), hence no longer.
+/// Combined with objects_count * mword <= heap_size, this gives
+/// Seq.length st <= heap_size / mword < heap_size.
+val mark_inv_stack_bound : (g: heap) -> (st: seq obj_addr) ->
+  Lemma (requires mark_inv g st)
+        (ensures Seq.length st < heap_size)
 
 val mark_inv_no_gray : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st /\ Seq.length st = 0)

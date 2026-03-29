@@ -8,7 +8,6 @@
 #include "internal/Pulse_Lib_GC.h"
 
 #include "internal/Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"
-#include "pulsegc_compat.h"
 
 uint64_t mword;
 

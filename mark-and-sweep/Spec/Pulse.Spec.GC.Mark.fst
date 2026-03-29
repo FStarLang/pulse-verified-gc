@@ -125,6 +125,80 @@ let obj_not_in_cons (obj child: obj_addr) (st: seq obj_addr)
 
 
 /// ---------------------------------------------------------------------------
+/// Stack Length Bound
+/// ---------------------------------------------------------------------------
+
+/// No-dup sequence has count <= 1 for every element
+let rec no_dup_count_le_1 (st: seq obj_addr)
+  : Lemma (requires stack_no_dups st)
+          (ensures forall (x: obj_addr). Seq.count x st <= 1)
+          (decreases Seq.length st)
+  = if Seq.length st = 0 then ()
+    else begin
+      no_dup_count_le_1 (Seq.tail st);
+      // head case: ~(mem hd tl) => count hd tl = 0, so count hd st = 1
+      // non-head case: count x st = count x tl <= 1 by IH
+      ()
+    end
+
+/// stack_elements_valid implies subset of objects
+let rec sev_mem_objects (g: heap) (st: seq obj_addr) (x: obj_addr)
+  : Lemma (requires stack_elements_valid g st /\ Seq.mem x st)
+          (ensures Seq.mem x (objects 0UL g))
+          (decreases Seq.length st)
+  = if Seq.length st = 0 then ()
+    else if x = Seq.head st then ()
+    else sev_mem_objects g (Seq.tail st) x
+
+/// General helper: if count x s1 <= count x s2 for all x, then length s1 <= length s2.
+/// Proof: induction on s1. Pop head, find it in s2, remove from s2, apply IH.
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 40"
+let rec count_le_length_le (#a: eqtype) (s1 s2: seq a)
+  : Lemma (requires (forall x. Seq.count x s1 <= Seq.count x s2))
+          (ensures Seq.length s1 <= Seq.length s2)
+          (decreases Seq.length s1)
+  = if Seq.length s1 = 0 then ()
+    else begin
+      let hd = Seq.head s1 in
+      let tl = Seq.tail s1 in
+      // hd is in s1, so count hd s1 >= 1, so count hd s2 >= 1
+      assert (Seq.count hd s2 > 0);
+      // Find index of hd in s2
+      let i = Seq.index_mem hd s2 in
+      let pfx = Seq.slice s2 0 i in
+      let sfx = Seq.slice s2 (i + 1) (Seq.length s2) in
+      let s2' = Seq.append pfx sfx in
+      // Key fact: s2 == append pfx (cons hd sfx)
+      assert (Seq.equal s2 (Seq.append pfx (Seq.cons hd sfx)));
+      // Prove count x tl <= count x s2' for all x
+      let aux (x: a) : Lemma (Seq.count x tl <= Seq.count x s2') =
+        Seq.lemma_append_count_aux x pfx (Seq.cons hd sfx);
+        Seq.lemma_append_count_aux x pfx sfx
+      in
+      FStar.Classical.forall_intro aux;
+      // Apply IH to tl and s2'
+      count_le_length_le tl s2'
+    end
+#pop-options
+
+/// Stack length is bounded by number of objects
+let stack_length_bound (g: heap) (st: seq obj_addr)
+  : Lemma (requires stack_elements_valid g st /\ stack_no_dups st)
+          (ensures Seq.length st <= Seq.length (objects 0UL g))
+  = no_dup_count_le_1 st;
+    let aux (x: obj_addr) : Lemma (Seq.count x st <= Seq.count x (objects 0UL g)) =
+      if Seq.count x st = 0 then ()
+      else begin
+        assert (Seq.mem x st);
+        sev_mem_objects g st x
+        // mem x (objects 0UL g) => count x (objects 0UL g) >= 1 >= count x st
+      end
+    in
+    FStar.Classical.forall_intro aux;
+    count_le_length_le st (objects 0UL g)
+
+
+/// ---------------------------------------------------------------------------
 /// Root Properties
 /// ---------------------------------------------------------------------------
 

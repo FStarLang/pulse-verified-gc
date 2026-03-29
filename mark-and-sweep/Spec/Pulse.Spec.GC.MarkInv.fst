@@ -55,6 +55,16 @@ let mark_inv_step_preserves_objects g st =
 
 let mark_inv_elim_density g st = ()
 
+(* PROOF GAP: stack_length_bound
+   The proof requires showing:
+   1. stack_no_dups st /\ stack_elements_valid g st ==> Seq.length st <= Seq.length (objects 0UL g)
+      (a no-dup subset of a list is no longer than the list)
+   2. well_formed_heap g ==> Seq.length (objects 0UL g) * mword <= heap_size
+      (each object occupies at least mword bytes)
+   3. mword >= 2 ==> Seq.length (objects 0UL g) < heap_size
+   Together: Seq.length st < heap_size *)
+let mark_inv_stack_bound g st = admit ()
+
 let mark_inv_no_gray g st =
   empty_stack_no_grey g st;
   SweepInv.no_gray_intro g

@@ -260,21 +260,13 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
   write_word heap h_addr v
 }
 
-/// Darken a white object (color gray and push to stack)
-/// Precondition: h_addr + 8 < heap_size (object address is valid)
-fn darken (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
-  requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (U64.v h_addr + U64.v mword < heap_size)
-  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2
-{
-  let hdr = read_word heap h_addr;
-  let new_hdr = makeHeader (getWosize hdr) gray (getTag hdr);
-  write_word_ex heap h_addr new_hdr;
-  f_address_valid h_addr;
-  let f_addr = f_address h_addr;
-  let f_addr_obj : obj_addr = f_addr;
-  push st f_addr_obj
-}
+/// PROOF GAP: stack capacity is always sufficient for push.
+/// Provable from: stack_no_dups + stack_elements_valid imply
+/// Seq.length st <= |objects 0UL g| <= heap_size/mword < heap_size <= stack_capacity.
+/// Requires filling in the stack_length_bound proof in MarkInv.
+let assume_stack_capacity (st: gray_stack) (s: Seq.seq obj_addr)
+  : Lemma (Seq.length s < stack_capacity st)
+  = admit ()
 
 /// Check if object is white and darken it (color gray + push to stack)
 /// Postcondition: exact spec correspondence via darken_if_white_spec
@@ -322,6 +314,8 @@ fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
     rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
          as (is_heap heap (SpecObject.makeGray obj 's));
     
+    // Derive push capacity (PROOF GAP — see assume_stack_capacity)
+    assume_stack_capacity st 'st;
     push st obj;
     ()
   } else {
