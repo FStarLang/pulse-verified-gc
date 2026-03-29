@@ -294,7 +294,7 @@ KRML_FLAGS = \
   -library Pulse.Spec.GC.Object \
   -library Pulse.Lib.Header \
   -library Pulse.Lib.Address \
-  -bundle 'Pulse.Lib.GC=Pulse.Lib.GC.*,Pulse.Lib.LinkedList' \
+  -bundle 'Pulse.Lib.GC=Pulse.Lib.GC.*' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'Pulse.Spec.GC.*,Pulse.Lib.Header,Pulse.Lib.Address' \
   -no-prefix Pulse.Lib.GC \
@@ -305,7 +305,6 @@ KRML_FLAGS = \
   -no-prefix Pulse.Lib.GC.Heap \
   -no-prefix Pulse.Lib.GC.Object \
   -no-prefix Pulse.Lib.GC.Stack \
-  -no-prefix Pulse.Lib.LinkedList \
   -warn-error -2-9-15
 
 # .krml files from mark-and-sweep Pulse.Lib.GC modules
@@ -322,9 +321,8 @@ COMMON_KRML = \
   $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Object.krml \
   $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Stack.krml
 
-# .krml files for dependencies (LinkedList, spec types, FStar.Pervasives.Native)
+# .krml files for dependencies (spec types, FStar.Pervasives.Native)
 DEP_KRML = \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_LinkedList.krml \
   $(KRML_OUTPUT_DIR)/FStar_Pervasives_Native.krml \
   $(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Base.krml \
   $(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Heap.krml \
@@ -375,10 +373,6 @@ $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Stack.krml: $(C)/Pulse.Lib.GC/Pulse.Lib.GC.Stack
 	  --codegen krml --extract_module Pulse.Lib.GC.Stack --odir $(KRML_OUTPUT_DIR) $<
 
 # Phase 1c: extract dependency modules to .krml
-$(KRML_OUTPUT_DIR)/Pulse_Lib_LinkedList.krml: $(PULSE_LIB)/Pulse.Lib.LinkedList.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.LinkedList --odir $(KRML_OUTPUT_DIR) $<
-
 $(KRML_OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(KRML_OUTPUT_DIR)
 	$(FSTAR) --cache_checked_modules --warn_error -321 \
 	  --codegen krml --extract_module FStar.Pervasives.Native --odir $(KRML_OUTPUT_DIR) \

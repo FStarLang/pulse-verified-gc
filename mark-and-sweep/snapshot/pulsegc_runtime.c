@@ -24,10 +24,8 @@ uint64_t Pulse_Spec_GC_Base_mword = 8;
 krml_checked_int_t Pulse_Spec_GC_Base_heap_size = 1024;
 uint64_t Pulse_Spec_GC_Base_zero_addr = 0;
 
-/* Aliases used in Pulse_Lib_GC (from Pulse.Lib.GC.Heap re-exports) */
-uint64_t mword = 8;
-krml_checked_int_t heap_size = 1024;
-uint64_t zero_addr = 0;
+/* mword, heap_size, heap_size_u64, zero_addr are defined as globals in
+ * Pulse_Lib_GC.c and initialized by krmlinit_globals() from the above. */
 
 /* -------------------------------------------------------------------------
  * Pulse.Spec.GC.Heap helper functions
