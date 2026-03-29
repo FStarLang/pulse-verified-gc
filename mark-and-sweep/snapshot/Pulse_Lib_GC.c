@@ -7,7 +7,6 @@
 
 #include "internal/Pulse_Lib_GC.h"
 
-#include "Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"
 #include "internal/Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"
 #include "pulsegc_compat.h"
 
@@ -83,35 +82,11 @@ static Pulse_Lib_Header_color_sem blue = Pulse_Lib_Header_Blue;
 
 static Pulse_Lib_Header_color_sem black = Pulse_Lib_Header_Black;
 
-static uint64_t pack_color(Pulse_Lib_Header_color_sem c)
-{
-  return FStar_UInt64_uint_to_t(Pulse_Lib_Header_pack_color(c));
-}
-
 static uint64_t no_scan_tag = 251ULL;
 
 static uint64_t getWosize(uint64_t hdr)
 {
   return hdr >> 10U;
-}
-
-static Pulse_Lib_Header_color_sem getColor(uint64_t hdr)
-{
-  uint64_t raw = hdr >> 8U & 3ULL;
-  FStar_Pervasives_Native_option__Pulse_Lib_Header_color_sem
-  scrut = Pulse_Lib_Header_unpack_color(FStar_UInt64_v(raw));
-  if (scrut.tag == FStar_Pervasives_Native_Some)
-    return scrut.v;
-  else if (scrut.tag == FStar_Pervasives_Native_None)
-    return Pulse_Lib_Header_White;
-  else
-  {
-    KRML_HOST_EPRINTF("KaRaMeL abort at %s:%d\n%s\n",
-      __FILE__,
-      __LINE__,
-      "unreachable (pattern matches are exhaustive in F*)");
-    KRML_HOST_EXIT(255U);
-  }
 }
 
 static uint64_t getTag(uint64_t hdr)
@@ -121,7 +96,35 @@ static uint64_t getTag(uint64_t hdr)
 
 static uint64_t makeHeader(uint64_t wz, Pulse_Lib_Header_color_sem c, uint64_t t)
 {
-  uint64_t c_num = pack_color(c);
+  uint64_t c_num;
+  switch (c)
+  {
+    case Pulse_Lib_Header_White:
+      {
+        c_num = 0ULL;
+        break;
+      }
+    case Pulse_Lib_Header_Gray:
+      {
+        c_num = 1ULL;
+        break;
+      }
+    case Pulse_Lib_Header_Blue:
+      {
+        c_num = 2ULL;
+        break;
+      }
+    case Pulse_Lib_Header_Black:
+      {
+        c_num = 3ULL;
+        break;
+      }
+    default:
+      {
+        KRML_HOST_EPRINTF("KaRaMeL incomplete match at %s:%d\n", __FILE__, __LINE__);
+        KRML_HOST_EXIT(253U);
+      }
+  }
   uint64_t wz_shifted = wz << 10U;
   uint64_t c_shifted = c_num << 8U;
   return wz_shifted | c_shifted | t;
@@ -269,7 +272,16 @@ darken_if_white(
 )
 {
   uint64_t hdr = read_word(heap, h_addr);
-  Pulse_Lib_Header_color_sem c = getColor(hdr);
+  uint64_t raw = hdr >> 8U & 3ULL;
+  Pulse_Lib_Header_color_sem c;
+  if (raw == 0ULL)
+    c = Pulse_Lib_Header_White;
+  else if (raw == 1ULL)
+    c = Pulse_Lib_Header_Gray;
+  else if (raw == 2ULL)
+    c = Pulse_Lib_Header_Blue;
+  else
+    c = Pulse_Lib_Header_Black;
   uint64_t obj = f_address(h_addr);
   if (c == white)
   {
@@ -423,7 +435,16 @@ static uint64_t sweep_black_case(heap_t heap, uint64_t h_addr, uint64_t wz, uint
 static uint64_t sweep_object(heap_t heap, uint64_t h_addr, uint64_t wz, uint64_t fp)
 {
   uint64_t hdr = read_word(heap, h_addr);
-  Pulse_Lib_Header_color_sem color = getColor(hdr);
+  uint64_t raw = hdr >> 8U & 3ULL;
+  Pulse_Lib_Header_color_sem color;
+  if (raw == 0ULL)
+    color = Pulse_Lib_Header_White;
+  else if (raw == 1ULL)
+    color = Pulse_Lib_Header_Gray;
+  else if (raw == 2ULL)
+    color = Pulse_Lib_Header_Blue;
+  else
+    color = Pulse_Lib_Header_Black;
   if (color == white)
     return sweep_white_case(heap, h_addr, wz, fp);
   else if (color == black)

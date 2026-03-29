@@ -49,8 +49,15 @@ let gray  : color = Header.Gray
 let blue  : color = Header.Blue
 let black : color = Header.Black
 
-/// Pack color to numeric for header encoding
-let pack_color (c: color) : U64.t = U64.uint_to_t (Header.pack_color c)
+/// Pack color to numeric for header encoding — directly returns U64 literal
+/// so KaRaMeL extracts clean C without going through uint_t 64.
+inline_for_extraction
+let pack_color (c: color) : (r:U64.t{U64.v r == Header.pack_color c}) =
+  match c with
+  | Header.White -> 0UL
+  | Header.Gray  -> 1UL
+  | Header.Blue  -> 2UL
+  | Header.Black -> 3UL
 
 /// ---------------------------------------------------------------------------
 /// Special tag values
@@ -70,15 +77,15 @@ let getWosize (hdr: U64.t) : wosize =
   FStar.Math.Lemmas.lemma_div_lt_nat (U64.v hdr) 64 10;
   U64.shift_right hdr 10ul
 
-/// Extract color from header (bits 8-9) — returns algebraic color
-#push-options "--z3rlimit 50"
+/// Extract color from header (bits 8-9) — directly matches U64 value
+/// so KaRaMeL extracts clean C without option type or uint_t 64.
+inline_for_extraction
 let getColor (hdr: U64.t) : color =
   let raw = U64.logand (U64.shift_right hdr 8ul) 3UL in
-  // raw is 0-3, so unpack always succeeds
-  match Header.unpack_color (U64.v raw) with
-  | Some c -> c
-  | None -> Header.White // unreachable: raw <= 3
-#pop-options
+  if raw = 0UL then Header.White
+  else if raw = 1UL then Header.Gray
+  else if raw = 2UL then Header.Blue
+  else Header.Black
 
 /// Extract tag from header (bits 0-7)
 let getTag (hdr: U64.t) : tag =
@@ -306,11 +313,12 @@ let getWosize_eq (hdr: U64.t) : Lemma (getWosize hdr == SpecObject.getWosize hdr
 let getTag_eq (hdr: U64.t) : Lemma (getTag hdr == SpecObject.getTag hdr) =
   SpecObject.getTag_spec hdr
 
-/// Lib.getColor == Spec.getColor (both extract bits 8-9 and unpack)
-#push-options "--z3rlimit 20"
+/// Lib.getColor == Spec.getColor (both extract bits 8-9)
+#push-options "--z3rlimit 50"
 let getColor_eq (hdr: U64.t) : Lemma (getColor hdr == SpecObject.getColor hdr) =
-  SpecObject.getColor_spec hdr;
-  Header.get_color_val (U64.v hdr)
+  Header.get_color_val (U64.v hdr);
+  Header.get_color_bound (U64.v hdr);
+  SpecObject.getColor_raw hdr
 #pop-options
 
 /// Lib.makeHeader on extracted fields == Spec.colorHeader

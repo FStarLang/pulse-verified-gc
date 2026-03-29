@@ -10,8 +10,6 @@
 
 #include "krmllib.h"
 
-#include "Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"
-
 typedef struct heap_t_s
 {
   uint8_t *data;
@@ -24,9 +22,14 @@ FStar_Pervasives_Native_option___Pulse_Lib_LinkedList_node__uint64_t_;
 
 typedef struct node__uint64_t_s node__uint64_t;
 
+#define FStar_Pervasives_Native_None 0
+#define FStar_Pervasives_Native_Some 1
+
+typedef uint8_t FStar_Pervasives_Native_option___Pulse_Lib_LinkedList_node__uint64_t__tags;
+
 typedef struct FStar_Pervasives_Native_option___Pulse_Lib_LinkedList_node__uint64_t__s
 {
-  FStar_Pervasives_Native_option__Pulse_Lib_Header_color_sem_tags tag;
+  FStar_Pervasives_Native_option___Pulse_Lib_LinkedList_node__uint64_t__tags tag;
   node__uint64_t *v;
 }
 FStar_Pervasives_Native_option___Pulse_Lib_LinkedList_node__uint64_t_;

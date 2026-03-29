@@ -10,8 +10,6 @@
 
 #include "krmllib.h"
 
-#include "../Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"
-
 extern uint64_t Pulse_Spec_GC_Base_mword;
 
 extern krml_checked_int_t Pulse_Spec_GC_Base_heap_size;
@@ -24,13 +22,6 @@ extern uint64_t Pulse_Spec_GC_Base_zero_addr;
 #define Pulse_Lib_Header_Black 3
 
 typedef uint8_t Pulse_Lib_Header_color_sem;
-
-typedef struct FStar_Pervasives_Native_option__Pulse_Lib_Header_color_sem_s
-{
-  FStar_Pervasives_Native_option__Pulse_Lib_Header_color_sem_tags tag;
-  Pulse_Lib_Header_color_sem v;
-}
-FStar_Pervasives_Native_option__Pulse_Lib_Header_color_sem;
 
 extern uint8_t Pulse_Spec_GC_Heap_uint64_to_uint8(uint64_t x);
 

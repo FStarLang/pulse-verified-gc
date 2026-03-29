@@ -75,42 +75,10 @@ uint64_t Pulse_Spec_GC_Object_colorHeader(
 }
 
 /* -------------------------------------------------------------------------
- * Pulse.Lib.Header helper functions
- * ------------------------------------------------------------------------- */
-
-/* pack_color: color_sem → uint_t 64 (represented as krml_checked_int_t) */
-krml_checked_int_t Pulse_Lib_Header_pack_color(Pulse_Lib_Header_color_sem c) {
-    return (krml_checked_int_t)c;
-}
-
-/* unpack_color: uint_t 64 → option color_sem */
-FStar_Pervasives_Native_option__Pulse_Lib_Header_color_sem
-Pulse_Lib_Header_unpack_color(krml_checked_int_t w) {
-    FStar_Pervasives_Native_option__Pulse_Lib_Header_color_sem r;
-    if (w >= 0 && w <= 3) {
-        r.tag = FStar_Pervasives_Native_Some;
-        r.v = (Pulse_Lib_Header_color_sem)w;
-    } else {
-        r.tag = FStar_Pervasives_Native_None;
-        r.v = 0;
-    }
-    return r;
-}
-
-/* -------------------------------------------------------------------------
  * FStar.UInt64 runtime support
+ * (uint_to_t converts spec-level int to uint64_t; used for heap_size)
  * ------------------------------------------------------------------------- */
-
-krml_checked_int_t FStar_UInt64_n = 64;
 
 uint64_t FStar_UInt64_uint_to_t(krml_checked_int_t x) {
     return (uint64_t)x;
-}
-
-krml_checked_int_t FStar_UInt64_v(uint64_t x) {
-    return (krml_checked_int_t)x;
-}
-
-krml_checked_int_t FStar_UInt64___proj__Mk__item__v(uint64_t projectee) {
-    return (krml_checked_int_t)projectee;
 }
