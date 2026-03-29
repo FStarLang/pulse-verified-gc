@@ -48,7 +48,8 @@ module SI = Pulse.Spec.GC.SweepInv
 /// - Stack empty after mark phase
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (SpecMarkInv.mark_inv 's 'st /\ SI.fp_valid fp 's)
+           pure (SpecMarkInv.mark_inv 's 'st /\ SI.fp_valid fp 's /\
+                 stack_capacity st >= heap_size)
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\ Seq.length st2 == 0 /\

@@ -260,19 +260,12 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
   write_word heap h_addr v
 }
 
-/// PROOF GAP: stack capacity is always sufficient for push.
-/// Provable from: stack_no_dups + stack_elements_valid imply
-/// Seq.length st <= |objects 0UL g| <= heap_size/mword < heap_size <= stack_capacity.
-/// Requires filling in the stack_length_bound proof in MarkInv.
-let assume_stack_capacity (st: gray_stack) (s: Seq.seq obj_addr)
-  : Lemma (Seq.length s < stack_capacity st)
-  = admit ()
-
 /// Check if object is white and darken it (color gray + push to stack)
 /// Postcondition: exact spec correspondence via darken_if_white_spec
 fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (U64.v h_addr + U64.v mword < heap_size)
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 Seq.length 'st < stack_capacity st)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
     pure ((s2, st2) == darken_if_white_spec 's 'st h_addr)
 {
@@ -314,8 +307,6 @@ fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
     rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
          as (is_heap heap (SpecObject.makeGray obj 's));
     
-    // Derive push capacity (PROOF GAP — see assume_stack_capacity)
-    assume_stack_capacity st 'st;
     push st obj;
     ()
   } else {
@@ -327,7 +318,8 @@ fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 
 /// Check if value is a pointer, and if so, darken its target if white
 fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
-  requires is_heap heap 's ** is_gray_stack st 'st
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (Seq.length 'st < stack_capacity st)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
     pure ((s2, st2) == check_and_darken_spec 's 'st v)
 {
@@ -355,7 +347,8 @@ fn push_step_body (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
                  U64.v h_addr + U64.v mword < heap_size /\
                  Seq.length 's == heap_size /\
                  spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size /\
-                 obj == SpecHeap.f_address h_addr)
+                 obj == SpecHeap.f_address h_addr /\
+                 Seq.length 'st < stack_capacity st)
   ensures exists* s' st'. is_heap heap s' ** is_gray_stack st st' **
     pure (Seq.length s' == heap_size /\
           SpecMark.push_children 's 'st obj curr_i wz ==
@@ -378,13 +371,29 @@ fn push_step_body (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
   ()
 }
 
+/// Helper: derive stack length bound after one push_children iteration.
+/// Uses monotonicity: current stack is no longer than the final result.
+/// The final result has mark_inv, so its length < heap_size.
+let push_children_iter_bound
+    (s: heap_state) (st_cur: Seq.seq obj_addr)
+    (s_init: heap_state) (st_init: Seq.seq obj_addr)
+    (obj: obj_addr) (vi: U64.t{U64.v vi >= 1}) (wz: U64.t)
+    (result_bound: nat)
+  : Lemma (requires SpecMark.push_children s st_cur obj vi wz ==
+                    SpecMark.push_children s_init st_init obj 1UL wz /\
+                    Seq.length (snd (SpecMark.push_children s_init st_init obj 1UL wz)) < result_bound)
+          (ensures Seq.length st_cur < result_bound)
+  = SpecMark.push_children_stack_monotone s st_cur obj vi wz
+
 /// Push white children of an object onto the gray stack
 fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (U64.v wz <= pow2 54 - 1 /\
                  U64.v h_addr + U64.v mword < heap_size /\
                  spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size /\
-                 Seq.length 's == heap_size)
+                 Seq.length 's == heap_size /\
+                 stack_capacity st >= heap_size /\
+                 Seq.length (snd (SpecMark.push_children 's 'st (f_address h_addr) 1UL wz)) < heap_size)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
     pure (U64.v (f_address h_addr) >= U64.v mword /\
           U64.v (f_address h_addr) < heap_size /\
@@ -395,6 +404,9 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
   let obj : obj_addr = f_address h_addr;
   let mut i = 1UL;
   
+  // Establish initial stack bound from monotonicity
+  push_children_iter_bound 's 'st 's 'st obj 1UL wz heap_size;
+  
   while (U64.lte !i wz)
     invariant exists* vi s st_cur.
       pts_to i vi **
@@ -402,11 +414,18 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
       is_gray_stack st st_cur **
       pure (U64.v vi >= 1 /\ U64.v vi <= U64.v wz + 1 /\
             Seq.length s == heap_size /\
+            Seq.length st_cur < heap_size /\
             SpecMark.push_children s st_cur obj vi wz ==
             SpecMark.push_children 's 'st obj 1UL wz)
   {
     let curr_i = !i;
+    // stack_capacity st >= heap_size (from push_children precondition)
+    // + Seq.length 'st_ghost < heap_size (from invariant)
+    // => Seq.length 'st_ghost < stack_capacity st (push_step_body precondition)
     push_step_body heap st h_addr obj curr_i wz;
+    // Derive new stack bound from monotonicity + result bound
+    with s_new st_new. assert (is_heap heap s_new ** is_gray_stack st st_new);
+    push_children_iter_bound s_new st_new 's 'st obj (U64.add curr_i 1UL) wz heap_size;
     i := U64.add curr_i 1UL
   };
   // At exit: vi > wz, push_children s st_cur obj vi wz == (s, st_cur)
@@ -422,7 +441,9 @@ fn maybe_push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wo
            pure (U64.v wz <= pow2 54 - 1 /\
                  U64.v h_addr + U64.v mword < heap_size /\
                  spec_field_address (U64.v h_addr) (U64.v wz + 1) <= heap_size /\
-                 Seq.length 's == heap_size)
+                 Seq.length 's == heap_size /\
+                 stack_capacity st >= heap_size /\
+                 Seq.length (snd (SpecMark.push_children 's 'st (f_address h_addr) 1UL wz)) < heap_size)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
     pure (U64.gte tag no_scan_tag ==> (s2 == 's /\ st2 == 'st))
 {
@@ -470,7 +491,8 @@ let mark_step_scan_preserves_objects
 /// Precondition: mark_inv provides well_formed_heap + stack_props
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0)
+           pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0 /\
+                 stack_capacity st >= heap_size)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
            pure (SpecMarkInv.mark_inv s2 st2 /\
                  SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
@@ -578,6 +600,13 @@ fn mark_step (heap: heap_t) (st: gray_stack)
     // Need stack ghost before push_children for mark_inv_step_scan
     with tl. assert (is_gray_stack st tl);
     
+    // Derive push_children result bound for push capacity
+    // mark_inv 's (cons f_addr tl) + not no_scan => result stack < heap_size
+    SpecMarkInv.mark_inv_push_children_bound 's f_addr tl;
+    // Now: Seq.length (snd (push_children (makeBlack f_addr 's) tl f_addr 1UL wz)) < heap_size
+    // The ghost heap here is (makeBlack f_addr 's) and ghost stack is tl.
+    // f_address h_addr == f_addr (from f_address_eq already called).
+    
     push_children heap st h_addr wz;
     
     // Establish equivalence to mark_step for scan case
@@ -621,7 +650,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 /// Postcondition: mark_inv preserved, stack empty, objects list preserved, s2 == mark 's 'st
 fn mark_loop (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (SpecMarkInv.mark_inv 's 'st)
+           pure (SpecMarkInv.mark_inv 's 'st /\ stack_capacity st >= heap_size)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecMarkInv.mark_inv s2 st2 /\ Seq.length st2 == 0 /\
                 SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\

@@ -237,6 +237,27 @@ let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64
     else
       (g', st')
 
+/// push_children only grows the stack (or leaves it unchanged)
+let rec push_children_stack_monotone (g: heap) (st: seq obj_addr) (obj: obj_addr)
+                                     (i: U64.t{U64.v i >= 1}) (ws: U64.t)
+  : Lemma (ensures Seq.length st <= Seq.length (snd (push_children g st obj i ws)))
+          (decreases (U64.v ws - U64.v i))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let v = HeapGraph.get_field g obj i in
+      let (g', st') =
+        if HeapGraph.is_pointer_field v then begin
+          HeapGraph.is_pointer_field_is_obj_addr v;
+          let child : obj_addr = v in
+          if is_white child g then (makeGray child g, Seq.cons child st)
+          else (g, st)
+        end else (g, st)
+      in
+      if U64.v i < U64.v ws then
+        push_children_stack_monotone g' st' obj (U64.add i 1UL) ws
+      else ()
+    end
+
 /// Pillar 1: Mark Preserves Well-Formedness
 /// ---------------------------------------------------------------------------
 

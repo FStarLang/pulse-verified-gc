@@ -62,6 +62,16 @@ let mark_inv_stack_bound g st =
   object_count_bound g
   // Step 3: Z3 closes: heap_size >= 8 (pos + %8==0) => heap_size/8 < heap_size
 
+let mark_inv_push_children_bound g obj tl =
+  mark_inv_step_scan g obj tl;
+  let g' = Pulse.Spec.GC.Object.makeBlack obj g in
+  let wz = Pulse.Spec.GC.Object.wosize_of_object obj g in
+  mark_inv_stack_bound (fst (push_children g' tl obj 1UL wz))
+                       (snd (push_children g' tl obj 1UL wz))
+
+let push_children_stack_monotone g st obj i ws =
+  push_children_stack_monotone g st obj i ws
+
 let mark_inv_no_gray g st =
   empty_stack_no_grey g st;
   SweepInv.no_gray_intro g

@@ -121,6 +121,18 @@ val mark_inv_stack_bound : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
         (ensures Seq.length st < heap_size)
 
+/// push_children result has bounded stack length
+val mark_inv_push_children_bound : (g: heap) -> (obj: obj_addr) -> (tl: seq obj_addr) ->
+  Lemma (requires mark_inv g (Seq.cons obj tl) /\ not (is_no_scan obj g))
+        (ensures (let g' = makeBlack obj g in
+                  let wz = wosize_of_object obj g in
+                  Seq.length (snd (push_children g' tl obj 1UL wz)) < heap_size))
+
+/// push_children only grows the stack
+val push_children_stack_monotone : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
+  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
+  Lemma (ensures Seq.length st <= Seq.length (snd (push_children g st obj i ws)))
+
 val mark_inv_no_gray : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st /\ Seq.length st = 0)
         (ensures SweepInv.no_gray_objects g)
