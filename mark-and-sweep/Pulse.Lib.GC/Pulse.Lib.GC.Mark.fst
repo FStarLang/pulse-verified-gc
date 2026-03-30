@@ -262,7 +262,7 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
 
 /// Read header, write gray header, rewrite ghost state to makeGray.
 /// Factored out so darken_if_white's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --split_queries always --z3refresh --z3smtopt '(set-option :smt.mbqi true)'"
+#push-options "--z3rlimit 200 --split_queries always --z3refresh"
 fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -496,7 +496,7 @@ let mark_step_scan_preserves_objects
 
 /// Write black header, rewrite ghost state to makeBlack.
 /// Factored out so mark_step's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --split_queries always --z3refresh --z3smtopt '(set-option :smt.mbqi true)'"
+#push-options "--z3rlimit 200 --split_queries always --z3refresh"
 fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -539,7 +539,7 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 
 /// Process one gray object: pop from stack, blacken, push white children
 /// Precondition: mark_inv provides well_formed_heap + stack_props
-#push-options "--z3rlimit 100 --split_queries always --z3refresh --z3smtopt '(set-option :smt.mbqi true)'"
+#push-options "--z3rlimit 100 --split_queries always --z3refresh"
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0 /\

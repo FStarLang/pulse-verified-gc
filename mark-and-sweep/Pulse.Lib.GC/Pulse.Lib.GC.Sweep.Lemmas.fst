@@ -253,7 +253,7 @@ let sweep_loop_next_bridge
       (next_v + 8 < heap_size ==>
         next_v % 8 == 0 /\
         next_v + 8 <= heap_size /\
-        SI.obj_in_objects (U64.uint_to_t (next_v + 8)) s_post /\
+        SI.obj_in_objects (SpecHeap.f_address (U64.uint_to_t next_v)) s_post /\
         Seq.length (SpecFields.objects (U64.uint_to_t next_v) s_post) > 0)))
   = let next_v = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
     // headers chain: g_init -> s_cur (from h_addr) + s_cur -> s_post (from next_v)
@@ -309,7 +309,7 @@ let sweep_loop_next_spec
       (next_v + 8 < heap_size ==>
         next_v % 8 == 0 /\
         next_v + 8 <= heap_size /\
-        SI.obj_in_objects (U64.uint_to_t (next_v + 8)) s_post /\
+        SI.obj_in_objects (SpecHeap.f_address (U64.uint_to_t next_v)) s_post /\
         Seq.length (SpecFields.objects (U64.uint_to_t next_v) s_post) > 0)))
   = let next_v = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
     SI.headers_preserved_from_trans (U64.v h_addr) next_v g_init s_cur s_post;
@@ -773,7 +773,7 @@ let lemma_next_addr_aligned (h_addr: nat) (wz: nat)
 /// These use only spec-level functions (no spec_read_word/spec_write_word)
 /// so they don't trigger bitvector cascades in combined VCs.
 
-#push-options "--z3rlimit 50 --z3smtopt '(set-option :smt.mbqi true)'"
+#push-options "--z3rlimit 50"
 let sweep_black_preserves_spec (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   : Lemma (requires Seq.length g == heap_size /\
                     SpecFields.well_formed_heap g /\
@@ -786,7 +786,9 @@ let sweep_black_preserves_spec (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U
 =
   let obj = SpecHeap.f_address h_addr in
   SpecMark.color_change_preserves_wf g obj Pulse.Lib.Header.White;
-  SpecFields.color_change_preserves_objects g obj Pulse.Lib.Header.White
+  SpecFields.color_change_preserves_objects g obj Pulse.Lib.Header.White;
+  let s2 = SpecObject.makeWhite obj g in
+  SpecObject.makeWhite_eq obj g
 
 let sweep_black_whiteness_spec (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   : Lemma (requires Seq.length g == heap_size /\

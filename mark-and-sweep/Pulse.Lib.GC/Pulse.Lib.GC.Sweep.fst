@@ -466,9 +466,7 @@ fn sweep_read_wz (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < he
 
 /// Loop body: dispatch sweep_object, advance, maintain invariants
 /// No spec_read_word in this fn — wosize comes from sweep_read_wz
-/// MBQI needed for with_pure combined VCs (Pulse encodes with_pure as a single
-/// monolithic implication that --split_queries cannot decompose)
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh --split_queries always --z3smtopt '(set-option :smt.mbqi true)'"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh --split_queries always"
 fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_init: Ghost.erased heap_state)
   requires pts_to current 'v0 ** pts_to free_ptr 'fv0 ** is_heap heap 's **
            with_pure (U64.v 'v0 % 8 == 0 /\
@@ -482,7 +480,7 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
                  SI.fp_valid 'fv0 's /\
                  SI.headers_preserved_from (U64.v 'v0) 's g_init /\
                  SI.objects_white_before (U64.v 'v0) 's /\
-                 SI.obj_in_objects (U64.uint_to_t (U64.v 'v0 + 8)) 's /\
+                 SI.obj_in_objects (SpecHeap.f_address 'v0) 's /\
                  Seq.length (SpecFields.objects (U64.uint_to_t (U64.v 'v0)) 's) > 0)
   ensures  exists* v1 fv1 s1.
              pts_to current v1 ** pts_to free_ptr fv1 ** is_heap heap s1 **
@@ -498,7 +496,7 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
                    SI.headers_preserved_from (U64.v v1) s1 g_init /\
                    SI.objects_white_before (U64.v v1) s1 /\
                    (U64.v v1 + 8 < heap_size ==>
-                     SI.obj_in_objects (U64.uint_to_t (U64.v v1 + 8)) s1 /\
+                     SI.obj_in_objects (SpecHeap.f_address v1) s1 /\
                      Seq.length (SpecFields.objects (U64.uint_to_t (U64.v v1)) s1) > 0) /\
                    (U64.v v1 < heap_size ==>
                      SpecSweep.sweep_aux s1 (SpecFields.objects (U64.uint_to_t (U64.v v1)) s1) fv1 ==
@@ -571,7 +569,7 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
   assert (pure (SI.headers_preserved_from (U64.v next_addr) s_post g_init));
   assert (pure (SI.objects_white_before (U64.v next_addr) s_post));
   assert (pure (U64.v next_addr + 8 < heap_size ==>
-    SI.obj_in_objects (U64.uint_to_t (U64.v next_addr + 8)) s_post /\
+    SI.obj_in_objects (SpecHeap.f_address next_addr) s_post /\
     Seq.length (SpecFields.objects (U64.uint_to_t (U64.v next_addr)) s_post) > 0));
   assert (pure (U64.v next_addr < heap_size ==>
     SpecSweep.sweep_aux s_post (SpecFields.objects (U64.uint_to_t (U64.v next_addr)) s_post) new_fp ==
@@ -596,8 +594,13 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
                  SI.no_gray_objects 's /\
                  SI.objects_white_before (U64.v 'v0) 's /\
                  (U64.v 'v0 + 8 < heap_size ==>
-                   SI.obj_in_objects (U64.uint_to_t (U64.v 'v0 + 8)) 's /\
-                   Seq.length (SpecFields.objects (U64.uint_to_t (U64.v 'v0)) 's) > 0))
+                   SI.obj_in_objects (SpecHeap.f_address 'v0) 's /\
+                   Seq.length (SpecFields.objects (U64.uint_to_t (U64.v 'v0)) 's) > 0) /\
+                 (U64.v 'v0 < heap_size ==>
+                   SpecSweep.sweep_aux 's (SpecFields.objects (U64.uint_to_t (U64.v 'v0)) 's) 'fv0 ==
+                   SpecSweep.sweep 's 'fv0) /\
+                 (U64.v 'v0 >= heap_size ==>
+                   (reveal 's, reveal 'fv0) == SpecSweep.sweep 's 'fv0))
   ensures  exists* vf fvf sf.
              pts_to current vf ** pts_to free_ptr fvf ** is_heap heap sf **
              pure (SpecFields.well_formed_heap sf /\
@@ -605,9 +608,6 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
                      (SpecObject.is_white x sf \/ SpecObject.is_blue x sf)) /\
                    (sf, fvf) == SpecSweep.sweep 's 'fv0)
 {
-  // MBQI needed for while loop invariant VCs (Pulse encoding of loop invariants
-  // generates monolithic queries that --split_queries cannot decompose)
-  #set-options "--z3smtopt '(set-option :smt.mbqi true)'" {
   while (U64.lt (U64.add !current mword) heap_size_u64)
     invariant exists* v fv s.
       pts_to current v **
@@ -625,16 +625,13 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
             SI.headers_preserved_from (U64.v v) s 's /\
             SI.objects_white_before (U64.v v) s /\
             (U64.v v + 8 < heap_size ==>
-              SI.obj_in_objects (U64.uint_to_t (U64.v v + 8)) s /\
+              SI.obj_in_objects (SpecHeap.f_address v) s /\
               Seq.length (SpecFields.objects (U64.uint_to_t (U64.v v)) s) > 0) /\
             (U64.v v < heap_size ==>
               SpecSweep.sweep_aux s (SpecFields.objects (U64.uint_to_t (U64.v v)) s) fv == SpecSweep.sweep 's 'fv0) /\
             (U64.v v >= heap_size ==> (s, fv) == SpecSweep.sweep 's 'fv0))
   {
-    #set-options "--z3smtopt '(set-option :smt.mbqi false)'" {
     sweep_loop_body heap current free_ptr 's;
-    }
-  };
   };
   // After loop: v + 8 >= heap_size and objects_white_before (U64.v v) s
   // Derive all objects are white
@@ -677,7 +674,18 @@ fn sweep (heap: heap_t) (fp: U64.t)
   let cur_init : U64.t = zero_addr;
   let mut current = cur_init;
   let mut free_ptr = fp;
-  
+  // Bridge: f_address zero_addr == uint_to_t 8 == f_address cur_init
+  SpecHeap.f_address_spec cur_init;
+  assert (pure (SpecHeap.f_address cur_init == U64.uint_to_t 8));
+  assert (pure (U64.v cur_init + 8 < heap_size ==>
+    SI.obj_in_objects (SpecHeap.f_address cur_init) 's));
+  // Establish sweep_aux initial condition: sweep g fp = sweep_aux g (objects 0UL g) fp
+  // and cur_init = zero_addr = 0UL, so objects (uint_to_t (v cur_init)) 's = objects 0UL 's
+  assert (pure (U64.v cur_init < heap_size ==>
+    SpecSweep.sweep_aux 's (SpecFields.objects (U64.uint_to_t (U64.v cur_init)) 's) fp ==
+    SpecSweep.sweep 's fp));
+  assert (pure (U64.v cur_init >= heap_size ==>
+    (reveal 's, fp) == SpecSweep.sweep 's fp));
   sweep_loop heap current free_ptr;
   
   let result = !free_ptr;

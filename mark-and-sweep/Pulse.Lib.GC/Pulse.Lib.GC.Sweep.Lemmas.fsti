@@ -194,7 +194,7 @@ val sweep_loop_next_bridge
       (next_v + 8 < heap_size ==>
         next_v % 8 == 0 /\
         next_v + 8 <= heap_size /\
-        SI.obj_in_objects (U64.uint_to_t (next_v + 8)) s_post /\
+        SI.obj_in_objects (SpecHeap.f_address (U64.uint_to_t next_v)) s_post /\
         Seq.length (SpecFields.objects (U64.uint_to_t next_v) s_post) > 0)))
 
 /// Spec-level version of sweep_loop_next_bridge: uses SpecObject.getWosize instead of
@@ -222,7 +222,7 @@ val sweep_loop_next_spec
       (next_v + 8 < heap_size ==>
         next_v % 8 == 0 /\
         next_v + 8 <= heap_size /\
-        SI.obj_in_objects (U64.uint_to_t (next_v + 8)) s_post /\
+        SI.obj_in_objects (SpecHeap.f_address (U64.uint_to_t next_v)) s_post /\
         Seq.length (SpecFields.objects (U64.uint_to_t next_v) s_post) > 0)))
 
 /// ---------------------------------------------------------------------------
