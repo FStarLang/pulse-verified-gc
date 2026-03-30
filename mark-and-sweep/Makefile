@@ -57,6 +57,7 @@ LIB_CHECKED = \
   Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
   Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst.checked \
   Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst.checked \
+  Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst.checked \
   Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked \
   Pulse.Lib.GC/Pulse.Lib.GC.fst.checked
 
@@ -227,8 +228,42 @@ Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst.checked: \
 	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
 	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
 
+Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fsti.checked: \
+	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fsti \
+	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
+	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
+	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
+	Spec/Pulse.Spec.GC.Sweep.fst.checked \
+	Spec/Pulse.Spec.GC.Mark.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
+	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked \
+	$(C)/Lib/Pulse.Lib.Header.fst.checked \
+	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
+	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+
+Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst.checked: \
+	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst \
+	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fsti.checked \
+	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
+	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
+	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
+	Spec/Pulse.Spec.GC.Sweep.fst.checked \
+	Spec/Pulse.Spec.GC.Mark.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
+	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
+	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
+	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked \
+	$(C)/Lib/Pulse.Lib.Header.fst.checked \
+	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
+	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+
 Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked: \
 	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst \
+	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst.checked \
 	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
 	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
 	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
@@ -267,6 +302,9 @@ Spec/%.fsti.checked: Spec/%.fsti
 	$(FSTAR) $(FSTAR_SPEC_INCLUDES) $(FSTAR_SPEC_FLAGS) $<
 
 Pulse.Lib.GC/%.fst.checked: Pulse.Lib.GC/%.fst
+	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_LIB_FLAGS) --z3refresh $<
+
+Pulse.Lib.GC/%.fsti.checked: Pulse.Lib.GC/%.fsti
 	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_LIB_FLAGS) --z3refresh $<
 
 # ------------------------------------------------------------------------------

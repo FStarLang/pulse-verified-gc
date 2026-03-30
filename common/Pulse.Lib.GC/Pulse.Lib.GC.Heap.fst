@@ -107,6 +107,7 @@ let combine_bytes (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) : U64.t =
   SpecHeap.combine_bytes b0 b1 b2 b3 b4 b5 b6 b7
 
 /// Specification for read_word — same as Spec.Heap.read_word on the byte sequence
+[@@"opaque_to_smt"]
 let spec_read_word (s: heap_state) (addr: nat{addr + 8 <= Seq.length s}) : U64.t =
   combine_bytes
     (Seq.index s addr)
@@ -122,9 +123,11 @@ let spec_read_word (s: heap_state) (addr: nat{addr + 8 <= Seq.length s}) : U64.t
 let spec_read_word_eq (s: heap_state) (addr: hp_addr)
   : Lemma (requires U64.v addr + 8 <= Seq.length s)
           (ensures spec_read_word s (U64.v addr) == SpecHeap.read_word s addr)
-  = SpecHeap.read_word_spec s addr
+  = reveal_opaque (`%spec_read_word) spec_read_word;
+    SpecHeap.read_word_spec s addr
 
 /// Specification for write_word
+[@@"opaque_to_smt"]
 let spec_write_word (s: heap_state) 
                     (addr: nat{addr + 8 <= Seq.length s}) 
                     (v: U64.t) 
@@ -150,7 +153,8 @@ let spec_write_word (s: heap_state)
 let spec_write_word_eq (s: heap_state) (addr: hp_addr) (v: U64.t)
   : Lemma (requires U64.v addr + 8 <= Seq.length s)
           (ensures spec_write_word s (U64.v addr) v == SpecHeap.write_word s addr v)
-  = SpecHeap.write_word_spec s addr v
+  = reveal_opaque (`%spec_write_word) spec_write_word;
+    SpecHeap.write_word_spec s addr v
 
 /// Seq.upd/index roundtrip for non-overlapping writes
 let upd_index_same (s: Seq.seq U8.t) (i: nat{i < Seq.length s}) (v: U8.t)
@@ -174,7 +178,7 @@ let spec_write_read_byte (s: heap_state)
             | 5 -> uint64_to_uint8 (U64.shift_right v 40ul)
             | 6 -> uint64_to_uint8 (U64.shift_right v 48ul)
             | _ -> uint64_to_uint8 (U64.shift_right v 56ul)))
-  = ()
+  = reveal_opaque (`%spec_write_word) spec_write_word
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -295,7 +299,9 @@ let read_write_same (s: heap_state)
                     (addr: nat{addr + 8 <= Seq.length s})
                     (v: U64.t)
   : Lemma (spec_read_word (spec_write_word s addr v) addr == v)
-  = spec_write_read_byte s addr v 0;
+  = reveal_opaque (`%spec_read_word) spec_read_word;
+    reveal_opaque (`%spec_write_word) spec_write_word;
+    spec_write_read_byte s addr v 0;
     spec_write_read_byte s addr v 1;
     spec_write_read_byte s addr v 2;
     spec_write_read_byte s addr v 3;
@@ -340,6 +346,7 @@ fn read_word (h: heap_t) (addr: hp_addr)
           pure (v == spec_read_word 's (U64.v addr))
 {
   hp_addr_plus_8 addr;
+  reveal_opaque (`%spec_read_word) spec_read_word;
   unfold is_heap;
   let base = SZ.uint64_to_sizet addr;
   
@@ -392,6 +399,7 @@ fn write_word (h: heap_t) (addr: hp_addr) (v: U64.t)
   ensures is_heap h (spec_write_word 's (U64.v addr) v)
 {
   hp_addr_plus_8 addr;
+  reveal_opaque (`%spec_write_word) spec_write_word;
   unfold is_heap;
   let base = SZ.uint64_to_sizet addr;
   

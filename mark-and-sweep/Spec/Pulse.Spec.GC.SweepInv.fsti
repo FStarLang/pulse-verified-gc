@@ -210,6 +210,10 @@ val headers_preserved_before_trans : (limit: nat) -> (g1: heap) -> (g2: heap) ->
   Lemma (requires headers_preserved_before limit g2 g1 /\ headers_preserved_before limit g3 g2)
         (ensures headers_preserved_before limit g3 g1)
 
+val headers_preserved_before_weaken : (limit1: nat) -> (limit2: nat) -> (g1: heap) -> (g2: heap) ->
+  Lemma (requires headers_preserved_before limit2 g2 g1 /\ limit1 <= limit2)
+        (ensures headers_preserved_before limit1 g2 g1)
+
 /// All objects with header position < pos are white or blue in the given heap
 val objects_white_before : nat -> heap -> prop
 
@@ -276,3 +280,8 @@ val no_gray_elim : (obj: obj_addr) -> (g: heap) ->
 val no_gray_intro : (g: heap) ->
   Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))
         (ensures no_gray_objects g)
+
+/// set_object_color at h_addr preserves all headers before h_addr
+val set_object_color_headers_preserved_before : (h_addr: hp_addr) -> (obj: obj_addr) -> (g: heap) -> (c: color) ->
+  Lemma (requires hd_address obj == h_addr)
+        (ensures headers_preserved_before (U64.v h_addr) (set_object_color obj g c) g)

@@ -288,6 +288,10 @@ let headers_preserved_before_trans (limit: nat) (g1 g2 g3: heap)
   : Lemma (requires headers_preserved_before limit g2 g1 /\ headers_preserved_before limit g3 g2)
           (ensures headers_preserved_before limit g3 g1) = ()
 
+let headers_preserved_before_weaken (limit1 limit2: nat) (g1 g2: heap)
+  : Lemma (requires headers_preserved_before limit2 g2 g1 /\ limit1 <= limit2)
+          (ensures headers_preserved_before limit1 g2 g1) = ()
+
 let objects_white_before (pos: nat) (g: heap) : prop =
   forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
     U64.v (hd_address x) < pos ==> (is_white x g \/ is_blue x g)
@@ -393,3 +397,13 @@ let no_gray_intro (g: heap)
   : Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))
           (ensures no_gray_objects g)
   = ()
+
+let set_object_color_headers_preserved_before (h_addr: hp_addr) (obj: obj_addr) (g: heap) (c: color)
+  : Lemma (requires hd_address obj == h_addr)
+          (ensures headers_preserved_before (U64.v h_addr) (set_object_color obj g c) g)
+  = let aux (p: hp_addr) : Lemma
+      (requires U64.v p < U64.v h_addr)
+      (ensures read_word (set_object_color obj g c) p == read_word g p)
+      = set_object_color_read_word obj p g c
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)

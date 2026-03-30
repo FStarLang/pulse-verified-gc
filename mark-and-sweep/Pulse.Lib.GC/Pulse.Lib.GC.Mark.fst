@@ -260,6 +260,31 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
   write_word heap h_addr v
 }
 
+/// Read header, write gray header, rewrite ghost state to makeGray.
+/// Factored out so darken_if_white's combined VC doesn't include spec_read_word.
+#push-options "--z3rlimit 200 --split_queries always --z3refresh --z3smtopt '(set-option :smt.mbqi true)'"
+fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
+  requires is_heap heap 's **
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 U64.v h_addr + 8 < heap_size /\
+                 Seq.length 's == heap_size /\
+                 SpecHeap.hd_address obj == h_addr /\
+                 SpecHeap.f_address h_addr == obj /\
+                 SpecObject.is_white obj 's)
+  ensures is_heap heap (SpecObject.makeGray obj 's)
+{
+  let hdr = read_word heap h_addr;
+  spec_read_word_eq 's h_addr;
+  let new_hdr = SpecObject.colorHeader hdr Pulse.Lib.Header.Gray;
+  is_heap_length heap;
+  write_word heap h_addr new_hdr;
+  spec_write_word_eq 's h_addr new_hdr;
+  SpecObject.makeGray_spec obj 's;
+  rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+       as (is_heap heap (SpecObject.makeGray obj 's))
+}
+#pop-options
+
 /// Check if object is white and darken it (color gray + push to stack)
 /// Postcondition: exact spec correspondence via darken_if_white_spec
 fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
@@ -270,43 +295,27 @@ fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
     pure ((s2, st2) == darken_if_white_spec 's 'st h_addr)
 {
   hp_addr_plus_8 h_addr;
+  is_heap_length heap;
+
+  // Read color — factored into spec_read_word_eq internally via sweep_read_wz analog
   spec_read_word_eq 's h_addr;
   let hdr = read_word heap h_addr;
-  // hdr == spec_read_word 's h_addr == SpecHeap.read_word 's h_addr
-  
   let c = getColor hdr;
-  
-  // Bridge: Pulse getColor == Spec getColor
   getColor_eq hdr;
-  // c == getColor hdr == SpecObject.getColor hdr
-  
-  // Bridge: SpecObject.getColor hdr == color_of_object obj 's
+
   f_address_valid h_addr;
   let obj : obj_addr = f_address h_addr;
   SpecObject.color_of_object_spec obj 's;
   SpecHeap.hd_address_spec obj;
   U64.v_inj h_addr (SpecHeap.hd_address obj);
-  // SpecObject.getColor (SpecHeap.read_word 's h_addr) == color_of_object obj 's
-  
+
   SpecObject.is_white_iff obj 's;
-  // is_white obj 's ↔ color_of_object obj 's == White ↔ c == white
-  
+
   if (c = white) {
-    // Bridge: Lib f_address == Spec f_address
     f_address_eq h_addr;
     assert (pure (SpecObject.is_white obj 's));
-    
-    // Use SpecObject.colorHeader instead of makeHeader (avoids valid_header64 requirement)
-    let new_hdr = SpecObject.colorHeader hdr Pulse.Lib.Header.Gray;
-    is_heap_length heap;
-    write_word heap h_addr new_hdr;
-    
-    // Bridge: spec_write_word == SpecHeap.write_word == makeGray
-    spec_write_word_eq 's h_addr new_hdr;
-    SpecObject.makeGray_spec obj 's;
-    rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
-         as (is_heap heap (SpecObject.makeGray obj 's));
-    
+    darken_write_gray heap h_addr obj;
+
     push st obj;
     ()
   } else {
@@ -487,8 +496,55 @@ let mark_step_scan_preserves_objects
     SpecMark.push_children_preserves_objects g' tl f_addr 1UL wz
 #pop-options
 
+/// Write black header, rewrite ghost state to makeBlack.
+/// Factored out so mark_step's combined VC doesn't include spec_read_word.
+#push-options "--z3rlimit 200 --split_queries always --z3refresh --z3smtopt '(set-option :smt.mbqi true)'"
+fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
+  requires is_heap heap 's **
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 U64.v h_addr + 8 < heap_size /\
+                 Seq.length 's == heap_size /\
+                 SpecHeap.hd_address f_addr == h_addr /\
+                 SpecObject.is_gray f_addr 's)
+  ensures is_heap heap (SpecObject.makeBlack f_addr 's)
+{
+  let hdr = read_word heap h_addr;
+  spec_read_word_eq 's h_addr;
+  let new_hdr = SpecObject.colorHeader hdr Pulse.Lib.Header.Black;
+  is_heap_length heap;
+  write_word heap h_addr new_hdr;
+  spec_write_word_eq 's h_addr new_hdr;
+  SpecObject.makeBlack_spec f_addr 's;
+  rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+       as (is_heap heap (SpecObject.makeBlack f_addr 's))
+}
+#pop-options
+
+/// Read header wosize and tag from spec state (no heap read needed)
+#push-options "--z3rlimit 50 --split_queries always --z3refresh"
+fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
+  requires is_heap heap 's **
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 U64.v h_addr + 8 < heap_size /\
+                 Seq.length 's == heap_size)
+  returns r: (wosize & U64.t)
+  ensures is_heap heap 's **
+          pure (fst r == SpecObject.getWosize (SpecHeap.read_word 's h_addr) /\
+                snd r == SpecObject.getTag (SpecHeap.read_word 's h_addr))
+{
+  let hdr = read_word heap h_addr;
+  spec_read_word_eq 's h_addr;
+  let wz = getWosize hdr;
+  let tag = getTag hdr;
+  getWosize_eq hdr;
+  getTag_eq hdr;
+  (wz, tag)
+}
+#pop-options
+
 /// Process one gray object: pop from stack, blacken, push white children
 /// Precondition: mark_inv provides well_formed_heap + stack_props
+#push-options "--z3rlimit 100 --split_queries always --z3refresh --z3smtopt '(set-option :smt.mbqi true)'"
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0 /\
@@ -504,144 +560,73 @@ fn mark_step (heap: heap_t) (st: gray_stack)
   SpecMarkInv.mark_inv_elim_sev 's 'st;
   
   let f_addr = pop st;
-  // f_addr : obj_addr from pop = head of 'st
-  // mark_inv_head_gray: f_addr is gray and in objects 0UL 's
   
   let h_addr_raw = U64.sub f_addr mword;
   let h_addr : hp_addr = h_addr_raw;
   
-  // Derive object-fits-in-heap from well_formed_heap
   SpecMarkInv.mark_inv_obj_fields_bound 's f_addr;
-  
-  // Prove h_addr == SpecHeap.hd_address f_addr (both are f_addr - mword)
   SpecHeap.hd_address_spec f_addr;
   U64.v_inj h_addr (SpecHeap.hd_address f_addr);
-  
-  // Bridge: connect Pulse read to spec read for wosize
   hp_addr_plus_8 h_addr;
-  spec_read_word_eq 's h_addr;
+  is_heap_length heap;
   
-  let hdr = read_word heap h_addr;
-  let wz = getWosize hdr;
-  let tag = getTag hdr;
+  // Read wz and tag (separate fn to isolate spec_read_word from combined VC)
+  let r = mark_read_header heap h_addr;
+  let wz = fst r;
+  let tag = snd r;
+  
+  // Blacken (separate fn with its own combined VC for the rewrite)
+  mark_write_black heap h_addr f_addr;
   
   // Derive spec_field_address bound from mark_inv + bridge
   mark_step_field_bound 's f_addr;
   
-  let new_hdr = makeHeader wz black tag;
-  
-  // Prove header is valid (gray headers have valid color bits)
-  SpecObject.color_of_object_spec f_addr 's;
-  SpecObject.is_gray_iff f_addr 's;
-  // getColor (SpecHeap.read_word 's (hd_address f_addr)) == Gray
-  // since hdr == SpecHeap.read_word 's h_addr == SpecHeap.read_word 's (hd_address f_addr)
-  SpecObject.gray_or_black_valid (SpecHeap.read_word 's (SpecHeap.hd_address f_addr));
-  // valid_header64 hdr
-  
-  // Prove: new_hdr == colorHeader hdr Black (makeHeader from fields == color change)
-  SpecObject.makeHeader_eq_colorHeader (SpecHeap.read_word 's (SpecHeap.hd_address f_addr)) Pulse.Lib.Header.Black;
-  // makeHeader wz black tag == colorHeader hdr Black
-  
-  // Blacken: write new header
-  is_heap_length heap;
-  write_word heap h_addr new_hdr;
-  
-  // After write_word: ghost == spec_write_word 's (U64.v h_addr) new_hdr
-  // By blacken_eq: this equals makeBlack f_addr 's == makeBlack (head 'st) 's
-  blacken_eq 's f_addr;
-  rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
-       as (is_heap heap (SpecObject.makeBlack f_addr 's));
-  
   // Bridge: tag check matches spec is_no_scan
+  // tag == SpecObject.getTag (SpecHeap.read_word 's h_addr) (from mark_read_header)
+  // is_no_scan_eq needs getTag hdr == SpecObject.getTag hdr (from getTag_eq)
+  // Call getTag_eq explicitly to bridge Pulse getTag to SpecObject.getTag
+  getTag_eq (SpecHeap.read_word 's (SpecHeap.hd_address f_addr));
   is_no_scan_eq 's f_addr (SpecHeap.read_word 's (SpecHeap.hd_address f_addr));
   
   if U64.gte tag no_scan_tag {
     with tl. assert (is_gray_stack st tl);
     
-    // Establish equivalence to mark_step for no-scan case
-    // We have: (makeBlack f_addr 's, tl)
-    // Need to show: this == mark_step 's 'st
-    
-    // From pop postcondition: 'st == Seq.cons f_addr tl
-    // Therefore: Seq.head 'st == f_addr and Seq.tail 'st == tl
     Seq.lemma_tl f_addr tl;
     assert (pure (Seq.head 'st == f_addr));
     assert (pure (Seq.tail 'st == tl));
     
-    // From is_no_scan_eq already called above: tag >= no_scan_tag <==> is_no_scan f_addr 's
     assert (pure (SpecObject.is_no_scan f_addr 's));
-    
-    // Extract stack_elements_valid from mark_inv
-    // mark_inv implies stack_props, which includes stack_elements_valid
     assert (pure (SpecMark.stack_elements_valid 's 'st));
-    
-    // Call mark_step_unfold to expose what mark_step computes
     SpecMark.mark_step_unfold 's 'st;
-    
-    // By mark_step_unfold, since is_no_scan f_addr 's:
-    // mark_step 's 'st == (makeBlack (head 'st) 's, tail 'st)
-    // == (makeBlack f_addr 's, tl)
-    
     SpecMarkInv.mark_inv_step_no_scan 's f_addr tl;
-    // Objects preserved: makeBlack only changes color
     makeBlack_preserves_objects f_addr 's;
     ()
   } else {
-    // Scannable: push white children onto stack
-    // Bridge: f_address h_addr == f_addr (hd/f roundtrip)
     f_address_eq h_addr;
     SpecHeap.f_hd_roundtrip f_addr;
     
-    // Bridge: wz == wosize_of_object f_addr 's
     SpecObject.wosize_of_object_spec f_addr 's;
-    getWosize_eq hdr;
     U64.v_inj wz (SpecObject.wosize_of_object f_addr 's);
     
-    // Need stack ghost before push_children for mark_inv_step_scan
     with tl. assert (is_gray_stack st tl);
-    
-    // Derive push_children result bound for push capacity
-    // mark_inv 's (cons f_addr tl) + not no_scan => result stack < heap_size
     SpecMarkInv.mark_inv_push_children_bound 's f_addr tl;
-    // Now: Seq.length (snd (push_children (makeBlack f_addr 's) tl f_addr 1UL wz)) < heap_size
-    // The ghost heap here is (makeBlack f_addr 's) and ghost stack is tl.
-    // f_address h_addr == f_addr (from f_address_eq already called).
     
     push_children heap st h_addr wz;
     
-    // Establish equivalence to mark_step for scan case
-    // From push_children: (s2, st2) == push_children (makeBlack f_addr 's) tl f_addr 1UL wz
-    // Need to show: this == mark_step 's 'st
     with s2 st2. assert (is_heap heap s2 ** is_gray_stack st st2);
     
-    // From pop postcondition: 'st == Seq.cons f_addr tl
     Seq.lemma_tl f_addr tl;
     assert (pure (Seq.head 'st == f_addr));
     assert (pure (Seq.tail 'st == tl));
-    
-    // From is_no_scan_eq: ~(tag >= no_scan_tag) <==> ~(is_no_scan f_addr 's)
     assert (pure (~(SpecObject.is_no_scan f_addr 's)));
-    
-    // wz == wosize_of_object f_addr 's (already established by U64.v_inj above)
-    
-    // Extract stack_elements_valid from mark_inv
     assert (pure (SpecMark.stack_elements_valid 's 'st));
-    
-    // Call mark_step_unfold to expose what mark_step computes
     SpecMark.mark_step_unfold 's 'st;
-    
-    // By mark_step_unfold, since ~(is_no_scan f_addr 's):
-    // mark_step 's 'st == push_children (makeBlack (head 'st) 's) (tail 'st) (head 'st) 1UL (wosize_of_object (head 'st) 's)
-    // == push_children (makeBlack f_addr 's) tl f_addr 1UL wz
-    // == (s2, st2)
-    
-    // mark_inv for post-state
     SpecMarkInv.mark_inv_step_scan 's f_addr tl;
-    // Objects preserved: combined bridge handles makeBlack + push_children
     mark_step_scan_preserves_objects 's f_addr tl wz;
     ()
   }
 }
+#pop-options
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 
