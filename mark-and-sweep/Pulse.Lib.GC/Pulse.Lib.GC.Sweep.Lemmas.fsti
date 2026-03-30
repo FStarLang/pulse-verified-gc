@@ -75,6 +75,26 @@ val bluen_eq (g: heap_state) (f_addr: obj_addr)
                     let new_hdr = makeHeader (getWosize hdr) blue (getTag hdr) in
                     SpecHeap.write_word g h_addr new_hdr == SpecObject.makeBlue f_addr g))
 
+/// Bridge: makeBlue preserves getWosize at h_addr (avoids hd_address roundtrip in Pulse VC)
+val makeBlue_preserves_getWosize
+  (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects zero_addr g) /\
+                    SpecObject.is_white (SpecHeap.f_address h_addr) g)
+          (ensures SpecObject.getWosize (SpecHeap.read_word (SpecObject.makeBlue (SpecHeap.f_address h_addr) g) h_addr) ==
+                   SpecObject.getWosize (SpecHeap.read_word g h_addr))
+
+/// Bridge: makeWhite preserves getWosize at h_addr (avoids hd_address roundtrip in Pulse VC)
+val makeWhite_preserves_getWosize
+  (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects zero_addr g) /\
+                    SpecObject.is_black (SpecHeap.f_address h_addr) g)
+          (ensures SpecObject.getWosize (SpecHeap.read_word (SpecObject.makeWhite (SpecHeap.f_address h_addr) g) h_addr) ==
+                   SpecObject.getWosize (SpecHeap.read_word g h_addr))
+
 /// ---------------------------------------------------------------------------
 /// Sweep Post / Transfer Bridge Lemmas
 /// ---------------------------------------------------------------------------

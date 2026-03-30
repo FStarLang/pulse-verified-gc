@@ -102,6 +102,36 @@ let bluen_eq (g: heap_state) (f_addr: obj_addr)
     SpecObject.makeBlue_spec f_addr g
 #pop-options
 
+#push-options "--z3rlimit 50 --split_queries no --fuel 4 --ifuel 2"
+let makeBlue_preserves_getWosize
+  (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects zero_addr g) /\
+                    SpecObject.is_white (SpecHeap.f_address h_addr) g)
+          (ensures SpecObject.getWosize (SpecHeap.read_word (SpecObject.makeBlue (SpecHeap.f_address h_addr) g) h_addr) ==
+                   SpecObject.getWosize (SpecHeap.read_word g h_addr))
+  = let obj = SpecHeap.f_address h_addr in
+    SpecHeap.hd_f_roundtrip h_addr;
+    SpecObject.makeBlue_eq obj g;
+    SpecObject.set_object_color_preserves_getWosize_at_hd obj g Pulse.Lib.Header.Blue
+#pop-options
+
+#push-options "--z3rlimit 50 --split_queries no --fuel 4 --ifuel 2"
+let makeWhite_preserves_getWosize
+  (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
+  : Lemma (requires Seq.length g == heap_size /\
+                    SpecFields.well_formed_heap g /\
+                    Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects zero_addr g) /\
+                    SpecObject.is_black (SpecHeap.f_address h_addr) g)
+          (ensures SpecObject.getWosize (SpecHeap.read_word (SpecObject.makeWhite (SpecHeap.f_address h_addr) g) h_addr) ==
+                   SpecObject.getWosize (SpecHeap.read_word g h_addr))
+  = let obj = SpecHeap.f_address h_addr in
+    SpecHeap.hd_f_roundtrip h_addr;
+    SpecObject.makeWhite_eq obj g;
+    SpecObject.set_object_color_preserves_getWosize_at_hd obj g Pulse.Lib.Header.White
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Sweep Post / Transfer Bridge Lemmas
 /// ---------------------------------------------------------------------------
