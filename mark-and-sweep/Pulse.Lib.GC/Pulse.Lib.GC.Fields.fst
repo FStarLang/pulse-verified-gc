@@ -130,7 +130,9 @@ fn read_field (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
   
   let addr_hp : hp_addr = addr;
   
-  read_word heap addr_hp
+  let v = read_word heap addr_hp;
+  spec_read_word_eq 's addr_hp;
+  v
 }
 
 /// Read successor pointer at field i

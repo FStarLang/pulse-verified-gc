@@ -18,6 +18,7 @@ module U8 = FStar.UInt8
 module Seq = FStar.Seq
 module Header = Pulse.Lib.Header
 module SpecObject = Pulse.Spec.GC.Object
+module SpecHeap = Pulse.Spec.GC.Heap
 
 /// ---------------------------------------------------------------------------
 /// Object Header Layout (64-bit word)
@@ -248,14 +249,15 @@ let isBlackObject (heap: heap_t) (h: hp_addr) : slprop =
 ghost fn package_is_object (heap: heap_t) (h: hp_addr) 
                              (wz: wosize) (c: color) (t: tag)
                              (new_hdr: U64.t) (old_s: heap_state)
-  requires is_heap heap (spec_write_word old_s (U64.v h) new_hdr) ** 
+  requires is_heap heap (SpecHeap.write_word old_s h new_hdr) ** 
            pure (getWosize new_hdr == wz /\
                  getColor new_hdr == c /\
                  getTag new_hdr == t /\
                  U64.v h + 8 <= heap_size)
   ensures is_object heap h wz c t
 {
-  read_write_same old_s (U64.v h) new_hdr;
+  SpecHeap.read_write_same old_s h new_hdr;
+  spec_read_word_eq (SpecHeap.write_word old_s h new_hdr) h;
   fold (is_object heap h wz c t)
 }
 
@@ -268,6 +270,7 @@ fn colorHeader (heap: heap_t) (h: hp_addr) (new_color: color)
   with old_s. _;
   hp_addr_plus_8 h;
   let hdr = read_word heap h;
+  spec_read_word_eq old_s h;
   let wz = getWosize hdr;
   let t = getTag hdr;
   let new_hdr = makeHeader wz new_color t;

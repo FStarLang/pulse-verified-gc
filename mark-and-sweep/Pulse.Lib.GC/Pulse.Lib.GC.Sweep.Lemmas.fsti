@@ -62,7 +62,7 @@ val whiten_eq (g: heap_state) (f_addr: obj_addr)
           (ensures (let h_addr = SpecHeap.hd_address f_addr in
                     let hdr = SpecHeap.read_word g h_addr in
                     let new_hdr = makeHeader (getWosize hdr) white (getTag hdr) in
-                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeWhite f_addr g))
+                    SpecHeap.write_word g h_addr new_hdr == SpecObject.makeWhite f_addr g))
 
 /// Bridge: Pulse bluen (write_word with makeHeader Blue) == spec makeBlue
 val bluen_eq (g: heap_state) (f_addr: obj_addr)
@@ -73,7 +73,7 @@ val bluen_eq (g: heap_state) (f_addr: obj_addr)
           (ensures (let h_addr = SpecHeap.hd_address f_addr in
                     let hdr = SpecHeap.read_word g h_addr in
                     let new_hdr = makeHeader (getWosize hdr) blue (getTag hdr) in
-                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeBlue f_addr g))
+                    SpecHeap.write_word g h_addr new_hdr == SpecObject.makeBlue f_addr g))
 
 /// ---------------------------------------------------------------------------
 /// Sweep Post / Transfer Bridge Lemmas

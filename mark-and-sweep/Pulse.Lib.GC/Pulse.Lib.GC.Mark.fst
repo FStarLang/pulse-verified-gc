@@ -274,13 +274,11 @@ fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   ensures is_heap heap (SpecObject.makeGray obj 's)
 {
   let hdr = read_word heap h_addr;
-  spec_read_word_eq 's h_addr;
   let new_hdr = SpecObject.colorHeader hdr Pulse.Lib.Header.Gray;
   is_heap_length heap;
   write_word heap h_addr new_hdr;
-  spec_write_word_eq 's h_addr new_hdr;
   SpecObject.makeGray_spec obj 's;
-  rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+  rewrite (is_heap heap (SpecHeap.write_word 's h_addr new_hdr))
        as (is_heap heap (SpecObject.makeGray obj 's))
 }
 #pop-options
@@ -509,13 +507,11 @@ fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   ensures is_heap heap (SpecObject.makeBlack f_addr 's)
 {
   let hdr = read_word heap h_addr;
-  spec_read_word_eq 's h_addr;
   let new_hdr = SpecObject.colorHeader hdr Pulse.Lib.Header.Black;
   is_heap_length heap;
   write_word heap h_addr new_hdr;
-  spec_write_word_eq 's h_addr new_hdr;
   SpecObject.makeBlack_spec f_addr 's;
-  rewrite (is_heap heap (spec_write_word 's (U64.v h_addr) new_hdr))
+  rewrite (is_heap heap (SpecHeap.write_word 's h_addr new_hdr))
        as (is_heap heap (SpecObject.makeBlack f_addr 's))
 }
 #pop-options
@@ -533,7 +529,6 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
                 snd r == SpecObject.getTag (SpecHeap.read_word 's h_addr))
 {
   let hdr = read_word heap h_addr;
-  spec_read_word_eq 's h_addr;
   let wz = getWosize hdr;
   let tag = getTag hdr;
   getWosize_eq hdr;

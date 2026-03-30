@@ -74,20 +74,13 @@ let whiten_eq (g: heap_state) (f_addr: obj_addr)
           (ensures (let h_addr = SpecHeap.hd_address f_addr in
                     let hdr = SpecHeap.read_word g h_addr in
                     let new_hdr = makeHeader (getWosize hdr) white (getTag hdr) in
-                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeWhite f_addr g))
+                    SpecHeap.write_word g h_addr new_hdr == SpecObject.makeWhite f_addr g))
   = let h_addr = SpecHeap.hd_address f_addr in
     let hdr = SpecHeap.read_word g h_addr in
-    // is_black -> getColor hdr == Black -> valid_header64
     SpecObject.is_black_iff f_addr g;
     SpecObject.color_of_object_spec f_addr g;
     SpecObject.gray_or_black_valid hdr;
-    // makeHeader with White == colorHeader White
     lib_makeHeader_eq_colorHeader hdr Pulse.Lib.Header.White;
-    // spec_write_word == SpecHeap.write_word
-    SpecHeap.hd_address_spec f_addr;
-    SpecFields.wf_object_size_bound g f_addr;
-    spec_write_word_eq g h_addr (makeHeader (getWosize hdr) white (getTag hdr));
-    // SpecHeap.write_word g h_addr (colorHeader hdr White) == makeWhite f_addr g
     SpecObject.makeWhite_spec f_addr g
 #pop-options
 
@@ -101,18 +94,11 @@ let bluen_eq (g: heap_state) (f_addr: obj_addr)
           (ensures (let h_addr = SpecHeap.hd_address f_addr in
                     let hdr = SpecHeap.read_word g h_addr in
                     let new_hdr = makeHeader (getWosize hdr) blue (getTag hdr) in
-                    spec_write_word g (U64.v h_addr) new_hdr == SpecObject.makeBlue f_addr g))
+                    SpecHeap.write_word g h_addr new_hdr == SpecObject.makeBlue f_addr g))
   = let h_addr = SpecHeap.hd_address f_addr in
     let hdr = SpecHeap.read_word g h_addr in
-    // Any header is valid: get_color always returns < 4
     Pulse.Lib.Header.get_color_bound (U64.v hdr);
-    // makeHeader with Blue == colorHeader Blue
     lib_makeHeader_eq_colorHeader hdr Pulse.Lib.Header.Blue;
-    // spec_write_word == SpecHeap.write_word
-    SpecHeap.hd_address_spec f_addr;
-    SpecFields.wf_object_size_bound g f_addr;
-    spec_write_word_eq g h_addr (makeHeader (getWosize hdr) blue (getTag hdr));
-    // SpecHeap.write_word g h_addr (colorHeader hdr Blue) == makeBlue f_addr g
     SpecObject.makeBlue_spec f_addr g
 #pop-options
 
@@ -345,7 +331,7 @@ let headers_preserved_before_spec_write (start: nat) (g: Pulse.Spec.GC.Base.heap
     SI.headers_preserved_before_write start g addr v
 
 /// Bridge: makeBlue preserves headers from a start address
-/// Proof: bluen_eq bridges makeBlue to spec_write_word, then use headers_preserved_from_spec_write
+/// Proof: bluen_eq bridges makeBlue to SpecHeap.write_word, then use headers_preserved_from_write
 let makeBlue_headers_preserved_from (start: nat) (g: heap_state)
     (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   : Lemma (requires Seq.length g == heap_size /\
@@ -359,7 +345,7 @@ let makeBlue_headers_preserved_from (start: nat) (g: heap_state)
     bluen_eq g obj;
     let hdr = SpecHeap.read_word g h_addr in
     let blue_hdr = makeHeader (getWosize hdr) blue (getTag hdr) in
-    headers_preserved_from_spec_write start g h_addr blue_hdr
+    SI.headers_preserved_from_write start g h_addr blue_hdr
 
 /// Bridge: makeBlue preserves headers before h_addr
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
@@ -395,7 +381,7 @@ let makeWhite_headers_preserved_from (start: nat) (g: heap_state)
     whiten_eq g obj;
     let hdr = SpecHeap.read_word g h_addr in
     let white_hdr = makeHeader (getWosize hdr) white (getTag hdr) in
-    headers_preserved_from_spec_write start g h_addr white_hdr
+    SI.headers_preserved_from_write start g h_addr white_hdr
 
 let makeWhite_headers_preserved_before_spec (g: heap_state)
     (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
@@ -433,6 +419,9 @@ let sweep_black_preserves (g: Pulse.Spec.GC.Base.heap) (h_addr: hp_addr{U64.v h_
     SpecObject.color_of_object_spec obj g;
     SpecObject.is_black_iff obj g;
     whiten_eq g obj;
+    let hdr_val = SpecHeap.read_word g h_addr in
+    let new_hdr = makeHeader wz white (getTag hdr_val) in
+    spec_write_word_eq g h_addr new_hdr;
     SpecObject.makeWhite_eq obj g;
     SpecMark.color_change_preserves_wf g obj Pulse.Lib.Header.White;
     SpecFields.color_change_preserves_objects g obj Pulse.Lib.Header.White
@@ -612,7 +601,10 @@ let sweep_black_whiteness (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v 
     spec_read_word_eq g h_addr;
     is_black_bridge g obj h_addr hdr;
     SpecObject.makeWhite_is_white obj g;
-    whiten_eq g obj
+    whiten_eq g obj;
+    let hdr_val = SpecHeap.read_word g h_addr in
+    let new_hdr = makeHeader (getWosize hdr_val) white (getTag hdr_val) in
+    spec_write_word_eq g h_addr new_hdr
 #pop-options
 
 /// Bridge: sweep_object spec equivalence for black case
@@ -634,7 +626,10 @@ let sweep_object_black_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v 
     SpecHeap.hd_f_roundtrip h_addr;
     spec_read_word_eq g h_addr;
     is_black_bridge g obj h_addr hdr;
-    whiten_eq g obj
+    whiten_eq g obj;
+    let hdr_val = SpecHeap.read_word g h_addr in
+    let new_hdr = makeHeader (getWosize hdr_val) white (getTag hdr_val) in
+    spec_write_word_eq g h_addr new_hdr
 #pop-options
 
 /// ---------------------------------------------------------------------------

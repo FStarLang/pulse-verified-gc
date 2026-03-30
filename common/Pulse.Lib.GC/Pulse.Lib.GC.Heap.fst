@@ -343,7 +343,7 @@ fn read_word (h: heap_t) (addr: hp_addr)
   requires is_heap h 's
   returns v: U64.t
   ensures is_heap h 's ** 
-          pure (v == spec_read_word 's (U64.v addr))
+          pure (v == SpecHeap.read_word 's addr)
 {
   hp_addr_plus_8 addr;
   reveal_opaque (`%spec_read_word) spec_read_word;
@@ -373,6 +373,7 @@ fn read_word (h: heap_t) (addr: hp_addr)
   
   // Combine into 64-bit word (little-endian)
   let v = combine_bytes b0 b1 b2 b3 b4 b5 b6 b7;
+  SpecHeap.read_word_spec 's addr;
   
   fold (is_heap h 's);
   v
@@ -396,7 +397,8 @@ fn write_byte (h: heap_t) (addr: val_addr) (v: U8.t)
 /// Write a 64-bit word to the heap (little-endian)
 fn write_word (h: heap_t) (addr: hp_addr) (v: U64.t)
   requires is_heap h 's
-  ensures is_heap h (spec_write_word 's (U64.v addr) v)
+  ensures is_heap h (SpecHeap.write_word 's addr v) **
+          pure (SpecHeap.write_word 's addr v == spec_write_word 's (U64.v addr) v)
 {
   hp_addr_plus_8 addr;
   reveal_opaque (`%spec_write_word) spec_write_word;
@@ -423,7 +425,8 @@ fn write_word (h: heap_t) (addr: hp_addr) (v: U64.t)
   h.data.(SZ.add base 6sz) <- b6;
   h.data.(SZ.add base 7sz) <- b7;
   
-  fold (is_heap h (spec_write_word 's (U64.v addr) v))
+  SpecHeap.write_word_spec 's addr v;
+  fold (is_heap h (SpecHeap.write_word 's addr v))
 }
 
 /// ---------------------------------------------------------------------------
