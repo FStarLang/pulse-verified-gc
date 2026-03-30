@@ -56,6 +56,7 @@ let lemma_addr_plus_8_no_overflow (addr: nat)
 /// ---------------------------------------------------------------------------
 
 /// field1_addr as hp_addr: avoids subtyping check in combined SMT queries
+inline_for_extraction
 let field1_of (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) : hp_addr =
   U64.add h_addr mword
 

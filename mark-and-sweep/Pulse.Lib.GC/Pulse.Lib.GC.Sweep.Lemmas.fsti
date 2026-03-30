@@ -45,6 +45,7 @@ val lemma_addr_plus_8_no_overflow (addr: nat)
 /// ---------------------------------------------------------------------------
 
 /// field1_addr as hp_addr: avoids subtyping check in combined SMT queries
+inline_for_extraction
 val field1_of (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   : (r:hp_addr{U64.v r == U64.v h_addr + U64.v mword})
 
