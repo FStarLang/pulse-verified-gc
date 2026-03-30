@@ -475,4 +475,4 @@ snapshot: extract
 clean:
 	rm -f Spec/*.checked* Pulse.Lib.GC/*.checked*
 	rm -f .depend .depend.spec .depend.lib .common-stamp .common-pulse-stamp
-	rm -rf $(KRML_OUTPUT_DIR) $(EXTRACT_DIR) $(SNAPSHOT_DIR)
+	rm -rf $(KRML_OUTPUT_DIR) $(EXTRACT_DIR)
