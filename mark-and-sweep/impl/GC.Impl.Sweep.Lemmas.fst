@@ -576,6 +576,8 @@ let sweep_object_white_write_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + 
                     (SpecObject.makeBlue obj g1, obj) ==
                     SpecSweep.sweep_object g obj fp))
   = let obj : obj_addr = SpecHeap.f_address h_addr in
+    SI.obj_in_objects_elim obj g;
+    SpecFields.wf_objects_non_infix g obj;
     set_field_1_eq g h_addr fp;
     SpecHeap.f_address_spec h_addr;
     SpecHeap.hd_f_roundtrip h_addr;
@@ -599,6 +601,8 @@ let sweep_object_white_noop_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U
           (ensures (let obj = SpecHeap.f_address h_addr in
                     (SpecObject.makeBlue obj g, obj) == SpecSweep.sweep_object g obj fp))
   = let obj : obj_addr = SpecHeap.f_address h_addr in
+    SI.obj_in_objects_elim obj g;
+    SpecFields.wf_objects_non_infix g obj;
     SpecHeap.f_address_spec h_addr;
     SpecHeap.hd_f_roundtrip h_addr;
     SpecObject.wosize_of_object_spec obj g;
@@ -653,6 +657,7 @@ let sweep_object_black_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v 
                     (spec_write_word g (U64.v h_addr) new_hdr, fp) ==
                     SpecSweep.sweep_object g obj fp))
   = let obj : obj_addr = SpecHeap.f_address h_addr in
+    SpecFields.wf_objects_non_infix g obj;
     SpecHeap.hd_f_roundtrip h_addr;
     spec_read_word_eq g h_addr;
     is_black_bridge g obj h_addr hdr;
@@ -697,6 +702,7 @@ let sweep_object_else_bridge (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_
                     fst (SpecSweep.sweep_object g obj fp) == g /\
                     snd (SpecSweep.sweep_object g obj fp) == fp))
   = let f = SpecHeap.f_address h_addr in
+    SpecFields.wf_objects_non_infix g f;
     SpecFields.colors_exhaustive_and_exclusive f g;
     // From exhaustiveness + ~gray + ~white + ~black, must be blue
     assert (SpecObject.is_blue f g);
@@ -810,5 +816,6 @@ let sweep_object_black_eq_spec (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U
                     (SpecObject.makeWhite obj g, fp) == SpecSweep.sweep_object g obj fp))
 =
   let obj = SpecHeap.f_address h_addr in
+    SpecFields.wf_objects_non_infix g obj;
   SpecMark.colors_exclusive obj g
 #pop-options

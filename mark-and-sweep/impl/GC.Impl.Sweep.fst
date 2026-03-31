@@ -329,6 +329,9 @@ fn sweep_white_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
                  s2 == fst (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp) /\
                  new_fp == snd (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp))
 {
+  // Object is not infix (well_formed_heap part 4)
+  SI.obj_in_objects_elim (SpecHeap.f_address h_addr) 's;
+  SpecFields.wf_objects_non_infix 's (SpecHeap.f_address h_addr);
   let r = sweep_white_spec heap h_addr wz fp;
   with s2. assert (is_heap heap s2);
   obj_in_objects_transfer_bridge (SpecHeap.f_address h_addr) 's s2;
@@ -364,6 +367,7 @@ fn sweep_black_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
 {
   is_heap_length heap;
   SI.obj_in_objects_elim (SpecHeap.f_address h_addr) 's;
+  SpecFields.wf_objects_non_infix 's (SpecHeap.f_address h_addr);
   let _ = sweep_black_spec heap h_addr wz fp;
   with s2. assert (is_heap heap s2);
   fp_valid_transfer_bridge fp 's s2;
@@ -397,6 +401,11 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < hea
                  new_fp == snd (SpecSweep.sweep_object 's (SpecHeap.f_address h_addr) fp))
 {
   is_heap_length heap;
+  
+  // Establish that this object is not infix (from well_formed_heap part 4)
+  // This makes the spec's is_infix check evaluate to false
+  SI.obj_in_objects_elim (SpecHeap.f_address h_addr) 's;
+  SpecFields.wf_objects_non_infix 's (SpecHeap.f_address h_addr);
   
   let hdr = read_word heap h_addr;
   

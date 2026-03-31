@@ -30,7 +30,7 @@ let mark_inv_elim_objects g st = ()
 let mark_inv_head_gray g st =
   stack_head_is_gray g st
 
-let mark_inv_obj_fields_bound g obj = ()
+let mark_inv_obj_fields_bound g obj = wf_object_size_bound g obj
 
 let mark_inv_step g st =
   mark_step_preserves_wf g st;

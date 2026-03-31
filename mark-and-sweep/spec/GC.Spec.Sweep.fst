@@ -71,7 +71,9 @@ let fp_in_heap_elim (fp: U64.t) (g: heap)
 let sweep_object (g: heap) (obj: obj_addr) (fp: U64.t) 
   : GTot (heap & U64.t)
   =
-  if is_white obj g then
+  // Skip infix objects — their lifetime is tied to the parent closure
+  if is_infix obj g then (g, fp)
+  else if is_white obj g then
     let ws = wosize_of_object obj g in
     let hd = GC.Spec.Heap.hd_address obj in
     let g' = 
@@ -109,7 +111,7 @@ let sweep (g: heap) (fp: U64.t) : GTot (heap & U64.t) =
 /// ---------------------------------------------------------------------------
 
 val sweep_object_black_becomes_white : (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
-  Lemma (requires is_black obj g)
+  Lemma (requires is_black obj g /\ ~(is_infix obj g))
         (ensures is_white obj (fst (sweep_object g obj fp)))
 
 let sweep_object_black_becomes_white g obj fp =
@@ -123,7 +125,8 @@ val sweep_object_color_locality : (g: heap) -> (obj1: obj_addr) -> (obj2: obj_ad
 
 #reset-options "--z3rlimit 800 --fuel 2 --ifuel 1"
 let sweep_object_color_locality g obj1 obj2 fp =
-  if is_white obj1 g then begin
+  if is_infix obj1 g then ()
+  else if is_white obj1 g then begin
     let ws = wosize_of_object obj1 g in
     let hd = GC.Spec.Heap.hd_address obj1 in
     if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
@@ -159,6 +162,8 @@ val sweep_object_preserves_objects : (g: heap) -> (obj: obj_addr) -> (fp: U64.t)
 
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let sweep_object_preserves_objects g obj fp =
+  if is_infix obj g then ()
+  else
   if is_white obj g then begin
     let ws = wosize_of_object obj g in
     let hd = GC.Spec.Heap.hd_address obj in
@@ -181,7 +186,7 @@ let sweep_object_preserves_objects g obj fp =
 #pop-options
 
 val sweep_object_resets_self_color : (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
-  Lemma (requires is_white obj g \/ is_black obj g)
+  Lemma (requires (is_white obj g \/ is_black obj g) /\ ~(is_infix obj g))
         (ensures (is_white obj g ==> is_blue obj (fst (sweep_object g obj fp))) /\
                  (is_black obj g ==> is_white obj (fst (sweep_object g obj fp))))
 
@@ -217,7 +222,8 @@ val sweep_object_preserves_wf : (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
 
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let sweep_object_preserves_wf g obj fp =
-  if is_white obj g then begin
+  if is_infix obj g then ()
+  else if is_white obj g then begin
     let ws = wosize_of_object obj g in
     let hd = GC.Spec.Heap.hd_address obj in
     let g' = 
@@ -248,7 +254,8 @@ val sweep_object_preserves_objects_from : (start: hp_addr) -> (g: heap) -> (obj:
 
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let sweep_object_preserves_objects_from start g obj fp =
-  if is_white obj g then begin
+  if is_infix obj g then ()
+  else if is_white obj g then begin
     let ws = wosize_of_object obj g in
     let hd = GC.Spec.Heap.hd_address obj in
     let g' = 
@@ -293,7 +300,8 @@ let sweep_object_preserves_objects_suffix h_addr g fp =
   if next_nat >= heap_size then ()
   else begin
     let next : hp_addr = U64.uint_to_t next_nat in
-    if is_white obj g then begin
+    if is_infix obj g then ()
+    else if is_white obj g then begin
       let ws = wosize_of_object obj g in
       let hd = GC.Spec.Heap.hd_address obj in
       GC.Spec.Heap.hd_address_spec obj;
@@ -405,11 +413,21 @@ let rec sweep_aux_non_member_color g objs fp x =
     sweep_object_color_locality g obj x fp;
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
+    // Bridge: objects preserved means membership transfers
+    assert (objects 0UL (fst (sweep_object g obj fp)) == objects 0UL g);
+    assert (Seq.mem obj (objects 0UL g'));
+    // well_formed_heap is opaque: explicitly derive ~(is_infix obj g) for sweep_object unfolding
+    wf_objects_non_infix g obj;
     // Establish that fp' is either 0UL or in objects g' = objects g
     // Case analysis on color of obj
     if is_white obj g then begin
       // fp' = obj, which is in objects g
       assert (fp' == obj);
+      // Explicit fp_in_heap construction
+      assert (U64.v fp' >= U64.v mword);
+      assert (U64.v fp' < heap_size);
+      assert (U64.v fp' % U64.v mword == 0);
+      assert (Seq.mem (fp' <: obj_addr) (objects 0UL g'));
       assert (fp_in_heap fp' g')
     end else begin
       // fp' = fp, which is 0UL or in objects g by precondition
@@ -451,6 +469,7 @@ let rec sweep_aux_black_survives g objs fp x =
     Seq.lemma_index_is_nth objs 0;
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
+    wf_objects_non_infix g obj;
     // is_vertex_set: head ∉ tail  
     coerce_tail_lemma objs;
     let cobjs = HeapGraph.coerce_to_vertex_list objs in
@@ -508,6 +527,7 @@ let rec sweep_aux_white_stays g objs fp x =
     let (g', fp') = sweep_object g obj fp in
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
+    wf_objects_non_infix g obj;
     // x ≠ obj since x ∉ objs
     sweep_object_color_locality g obj x fp;
     is_white_iff x g;
@@ -541,6 +561,7 @@ let rec sweep_aux_white_in_objs_becomes_blue g objs fp x =
     Seq.lemma_index_is_nth objs 0;
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
+    wf_objects_non_infix g obj;
     coerce_tail_lemma objs;
     let cobjs = HeapGraph.coerce_to_vertex_list objs in
     assert (is_vertex_set cobjs);
@@ -595,6 +616,7 @@ let rec sweep_aux_blue_stays_blue g objs fp x =
     Seq.lemma_index_is_nth objs 0;
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
+    wf_objects_non_infix g obj;
     coerce_tail_lemma objs;
     assert (is_vertex_set (HeapGraph.coerce_to_vertex_list (Seq.tail objs)));
     if x = obj then begin
@@ -643,6 +665,7 @@ let rec sweep_aux_preserves_objects g objs fp =
     let (g', fp') = sweep_object g obj fp in
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
+    wf_objects_non_infix g obj;
     // Establish fp' is 0UL or in objects for recursion
     if is_white obj g then begin
       assert (fp' == obj);
@@ -678,6 +701,7 @@ let rec sweep_aux_preserves_wf g objs fp =
     let (g', fp') = sweep_object g obj fp in
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
+    wf_objects_non_infix g obj;
     if is_white obj g then begin
       assert (fp' == obj);
       assert (fp_in_heap fp' g')
@@ -867,7 +891,8 @@ private let sweep_object_preserves_other_body_read
     end;
     
     // Now prove read_word preservation for each sweep_object case
-    if is_white obj g then begin
+    if is_infix obj g then ()
+    else if is_white obj g then begin
       // White: set_field at obj then makeBlue at hd_address(obj)
       let ws_obj = wosize_of_object obj g in
       let hd_obj = GC.Spec.Heap.hd_address obj in
@@ -935,7 +960,9 @@ private let sweep_object_preserves_other_header
       assert (U64.v hd_x + 8 <= U64.v (GC.Spec.Heap.hd_address obj));
       assert (U64.v hd_x + 8 <= U64.v obj)
     end;
-    if is_white obj g then begin
+    if is_infix obj g then begin
+      colors_exclusive obj g
+    end else if is_white obj g then begin
       // White: set_field at obj + makeBlue at hd_address(obj)
       let ws_obj = wosize_of_object obj g in
       let hd_obj = GC.Spec.Heap.hd_address obj in
@@ -983,6 +1010,7 @@ private let rec sweep_aux_preserves_field_nonmember
       Seq.lemma_index_is_nth objs 0;
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
       assert (obj <> x);
       sweep_object_preserves_other_body_read g obj fp x a;
       assert (read_word g' a == read_word g a);
@@ -1007,7 +1035,7 @@ private let rec sweep_aux_preserves_field_nonmember
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_body_read
   (g: heap) (x: obj_addr) (fp: U64.t) (a: hp_addr)
-  : Lemma (requires is_black x g /\
+  : Lemma (requires is_black x g /\ ~(is_infix x g) /\
                     U64.v a >= U64.v x /\
                     U64.v a % 8 = 0)
           (ensures read_word (fst (sweep_object g x fp)) a == read_word g a)
@@ -1022,7 +1050,7 @@ private let sweep_object_self_preserves_body_read
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_wosize
   (g: heap) (x: obj_addr) (fp: U64.t)
-  : Lemma (requires is_black x g)
+  : Lemma (requires is_black x g /\ ~(is_infix x g))
           (ensures wosize_of_object x (fst (sweep_object g x fp)) == wosize_of_object x g)
   = colors_exclusive x g;
     makeWhite_eq x g;
@@ -1032,7 +1060,7 @@ private let sweep_object_self_preserves_wosize
 /// Self-case: sweep_object on a black object returns the same fp
 private let sweep_object_self_fp
   (g: heap) (x: obj_addr) (fp: U64.t)
-  : Lemma (requires is_black x g)
+  : Lemma (requires is_black x g /\ ~(is_infix x g))
           (ensures snd (sweep_object g x fp) == fp)
   = colors_exclusive x g
 
@@ -1040,7 +1068,7 @@ private let sweep_object_self_fp
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_tag
   (g: heap) (x: obj_addr) (fp: U64.t)
-  : Lemma (requires is_black x g)
+  : Lemma (requires is_black x g /\ ~(is_infix x g))
           (ensures getTag (read_word (fst (sweep_object g x fp)) (GC.Spec.Heap.hd_address x)) ==
                    getTag (read_word g (GC.Spec.Heap.hd_address x)))
   = colors_exclusive x g;
@@ -1075,6 +1103,7 @@ private let rec sweep_aux_preserves_field_member
       Seq.lemma_index_is_nth objs 0;
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
       coerce_tail_lemma objs;
       if obj = x then begin
         // x is BLACK → sweep_object does makeWhite only (no set_field)
@@ -1138,6 +1167,7 @@ private let rec sweep_aux_preserves_wosize_nonmember
       Seq.lemma_index_is_nth objs 0;
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
       // obj ≠ x (since x ∉ objs but obj ∈ objs)
       assert (obj <> x);
       // wosize preserved via header helper
@@ -1176,6 +1206,7 @@ private let rec sweep_aux_preserves_wosize_member
       Seq.lemma_index_is_nth objs 0;
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
       coerce_tail_lemma objs;
       if obj = x then begin
         // x is BLACK → sweep_object does makeWhite only
@@ -1234,6 +1265,7 @@ private let rec sweep_aux_preserves_tag_nonmember
       Seq.lemma_index_is_nth objs 0;
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
       // obj ≠ x
       assert (obj <> x);
       // header preserved via helper
@@ -1274,6 +1306,7 @@ private let rec sweep_aux_preserves_tag_member
       Seq.lemma_index_is_nth objs 0;
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
       coerce_tail_lemma objs;
       if obj = x then begin
         // x is BLACK → makeWhite only

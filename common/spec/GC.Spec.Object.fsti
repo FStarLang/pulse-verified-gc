@@ -219,6 +219,14 @@ val is_closure (h_addr: obj_addr) (g: heap) : GTot bool
 val is_infix (h_addr: obj_addr) (g: heap) : GTot bool
 val is_no_scan (h_addr: obj_addr) (g: heap) : GTot bool
 
+/// is_closure specification: true when tag == closure_tag
+val is_closure_spec : (h_addr: obj_addr) -> (g: heap) ->
+  Lemma (is_closure h_addr g == (tag_of_object h_addr g = closure_tag))
+
+/// is_infix specification: true when tag == infix_tag
+val is_infix_spec : (h_addr: obj_addr) -> (g: heap) ->
+  Lemma (is_infix h_addr g == (tag_of_object h_addr g = infix_tag))
+
 /// is_no_scan specification: true when tag >= no_scan_tag
 val is_no_scan_spec : (h_addr: obj_addr) -> (g: heap) ->
   Lemma (is_no_scan h_addr g == U64.gte (tag_of_object h_addr g) no_scan_tag)
@@ -374,6 +382,81 @@ val color_change_preserves_other_read : (obj1: obj_addr) -> (addr: hp_addr) -> (
 val color_change_preserves_other_color : (obj1: obj_addr) -> (obj2: obj_addr) -> (g: heap) -> (c: color) ->
   Lemma (requires obj1 <> obj2)
         (ensures color_of_object obj2 (set_object_color obj1 g c) == color_of_object obj2 g)
+
+/// ---------------------------------------------------------------------------
+/// Infix Object Support
+/// ---------------------------------------------------------------------------
+
+/// Raw computation of parent closure address from infix object.
+/// For an infix object at obj_addr `a` with wosize (offset) `w`:
+///   infix_hdr = a - 8 (hd_address a)
+///   parent_obj_addr = infix_hdr - w * 8
+/// The offset in the infix header's wosize field is from the parent closure's
+/// first-field address to the infix header.
+val parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int
+
+/// parent_closure_addr_nat specification: depends only on wosize_of_object
+val parent_closure_addr_nat_spec : (infix_obj: obj_addr) -> (g: heap) ->
+  Lemma (parent_closure_addr_nat infix_obj g ==
+         U64.v infix_obj - 8 - FStar.Mul.(U64.v (wosize_of_object infix_obj g) * 8))
+
+/// Resolve an address: if infix, return parent closure; otherwise return self.
+/// Defensive: if the computed parent address is invalid, returns the input unchanged.
+val resolve_object (addr: obj_addr) (g: heap) : GTot obj_addr
+
+/// resolve_object identity for non-infix objects
+val resolve_non_infix : (addr: obj_addr) -> (g: heap) ->
+  Lemma (requires ~(is_infix addr g))
+        (ensures resolve_object addr g == addr)
+
+/// resolve_object for infix objects with valid parent
+val resolve_infix_spec : (addr: obj_addr) -> (g: heap) ->
+  Lemma (requires is_infix addr g /\
+                  (let p = parent_closure_addr_nat addr g in
+                   p >= 8 /\ p < heap_size /\ p % 8 == 0))
+        (ensures resolve_object addr g == U64.uint_to_t (parent_closure_addr_nat addr g))
+
+/// Infix well-formedness: every infix object in the heap has a valid parent closure
+val infix_wf (g: heap) (objs: seq obj_addr) : prop
+
+/// Elimination: extract facts for a specific infix object
+val infix_wf_elim : (g: heap) -> (objs: seq obj_addr) -> (h: obj_addr) ->
+  Lemma (requires infix_wf g objs /\ Seq.mem h objs /\ is_infix h g)
+        (ensures (let p = parent_closure_addr_nat h g in
+                  p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+                  Seq.mem (U64.uint_to_t p) objs /\
+                  is_closure (U64.uint_to_t p) g))
+
+/// Introduction: establish infix_wf from pointwise proof
+val infix_wf_intro : (g: heap) -> (objs: seq obj_addr) ->
+  (pf: (h: obj_addr -> Lemma (requires Seq.mem h objs /\ is_infix h g)
+                              (ensures (let p = parent_closure_addr_nat h g in
+                                        p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+                                        Seq.mem (U64.uint_to_t p) objs /\
+                                        is_closure (U64.uint_to_t p) g)))) ->
+  Lemma (ensures infix_wf g objs)
+
+/// Color change preserves is_infix
+val color_change_preserves_is_infix : (obj: obj_addr) -> (addr: obj_addr) -> (g: heap) -> (c: color) ->
+  Lemma (ensures is_infix addr (set_object_color obj g c) == is_infix addr g)
+
+/// Color change preserves is_closure
+val color_change_preserves_is_closure : (obj: obj_addr) -> (addr: obj_addr) -> (g: heap) -> (c: color) ->
+  Lemma (ensures is_closure addr (set_object_color obj g c) == is_closure addr g)
+
+/// Color change preserves resolve_object (colors don't change tags or wosize)
+val color_change_preserves_resolve : (obj: obj_addr) -> (addr: obj_addr) -> (g: heap) -> (c: color) ->
+  Lemma (ensures resolve_object addr (set_object_color obj g c) == resolve_object addr g)
+
+/// Color change preserves infix_wf
+val color_change_preserves_infix_wf : (obj: obj_addr) -> (g: heap) -> (c: color) -> (objs: seq obj_addr) ->
+  Lemma (requires infix_wf g objs)
+        (ensures infix_wf (set_object_color obj g c) objs)
+
+/// resolve_object maps into the same objects list (under infix_wf)
+val resolve_object_in_objects : (addr: obj_addr) -> (g: heap) -> (objs: seq obj_addr) ->
+  Lemma (requires Seq.mem addr objs /\ infix_wf g objs)
+        (ensures Seq.mem (resolve_object addr g) objs)
 
 /// ---------------------------------------------------------------------------
 /// Aggregate Color Predicates

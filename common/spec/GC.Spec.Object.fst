@@ -401,6 +401,12 @@ let is_infix (h_addr: obj_addr) (g: heap) : GTot bool =
 let is_no_scan (h_addr: obj_addr) (g: heap) : GTot bool =
   U64.gte (tag_of_object h_addr g) no_scan_tag
 
+let is_closure_spec (h_addr: obj_addr) (g: heap)
+  : Lemma (is_closure h_addr g == (tag_of_object h_addr g = closure_tag)) = ()
+
+let is_infix_spec (h_addr: obj_addr) (g: heap)
+  : Lemma (is_infix h_addr g == (tag_of_object h_addr g = infix_tag)) = ()
+
 let is_no_scan_spec (h_addr: obj_addr) (g: heap)
   : Lemma (is_no_scan h_addr g == U64.gte (tag_of_object h_addr g) no_scan_tag) = 
   ()
@@ -921,6 +927,159 @@ let color_change_preserves_other_color (obj1: hp_addr{U64.v obj1 >= U64.v mword}
           (ensures color_of_object obj2 (set_object_color obj1 g c) == color_of_object obj2 g) =
   hd_address_injective obj1 obj2;
   color_change_locality obj1 obj2 g c
+
+/// ---------------------------------------------------------------------------
+/// Infix Object Support
+/// ---------------------------------------------------------------------------
+
+/// Raw computation: parent closure address from infix object.
+/// The infix header's wosize = offset (in words) from parent's obj_addr to infix header.
+///   infix_hdr = hd_address(infix_obj) = infix_obj - 8
+///   parent_obj_addr = infix_hdr - offset * 8 = infix_obj - 8 - wosize * 8
+let parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int =
+  U64.v infix_obj - 8 - FStar.Mul.(U64.v (wosize_of_object infix_obj g) * 8)
+
+let parent_closure_addr_nat_spec (infix_obj: obj_addr) (g: heap)
+  : Lemma (parent_closure_addr_nat infix_obj g ==
+           U64.v infix_obj - 8 - FStar.Mul.(U64.v (wosize_of_object infix_obj g) * 8))
+  = ()
+
+/// Resolve: if infix with valid parent, return parent; otherwise return self.
+let resolve_object (addr: obj_addr) (g: heap) : GTot obj_addr =
+  if is_infix addr g then
+    let p = parent_closure_addr_nat addr g in
+    if p >= 8 && p < heap_size && p % 8 = 0 then
+      U64.uint_to_t p
+    else addr
+  else addr
+
+let resolve_non_infix (addr: obj_addr) (g: heap)
+  : Lemma (requires ~(is_infix addr g))
+          (ensures resolve_object addr g == addr) = ()
+
+let resolve_infix_spec (addr: obj_addr) (g: heap)
+  : Lemma (requires is_infix addr g /\
+                    (let p = parent_closure_addr_nat addr g in
+                     p >= 8 /\ p < heap_size /\ p % 8 == 0))
+          (ensures resolve_object addr g == U64.uint_to_t (parent_closure_addr_nat addr g)) = ()
+
+/// Infix well-formedness: every infix object has a valid parent closure in the objects list
+let infix_wf (g: heap) (objs: seq obj_addr) : prop =
+  forall (h: obj_addr). Seq.mem h objs /\ is_infix h g ==>
+    (let p = parent_closure_addr_nat h g in
+     p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+     Seq.mem (U64.uint_to_t p) objs /\
+     is_closure (U64.uint_to_t p) g)
+
+let infix_wf_elim (g: heap) (objs: seq obj_addr) (h: obj_addr)
+  : Lemma (requires infix_wf g objs /\ Seq.mem h objs /\ is_infix h g)
+          (ensures (let p = parent_closure_addr_nat h g in
+                    p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+                    Seq.mem (U64.uint_to_t p) objs /\
+                    is_closure (U64.uint_to_t p) g))
+  = ()
+
+let infix_wf_intro (g: heap) (objs: seq obj_addr)
+  (pf: (h: obj_addr -> Lemma (requires Seq.mem h objs /\ is_infix h g)
+                              (ensures (let p = parent_closure_addr_nat h g in
+                                        p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+                                        Seq.mem (U64.uint_to_t p) objs /\
+                                        is_closure (U64.uint_to_t p) g))))
+  : Lemma (ensures infix_wf g objs)
+  = FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
+
+/// Color change preserves is_infix (tag is unchanged)
+let color_change_preserves_is_infix (obj: obj_addr) (addr: obj_addr) (g: heap) (c: color)
+  : Lemma (ensures is_infix addr (set_object_color obj g c) == is_infix addr g)
+  = if obj = addr then color_preserves_tag addr g c
+    else begin
+      hd_address_injective obj addr;
+      color_change_header_locality obj (hd_address addr) g c
+    end
+
+/// Color change preserves is_closure (identical structure to is_infix)
+let color_change_preserves_is_closure (obj: obj_addr) (addr: obj_addr) (g: heap) (c: color)
+  : Lemma (ensures is_closure addr (set_object_color obj g c) == is_closure addr g)
+  = if obj = addr then color_preserves_tag addr g c
+    else begin
+      hd_address_injective obj addr;
+      color_change_header_locality obj (hd_address addr) g c
+    end
+
+/// Color change preserves resolve_object
+let color_change_preserves_resolve (obj: obj_addr) (addr: obj_addr) (g: heap) (c: color)
+  : Lemma (ensures resolve_object addr (set_object_color obj g c) == resolve_object addr g)
+  = color_change_preserves_is_infix obj addr g c;
+    if is_infix addr g then begin
+      // wosize is preserved: both at same header and at different headers
+      if obj = addr then color_preserves_wosize addr g c
+      else begin
+        hd_address_injective obj addr;
+        color_change_header_locality obj (hd_address addr) g c
+      end
+    end
+
+/// Color change preserves infix_wf
+/// Helper: color change always preserves wosize (works for same or different objects)
+private let wosize_always_preserved (obj h: obj_addr) (g: heap) (c: color)
+  : Lemma (wosize_of_object h (set_object_color obj g c) == wosize_of_object h g)
+  = wosize_of_object_spec h g;
+    wosize_of_object_spec h (set_object_color obj g c);
+    if obj = h then begin
+      set_object_color_preserves_getWosize_at_hd obj g c;
+      hd_address_spec h
+    end else begin
+      hd_address_injective obj h;
+      color_change_header_locality obj (hd_address h) g c
+    end
+
+/// Helper: wosize preserved implies parent_closure_addr_nat preserved
+private let wosize_preserved_parent_preserved (obj h: obj_addr) (g: heap) (c: color)
+  : Lemma (requires wosize_of_object h (set_object_color obj g c) == wosize_of_object h g)
+          (ensures parent_closure_addr_nat h (set_object_color obj g c) == parent_closure_addr_nat h g)
+  = ()
+
+/// Color change preserves infix_wf
+let color_change_preserves_infix_wf (obj: obj_addr) (g: heap) (c: color) (objs: seq obj_addr)
+  : Lemma (requires infix_wf g objs)
+          (ensures infix_wf (set_object_color obj g c) objs)
+  = let g' = set_object_color obj g c in
+    let aux (h: obj_addr)
+      : Lemma (requires Seq.mem h objs /\ is_infix h g')
+              (ensures (let p = parent_closure_addr_nat h g' in
+                        p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+                        Seq.mem (U64.uint_to_t p) objs /\
+                        is_closure (U64.uint_to_t p) g'))
+      = // Step 1: is_infix preserved backward
+        color_change_preserves_is_infix obj h g c;
+        // Step 2: wosize preserved (no case split needed)
+        wosize_always_preserved obj h g c;
+        // Step 3: parent addr same in both heaps
+        wosize_preserved_parent_preserved obj h g c;
+        // Step 4: from infix_wf g, extract parent facts for h
+        assert (Seq.mem h objs /\ is_infix h g);
+        let p_nat = parent_closure_addr_nat h g in
+        assert (p_nat >= 8 /\ p_nat < heap_size /\ p_nat % 8 == 0);
+        assert (Seq.mem (U64.uint_to_t p_nat) objs);
+        assert (is_closure (U64.uint_to_t p_nat) g);
+        let p : obj_addr = U64.uint_to_t p_nat in
+        // Step 5: is_closure preserved
+        color_change_preserves_is_closure obj p g c
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+/// resolve_object maps into the same objects list (under infix_wf)
+let resolve_object_in_objects (addr: obj_addr) (g: heap) (objs: seq obj_addr)
+  : Lemma (requires Seq.mem addr objs /\ infix_wf g objs)
+          (ensures Seq.mem (resolve_object addr g) objs)
+  = if is_infix addr g then begin
+      let p = parent_closure_addr_nat addr g in
+      assert (p >= 8 /\ p < heap_size /\ p % 8 == 0);
+      resolve_infix_spec addr g;
+      assert (resolve_object addr g == U64.uint_to_t p);
+      assert (Seq.mem (U64.uint_to_t p) objs)
+    end else
+      resolve_non_infix addr g
 
 /// ---------------------------------------------------------------------------
 /// Aggregate Color Predicates

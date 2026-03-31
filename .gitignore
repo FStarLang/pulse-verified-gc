@@ -14,3 +14,4 @@ mark-and-sweep/_extract/
 # Snapshot build artifacts (snapshot/ itself is tracked)
 mark-and-sweep/snapshot/*.o
 mark-and-sweep/snapshot/*.a
+dump
