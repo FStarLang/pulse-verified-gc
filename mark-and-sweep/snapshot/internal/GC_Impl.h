@@ -5,20 +5,21 @@
   KaRaMeL version: <unknown>
  */
 
-#include "krmlinit.h"
+#ifndef internal_GC_Impl_H
+#define internal_GC_Impl_H
 
-#include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
-#include "internal/GC_Impl.h"
+#include "krmllib.h"
 
-#if defined(__GNUC__) && !(defined(_WIN32) || defined(_WIN64))
-__attribute__ ((visibility ("hidden")))
-#endif
+#include "../GC_Impl.h"
 
-void krmlinit_globals(void)
-{
-  mword = GC_Spec_Base_mword;
-  heap_size = GC_Spec_Base_heap_size;
-  heap_size_u64 = FStar_UInt64_uint_to_t(heap_size);
-  zero_addr = GC_Spec_Base_zero_addr;
-}
+extern uint64_t mword;
 
+extern krml_checked_int_t heap_size;
+
+extern uint64_t heap_size_u64;
+
+extern uint64_t zero_addr;
+
+
+#define internal_GC_Impl_H_DEFINED
+#endif /* internal_GC_Impl_H */

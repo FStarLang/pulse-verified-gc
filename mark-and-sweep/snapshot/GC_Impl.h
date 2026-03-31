@@ -5,20 +5,28 @@
   KaRaMeL version: <unknown>
  */
 
-#include "krmlinit.h"
+#ifndef GC_Impl_H
+#define GC_Impl_H
 
-#include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
-#include "internal/GC_Impl.h"
+#include "krmllib.h"
 
-#if defined(__GNUC__) && !(defined(_WIN32) || defined(_WIN64))
-__attribute__ ((visibility ("hidden")))
-#endif
-
-void krmlinit_globals(void)
+typedef struct heap_t_s
 {
-  mword = GC_Spec_Base_mword;
-  heap_size = GC_Spec_Base_heap_size;
-  heap_size_u64 = FStar_UInt64_uint_to_t(heap_size);
-  zero_addr = GC_Spec_Base_zero_addr;
+  uint8_t *data;
+  size_t size;
 }
+heap_t;
 
+typedef struct gray_stack_rec_s
+{
+  uint64_t *storage;
+  size_t *top;
+  size_t cap;
+}
+gray_stack_rec;
+
+uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);
+
+
+#define GC_Impl_H_DEFINED
+#endif /* GC_Impl_H */

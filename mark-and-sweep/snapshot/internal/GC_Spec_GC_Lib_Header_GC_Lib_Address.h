@@ -5,20 +5,42 @@
   KaRaMeL version: <unknown>
  */
 
-#include "krmlinit.h"
+#ifndef internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H
+#define internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H
 
-#include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
-#include "internal/GC_Impl.h"
+#include "krmllib.h"
 
-#if defined(__GNUC__) && !(defined(_WIN32) || defined(_WIN64))
-__attribute__ ((visibility ("hidden")))
-#endif
+#define GC_Lib_Header_White 0
+#define GC_Lib_Header_Gray 1
+#define GC_Lib_Header_Blue 2
+#define GC_Lib_Header_Black 3
 
-void krmlinit_globals(void)
-{
-  mword = GC_Spec_Base_mword;
-  heap_size = GC_Spec_Base_heap_size;
-  heap_size_u64 = FStar_UInt64_uint_to_t(heap_size);
-  zero_addr = GC_Spec_Base_zero_addr;
-}
+typedef uint8_t GC_Lib_Header_color_sem;
 
+extern uint64_t GC_Spec_Base_mword;
+
+extern krml_checked_int_t GC_Spec_Base_heap_size;
+
+extern uint64_t GC_Spec_Base_zero_addr;
+
+extern uint8_t GC_Spec_Heap_uint64_to_uint8(uint64_t x);
+
+extern uint64_t
+GC_Spec_Heap_combine_bytes(
+  uint8_t b0,
+  uint8_t b1,
+  uint8_t b2,
+  uint8_t b3,
+  uint8_t b4,
+  uint8_t b5,
+  uint8_t b6,
+  uint8_t b7
+);
+
+extern uint64_t GC_Spec_Heap_f_address(uint64_t h_addr);
+
+extern uint64_t GC_Spec_Object_colorHeader(uint64_t header, GC_Lib_Header_color_sem new_color);
+
+
+#define internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H_DEFINED
+#endif /* internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H */

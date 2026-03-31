@@ -13,18 +13,18 @@ C = ../common
 
 # Include paths (shared between spec and lib)
 COMMON_INCLUDES = \
-  --include Spec \
-  --include $(C)/Spec \
-  --include $(C)/Lib
+  --include spec \
+  --include $(C)/spec \
+  --include $(C)/lib
 
 # Spec: pure F*, no Pulse plugin needed
 FSTAR_SPEC_INCLUDES = $(COMMON_INCLUDES)
 
 # Lib: fstar2 stage3 has Pulse baked in
 PULSE_LIB ?= $(FSTAR_HOME)/pulse/lib/pulse/lib
-FSTAR_LIB_INCLUDES = $(COMMON_INCLUDES) \
-  --include Pulse.Lib.GC \
-  --include $(C)/Pulse.Lib.GC \
+FSTAR_IMPL_INCLUDES = $(COMMON_INCLUDES) \
+  --include impl \
+  --include $(C)/impl \
   --include $(PULSE_LIB)
 
 # F* base options
@@ -34,284 +34,278 @@ FSTAR_BASE = \
   --report_assumes warn
 
 FSTAR_SPEC_FLAGS = $(FSTAR_BASE) \
-  --already_cached 'FStar -Pulse.Spec.GC'
+  --already_cached 'FStar -GC'
 
-FSTAR_LIB_FLAGS = $(FSTAR_BASE) \
+FSTAR_IMPL_FLAGS = $(FSTAR_BASE) \
   --split_queries always \
-  --already_cached 'FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address -Pulse.Lib.Bitvec'
+  --already_cached 'FStar Pulse -GC'
 
 # Spec checked files (explicit list)
 SPEC_CHECKED = \
-  Spec/Pulse.Spec.GC.SeqMemLemmas.fst.checked \
-  Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-  Spec/Pulse.Spec.GC.SweepInv.fst.checked \
-  Spec/Pulse.Spec.GC.Mark.fst.checked \
-  Spec/Pulse.Spec.GC.MarkInv.fsti.checked \
-  Spec/Pulse.Spec.GC.MarkInv.fst.checked \
-  Spec/Pulse.Spec.GC.Sweep.fst.checked \
-  Spec/Pulse.Spec.GC.Correctness.fsti.checked \
-  Spec/Pulse.Spec.GC.Correctness.fst.checked
+  spec/GC.Spec.SeqMemLemmas.fst.checked \
+  spec/GC.Spec.SweepInv.fsti.checked \
+  spec/GC.Spec.SweepInv.fst.checked \
+  spec/GC.Spec.Mark.fst.checked \
+  spec/GC.Spec.MarkInv.fsti.checked \
+  spec/GC.Spec.MarkInv.fst.checked \
+  spec/GC.Spec.Sweep.fst.checked \
+  spec/GC.Spec.Correctness.fsti.checked \
+  spec/GC.Spec.Correctness.fst.checked
 
 # Lib checked files (explicit list)
-LIB_CHECKED = \
-  Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
-  Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst.checked \
-  Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst.checked \
-  Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst.checked \
-  Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked \
-  Pulse.Lib.GC/Pulse.Lib.GC.fst.checked
+IMPL_CHECKED = \
+  impl/GC.Impl.Fields.fst.checked \
+  impl/GC.Impl.Closure.fst.checked \
+  impl/GC.Impl.Mark.fst.checked \
+  impl/GC.Impl.Sweep.Lemmas.fst.checked \
+  impl/GC.Impl.Sweep.fst.checked \
+  impl/GC.Impl.fst.checked
 
 # ------------------------------------------------------------------------------
 # Targets
 # ------------------------------------------------------------------------------
 
-.PHONY: all verify verify-spec verify-lib extract snapshot clean
+.PHONY: all verify verify-spec verify-impl extract snapshot clean
 
 all: verify
 
-verify: verify-lib
+verify: verify-impl
 
 verify-spec: $(SPEC_CHECKED)
 	@echo "=== mark-and-sweep: spec modules verified ==="
 
-verify-lib: verify-spec $(LIB_CHECKED)
-	@echo "=== mark-and-sweep: lib modules verified ==="
+verify-impl: verify-spec $(IMPL_CHECKED)
+	@echo "=== mark-and-sweep: impl modules verified ==="
 
 # ------------------------------------------------------------------------------
 # Common/ build: parallel-safe via sentinel files
 # ------------------------------------------------------------------------------
 
-COMMON_SPEC_SOURCES = $(wildcard $(C)/Spec/*.fst $(C)/Spec/*.fsti $(C)/Lib/*.fst)
-COMMON_PULSE_SOURCES = $(wildcard $(C)/Pulse.Lib.GC/*.fst)
+COMMON_SPEC_SOURCES = $(wildcard $(C)/spec/*.fst $(C)/spec/*.fsti $(C)/lib/*.fst)
+COMMON_PULSE_SOURCES = $(wildcard $(C)/impl/*.fst)
 
 # Build common/ spec+lib modules once (for verify-spec)
 .common-stamp: $(COMMON_SPEC_SOURCES)
 	+$(MAKE) -C $(C)
 	@touch $@
 
-# Build common/ Pulse modules once (for verify-lib)
-.common-pulse-stamp: .common-stamp $(COMMON_PULSE_SOURCES)
-	+$(MAKE) -C $(C) verify-pulse
+# Build common/ Pulse modules once (for verify-impl)
+.common-impl-stamp: .common-stamp $(COMMON_PULSE_SOURCES)
+	+$(MAKE) -C $(C) verify-impl
 	@touch $@
 
 # Common checked files are produced by common/Makefile via stamps
-$(C)/Spec/%.checked: | .common-stamp
+$(C)/spec/%.checked: | .common-stamp
 	@true
 
-$(C)/Lib/%.checked: | .common-stamp
+$(C)/lib/%.checked: | .common-stamp
 	@true
 
-$(C)/Pulse.Lib.GC/%.checked: | .common-pulse-stamp
+$(C)/impl/%.checked: | .common-impl-stamp
 	@true
 
 # ------------------------------------------------------------------------------
 # Spec module dependencies (from module graph, validated against --dep full)
 # ------------------------------------------------------------------------------
 
-Spec/Pulse.Spec.GC.SeqMemLemmas.fst.checked: \
-	Spec/Pulse.Spec.GC.SeqMemLemmas.fst
+spec/GC.Spec.SeqMemLemmas.fst.checked: \
+	spec/GC.Spec.SeqMemLemmas.fst
 
-Spec/Pulse.Spec.GC.Correctness.fsti.checked: \
-	Spec/Pulse.Spec.GC.Correctness.fsti \
-	Spec/Pulse.Spec.GC.Sweep.fst.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.DFS.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapModel.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Graph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.Correctness.fsti.checked: \
+	spec/GC.Spec.Correctness.fsti \
+	spec/GC.Spec.Sweep.fst.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.DFS.fst.checked \
+	$(C)/spec/GC.Spec.HeapModel.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Graph.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.Correctness.fst.checked: \
-	Spec/Pulse.Spec.GC.Correctness.fst \
-	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
-	Spec/Pulse.Spec.GC.Sweep.fst.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.DFS.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapModel.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Graph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.Correctness.fst.checked: \
+	spec/GC.Spec.Correctness.fst \
+	spec/GC.Spec.Correctness.fsti.checked \
+	spec/GC.Spec.Sweep.fst.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.DFS.fst.checked \
+	$(C)/spec/GC.Spec.HeapModel.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Graph.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.SweepInv.fsti.checked: \
-	Spec/Pulse.Spec.GC.SweepInv.fsti \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.SweepInv.fsti.checked: \
+	spec/GC.Spec.SweepInv.fsti \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.SweepInv.fst.checked: \
-	Spec/Pulse.Spec.GC.SweepInv.fst \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.SweepInv.fst.checked: \
+	spec/GC.Spec.SweepInv.fst \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.Mark.fst.checked: \
-	Spec/Pulse.Spec.GC.Mark.fst \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	$(C)/Lib/Pulse.Lib.Header.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.DFS.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapModel.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Graph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.Mark.fst.checked: \
+	spec/GC.Spec.Mark.fst \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	$(C)/lib/GC.Lib.Header.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.DFS.fst.checked \
+	$(C)/spec/GC.Spec.HeapModel.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Graph.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.MarkInv.fsti.checked: \
-	Spec/Pulse.Spec.GC.MarkInv.fsti \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.MarkInv.fsti.checked: \
+	spec/GC.Spec.MarkInv.fsti \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.MarkInv.fst.checked: \
-	Spec/Pulse.Spec.GC.MarkInv.fst \
-	Spec/Pulse.Spec.GC.MarkInv.fsti.checked \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.MarkInv.fst.checked: \
+	spec/GC.Spec.MarkInv.fst \
+	spec/GC.Spec.MarkInv.fsti.checked \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
-Spec/Pulse.Spec.GC.Sweep.fst.checked: \
-	Spec/Pulse.Spec.GC.Sweep.fst \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Lib/Pulse.Lib.Header.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapModel.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Graph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked
+spec/GC.Spec.Sweep.fst.checked: \
+	spec/GC.Spec.Sweep.fst \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/lib/GC.Lib.Header.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.HeapModel.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Graph.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked
 
 
 # ------------------------------------------------------------------------------
-# Lib module dependencies (from module graph, validated against --dep full)
+# Impl module dependencies (from module graph, validated against --dep full)
 # ------------------------------------------------------------------------------
 
-Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked: \
-	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+impl/GC.Impl.Fields.fst.checked: \
+	impl/GC.Impl.Fields.fst \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
 
-Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst.checked: \
-	Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst \
-	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+impl/GC.Impl.Closure.fst.checked: \
+	impl/GC.Impl.Closure.fst \
+	impl/GC.Impl.Fields.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
 
-Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst.checked: \
-	Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst \
-	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
-	Spec/Pulse.Spec.GC.MarkInv.fsti.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked \
-	$(C)/Lib/Pulse.Lib.Header.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+impl/GC.Impl.Mark.fst.checked: \
+	impl/GC.Impl.Mark.fst \
+	impl/GC.Impl.Fields.fst.checked \
+	spec/GC.Spec.MarkInv.fsti.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked \
+	$(C)/lib/GC.Lib.Header.fst.checked \
+	$(C)/impl/GC.Impl.Stack.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
 
-Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fsti.checked: \
-	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fsti \
-	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
-	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	Spec/Pulse.Spec.GC.Sweep.fst.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked \
-	$(C)/Lib/Pulse.Lib.Header.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+impl/GC.Impl.Sweep.Lemmas.fsti.checked: \
+	impl/GC.Impl.Sweep.Lemmas.fsti \
+	impl/GC.Impl.Fields.fst.checked \
+	spec/GC.Spec.Correctness.fsti.checked \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.Sweep.fst.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked \
+	$(C)/lib/GC.Lib.Header.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
 
-Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst.checked: \
-	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst \
-	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fsti.checked \
-	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
-	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	Spec/Pulse.Spec.GC.Sweep.fst.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked \
-	$(C)/Lib/Pulse.Lib.Header.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+impl/GC.Impl.Sweep.Lemmas.fst.checked: \
+	impl/GC.Impl.Sweep.Lemmas.fst \
+	impl/GC.Impl.Sweep.Lemmas.fsti.checked \
+	impl/GC.Impl.Fields.fst.checked \
+	spec/GC.Spec.Correctness.fsti.checked \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.Sweep.fst.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked \
+	$(C)/lib/GC.Lib.Header.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
 
-Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked: \
-	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst \
-	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.Lemmas.fst.checked \
-	Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst.checked \
-	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	Spec/Pulse.Spec.GC.Sweep.fst.checked \
-	Spec/Pulse.Spec.GC.Mark.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.HeapGraph.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Heap.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Base.fsti.checked \
-	$(C)/Lib/Pulse.Lib.Header.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+impl/GC.Impl.Sweep.fst.checked: \
+	impl/GC.Impl.Sweep.fst \
+	impl/GC.Impl.Sweep.Lemmas.fst.checked \
+	impl/GC.Impl.Fields.fst.checked \
+	spec/GC.Spec.Correctness.fsti.checked \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.Sweep.fst.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Heap.fsti.checked \
+	$(C)/spec/GC.Spec.Base.fsti.checked \
+	$(C)/lib/GC.Lib.Header.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
 
-Pulse.Lib.GC/Pulse.Lib.GC.fst.checked: \
-	Pulse.Lib.GC/Pulse.Lib.GC.fst \
-	Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst.checked \
-	Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst.checked \
-	Spec/Pulse.Spec.GC.SweepInv.fsti.checked \
-	Spec/Pulse.Spec.GC.MarkInv.fsti.checked \
-	Spec/Pulse.Spec.GC.Correctness.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Object.fsti.checked \
-	$(C)/Spec/Pulse.Spec.GC.Fields.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst.checked \
-	$(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst.checked
+impl/GC.Impl.fst.checked: \
+	impl/GC.Impl.fst \
+	impl/GC.Impl.Mark.fst.checked \
+	impl/GC.Impl.Sweep.fst.checked \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.MarkInv.fsti.checked \
+	spec/GC.Spec.Correctness.fsti.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/impl/GC.Impl.Stack.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
 
 # ------------------------------------------------------------------------------
 # Pattern rules (recipes for verification)
 # ------------------------------------------------------------------------------
 
-Spec/%.fst.checked: Spec/%.fst
+spec/%.checked: spec/%
 	$(FSTAR) $(FSTAR_SPEC_INCLUDES) $(FSTAR_SPEC_FLAGS) $<
 
-Spec/%.fsti.checked: Spec/%.fsti
-	$(FSTAR) $(FSTAR_SPEC_INCLUDES) $(FSTAR_SPEC_FLAGS) $<
-
-Pulse.Lib.GC/%.fst.checked: Pulse.Lib.GC/%.fst
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_LIB_FLAGS) --z3refresh $<
-
-Pulse.Lib.GC/%.fsti.checked: Pulse.Lib.GC/%.fsti
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_LIB_FLAGS) --z3refresh $<
+impl/%.checked: impl/%
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_IMPL_FLAGS) --z3refresh $<
 
 # ------------------------------------------------------------------------------
 # Extraction to C via KaRaMeL (two-phase pipeline)
 #
 # Phase 1: fstar.exe --codegen krml → .krml  (one per module)
-# Phase 2: krml .krml → Pulse_Lib_GC.c/.h    (bundle into single C file)
+# Phase 2: krml .krml → GC_Impl.c/.h    (bundle into single C file)
 # ------------------------------------------------------------------------------
 
 KRML_OUTPUT_DIR = _output
@@ -320,53 +314,53 @@ EXTRACT_DIR     = _extract
 # F* flags for extraction (reuses lib flags + codegen)
 FSTAR_EXTRACT_FLAGS = $(FSTAR_BASE) \
   --split_queries always \
-  --already_cached 'FStar Pulse -Pulse.Spec.GC -Pulse.Lib.GC -Pulse.Lib.Header -Pulse.Lib.Address -Pulse.Lib.Bitvec'
+  --already_cached 'FStar Pulse -GC'
 
 # KaRaMeL flags
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation \
   -skip-linking \
-  -library Pulse.Spec.GC.Base \
-  -library Pulse.Spec.GC.Heap \
-  -library Pulse.Spec.GC.Object \
-  -library Pulse.Lib.Header \
-  -library Pulse.Lib.Address \
-  -bundle 'Pulse.Lib.GC=Pulse.Lib.GC.*' \
+  -library GC.Spec.Base \
+  -library GC.Spec.Heap \
+  -library GC.Spec.Object \
+  -library GC.Lib.Header \
+  -library GC.Lib.Address \
+  -bundle 'GC.Impl=GC.Impl.*' \
   -bundle 'FStar.Pervasives.Native' \
-  -bundle 'Pulse.Spec.GC.*,Pulse.Lib.Header,Pulse.Lib.Address' \
-  -no-prefix Pulse.Lib.GC \
-  -no-prefix Pulse.Lib.GC.Mark \
-  -no-prefix Pulse.Lib.GC.Sweep \
-  -no-prefix Pulse.Lib.GC.Fields \
-  -no-prefix Pulse.Lib.GC.Closure \
-  -no-prefix Pulse.Lib.GC.Heap \
-  -no-prefix Pulse.Lib.GC.Object \
-  -no-prefix Pulse.Lib.GC.Stack \
+  -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
+  -no-prefix GC.Impl \
+  -no-prefix GC.Impl.Mark \
+  -no-prefix GC.Impl.Sweep \
+  -no-prefix GC.Impl.Fields \
+  -no-prefix GC.Impl.Closure \
+  -no-prefix GC.Impl.Heap \
+  -no-prefix GC.Impl.Object \
+  -no-prefix GC.Impl.Stack \
   -warn-error -2-9-15
 
-# .krml files from mark-and-sweep Pulse.Lib.GC modules
+# .krml files from mark-and-sweep GC.Impl modules
 MS_KRML = \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Fields.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Closure.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Mark.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Sweep.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC.krml
+  $(KRML_OUTPUT_DIR)/GC_Impl_Fields.krml \
+  $(KRML_OUTPUT_DIR)/GC_Impl_Closure.krml \
+  $(KRML_OUTPUT_DIR)/GC_Impl_Mark.krml \
+  $(KRML_OUTPUT_DIR)/GC_Impl_Sweep.krml \
+  $(KRML_OUTPUT_DIR)/GC_Impl.krml
 
-# .krml files from common/ Pulse.Lib.GC modules
+# .krml files from common/ GC.Impl modules
 COMMON_KRML = \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Heap.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Object.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Stack.krml
+  $(KRML_OUTPUT_DIR)/GC_Impl_Heap.krml \
+  $(KRML_OUTPUT_DIR)/GC_Impl_Object.krml \
+  $(KRML_OUTPUT_DIR)/GC_Impl_Stack.krml
 
 # .krml files for dependencies (spec types, FStar.Pervasives.Native)
 DEP_KRML = \
   $(KRML_OUTPUT_DIR)/FStar_Pervasives_Native.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Base.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Heap.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Object.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_Header.krml \
-  $(KRML_OUTPUT_DIR)/Pulse_Lib_Address.krml
+  $(KRML_OUTPUT_DIR)/GC_Spec_Base.krml \
+  $(KRML_OUTPUT_DIR)/GC_Spec_Heap.krml \
+  $(KRML_OUTPUT_DIR)/GC_Spec_Object.krml \
+  $(KRML_OUTPUT_DIR)/GC_Lib_Header.krml \
+  $(KRML_OUTPUT_DIR)/GC_Lib_Address.krml
 
 ALL_KRML = $(MS_KRML) $(COMMON_KRML) $(DEP_KRML)
 
@@ -377,38 +371,38 @@ $(EXTRACT_DIR):
 	@mkdir -p $@
 
 # Phase 1a: extract mark-and-sweep modules to .krml
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Fields.krml: Pulse.Lib.GC/Pulse.Lib.GC.Fields.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC.Fields --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Impl_Fields.krml: impl/GC.Impl.Fields.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl.Fields --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Closure.krml: Pulse.Lib.GC/Pulse.Lib.GC.Closure.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC.Closure --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Impl_Closure.krml: impl/GC.Impl.Closure.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl.Closure --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Mark.krml: Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC.Mark --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Impl_Mark.krml: impl/GC.Impl.Mark.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl.Mark --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Sweep.krml: Pulse.Lib.GC/Pulse.Lib.GC.Sweep.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC.Sweep --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Impl_Sweep.krml: impl/GC.Impl.Sweep.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl.Sweep --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC.krml: Pulse.Lib.GC/Pulse.Lib.GC.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Impl.krml: impl/GC.Impl.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl --odir $(KRML_OUTPUT_DIR) $<
 
-# Phase 1b: extract common/ Pulse.Lib.GC modules to .krml
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Heap.krml: $(C)/Pulse.Lib.GC/Pulse.Lib.GC.Heap.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC.Heap --odir $(KRML_OUTPUT_DIR) $<
+# Phase 1b: extract common/ GC.Impl modules to .krml
+$(KRML_OUTPUT_DIR)/GC_Impl_Heap.krml: $(C)/impl/GC.Impl.Heap.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl.Heap --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Object.krml: $(C)/Pulse.Lib.GC/Pulse.Lib.GC.Object.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC.Object --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Impl_Object.krml: $(C)/impl/GC.Impl.Object.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl.Object --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_GC_Stack.krml: $(C)/Pulse.Lib.GC/Pulse.Lib.GC.Stack.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(FSTAR_LIB_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
-	  --codegen krml --extract_module Pulse.Lib.GC.Stack --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Impl_Stack.krml: $(C)/impl/GC.Impl.Stack.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(FSTAR_IMPL_INCLUDES) $(FSTAR_EXTRACT_FLAGS) \
+	  --codegen krml --extract_module GC.Impl.Stack --odir $(KRML_OUTPUT_DIR) $<
 
 # Phase 1c: extract dependency modules to .krml
 $(KRML_OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(KRML_OUTPUT_DIR)
@@ -416,32 +410,32 @@ $(KRML_OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(KRML_OUTPUT_DIR)
 	  --codegen krml --extract_module FStar.Pervasives.Native --odir $(KRML_OUTPUT_DIR) \
 	  $(FSTAR_HOME)/ulib/FStar.Pervasives.Native.fst
 
-$(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Base.krml: $(C)/Spec/Pulse.Spec.GC.Base.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -Pulse.Spec.GC' \
-	  --codegen krml --extract_module Pulse.Spec.GC.Base --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Spec_Base.krml: $(C)/spec/GC.Spec.Base.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -GC' \
+	  --codegen krml --extract_module GC.Spec.Base --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Heap.krml: $(C)/Spec/Pulse.Spec.GC.Heap.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -Pulse.Spec.GC -Pulse.Lib.Header' \
-	  --codegen krml --extract_module Pulse.Spec.GC.Heap --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Spec_Heap.krml: $(C)/spec/GC.Spec.Heap.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -GC.Spec -GC.Lib.Header' \
+	  --codegen krml --extract_module GC.Spec.Heap --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Spec_GC_Object.krml: $(C)/Spec/Pulse.Spec.GC.Object.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -Pulse.Spec.GC -Pulse.Lib.Header' \
-	  --codegen krml --extract_module Pulse.Spec.GC.Object --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Spec_Object.krml: $(C)/spec/GC.Spec.Object.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -GC.Spec -GC.Lib.Header' \
+	  --codegen krml --extract_module GC.Spec.Object --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_Header.krml: $(C)/Lib/Pulse.Lib.Header.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -Pulse.Lib.Header' \
-	  --codegen krml --extract_module Pulse.Lib.Header --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Lib_Header.krml: $(C)/lib/GC.Lib.Header.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -GC.Lib.Header' \
+	  --codegen krml --extract_module GC.Lib.Header --odir $(KRML_OUTPUT_DIR) $<
 
-$(KRML_OUTPUT_DIR)/Pulse_Lib_Address.krml: $(C)/Lib/Pulse.Lib.Address.fst | $(KRML_OUTPUT_DIR)
-	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -Pulse.Spec.GC -Pulse.Lib.Address' \
-	  --codegen krml --extract_module Pulse.Lib.Address --odir $(KRML_OUTPUT_DIR) $<
+$(KRML_OUTPUT_DIR)/GC_Lib_Address.krml: $(C)/lib/GC.Lib.Address.fst | $(KRML_OUTPUT_DIR)
+	$(FSTAR) $(COMMON_INCLUDES) $(FSTAR_BASE) --already_cached 'FStar -GC.Spec -GC.Lib.Address' \
+	  --codegen krml --extract_module GC.Lib.Address --odir $(KRML_OUTPUT_DIR) $<
 
 # Phase 2: .krml → C via KaRaMeL
-$(EXTRACT_DIR)/Pulse_Lib_GC.c: $(ALL_KRML) | $(EXTRACT_DIR)
+$(EXTRACT_DIR)/GC_Impl.c: $(ALL_KRML) | $(EXTRACT_DIR)
 	$(KRML) $(KRML_FLAGS) $(ALL_KRML)
 
-extract: verify-lib $(EXTRACT_DIR)/Pulse_Lib_GC.c
-	@echo "=== Extraction complete: $(EXTRACT_DIR)/Pulse_Lib_GC.{c,h} ==="
+extract: verify-impl $(EXTRACT_DIR)/GC_Impl.c
+	@echo "=== Extraction complete: $(EXTRACT_DIR)/GC_Impl.{c,h} ==="
 
 # ------------------------------------------------------------------------------
 # Snapshot: self-contained extracted C for CI without F*/KaRaMeL
@@ -452,9 +446,9 @@ SNAPSHOT_DIR = snapshot
 snapshot: extract
 	@echo "=== Creating snapshot ==="
 	@mkdir -p $(SNAPSHOT_DIR)/krmllib/krml/internal $(SNAPSHOT_DIR)/internal
-	@cp $(EXTRACT_DIR)/Pulse_Lib_GC.c $(SNAPSHOT_DIR)/
-	@cp $(EXTRACT_DIR)/Pulse_Lib_GC.h $(SNAPSHOT_DIR)/
-	@cp $(EXTRACT_DIR)/Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
+	@cp $(EXTRACT_DIR)/GC_Impl.c $(SNAPSHOT_DIR)/
+	@cp $(EXTRACT_DIR)/GC_Impl.h $(SNAPSHOT_DIR)/
+	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/internal/*.h $(SNAPSHOT_DIR)/internal/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/krmlinit.c $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/krmlinit.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
@@ -462,8 +456,8 @@ snapshot: extract
 	@cp -r $(KRML_HOME)/krmllib/dist/minimal/* $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krml/*.h $(SNAPSHOT_DIR)/krmllib/krml/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krml/internal/*.h $(SNAPSHOT_DIR)/krmllib/krml/internal/ 2>/dev/null || true
-	@if ! grep -q '^#include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/Pulse_Lib_GC.c 2>/dev/null; then \
-	  sed -i '/#include "internal\/Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"/a #include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/Pulse_Lib_GC.c; \
+	@if ! grep -q '^#include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/GC_Impl.c 2>/dev/null; then \
+	  sed -i '/#include "internal\/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"/a #include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/GC_Impl.c; \
 	fi
 	@echo "=== Snapshot updated: $(SNAPSHOT_DIR)/ ==="
 	@echo "    Hand-maintained: pulsegc_compat.h, pulsegc_runtime.c, Makefile"
@@ -473,6 +467,6 @@ snapshot: extract
 # ------------------------------------------------------------------------------
 
 clean:
-	rm -f Spec/*.checked* Pulse.Lib.GC/*.checked*
-	rm -f .depend .depend.spec .depend.lib .common-stamp .common-pulse-stamp
+	rm -f spec/*.checked* impl/*.checked*
+	rm -f .depend .depend.spec .depend.lib .common-stamp .common-impl-stamp
 	rm -rf $(KRML_OUTPUT_DIR) $(EXTRACT_DIR)

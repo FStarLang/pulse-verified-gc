@@ -7,40 +7,40 @@ Shared F* specifications and Pulse infrastructure used by both GC variants:
 
 ## Module Overview
 
-### Spec/ - Pure F* Specifications
+### spec/ - Pure F* Specifications
 
 | Module | Interface | Description |
 |--------|-----------|-------------|
-| `Pulse.Spec.GC.Base.fst` | `.fsti` ✓ | Core types: heap, hp_addr, mword |
-| `Pulse.Spec.GC.Heap.fst` | `.fsti` ✓ | Heap operations: read_word, write_word |
-| `Pulse.Spec.GC.Object.fst` | `.fsti` ✓ | Header operations, color predicates (algebraic color_sem) |
-| `Pulse.Spec.GC.Graph.fst` | (self) | Graph types, vertex sets, reachability |
-| `Pulse.Spec.GC.DFS.fst` | (self) | DFS algorithm with ghost forest, soundness + completeness |
-| `Pulse.Spec.GC.Fields.fst` | (self) | Object enumeration, field traversal |
-| `Pulse.Spec.GC.HeapGraph.fst` | (self) | Bridge: heap objects → graph edges |
-| `Pulse.Spec.GC.HeapModel.fst` | (self) | Graph construction from heap, field equality |
+| `GC.Spec.Base.fst` | `.fsti` ✓ | Core types: heap, hp_addr, mword |
+| `GC.Spec.Heap.fst` | `.fsti` ✓ | Heap operations: read_word, write_word |
+| `GC.Spec.Object.fst` | `.fsti` ✓ | Header operations, color predicates (algebraic color_sem) |
+| `GC.Spec.Graph.fst` | (self) | Graph types, vertex sets, reachability |
+| `GC.Spec.DFS.fst` | (self) | DFS algorithm with ghost forest, soundness + completeness |
+| `GC.Spec.Fields.fst` | (self) | Object enumeration, field traversal |
+| `GC.Spec.HeapGraph.fst` | (self) | Bridge: heap objects → graph edges |
+| `GC.Spec.HeapModel.fst` | (self) | Graph construction from heap, field equality |
 
-### Lib/ - Pure F* Libraries
-
-| Module | Description |
-|--------|-------------|
-| `Pulse.Lib.Header.fst` | Header bitvector operations, algebraic color_sem type |
-| `Pulse.Lib.Address.fst` | Address arithmetic, field/header separation lemmas |
-
-### Pulse.Lib.GC/ - Shared Pulse Implementations
+### lib/ - Pure F* Libraries
 
 | Module | Description |
 |--------|-------------|
-| `Pulse.Lib.GC.Heap.fst` | Mutable heap (array-backed), read/write word |
-| `Pulse.Lib.GC.Object.fst` | Object headers, algebraic color type, slprop predicates |
-| `Pulse.Lib.GC.Stack.fst` | Gray object stack (worklist for tri-color marking) |
+| `GC.Lib.Header.fst` | Header bitvector operations, algebraic color_sem type |
+| `GC.Lib.Address.fst` | Address arithmetic, field/header separation lemmas |
+
+### impl/ - Shared Pulse Implementations
+
+| Module | Description |
+|--------|-------------|
+| `GC.Impl.Heap.fst` | Mutable heap (array-backed), read/write word |
+| `GC.Impl.Object.fst` | Object headers, algebraic color type, slprop predicates |
+| `GC.Impl.Stack.fst` | Gray object stack (worklist for tri-color marking) |
 
 ## Building
 
 ```bash
-make lax          # Quick lax-check (Spec + Lib only)
-make verify       # Full SMT verification (Spec + Lib)
-make verify-pulse # Verify Pulse.Lib.GC modules (requires Pulse tooling)
+make              # Full SMT verification (spec + lib + impl)
+make verify-spec  # Verify spec + lib only
+make verify-impl  # Verify impl (Pulse) modules
 make clean
 ```
 
@@ -49,21 +49,21 @@ make clean
 From either GC variant, include common modules:
 
 ```makefile
-FSTAR_FLAGS += --include ../common/Lib --include ../common/Spec
+FSTAR_FLAGS += --include ../common/spec --include ../common/lib
 # For Pulse modules:
-FSTAR_FLAGS += --include ../common/Pulse.Lib.GC
+FSTAR_FLAGS += --include ../common/impl
 ```
 
 ## Module Dependencies
 
 ```
-Pulse.Lib.Header (bitvec ops, color_sem type)
+GC.Lib.Header (bitvec ops, color_sem type)
     ↓
-Pulse.Lib.Address (field/header separation)
+GC.Lib.Address (field/header separation)
     ↓
 Base.fst → Heap.fst → Object.fst → Fields.fst → Graph.fst → DFS.fst
                                                       ↓
                                                  HeapGraph.fst → HeapModel.fst
 
-Pulse.Lib.GC.Heap → Pulse.Lib.GC.Object → Pulse.Lib.GC.Stack
+GC.Impl.Heap → GC.Impl.Object → GC.Impl.Stack
 ```

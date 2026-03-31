@@ -11,28 +11,28 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "krmllib.h"
-#include "internal/Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h"
-#include "internal/Pulse_Lib_GC.h"
+#include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
+#include "internal/GC_Impl.h"
 
 /* -------------------------------------------------------------------------
- * Pulse.Spec.GC.Base constants
+ * GC.Spec.Base constants
  * ------------------------------------------------------------------------- */
 
-uint64_t Pulse_Spec_GC_Base_mword = 8;
-krml_checked_int_t Pulse_Spec_GC_Base_heap_size = 1024;
-uint64_t Pulse_Spec_GC_Base_zero_addr = 0;
+uint64_t GC_Spec_Base_mword = 8;
+krml_checked_int_t GC_Spec_Base_heap_size = 1024;
+uint64_t GC_Spec_Base_zero_addr = 0;
 
 /* -------------------------------------------------------------------------
- * Pulse.Spec.GC.Heap helper functions
+ * GC.Spec.Heap helper functions
  * ------------------------------------------------------------------------- */
 
 /* uint64_to_uint8: truncate uint64 to low byte */
-uint8_t Pulse_Spec_GC_Heap_uint64_to_uint8(uint64_t x) {
+uint8_t GC_Spec_Heap_uint64_to_uint8(uint64_t x) {
     return (uint8_t)(x & 0xFF);
 }
 
 /* combine_bytes: pack 8 bytes into uint64_t (little-endian) */
-uint64_t Pulse_Spec_GC_Heap_combine_bytes(
+uint64_t GC_Spec_Heap_combine_bytes(
     uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3,
     uint8_t b4, uint8_t b5, uint8_t b6, uint8_t b7)
 {
@@ -47,19 +47,19 @@ uint64_t Pulse_Spec_GC_Heap_combine_bytes(
 }
 
 /* f_address: header address → first field address (skip 8-byte header) */
-uint64_t Pulse_Spec_GC_Heap_f_address(uint64_t h_addr) {
+uint64_t GC_Spec_Heap_f_address(uint64_t h_addr) {
     return h_addr + 8;
 }
 
 /* -------------------------------------------------------------------------
- * Pulse.Spec.GC.Object helper functions
+ * GC.Spec.Object helper functions
  * ------------------------------------------------------------------------- */
 
 /* colorHeader: replace color bits [8:9] in header with new_color
  * Header layout: | wosize (54 bits) | color (2 bits) | tag (8 bits) | */
-uint64_t Pulse_Spec_GC_Object_colorHeader(
+uint64_t GC_Spec_Object_colorHeader(
     uint64_t header,
-    Pulse_Lib_Header_color_sem new_color)
+    GC_Lib_Header_color_sem new_color)
 {
     uint64_t mask = ~((uint64_t)0x3 << 8);
     return (header & mask) | ((uint64_t)new_color << 8);

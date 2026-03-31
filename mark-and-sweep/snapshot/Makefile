@@ -2,7 +2,7 @@
 CC ?= cc
 CFLAGS = -O2 -Wall -Wextra -std=c11 -I. -Ikrmllib -Ikrmllib/krml -Ikrmllib/krml/internal
 
-OBJS = Pulse_Lib_GC.o pulsegc_runtime.o krmlinit.o
+OBJS = GC_Impl.o pulsegc_runtime.o krmlinit.o
 
 all: libpulsegc.a
 
@@ -12,8 +12,8 @@ libpulsegc.a: $(OBJS)
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-Pulse_Lib_GC.o: Pulse_Lib_GC.c pulsegc_compat.h Pulse_Lib_GC.h \
-  internal/Pulse_Lib_GC.h internal/Pulse_Spec_GC_Pulse_Lib_Header_Pulse_Lib_Address.h
+GC_Impl.o: GC_Impl.c pulsegc_compat.h GC_Impl.h \
+  internal/GC_Impl.h internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h
 
 clean:
 	rm -f *.o libpulsegc.a

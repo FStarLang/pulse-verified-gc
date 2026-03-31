@@ -11,7 +11,7 @@ A formally verified OCaml-compatible garbage collector, specified in [F*](https:
 
 ## Main Theorems
 
-All theorems live in `mark-and-sweep/Spec/Pulse.Spec.GC.Correctness.fst` with **zero admits**.
+All theorems live in `mark-and-sweep/spec/GC.Spec.Correctness.fst` with **zero admits**.
 
 ### `end_to_end_correctness`
 
@@ -59,13 +59,14 @@ Every reachable object survives collection — follows from `mark_reachable_is_b
 
 ```
 common/                          Shared F* specifications & Pulse libraries
-├── Spec/                        Pure F* specs (heap, objects, graph, DFS)
-├── Lib/                         Header bitvectors, address arithmetic
-└── Pulse.Lib.GC/                Shared Pulse: heap, object, stack
+├── spec/                        Pure F* specs (heap, objects, graph, DFS)
+├── lib/                         Header bitvectors, address arithmetic
+└── impl/                        Shared Pulse: heap, object, stack
 
 mark-and-sweep/                  Sequential mark-and-sweep GC
-├── Spec/                        Mark, Sweep, Correctness (end-to-end theorem)
-└── Pulse.Lib.GC/                Pulse implementation (fields, closure, mark, sweep)
+├── spec/                        Mark, Sweep, Correctness (end-to-end theorem)
+├── impl/                        Pulse implementation (fields, closure, mark, sweep)
+└── snapshot/                    Extracted C code (self-contained)
 
 concurrent/                      Concurrent GC extensions
 ├── Spec/                        Tri-color invariant, tricolor_sem type (4 colors)
@@ -83,30 +84,30 @@ fly/                             On-the-fly concurrent GC (imports from common/)
   bits 10–63          bits 8–9         bits 0–7
 ```
 
-Colors: `White=0`, `Gray=1`, `Black=2` (3-color `color_sem` in `Pulse.Lib.Header`; fly/ uses 4-color `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst`).
+Colors: `White=0`, `Gray=1`, `Black=2` (3-color `color_sem` in `GC.Lib.Header`; fly/ uses 4-color `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst`).
 
 ## Module Dependency Chain
 
 ```
-Pulse.Lib.Header              bitvector operations on 64-bit object headers
+GC.Lib.Header                 bitvector operations on 64-bit object headers
     ↓
-Pulse.Spec.GC.Base             core types: mword, heap, hp_addr, obj_addr
+GC.Spec.Base                   core types: mword, heap, hp_addr, obj_addr
     ↓
-Pulse.Spec.GC.Heap             read_word, write_word on byte-addressable heap
+GC.Spec.Heap                   read_word, write_word on byte-addressable heap
     ↓
-Pulse.Spec.GC.Object           header fields, color predicates, color mutations
+GC.Spec.Object                 header fields, color predicates, color mutations
     ↓
-Pulse.Spec.GC.Fields           object enumeration (objects 0UL g), field traversal
+GC.Spec.Fields                 object enumeration (objects 0UL g), field traversal
     ↓
-Pulse.Spec.GC.Graph            vertex/edge types, reachability, DFS forest
+GC.Spec.Graph                  vertex/edge types, reachability, DFS forest
     ↓
-Pulse.Spec.GC.DFS              DFS algorithm with termination proofs
+GC.Spec.DFS                    DFS algorithm with termination proofs
     ↓
-Pulse.Spec.GC.HeapGraph        bridge: heap objects → graph edges (successors)
+GC.Spec.HeapGraph              bridge: heap objects → graph edges (successors)
     ↓
-Pulse.Spec.GC.HeapModel        graph construction from heap (create_graph)
+GC.Spec.HeapModel              graph construction from heap (create_graph)
     ↓
-  ├── mark-and-sweep/Spec/     Mark, Sweep, Correctness
+  ├── mark-and-sweep/spec/     Mark, Sweep, Correctness
   └── fly/                     TriColor, GraySet, CASPreservation, Correctness
 ```
 
@@ -152,10 +153,10 @@ make            # Produces libpulsegc.a
 
 | File | Lines | Admits | Assumes | Status |
 |------|------:|-------:|--------:|--------|
-| `Spec/Pulse.Spec.GC.Mark.fst` | ~3,400 | 0 | 0 | ✅ Verified |
-| `Spec/Pulse.Spec.GC.Sweep.fst` | ~1,240 | 0 | 0 | ✅ Verified |
-| `Spec/Pulse.Spec.GC.Correctness.fst` | ~300 | 0 | 0 | ✅ Verified |
-| `Spec/Pulse.Spec.GC.SeqMemLemmas.fst` | ~90 | 0 | 1 | Helper module |
+| `spec/GC.Spec.Mark.fst` | ~3,400 | 0 | 0 | ✅ Verified |
+| `spec/GC.Spec.Sweep.fst` | ~1,240 | 0 | 0 | ✅ Verified |
+| `spec/GC.Spec.Correctness.fst` | ~300 | 0 | 0 | ✅ Verified |
+| `spec/GC.Spec.SeqMemLemmas.fst` | ~90 | 0 | 1 | Helper module |
 
 ### common/ — Fully Verified ✅
 
