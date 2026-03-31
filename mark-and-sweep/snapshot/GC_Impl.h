@@ -25,6 +25,8 @@ typedef struct gray_stack_rec_s
 }
 gray_stack_rec;
 
+typedef void *gc_precondition;
+
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 
