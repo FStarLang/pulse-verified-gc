@@ -47,11 +47,11 @@ ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
 	$(FSTAR) --dep full $(ALL_SRC) --output_deps_to $@.raw
 	@awk -v cwd="$$(pwd)/" -v proj="$$(cd .. && pwd)/" ' \
 	  { gsub(cwd, ""); gsub(proj, "../") } \
-	  /^[^ \t].*[:=]/ { if (n) flush(); \
-	    keep = (/\.checked:/ || /^_output\/GC_.*\.krml:/ || /^ALL_CHECKED_FILES/) ? 1 : 0; n = 0 } \
+	  /^[^ \t].*:/ { if (n) flush(); \
+	    keep = (/\.checked:/ || /^_output\/GC_.*\.krml:/) ? 1 : 0; n = 0 } \
 	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
 	    if (line == "") next; \
-	    if (line !~ /[:=]/ && line !~ /^(spec|impl|_output)\/|^\.\.\/common\//) next; \
+	    if (line !~ /:/ && line !~ /^(spec|impl|_output)\/|^\.\.\/common\//) next; \
 	    buf[n++] = $$0 } \
 	  END { if (n) flush() } \
 	  function flush() { if (!n) return; \
@@ -59,20 +59,21 @@ ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
 	    for (i=0;i<n;i++) print buf[i]; print ""; n=0 }' $@.raw > $@
 	@rm -f $@.raw
 
--include .depend
-
-# --- Phony targets ----------------------------------------------------------
+# --- Default goal (must precede -include .depend so included targets
+#     don't accidentally become the default goal) -------------------------
 
 .PHONY: all verify verify-spec verify-impl extract snapshot clean
 
 all: verify
+
+-include .depend
 
 verify: verify-impl
 
 verify-spec: $(addsuffix .checked,$(SPEC_SRC))
 	@echo "=== spec modules verified ==="
 
-verify-impl: $(ALL_CHECKED_FILES)
+verify-impl: $(addsuffix .checked,$(ALL_SRC))
 	@echo "=== all modules verified ==="
 
 # --- Pattern rules (verification) -------------------------------------------
