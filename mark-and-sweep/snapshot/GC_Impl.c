@@ -7,7 +7,6 @@
 
 #include "GC_Impl.h"
 
-#include "internal/Prims.h"
 #include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 #include "pulsegc_compat.h"
 
@@ -19,7 +18,7 @@ static uint64_t zero_addr = 0ULL;
 
 static uint8_t uint64_to_uint8(uint64_t x)
 {
-  return FStar_UInt8_uint_to_t(Prims_op_Modulus(FStar_UInt64_v(x), (krml_checked_int_t)256));
+  return (uint8_t)x;
 }
 
 static uint64_t
@@ -34,14 +33,14 @@ combine_bytes(
   uint8_t b7
 )
 {
-  uint64_t v0 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b0));
-  uint64_t v1 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b1)) << 8U;
-  uint64_t v2 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b2)) << 16U;
-  uint64_t v3 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b3)) << 24U;
-  uint64_t v4 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b4)) << 32U;
-  uint64_t v5 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b5)) << 40U;
-  uint64_t v6 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b6)) << 48U;
-  uint64_t v7 = FStar_UInt64_uint_to_t(FStar_UInt8_v(b7)) << 56U;
+  uint64_t v0 = (uint64_t)b0;
+  uint64_t v1 = (uint64_t)b1 << 8U;
+  uint64_t v2 = (uint64_t)b2 << 16U;
+  uint64_t v3 = (uint64_t)b3 << 24U;
+  uint64_t v4 = (uint64_t)b4 << 32U;
+  uint64_t v5 = (uint64_t)b5 << 40U;
+  uint64_t v6 = (uint64_t)b6 << 48U;
+  uint64_t v7 = (uint64_t)b7 << 56U;
   return v0 | v1 | v2 | v3 | v4 | v5 | v6 | v7;
 }
 

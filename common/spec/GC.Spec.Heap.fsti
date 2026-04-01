@@ -15,6 +15,7 @@ open FStar.Mul
 
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8
+module Cast = FStar.Int.Cast
 
 open GC.Spec.Base
 
@@ -23,10 +24,10 @@ open GC.Spec.Base
 /// ---------------------------------------------------------------------------
 
 inline_for_extraction
-let uint8_to_uint64 (x: U8.t) : U64.t = U64.uint_to_t (U8.v x)
+let uint8_to_uint64 (x: U8.t) : U64.t = Cast.uint8_to_uint64 x
 
 inline_for_extraction
-let uint64_to_uint8 (x: U64.t) : U8.t = U8.uint_to_t (U64.v x % 256)
+let uint64_to_uint8 (x: U64.t) : U8.t = Cast.uint64_to_uint8 x
 
 inline_for_extraction
 let combine_bytes (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) : U64.t =
