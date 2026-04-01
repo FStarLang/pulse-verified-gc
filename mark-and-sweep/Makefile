@@ -52,7 +52,15 @@ SPEC_CHECKED = \
   spec/GC.Spec.Correctness.fsti.checked \
   spec/GC.Spec.Correctness.fst.checked
 
-# Lib checked files (explicit list)
+# Lib checked files (explicit list — interfaces first, then implementations)
+IMPL_IFACE_CHECKED = \
+  impl/GC.Impl.Fields.fsti.checked \
+  impl/GC.Impl.Closure.fsti.checked \
+  impl/GC.Impl.Mark.fsti.checked \
+  impl/GC.Impl.Sweep.fsti.checked \
+  impl/GC.Impl.Sweep.Lemmas.fsti.checked \
+  impl/GC.Impl.fsti.checked
+
 IMPL_CHECKED = \
   impl/GC.Impl.Fields.fst.checked \
   impl/GC.Impl.Closure.fst.checked \
@@ -74,7 +82,7 @@ verify: verify-impl
 verify-spec: $(SPEC_CHECKED)
 	@echo "=== mark-and-sweep: spec modules verified ==="
 
-verify-impl: verify-spec $(IMPL_CHECKED)
+verify-impl: verify-spec $(IMPL_IFACE_CHECKED) $(IMPL_CHECKED)
 	@echo "=== mark-and-sweep: impl modules verified ==="
 
 # ------------------------------------------------------------------------------
@@ -200,22 +208,77 @@ spec/GC.Spec.Sweep.fst.checked: \
 
 # ------------------------------------------------------------------------------
 # Impl module dependencies (from module graph, validated against --dep full)
+#
+# With .fsti interfaces: .fst files depend on .fsti of other modules,
+# enabling parallel verification of .fst files.
 # ------------------------------------------------------------------------------
+
+# --- Interface dependencies ---
+
+impl/GC.Impl.Fields.fsti.checked: \
+	impl/GC.Impl.Fields.fsti \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
+
+impl/GC.Impl.Closure.fsti.checked: \
+	impl/GC.Impl.Closure.fsti \
+	impl/GC.Impl.Fields.fsti.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
+
+impl/GC.Impl.Mark.fsti.checked: \
+	impl/GC.Impl.Mark.fsti \
+	spec/GC.Spec.MarkInv.fsti.checked \
+	spec/GC.Spec.Mark.fst.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/impl/GC.Impl.Stack.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
+
+impl/GC.Impl.Sweep.fsti.checked: \
+	impl/GC.Impl.Sweep.fsti \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.Sweep.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
+
+impl/GC.Impl.fsti.checked: \
+	impl/GC.Impl.fsti \
+	impl/GC.Impl.Mark.fsti.checked \
+	impl/GC.Impl.Sweep.fsti.checked \
+	spec/GC.Spec.SweepInv.fsti.checked \
+	spec/GC.Spec.MarkInv.fsti.checked \
+	spec/GC.Spec.Correctness.fsti.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.HeapModel.fst.checked \
+	$(C)/spec/GC.Spec.Graph.fst.checked \
+	$(C)/spec/GC.Spec.Object.fsti.checked \
+	$(C)/spec/GC.Spec.Fields.fst.checked \
+	$(C)/impl/GC.Impl.Stack.fst.checked \
+	$(C)/impl/GC.Impl.Object.fst.checked \
+	$(C)/impl/GC.Impl.Heap.fst.checked
+
+# --- Implementation dependencies (depend on own .fsti + transitive .fsti deps) ---
 
 impl/GC.Impl.Fields.fst.checked: \
 	impl/GC.Impl.Fields.fst \
+	impl/GC.Impl.Fields.fsti.checked \
 	$(C)/impl/GC.Impl.Object.fst.checked \
 	$(C)/impl/GC.Impl.Heap.fst.checked
 
 impl/GC.Impl.Closure.fst.checked: \
 	impl/GC.Impl.Closure.fst \
-	impl/GC.Impl.Fields.fst.checked \
+	impl/GC.Impl.Closure.fsti.checked \
+	impl/GC.Impl.Fields.fsti.checked \
 	$(C)/impl/GC.Impl.Object.fst.checked \
 	$(C)/impl/GC.Impl.Heap.fst.checked
 
 impl/GC.Impl.Mark.fst.checked: \
 	impl/GC.Impl.Mark.fst \
-	impl/GC.Impl.Fields.fst.checked \
+	impl/GC.Impl.Mark.fsti.checked \
+	impl/GC.Impl.Fields.fsti.checked \
 	spec/GC.Spec.MarkInv.fsti.checked \
 	spec/GC.Spec.Mark.fst.checked \
 	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
@@ -230,7 +293,7 @@ impl/GC.Impl.Mark.fst.checked: \
 
 impl/GC.Impl.Sweep.Lemmas.fsti.checked: \
 	impl/GC.Impl.Sweep.Lemmas.fsti \
-	impl/GC.Impl.Fields.fst.checked \
+	impl/GC.Impl.Fields.fsti.checked \
 	spec/GC.Spec.Correctness.fsti.checked \
 	spec/GC.Spec.SweepInv.fsti.checked \
 	spec/GC.Spec.Sweep.fst.checked \
@@ -247,7 +310,7 @@ impl/GC.Impl.Sweep.Lemmas.fsti.checked: \
 impl/GC.Impl.Sweep.Lemmas.fst.checked: \
 	impl/GC.Impl.Sweep.Lemmas.fst \
 	impl/GC.Impl.Sweep.Lemmas.fsti.checked \
-	impl/GC.Impl.Fields.fst.checked \
+	impl/GC.Impl.Fields.fsti.checked \
 	spec/GC.Spec.Correctness.fsti.checked \
 	spec/GC.Spec.SweepInv.fsti.checked \
 	spec/GC.Spec.Sweep.fst.checked \
@@ -263,8 +326,9 @@ impl/GC.Impl.Sweep.Lemmas.fst.checked: \
 
 impl/GC.Impl.Sweep.fst.checked: \
 	impl/GC.Impl.Sweep.fst \
-	impl/GC.Impl.Sweep.Lemmas.fst.checked \
-	impl/GC.Impl.Fields.fst.checked \
+	impl/GC.Impl.Sweep.fsti.checked \
+	impl/GC.Impl.Sweep.Lemmas.fsti.checked \
+	impl/GC.Impl.Fields.fsti.checked \
 	spec/GC.Spec.Correctness.fsti.checked \
 	spec/GC.Spec.SweepInv.fsti.checked \
 	spec/GC.Spec.Sweep.fst.checked \
@@ -280,11 +344,15 @@ impl/GC.Impl.Sweep.fst.checked: \
 
 impl/GC.Impl.fst.checked: \
 	impl/GC.Impl.fst \
-	impl/GC.Impl.Mark.fst.checked \
-	impl/GC.Impl.Sweep.fst.checked \
+	impl/GC.Impl.fsti.checked \
+	impl/GC.Impl.Mark.fsti.checked \
+	impl/GC.Impl.Sweep.fsti.checked \
 	spec/GC.Spec.SweepInv.fsti.checked \
 	spec/GC.Spec.MarkInv.fsti.checked \
 	spec/GC.Spec.Correctness.fsti.checked \
+	$(C)/spec/GC.Spec.HeapGraph.fst.checked \
+	$(C)/spec/GC.Spec.HeapModel.fst.checked \
+	$(C)/spec/GC.Spec.Graph.fst.checked \
 	$(C)/spec/GC.Spec.Object.fsti.checked \
 	$(C)/spec/GC.Spec.Fields.fst.checked \
 	$(C)/impl/GC.Impl.Stack.fst.checked \
