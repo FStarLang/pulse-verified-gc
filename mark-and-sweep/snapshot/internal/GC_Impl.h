@@ -5,20 +5,15 @@
   KaRaMeL version: <unknown>
  */
 
-#ifndef internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H
-#define internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H
+#ifndef internal_GC_Impl_H
+#define internal_GC_Impl_H
 
 #include "krmllib.h"
 
-#define GC_Lib_Header_White 0
-#define GC_Lib_Header_Gray 1
-#define GC_Lib_Header_Blue 2
-#define GC_Lib_Header_Black 3
+#include "../GC_Impl.h"
 
-typedef uint8_t GC_Lib_Header_color_sem;
-
-extern uint64_t GC_Spec_Base_heap_size_u64;
+extern uint64_t heap_size_u64;
 
 
-#define internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H_DEFINED
-#endif /* internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H */
+#define internal_GC_Impl_H_DEFINED
+#endif /* internal_GC_Impl_H */

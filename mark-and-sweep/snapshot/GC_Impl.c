@@ -5,14 +5,14 @@
   KaRaMeL version: <unknown>
  */
 
-#include "GC_Impl.h"
+#include "internal/GC_Impl.h"
 
 #include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 #include "pulsegc_compat.h"
 
 static uint64_t mword = 8ULL;
 
-static uint64_t heap_size_u64 = 1024ULL;
+uint64_t heap_size_u64;
 
 static uint64_t zero_addr = 0ULL;
 

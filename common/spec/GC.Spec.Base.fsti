@@ -27,9 +27,7 @@ let mword : U64.t = 8UL
 /// The pow2 57 bound ensures h_addr + (1+wosize)*mword doesn't overflow U64.
 val heap_size : n:pos{n % U64.v mword == 0 /\ n <= pow2 57 /\ n < pow2 64}
 
-/// Heap size as U64 — the primary extractable constant for C code.
-/// Left as an extern so the runtime can configure the actual heap size.
-inline_for_extraction
+/// Heap size as U64 — left as an extern so the runtime can configure it.
 val heap_size_u64 : n:U64.t{U64.v n == heap_size}
 
 /// ---------------------------------------------------------------------------
