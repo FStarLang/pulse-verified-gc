@@ -149,7 +149,8 @@ snapshot: extract
 	@echo "=== Creating snapshot ==="
 	@mkdir -p $(SNAPSHOT_DIR)/krmllib/krml/internal $(SNAPSHOT_DIR)/internal
 	@rm -f $(SNAPSHOT_DIR)/internal/*.h
-	@cp $(EXTRACT_DIR)/GC_Impl.c $(SNAPSHOT_DIR)/
+	@sed 's/^uint64_t heap_size_u64;/\/\* heap_size_u64: defined by the application (e.g., main.c) \*\//' \
+	  $(EXTRACT_DIR)/GC_Impl.c > $(SNAPSHOT_DIR)/GC_Impl.c
 	@cp $(EXTRACT_DIR)/GC_Impl.h $(SNAPSHOT_DIR)/
 	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/internal/*.h $(SNAPSHOT_DIR)/internal/ 2>/dev/null || true
