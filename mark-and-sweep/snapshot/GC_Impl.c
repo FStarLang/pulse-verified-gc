@@ -8,7 +8,6 @@
 #include "internal/GC_Impl.h"
 
 #include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
-#include "pulsegc_compat.h"
 
 static uint64_t mword = 8ULL;
 

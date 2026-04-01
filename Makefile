@@ -1,24 +1,22 @@
 # Root Makefile for pulse-verified-gc
 #
-# Orchestrates builds across all subdirectories.
-# common/ is built first; mark-and-sweep/ depends on it.
+# The mark-and-sweep/ Makefile builds all modules (common/ + mark-and-sweep/)
+# in a single incremental build via `fstar.exe --dep full`.
 #
 # The FStar/ submodule (fstar2 branch) provides F*, Pulse, and KaRaMeL.
 # Run `make prep` once after cloning to build the toolchain.
 #
 # Usage:
 #   make prep       Build fstar.exe (stage3) and KaRaMeL
-#   make            Verify common/ then mark-and-sweep/
+#   make            Verify all modules (common/ + mark-and-sweep/)
 #   make extract    Verify + extract mark-and-sweep to C
 #   make snapshot   Verify + extract + create snapshot/
-#   make clean      Clean all subdirectories
+#   make clean      Clean all build artifacts
 
 FSTAR_HOME ?= $(CURDIR)/FStar
 KRML_HOME  ?= $(FSTAR_HOME)/karamel
 
-SUBDIRS = common mark-and-sweep
-
-.PHONY: all prep verify extract snapshot clean $(SUBDIRS)
+.PHONY: all prep verify extract snapshot clean
 
 all: verify
 
@@ -27,20 +25,15 @@ prep:
 	+$(MAKE) -C $(FSTAR_HOME) -j8
 	+$(MAKE) -C $(FSTAR_HOME) karamel
 
-verify: common
+verify:
 	+$(MAKE) -C mark-and-sweep FSTAR_HOME=$(FSTAR_HOME)
 
-common:
-	+$(MAKE) -C common FSTAR_HOME=$(FSTAR_HOME)
-
-mark-and-sweep: common
-	+$(MAKE) -C mark-and-sweep FSTAR_HOME=$(FSTAR_HOME)
-
-extract: common
+extract:
 	+$(MAKE) -C mark-and-sweep extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
 
-snapshot: common
+snapshot:
 	+$(MAKE) -C mark-and-sweep snapshot FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
 
 clean:
-	@for d in $(SUBDIRS); do $(MAKE) -C $$d clean; done
+	+$(MAKE) -C mark-and-sweep clean
+	+$(MAKE) -C common clean 2>/dev/null || true

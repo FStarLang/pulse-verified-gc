@@ -13,7 +13,7 @@ C = ../common
 OUTPUT_DIR  = _output
 EXTRACT_DIR = _extract
 
-# --- F* flags (single consistent set for all modules) ----------------------
+# --- F* flags ---------------------------------------------------------------
 
 PULSE_LIB ?= $(FSTAR_HOME)/pulse/lib/pulse/lib
 
@@ -22,7 +22,7 @@ FSTAR_FLAGS = \
   --odir $(OUTPUT_DIR) \
   --warn_error -321 \
   --report_assumes warn \
-  --already_cached 'FStar Pulse -GC' \
+  --already_cached 'Prims FStar Pulse PulseCore -GC' \
   --include spec --include impl \
   --include $(C)/spec --include $(C)/lib --include $(C)/impl \
   --include $(PULSE_LIB)
@@ -39,24 +39,22 @@ ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
 
 # --- Auto-generated dependency graph ----------------------------------------
 #
-# `fstar.exe --dep full` emits Make rules for .checked and .krml targets.
-# We post-process to keep only GC module rules (strip FStar/Pulse library
-# rules that are --already_cached).  Path normalization converts absolute
-# paths to project-relative paths.
+# `fstar.exe --dep full` emits .checked and .krml rules.
+# --already_cached ensures .checked targets are GC-only; awk post-processes
+# to (a) normalize absolute paths and (b) filter .krml rules to GC modules.
 
 .depend: $(ALL_SRC)
 	$(FSTAR) --dep full $(ALL_SRC) --output_deps_to $@.raw
-	@awk -v cwd="$$(pwd)/" -v proj="$$(cd .. && pwd)/" '\
+	@awk -v cwd="$$(pwd)/" -v proj="$$(cd .. && pwd)/" ' \
 	  { gsub(cwd, ""); gsub(proj, "../") } \
-	  /^[^[:space:]].*:/ { if (p) flush(); \
-	    p = (/^(spec|impl|\.\.\/common)\/.*(\.checked|\.krml):/ || /^_output\/GC_.*\.krml:/) ? 1 : 0; n = 0 } \
-	  p { line = $$0; \
-	      tmp = line; gsub(/^[ \t]+/, "", tmp); gsub(/[ \t]*\\?[ \t]*$$/, "", tmp); \
-	      if (tmp == "") next; \
-	      if (tmp !~ /^(spec|impl|_output)\/|^\.\.\/common\// && tmp !~ /:/) next; \
-	      buf[n++] = line } \
-	  END { if (p) flush() } \
-	  function flush() { if (n==0) return; \
+	  /^[^ \t].*[:=]/ { if (n) flush(); \
+	    keep = (/\.checked:/ || /^_output\/GC_.*\.krml:/ || /^ALL_CHECKED_FILES/) ? 1 : 0; n = 0 } \
+	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
+	    if (line == "") next; \
+	    if (line !~ /[:=]/ && line !~ /^(spec|impl|_output)\/|^\.\.\/common\//) next; \
+	    buf[n++] = $$0 } \
+	  END { if (n) flush() } \
+	  function flush() { if (!n) return; \
 	    sub(/[ \t]*\\[ \t]*$$/, "", buf[n-1]); \
 	    for (i=0;i<n;i++) print buf[i]; print ""; n=0 }' $@.raw > $@
 	@rm -f $@.raw
@@ -74,7 +72,7 @@ verify: verify-impl
 verify-spec: $(addsuffix .checked,$(SPEC_SRC))
 	@echo "=== spec modules verified ==="
 
-verify-impl: $(addsuffix .checked,$(ALL_SRC))
+verify-impl: $(ALL_CHECKED_FILES)
 	@echo "=== all modules verified ==="
 
 # --- Pattern rules (verification) -------------------------------------------
@@ -98,7 +96,6 @@ $(C)/impl/%.checked: $(C)/impl/%
 #
 # --dep full generates: _output/GC_Impl_Fields.krml: impl/GC.Impl.Fields.fst.checked ...
 # The first prerequisite ($<) is always the module's .fst.checked file.
-# We strip .checked to get the .fst source and derive the module name from $*.
 
 $(OUTPUT_DIR):
 	@mkdir -p $@
@@ -114,7 +111,7 @@ _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 	  --codegen krml --extract_module FStar.Pervasives.Native \
 	  --odir $(OUTPUT_DIR) $(FSTAR_HOME)/ulib/FStar.Pervasives.Native.fst
 
-# --- KaRaMeL bundling (Phase 2: .krml → C) ---------------------------------
+# --- KaRaMeL bundling (.krml → C) ------------------------------------------
 
 EXTRACT_MODULES = \
   GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.Sweep GC.Impl \
@@ -159,9 +156,6 @@ snapshot: extract
 	@cp -r $(KRML_HOME)/krmllib/dist/minimal/* $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krml/*.h $(SNAPSHOT_DIR)/krmllib/krml/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krml/internal/*.h $(SNAPSHOT_DIR)/krmllib/krml/internal/ 2>/dev/null || true
-	@if ! grep -q '^#include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/GC_Impl.c 2>/dev/null; then \
-	  sed -i '/#include "internal\/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"/a #include "pulsegc_compat.h"' $(SNAPSHOT_DIR)/GC_Impl.c; \
-	fi
 	@echo "=== Snapshot updated ==="
 
 # --- Cleanup ----------------------------------------------------------------
