@@ -446,8 +446,6 @@ snapshot: extract
 	@cp $(EXTRACT_DIR)/GC_Impl.h $(SNAPSHOT_DIR)/
 	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/internal/*.h $(SNAPSHOT_DIR)/internal/ 2>/dev/null || true
-	@cp $(EXTRACT_DIR)/krmlinit.c $(SNAPSHOT_DIR)/ 2>/dev/null || true
-	@cp $(EXTRACT_DIR)/krmlinit.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krmllib.h $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
 	@cp -r $(KRML_HOME)/krmllib/dist/minimal/* $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krml/*.h $(SNAPSHOT_DIR)/krmllib/krml/ 2>/dev/null || true
