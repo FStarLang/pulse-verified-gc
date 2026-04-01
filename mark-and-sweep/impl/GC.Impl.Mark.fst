@@ -309,9 +309,12 @@ fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   ensures is_heap heap (SpecObject.makeGray obj 's)
 {
   let hdr = read_word heap h_addr;
-  let new_hdr = SpecObject.colorHeader hdr GC.Lib.Header.Gray;
+  let new_hdr = makeHeader (getWosize hdr) gray (getTag hdr);
   is_heap_length heap;
   write_word heap h_addr new_hdr;
+  // Bridge: Impl.makeHeader == Spec.colorHeader for the spec rewrite
+  SpecObject.all_headers_valid hdr;
+  lib_makeHeader_eq_colorHeader hdr GC.Lib.Header.Gray;
   SpecObject.makeGray_spec obj 's;
   rewrite (is_heap heap (SpecHeap.write_word 's h_addr new_hdr))
        as (is_heap heap (SpecObject.makeGray obj 's))
@@ -563,9 +566,12 @@ fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   ensures is_heap heap (SpecObject.makeBlack f_addr 's)
 {
   let hdr = read_word heap h_addr;
-  let new_hdr = SpecObject.colorHeader hdr GC.Lib.Header.Black;
+  let new_hdr = makeHeader (getWosize hdr) black (getTag hdr);
   is_heap_length heap;
   write_word heap h_addr new_hdr;
+  // Bridge: Impl.makeHeader == Spec.colorHeader for the spec rewrite
+  SpecObject.all_headers_valid hdr;
+  lib_makeHeader_eq_colorHeader hdr GC.Lib.Header.Black;
   SpecObject.makeBlack_spec f_addr 's;
   rewrite (is_heap heap (SpecHeap.write_word 's h_addr new_hdr))
        as (is_heap heap (SpecObject.makeBlack f_addr 's))

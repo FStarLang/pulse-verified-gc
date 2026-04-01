@@ -23,6 +23,8 @@ module U8 = FStar.UInt8
 
 let heap_size : n:pos{n % U64.v mword == 0 /\ n <= pow2 57 /\ n < pow2 64} = 1024
 
+let heap_size_u64 : n:U64.t{U64.v n == heap_size} = 1024UL
+
 /// ---------------------------------------------------------------------------
 /// Address Predicates (implementations)
 /// ---------------------------------------------------------------------------

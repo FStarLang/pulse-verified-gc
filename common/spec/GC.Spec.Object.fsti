@@ -102,10 +102,14 @@ val getWosize_bound : (hdr: U64.t) -> Lemma (U64.v (getWosize hdr) < pow2 54)
 /// ---------------------------------------------------------------------------
 
 /// Construct header from components
+inline_for_extraction
 val makeHeader (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256}) : U64.t
 
-/// Change color in header (takes color_sem)
+/// Change color in header (takes color_sem) — spec only, use makeHeader for extraction
 val colorHeader (header: U64.t) (new_color: color) : U64.t
+
+/// All headers have valid color bits (get_color always < 4)
+val all_headers_valid : (hdr: U64.t) -> Lemma (valid_header64 hdr)
 
 /// colorHeader definition: colorHeader hdr c == set_color64 hdr (uint_to_t (pack_color c))
 val colorHeader_spec : (hdr: U64.t) -> (c: color) ->

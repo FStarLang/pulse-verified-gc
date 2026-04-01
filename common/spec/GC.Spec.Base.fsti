@@ -20,11 +20,17 @@ module U8 = FStar.UInt8
 /// ---------------------------------------------------------------------------
 
 /// Machine word size in bytes (8 for 64-bit)
+inline_for_extraction
 let mword : U64.t = 8UL
 
 /// Heap size in bytes (abstract — proofs work for any word-aligned size up to pow2 57)
 /// The pow2 57 bound ensures h_addr + (1+wosize)*mword doesn't overflow U64.
 val heap_size : n:pos{n % U64.v mword == 0 /\ n <= pow2 57 /\ n < pow2 64}
+
+/// Heap size as U64 — the primary extractable constant for C code.
+/// Left as an extern so the runtime can configure the actual heap size.
+inline_for_extraction
+val heap_size_u64 : n:U64.t{U64.v n == heap_size}
 
 /// ---------------------------------------------------------------------------
 /// Heap Type
@@ -52,6 +58,7 @@ let hp_addr_32 = a:FStar.UInt32.t{
 }
 
 /// Zero address is a valid hp_addr
+inline_for_extraction
 let zero_addr : hp_addr = 0UL
 
 /// Object address: hp_addr with room for header before it (>= 8)

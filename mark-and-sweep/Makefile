@@ -321,11 +321,6 @@ KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation \
   -skip-linking \
-  -library GC.Spec.Base \
-  -library GC.Spec.Heap \
-  -library GC.Spec.Object \
-  -library GC.Lib.Header \
-  -library GC.Lib.Address \
   -bundle 'GC.Impl=GC.Impl.*' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
@@ -446,6 +441,7 @@ SNAPSHOT_DIR = snapshot
 snapshot: extract
 	@echo "=== Creating snapshot ==="
 	@mkdir -p $(SNAPSHOT_DIR)/krmllib/krml/internal $(SNAPSHOT_DIR)/internal
+	@rm -f $(SNAPSHOT_DIR)/internal/*.h
 	@cp $(EXTRACT_DIR)/GC_Impl.c $(SNAPSHOT_DIR)/
 	@cp $(EXTRACT_DIR)/GC_Impl.h $(SNAPSHOT_DIR)/
 	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true

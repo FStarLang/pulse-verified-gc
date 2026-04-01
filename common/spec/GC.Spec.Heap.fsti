@@ -22,9 +22,13 @@ open GC.Spec.Base
 /// Byte ↔ U64 Helpers (shared with GC.Impl.Heap)
 /// ---------------------------------------------------------------------------
 
+inline_for_extraction
 let uint8_to_uint64 (x: U8.t) : U64.t = U64.uint_to_t (U8.v x)
+
+inline_for_extraction
 let uint64_to_uint8 (x: U64.t) : U8.t = U8.uint_to_t (U64.v x % 256)
 
+inline_for_extraction
 let combine_bytes (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) : U64.t =
   let open U64 in
   let v0 = uint8_to_uint64 b0 in
@@ -154,6 +158,7 @@ val hd_address_bounds : (obj: obj_addr) ->
   Lemma (U64.v (hd_address obj) + U64.v mword < heap_size)
 
 /// Field/object address from header address  
+inline_for_extraction
 val f_address (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) : obj_addr
 
 /// f_address arithmetic: f_address h = h + 8

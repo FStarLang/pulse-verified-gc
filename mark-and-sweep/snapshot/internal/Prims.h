@@ -5,18 +5,13 @@
   KaRaMeL version: <unknown>
  */
 
-#ifndef internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H
-#define internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H
+#ifndef internal_Prims_H
+#define internal_Prims_H
 
 #include "krmllib.h"
 
-#define GC_Lib_Header_White 0
-#define GC_Lib_Header_Gray 1
-#define GC_Lib_Header_Blue 2
-#define GC_Lib_Header_Black 3
-
-typedef uint8_t GC_Lib_Header_color_sem;
+extern krml_checked_int_t Prims_op_Modulus(krml_checked_int_t x, krml_checked_int_t y);
 
 
-#define internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H_DEFINED
-#endif /* internal_GC_Spec_GC_Lib_Header_GC_Lib_Address_H */
+#define internal_Prims_H_DEFINED
+#endif /* internal_Prims_H */
