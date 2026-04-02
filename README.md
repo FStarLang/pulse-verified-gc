@@ -1,13 +1,46 @@
 # Verified OCaml Garbage Collector
 
-A formally verified OCaml-compatible garbage collector, specified in [F*](https://fstar-lang.org/) and implemented in [Pulse](https://github.com/FStarLang/pulse) (concurrent separation logic for F*). Two GC variants share common graph-theoretic infrastructure:
+> **Based on:** Sheera Shamsu, Uday Khedker, and Adithya Murali.
+> *"Formal Verification of a Concurrent Garbage Collector with Pulse."*
+> Journal of Automated Reasoning **69**, 7 (2025).
+> [DOI: 10.1007/s10817-025-09721-0](https://link.springer.com/article/10.1007/s10817-025-09721-0)
+>
+> Original source: <https://github.com/fplaunchpad/verified_ocaml_gc/>
+>
+> This repository restructures and extends that work: refactoring the
+> build system for incremental parallel verification, adding `.fsti`
+> interfaces for modular compilation, extracting verified C code via
+> KaRaMeL, and tracking the upstream `fstar2` branch.
 
-| Variant | Directory | Description | Spec Status |
-|---------|-----------|-------------|-------------|
-| **Mark-and-Sweep** | `mark-and-sweep/` | Sequential stop-the-world GC | ✅ Fully verified (0 admits) |
-| **On-the-Fly** | `fly/` | Concurrent Dijkstra-style tri-color marking | Spec proven (some assumes in Pulse) |
-| **Common** | `common/` | Shared heap model, graph theory, DFS | ✅ Fully verified |
+---
+
+A formally verified OCaml-compatible garbage collector, specified in
+[F*](https://fstar-lang.org/) and implemented in
+[Pulse](https://fstar-lang.org/) (concurrent separation logic for F*).
+~20k lines of F*/Pulse across 38 verified modules, extracted to standalone C.
+
+| Component | Directory | Description | Status |
+|-----------|-----------|-------------|--------|
+| **Common** | `common/` | Shared heap model, graph theory, DFS | ✅ Verified |
+| **Mark-and-Sweep** | `mark-and-sweep/` | Sequential stop-the-world GC | ✅ Verified, extracted to C |
 | **Concurrent** | `concurrent/` | Concurrent extensions (shadow stacks, write barriers) | Pulse modules |
+| **On-the-Fly** | `fly/` | Concurrent Dijkstra-style tri-color marking | Spec proven |
+
+## Quick Start
+
+```bash
+# Clone with submodules
+git clone --recursive <this-repo>
+
+# Build the F*/Pulse/KaRaMeL toolchain (~30 min, one-time)
+make prep
+
+# Verify all modules + extract to C + update snapshot
+make snapshot
+
+# Or just build the pre-extracted C (no F* needed):
+cd mark-and-sweep/snapshot && make
+```
 
 ## Main Theorems
 
@@ -15,45 +48,23 @@ All theorems live in `mark-and-sweep/spec/GC.Spec.Correctness.fst` with **zero a
 
 ### `end_to_end_correctness`
 
-Composes all five pillars of GC correctness — given a well-formed heap, mark followed by sweep produces a heap that is still well-formed, where every reachable object is black after marking, every object is white after sweeping, and all reachable data is preserved:
+Composes five pillars of GC correctness — given a well-formed heap,
+mark followed by sweep produces a heap that is still well-formed,
+where every reachable object is black after marking, every object is
+white after sweeping, and all reachable data is preserved:
 
 | Pillar | Key lemma(s) |
 |--------|-------------|
 | 1. Heap integrity | `sweep_preserves_wf` |
 | 2. Reachability ⟺ black | `mark_reachable_is_black`, `mark_black_is_reachable` |
-| 3. Successor preservation | `gc_preserves_structure` (see below) |
+| 3. Successor preservation | `gc_preserves_structure` |
 | 4. Color reset | `sweep_resets_colors` |
-| 5. Data transparency | `gc_preserves_data` (see below) |
+| 5. Data transparency | `gc_preserves_data` |
 
-### `gc_preserves_structure`
+### `gc_safety` and `gc_completeness`
 
-Proves that every reachable object keeps the same graph successors through mark+sweep. Chains three lemmas:
-
-```
-mark_preserves_create_graph     mark does not alter the graph structure
-        ↓
-successors_eq_pointer_fields    graph successors = heap pointer fields
-        ↓
-sweep_preserves_edges           sweep preserves pointer fields of survivors
-```
-
-### `gc_preserves_data`
-
-Proves that every field of every reachable object is unchanged after mark+sweep. Chains:
-
-```
-mark_preserves_get_field        mark only touches headers, not field data
-        ↓
-sweep_preserves_field           sweep preserves fields of survivors
-```
-
-### `gc_completeness`
-
-Every object that survives collection is reachable — the contrapositive of `mark_black_is_reachable` (unreachable ⟹ not black ⟹ swept).
-
-### `gc_safety`
-
-Every reachable object survives collection — follows from `mark_reachable_is_black` (reachable ⟹ black ⟹ not swept).
+- **Safety:** every reachable object survives collection (reachable ⟹ black ⟹ not swept).
+- **Completeness:** every object that survives is reachable (unreachable ⟹ not black ⟹ swept).
 
 ## Architecture
 
@@ -66,7 +77,11 @@ common/                          Shared F* specifications & Pulse libraries
 mark-and-sweep/                  Sequential mark-and-sweep GC
 ├── spec/                        Mark, Sweep, Correctness (end-to-end theorem)
 ├── impl/                        Pulse implementation (fields, closure, mark, sweep)
-└── snapshot/                    Extracted C code (self-contained)
+├── snapshot/                    Extracted C code (self-contained, builds without F*)
+│   ├── GC_Impl.c / GC_Impl.h   KaRaMeL-extracted verified C
+│   ├── main.c                   Test harness
+│   └── Makefile                 Standalone build
+└── Makefile                     Incremental build with --dep full
 
 concurrent/                      Concurrent GC extensions
 ├── Spec/                        Tri-color invariant, tricolor_sem type (4 colors)
@@ -84,7 +99,8 @@ fly/                             On-the-fly concurrent GC (imports from common/)
   bits 10–63          bits 8–9         bits 0–7
 ```
 
-Colors: `White=0`, `Gray=1`, `Black=2` (3-color `color_sem` in `GC.Lib.Header`; fly/ uses 4-color `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst`).
+Colors: `White=0`, `Gray=1`, `Black=2` (3-color `color_sem` in
+`GC.Lib.Header`; fly/ uses 4-color `tricolor_sem` adding `Blue`).
 
 ## Module Dependency Chain
 
@@ -97,7 +113,7 @@ GC.Spec.Heap                   read_word, write_word on byte-addressable heap
     ↓
 GC.Spec.Object                 header fields, color predicates, color mutations
     ↓
-GC.Spec.Fields                 object enumeration (objects 0UL g), field traversal
+GC.Spec.Fields                 object enumeration, field traversal
     ↓
 GC.Spec.Graph                  vertex/edge types, reachability, DFS forest
     ↓
@@ -113,69 +129,54 @@ GC.Spec.HeapModel              graph construction from heap (create_graph)
 
 ## Building & Verification
 
-The FStar/ submodule (fstar2 branch) provides F*, Pulse, and KaRaMeL.
-
-### First-time setup
-
-```bash
-git submodule update --init --recursive
-make prep       # Build fstar.exe (stage3) and KaRaMeL (~30 min)
-```
-
-### Verification
+The `FStar/` submodule (`fstar2` branch) provides F*, Pulse, and KaRaMeL
+in a single repository.
 
 ```bash
-make            # Verify common/ then mark-and-sweep/ (default)
-
-# Or verify individual directories:
-cd common && make
-cd mark-and-sweep && make
-```
-
-### Extraction to C
-
-```bash
-make extract    # Verify + extract mark-and-sweep to C
+make prep       # Build fstar.exe (stage3) and KaRaMeL (one-time)
+make            # Verify all 38 modules (common/ + mark-and-sweep/)
+make -j8        # Parallel verification
+make extract    # Verify + extract to C via KaRaMeL
 make snapshot   # Verify + extract + update snapshot/
+make clean      # Clean all build artifacts
 ```
 
-The extracted C code lives in `mark-and-sweep/snapshot/` and can be
-built standalone without F*:
+The `mark-and-sweep/Makefile` uses `fstar.exe --dep full` for automatic
+dependency analysis with generic pattern rules — supporting fully
+incremental, parallel builds.
+
+### Using the Extracted C
+
+The snapshot in `mark-and-sweep/snapshot/` is self-contained:
 
 ```bash
 cd mark-and-sweep/snapshot
-make            # Produces libpulsegc.a
+make            # Compiles GC_Impl.c + main.c → gc_test, runs it
 ```
+
+The application provides `heap_size_u64` (declared `extern` in the
+generated code) to configure the heap size at link time.
 
 ## Verification Status
 
-### mark-and-sweep/ — Fully Verified ✅
+**38 modules, ~20k lines, 0 admits.**
 
-| File | Lines | Admits | Assumes | Status |
-|------|------:|-------:|--------:|--------|
-| `spec/GC.Spec.Mark.fst` | ~3,400 | 0 | 0 | ✅ Verified |
-| `spec/GC.Spec.Sweep.fst` | ~1,240 | 0 | 0 | ✅ Verified |
-| `spec/GC.Spec.Correctness.fst` | ~300 | 0 | 0 | ✅ Verified |
-| `spec/GC.Spec.SeqMemLemmas.fst` | ~90 | 0 | 1 | Helper module |
-
-### common/ — Fully Verified ✅
-
-All Spec/ and Lib/ modules: **0 admits, 0 assumes**.
-
-### fly/ — Specs Proven, Pulse WIP
-
-Spec modules are verified. Pulse implementation modules use `assume` for concurrency-related TCB axioms (atomic operations, lock semantics).
+Three `assume` statements remain (Pulse TCB for array allocation, and
+a sequence-membership lemma used as an axiom in `GC.Spec.SeqMemLemmas`).
 
 ## Prerequisites
 
-- [F*](https://github.com/FStarLang/FStar) fstar2 branch (included as Git submodule)
-- OCaml 4.14+ (for building F* and KaRaMeL)
-- Z3 SMT solver (bundled with F* build)
+- [F*](https://github.com/FStarLang/FStar) `fstar2` branch (included as Git submodule)
+- OCaml 4.14+ with opam (for building F* and KaRaMeL)
+- Z3 SMT solver (bundled with the F* build)
 
-The FStar/ submodule includes both Pulse (baked into stage3) and
-KaRaMeL (for C extraction). Run `make prep` to build everything.
+Run `make prep` after cloning to build the full toolchain.
 
 ## References
 
-- [Pulse: Concurrent Separation Logic for F*](https://github.com/FStarLang/pulse)
-- [F* Tutorial](https://fstar-lang.org/tutorial/)
+- Sheera Shamsu, Uday Khedker, Adithya Murali.
+  [*Formal Verification of a Concurrent Garbage Collector with Pulse.*](https://link.springer.com/article/10.1007/s10817-025-09721-0)
+  J. Autom. Reason. **69**, 7 (2025).
+- Original implementation: <https://github.com/fplaunchpad/verified_ocaml_gc/>
+- [F* language](https://fstar-lang.org/) and [tutorial](https://fstar-lang.org/tutorial/)
+- [Pulse: Concurrent Separation Logic for F*](https://fstar-lang.org/)
