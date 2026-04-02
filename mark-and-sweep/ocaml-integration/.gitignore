@@ -1,0 +1,6 @@
+ocaml-4.14-unchanged/
+ocaml-4.14-verified-gc/
+tests/*.byte
+tests/*.cmi
+tests/*.cmo
+tests/results/
