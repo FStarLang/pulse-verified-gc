@@ -1,6 +1,6 @@
 # Verified OCaml Garbage Collector
 
-> **Based on:** Sheera Shamsu, Uday Khedker, and Adithya Murali.
+> **Based on:** Sheera Shamsu, Dipesh Kafle, Dhruv Maroo, Kartik Nagar, Karthikeyan Bhargavan & KC Sivaramakrishnan 
 > *"Formal Verification of a Concurrent Garbage Collector with Pulse."*
 > Journal of Automated Reasoning **69**, 7 (2025).
 > [DOI: 10.1007/s10817-025-09721-0](https://link.springer.com/article/10.1007/s10817-025-09721-0)
@@ -161,8 +161,8 @@ generated code) to configure the heap size at link time.
 
 **38 modules, ~20k lines, 0 admits.**
 
-Three `assume` statements remain (Pulse TCB for array allocation, and
-a sequence-membership lemma used as an axiom in `GC.Spec.SeqMemLemmas`).
+One `assume` remains: `platform_fits_u64` in `common/impl/GC.Impl.Heap.fst`
+— an axiom that `size_t` is at least 64 bits, true on all 64-bit platforms.
 
 ## Prerequisites
 
