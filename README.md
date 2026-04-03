@@ -1,7 +1,7 @@
 # Verified OCaml Garbage Collector
 
 > **Based on:** Sheera Shamsu, Dipesh Kafle, Dhruv Maroo, Kartik Nagar, Karthikeyan Bhargavan & KC Sivaramakrishnan 
-> *"Formal Verification of a Concurrent Garbage Collector with Pulse."*
+> *"A Mechanically Verified Garbage Collector for OCaml"*
 > Journal of Automated Reasoning **69**, 7 (2025).
 > [DOI: 10.1007/s10817-025-09721-0](https://link.springer.com/article/10.1007/s10817-025-09721-0)
 >
@@ -174,8 +174,8 @@ Run `make prep` after cloning to build the full toolchain.
 
 ## References
 
-- Sheera Shamsu, Uday Khedker, Adithya Murali.
-  [*Formal Verification of a Concurrent Garbage Collector with Pulse.*](https://link.springer.com/article/10.1007/s10817-025-09721-0)
+- Sheera Shamsu, Dipesh Kafle, Dhruv Maroo, Kartik Nagar, Karthikeyan Bhargavan & KC Sivaramakrishnan
+  [*A Mechanically Verified Garbage Collector for OCaml*](https://link.springer.com/article/10.1007/s10817-025-09721-0)
   J. Autom. Reason. **69**, 7 (2025).
 - Original implementation: <https://github.com/fplaunchpad/verified_ocaml_gc/>
 - [F* language](https://fstar-lang.org/) and [tutorial](https://fstar-lang.org/tutorial/)
