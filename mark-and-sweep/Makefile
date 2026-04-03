@@ -90,6 +90,10 @@ $(C)/lib/%.checked: $(C)/lib/%
 impl/%.checked: impl/%
 	$(FSTAR) --split_queries always --z3refresh $<
 
+# Allocator proof needs cross-lemma fact chaining — no split_queries
+impl/GC.Impl.Allocator.fst.checked: impl/GC.Impl.Allocator.fst
+	$(FSTAR) --z3rlimit 100 $<
+
 $(C)/impl/%.checked: $(C)/impl/%
 	$(FSTAR) --split_queries always $<
 
