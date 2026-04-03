@@ -125,6 +125,8 @@ private let rec efptu_congruence
 /// ===========================================================================
 
 /// For src = obj: fields at obj + k*8 are all > hd_address obj = obj - 8
+#restart-solver
+#push-options "--z3rlimit 200"
 let header_write_doesnt_change_own_fields
   (g: heap) (obj: obj_addr) (new_hdr: U64.t) (k: nat)
   : Lemma (requires k < U64.v (wosize_of_object obj g))
@@ -138,6 +140,7 @@ let header_write_doesnt_change_own_fields
     wosize_of_object_bound obj g;
     if U64.v fa < heap_size && U64.v fa % 8 = 0 then
       read_write_different g hd fa new_hdr
+#pop-options
 
 /// For src ≠ obj: all fields of src are separated from hd_address(obj)
 #push-options "--z3rlimit 30"

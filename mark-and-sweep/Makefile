@@ -81,6 +81,10 @@ verify-impl: $(addsuffix .checked,$(ALL_SRC))
 spec/%.checked: spec/%
 	$(FSTAR) $<
 
+# Allocator bridge lemmas: bitvector and objects-walk proofs need higher limits
+spec/GC.Spec.Allocator.Lemmas.fst.checked: spec/GC.Spec.Allocator.Lemmas.fst
+	$(FSTAR) --z3rlimit 200 $<
+
 $(C)/spec/%.checked: $(C)/spec/%
 	$(FSTAR) $<
 
