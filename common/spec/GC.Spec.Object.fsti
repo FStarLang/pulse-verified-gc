@@ -42,6 +42,7 @@ val no_scan_tag : U64.t
 
 /// Expose tag constant values (needed for Pulse bridge lemmas)
 val no_scan_tag_val : unit -> Lemma (no_scan_tag == U64.uint_to_t 251)
+val infix_tag_val : unit -> Lemma (infix_tag == U64.uint_to_t 249)
 
 /// ---------------------------------------------------------------------------
 /// Header Masks and Shifts
