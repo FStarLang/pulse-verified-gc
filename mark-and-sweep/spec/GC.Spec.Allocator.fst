@@ -203,3 +203,20 @@ let init_heap_spec (g: heap) : GTot (heap & U64.t) =
     let obj_addr_nat = U64.v mword in
     let g2 = write_word g1 (mword <: hp_addr) 0UL in
     (g2, mword)  // Free pointer = first object = offset 8
+
+/// ---------------------------------------------------------------------------
+/// Bridge: make_header == GC.Impl.Object.makeHeader (for extraction)
+/// ---------------------------------------------------------------------------
+
+/// The spec's make_header with blue_bits matches GC.Impl.Object.makeHeader with blue
+/// because pack_color Blue = 2 = blue_bits.
+/// This is needed to connect the Pulse implementation to the pure spec.
+
+module ImplObject = GC.Spec.Object
+
+let make_header_eq_impl (wz: U64.t{U64.v wz < pow2 54}) (c: U64.t{U64.v c < 4}) (tag: U64.t{U64.v tag < 256})
+  : Lemma (make_header wz c tag == 
+           (let wz_shifted = U64.shift_left wz 10ul in
+            let c_shifted = U64.shift_left c 8ul in
+            U64.logor wz_shifted (U64.logor c_shifted tag)))
+  = ()

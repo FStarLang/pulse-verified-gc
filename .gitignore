@@ -15,3 +15,4 @@ mark-and-sweep/_extract/
 mark-and-sweep/snapshot/*.o
 mark-and-sweep/snapshot/*.a
 dump
+mark-and-sweep/snapshot/gc_test
