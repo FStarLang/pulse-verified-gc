@@ -116,6 +116,7 @@ _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 
 EXTRACT_MODULES = \
   GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.Sweep GC.Impl \
+  GC.Impl.Allocator \
   GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
 
@@ -125,11 +126,12 @@ ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_MODULES))) \
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Impl=GC.Impl.*' \
+  -bundle 'GC.Impl+GC.Impl.Allocator=GC.Impl.*[rename=GC_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.Sweep \
-    GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack) \
+    GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+    GC.Impl.Allocator) \
   -warn-error -2-9-15
 
 $(EXTRACT_DIR):
@@ -149,7 +151,8 @@ snapshot: extract
 	@echo "=== Creating snapshot ==="
 	@mkdir -p $(SNAPSHOT_DIR)/krmllib/krml/internal $(SNAPSHOT_DIR)/internal
 	@rm -f $(SNAPSHOT_DIR)/internal/*.h
-	@sed 's/^uint64_t heap_size_u64;/\/\* heap_size_u64: defined by the application (e.g., main.c) \*\//' \
+	@sed -e 's/^uint64_t heap_size_u64;/\/\* heap_size_u64: defined by the application (e.g., main.c) \*\//' \
+	     -e 's/^krml_checked_int_t heap_size;/\/\* heap_size: defined by the application (e.g., main.c) \*\//' \
 	  $(EXTRACT_DIR)/GC_Impl.c > $(SNAPSHOT_DIR)/GC_Impl.c
 	@cp $(EXTRACT_DIR)/GC_Impl.h $(SNAPSHOT_DIR)/
 	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true

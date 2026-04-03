@@ -5,15 +5,13 @@
   KaRaMeL version: <unknown>
  */
 
-#ifndef internal_GC_Impl_H
-#define internal_GC_Impl_H
+#ifndef internal_Prims_H
+#define internal_Prims_H
 
 #include "krmllib.h"
 
-#include "../GC_Impl.h"
-
-extern uint64_t heap_size_u64;
+extern krml_checked_int_t Prims_op_Division(krml_checked_int_t x, krml_checked_int_t y);
 
 
-#define internal_GC_Impl_H_DEFINED
-#endif /* internal_GC_Impl_H */
+#define internal_Prims_H_DEFINED
+#endif /* internal_Prims_H */
