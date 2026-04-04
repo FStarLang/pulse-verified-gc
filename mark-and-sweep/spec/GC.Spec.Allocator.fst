@@ -105,6 +105,8 @@ let alloc_from_block (g: heap) (obj: obj_addr) (requested_wz: nat) (next_fp: U64
         let g2 = write_word g1 rem_hd rem_hdr in
         // Remainder's first field links to rest of free list
         let rem_obj_nat = rem_hd_nat + 8 in
+        // rem_hd_nat < heap_size <= pow2 57, so rem_obj_nat < pow2 64
+        FStar.Math.Lemmas.pow2_lt_compat 64 57;
         if rem_obj_nat >= heap_size || rem_obj_nat >= pow2 64 ||
            rem_obj_nat % 8 <> 0 then
           (g2, U64.uint_to_t rem_obj_nat)

@@ -187,8 +187,67 @@ private let rec efptu_monotone
 /// ===========================================================================
 
 /// For src = obj: fields at obj + k*8 are all > hd_address obj = obj - 8
+/// hd_address(obj) = obj - 8, so obj + k*8 > obj - 8 for all k >= 0.
+///
+/// Proof uses a custom NL step to avoid Z3 4.13.3 arith.solver 6 limitations
+/// with chaining through k*8 terms.
 #restart-solver
-#push-options "--z3rlimit 200 --z3smtopt '(set-option :smt.mbqi true)'"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+
+/// Helper: if (a * b) % n == a * b and (c + a * b) % n == c + a * b,
+/// then for any x with (c + x) % n == c + x and x == (a * b) % n,
+/// we get x == a * b and c + x < n.
+/// This helper avoids the NL chain in the main proof.
+private let mul_mod_add_mod_helper
+  (k: nat) (obj_v: nat)
+  : Lemma (requires k < pow2 54 /\ obj_v < pow2 57)
+          (ensures (let km_v = (k * 8) % pow2 64 in
+                    let fa_v = (obj_v + km_v) % pow2 64 in
+                    km_v == k * 8 /\
+                    fa_v == obj_v + km_v /\
+                    obj_v + km_v < pow2 64))
+  = FStar.Math.Lemmas.nat_times_nat_is_nat k 8;
+    FStar.Math.Lemmas.lemma_mult_lt_right 8 k (pow2 54);
+    assert_norm (pow2 54 * 8 == pow2 57);
+    assert_norm (pow2 57 < pow2 64);
+    FStar.Math.Lemmas.small_mod (k * 8) (pow2 64);
+    assert_norm (pow2 57 + pow2 57 == pow2 58);
+    assert_norm (pow2 58 < pow2 64);
+    FStar.Math.Lemmas.small_mod (obj_v + k * 8) (pow2 64)
+
+/// Bridge lemma: if a == c and b == d then a * b == c * d.
+/// Z3 can't do this under arith.solver 6 — write it as a standalone lemma.
+private let mul_cong (a b c d: nat)
+  : Lemma (requires a == c /\ b == d)
+          (ensures a * b == c * d)
+  = ()
+
+private let header_write_doesnt_change_own_fields_aux
+  (g: heap) (obj: obj_addr) (new_hdr: U64.t) (k: nat)
+  (fa: U64.t) (hd: hp_addr)
+  : Lemma (requires k < U64.v (wosize_of_object obj g) /\
+                    fa == U64.add_mod obj (U64.mul_mod (U64.uint_to_t k) mword) /\
+                    hd == hd_address obj /\
+                    U64.v fa < heap_size /\ U64.v fa % 8 == 0)
+          (ensures read_word (write_word g hd new_hdr) fa == read_word g fa)
+  = hd_address_spec obj;
+    wosize_of_object_bound obj g;
+    assert_norm (pow2 54 < pow2 64);
+    // Connect U64 operations to nat arithmetic via mul_cong
+    // U64.v (uint_to_t k) == k, U64.v mword == 8
+    mul_cong (U64.v (U64.uint_to_t k)) (U64.v mword) k 8;
+    // Now Z3 knows: U64.v (uint_to_t k) * U64.v mword == k * 8
+    // So (U64.v (uint_to_t k) * U64.v mword) % pow2 64 == (k * 8) % pow2 64
+    // Use helper to establish mod-arithmetic facts
+    mul_mod_add_mod_helper k (U64.v obj);
+    // Helper gives: (k * 8) % pow2 64 == k * 8 /\ (obj_v + k*8) % pow2 64 == obj_v + k*8
+    // So U64.v (mul_mod ...) == k * 8, and U64.v fa == U64.v obj + k * 8
+    // hd == obj - 8, so hd + 8 <= obj <= obj + k * 8 == fa
+    assert (U64.v hd + U64.v mword <= U64.v fa);
+    read_write_different g hd fa new_hdr
+#pop-options
+
+#push-options "--z3rlimit 20"
 let header_write_doesnt_change_own_fields
   (g: heap) (obj: obj_addr) (new_hdr: U64.t) (k: nat)
   : Lemma (requires k < U64.v (wosize_of_object obj g))
@@ -196,26 +255,13 @@ let header_write_doesnt_change_own_fields
                     let hd = hd_address obj in
                     U64.v fa < heap_size /\ U64.v fa % 8 == 0 ==>
                     read_word (write_word g hd new_hdr) fa == read_word g fa))
-  = let fa = U64.add_mod obj (U64.mul_mod (U64.uint_to_t k) mword) in
+  = wosize_of_object_bound obj g;
+    assert_norm (pow2 54 < pow2 64);
+    let fa = U64.add_mod obj (U64.mul_mod (U64.uint_to_t k) mword) in
     let hd = hd_address obj in
-    hd_address_spec obj;
-    wosize_of_object_bound obj g;
-    // Establish k*8 is nat and < pow2 64
-    FStar.Math.Lemmas.nat_times_nat_is_nat k 8;
-    let k8 : nat = k * 8 in
-    FStar.Math.Lemmas.lemma_mult_lt_right 8 k (pow2 54);
-    assert_norm (pow2 54 * 8 == pow2 57);
-    assert_norm (pow2 57 < pow2 64);
-    FStar.Math.Lemmas.small_mod k8 (pow2 64);
-    // Establish obj + k8 is nat and < pow2 64
-    assert_norm (heap_size <= pow2 57);
-    assert_norm (pow2 57 + pow2 57 == pow2 58);
-    assert_norm (pow2 58 < pow2 64);
-    let obj_k8 : nat = U64.v obj + k8 in
-    FStar.Math.Lemmas.small_mod obj_k8 (pow2 64);
-    assert (U64.v fa == obj_k8);
-    if U64.v fa < heap_size && U64.v fa % 8 = 0 then
-      read_write_different g hd fa new_hdr
+    if U64.v fa < heap_size && U64.v fa % 8 = 0
+    then header_write_doesnt_change_own_fields_aux g obj new_hdr k fa hd
+    else ()
 #pop-options
 
 /// For src ≠ obj: all fields of src are separated from hd_address(obj)
