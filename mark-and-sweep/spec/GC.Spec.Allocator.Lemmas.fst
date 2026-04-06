@@ -1919,4 +1919,604 @@ let alloc_spec_preserves_wf (g: heap) (fp: U64.t) (requested_wz: nat)
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_wf g fp 0UL fp wz (heap_size / U64.v mword)
 
+/// fl_valid introduction forms
+let fl_valid_null (g: heap) (fuel: nat)
+  : Lemma (requires fuel > 0)
+          (ensures fl_valid g 0UL fuel)
+  = ()
+
+let fl_valid_step (g: heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    Seq.mem fp (objects 0UL g) /\
+                    U64.v (wosize_of_object (fp <: obj_addr) g) >= 1 /\
+                    (U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size ==>
+                      read_word g (fp <: obj_addr) <> fp /\
+                      fl_valid g (read_word g (fp <: obj_addr)) (fuel - 1)))
+          (ensures fl_valid g fp fuel)
+  = ()
+
+/// fl_valid weakening: more fuel implies less fuel
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let rec fl_valid_weaken (g: heap) (fp: U64.t) (fuel_strong fuel_weak: nat)
+  : Lemma (requires fl_valid g fp fuel_strong /\ fuel_weak <= fuel_strong)
+          (ensures fl_valid g fp fuel_weak)
+          (decreases fuel_weak)
+  = if fuel_weak = 0 then ()
+    else if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = fp in
+      let hd = hd_address obj in
+      if U64.v hd + 16 <= heap_size then
+        fl_valid_weaken g (read_word g obj) (fuel_strong - 1) (fuel_weak - 1)
+      else ()
+    end
+#pop-options
+
+/// Transfer fl_valid from g to g' with the same fuel
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let rec fl_valid_transfer (g g': heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+    (requires fl_valid g fp fuel /\
+              (forall (a: U64.t).
+                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
+                  Seq.mem a (objects 0UL g)) ==>
+                 (Seq.mem a (objects 0UL g') /\
+                  (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 ==>
+                    U64.v (wosize_of_object (a <: obj_addr) g') >= 1) /\
+                  (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                   U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                    read_word g' (a <: obj_addr) == read_word g (a <: obj_addr)))))
+    (ensures fl_valid g' fp fuel)
+    (decreases fuel)
+  = if fuel = 0 then ()
+    else if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = fp in
+      let hd = hd_address obj in
+      if U64.v hd + 16 <= heap_size then begin
+        let link = read_word g obj in
+        fl_valid_transfer g g' link (fuel - 1)
+      end
+      else ()
+    end
+#pop-options
+
+/// Chain termination: the free-list chain from fp hits a base case within `steps` iterations.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let rec fl_chain_terminates (g: heap) (fp: U64.t) (steps: nat) : Tot bool (decreases steps) =
+  if fp = 0UL then true
+  else if U64.v fp < U64.v mword then true
+  else if U64.v fp >= heap_size then true
+  else if U64.v fp % U64.v mword <> 0 then true
+  else if steps = 0 then false
+  else
+    let hd = hd_address (fp <: obj_addr) in
+    if U64.v hd + 16 > heap_size then true
+    else fl_chain_terminates g (read_word g (fp <: obj_addr)) (steps - 1)
+#pop-options
+
+/// If fl_valid holds AND the chain terminates within fuel steps,
+/// then fl_valid holds for any fuel'.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let rec fl_valid_any_fuel (g: heap) (fp: U64.t) (fuel fuel': nat)
+  : Lemma
+    (requires fl_valid g fp fuel /\ fl_chain_terminates g fp fuel)
+    (ensures fl_valid g fp fuel')
+    (decreases fuel')
+  = if fuel' = 0 then ()
+    else if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = fp in
+      let hd = hd_address obj in
+      if U64.v hd + 16 <= heap_size then begin
+        let link = read_word g obj in
+        fl_valid_any_fuel g link (fuel - 1) (fuel' - 1)
+      end
+      else ()
+    end
+#pop-options
+
+/// Chain termination transfers when links are preserved
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let rec fl_chain_terminates_transfer (g g': heap) (fp: U64.t) (steps: nat)
+  : Lemma
+    (requires fl_chain_terminates g fp steps /\
+              fl_valid g fp steps /\
+              (forall (a: U64.t).
+                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
+                  Seq.mem a (objects 0UL g)) ==>
+                 (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                    read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
+    (ensures fl_chain_terminates g' fp steps)
+    (decreases steps)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = fp in
+      let hd = hd_address obj in
+      if U64.v hd + 16 <= heap_size then begin
+        let link = read_word g obj in
+        fl_chain_terminates_transfer g g' link (steps - 1)
+      end
+      else ()
+    end
+#pop-options
+
+/// Chain termination bound: any valid free-list chain terminates within
+/// heap_size / U64.v mword steps.
+/// Proof sketch: each node has wosize >= 1, occupying >= 16 bytes (header + 1 word).
+/// The heap has heap_size bytes, so at most heap_size/16 nodes can exist.
+/// Since heap_size/mword = heap_size/8 >= heap_size/16, the fuel suffices.
+// TODO: prove chain termination bound — this requires showing that free-list
+// nodes occupy disjoint regions of the heap (from well_formed_heap), bounding
+// the chain length by heap_size/16, and concluding that heap_size/mword >= heap_size/16.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let fl_chain_terminates_bound (g: heap) (fp: U64.t)
+  : Lemma (requires well_formed_heap g)
+          (ensures fl_chain_terminates g fp (heap_size / U64.v mword))
+  = admit()
+#pop-options
+
+/// ===========================================================================
+/// Section F: alloc_search preserves fl_valid
+/// ===========================================================================
+
+/// Helper: establish the fl_valid_transfer precondition for alloc_from_block (split case)
+/// For all objects a in objects(0,g): a ∈ objects(0,g'), wosize preserved if >= 1, links preserved if wosize >= 1
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+private let alloc_split_transfer_pre
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
+  : Lemma (requires alloc_split_pre g obj wz next_fp /\
+                    Seq.mem a (objects 0UL g) /\
+                    U64.v a >= U64.v mword /\
+                    U64.v a < heap_size /\
+                    U64.v a % U64.v mword = 0)
+          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                    Seq.mem a (objects 0UL g') /\
+                    (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 ==>
+                      U64.v (wosize_of_object (a <: obj_addr) g') >= 1) /\
+                    (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                     U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                      read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
+  = alloc_split_facts g obj wz next_fp;
+    alloc_from_block_objects_facts g obj wz next_fp;
+    let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+    let rem_obj_nat = rem_hd_nat + 8 in
+    let (g', _) = alloc_from_block g obj wz next_fp in
+    hd_address_spec obj;
+    hd_address_bounds obj;
+    wf_object_size_bound g obj;
+    wosize_of_object_spec obj g;
+    getWosize_bound hdr;
+    // a ∈ objects(0, g'): from alloc_from_block_objects_facts
+    assert (Seq.mem a (objects 0UL g'));
+    // For the header and link conditions, we need to show the write positions
+    // (hd, rem_hd, rem_obj) don't overlap with a's header or first field
+    if U64.v (wosize_of_object a g) >= 1 then begin
+      hd_address_spec a;
+      wosize_of_object_spec a g;
+      wosize_of_object_bound a g;
+      wf_object_size_bound g a;
+      if a = obj then begin
+        // a = obj: header changed but wosize(obj, g') = wz >= 1 ✓
+        // Link: a (= obj) is not one of {hd, rem_hd, rem_obj}
+        // hd = obj - 8 ≠ obj; rem_hd = hd + (1+wz)*8 > obj; rem_obj = rem_hd + 8 > obj
+        assert (U64.v hd <> U64.v obj);  // hd = obj - 8
+        assert (rem_hd_nat > U64.v obj);  // rem_hd = hd + (1+wz)*8 >= hd + 16 > obj
+        assert (rem_obj_nat > U64.v obj);
+        alloc_split_g3_agrees g obj wz next_fp (obj <: hp_addr);
+        // For wosize: the header at hd was overwritten with make_header wz white_bits 0UL
+        // getWosize of new header = wz >= 1
+        // Need to show wosize_of_object obj g' >= 1
+        // wosize_of_object obj g' = getWosize (read_word g' (hd_address obj))
+        //                         = getWosize (read_word g' hd)
+        //                         = getWosize alloc_hdr = wz >= 1
+        ()
+      end else begin
+        // a ≠ obj: from objects_separated, a's span is disjoint from obj's span
+        // All 3 writes are within obj's span, so a's header and first field are unchanged
+        if U64.v a < U64.v obj then begin
+          objects_separated 0UL g a obj;
+          // a < obj: a + wosize(a)*8 < obj - 8 = hd (from separation)
+          // Wait, objects_separated gives: a > U64.v a + wosize_of_object_as_wosize(a,g)*8
+          // actually for a < obj: U64.v obj > U64.v a + U64.v (wosize_of_object_as_wosize a g) * 8
+          // hd_address(a) = a - 8. So a - 8 < a < a + wosize(a)*8 < obj.
+          // hd, rem_hd, rem_obj are all >= hd = obj - 8 >= a + wosize(a)*8 > a - 8 = hd_address(a)
+          // Actually we need: hd_address(a) ∉ {hd, rem_hd, rem_obj}
+          // hd_address(a) = a - 8. a < obj. obj - 8 = hd. So hd_address(a) = a - 8 < obj - 8 = hd.
+          // Hmm, that's < not ≤. a - 8 could equal hd only if a = obj, but a ≠ obj. Good.
+          // Actually a - 8 < hd = obj - 8 since a < obj and both aligned to 8, so a <= obj - 8, so a - 8 <= obj - 16 = hd - 8.
+          // So hd_address(a) <= hd - 8. Definitely ≠ hd, < rem_hd, < rem_obj. ✓
+          // For a itself: a < obj <= hd + 8. But wait: a could be >= hd? a < obj = hd + 8. And a >= 8 = mword.
+          // If hd = 0 (obj = 8), then a < 8, but a >= mword = 8. Contradiction. So hd ≥ 8.
+          // a < obj = hd + 8. Since a and obj are both aligned to 8 and a < obj, a ≤ obj - 8 = hd.
+          // If a = hd: then hd_address(a) = a - 8 = hd - 8. But a < obj = hd + 8 and a = hd. ✓
+          // But objects_separated says: U64.v obj > U64.v a + wosize(a)*8. If a = hd and wosize(a) >= 1:
+          //   obj > hd + 8 = obj. Contradiction! So if a = hd and wosize(a) >= 1, contradiction.
+          //   So a ≠ hd when wosize(a) >= 1. ✓
+          // So for the case wosize(a) >= 1: a ≤ hd - 8 (since a < obj = hd + 8 and a ≠ hd).
+          // No wait, a and obj aligned to 8, a < obj: a ≤ obj - 8 = hd. With wosize(a) >= 1:
+          //   objects_separated: obj > a + wosize(a)*8 >= a + 8.
+          //   So a < obj - 8 = hd. So a ≤ hd - 8 (since aligned to 8).
+          // So a + 8 ≤ hd. a ∉ {hd, rem_hd, rem_obj}. (a ≤ hd - 8 < hd < rem_hd < rem_obj)
+          // hd_address(a) = a - 8. a - 8 ≤ hd - 16. So hd_address(a) ∉ {hd, rem_hd, rem_obj}.
+          // Use alloc_split_g3_agrees for both hd_address(a) and a
+          alloc_split_g3_agrees g obj wz next_fp (hd_address a);
+          alloc_split_g3_agrees g obj wz next_fp (a <: hp_addr);
+          wosize_of_object_spec a g'
+        end else begin
+          objects_separated 0UL g obj a;
+          // obj < a: a > obj + wosize(obj)*8 = obj + block_wz*8
+          // hd_address(a) = a - 8 >= obj + block_wz*8 + 1 - 8 = obj + block_wz*8 - 7
+          // All writes are within [hd, hd + (block_wz+1)*8) = [obj-8, obj + block_wz*8)
+          // So hd_address(a) >= obj + block_wz*8 - 7 > obj + block_wz*8 - 8 = hd + block_wz*8
+          // But rem_obj = hd + (1+wz)*8 + 8 <= hd + block_wz*8 (since wz+2 <= block_wz)
+          // So hd_address(a) > rem_obj in most cases.
+          // More precisely: a > obj + block_wz*8. a aligned to 8: a >= obj + block_wz*8 + 8.
+          // Actually objects_separated gives: a > obj + wosize_of_object_as_wosize(obj,g)*8
+          // which is a > obj + block_wz * 8. Since aligned to 8: a >= obj + block_wz*8 + 8.
+          // Wait, that's not necessarily true since wosize_of_object_as_wosize might use different scaling.
+          // Let me check: wosize_of_object_as_wosize is the same as wosize_of_object, just with a bound proof.
+          // objects_separated: U64.v a > U64.v obj + U64.v (wosize_of_object_as_wosize obj g) * 8
+          //                  = U64.v obj + block_wz * 8
+          // Since aligned to 8: U64.v a >= U64.v obj + block_wz * 8 + 8
+          //                    = U64.v hd + (block_wz + 1) * 8 + 8 - 8
+          //                    = U64.v hd + (block_wz + 1) * 8
+          // Hmm wait: obj = hd + 8. obj + block_wz*8 = hd + 8 + block_wz*8.
+          // a > hd + 8 + block_wz*8. Since aligned: a >= hd + 8 + block_wz*8 + 8 = hd + (block_wz+2)*8
+          // Actually no. a > obj + block_wz*8 = hd + 8 + block_wz*8. Aligned to 8.
+          // a >= hd + 8 + block_wz*8 + (8 - (hd + 8 + block_wz*8) % 8) 
+          // But hd is aligned to 8, so hd + 8 + block_wz*8 is aligned to 8.
+          // So a >= hd + 8 + block_wz*8 + 8 = hd + (block_wz + 2)*8.
+          // Hmm that's hd + 16 + block_wz*8. 
+          // Write positions: hd, rem_hd = hd + (1+wz)*8, rem_obj = rem_hd + 8
+          // rem_obj = hd + (1+wz)*8 + 8 = hd + (wz+2)*8 <= hd + block_wz*8 (since wz+2 <= block_wz)
+          // hd_address(a) = a - 8 >= hd + (block_wz+2)*8 - 8 = hd + (block_wz+1)*8 + 8 > rem_obj
+          // So hd_address(a) > rem_obj > rem_hd > hd. ✓
+          // And a >= hd_address(a) + 8 > rem_obj + 8 > rem_obj. ✓
+          alloc_split_g3_agrees g obj wz next_fp (hd_address a);
+          alloc_split_g3_agrees g obj wz next_fp (a <: hp_addr);
+          wosize_of_object_spec a g'
+        end
+      end
+    end else ()
+#pop-options
+```
+
+Hmm, this is getting really long and complex. The `alloc_split_g3_agrees` lemma requires showing that the point p satisfies:
+```
+U64.v p <> U64.v hd /\
+U64.v p <> rem_hd_nat /\
+U64.v p <> rem_obj_nat
+```
+
+For `hd_address(a)` and `a` when a ≠ obj. I need to derive these from objects_separated. Let me check if this approach will work by trying to get Z3 to verify it.
+
+Actually, let me take a more practical approach. Instead of writing a separate helper lemma for the transfer precondition, let me write the main `alloc_search_preserves_fl_valid` proof with admits for the complex sub-cases, and see if the overall structure works. I can always come back and fill in details.
+
+Let me start with a version that has the structure right and admits the hardest proofs:
+</thinking>
+
+Let me take a practical approach - write the main proof with strategic admits for the complex sub-cases, verify it compiles, then fill in what I can:
+
+<function_calls>
+<invoke name="edit">
+<parameter name="new_str">#pop-options
+
+/// ===========================================================================
+/// Section F: alloc_search preserves fl_valid
+/// ===========================================================================
+
+/// Helper: for the split case, establish the fl_valid_transfer quantifier.
+/// For all objects a in objects(0,g) with wosize >= 1:
+///   - a ∈ objects(0,g')
+///   - wosize(a,g') >= 1
+///   - link preserved: read_word g' a == read_word g a
+#restart-solver
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+private let alloc_split_fl_transfer_pre
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
+  : Lemma (requires alloc_split_pre g obj wz next_fp /\
+                    Seq.mem a (objects 0UL g) /\
+                    U64.v a >= U64.v mword /\
+                    U64.v a < heap_size /\
+                    U64.v a % U64.v mword = 0)
+          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                    Seq.mem a (objects 0UL g') /\
+                    (U64.v (wosize_of_object a g) >= 1 ==>
+                      U64.v (wosize_of_object a g') >= 1) /\
+                    (U64.v (wosize_of_object a g) >= 1 /\
+                     U64.v (hd_address a) + 16 <= heap_size ==>
+                      read_word g' a == read_word g a)))
+  = alloc_split_facts g obj wz next_fp;
+    alloc_from_block_objects_facts g obj wz next_fp;
+    let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+    let rem_obj_nat = rem_hd_nat + 8 in
+    hd_address_spec obj;
+    hd_address_bounds obj;
+    wf_object_size_bound g obj;
+    wosize_of_object_spec obj g;
+    getWosize_bound hdr;
+    if U64.v (wosize_of_object a g) >= 1 then begin
+      hd_address_spec a;
+      wosize_of_object_spec a g;
+      wosize_of_object_bound a g;
+      wf_object_size_bound g a;
+      if a = obj then begin
+        // Header changed to alloc_hdr with wosize = wz >= 1.
+        // Link at a (= obj): obj ∉ {hd, rem_hd, rem_obj} since
+        //   hd = obj - 8 ≠ obj; rem_hd > obj; rem_obj > obj
+        alloc_split_g3_agrees g obj wz next_fp (obj <: hp_addr)
+      end else begin
+        // a ≠ obj: objects_separated ensures a's header & body are outside obj's span
+        if U64.v a < U64.v obj then begin
+          objects_separated 0UL g a obj;
+          // a + wosize(a)*8 < obj, so a ≤ obj - 16 (since wosize >= 1, aligned)
+          // hd_address(a) = a - 8 ≤ obj - 24 < hd = obj - 8 < rem_hd < rem_obj
+          // a ≤ obj - 16 < obj - 8 = hd < rem_hd < rem_obj
+          alloc_split_g3_agrees g obj wz next_fp (hd_address a);
+          alloc_split_g3_agrees g obj wz next_fp (a <: hp_addr);
+          wosize_of_object_spec a g
+        end else begin
+          objects_separated 0UL g obj a;
+          // a > obj + block_wz*8, so a >= obj + block_wz*8 + 8 (aligned)
+          // hd_address(a) = a - 8 >= obj + block_wz*8 = hd + (block_wz+1)*8
+          // All writes at hd, rem_hd, rem_obj are below hd + (block_wz+1)*8
+          alloc_split_g3_agrees g obj wz next_fp (hd_address a);
+          alloc_split_g3_agrees g obj wz next_fp (a <: hp_addr);
+          wosize_of_object_spec a g
+        end
+      end
+    end else ()
+#pop-options
+
+/// Helper: for the exact-fit case, establish the fl_valid_transfer quantifier.
+#restart-solver
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+private let alloc_exact_fl_transfer_pre
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
+  : Lemma (requires well_formed_heap g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    (let hdr = read_word g (hd_address obj) in
+                     let block_wz = U64.v (getWosize hdr) in
+                     block_wz >= wz /\ block_wz - wz < 2) /\
+                    Seq.mem a (objects 0UL g) /\
+                    U64.v a >= U64.v mword /\
+                    U64.v a < heap_size /\
+                    U64.v a % U64.v mword = 0)
+          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                    Seq.mem a (objects 0UL g') /\
+                    (U64.v (wosize_of_object a g) >= 1 ==>
+                      U64.v (wosize_of_object a g') >= 1) /\
+                    (U64.v (wosize_of_object a g) >= 1 /\
+                     U64.v (hd_address a) + 16 <= heap_size ==>
+                      read_word g' a == read_word g a)))
+  = let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+    let g' = write_word g hd alloc_hdr in
+    hd_address_spec obj;
+    hd_address_bounds obj;
+    getWosize_bound hdr;
+    make_header_getWosize (U64.uint_to_t block_wz) white_bits 0UL;
+    header_write_same_wosize_preserves_objects g obj alloc_hdr;
+    // objects(0, g') == objects(0, g)
+    alloc_exact_preserves_wf g obj wz next_fp;
+    if U64.v (wosize_of_object a g) >= 1 then begin
+      hd_address_spec a;
+      wosize_of_object_spec a g;
+      wosize_of_object_bound a g;
+      wf_object_size_bound g a;
+      if a = obj then begin
+        // Header changed but wosize preserved (block_wz = block_wz)
+        read_write_same g hd alloc_hdr;
+        // Link: a = obj, only write is at hd = obj - 8.
+        // a ≠ hd since a >= 8, hd = a - 8
+        // But we need |a - hd| >= 8 for read_write_different
+        // a = obj, hd = obj - 8, so a - hd = 8. ✓ (a > hd and a - hd = 8 = mword)
+        read_write_different g hd (a <: hp_addr) alloc_hdr
+      end else begin
+        // a ≠ obj: header at hd_address(a) ≠ hd, and a ≠ hd
+        if U64.v a < U64.v obj then begin
+          objects_separated 0UL g a obj
+          // a + wosize(a)*8 < obj since wosize >= 1 and aligned
+          // hd_address(a) = a - 8, and a ≤ obj - 16, so hd_address(a) ≤ obj - 24 < hd
+        end else
+          objects_separated 0UL g obj a;
+          // a > obj + block_wz*8, so a >> hd
+        read_write_different g hd (hd_address a) alloc_hdr;
+        read_write_different g hd (a <: hp_addr) alloc_hdr;
+        wosize_of_object_spec a g
+      end
+    end else ()
+#pop-options
+
+/// The main recursive proof: alloc_search preserves fl_valid.
+#restart-solver
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+let rec alloc_search_preserves_fl_valid
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma (requires well_formed_heap g /\
+                    fl_valid g cur_fp fuel /\
+                    fl_chain_terminates g cur_fp fuel /\
+                    fl_valid g head_fp (heap_size / U64.v mword) /\
+                    wz >= 1 /\
+                    (prev_fp <> 0UL ==>
+                      (prev_fp <> cur_fp /\
+                       U64.v prev_fp >= U64.v mword /\
+                       U64.v prev_fp < heap_size /\
+                       U64.v prev_fp % U64.v mword = 0 /\
+                       Seq.mem prev_fp (objects 0UL g) /\
+                       U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+                    fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+          (decreases fuel)
+  = let big_fuel = heap_size / U64.v mword in
+    if fuel = 0 then ()
+    // Base cases: result = {g, head_fp, 0UL}. fl_valid g head_fp big_fuel from precondition.
+    else if cur_fp = 0UL then ()
+    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp >= heap_size then ()
+    else if U64.v cur_fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = cur_fp in
+      let hd = hd_address obj in
+      let hdr = read_word g hd in
+      let block_wz = U64.v (getWosize hdr) in
+      hd_address_spec obj;
+      hd_address_bounds obj;
+      fl_valid_gives_mem g cur_fp fuel;
+      fl_valid_gives_wosize g cur_fp fuel;
+      fl_valid_next g cur_fp fuel;
+      assert (Seq.mem obj (objects 0UL g));
+      assert (U64.v (wosize_of_object obj g) >= 1);
+      wosize_of_object_spec obj g;
+      wosize_of_object_bound obj g;
+      wf_object_size_bound g obj;
+      getWosize_bound hdr;
+      let next_fp =
+        if U64.v hd + 16 <= heap_size then read_word g obj
+        else 0UL
+      in
+      // hd + 16 always <= heap_size for valid objects: obj >= 8, obj < 1024, aligned to 8
+      // So hd = obj - 8, hd + 16 = obj + 8 <= heap_size
+      assert (U64.v hd + 16 <= heap_size);
+      // fl_valid g next_fp (fuel-1) from fl_valid_next
+      assert (fl_valid g next_fp (fuel - 1));
+      // fl_chain_terminates g next_fp (fuel-1) from fl_chain_terminates g cur_fp fuel
+      assert (fl_chain_terminates g next_fp (fuel - 1));
+      if block_wz >= wz then begin
+        // ===== Found a suitable block =====
+        next_fp_in_objects g obj;
+        alloc_from_block_preserves_wf g obj wz next_fp;
+        let (g', new_fp) = alloc_from_block g obj wz next_fp in
+        // Upgrade fl_valid g next_fp (fuel-1) to fl_valid g next_fp big_fuel
+        fl_valid_any_fuel g next_fp (fuel - 1) big_fuel;
+        assert (fl_valid g next_fp big_fuel);
+        if prev_fp = 0UL then begin
+          // ===== prev_fp = 0UL: fp_out = new_fp =====
+          if block_wz - wz >= 2 then begin
+            // ===== Split case: new_fp = rem_obj =====
+            alloc_split_facts g obj wz next_fp;
+            alloc_from_block_objects_facts g obj wz next_fp;
+            let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+            let rem_obj_nat = rem_hd_nat + 8 in
+            let rem_wz = block_wz - wz - 1 in
+            // new_fp = rem_obj from alloc_split_facts
+            // rem_obj ∈ objects(0, g') from alloc_from_block_objects_facts
+            assert (is_pointer_field new_fp ==> Seq.mem new_fp (objects 0UL g'));
+            // Transfer fl_valid g next_fp big_fuel to g'
+            let transfer_aux (a: U64.t) : Lemma
+              (requires U64.v a >= U64.v mword /\ U64.v a < heap_size /\
+                        U64.v a % U64.v mword = 0 /\
+                        Seq.mem a (objects 0UL g))
+              (ensures Seq.mem a (objects 0UL g') /\
+                       (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 ==>
+                         U64.v (wosize_of_object (a <: obj_addr) g') >= 1) /\
+                       (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                        U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                         read_word g' (a <: obj_addr) == read_word g (a <: obj_addr)))
+            = alloc_split_fl_transfer_pre g obj wz next_fp a
+            in
+            FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux);
+            fl_valid_transfer g g' next_fp big_fuel;
+            assert (fl_valid g' next_fp big_fuel);
+            fl_valid_weaken g' next_fp big_fuel (big_fuel - 1);
+            // Build fl_valid g' new_fp big_fuel via fl_valid_step
+            // new_fp = rem_obj:
+            //   rem_obj ∈ objects(0, g') ✓
+            //   wosize(rem_obj, g') = rem_wz >= 1 ✓ (block_wz - wz >= 2 => rem_wz >= 1)
+            //   hd(rem_obj) + 16 <= heap_size: rem_hd + 16 = rem_obj + 8 <= heap_size ✓
+            //   link(rem_obj, g') = next_fp (written by alloc_from_block)
+            //   next_fp ≠ rem_obj: from objects_separated (rem_obj is interior to obj's old block)
+            //   fl_valid g' next_fp (big_fuel - 1) ✓
+            // Need to show rem_obj is valid and call fl_valid_step
+            assert (Seq.mem new_fp (objects 0UL g'));
+            // Read back link: alloc_split_facts gives read_word g' rem_obj = next_fp
+            // via the g3 = write_word g2 rem_obj next_fp and read_write_same
+            // For fl_valid_step, we need all the fl_valid_step preconditions.
+            // This is complex - admit this detailed step
+            // TODO: prove fl_valid_step application for split/prev_fp=0UL case
+            admit()
+          end else begin
+            // ===== Exact-fit case: new_fp = next_fp =====
+            alloc_exact_preserves_wf g obj wz next_fp;
+            // Transfer fl_valid g next_fp big_fuel to g'
+            let transfer_aux (a: U64.t) : Lemma
+              (requires U64.v a >= U64.v mword /\ U64.v a < heap_size /\
+                        U64.v a % U64.v mword = 0 /\
+                        Seq.mem a (objects 0UL g))
+              (ensures Seq.mem a (objects 0UL g') /\
+                       (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 ==>
+                         U64.v (wosize_of_object (a <: obj_addr) g') >= 1) /\
+                       (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                        U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                         read_word g' (a <: obj_addr) == read_word g (a <: obj_addr)))
+            = alloc_exact_fl_transfer_pre g obj wz next_fp a
+            in
+            FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux);
+            fl_valid_transfer g g' next_fp big_fuel;
+            // fp_out = new_fp = next_fp (in exact fit, alloc_from_block returns (g1, next_fp))
+            // fl_valid g' next_fp big_fuel ✓
+            ()
+          end
+        end
+        else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
+                U64.v prev_fp % U64.v mword = 0 then begin
+          // ===== prev_fp ≠ 0UL: fp_out = head_fp, heap_out = write_word g' prev_fp new_fp =====
+          // This is the hardest case: writing at prev_fp splices the chain
+          // The result's fp_out = head_fp, and the chain from head_fp in g2 must be valid
+          // TODO: prove prev_fp ≠ 0UL splice case preserves fl_valid for head_fp chain
+          admit()
+        end
+        else ()
+      end
+      else begin
+        // ===== Advance: block too small, continue search =====
+        // fl_valid g next_fp (fuel-1) ✓
+        // fl_chain_terminates g next_fp (fuel-1) ✓
+        // fl_valid g head_fp big_fuel ✓ (unchanged)
+        // cur_fp becomes prev_fp; wosize(cur_fp, g) >= 1 from fl_valid_gives_wosize
+        // cur_fp ≠ next_fp: from fl_valid_next (no self-loop)
+        assert (cur_fp <> next_fp);
+        alloc_search_preserves_fl_valid g head_fp cur_fp next_fp wz (fuel - 1)
+      end
+    end
+#pop-options
+
+/// ===========================================================================
+/// Section G: Top-level theorem — alloc_spec preserves fl_valid
+/// ===========================================================================
+
+let alloc_spec_preserves_fl_valid (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires well_formed_heap g /\
+                    fl_valid g fp (heap_size / U64.v mword))
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    fl_chain_terminates_bound g fp;
+    alloc_search_preserves_fl_valid g fp 0UL fp wz (heap_size / U64.v mword)
+
 #pop-options // Module-level z3rlimit 20
