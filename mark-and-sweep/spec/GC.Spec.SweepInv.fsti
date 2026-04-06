@@ -115,9 +115,13 @@ val obj_in_objects_head : (g: heap) ->
 /// the head object is in the global objects list.
 val heap_objects_dense : heap -> prop
 
-/// Step lemma: density + objects at start > 0 + next has room → objects at next > 0
+/// Step lemma: density + object at start in global list + objects at start > 0
+/// + next has room → objects at next > 0
 val objects_dense_step : (start: hp_addr) -> (g: heap) ->
-  Lemma (requires heap_objects_dense g /\ Seq.length (objects start g) > 0)
+  Lemma (requires heap_objects_dense g /\
+                  U64.v start + 8 < heap_size /\
+                  Seq.mem (f_address start) (objects 0UL g) /\
+                  Seq.length (objects start g) > 0)
         (ensures (let wz = getWosize (read_word g start) in
                   let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
                   next + 8 < heap_size ==>
@@ -125,7 +129,10 @@ val objects_dense_step : (start: hp_addr) -> (g: heap) ->
 
 /// From density + non-empty objects at next, derive obj_in_objects for the head
 val objects_dense_obj_in : (start: hp_addr) -> (g: heap) ->
-  Lemma (requires heap_objects_dense g /\ Seq.length (objects start g) > 0)
+  Lemma (requires heap_objects_dense g /\
+                  U64.v start + 8 < heap_size /\
+                  Seq.mem (f_address start) (objects 0UL g) /\
+                  Seq.length (objects start g) > 0)
         (ensures (let wz = getWosize (read_word g start) in
                   let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
                   next + 8 < heap_size ==>

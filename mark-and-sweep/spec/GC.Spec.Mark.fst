@@ -765,10 +765,11 @@ let no_black_objects (g: heap) : prop =
 let no_blue_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_blue obj g)
 
-/// No live object points to a blue object (allocator invariant)
+/// No non-blue object points to a blue object (allocator invariant).
+/// Blue→blue pointers are allowed (free-list internal links).
 let no_pointer_to_blue (g: heap) : prop =
   forall (src dst: obj_addr).
-    Seq.mem src (objects 0UL g) /\ points_to g src dst ==>
+    Seq.mem src (objects 0UL g) /\ ~(is_blue src g) /\ points_to g src dst ==>
     ~(is_blue dst g)
 
 /// Fuel must be positive when stack is non-empty and mark_aux converges
@@ -2469,6 +2470,123 @@ let rec mark_aux_no_new_blue g st fuel x =
   end
 #pop-options
 
+/// push_children preserves blue objects (blue stays blue — only white objects are grayed)
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let rec push_children_preserves_blue (g: heap) (st: seq obj_addr) (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1}) (ws: U64.t) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ is_blue x g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    U64.v ws <= U64.v (wosize_of_object obj g) /\
+                    U64.v (wosize_of_object obj g) < pow2 54)
+          (ensures is_blue x (fst (push_children g st obj i ws)))
+          (decreases (U64.v ws - U64.v i))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let v = HeapGraph.get_field g obj i in
+      if HeapGraph.is_pointer_field v then begin
+        HeapGraph.is_pointer_field_is_obj_addr v;
+        let child_raw : obj_addr = v in
+        let child = resolve_object child_raw g in
+        if is_white child g then begin
+          // child is white, x is blue => child <> x
+          is_blue_iff x g; is_white_iff child g;
+          assert (child <> x);
+          hd_address_injective child x;
+          makeGray_eq child g;
+          let g' = makeGray child g in
+          color_change_header_locality child (hd_address x) g Header.Gray;
+          color_of_header_eq x g' g;
+          assert (is_blue x g');
+          let st' = Seq.cons child st in
+          // Prove child is in objects (for well-formedness)
+          let wz = wosize_of_object obj g in
+          wosize_of_object_bound obj g;
+          GC.Spec.Heap.hd_address_spec obj;
+          FStar.Math.Lemmas.pow2_lt_compat 61 54;
+          HeapGraph.get_field_addr_eq g obj i;
+          let k = U64.sub i 1UL in
+          wf_object_size_bound g obj;
+          field_read_implies_exists_pointing g obj wz k child_raw;
+          wf_field_target_in_objects g obj child_raw;
+          wf_infix_wf g;
+          resolve_object_in_objects child_raw g (objects 0UL g);
+          color_change_preserves_wf g child Header.Gray;
+          color_change_preserves_objects_mem g child Header.Gray obj;
+          if child = obj then
+            color_preserves_wosize child g Header.Gray
+          else
+            color_change_preserves_other_wosize child obj g Header.Gray;
+          if U64.v i < U64.v ws then
+            push_children_preserves_blue g' st' obj (U64.add i 1UL) ws x
+        end else begin
+          if U64.v i < U64.v ws then
+            push_children_preserves_blue g st obj (U64.add i 1UL) ws x
+        end
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_preserves_blue g st obj (U64.add i 1UL) ws x
+      end
+    end
+#pop-options
+
+/// mark_step preserves blue objects
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
+val mark_step_preserves_blue : (g: heap) -> (st: seq obj_addr{Seq.length st > 0 /\ stack_props g st}) ->
+  (x: obj_addr) ->
+  Lemma (requires well_formed_heap g /\ is_blue x g /\ Seq.mem x (objects 0UL g))
+        (ensures is_blue x (fst (mark_step g st)))
+
+let mark_step_preserves_blue g st x =
+  let obj = Seq.head st in
+  let st' = Seq.tail st in
+  stack_head_is_gray g st;
+  // obj is gray, x is blue => obj <> x
+  is_blue_iff x g; is_gray_iff obj g;
+  assert (obj <> x);
+  hd_address_injective obj x;
+  let g1 = makeBlack obj g in
+  let ws = wosize_of_object obj g in
+  makeBlack_eq obj g;
+  wosize_of_object_bound obj g;
+  color_change_header_locality obj (hd_address x) g Header.Black;
+  color_of_header_eq x g1 g;
+  assert (is_blue x g1);
+  if is_no_scan obj g then ()
+  else begin
+    color_change_preserves_wf g obj Header.Black;
+    color_change_preserves_objects_mem g obj Header.Black obj;
+    set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+    wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+    color_change_preserves_objects_mem g obj Header.Black x;
+    push_children_preserves_blue g1 st' obj 1UL ws x
+  end
+#pop-options
+
+/// mark_aux preserves blue objects (induction on fuel)
+#push-options "--z3rlimit 20"
+val mark_aux_preserves_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  (fuel: nat) -> (x: obj_addr) ->
+  Lemma (requires is_blue x g /\ Seq.mem x (objects 0UL g))
+        (ensures is_blue x (mark_aux g st fuel))
+        (decreases fuel)
+
+let rec mark_aux_preserves_blue g st fuel x =
+  if Seq.length st = 0 then ()
+  else if fuel = 0 then ()
+  else begin
+    assert (fuel > 0);
+    let (g', st') = mark_step g st in
+    mark_step_preserves_stack_props g st;
+    mark_step_preserves_wf g st;
+    mark_step_preserves_blue g st x;
+    assert (is_blue x g');
+    mark_aux_preserves_objects g st 1;
+    assert (objects 0UL g' == objects 0UL g);
+    assert (Seq.mem x (objects 0UL g'));
+    mark_aux_preserves_blue g' st' (fuel - 1) x
+  end
+#pop-options
+
 /// mark preserves no_blue_objects
 val mark_preserves_no_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   Lemma (requires no_blue_objects g)
@@ -2801,6 +2919,10 @@ let black_successor_is_black g src dst =
   edge_implies_points_to g src dst;
   // dst is in objects (given), so resolve_object dst g == dst
   wf_resolve_identity g dst;
+  // src is black, hence not blue — needed for weakened no_pointer_to_blue
+  is_black_iff src g;
+  is_blue_iff src g;
+  assert (~(is_blue src g));
   color_exhaustive dst g
 #pop-options
 
@@ -3493,10 +3615,20 @@ let mark_preserves_no_pointer_to_blue g st =
   mark_aux_preserves_objects g st (heap_size / U64.v mword);
   mark_preserves_wf g st;
   let aux (src: obj_addr) (dst: obj_addr) : Lemma
-    (Seq.mem src (objects 0UL gm) /\ points_to gm src dst ==> ~(is_blue dst gm))
-  = if Seq.mem src (objects 0UL gm) && points_to gm src dst then begin
+    (Seq.mem src (objects 0UL gm) /\ ~(is_blue src gm) /\ points_to gm src dst ==> ~(is_blue dst gm))
+  = if Seq.mem src (objects 0UL gm) && not (is_blue src gm) && points_to gm src dst then begin
       assert (Seq.mem src (objects 0UL g));
+      // Prove src was non-blue in g: contrapositive of mark_aux_preserves_blue
+      // mark_aux_preserves_blue: is_blue src g → is_blue src gm
+      // We have ~(is_blue src gm), so by contrapositive ~(is_blue src g)
+      (if is_blue src g then mark_aux_preserves_blue g st (heap_size / U64.v mword) src);
+      assert (~(is_blue src g));
+      // Now use no_pointer_to_blue g: non-blue src with points_to → dst not blue
       mark_preserves_points_to g st src dst;
+      assert (points_to g src dst);
+      // no_pointer_to_blue g applied to src, dst
+      assert (~(is_blue dst g));
+      // dst not blue in g → dst not blue in gm (mark doesn't create blue)
       wosize_of_object_bound src g;
       points_to_target_in_objects g src dst;
       mark_aux_no_new_blue g st (heap_size / U64.v mword) dst

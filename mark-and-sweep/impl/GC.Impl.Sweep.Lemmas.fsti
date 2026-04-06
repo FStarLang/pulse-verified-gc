@@ -134,6 +134,8 @@ val obj_in_objects_head_bridge (g: GC.Spec.Base.heap)
 val density_next_bridge (h_addr: hp_addr) (g_init g_post: GC.Spec.Base.heap) (wz: U64.t)
   : Lemma (requires
       SI.heap_objects_dense g_init /\
+      U64.v h_addr + 8 < heap_size /\
+      Seq.mem (SpecHeap.f_address h_addr) (SpecFields.objects zero_addr g_init) /\
       Seq.length (SpecFields.objects h_addr g_init) > 0 /\
       wz == SpecObject.getWosize (SpecHeap.read_word g_init h_addr) /\
       SpecFields.objects zero_addr g_post == SpecFields.objects zero_addr g_init /\

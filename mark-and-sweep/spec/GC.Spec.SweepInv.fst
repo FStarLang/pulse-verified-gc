@@ -108,8 +108,14 @@ let obj_in_objects_head (g: heap)
 /// The walk from every position where objects > 0 continues at the next position
 /// (provided the next position has room for a header), and the head of the next
 /// position is in the global objects list.
+/// Weakened density: only requires the chain property at positions whose
+/// f_address is in objects 0UL g (i.e., actual object header positions).
+/// This excludes interior positions of large blocks that have 0UL headers
+/// (phantom wosize-0 objects not in the global enumeration).
 let heap_objects_dense (g: heap) : prop =
   forall (start: hp_addr).
+    U64.v start + 8 < heap_size ==>
+    Seq.mem (f_address start) (objects 0UL g) ==>
     Seq.length (objects start g) > 0 ==>
     (let wz = getWosize (read_word g start) in
      let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
@@ -118,7 +124,10 @@ let heap_objects_dense (g: heap) : prop =
      Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))
 
 let objects_dense_step (start: hp_addr) (g: heap)
-  : Lemma (requires heap_objects_dense g /\ Seq.length (objects start g) > 0)
+  : Lemma (requires heap_objects_dense g /\
+                    U64.v start + 8 < heap_size /\
+                    Seq.mem (f_address start) (objects 0UL g) /\
+                    Seq.length (objects start g) > 0)
           (ensures (let wz = getWosize (read_word g start) in
                     let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
                     next + 8 < heap_size ==>
@@ -127,7 +136,10 @@ let objects_dense_step (start: hp_addr) (g: heap)
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 let objects_dense_obj_in (start: hp_addr) (g: heap)
-  : Lemma (requires heap_objects_dense g /\ Seq.length (objects start g) > 0)
+  : Lemma (requires heap_objects_dense g /\
+                    U64.v start + 8 < heap_size /\
+                    Seq.mem (f_address start) (objects 0UL g) /\
+                    Seq.length (objects start g) > 0)
           (ensures (let wz = getWosize (read_word g start) in
                     let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
                     next + 8 < heap_size ==>
@@ -173,19 +185,24 @@ let heap_objects_dense_transfer (g1 g2: heap)
                     (forall (p: hp_addr). getWosize (read_word g2 p) == getWosize (read_word g1 p)))
           (ensures heap_objects_dense g2)
   = let aux (start: hp_addr) : Lemma
-      (Seq.length (objects start g2) > 0 ==>
+      (U64.v start + 8 < heap_size ==>
+       Seq.mem (f_address start) (objects 0UL g2) ==>
+       Seq.length (objects start g2) > 0 ==>
        (let wz = getWosize (read_word g2 start) in
         let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
         next + 8 < heap_size ==>
         Seq.length (objects (U64.uint_to_t next) g2) > 0 /\
         Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g2)))
-    = objects_eq_from_wosize start g1 g2;
-      if Seq.length (objects start g2) > 0 then begin
-        let wz = getWosize (read_word g2 start) in
-        assert (wz == getWosize (read_word g1 start));
-        let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
-        if next + 8 < heap_size then begin
-          objects_eq_from_wosize (U64.uint_to_t next) g1 g2
+    = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects 0UL g2) then begin
+        // f_address start ∈ objects 0UL g2 == objects 0UL g1
+        objects_eq_from_wosize start g1 g2;
+        if Seq.length (objects start g2) > 0 then begin
+          let wz = getWosize (read_word g2 start) in
+          assert (wz == getWosize (read_word g1 start));
+          let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+          if next + 8 < heap_size then begin
+            objects_eq_from_wosize (U64.uint_to_t next) g1 g2
+          end
         end
       end
     in
