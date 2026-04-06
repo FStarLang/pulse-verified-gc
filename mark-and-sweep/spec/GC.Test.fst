@@ -4,15 +4,16 @@
    Demonstrates that the allocator and GC specs compose correctly:
      init_heap → collect → allocate → collect → ...
 
-   Init → collect: ALMOST FULLY VERIFIED
-     All init-time properties are proven in GC.Test.Bridge, except
-     heap_objects_dense which requires interior headers (see note below).
+   Init → collect: FULLY VERIFIED
+     All init-time properties proven in GC.Test.Bridge (including density).
 
    Collect → allocate: FULLY VERIFIED
      gc_postcondition gives well_formed_heap, exactly what allocate needs.
 
-   Allocate → collect: PARTIAL (alloc-time assumptions remain)
-     Density, fl_valid, no_black, graph_wf preservation across allocation
+   Allocate → collect: VERIFIED for well_formed_heap, fl_valid, no_black
+     See alloc_enables_collect for the current state.
+     General density, no_pointer_to_blue, and graph_wf preservation across
+     allocation are future work (see comments below).
      are documented proof obligations.
 *)
 module GC.Test
@@ -68,14 +69,11 @@ let init_dense_lemma (g: heap)
                     heap_objects_dense g'))
   = GC.Test.Bridge.init_dense g
 
-/// Alloc-time assumptions: properties preserved across allocation.
-assume val alloc_preserves_dense : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
-  Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword) /\
-                  heap_objects_dense g)
-        (ensures (let r = alloc_spec g fp wz in
-                  heap_objects_dense r.heap_out))
+/// -------------------------------------------------------------------------
+/// Alloc-time preservation theorems (VERIFIED)
+/// -------------------------------------------------------------------------
 
+/// Proven in GC.Spec.Allocator.Lemmas
 let alloc_preserves_no_black (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires no_black_objects g /\
                     well_formed_heap g /\
@@ -84,24 +82,25 @@ let alloc_preserves_no_black (g: heap) (fp: U64.t) (wz: nat)
                     no_black_objects r.heap_out))
   = alloc_spec_preserves_no_black g fp wz
 
-/// NOTE: alloc_preserves_no_ptr_to_blue is only valid when the free list
-/// was built from a zeroed heap (all link pointers are 0UL). After a GC
-/// cycle, sweep writes actual object addresses as free list links, so
-/// allocated blocks inherit stale link pointers that may point to blue
-/// objects. The mutator must zero allocated fields before the next GC.
-assume val alloc_preserves_no_ptr_to_blue : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
-  Lemma (requires no_pointer_to_blue g /\
-                  well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword))
-        (ensures (let r = alloc_spec g fp wz in
-                  no_pointer_to_blue r.heap_out))
-
-assume val alloc_preserves_graph_wf : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
-  Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword) /\
-                  graph_wf (create_graph g))
-        (ensures (let r = alloc_spec g fp wz in
-                  graph_wf (create_graph r.heap_out)))
+/// -------------------------------------------------------------------------
+/// Alloc-time proof obligations (future work, documented)
+/// -------------------------------------------------------------------------
+///
+/// The following properties are needed for alloc → collect in general:
+///
+/// 1. alloc_preserves_dense: heap_objects_dense preserved by alloc_spec.
+///    Structural property: exact-fit preserves objects/wosize (use transfer);
+///    split creates adjacent tiling blocks (use intro). Purely about headers.
+///
+/// 2. alloc_preserves_no_ptr_to_blue: no_pointer_to_blue preserved by alloc_spec.
+///    Requires zeroing allocated block's fields (stale free-list links may
+///    point to blue objects). For the first cycle from init (zeroed heap),
+///    trivially holds. For subsequent cycles, compose alloc_spec with
+///    zero_fields. Handled at the Pulse implementation level.
+///
+/// 3. alloc_preserves_graph_wf: graph_wf preserved by alloc_spec.
+///    Follows from well_formed_heap preservation + field consistency.
+///    Similarly benefits from field zeroing for subsequent cycles.
 
 let alloc_preserves_fl_valid (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap g /\
@@ -227,19 +226,15 @@ let gc_postcondition_enables_gc
 #pop-options
 
 /// Full alloc → collect bridge: after allocation, we can collect.
-/// Uses bridge assumptions for the properties allocate doesn't naturally provide.
+/// Proves the core properties (well_formed_heap, no_black_objects).
+/// Density, no_pointer_to_blue, and graph_wf preservation is future work.
 let alloc_enables_collect
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap g /\
                     fl_valid g fp (heap_size / U64.v mword) /\
-                    heap_objects_dense g /\
-                    Seq.length (objects zero_addr g) > 0 /\
-                    graph_wf (create_graph g) /\
-                    no_black_objects g /\
-                    no_pointer_to_blue g)
+                    no_black_objects g)
           (ensures (let r = alloc_spec g fp wz in
                     let g' = r.heap_out in
-                    let fp' = r.fp_out in
                     well_formed_heap g' /\
                     no_black_objects g'))
   = alloc_spec_preserves_wf g fp wz;
@@ -249,39 +244,77 @@ let alloc_enables_collect
 /// The main round-trip theorem (spec level)
 /// =========================================================================
 
-/// Starting from a well-formed heap with a valid free list, density, etc.,
-/// we can interleave allocate and collect indefinitely.
+/// Starting from a well-formed heap with a valid free list,
+/// successive allocations preserve well_formed_heap.
 ///
-/// This theorem proves the structural compatibility:
+/// Verified properties:
 ///   1. alloc_spec preserves well_formed_heap (verified)
-///   2. gc_postcondition implies well_formed_heap (verified)
-///   3. The bridge properties (density, no_black, graph_wf) are preserved
-///      across both allocation and collection (assumed, documented)
-///
-/// Once the bridge assumptions are proven, this gives a fully verified
-/// round-trip guarantee.
+///   2. alloc_spec preserves fl_valid (verified)
+///   3. alloc_spec preserves no_black_objects (verified)
+///   4. gc_postcondition implies well_formed_heap (verified)
 let round_trip_spec
   (g0: heap) (fp0: U64.t) (wz1 wz2: nat)
   : Lemma (requires well_formed_heap g0 /\
                     fl_valid g0 fp0 (heap_size / U64.v mword) /\
-                    heap_objects_dense g0 /\
-                    Seq.length (objects zero_addr g0) > 0 /\
-                    graph_wf (create_graph g0) /\
-                    no_black_objects g0 /\
-                    no_pointer_to_blue g0 /\
-                    fp_in_heap fp0 g0)
+                    no_black_objects g0)
           (ensures (// Step 1: allocate
                     let r1 = alloc_spec g0 fp0 wz1 in
                     well_formed_heap r1.heap_out /\
+                    no_black_objects r1.heap_out /\
+                    fl_valid r1.heap_out r1.fp_out (heap_size / U64.v mword) /\
                     // Step 2: the output supports another allocation
-                    (fl_valid r1.heap_out r1.fp_out (heap_size / U64.v mword) ==>
-                     (let r2 = alloc_spec r1.heap_out r1.fp_out wz2 in
-                      well_formed_heap r2.heap_out))))
-  = // Step 1: first allocation preserves well_formed_heap
+                    (let r2 = alloc_spec r1.heap_out r1.fp_out wz2 in
+                     well_formed_heap r2.heap_out /\
+                     no_black_objects r2.heap_out)))
+  = // Step 1: first allocation preserves all properties
     alloc_spec_preserves_wf g0 fp0 wz1;
+    alloc_preserves_no_black g0 fp0 wz1;
+    alloc_preserves_fl_valid g0 fp0 wz1;
     let r1 = alloc_spec g0 fp0 wz1 in
-    // Step 2: if fl_valid is preserved, second allocation also preserves wfh
-    if FStar.StrongExcludedMiddle.strong_excluded_middle
-         (fl_valid r1.heap_out r1.fp_out (heap_size / U64.v mword))
-    then alloc_spec_preserves_wf r1.heap_out r1.fp_out wz2
-    else ()
+    // Step 2: second allocation preserves all properties
+    alloc_spec_preserves_wf r1.heap_out r1.fp_out wz2;
+    alloc_preserves_no_black r1.heap_out r1.fp_out wz2
+
+/// =========================================================================
+/// End-to-end test: init → alloc → alloc (from a concrete initial state)
+/// =========================================================================
+
+/// Starting from a freshly initialized heap, two successive allocations
+/// produce well-formed heaps. All properties are fully verified.
+let init_alloc_alloc
+  (g: heap) (wz1 wz2: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', fp) = init_heap_spec g in
+                    let r1 = alloc_spec g' fp wz1 in
+                    well_formed_heap r1.heap_out /\
+                    no_black_objects r1.heap_out /\
+                    fl_valid r1.heap_out r1.fp_out (heap_size / U64.v mword) /\
+                    (let r2 = alloc_spec r1.heap_out r1.fp_out wz2 in
+                     well_formed_heap r2.heap_out /\
+                     no_black_objects r2.heap_out)))
+  = let (g', fp) = init_heap_spec g in
+    init_enables_collect g;
+    init_fl_valid g;
+    init_no_black g;
+    init_wf g;
+    round_trip_spec g' fp wz1 wz2
+
+/// =========================================================================
+/// End-to-end test: init → collect (GC with empty roots)
+/// =========================================================================
+
+/// From init, we can immediately run a GC pass (with no roots).
+/// This tests init_enables_collect + gc_precondition assembly.
+let init_collect
+  (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', fp) = init_heap_spec g in
+                    let st = Seq.empty #obj_addr in
+                    mark_inv g' st /\
+                    fp_valid fp g' /\
+                    root_props g' st /\
+                    no_black_objects g' /\
+                    no_pointer_to_blue g' /\
+                    graph_wf (create_graph g') /\
+                    heap_objects_dense g'))
+  = init_enables_collect g
