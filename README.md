@@ -27,7 +27,7 @@ and integrated with OCaml 4.14's bytecode runtime.
 | **Common** | `common/` | Shared heap model, graph theory, DFS | ✅ Verified |
 | **Mark-and-Sweep GC** | `mark-and-sweep/spec/` + `impl/` | Sequential stop-the-world GC | ✅ Verified, extracted to C |
 | **Allocator** | `mark-and-sweep/spec/` + `impl/` | Free-list allocator with split/exact-fit | ✅ Verified, 3 admits in bridge lemmas |
-| **GC ↔ Allocator Bridge** | `mark-and-sweep/spec/GC.Test.*` | Init-time + round-trip proofs | ✅ 10 proven lemmas, 6 assume vals remain |
+| **GC ↔ Allocator Bridge** | `mark-and-sweep/spec/GC.Test.*` | Init-time + round-trip proofs | ✅ 11 proven lemmas, 0 assume vals |
 | **OCaml Integration** | `mark-and-sweep/ocaml-integration/` | Patched OCaml 4.14 bytecode runtime | ✅ Working, benchmarked |
 | **Snapshot** | `mark-and-sweep/snapshot/` | Self-contained extracted C | ✅ Builds without F* |
 
@@ -84,11 +84,14 @@ implementation (`GC.Impl.Allocator`) is functionally tied to
 
 ### Init-Time Bridge Proofs
 
-`GC.Test.Bridge` proves 10 lemmas (zero admits) connecting the allocator's
+`GC.Test.Bridge` proves 11 lemmas (zero admits) connecting the allocator's
 `init_heap_spec` to the GC's preconditions: the freshly initialized heap
 is well-formed, has valid free list, has no black/gray objects, has no
-pointers to blue objects, and has a well-formed graph. This enables
-`init_enables_collect`: immediately after init, `collect` can be called.
+pointers to blue objects, satisfies density, and has a well-formed graph.
+This enables `init_enables_collect`: immediately after init, `collect` can
+be called. `GC.Test` further proves `round_trip_spec`: starting from any
+well-formed heap with valid free list, two successive allocations both
+preserve `well_formed_heap`, `fl_valid`, and `no_black_objects`.
 
 ## Architecture
 
@@ -222,21 +225,27 @@ make benchmark  # Run hyperfine benchmarks (requires hyperfine)
 | `GC.Spec.Correctness` | admits | 0 | GC correctness fully proven |
 | `GC.Spec.Allocator` | admits | 0 | Allocator spec fully proven |
 | `GC.Spec.Allocator.Lemmas` | admits | 3 | Free-list chain termination, fl_valid after split (prev=0), fl_valid splice (prev≠0) |
-| `GC.Test` | assume vals | 6 | `init_dense`, `alloc_preserves_{dense,no_black,no_ptr_to_blue,graph_wf,fl_valid}` |
+| `GC.Test` | assume vals | 0 | All bridge lemmas proven |
 | `GC.Impl.Heap` | assume | 1 | `platform_fits_u64` — axiom that `size_t ≥ 64` bits (true on 64-bit platforms) |
 
 ### Known design limitations
 
-- **`heap_objects_dense` after init:** The `init_heap_spec` creates a single
-  large free block; interior positions have zero headers that create phantom
-  objects not tracked in the `objects` list. Proving `init_dense` requires
-  either redesigning `init_heap_spec` to write proper headers at every
-  object boundary, or weakening the `heap_objects_dense` predicate.
+- **`heap_objects_dense` after allocation:** Density preservation across
+  allocation (`alloc_spec`) is a documented proof obligation. The exact-fit
+  case follows from `heap_objects_dense_transfer` (objects and wosize
+  unchanged). The split case requires `heap_objects_dense_intro` with the
+  new tiling structure.
 
-- **`no_pointer_to_blue` after GC cycles:** Sweep writes free-list links
-  into field 1 of blue blocks, creating blue→blue pointers. After an
-  exact-fit allocation, a stale link value may produce a white→blue pointer.
-  The mutator must zero allocated fields before the next collection.
+- **`no_pointer_to_blue` after allocation:** Alloc changes a blue (free)
+  block to white (allocated) without clearing its fields. The old free-list
+  link in field 0 may point to a blue block, violating `no_pointer_to_blue`.
+  The fix is to compose `alloc_spec` with `zero_fields` (already defined
+  in `GC.Spec.Allocator`). This matches the OCaml runtime which zeros all
+  fields on allocation. The Pulse implementation handles zeroing.
+
+- **`graph_wf` after allocation:** Graph well-formedness preservation
+  follows from `well_formed_heap` preservation combined with field
+  consistency. Like `no_pointer_to_blue`, benefits from field zeroing.
 
 ## Prerequisites
 
