@@ -123,6 +123,19 @@ let heap_objects_dense (g: heap) : prop =
      Seq.length (objects (U64.uint_to_t next) g) > 0 /\
      Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))
 
+let heap_objects_dense_intro (g: heap)
+  : Lemma (requires (forall (start: hp_addr).
+                      U64.v start + 8 < heap_size ==>
+                      Seq.mem (f_address start) (objects 0UL g) ==>
+                      Seq.length (objects start g) > 0 ==>
+                      (let wz = getWosize (read_word g start) in
+                       let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                       next + 8 < heap_size ==>
+                       Seq.length (objects (U64.uint_to_t next) g) > 0 /\
+                       Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))))
+          (ensures heap_objects_dense g)
+  = ()
+
 let objects_dense_step (start: hp_addr) (g: heap)
   : Lemma (requires heap_objects_dense g /\
                     U64.v start + 8 < heap_size /\

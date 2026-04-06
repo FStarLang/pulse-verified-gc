@@ -60,16 +60,13 @@ let collect_enables_allocate (h_final: heap) (fp: U64.t) (wz: nat)
 ///   init_graph_wf
 /// -------------------------------------------------------------------------
 
-/// NOTE: heap_objects_dense does NOT hold after init_heap_spec for heaps
-/// larger than 32 bytes. Interior positions of the single large block have
-/// 0UL headers, creating phantom objects not in objects(0, g). This is a
-/// design limitation of init_heap_spec. A fix would be to write proper
-/// headers at every 2-word boundary during init, creating many small blue
-/// blocks instead of one giant block.
-assume val init_dense : (g: heap) ->
-  Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
-        (ensures (let (g', _) = init_heap_spec g in
-                  heap_objects_dense g'))
+/// heap_objects_dense holds after init_heap_spec with weakened predicate.
+/// Proven in GC.Test.Bridge.init_dense.
+let init_dense_lemma (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', _) = init_heap_spec g in
+                    heap_objects_dense g'))
+  = GC.Test.Bridge.init_dense g
 
 /// Alloc-time assumptions: properties preserved across allocation.
 assume val alloc_preserves_dense : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
@@ -79,12 +76,13 @@ assume val alloc_preserves_dense : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
         (ensures (let r = alloc_spec g fp wz in
                   heap_objects_dense r.heap_out))
 
-assume val alloc_preserves_no_black : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
-  Lemma (requires no_black_objects g /\
-                  well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword))
-        (ensures (let r = alloc_spec g fp wz in
-                  no_black_objects r.heap_out))
+let alloc_preserves_no_black (g: heap) (fp: U64.t) (wz: nat)
+  : Lemma (requires no_black_objects g /\
+                    well_formed_heap g /\
+                    fl_valid g fp (heap_size / U64.v mword))
+          (ensures (let r = alloc_spec g fp wz in
+                    no_black_objects r.heap_out))
+  = alloc_spec_preserves_no_black g fp wz
 
 /// NOTE: alloc_preserves_no_ptr_to_blue is only valid when the free list
 /// was built from a zeroed heap (all link pointers are 0UL). After a GC
@@ -105,11 +103,12 @@ assume val alloc_preserves_graph_wf : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
         (ensures (let r = alloc_spec g fp wz in
                   graph_wf (create_graph r.heap_out)))
 
-assume val alloc_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (wz: nat) ->
-  Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword))
-        (ensures (let r = alloc_spec g fp wz in
-                  fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+let alloc_preserves_fl_valid (g: heap) (fp: U64.t) (wz: nat)
+  : Lemma (requires well_formed_heap g /\
+                    fl_valid g fp (heap_size / U64.v mword))
+          (ensures (let r = alloc_spec g fp wz in
+                    fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+  = alloc_spec_preserves_fl_valid g fp wz
 
 /// =========================================================================
 /// Empty-stack properties (FULLY VERIFIED)
@@ -153,11 +152,10 @@ private let no_gray_elim_all (g: heap)
     Classical.forall_intro (Classical.move_requires aux)
 
 /// After init, we can establish gc_precondition for the first collection.
-/// Uses only Bridge lemmas + init_dense (the sole remaining init-time assumption).
+/// All init-time properties are now fully proven (including density).
 #push-options "--z3rlimit 30"
 let init_enables_collect (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16 /\
-                    (let (g', _) = init_heap_spec g in heap_objects_dense g'))
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
           (ensures (let (g', fp) = init_heap_spec g in
                     let st = Seq.empty #obj_addr in
                     mark_inv g' st /\
@@ -165,9 +163,11 @@ let init_enables_collect (g: heap)
                     root_props g' st /\
                     no_black_objects g' /\
                     no_pointer_to_blue g' /\
-                    graph_wf (create_graph g')))
+                    graph_wf (create_graph g') /\
+                    heap_objects_dense g'))
   = let (g', fp) = init_heap_spec g in
-    // Bridge lemmas
+    // Bridge lemmas (including init_dense)
+    init_dense_lemma g;
     init_wf g;
     init_fl_valid g;
     init_no_black g;

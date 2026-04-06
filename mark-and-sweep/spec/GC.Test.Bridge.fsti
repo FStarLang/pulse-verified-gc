@@ -59,3 +59,11 @@ val init_graph_wf (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
           (ensures (let (g', _) = init_heap_spec g in
                     graph_wf (create_graph g')))
+
+/// heap_objects_dense holds after init_heap_spec on a zeroed heap.
+/// With the weakened predicate (guarded by membership in objects 0UL g),
+/// init density is trivially satisfied.
+val init_dense (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', _) = init_heap_spec g in
+                    heap_objects_dense g'))

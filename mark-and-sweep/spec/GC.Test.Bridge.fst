@@ -547,3 +547,62 @@ let init_graph_wf (g: heap)
     assert (object_edges g' mword == make_edges mword Seq.empty);
     ()
 #pop-options
+
+/// =========================================================================
+/// Lemma 11: init_dense — heap_objects_dense after init_heap_spec
+/// =========================================================================
+/// With the weakened heap_objects_dense (guarded by membership in objects 0UL g),
+/// init density is trivially satisfied: the only position whose f_address is in
+/// objects 0UL g' = [8] is start=0, and for that position the next position is
+/// at heap_size (out of bounds), making the implication vacuously true.
+
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let init_dense (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', _) = init_heap_spec g in heap_objects_dense g'))
+  = let (g', fp) = init_heap_spec g in
+    init_objects_eq g;
+    wz_bounds ();
+    init_header_at_zero g;
+    // objects 0UL g' == [mword], a singleton
+    let objs = objects 0UL g' in
+    // Characterize membership: mem y objs ↔ y = mword
+    Seq.lemma_mem_snoc (Seq.empty #obj_addr) (mword <: obj_addr);
+    assert (Seq.equal (Seq.snoc (Seq.empty #obj_addr) (mword <: obj_addr))
+                      (Seq.cons (mword <: obj_addr) (Seq.empty #obj_addr)));
+    // Key header facts
+    let total_words = heap_size / U64.v mword in
+    let wz_nat = total_words - 1 in
+    let wz_u64 = U64.uint_to_t wz_nat in
+    let hdr = make_header wz_u64 blue_bits 0UL in
+    make_header_getWosize wz_u64 blue_bits 0UL;
+    assert (getWosize hdr == wz_u64);
+    assert (read_word g' zero_addr == hdr);
+    assert ((wz_nat + 1) * 8 == heap_size);
+    let aux (start: hp_addr) : Lemma
+      (U64.v start + 8 < heap_size ==>
+       Seq.mem (f_address start) (objects 0UL g') ==>
+       Seq.length (objects start g') > 0 ==>
+       (let wz = getWosize (read_word g' start) in
+        let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+        next + 8 < heap_size ==>
+        Seq.length (objects (U64.uint_to_t next) g') > 0 /\
+        Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
+    = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects 0UL g') then begin
+        // f_address start = start + 8 ∈ [mword] means start = 0
+        f_address_spec start;
+        assert (f_address start == (mword <: obj_addr));
+        assert (U64.v start == 0);
+        // At start = 0: read_word g' 0 == hdr, getWosize hdr == wz_u64
+        assert (start == zero_addr);
+        assert (getWosize (read_word g' start) == wz_u64);
+        // next = 0 + (wz+1)*8 = heap_size
+        let next = U64.v start + FStar.Mul.((U64.v wz_u64 + 1) * 8) in
+        assert (next == heap_size);
+        // next + 8 >= heap_size → implication is vacuously true
+        assert (~ (next + 8 < heap_size))
+      end
+    in
+    FStar.Classical.forall_intro aux;
+    heap_objects_dense_intro g'
+#pop-options

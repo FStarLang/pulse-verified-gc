@@ -115,6 +115,19 @@ val obj_in_objects_head : (g: heap) ->
 /// the head object is in the global objects list.
 val heap_objects_dense : heap -> prop
 
+/// Introduction lemma for heap_objects_dense: prove it from the universal property
+val heap_objects_dense_intro : (g: heap) ->
+  Lemma (requires (forall (start: hp_addr).
+                    U64.v start + 8 < heap_size ==>
+                    Seq.mem (f_address start) (objects 0UL g) ==>
+                    Seq.length (objects start g) > 0 ==>
+                    (let wz = getWosize (read_word g start) in
+                     let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                     next + 8 < heap_size ==>
+                     Seq.length (objects (U64.uint_to_t next) g) > 0 /\
+                     Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))))
+        (ensures heap_objects_dense g)
+
 /// Step lemma: density + object at start in global list + objects at start > 0
 /// + next has room → objects at next > 0
 val objects_dense_step : (start: hp_addr) -> (g: heap) ->
