@@ -84,3 +84,20 @@ val fl_valid_step : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
                     read_word g (fp <: obj_addr) <> fp /\
                     fl_valid g (read_word g (fp <: obj_addr)) (fuel - 1)))
         (ensures fl_valid g fp fuel)
+
+/// alloc_spec preserves fl_valid: the free-list chain remains valid after allocation.
+val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires well_formed_heap g /\
+                  fl_valid g fp (heap_size / U64.v mword))
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+
+/// **Theorem**: alloc_spec preserves no_black_objects.
+/// Given a well-formed heap with no black objects and a valid free list,
+/// allocation produces a heap with no black objects.
+val alloc_spec_preserves_no_black : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires GC.Spec.Mark.no_black_objects g /\
+                  well_formed_heap g /\
+                  fl_valid g fp (heap_size / U64.v mword))
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  GC.Spec.Mark.no_black_objects r.heap_out))
