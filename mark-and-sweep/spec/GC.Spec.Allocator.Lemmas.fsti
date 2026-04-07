@@ -85,10 +85,31 @@ val fl_valid_step : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
                     fl_valid g (read_word g (fp <: obj_addr)) (fuel - 1)))
         (ensures fl_valid g fp fuel)
 
+/// Free-list chain termination: the chain from fp reaches a terminal node
+/// (0UL, out of bounds, or unaligned) within the given number of steps.
+val fl_chain_terminates (g: heap) (fp: U64.t) (steps: nat) : Tot bool (decreases steps)
+
+/// Terminal base cases: 0UL, out of bounds, or misaligned → always terminates.
+val fl_chain_terminates_terminal (g: heap) (fp: U64.t) (steps: nat)
+  : Lemma (requires fp = 0UL \/ U64.v fp < U64.v mword \/ U64.v fp >= heap_size \/ U64.v fp % U64.v mword <> 0)
+          (ensures fl_chain_terminates g fp steps = true)
+
+/// Step case: fp is valid, hd + 16 <= heap_size, and the tail terminates.
+val fl_chain_terminates_step (g: heap) (fp: U64.t) (steps: nat)
+  : Lemma (requires steps > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    (let hd = hd_address (fp <: obj_addr) in
+                     U64.v hd + 16 <= heap_size ==>
+                     fl_chain_terminates g (read_word g (fp <: obj_addr)) (steps - 1)))
+          (ensures fl_chain_terminates g fp steps)
+
 /// alloc_spec preserves fl_valid: the free-list chain remains valid after allocation.
 val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword))
+                  fl_valid g fp (heap_size / U64.v mword) /\
+                  fl_chain_terminates g fp (heap_size / U64.v mword))
         (ensures (let r = alloc_spec g fp requested_wz in
                   fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
 

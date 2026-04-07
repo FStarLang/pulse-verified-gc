@@ -67,3 +67,10 @@ val init_dense (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
           (ensures (let (g', _) = init_heap_spec g in
                     heap_objects_dense g'))
+
+/// fl_chain_terminates holds after init_heap_spec on a zeroed heap.
+/// The initial free list is a single node (mword → 0UL), which terminates in 1 step.
+val init_fl_chain_terminates (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', fp) = init_heap_spec g in
+                    fl_chain_terminates g' fp (heap_size / FStar.UInt64.v mword)))

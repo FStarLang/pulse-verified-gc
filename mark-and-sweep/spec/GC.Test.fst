@@ -104,7 +104,8 @@ let alloc_preserves_no_black (g: heap) (fp: U64.t) (wz: nat)
 
 let alloc_preserves_fl_valid (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword))
+                    fl_valid g fp (heap_size / U64.v mword) /\
+                    fl_chain_terminates g fp (heap_size / U64.v mword))
           (ensures (let r = alloc_spec g fp wz in
                     fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
   = alloc_spec_preserves_fl_valid g fp wz
@@ -256,6 +257,7 @@ let round_trip_spec
   (g0: heap) (fp0: U64.t) (wz1 wz2: nat)
   : Lemma (requires well_formed_heap g0 /\
                     fl_valid g0 fp0 (heap_size / U64.v mword) /\
+                    fl_chain_terminates g0 fp0 (heap_size / U64.v mword) /\
                     no_black_objects g0)
           (ensures (// Step 1: allocate
                     let r1 = alloc_spec g0 fp0 wz1 in
@@ -271,7 +273,7 @@ let round_trip_spec
     alloc_preserves_no_black g0 fp0 wz1;
     alloc_preserves_fl_valid g0 fp0 wz1;
     let r1 = alloc_spec g0 fp0 wz1 in
-    // Step 2: second allocation preserves all properties
+    // Step 2: second allocation preserves wf and no_black
     alloc_spec_preserves_wf r1.heap_out r1.fp_out wz2;
     alloc_preserves_no_black r1.heap_out r1.fp_out wz2
 
@@ -295,6 +297,7 @@ let init_alloc_alloc
   = let (g', fp) = init_heap_spec g in
     init_enables_collect g;
     init_fl_valid g;
+    init_fl_chain_terminates g;
     init_no_black g;
     init_wf g;
     round_trip_spec g' fp wz1 wz2

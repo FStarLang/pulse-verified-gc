@@ -606,3 +606,28 @@ let init_dense (g: heap)
     FStar.Classical.forall_intro aux;
     heap_objects_dense_intro g'
 #pop-options
+
+/// =========================================================================
+/// Lemma 12: init_fl_chain_terminates
+/// =========================================================================
+
+/// The initial free list is mword → 0UL, which terminates in 1 step.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let init_fl_chain_terminates (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', fp) = init_heap_spec g in
+                    fl_chain_terminates g' fp (heap_size / U64.v mword)))
+  = let (g', fp) = init_heap_spec g in
+    assert (fp == mword);
+    let fuel = heap_size / U64.v mword in
+    assert (fuel >= 2);
+    hd_address_spec (mword <: obj_addr);
+    assert (U64.v (hd_address (mword <: obj_addr)) == 0);
+    assert (0 + 16 <= heap_size);
+    init_link_at_mword g;
+    assert (read_word g' mword == 0UL);
+    // 0UL is terminal
+    fl_chain_terminates_terminal g' 0UL (fuel - 1);
+    // Step: mword → 0UL terminates
+    fl_chain_terminates_step g' mword fuel
+#pop-options
