@@ -64,7 +64,7 @@ let collect_enables_allocate (h_final: heap) (fp: U64.t) (wz: nat)
 /// heap_objects_dense holds after init_heap_spec with weakened predicate.
 /// Proven in GC.Test.Bridge.init_dense.
 let init_dense_lemma (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     heap_objects_dense g'))
   = GC.Test.Bridge.init_dense g
@@ -155,7 +155,7 @@ private let no_gray_elim_all (g: heap)
 /// All init-time properties are now fully proven (including density).
 #push-options "--z3rlimit 30"
 let init_enables_collect (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     let st = Seq.empty #obj_addr in
                     mark_inv g' st /\
@@ -285,7 +285,7 @@ let round_trip_spec
 /// produce well-formed heaps. All properties are fully verified.
 let init_alloc_alloc
   (g: heap) (wz1 wz2: nat)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     let r1 = alloc_spec g' fp wz1 in
                     well_formed_heap r1.heap_out /\
@@ -310,7 +310,7 @@ let init_alloc_alloc
 /// This tests init_enables_collect + gc_precondition assembly.
 let init_collect
   (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     let st = Seq.empty #obj_addr in
                     mark_inv g' st /\
@@ -332,7 +332,7 @@ let init_collect
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_collect_alloc
   (g: heap) (wz: nat)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g0, fp0) = init_heap_spec g in
                     // mark with empty stack is identity
                     let g_mark = mark g0 Seq.empty in
@@ -385,3 +385,17 @@ let init_collect_alloc
     // allocate
     alloc_spec_preserves_wf g_sweep fp_sweep wz
 #pop-options
+
+/// =========================================================================
+/// Init → fp_in_heap + vertex set properties (for Pulse test)
+/// =========================================================================
+
+/// After init, fp_in_heap holds (fp = mword, which is in objects).
+let init_fp_in_heap (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g', fp) = init_heap_spec g in
+                    fp_in_heap fp g'))
+  = let (g', fp) = init_heap_spec g in
+    init_objects_eq g;
+    Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
+    assert (Seq.mem (mword <: obj_addr) (objects 0UL g'))

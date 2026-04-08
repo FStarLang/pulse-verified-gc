@@ -110,8 +110,7 @@ private let make_header_color_blue (wz: U64.t{U64.v wz < pow2 54})
 /// =========================================================================
 
 private let wz_bounds ()
-  : Lemma (requires heap_size >= 16)
-          (ensures (let total_words = heap_size / U64.v mword in
+  : Lemma (ensures (let total_words = heap_size / U64.v mword in
                     let wz = total_words - 1 in
                     total_words >= 2 /\
                     wz >= 1 /\
@@ -132,7 +131,7 @@ private let wz_bounds ()
 
 #push-options "--z3rlimit 50"
 private let init_header_at_zero (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     let total_words = heap_size / U64.v mword in
                     let wz = total_words - 1 in
@@ -151,7 +150,7 @@ private let init_header_at_zero (g: heap)
 
 #push-options "--z3rlimit 50"
 private let init_link_at_mword (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     read_word g' mword == 0UL))
   = wz_bounds ();
@@ -166,7 +165,7 @@ private let init_link_at_mword (g: heap)
 
 #push-options "--z3rlimit 30"
 private let init_wosize_lemma (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     let total_words = heap_size / U64.v mword in
                     let wz = total_words - 1 in
@@ -184,7 +183,7 @@ private let init_wosize_lemma (g: heap)
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_objects_eq (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     fp == mword /\
                     objects 0UL g' == Seq.cons (mword <: obj_addr) Seq.empty))
@@ -204,7 +203,7 @@ let init_objects_eq (g: heap)
 
 #push-options "--z3rlimit 10"
 private let init_mem_mword (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     Seq.mem mword (objects 0UL g')))
   = init_objects_eq g;
@@ -218,7 +217,7 @@ private let init_mem_mword (g: heap)
 
 #push-options "--z3rlimit 50"
 private let init_field_read (g: heap) (addr: hp_addr)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16 /\
+  : Lemma (requires g == Seq.create heap_size 0uy /\
                     U64.v addr >= 8)
           (ensures (let (g', _) = init_heap_spec g in
                     read_word g' addr == 0UL))
@@ -265,7 +264,7 @@ private let rec no_pointer_fields_no_efptu
 
 #push-options "--z3rlimit 50"
 private let init_all_fields_zero (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     let total_words = heap_size / U64.v mword in
                     let wz = total_words - 1 in
@@ -307,7 +306,7 @@ private let init_all_fields_zero (g: heap)
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_wf (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in well_formed_heap g'))
   = let (g', _) = init_heap_spec g in
     wz_bounds ();
@@ -353,7 +352,7 @@ let init_wf (g: heap)
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_fl_valid (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     fl_valid g' fp (heap_size / U64.v mword)))
   = let (g', fp) = init_heap_spec g in
@@ -385,7 +384,7 @@ let init_fl_valid (g: heap)
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_no_black (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in no_black_objects g'))
   = let (g', _) = init_heap_spec g in
     wz_bounds ();
@@ -413,7 +412,7 @@ let init_no_black (g: heap)
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_no_gray (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in no_gray_objects g'))
   = let (g', _) = init_heap_spec g in
     wz_bounds ();
@@ -442,7 +441,7 @@ let init_no_gray (g: heap)
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_no_pointer_to_blue (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in no_pointer_to_blue g'))
   = let (g', _) = init_heap_spec g in
     wz_bounds ();
@@ -471,7 +470,7 @@ let init_no_pointer_to_blue (g: heap)
 
 #push-options "--z3rlimit 10"
 let init_objects_nonempty (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     Seq.length (objects 0UL g') > 0))
   = init_objects_eq g
@@ -485,7 +484,7 @@ let init_objects_nonempty (g: heap)
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 private let rec init_get_pointer_fields_aux_empty
   (g: heap) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16 /\
+  : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let (g', _) = init_heap_spec g in
                      U64.v i <= U64.v ws + 1 /\
                      (forall (j: U64.t{U64.v j >= U64.v i /\ U64.v j <= U64.v ws}).
@@ -506,7 +505,7 @@ private let rec init_get_pointer_fields_aux_empty
 
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let init_graph_wf (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     graph_wf (create_graph g')))
   = let (g', _) = init_heap_spec g in
@@ -559,7 +558,7 @@ let init_graph_wf (g: heap)
 
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let init_dense (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in heap_objects_dense g'))
   = let (g', fp) = init_heap_spec g in
     init_objects_eq g;
@@ -615,7 +614,7 @@ let init_dense (g: heap)
 /// The initial free list is mword → 0UL, which terminates in 1 step.
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let init_fl_chain_terminates (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     fl_chain_terminates g' fp (heap_size / U64.v mword)))
   = let (g', fp) = init_heap_spec g in
@@ -1091,7 +1090,7 @@ let sweep_produces_fl_valid
 
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let init_all_blue (g: heap)
-  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+  : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     forall (obj: obj_addr). Seq.mem obj (objects 0UL g') ==> is_blue obj g'))
   = let (g', _) = init_heap_spec g in
@@ -1112,4 +1111,19 @@ let init_all_blue (g: heap)
         is_blue_iff obj g'
     in
     Classical.forall_intro (Classical.move_requires aux)
+#pop-options
+
+/// =========================================================================
+/// Lemma 21: fl_valid_implies_fp_in_heap
+/// =========================================================================
+
+/// fl_valid of a well-formed fp (non-null, valid obj_addr) implies fp_in_heap.
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+let fl_valid_implies_fp_in_heap (g: heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fl_valid g fp fuel /\ fuel > 0 /\
+                    (fp = 0UL \/ (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+                                  U64.v fp % U64.v mword = 0)))
+          (ensures fp_in_heap fp g)
+  = if fp = 0UL then ()
+    else fl_valid_gives_mem g fp fuel
 #pop-options

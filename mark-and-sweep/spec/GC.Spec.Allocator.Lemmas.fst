@@ -3182,3 +3182,4 @@ let alloc_spec_preserves_no_black (g: heap) (fp: U64.t) (requested_wz: nat)
     alloc_search_preserves_no_black g fp 0UL fp wz (heap_size / U64.v mword)
 
 #pop-options // Module-level z3rlimit 20
+
