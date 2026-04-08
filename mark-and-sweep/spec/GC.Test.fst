@@ -321,3 +321,67 @@ let init_collect
                     graph_wf (create_graph g') /\
                     heap_objects_dense g'))
   = init_enables_collect g
+
+/// =========================================================================
+/// End-to-end test: init → collect → alloc (full GC cycle)
+/// =========================================================================
+
+/// From a zeroed heap: init, then mark+sweep (with empty roots),
+/// then allocate. This exercises the sweep_produces_fl_valid bridge.
+/// All properties are fully verified — zero admits.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let init_collect_alloc
+  (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    // mark with empty stack is identity
+                    let g_mark = mark g0 Seq.empty in
+                    // sweep produces fl_valid
+                    let (g_sweep, fp_sweep) = sweep g_mark fp0 in
+                    fl_valid g_sweep fp_sweep (heap_size / U64.v mword) /\
+                    well_formed_heap g_sweep /\
+                    // allocate on post-sweep heap works
+                    (let r = alloc_spec g_sweep fp_sweep wz in
+                     well_formed_heap r.heap_out)))
+  = let (g0, fp0) = init_heap_spec g in
+    // Init properties
+    init_wf g;
+    init_fl_valid g;
+    init_objects_eq g;
+    init_all_blue g;
+    // mark with empty stack = identity
+    mark_empty_identity g0;
+    assert (mark g0 Seq.empty == g0);
+    let g_mark = g0 in
+    // fp_in_heap: fp0 = mword, which is in objects
+    Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
+    assert (Seq.mem (mword <: obj_addr) (objects 0UL g0));
+    assert (fp_in_heap fp0 g0);
+    // All objects are blue → vacuous white/non-blue preconditions
+    let blue_implies_not_white (o: obj_addr)
+      : Lemma (requires Seq.mem o (objects 0UL g0) /\ is_white o g0)
+              (ensures U64.v (wosize_of_object o g0) >= 1)
+      = is_white_iff o g0; is_blue_iff o g0
+    in
+    Classical.forall_intro (Classical.move_requires blue_implies_not_white);
+    let blue_implies_no_chain (o: obj_addr)
+      : Lemma (requires Seq.mem o (objects 0UL g0) /\ ~(is_blue o g0))
+              (ensures chain_not_visits g0 fp0 o (heap_size / U64.v mword))
+      = ()  // vacuously true — all objects are blue
+    in
+    Classical.forall_intro (Classical.move_requires blue_implies_no_chain);
+    // sweep_produces_fl_valid
+    sweep_produces_fl_valid g_mark fp0;
+    let (g_sweep, fp_sweep) = SpecSweep.sweep g_mark fp0 in
+    // Establish noGreyObjects for sweep_preserves_wf
+    // All objects are blue after init → not gray
+    let no_grey (obj: obj_addr)
+      : Lemma (requires Seq.mem obj (objects 0UL g0))
+              (ensures not (is_gray obj g0))
+      = is_blue_iff obj g0; is_gray_iff obj g0
+    in
+    Classical.forall_intro (Classical.move_requires no_grey);
+    sweep_preserves_wf g_mark fp0;
+    // allocate
+    alloc_spec_preserves_wf g_sweep fp_sweep wz
+#pop-options

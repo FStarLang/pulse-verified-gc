@@ -841,8 +841,20 @@ let sweep_no_gray_or_black g fp = sweep_final_colors g fp
 
 /// Sweep preserves wosize for black objects
 /// Single-step helper: sweep_object preserves read_word at address a in x's body when obj ≠ x
+val sweep_object_preserves_other_body_read :
+  (g: heap) -> (obj: obj_addr) -> (fp: U64.t) -> (x: obj_addr) -> (a: hp_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  fp_in_heap fp g /\
+                  Seq.mem x (objects 0UL g) /\
+                  obj <> x /\
+                  U64.v a >= U64.v x /\
+                  U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8 /\
+                  U64.v a % 8 = 0)
+        (ensures read_word (fst (sweep_object g obj fp)) a == read_word g a)
+
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
-private let sweep_object_preserves_other_body_read
+let sweep_object_preserves_other_body_read
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
                     Seq.mem obj (objects 0UL g) /\
@@ -919,8 +931,18 @@ private let sweep_object_preserves_other_body_read
 #pop-options
 
 /// Single-step: sweep_object preserves header (and thus wosize/tag) of different object
+val sweep_object_preserves_other_header :
+  (g: heap) -> (obj: obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
+  Lemma (requires Seq.mem obj (objects 0UL g) /\
+                  fp_in_heap fp g /\
+                  Seq.mem x (objects 0UL g) /\
+                  obj <> x)
+        (ensures (let g' = fst (sweep_object g obj fp) in
+                  read_word g' (GC.Spec.Heap.hd_address x) == read_word g (GC.Spec.Heap.hd_address x) /\
+                  wosize_of_object x g' == wosize_of_object x g))
+
 #push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
-private let sweep_object_preserves_other_header
+let sweep_object_preserves_other_header
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires Seq.mem obj (objects 0UL g) /\
                     fp_in_heap fp g /\
@@ -986,6 +1008,86 @@ private let sweep_object_preserves_other_header
     end;
     assert (read_word g' hd_x == read_word g hd_x);
     wosize_of_object_spec x g'
+#pop-options
+
+/// sweep_object preserves wosize of the processed object itself.
+/// For all cases: infix (no-op), white (set_field + makeBlue), black (makeWhite), blue/gray (no-op).
+val sweep_object_preserves_self_wosize :
+  (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
+  Lemma (requires Seq.mem obj (objects 0UL g) /\ fp_in_heap fp g)
+        (ensures wosize_of_object obj (fst (sweep_object g obj fp)) == wosize_of_object obj g)
+
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let sweep_object_preserves_self_wosize
+  (g: heap) (obj: obj_addr) (fp: U64.t)
+  : Lemma (requires Seq.mem obj (objects 0UL g) /\ fp_in_heap fp g)
+          (ensures wosize_of_object obj (fst (sweep_object g obj fp)) == wosize_of_object obj g)
+  = if is_infix obj g then ()
+    else if is_white obj g then begin
+      let ws = wosize_of_object obj g in
+      let hd = GC.Spec.Heap.hd_address obj in
+      GC.Spec.Heap.hd_address_spec obj;
+      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        // Step 1: set_field writes at obj, preserves header at hd_address(obj)
+        let field_addr = U64.add hd (U64.mul mword 1UL) in
+        assert (field_addr == obj);
+        let g_sf = HeapGraph.set_field g obj 1UL fp in
+        GC.Spec.Heap.read_write_different g field_addr hd fp;
+        assert (read_word g_sf hd == read_word g hd);
+        wosize_of_object_spec obj g;
+        wosize_of_object_spec obj g_sf;
+        assert (wosize_of_object obj g_sf == wosize_of_object obj g);
+        // Step 2: makeBlue preserves wosize
+        makeBlue_eq obj g_sf;
+        color_preserves_wosize obj g_sf Header.Blue;
+        let g'' = makeBlue obj g_sf in
+        assert (wosize_of_object obj g'' == wosize_of_object obj g_sf);
+        assert (fst (sweep_object g obj fp) == g'')
+      end else begin
+        // ws = 0 or hd too close to end: g_sf = g, only makeBlue
+        makeBlue_eq obj g;
+        color_preserves_wosize obj g Header.Blue
+      end
+    end
+    else if is_black obj g then begin
+      colors_exclusive obj g;
+      makeWhite_eq obj g;
+      color_preserves_wosize obj g Header.White
+    end
+    else begin
+      colors_exclusive obj g
+    end
+#pop-options
+
+/// sweep_object on a white object with wosize > 0 writes fp to field 0.
+/// After sweep_object, read_word at obj returns the original fp argument.
+val sweep_object_white_field0 :
+  (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
+  Lemma (requires is_white obj g /\ ~(is_infix obj g) /\
+                  U64.v (wosize_of_object obj g) > 0 /\
+                  U64.v (hd_address obj) + U64.v mword * 2 <= heap_size)
+        (ensures read_word (fst (sweep_object g obj fp)) obj == fp)
+
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let sweep_object_white_field0
+  (g: heap) (obj: obj_addr) (fp: U64.t)
+  : Lemma (requires is_white obj g /\ ~(is_infix obj g) /\
+                    U64.v (wosize_of_object obj g) > 0 /\
+                    U64.v (hd_address obj) + U64.v mword * 2 <= heap_size)
+          (ensures read_word (fst (sweep_object g obj fp)) obj == fp)
+  = let hd = GC.Spec.Heap.hd_address obj in
+    GC.Spec.Heap.hd_address_spec obj;
+    // Step 1: set_field writes fp at obj (field_addr = hd + mword*1 = obj)
+    let g_sf = HeapGraph.set_field g obj 1UL fp in
+    GC.Spec.Heap.read_write_same g obj fp;
+    assert (read_word g_sf obj == fp);
+    // Step 2: makeBlue = write_word g_sf hd (colorHeader ...). hd ≠ obj.
+    // read_write_different: |hd - obj| >= mword, so read_word at obj is preserved.
+    makeBlue_eq obj g_sf;
+    let old_hdr = read_word g_sf hd in
+    let new_hdr = colorHeader old_hdr Header.Blue in
+    GC.Spec.Heap.read_write_different g_sf hd obj new_hdr;
+    assert (read_word (write_word g_sf hd new_hdr) obj == read_word g_sf obj)
 #pop-options
 
 ///Helper 1: sweep_aux preserves read_word at field addresses of x when x ∉ objs

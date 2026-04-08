@@ -74,3 +74,42 @@ val init_fl_chain_terminates (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
           (ensures (let (g', fp) = init_heap_spec g in
                     fl_chain_terminates g' fp (heap_size / FStar.UInt64.v mword)))
+
+open GC.Spec.Sweep
+
+/// Returns true when the fl_valid chain from fp does NOT visit `skip`.
+let rec chain_not_visits (g: heap) (fp: FStar.UInt64.t) (skip: obj_addr) (fuel: nat)
+  : Tot bool (decreases fuel)
+  = if fuel = 0 then true
+    else if fp = 0UL then true
+    else if FStar.UInt64.v fp < FStar.UInt64.v mword then true
+    else if FStar.UInt64.v fp >= heap_size then true
+    else if FStar.UInt64.v fp % FStar.UInt64.v mword <> 0 then true
+    else if fp = skip then false
+    else
+      let hd = hd_address (fp <: obj_addr) in
+      if FStar.UInt64.v hd + 16 > heap_size then true
+      else chain_not_visits g (read_word g (fp <: obj_addr)) skip (fuel - 1)
+
+/// mark with an empty stack is the identity on the heap.
+val mark_empty_identity (g: heap)
+  : Lemma (mark g Seq.empty == g)
+
+/// After sweep, the returned free pointer is fl_valid.
+val sweep_produces_fl_valid (g: heap) (fp: FStar.UInt64.t)
+  : Lemma
+    (requires well_formed_heap g /\
+              fl_valid g fp (heap_size / FStar.UInt64.v mword) /\
+              fp_in_heap fp g /\
+              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ is_white o g ==>
+                FStar.UInt64.v (wosize_of_object o g) >= 1) /\
+              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ ~(is_blue o g) ==>
+                chain_not_visits g fp o (heap_size / FStar.UInt64.v mword)))
+    (ensures (let (g', fp') = sweep g fp in
+              fl_valid g' fp' (heap_size / FStar.UInt64.v mword)))
+
+/// All objects are blue after init_heap_spec on a zeroed heap.
+val init_all_blue (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', _) = init_heap_spec g in
+                    forall (obj: obj_addr). Seq.mem obj (objects 0UL g') ==> is_blue obj g'))

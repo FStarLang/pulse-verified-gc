@@ -20,6 +20,7 @@ open GC.Spec.SweepInv
 open GC.Spec.HeapModel
 open GC.Spec.HeapGraph
 open GC.Spec.Graph
+open GC.Spec.Sweep
 
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8
@@ -630,4 +631,485 @@ let init_fl_chain_terminates (g: heap)
     fl_chain_terminates_terminal g' 0UL (fuel - 1);
     // Step: mword → 0UL terminates
     fl_chain_terminates_step g' mword fuel
+#pop-options
+
+/// =========================================================================
+/// Sweep → fl_valid bridge lemmas (Lemmas 13–19)
+/// =========================================================================
+
+/// =========================================================================
+/// Lemma 13: mark_empty_identity
+/// =========================================================================
+
+/// mark with an empty stack is the identity on the heap.
+let mark_empty_identity (g: heap)
+  : Lemma (mark g Seq.empty == g)
+  = mark_aux_empty g Seq.empty (heap_size / U64.v mword)
+
+/// =========================================================================
+/// Lemma 14: chain_not_visits helpers
+/// =========================================================================
+
+/// Monotonicity: more fuel doesn't find new visits if the shorter search didn't.
+let rec chain_not_visits_weaken (g: heap) (fp: U64.t) (skip: obj_addr)
+  (fuel_strong fuel_weak: nat)
+  : Lemma (requires fuel_weak <= fuel_strong /\
+                    chain_not_visits g fp skip fuel_strong)
+          (ensures chain_not_visits g fp skip fuel_weak)
+          (decreases fuel_weak)
+  = if fuel_weak = 0 then ()
+    else if fp = 0UL || U64.v fp < U64.v mword || U64.v fp >= heap_size
+         || U64.v fp % U64.v mword <> 0 then ()
+    else if fp = skip then ()
+    else
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else chain_not_visits_weaken g (read_word g (fp <: obj_addr)) skip
+             (fuel_strong - 1) (fuel_weak - 1)
+
+/// =========================================================================
+/// Lemma 15: fl_valid_transfer_skip — fl_valid frame with one excluded object
+/// =========================================================================
+
+/// fl_valid transfers when a single object `skip` is excluded from preservation,
+/// provided the chain doesn't visit `skip`.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec fl_valid_transfer_skip (g g': heap) (fp: U64.t) (skip: obj_addr) (fuel: nat)
+  : Lemma
+    (requires fl_valid g fp fuel /\
+              chain_not_visits g fp skip fuel /\
+              objects 0UL g' == objects 0UL g /\
+              (forall (a: obj_addr).
+                 (Seq.mem a (objects 0UL g) /\ a <> skip) ==>
+                 (Seq.mem a (objects 0UL g') /\
+                  (U64.v (wosize_of_object a g) >= 1 ==>
+                    U64.v (wosize_of_object a g') >= 1) /\
+                  (U64.v (wosize_of_object a g) >= 1 /\
+                   U64.v (hd_address a) + 16 <= heap_size ==>
+                    read_word g' a == read_word g a))))
+    (ensures fl_valid g' fp fuel)
+    (decreases fuel)
+  = if fuel = 0 then fl_valid_zero g' fp
+    else if fp = 0UL then fl_valid_terminal g' fp fuel
+    else if U64.v fp < U64.v mword then fl_valid_terminal g' fp fuel
+    else if U64.v fp >= heap_size then fl_valid_terminal g' fp fuel
+    else if U64.v fp % U64.v mword <> 0 then fl_valid_terminal g' fp fuel
+    else begin
+      assert (fp <> skip);  // from chain_not_visits
+      fl_valid_elim g fp fuel;
+      let obj_fp : obj_addr = fp in
+      let hd_fp = hd_address obj_fp in
+      assert (Seq.mem fp (objects 0UL g'));
+      assert (U64.v (wosize_of_object obj_fp g') >= 1);
+      if U64.v hd_fp + 16 <= heap_size then begin
+        assert (read_word g' obj_fp == read_word g obj_fp);
+        assert (read_word g obj_fp <> fp);
+        assert (read_word g' obj_fp <> fp);
+        let link = read_word g obj_fp in
+        fl_valid_transfer_skip g g' link skip (fuel - 1);
+        assert (fl_valid g' (read_word g' obj_fp) (fuel - 1))
+      end;
+      fl_valid_step g' fp fuel
+    end
+#pop-options
+
+/// =========================================================================
+/// Lemma 16: chain node ≠ hd_address(obj) when wosize ≥ 1
+/// =========================================================================
+
+/// Key separation lemma: a chain node with wosize ≥ 1 cannot be at hd_address(obj)
+/// for any other object obj. This is because adjacent objects with that relationship
+/// would require wosize = 0.
+let chain_node_ne_hd_address (g: heap) (node obj: obj_addr)
+  : Lemma (requires Seq.mem node (objects 0UL g) /\ Seq.mem obj (objects 0UL g) /\
+                    U64.v (wosize_of_object node g) >= 1 /\ node <> obj)
+          (ensures U64.v node <> U64.v (hd_address obj))
+  = hd_address_spec obj;
+    if U64.v node < U64.v obj then begin
+      objects_separated 0UL g node obj;
+      // obj > node + wosize(node)*8 ≥ node + 8
+      // hd_address(obj) = obj - 8 ≥ node + 1 (strict)
+      // But actually obj > node + wosize*8 and hd_address = obj - 8
+      // node + 8 ≤ obj (since node < obj and both 8-aligned)
+      // If node = hd_address(obj) = obj - 8: obj = node + 8
+      // Then obj > node + wosize*8 → node + 8 > node + wosize*8 → 8 > wosize*8 → wosize = 0
+      // Contradiction with wosize ≥ 1
+      assert (U64.v obj > U64.v node + U64.v (wosize_of_object node g) * 8)
+    end else begin
+      objects_separated 0UL g obj node;
+      // node > obj + wosize(obj)*8
+      // hd_address(obj) = obj - 8 < obj ≤ node
+      // If node = obj - 8: node < obj, contradicts node > obj
+      assert (U64.v node > U64.v obj + U64.v (wosize_of_object obj g) * 8)
+    end
+
+/// =========================================================================
+/// Lemma 17: sweep_object preserves fl_valid of the existing chain
+/// =========================================================================
+
+/// sweep_object on `obj` preserves fl_valid of any chain that doesn't visit `obj`.
+/// Uses chain_node_ne_hd_address to show writes don't affect chain nodes.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let sweep_object_preserves_fl_valid_chain
+  (g: heap) (obj: obj_addr) (fp_chain: U64.t) (fp_arg: U64.t) (fuel: nat)
+  : Lemma
+    (requires well_formed_heap g /\
+              Seq.mem obj (objects 0UL g) /\
+              fp_in_heap fp_arg g /\
+              fl_valid g fp_chain fuel /\
+              chain_not_visits g fp_chain obj fuel)
+    (ensures fl_valid (fst (sweep_object g obj fp_arg)) fp_chain fuel)
+  = let g' = fst (sweep_object g obj fp_arg) in
+    sweep_object_preserves_objects g obj fp_arg;
+    let aux (a: obj_addr)
+      : Lemma (requires Seq.mem a (objects 0UL g) /\ a <> obj)
+              (ensures Seq.mem a (objects 0UL g') /\
+                       (U64.v (wosize_of_object a g) >= 1 ==>
+                         U64.v (wosize_of_object a g') >= 1) /\
+                       (U64.v (wosize_of_object a g) >= 1 /\
+                        U64.v (hd_address a) + 16 <= heap_size ==>
+                         read_word g' a == read_word g a))
+      = assert (Seq.mem a (objects 0UL g'));
+        sweep_object_preserves_other_header g obj fp_arg a;
+        if U64.v (wosize_of_object a g) >= 1 &&
+           U64.v (hd_address a) + 16 <= heap_size then
+          sweep_object_preserves_other_body_read g obj fp_arg a (a <: hp_addr)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+    fl_valid_transfer_skip g g' fp_chain obj fuel
+#pop-options
+
+/// =========================================================================
+/// Lemma 18: chain_not_visits preserved by sweep_object
+/// =========================================================================
+
+/// chain_not_visits transfers across sweep_object when the chain doesn't visit obj.
+/// Key insight: chain nodes have wosize ≥ 1 (from fl_valid), so chain nodes ≠ hd_address(obj),
+/// meaning sweep_object's writes don't affect chain nodes' links.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec chain_not_visits_preserved_by_sweep_object
+  (g: heap) (obj: obj_addr) (fp_arg: U64.t) (fp_chain: U64.t) (skip: obj_addr) (fuel: nat)
+  : Lemma
+    (requires well_formed_heap g /\
+              Seq.mem obj (objects 0UL g) /\
+              fp_in_heap fp_arg g /\
+              fl_valid g fp_chain fuel /\
+              chain_not_visits g fp_chain obj fuel /\
+              chain_not_visits g fp_chain skip fuel)
+    (ensures chain_not_visits (fst (sweep_object g obj fp_arg)) fp_chain skip fuel)
+    (decreases fuel)
+  = if fuel = 0 then ()
+    else if fp_chain = 0UL || U64.v fp_chain < U64.v mword || U64.v fp_chain >= heap_size
+         || U64.v fp_chain % U64.v mword <> 0 then ()
+    else begin
+      assert (fp_chain <> obj);   // from chain_not_visits ... obj
+      assert (fp_chain <> skip);  // from chain_not_visits ... skip
+      let hd_c = hd_address (fp_chain <: obj_addr) in
+      if U64.v hd_c + 16 > heap_size then ()
+      else begin
+        let g' = fst (sweep_object g obj fp_arg) in
+        // Eliminate fl_valid to get wosize ≥ 1
+        fl_valid_elim g fp_chain fuel;
+        // fp_chain ≠ hd_address(obj) (from wosize ≥ 1 + objects_separated)
+        chain_node_ne_hd_address g (fp_chain <: obj_addr) obj;
+        // read_word preserved at fp_chain
+        sweep_object_preserves_other_body_read g obj fp_arg (fp_chain <: obj_addr) (fp_chain <: hp_addr);
+        assert (read_word g' (fp_chain <: obj_addr) == read_word g (fp_chain <: obj_addr));
+        // Recurse on the link
+        chain_not_visits_preserved_by_sweep_object g obj fp_arg
+          (read_word g (fp_chain <: obj_addr)) skip (fuel - 1)
+      end
+    end
+#pop-options
+
+
+/// =========================================================================
+/// Lemma 19: sweep_aux_produces_fl_valid — the main inductive theorem
+/// =========================================================================
+
+let big_fuel : nat = heap_size / U64.v mword
+
+/// Helper: is_vertex_set head is not in tail.
+/// Follows directly from the definition of is_vertex_set.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let vertex_set_head_not_in_tail (objs: seq obj_addr)
+  : Lemma (requires Seq.length objs > 0 /\
+                    is_vertex_set (coerce_to_vertex_list objs))
+          (ensures ~(Seq.mem (Seq.head objs) (Seq.tail objs)))
+  = let hd = Seq.head objs in
+    let tl = Seq.tail objs in
+    coerce_cons_lemma hd tl;
+    assert (Seq.equal (Seq.cons hd tl) objs);
+    let verts = coerce_to_vertex_list objs in
+    assert (is_vertex_set verts);
+    assert (Seq.length verts > 0);
+    // is_vertex_set unfolds: not (mem (head verts) (tail verts)) && ...
+    // With fuel 2, F* can unfold is_vertex_set once
+    assert (not (Seq.mem (Seq.head verts) (Seq.tail verts)));
+    // head/tail of coerce match head/tail of objs
+    assert (Seq.head verts == hd);
+    assert (Seq.equal (Seq.tail verts) (coerce_to_vertex_list tl));
+    assert (~(Seq.mem hd (coerce_to_vertex_list tl)));
+    coerce_mem_lemma tl hd
+#pop-options
+
+/// Helper: is_vertex_set of tail.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let head_in_vertex_set_tail (objs: seq obj_addr)
+  : Lemma (requires Seq.length objs > 0 /\
+                    is_vertex_set (coerce_to_vertex_list objs))
+          (ensures is_vertex_set (coerce_to_vertex_list (Seq.tail objs)))
+  = let hd = Seq.head objs in
+    let tl = Seq.tail objs in
+    coerce_cons_lemma hd tl;
+    assert (Seq.equal (Seq.cons hd tl) objs);
+    // coerce objs == cons hd (coerce tl)
+    let verts = coerce_to_vertex_list objs in
+    assert (verts == Seq.cons hd (coerce_to_vertex_list tl));
+    assert (Seq.equal (Seq.tail verts) (coerce_to_vertex_list tl));
+    is_vertex_set_tail verts
+#pop-options
+
+/// After sweep_aux, the returned fp satisfies fl_valid.
+/// Key preconditions:
+///   - fl_valid g fp big_fuel (existing chain is valid)
+///   - All white objects in objs have wosize >= 1
+///   - No non-blue object in objs is visited by the chain from fp
+///     (free-list chains only visit blue objects; non-blue objects are separate)
+///   - is_vertex_set ensures objects are distinct (no repeats)
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let rec sweep_aux_produces_fl_valid
+  (g: heap) (objs: seq obj_addr) (fp: U64.t)
+  : Lemma
+    (requires well_formed_heap g /\
+              fl_valid g fp big_fuel /\
+              fp_in_heap fp g /\
+              (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+              is_vertex_set (coerce_to_vertex_list objs) /\
+              // White objects have wosize >= 1
+              (forall (o: obj_addr). Seq.mem o objs /\ is_white o g ==>
+                U64.v (wosize_of_object o g) >= 1) /\
+              // Non-blue objects are not in the chain
+              (forall (o: obj_addr). Seq.mem o objs /\ ~(is_blue o g) ==>
+                chain_not_visits g fp o big_fuel))
+    (ensures (let (g', fp') = sweep_aux g objs fp in
+              fl_valid g' fp' big_fuel))
+    (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let obj = Seq.head objs in
+      let rest = Seq.tail objs in
+      let (g1, fp1) = sweep_object g obj fp in
+
+      // Objects preserved
+      sweep_object_preserves_objects g obj fp;
+      sweep_object_preserves_wf g obj fp;
+      assert (objects 0UL g1 == objects 0UL g);
+
+      // Head is in objects
+      assert (Seq.mem obj (objects 0UL g));
+
+      if is_infix obj g then begin
+        // Infix: (g1, fp1) = (g, fp), fl_valid unchanged
+        assert (g1 == g /\ fp1 == fp);
+        head_in_vertex_set_tail objs;
+        sweep_aux_produces_fl_valid g1 rest fp1
+      end
+      else if is_white obj g then begin
+        // White: fp1 = obj, g1 = makeBlue(set_field g obj 1 fp)
+        assert (fp1 == obj);
+
+        // obj is white hence non-blue, so chain doesn't visit obj
+        is_white_iff obj g;
+        is_blue_iff obj g;
+        assert (color_of_object obj g = Header.White);
+        assert (~(is_blue obj g));
+        assert (chain_not_visits g fp obj big_fuel);
+        // fl_valid of the OLD chain (fp) transfers to g1
+        sweep_object_preserves_fl_valid_chain g obj fp fp big_fuel;
+        assert (fl_valid g1 fp big_fuel);
+
+        // Construct fl_valid g1 obj big_fuel via fl_valid_step:
+        assert (Seq.mem obj (objects 0UL g1));
+        sweep_object_preserves_self_wosize g obj fp;
+        assert (U64.v (wosize_of_object obj g1) >= 1);
+        // chain_not_visits gives fp ≠ obj (first hop)
+        assert (fp <> obj);
+        fl_valid_weaken g1 fp big_fuel (big_fuel - 1);
+        // big_fuel > 0 (heap_size >= 16, mword = 8)
+        assert (big_fuel > 0);
+        // For fl_valid_step, we need:
+        //   hd + 16 ≤ heap_size ==> read_word g1 obj ≠ obj ∧ fl_valid g1 (read_word g1 obj) (big_fuel-1)
+        // sweep_object on white obj: set_field writes fp at obj, makeBlue writes at hd_address(obj)
+        // So read_word g1 obj == fp
+        let hd_obj = hd_address obj in
+        hd_address_spec obj;
+        if U64.v hd_obj + 16 <= heap_size then begin
+          sweep_object_white_field0 g obj fp;
+          assert (read_word g1 obj == fp);
+          assert (read_word g1 obj <> obj);
+          assert (fl_valid g1 (read_word g1 obj) (big_fuel - 1))
+        end;
+        fl_valid_step g1 (obj <: U64.t) big_fuel;
+
+        // fp_in_heap obj g1
+        assert (fp_in_heap fp1 g1);
+
+        // Establish IH preconditions for rest
+        head_in_vertex_set_tail objs;
+
+        // White objects in rest: still white, wosize preserved, not in new chain
+        let aux_white (o: obj_addr)
+          : Lemma (requires Seq.mem o rest /\ is_white o g1)
+                  (ensures U64.v (wosize_of_object o g1) >= 1)
+          = vertex_set_head_not_in_tail objs;
+            assert (o <> obj);
+            sweep_object_color_locality g obj o fp;
+            // color_of_object o g1 == color_of_object o g
+            is_white_iff o g1;
+            is_white_iff o g;
+            assert (is_white o g);
+            sweep_object_preserves_other_header g obj fp o
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires aux_white);
+
+        // Non-blue objects in rest: not in the new chain (obj → fp → ...)
+        let aux_chain (o: obj_addr)
+          : Lemma (requires Seq.mem o rest /\ ~(is_blue o g1))
+                  (ensures chain_not_visits g1 fp1 o big_fuel)
+          = vertex_set_head_not_in_tail objs;
+            assert (o <> obj);
+            // o is non-blue in g1; color locality shows same color in g
+            sweep_object_color_locality g obj o fp;
+            is_blue_iff o g1;
+            is_blue_iff o g;
+            assert (~(is_blue o g));
+            // From precondition: chain_not_visits g fp o big_fuel
+            assert (chain_not_visits g fp o big_fuel);
+            // Weaken fuel for the recursive step
+            chain_not_visits_weaken g fp o big_fuel (big_fuel - 1);
+            fl_valid_weaken g fp big_fuel (big_fuel - 1);
+            chain_not_visits_weaken g fp obj big_fuel (big_fuel - 1);
+            // Transfer chain_not_visits from g to g1
+            chain_not_visits_preserved_by_sweep_object g obj fp fp o (big_fuel - 1);
+            // Now chain_not_visits g1 fp o (big_fuel - 1)
+            assert (chain_not_visits g1 fp o (big_fuel - 1));
+            // New chain: fp1 = obj, o ≠ obj.
+            // chain_not_visits g1 obj o big_fuel unfolds to:
+            //   obj ≠ o, hd_address(obj) + 16 ≤ heap_size,
+            //   then chain_not_visits g1 (read_word g1 obj) o (big_fuel - 1)
+            //   = chain_not_visits g1 fp o (big_fuel - 1)
+            assert (chain_not_visits g1 fp1 o big_fuel)
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires aux_chain);
+        sweep_aux_produces_fl_valid g1 rest fp1
+      end
+      else if is_black obj g then begin
+        // Black: g1 = makeWhite obj g, fp1 = fp (only header write)
+        assert (fp1 == fp);
+
+        // obj is black hence non-blue, so chain doesn't visit obj
+        is_black_iff obj g;
+        is_blue_iff obj g;
+        assert (color_of_object obj g = Header.Black);
+        assert (~(is_blue obj g));
+        assert (chain_not_visits g fp obj big_fuel);
+        sweep_object_preserves_fl_valid_chain g obj fp fp big_fuel;
+        assert (fl_valid g1 fp big_fuel);
+        assert (fp_in_heap fp1 g1);
+
+        head_in_vertex_set_tail objs;
+
+        // White objects in rest: wosize preserved
+        let aux_white (o: obj_addr)
+          : Lemma (requires Seq.mem o rest /\ is_white o g1)
+                  (ensures U64.v (wosize_of_object o g1) >= 1)
+          = vertex_set_head_not_in_tail objs;
+            assert (o <> obj);
+            sweep_object_color_locality g obj o fp;
+            is_white_iff o g1;
+            is_white_iff o g;
+            assert (is_white o g);
+            sweep_object_preserves_other_header g obj fp o
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires aux_white);
+
+        // Non-blue objects in rest: chain_not_visits transfers
+        let aux_chain (o: obj_addr)
+          : Lemma (requires Seq.mem o rest /\ ~(is_blue o g1))
+                  (ensures chain_not_visits g1 fp1 o big_fuel)
+          = vertex_set_head_not_in_tail objs;
+            assert (o <> obj);
+            sweep_object_color_locality g obj o fp;
+            is_blue_iff o g1;
+            is_blue_iff o g;
+            assert (~(is_blue o g));
+            assert (chain_not_visits g fp o big_fuel);
+            // Transfer: chain_not_visits g fp o big_fuel → chain_not_visits g1 fp o big_fuel
+            chain_not_visits_preserved_by_sweep_object g obj fp fp o big_fuel;
+            assert (chain_not_visits g1 fp o big_fuel)
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires aux_chain);
+        sweep_aux_produces_fl_valid g1 rest fp1
+      end
+      else begin
+        // Blue/Gray: (g1, fp1) = (g, fp), nothing changes
+        assert (g1 == g /\ fp1 == fp);
+        head_in_vertex_set_tail objs;
+        sweep_aux_produces_fl_valid g1 rest fp1
+      end
+    end
+#pop-options
+
+/// =========================================================================
+/// Lemma 19: sweep_produces_fl_valid — top-level sweep wrapper
+/// =========================================================================
+
+/// After sweep, the returned free pointer is fl_valid.
+/// Preconditions model the post-mark state: fl_valid initial chain,
+/// white objects have wosize >= 1, and the chain only visits blue objects.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+let sweep_produces_fl_valid
+  (g: heap) (fp: U64.t)
+  : Lemma
+    (requires well_formed_heap g /\
+              fl_valid g fp big_fuel /\
+              fp_in_heap fp g /\
+              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ is_white o g ==>
+                U64.v (wosize_of_object o g) >= 1) /\
+              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ ~(is_blue o g) ==>
+                chain_not_visits g fp o big_fuel))
+    (ensures (let (g', fp') = sweep g fp in
+              fl_valid g' fp' big_fuel))
+  = objects_is_vertex_set g;
+    sweep_aux_produces_fl_valid g (objects 0UL g) fp
+#pop-options
+
+/// =========================================================================
+/// Lemma 20: init_all_blue — all objects are blue after init
+/// =========================================================================
+
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let init_all_blue (g: heap)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ heap_size >= 16)
+          (ensures (let (g', _) = init_heap_spec g in
+                    forall (obj: obj_addr). Seq.mem obj (objects 0UL g') ==> is_blue obj g'))
+  = let (g', _) = init_heap_spec g in
+    wz_bounds ();
+    init_objects_eq g;
+    init_header_at_zero g;
+    let total_words = heap_size / U64.v mword in
+    let wz = total_words - 1 in
+    make_header_color_blue (U64.uint_to_t wz);
+    color_of_object_spec (mword <: obj_addr) g';
+    hd_address_spec (mword <: obj_addr);
+    is_blue_iff (mword <: obj_addr) g';
+    let aux (obj: obj_addr)
+      : Lemma (requires Seq.mem obj (objects 0UL g'))
+              (ensures is_blue obj g')
+      = Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr);
+        assert (obj == mword);
+        is_blue_iff obj g'
+    in
+    Classical.forall_intro (Classical.move_requires aux)
 #pop-options

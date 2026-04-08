@@ -59,8 +59,6 @@ val fl_valid_gives_wosize : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
         (ensures U64.v (wosize_of_object (fp <: obj_addr) g) >= 1)
 
 /// **Main theorem**: alloc_spec preserves well_formed_heap.
-/// Given a well-formed heap and a valid free list, allocation produces
-/// a well-formed heap suitable for subsequent GC collection.
 val alloc_spec_preserves_wf : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\
                   fl_valid g fp (heap_size / U64.v mword))
@@ -85,11 +83,40 @@ val fl_valid_step : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
                     fl_valid g (read_word g (fp <: obj_addr)) (fuel - 1)))
         (ensures fl_valid g fp fuel)
 
+/// fl_valid eliminator: extract all components from fl_valid.
+val fl_valid_elim : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
+  Lemma (requires fuel > 0 /\
+                  U64.v fp >= U64.v mword /\
+                  U64.v fp < heap_size /\
+                  U64.v fp % U64.v mword = 0 /\
+                  fl_valid g fp fuel)
+        (ensures Seq.mem fp (objects 0UL g) /\
+                 U64.v (wosize_of_object (fp <: obj_addr) g) >= 1 /\
+                 (U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size ==>
+                   read_word g (fp <: obj_addr) <> fp /\
+                   fl_valid g (read_word g (fp <: obj_addr)) (fuel - 1)))
+
+/// fl_valid base case: fuel = 0 makes fl_valid trivially true.
+val fl_valid_zero : (g: heap) -> (fp: U64.t) ->
+  Lemma (fl_valid g fp 0)
+
+/// fl_valid terminal case: out of bounds, unaligned, or null pointer.
+val fl_valid_terminal : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
+  Lemma (requires fuel > 0 /\
+                  (fp = 0UL \/ U64.v fp < U64.v mword \/ U64.v fp >= heap_size \/
+                   U64.v fp % U64.v mword <> 0))
+        (ensures fl_valid g fp fuel)
+
+/// fl_valid monotonicity: more fuel implies less fuel.
+val fl_valid_weaken : (g: heap) -> (fp: U64.t) -> (fuel_strong: nat) -> (fuel_weak: nat) ->
+  Lemma (requires fl_valid g fp fuel_strong /\ fuel_weak <= fuel_strong)
+        (ensures fl_valid g fp fuel_weak)
+
 /// Free-list chain termination: the chain from fp reaches a terminal node
 /// (0UL, out of bounds, or unaligned) within the given number of steps.
 val fl_chain_terminates (g: heap) (fp: U64.t) (steps: nat) : Tot bool (decreases steps)
 
-/// Terminal base cases: 0UL, out of bounds, or misaligned → always terminates.
+/// Terminal base cases: 0UL, out of bounds, or misaligned -> always terminates.
 val fl_chain_terminates_terminal (g: heap) (fp: U64.t) (steps: nat)
   : Lemma (requires fp = 0UL \/ U64.v fp < U64.v mword \/ U64.v fp >= heap_size \/ U64.v fp % U64.v mword <> 0)
           (ensures fl_chain_terminates g fp steps = true)
@@ -114,8 +141,6 @@ val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: n
                   fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
 
 /// **Theorem**: alloc_spec preserves no_black_objects.
-/// Given a well-formed heap with no black objects and a valid free list,
-/// allocation produces a heap with no black objects.
 val alloc_spec_preserves_no_black : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires GC.Spec.Mark.no_black_objects g /\
                   well_formed_heap g /\
