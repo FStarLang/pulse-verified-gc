@@ -8,7 +8,9 @@ open GC.Spec.Allocator
 open GC.Spec.Allocator.Lemmas
 open GC.Spec.Mark
 open GC.Spec.SweepInv
+open GC.Spec.MarkInv
 open GC.Spec.HeapModel
+open GC.Spec.HeapGraph
 open GC.Spec.Graph
 
 /// Reading any word from a zeroed heap gives 0UL.
@@ -113,3 +115,76 @@ val init_all_blue (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
                     forall (obj: obj_addr). Seq.mem obj (objects 0UL g') ==> is_blue obj g'))
+
+/// After init + alloc, objects list is nonempty.
+val init_alloc_objects_nonempty (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    Seq.length (objects 0UL r.heap_out) > 0))
+
+/// After init + alloc, no_pointer_to_blue holds.
+val init_alloc_no_pointer_to_blue (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    no_pointer_to_blue r.heap_out))
+
+/// After init + alloc, graph_wf holds.
+val init_alloc_graph_wf (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    graph_wf (create_graph r.heap_out)))
+
+/// After init + alloc, heap_objects_dense holds.
+val init_alloc_dense (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    heap_objects_dense r.heap_out))
+
+/// After init + alloc, fp_in_heap holds.
+val init_alloc_fp_in_heap (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    fp_in_heap r.fp_out r.heap_out))
+
+/// After init + alloc, fp_valid holds.
+val init_alloc_fp_valid (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    fp_valid r.fp_out r.heap_out))
+
+/// After init + alloc, mark_inv holds (with empty stack).
+val init_alloc_mark_inv (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    let st = Seq.empty #obj_addr in
+                    mark_inv r.heap_out st))
+
+/// After init + alloc, no_black_objects holds.
+val init_alloc_no_black (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    no_black_objects r.heap_out))
+
+/// After init + alloc, the heap satisfies gc_precondition (with empty stack).
+val init_alloc_enables_collect (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    let st = Seq.empty #obj_addr in
+                    mark_inv r.heap_out st /\
+                    fp_valid r.fp_out r.heap_out /\
+                    root_props r.heap_out st /\
+                    fp_in_heap r.fp_out r.heap_out /\
+                    no_black_objects r.heap_out /\
+                    no_pointer_to_blue r.heap_out /\
+                    graph_wf (create_graph r.heap_out) /\
+                    is_vertex_set (coerce_to_vertex_list st) /\
+                    subset_vertices (coerce_to_vertex_list st) (create_graph r.heap_out).vertices))

@@ -105,6 +105,15 @@ private let make_header_color_blue (wz: U64.t{U64.v wz < pow2 54})
     assert (Header.get_color (U64.v hdr) == 2)
 #pop-options
 
+#push-options "--z3rlimit 50"
+private let make_header_color_white (wz: U64.t{U64.v wz < pow2 54})
+  : Lemma (getColor (make_header wz white_bits 0UL) == Header.White)
+  = let hdr = make_header wz white_bits 0UL in
+    getColor_raw hdr;
+    make_header_getColor_bridge wz white_bits 0UL;
+    assert (Header.get_color (U64.v hdr) == 0)
+#pop-options
+
 /// =========================================================================
 /// Helper: wz bounds from heap_size
 /// =========================================================================
@@ -129,7 +138,7 @@ private let wz_bounds ()
 /// Helpers: Reading after init_heap_spec
 /// =========================================================================
 
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 100 --fuel 4 --ifuel 2"
 private let init_header_at_zero (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
@@ -142,9 +151,13 @@ private let init_header_at_zero (g: heap)
     let wz = total_words - 1 in
     let hdr = make_header (U64.uint_to_t wz) blue_bits 0UL in
     let g1 = write_word g zero_addr hdr in
+    assert (U64.v mword == 8);
+    assert (heap_size >= 16);
     assert (U64.v mword < heap_size);
-    let g2 = write_word g1 (mword <: hp_addr) 0UL in
-    read_write_different g1 mword zero_addr 0UL;
+    assert (U64.v mword % U64.v mword == 0);
+    let m : hp_addr = mword in
+    let g2 = write_word g1 m 0UL in
+    read_write_different g1 m zero_addr 0UL;
     read_write_same g zero_addr hdr
 #pop-options
 
@@ -1118,7 +1131,7 @@ let init_all_blue (g: heap)
 /// =========================================================================
 
 /// fl_valid of a well-formed fp (non-null, valid obj_addr) implies fp_in_heap.
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let fl_valid_implies_fp_in_heap (g: heap) (fp: U64.t) (fuel: nat)
   : Lemma (requires fl_valid g fp fuel /\ fuel > 0 /\
                     (fp = 0UL \/ (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
@@ -1126,4 +1139,1240 @@ let fl_valid_implies_fp_in_heap (g: heap) (fp: U64.t) (fuel: nat)
           (ensures fp_in_heap fp g)
   = if fp = 0UL then ()
     else fl_valid_gives_mem g fp fuel
+#pop-options
+
+/// =========================================================================
+/// Section III: Init + Alloc Bridge Lemmas
+/// =========================================================================
+/// Prove properties of the heap after init_heap_spec + alloc_spec,
+/// enabling the alloc → collect transition.
+
+/// alloc_search first-fit: when the first block in the free list
+/// is big enough, alloc_search finds it on the first iteration.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+private let alloc_search_first_fit
+  (g: heap) (fp: obj_addr) (wz: nat) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    U64.v (hd_address fp) + 16 <= heap_size /\
+                    U64.v (getWosize (read_word g (hd_address fp))) >= wz)
+          (ensures (let next_fp = read_word g fp in
+                    let (g', rem_fp) = alloc_from_block g fp wz next_fp in
+                    alloc_search g fp 0UL fp wz fuel ==
+                      { heap_out = g'; fp_out = rem_fp; obj_out = fp }))
+  = hd_address_spec fp;
+    hd_address_bounds fp
+#pop-options
+
+/// init_alloc_spec_unfold: for the init heap, alloc_spec reduces to
+/// alloc_from_block on the single free block.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+private let init_alloc_spec_unfold (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     wz' <= heap_size / U64.v mword - 1))
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', rem_fp) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    alloc_spec g0 fp0 wz ==
+                      { heap_out = g'; fp_out = rem_fp; obj_out = mword }))
+  = let (g0, fp0) = init_heap_spec g in
+    wz_bounds ();
+    init_wosize_lemma g;
+    init_link_at_mword g;
+    let wz' = if wz = 0 then 1 else wz in
+    hd_address_spec (mword <: obj_addr);
+    let fuel = heap_size / U64.v mword in
+    alloc_search_first_fit g0 mword wz' fuel
+#pop-options
+
+/// After init + alloc_from_block, all field addresses read as 0UL.
+/// Excludes header addresses (0 and rem_hd in split case).
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+private let init_alloc_from_block_field_zero (g: heap) (wz: nat) (addr: hp_addr)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     wz' <= heap_size / U64.v mword - 1 /\
+                     U64.v addr >= U64.v mword /\
+                     (let bwz = heap_size / U64.v mword - 1 in
+                      let leftover = bwz - wz' in
+                      // In split case, addr must not be the remainder header
+                      (leftover >= 2 ==> U64.v addr <> (1 + wz') * 8))))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    read_word g' addr == 0UL))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    init_wosize_lemma g;
+    init_header_at_zero g;
+    init_field_read g addr;
+    hd_address_spec (mword <: obj_addr);
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    let leftover = bwz - wz' in
+    if leftover < 2 then begin
+      // Exact fit: only writes at hd=0
+      alloc_from_block_exact g0 mword wz' 0UL;
+      let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
+      read_write_different g0 zero_addr addr ahdr
+    end
+    else begin
+      // Split: writes at hd=0, rem_hd=(1+wz')*8, rem_obj=(2+wz')*8
+      alloc_from_block_split_normal g0 mword wz' 0UL;
+      let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
+      let g1 = write_word g0 zero_addr ahdr in
+      let rhn = (1 + wz') * 8 in
+      let rh : hp_addr = U64.uint_to_t rhn in
+      let rhdr = make_header (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL in
+      let g2 = write_word g1 rh rhdr in
+      let ron = (2 + wz') * 8 in
+      let ro : hp_addr = U64.uint_to_t ron in
+      let g3 = write_word g2 ro 0UL in
+      if U64.v addr = ron then
+        // addr is the remainder link field: written with 0UL
+        read_write_same g2 ro 0UL
+      else begin
+        // addr is not hd(=0), not rem_hd, not rem_obj
+        read_write_different g2 ro addr 0UL;
+        // addr <> rhn (from precondition: leftover >= 2 ==> addr <> rhn)
+        read_write_different g1 rh addr rhdr;
+        // addr >= 8 > 0
+        read_write_different g0 zero_addr addr ahdr
+      end
+    end
+#pop-options
+
+/// For the exact fit case: read_word g' 0 has same wosize as init.
+/// The objects list is unchanged because only color changed, not wosize.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 0"
+private let init_alloc_exact_wosize (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' < 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let bwz = heap_size / U64.v mword - 1 in
+                    U64.v (getWosize (read_word g' zero_addr)) == bwz))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    init_wosize_lemma g;
+    init_header_at_zero g;
+    hd_address_spec (mword <: obj_addr);
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    alloc_from_block_exact g0 mword wz' 0UL;
+    let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
+    read_write_same g0 zero_addr ahdr;
+    make_header_getWosize (U64.uint_to_t bwz) white_bits 0UL
+#pop-options
+
+/// For the exact fit case: objects list unchanged.
+/// Proof: the only write is at header 0, and wosize is preserved → objects walk same.
+#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
+private let init_alloc_exact_objects (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' < 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    objects 0UL g' == objects 0UL g0))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    init_objects_eq g;
+    init_wosize_lemma g;
+    init_header_at_zero g;
+    hd_address_spec (mword <: obj_addr);
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    alloc_from_block_exact g0 mword wz' 0UL;
+    let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
+    let g' = write_word g0 zero_addr ahdr in
+    // g' has same wosize at position 0 as g0
+    read_write_same g0 zero_addr ahdr;
+    make_header_getWosize (U64.uint_to_t bwz) white_bits 0UL;
+    // Both heaps have getWosize(read_word _ 0) = bwz
+    // next_start = (bwz+1)*8 = heap_size → objects = [mword]
+    assert (U64.v (getWosize (read_word g' zero_addr)) == bwz);
+    assert (U64.v (getWosize (read_word g0 zero_addr)) == bwz);
+    // Both objects walks: start at 0, wosize bwz, next = heap_size, stop
+    // F* should unfold objects once and see they're equal
+    assert (objects 0UL g' == Seq.cons (mword <: hp_addr) Seq.empty);
+    assert (objects 0UL g0 == Seq.cons (mword <: hp_addr) Seq.empty)
+#pop-options
+
+/// When the requested size exceeds the single init block (wz' > 127),
+/// alloc_spec returns OOM: heap unchanged, fp unchanged, obj = 0.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+private let init_alloc_oom (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     wz' > heap_size / U64.v mword - 1))
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    r.heap_out == g0 /\ r.fp_out == fp0 /\ r.obj_out == 0UL))
+  = let (g0, fp0) = init_heap_spec g in
+    wz_bounds ();
+    init_wosize_lemma g;
+    init_link_at_mword g;
+    let wz' = if wz = 0 then 1 else wz in
+    let fuel = heap_size / U64.v mword in
+    // Step 1: block_wz = 127 < wz', so alloc_search advances past mword
+    hd_address_spec (mword <: obj_addr);
+    alloc_search_advance g0 fp0 0UL fp0 wz' fuel;
+    // Step 2: next = spec_next_fp g0 mword = read_word g0 mword = 0UL
+    spec_next_fp_eq g0 (mword <: obj_addr);
+    // Step 3: cur = 0UL is invalid, so alloc_search returns OOM
+    alloc_search_invalid g0 fp0 fp0 0UL wz' (fuel - 1)
+#pop-options
+
+/// For the split case: header reads in the post-alloc heap.
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+private let init_alloc_split_headers (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let bwz = heap_size / U64.v mword - 1 in
+                    let rhn = (1 + wz') * 8 in
+                    let rh : hp_addr = U64.uint_to_t rhn in
+                    // Header at 0: make_header wz' white 0
+                    U64.v (getWosize (read_word g' zero_addr)) == wz' /\
+                    // Header at rem_hd: make_header (bwz-wz'-1) blue 0
+                    U64.v (getWosize (read_word g' rh)) == bwz - wz' - 1 /\
+                    // Heap length unchanged
+                    Seq.length g' == heap_size))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    init_wosize_lemma g;
+    init_header_at_zero g;
+    hd_address_spec (mword <: obj_addr);
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    alloc_from_block_split_normal g0 mword wz' 0UL;
+    let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
+    let g1 = write_word g0 zero_addr ahdr in
+    let rhn = (1 + wz') * 8 in
+    let rh : hp_addr = U64.uint_to_t rhn in
+    let rw = bwz - wz' - 1 in
+    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
+    let g2 = write_word g1 rh rhdr in
+    let ron = (2 + wz') * 8 in
+    let ro : hp_addr = U64.uint_to_t ron in
+    let g3 = write_word g2 ro 0UL in
+    // Header at 0: chain reads back
+    read_write_different g2 ro zero_addr 0UL;
+    read_write_different g1 rh zero_addr rhdr;
+    read_write_same g0 zero_addr ahdr;
+    make_header_getWosize (U64.uint_to_t wz') white_bits 0UL;
+    // Header at rem_hd: chain reads back
+    read_write_different g2 ro rh 0UL;
+    read_write_same g1 rh rhdr;
+    make_header_getWosize (U64.uint_to_t rw) blue_bits 0UL
+#pop-options
+
+/// Split case helper: objects starting at the remainder header position.
+/// objects rh g' == [rem_obj]
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 0 --split_queries always"
+private let init_alloc_split_objects_tail (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let rhn = (1 + wz') * 8 in
+                    let rh : hp_addr = U64.uint_to_t rhn in
+                    let ron = (2 + wz') * 8 in
+                    let rem_obj : hp_addr = U64.uint_to_t ron in
+                    objects rh g' == Seq.cons rem_obj Seq.empty))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    init_alloc_split_headers g wz;
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    let rhn = (1 + wz') * 8 in
+    let rh : hp_addr = U64.uint_to_t rhn in
+    let ron = (2 + wz') * 8 in
+    let rem_obj : hp_addr = U64.uint_to_t ron in
+    // Guide objects unfolding at rh:
+    // rh + 8 = ron < heap_size
+    assert (rhn + 8 < heap_size);
+    // wosize at rh
+    assert (U64.v (getWosize (read_word g' rh)) == bwz - wz' - 1);
+    // f_address rh = rh + 8 = rem_obj
+    f_address_spec rh;
+    assert (U64.v (f_address rh) == ron);
+    // next_start = rhn + (bwz - wz' - 1 + 1) * 8 = rhn + (bwz - wz') * 8
+    let rw = bwz - wz' - 1 in
+    let next2 = rhn + (rw + 1) * 8 in
+    assert (next2 == rhn + (bwz - wz') * 8);
+    assert (next2 == (wz' + 1) * 8 + (bwz - wz') * 8);
+    assert (next2 == (bwz + 1) * 8);
+    assert (next2 == heap_size);
+    assert (next2 >= heap_size)
+#pop-options
+
+/// For the split case: objects list = [mword, rem_obj].
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 0 --split_queries always"
+private let init_alloc_split_objects (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let ron = (2 + wz') * 8 in
+                    let rem_obj : hp_addr = U64.uint_to_t ron in
+                    objects 0UL g' == Seq.cons (mword <: hp_addr) (Seq.cons rem_obj Seq.empty)))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    init_alloc_split_headers g wz;
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    let rhn = (1 + wz') * 8 in
+    let rh : hp_addr = U64.uint_to_t rhn in
+    let ron = (2 + wz') * 8 in
+    let rem_obj : hp_addr = U64.uint_to_t ron in
+    // Guide objects unfolding at 0:
+    assert (0 + 8 < heap_size);
+    assert (U64.v (getWosize (read_word g' zero_addr)) == wz');
+    f_address_spec zero_addr;
+    assert (U64.v (f_address zero_addr) == 8);
+    // next_start = (wz'+1)*8 = rhn
+    let next1 = (wz' + 1) * 8 in
+    assert (next1 == rhn);
+    assert (rhn < heap_size);
+    assert (rhn < Seq.length g');
+    // So objects 0UL g' = Seq.cons mword (objects rh g')
+    // Now prove the tail
+    init_alloc_split_objects_tail g wz
+#pop-options
+
+/// After init + alloc, objects list is always nonempty (all three cases).
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+let init_alloc_objects_nonempty (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    Seq.length (objects 0UL r.heap_out) > 0))
+  = let (g0, fp0) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      // OOM: heap unchanged, so objects same as init
+      init_alloc_oom g wz;
+      init_objects_nonempty g
+    end
+    else if bwz - wz' < 2 then begin
+      // Exact fit: objects list unchanged from init
+      init_alloc_spec_unfold g wz;
+      init_alloc_exact_objects g wz;
+      init_objects_nonempty g
+    end
+    else begin
+      // Split: objects list = [mword; rem_obj], length 2
+      init_alloc_spec_unfold g wz;
+      init_alloc_split_objects g wz
+    end
+#pop-options
+
+/// =========================================================================
+/// Helper: field of mword reads 0UL in post-alloc heap
+/// =========================================================================
+
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+private let init_alloc_mword_field_zero_at (g: heap) (wz: nat) (idx: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\
+                     idx < (if bwz - wz' < 2 then bwz else wz')))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let far = U64.add_mod mword (U64.mul_mod (U64.uint_to_t idx) mword) in
+                    U64.v far < heap_size /\ U64.v far % 8 == 0 /\
+                    read_word g' (far <: hp_addr) == 0UL))
+  = wz_bounds ();
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    assert (idx < bwz);
+    // Compute far = 8 + idx * 8 (same pattern as init_all_fields_zero)
+    assert (idx < pow2 54);
+    FStar.Math.Lemmas.pow2_lt_compat 64 54;
+    FStar.Math.Lemmas.small_mod (idx * 8) (pow2 64);
+    assert (U64.v (U64.mul_mod (U64.uint_to_t idx) mword) == idx * 8);
+    assert (8 + idx * 8 < pow2 64);
+    FStar.Math.Lemmas.small_mod (8 + idx * 8) (pow2 64);
+    assert (U64.v (U64.add_mod mword (U64.mul_mod (U64.uint_to_t idx) mword)) == 8 + idx * 8);
+    let far_nat = 8 + idx * 8 in
+    assert (far_nat < heap_size);
+    FStar.Math.Lemmas.lemma_mod_plus_distr_l 8 (idx * 8) 8;
+    assert (far_nat % 8 == 0);
+    let far : hp_addr = U64.uint_to_t far_nat in
+    // In split case: idx < wz', so (idx+1)*8 < (1+wz')*8, i.e., far_nat <> (1+wz')*8
+    (if bwz - wz' >= 2 then
+       FStar.Math.Lemmas.lemma_mult_lt_right 8 (idx + 1) (1 + wz')
+     else ());
+    init_alloc_from_block_field_zero g wz far
+#pop-options
+
+/// =========================================================================
+/// Helper: remainder object is blue after split allocation
+/// =========================================================================
+
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+private let init_alloc_split_rem_blue (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let ron = (2 + wz') * 8 in
+                    let rem_obj : obj_addr = U64.uint_to_t ron in
+                    is_blue rem_obj g'))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    init_wosize_lemma g;
+    init_header_at_zero g;
+    hd_address_spec (mword <: obj_addr);
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    alloc_from_block_split_normal g0 mword wz' 0UL;
+    let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
+    let g1 = write_word g0 zero_addr ahdr in
+    let rhn = (1 + wz') * 8 in
+    let rh : hp_addr = U64.uint_to_t rhn in
+    let rw = bwz - wz' - 1 in
+    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
+    let g2 = write_word g1 rh rhdr in
+    let ron = (2 + wz') * 8 in
+    let ro : hp_addr = U64.uint_to_t ron in
+    let g3 = write_word g2 ro 0UL in
+    // Chain reads: read_word g3 rh = rhdr
+    read_write_different g2 ro rh 0UL;
+    read_write_same g1 rh rhdr;
+    assert (read_word g3 rh == rhdr);
+    // Color of remainder header is Blue
+    make_header_color_blue (U64.uint_to_t rw);
+    // Connect to is_blue via rem_obj
+    let rem_obj : obj_addr = U64.uint_to_t ron in
+    hd_address_spec rem_obj;
+    color_of_object_spec rem_obj g3;
+    is_blue_iff rem_obj g3
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+/// After init + alloc (split), mword is NOT blue (it's white).
+private let init_alloc_split_mword_not_blue (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    ~(is_blue (mword <: obj_addr) g')))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    init_wosize_lemma g;
+    init_header_at_zero g;
+    hd_address_spec (mword <: obj_addr);
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    alloc_from_block_split_normal g0 mword wz' 0UL;
+    let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
+    let g1 = write_word g0 zero_addr ahdr in
+    let rhn = (1 + wz') * 8 in
+    let rh : hp_addr = U64.uint_to_t rhn in
+    let rw = bwz - wz' - 1 in
+    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
+    let g2 = write_word g1 rh rhdr in
+    let ron = (2 + wz') * 8 in
+    let ro : hp_addr = U64.uint_to_t ron in
+    let g3 = write_word g2 ro 0UL in
+    // Chain reads: read_word g3 zero_addr = ahdr
+    read_write_different g2 ro zero_addr 0UL;
+    read_write_different g1 rh zero_addr rhdr;
+    read_write_same g0 zero_addr ahdr;
+    assert (read_word g3 zero_addr == ahdr);
+    // Color of allocated header is White ≠ Blue
+    make_header_color_white (U64.uint_to_t wz');
+    color_of_object_spec (mword <: obj_addr) g3;
+    is_blue_iff (mword <: obj_addr) g3
+#pop-options
+
+/// After init + alloc, all fields of mword (the allocated object) read as 0UL.
+/// This covers both exact and split cases.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+private let init_alloc_mword_fields_zero (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     wz' <= heap_size / U64.v mword - 1))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let bwz = heap_size / U64.v mword - 1 in
+                    let actual_wz = if bwz - wz' < 2 then bwz else wz' in
+                    forall (idx: nat{idx < actual_wz}).
+                      (let far = U64.add_mod (mword <: obj_addr) (U64.mul_mod (U64.uint_to_t idx) mword) in
+                       U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
+                       read_word g' (far <: hp_addr) == 0UL)))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    let actual_wz = if bwz - wz' < 2 then bwz else wz' in
+    let aux (idx: nat{idx < actual_wz}) : Lemma
+      (let far = U64.add_mod (mword <: obj_addr) (U64.mul_mod (U64.uint_to_t idx) mword) in
+       U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
+       (let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+        read_word g' (far <: hp_addr) == 0UL))
+    = let far = U64.add_mod (mword <: obj_addr) (U64.mul_mod (U64.uint_to_t idx) mword) in
+      if U64.v far < heap_size && U64.v far % 8 = 0 then begin
+        assert (U64.v far == (1 + idx) * 8);
+        assert (U64.v far >= 8);
+        init_alloc_from_block_field_zero g wz (far <: hp_addr)
+      end
+    in
+    Classical.forall_intro aux
+#pop-options
+
+/// After init + alloc, points_to g' mword dst = false for all dst.
+/// Follows from all fields being 0UL → no pointer fields.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let init_alloc_no_points_to (g: heap) (wz: nat) (dst: obj_addr)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     wz' <= heap_size / U64.v mword - 1))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    ~(points_to g' mword dst)))
+  = let (g0, _) = init_heap_spec g in
+    wz_bounds ();
+    init_alloc_mword_fields_zero g wz;
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    if bwz - wz' < 2 then begin
+      init_alloc_exact_wosize g wz;
+      wosize_of_object_spec (mword <: obj_addr) g';
+      hd_address_spec (mword <: obj_addr);
+      wosize_of_object_bound (mword <: obj_addr) g';
+      no_pointer_fields_no_efptu g' mword (wosize_of_object mword g') dst
+    end
+    else begin
+      init_alloc_split_headers g wz;
+      wosize_of_object_spec (mword <: obj_addr) g';
+      hd_address_spec (mword <: obj_addr);
+      wosize_of_object_bound (mword <: obj_addr) g';
+      no_pointer_fields_no_efptu g' mword (wosize_of_object mword g') dst
+    end
+#pop-options
+
+/// Exact-fit: no_pointer_to_blue for init+alloc
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let init_alloc_exact_no_pointer_to_blue (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' < 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    no_pointer_to_blue g'))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    wz_bounds ();
+    init_alloc_mword_fields_zero g wz;
+    init_alloc_exact_objects g wz;
+    init_objects_eq g;
+    init_alloc_exact_wosize g wz;
+    wosize_of_object_spec (mword <: obj_addr) g';
+    hd_address_spec (mword <: obj_addr);
+    wosize_of_object_bound (mword <: obj_addr) g';
+    let aux (src dst: obj_addr) : Lemma
+      (Seq.mem src (objects 0UL g') /\ ~(is_blue src g') /\ points_to g' src dst ==>
+       ~(is_blue dst g'))
+    = if Seq.mem src (objects 0UL g') && points_to g' src dst then begin
+        Seq.lemma_mem_snoc (Seq.empty #obj_addr) (mword <: obj_addr);
+        assert (src == mword);
+        no_pointer_fields_no_efptu g' mword (wosize_of_object mword g') dst
+      end
+    in
+    Classical.forall_intro_2 aux
+#pop-options
+
+/// Split: no_pointer_to_blue for init+alloc
+/// Helper for decomposing membership in a 2-element obj_addr sequence
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let mem_two_objects (src x y: obj_addr)
+  : Lemma (requires Seq.mem src (Seq.cons #obj_addr x (Seq.cons #obj_addr y (Seq.empty #obj_addr))))
+          (ensures src == x \/ src == y)
+  = Seq.mem_cons #obj_addr y (Seq.empty #obj_addr);
+    Seq.mem_cons #obj_addr x (Seq.cons #obj_addr y (Seq.empty #obj_addr))
+#pop-options
+
+/// Helper: given a 2-object heap where only mword is non-blue and mword has
+/// no outgoing pointers, conclude no_pointer_to_blue.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let no_pointer_to_blue_two_objects
+  (g': heap) (rem_obj: obj_addr)
+  : Lemma
+    (requires
+      objects 0UL g' == Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) /\
+      is_blue rem_obj g' /\
+      ~(is_blue (mword <: obj_addr) g') /\
+      (forall (dst: obj_addr). ~(points_to g' mword dst)))
+    (ensures no_pointer_to_blue g')
+  = let s2 = Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) in
+    let aux (src dst: obj_addr) : Lemma
+      (Seq.mem src (objects 0UL g') /\ ~(is_blue src g') /\ points_to g' src dst ==>
+       ~(is_blue dst g'))
+    = if Seq.mem src (objects 0UL g') && not (is_blue src g') && points_to g' src dst then begin
+        assert (Seq.mem src s2);
+        mem_two_objects src mword rem_obj;
+        assert (src == mword \/ src == rem_obj);
+        // rem_obj is blue, src is not blue, so src == mword
+        assert (src == mword);
+        // But mword has no outgoing pointers, contradiction
+        assert False
+      end
+    in
+    Classical.forall_intro_2 aux
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+/// Standalone: mword has no outgoing pointers after init+alloc split
+private let init_alloc_split_mword_no_pts (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    forall (dst: obj_addr). ~(points_to g' mword dst)))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    wz_bounds ();
+    init_alloc_mword_fields_zero g wz;
+    init_alloc_split_headers g wz;
+    wosize_of_object_spec (mword <: obj_addr) g';
+    hd_address_spec (mword <: obj_addr);
+    wosize_of_object_bound (mword <: obj_addr) g';
+    // Bridge: connect wosize_of_object to wz' so Z3 can match the quantifiers
+    assert (U64.v (hd_address (mword <: obj_addr)) == 0);
+    assert (wosize_of_object (mword <: obj_addr) g' == getWosize (read_word g' (hd_address (mword <: obj_addr))));
+    make_header_getWosize (U64.uint_to_t wz') white_bits 0UL;
+    assert (U64.v (wosize_of_object (mword <: obj_addr) g') == wz');
+    let aux (dst: obj_addr) : Lemma (~(points_to g' mword dst))
+      = no_pointer_fields_no_efptu g' mword (wosize_of_object mword g') dst
+    in
+    Classical.forall_intro aux
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+private let init_alloc_split_no_pointer_to_blue (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    no_pointer_to_blue g'))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    wz_bounds ();
+    let ron = (2 + wz') * 8 in
+    let rem_obj : obj_addr = U64.uint_to_t ron in
+    init_alloc_split_objects g wz;
+    assert (objects 0UL g' == Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)));
+    init_alloc_split_rem_blue g wz;
+    assert (is_blue rem_obj g');
+    init_alloc_split_mword_not_blue g wz;
+    assert (~(is_blue (mword <: obj_addr) g'));
+    init_alloc_split_mword_no_pts g wz;
+    assert (forall (dst: obj_addr). ~(points_to g' mword dst));
+    no_pointer_to_blue_two_objects g' rem_obj
+#pop-options
+
+/// After init + alloc, no_pointer_to_blue holds.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+let init_alloc_no_pointer_to_blue (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    no_pointer_to_blue r.heap_out))
+  = let (g0, fp0) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      init_alloc_oom g wz;
+      init_no_pointer_to_blue g
+    end
+    else begin
+      init_alloc_spec_unfold g wz;
+      if bwz - wz' < 2 then
+        init_alloc_exact_no_pointer_to_blue g wz
+      else
+        init_alloc_split_no_pointer_to_blue g wz
+    end
+#pop-options
+
+
+
+
+
+
+
+/// General lemma: if all fields of an object are 0UL, get_pointer_fields returns empty.
+/// This generalizes init_get_pointer_fields_aux_empty to work on any heap.
+#push-options "--z3rlimit 50"
+private let rec zero_fields_pointer_fields_empty
+  (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
+  : Lemma (requires U64.v i <= U64.v ws + 1 /\
+                    (forall (j: U64.t{U64.v j >= U64.v i /\ U64.v j <= U64.v ws}).
+                      get_field g obj j == 0UL))
+          (ensures get_pointer_fields_aux g obj i ws == Seq.empty)
+          (decreases (U64.v ws - U64.v i + 1))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      assert (get_field g obj i == 0UL);
+      assert (~(is_pointer_field (get_field g obj i)));
+      if U64.v i < U64.v ws then
+        zero_fields_pointer_fields_empty g obj (U64.add i 1UL) ws
+      else ()
+    end
+#pop-options
+
+/// After init + alloc, graph_wf holds.
+/// Helper: all_edges on objects with empty pointer fields yields empty edges.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 0"
+private let all_edges_empty_one (g: heap) (obj: obj_addr)
+  : Lemma (requires get_pointer_fields g obj == Seq.empty)
+          (ensures all_edges g (Seq.cons obj Seq.empty) == Seq.empty)
+  = assert (Seq.length (Seq.cons obj (Seq.empty #obj_addr)) > 0);
+    assert (Seq.head (Seq.cons obj (Seq.empty #obj_addr)) == obj);
+    assert (Seq.equal (Seq.tail (Seq.cons obj (Seq.empty #obj_addr))) Seq.empty);
+    assert (object_edges g obj == make_edges obj Seq.empty);
+    assert (make_edges obj Seq.empty == Seq.empty);
+    assert (all_edges g Seq.empty == Seq.empty);
+    Seq.append_empty_l (Seq.empty #edge)
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 0"
+private let all_edges_empty_two (g: heap) (obj1 obj2: obj_addr)
+  : Lemma (requires get_pointer_fields g obj1 == Seq.empty /\
+                    get_pointer_fields g obj2 == Seq.empty)
+          (ensures all_edges g (Seq.cons obj1 (Seq.cons obj2 Seq.empty)) == Seq.empty)
+  = let s2 = Seq.cons obj2 (Seq.empty #obj_addr) in
+    let s12 = Seq.cons obj1 s2 in
+    assert (Seq.head s12 == obj1);
+    assert (Seq.equal (Seq.tail s12) s2);
+    all_edges_empty_one g obj2;
+    assert (all_edges g s2 == Seq.empty);
+    assert (object_edges g obj1 == make_edges obj1 Seq.empty);
+    assert (make_edges obj1 Seq.empty == Seq.empty);
+    Seq.append_empty_l (Seq.empty #edge)
+#pop-options
+
+/// Helper: graph with empty edges is well-formed
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+private let graph_wf_empty_edges (g: heap)
+  : Lemma (requires all_edges g (objects 0UL g) == Seq.empty)
+          (ensures graph_wf (create_graph g))
+  = objects_is_vertex_set g;
+    let objs = objects 0UL g in
+    let gr = create_graph_from_heap g objs in
+    assert (gr.edges == Seq.empty);
+    let aux (e: edge) : Lemma (Seq.mem e gr.edges ==> Seq.mem (fst e) gr.vertices /\ Seq.mem (snd e) gr.vertices)
+      = ()
+    in
+    Classical.forall_intro aux
+#pop-options
+
+/// Helper: after init + exact alloc, mword has empty pointer fields
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --split_queries always"
+private let init_alloc_exact_empty_pointer_fields (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' < 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    get_pointer_fields g' mword == Seq.empty))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    init_alloc_spec_unfold g wz;
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    init_alloc_mword_fields_zero g wz;
+    hd_address_spec (mword <: obj_addr);
+    init_alloc_exact_wosize g wz;
+    wosize_of_object_spec (mword <: obj_addr) g';
+    wosize_of_object_bound (mword <: obj_addr) g';
+    let exact_wz = U64.uint_to_t bwz in
+    make_header_getTag exact_wz white_bits 0UL;
+    tag_of_object_spec (mword <: obj_addr) g';
+    no_scan_tag_val ();
+    is_no_scan_spec (mword <: obj_addr) g';
+    let field_zero (j: U64.t{U64.v j >= 1 /\ U64.v j <= U64.v (wosize_of_object mword g')})
+      : Lemma (get_field g' mword j == 0UL)
+      = let fa = U64.add (hd_address (mword <: obj_addr)) (U64.mul mword j) in
+        assert (U64.v fa == U64.v j * 8);
+        assert (U64.v fa >= 8);
+        init_alloc_from_block_field_zero g wz (fa <: hp_addr)
+    in
+    Classical.forall_intro (Classical.move_requires field_zero);
+    zero_fields_pointer_fields_empty g' mword 1UL (wosize_of_object mword g')
+#pop-options
+
+/// Helper: graph_wf for the exact-fit case
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let init_alloc_exact_graph_wf (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' < 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    graph_wf (create_graph g')))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    wz_bounds ();
+    init_alloc_spec_unfold g wz;
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    init_alloc_exact_empty_pointer_fields g wz;
+    init_alloc_exact_objects g wz;
+    init_objects_eq g;
+    all_edges_empty_one g' mword;
+    graph_wf_empty_edges g'
+#pop-options
+
+/// Helper: after init + split alloc, both objects have empty pointer fields
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --split_queries always"
+private let init_alloc_split_empty_pointer_fields (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    let ron = (2 + wz') * 8 in
+                    let rem_obj : obj_addr = U64.uint_to_t ron in
+                    get_pointer_fields g' mword == Seq.empty /\
+                    get_pointer_fields g' rem_obj == Seq.empty))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    init_alloc_spec_unfold g wz;
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    init_alloc_mword_fields_zero g wz;
+    hd_address_spec (mword <: obj_addr);
+    init_alloc_split_headers g wz;
+    let ron = (2 + wz') * 8 in
+    let rem_obj : obj_addr = U64.uint_to_t ron in
+    wosize_of_object_spec (mword <: obj_addr) g';
+    wosize_of_object_bound (mword <: obj_addr) g';
+    make_header_getTag (U64.uint_to_t wz') white_bits 0UL;
+    tag_of_object_spec (mword <: obj_addr) g';
+    no_scan_tag_val ();
+    is_no_scan_spec (mword <: obj_addr) g';
+    let field_zero_mword (j: U64.t{U64.v j >= 1 /\ U64.v j <= U64.v (wosize_of_object mword g')})
+      : Lemma (get_field g' mword j == 0UL)
+      = let fa = U64.add (hd_address (mword <: obj_addr)) (U64.mul mword j) in
+        assert (U64.v fa == U64.v j * 8);
+        assert (U64.v fa >= 8);
+        init_alloc_from_block_field_zero g wz (fa <: hp_addr)
+    in
+    Classical.forall_intro (Classical.move_requires field_zero_mword);
+    zero_fields_pointer_fields_empty g' mword 1UL (wosize_of_object mword g');
+    wosize_of_object_spec rem_obj g';
+    hd_address_spec rem_obj;
+    wosize_of_object_bound rem_obj g';
+    make_header_getTag (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL;
+    tag_of_object_spec rem_obj g';
+    is_no_scan_spec rem_obj g';
+    let field_zero_rem (j: U64.t{U64.v j >= 1 /\ U64.v j <= U64.v (wosize_of_object rem_obj g')})
+      : Lemma (get_field g' rem_obj j == 0UL)
+      = let fa = U64.add (hd_address rem_obj) (U64.mul mword j) in
+        assert (U64.v fa == ron - 8 + U64.v j * 8);
+        assert (U64.v fa == (1 + wz' + U64.v j) * 8);
+        assert (U64.v fa >= 8);
+        init_alloc_from_block_field_zero g wz (fa <: hp_addr)
+    in
+    Classical.forall_intro (Classical.move_requires field_zero_rem);
+    zero_fields_pointer_fields_empty g' rem_obj 1UL (wosize_of_object rem_obj g')
+#pop-options
+
+/// Helper: graph_wf for the split case
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let init_alloc_split_graph_wf (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    graph_wf (create_graph g')))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    wz_bounds ();
+    init_alloc_spec_unfold g wz;
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    init_alloc_split_empty_pointer_fields g wz;
+    init_alloc_split_objects g wz;
+    let ron = (2 + wz') * 8 in
+    let rem_obj : obj_addr = U64.uint_to_t ron in
+    all_edges_empty_two g' mword rem_obj;
+    graph_wf_empty_edges g'
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+let init_alloc_graph_wf (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    graph_wf (create_graph r.heap_out)))
+  = let (g0, fp0) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      init_alloc_oom g wz;
+      init_graph_wf g
+    end
+    else begin
+      init_alloc_spec_unfold g wz;
+      if bwz - wz' < 2 then
+        init_alloc_exact_graph_wf g wz
+      else
+        init_alloc_split_graph_wf g wz
+    end
+#pop-options
+
+/// After init + alloc, heap_objects_dense holds.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --split_queries always"
+let init_alloc_dense (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    heap_objects_dense r.heap_out))
+  = let (g0, fp0) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      init_alloc_oom g wz;
+      init_dense g
+    end
+    else if bwz - wz' < 2 then begin
+      init_alloc_spec_unfold g wz;
+      init_alloc_exact_objects g wz;
+      init_objects_eq g;
+      let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+      init_alloc_exact_wosize g wz;
+      let aux (start: hp_addr) : Lemma
+        (U64.v start + 8 < heap_size ==>
+         Seq.mem (f_address start) (objects 0UL g') ==>
+         Seq.length (objects start g') > 0 ==>
+         (let wz_h = getWosize (read_word g' start) in
+          let next = U64.v start + (U64.v wz_h + 1) * 8 in
+          next + 8 < heap_size ==>
+          Seq.length (objects (U64.uint_to_t next) g') > 0 /\
+          Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
+      = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects 0UL g') then begin
+          f_address_spec start;
+          Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr);
+          assert (f_address start == (mword <: obj_addr));
+          assert (U64.v start == 0);
+          assert (getWosize (read_word g' zero_addr) == U64.uint_to_t bwz);
+          let next = (bwz + 1) * 8 in
+          assert (next == heap_size);
+          assert (~ (next + 8 < heap_size))
+        end
+      in
+      Classical.forall_intro aux;
+      heap_objects_dense_intro g'
+    end
+    else begin
+      init_alloc_spec_unfold g wz;
+      init_alloc_split_objects g wz;
+      init_alloc_split_headers g wz;
+      let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+      let ron = (2 + wz') * 8 in
+      let rem_obj : hp_addr = U64.uint_to_t ron in
+      let objs = objects 0UL g' in
+      Seq.lemma_mem_snoc (Seq.cons (mword <: hp_addr) Seq.empty) rem_obj;
+      Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
+      let aux (start: hp_addr) : Lemma
+        (U64.v start + 8 < heap_size ==>
+         Seq.mem (f_address start) (objects 0UL g') ==>
+         Seq.length (objects start g') > 0 ==>
+         (let wz_h = getWosize (read_word g' start) in
+          let next = U64.v start + (U64.v wz_h + 1) * 8 in
+          next + 8 < heap_size ==>
+          Seq.length (objects (U64.uint_to_t next) g') > 0 /\
+          Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
+      = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects 0UL g') then begin
+          f_address_spec start;
+          if f_address start = (mword <: obj_addr) then begin
+            assert (U64.v start == 0);
+            assert (getWosize (read_word g' zero_addr) == U64.uint_to_t wz');
+            let rhn = (1 + wz') * 8 in
+            assert ((wz' + 1) * 8 == rhn);
+            assert (rhn + 8 < heap_size);
+            f_address_spec (U64.uint_to_t rhn);
+            assert (f_address (U64.uint_to_t rhn) == rem_obj);
+            assert (Seq.mem rem_obj objs);
+            init_alloc_split_objects_tail g wz
+          end
+          else begin
+            assert (f_address start == rem_obj);
+            assert (U64.v start == ron - 8);
+            let rhn = (1 + wz') * 8 in
+            assert (U64.v start == rhn);
+            assert (getWosize (read_word g' (U64.uint_to_t rhn)) == U64.uint_to_t (bwz - wz' - 1));
+            let next = rhn + (bwz - wz') * 8 in
+            assert (next == (wz' + 1 + bwz - wz') * 8);
+            assert (next == (bwz + 1) * 8);
+            assert (next == heap_size);
+            assert (~ (next + 8 < heap_size))
+          end
+        end
+      in
+      Classical.forall_intro aux;
+      heap_objects_dense_intro g'
+    end
+#pop-options
+
+/// After init + alloc, fp_in_heap holds.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+let init_alloc_fp_in_heap (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    fp_in_heap r.fp_out r.heap_out))
+  = let (g0, fp0) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      init_alloc_oom g wz;
+      init_objects_eq g;
+      Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr)
+    end
+    else begin
+      init_alloc_spec_unfold g wz;
+      if bwz - wz' < 2 then
+        alloc_from_block_exact g0 mword wz' 0UL
+      else begin
+        alloc_from_block_split_normal g0 mword wz' 0UL;
+        init_alloc_split_objects g wz;
+        let ron = (2 + wz') * 8 in
+        let rem_obj : hp_addr = U64.uint_to_t ron in
+        Seq.lemma_mem_snoc (Seq.cons (mword <: hp_addr) Seq.empty) rem_obj
+      end
+    end
+#pop-options
+
+/// After init + alloc, fp_valid holds.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+let init_alloc_fp_valid (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    fp_valid r.fp_out r.heap_out))
+  = let (g0, fp0) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      init_alloc_oom g wz;
+      init_objects_eq g;
+      Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
+      fp_valid_intro (mword <: obj_addr) g0
+    end
+    else begin
+      init_alloc_spec_unfold g wz;
+      if bwz - wz' < 2 then begin
+        alloc_from_block_exact g0 mword wz' 0UL;
+        let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+        fp_valid_not_pointer 0UL g'
+      end
+      else begin
+        alloc_from_block_split_normal g0 mword wz' 0UL;
+        init_alloc_split_objects g wz;
+        let ron = (2 + wz') * 8 in
+        let rem_obj : hp_addr = U64.uint_to_t ron in
+        let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+        Seq.lemma_mem_snoc (Seq.cons (mword <: hp_addr) Seq.empty) rem_obj;
+        fp_valid_intro (rem_obj <: obj_addr) g'
+      end
+    end
+#pop-options
+
+/// After init + alloc, no object is gray.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+private let init_alloc_no_gray (g: heap) (wz: nat) (obj: obj_addr)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let (g0, fp0) = init_heap_spec g in
+                     let r = alloc_spec g0 fp0 wz in
+                     Seq.mem obj (objects 0UL r.heap_out)))
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    ~(is_gray obj r.heap_out)))
+  = let (g0, fp0) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      init_alloc_oom g wz;
+      init_no_gray g;
+      no_gray_elim obj g0
+    end
+    else begin
+      init_alloc_spec_unfold g wz;
+      let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+      if bwz - wz' < 2 then begin
+        init_alloc_exact_objects g wz;
+        init_objects_eq g;
+        Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr);
+        hd_address_spec (mword <: obj_addr);
+        alloc_from_block_exact g0 mword wz' 0UL;
+        let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
+        read_write_same g0 zero_addr ahdr;
+        make_header_getColor_bridge (U64.uint_to_t bwz) white_bits 0UL;
+        getColor_raw (read_word g' (hd_address (mword <: obj_addr)));
+        color_of_object_spec (mword <: obj_addr) g';
+        is_gray_iff (mword <: obj_addr) g'
+      end
+      else begin
+        init_alloc_split_objects g wz;
+        init_alloc_split_headers g wz;
+        let ron = (2 + wz') * 8 in
+        let rem_obj : hp_addr = U64.uint_to_t ron in
+        Seq.lemma_mem_snoc (Seq.cons (mword <: hp_addr) Seq.empty) rem_obj;
+        Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
+        hd_address_spec (mword <: obj_addr);
+        alloc_from_block_split_normal g0 mword wz' 0UL;
+        let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
+        let g1 = write_word g0 zero_addr ahdr in
+        let rh : hp_addr = U64.uint_to_t ((1 + wz') * 8) in
+        let rhdr = make_header (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL in
+        let g2 = write_word g1 rh rhdr in
+        let ro : hp_addr = U64.uint_to_t ron in
+        read_write_different g2 ro zero_addr 0UL;
+        read_write_different g1 rh zero_addr rhdr;
+        read_write_same g0 zero_addr ahdr;
+        make_header_getColor_bridge (U64.uint_to_t wz') white_bits 0UL;
+        getColor_raw (read_word g' (hd_address (mword <: obj_addr)));
+        color_of_object_spec (mword <: obj_addr) g';
+        is_gray_iff (mword <: obj_addr) g';
+        if obj = (rem_obj <: obj_addr) then begin
+          hd_address_spec rem_obj;
+          read_write_different g2 ro rh 0UL;
+          read_write_same g1 rh rhdr;
+          make_header_getColor_bridge (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL;
+          getColor_raw (read_word g' (hd_address rem_obj));
+          color_of_object_spec rem_obj g';
+          is_gray_iff rem_obj g'
+        end
+      end
+    end
+#pop-options
+
+/// After init + alloc, mark_inv holds (with empty stack).
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+let init_alloc_mark_inv (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    let st = Seq.empty #obj_addr in
+                    mark_inv r.heap_out st))
+  = let (g0, fp0) = init_heap_spec g in
+    let r = alloc_spec g0 fp0 wz in
+    init_wf g;
+    alloc_spec_preserves_wf g0 fp0 wz;
+    init_alloc_dense g wz;
+    init_alloc_objects_nonempty g wz;
+    let no_gray_all (obj: obj_addr) : Lemma
+      (requires Seq.mem obj (objects 0UL r.heap_out))
+      (ensures ~(is_gray obj r.heap_out))
+    = init_alloc_no_gray g wz obj
+    in
+    Classical.forall_intro (Classical.move_requires no_gray_all);
+    let st = Seq.empty #obj_addr in
+    mark_inv_intro r.heap_out st
+#pop-options
+
+/// After init + alloc, no_black_objects holds.
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
+let init_alloc_no_black (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    no_black_objects r.heap_out))
+  = init_wf g;
+    init_no_black g;
+    init_fl_valid g;
+    let (g0, fp0) = init_heap_spec g in
+    alloc_spec_preserves_no_black g0 fp0 wz
+#pop-options
+
+/// =========================================================================
+/// Master lemma: init + alloc enables collect
+/// =========================================================================
+
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+let init_alloc_enables_collect (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures (let (g0, fp0) = init_heap_spec g in
+                    let r = alloc_spec g0 fp0 wz in
+                    let st = Seq.empty #obj_addr in
+                    mark_inv r.heap_out st /\
+                    fp_valid r.fp_out r.heap_out /\
+                    root_props r.heap_out st /\
+                    fp_in_heap r.fp_out r.heap_out /\
+                    no_black_objects r.heap_out /\
+                    no_pointer_to_blue r.heap_out /\
+                    graph_wf (create_graph r.heap_out) /\
+                    is_vertex_set (coerce_to_vertex_list st) /\
+                    subset_vertices (coerce_to_vertex_list st) (create_graph r.heap_out).vertices))
+  = init_alloc_mark_inv g wz;
+    init_alloc_fp_valid g wz;
+    init_alloc_fp_in_heap g wz;
+    init_alloc_no_black g wz;
+    init_alloc_no_pointer_to_blue g wz;
+    init_alloc_graph_wf g wz
 #pop-options
