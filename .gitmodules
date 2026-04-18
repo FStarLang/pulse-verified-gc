@@ -1,4 +1,0 @@
-[submodule "FStar"]
-	path = FStar
-	url = https://github.com/FStarLang/FStar.git
-	branch = fstar2

@@ -3,27 +3,21 @@
 # The mark-and-sweep/ Makefile builds all modules (common/ + mark-and-sweep/)
 # in a single incremental build via `fstar.exe --dep full`.
 #
-# The FStar/ submodule (fstar2 branch) provides F*, Pulse, and KaRaMeL.
-# Run `make prep` once after cloning to build the toolchain.
+# Run `./setup.sh` once after cloning to install the F* toolchain.
 #
 # Usage:
-#   make prep       Build fstar.exe (stage3) and KaRaMeL
+#   ./setup.sh      Install F* binary release
 #   make            Verify all modules (common/ + mark-and-sweep/)
 #   make extract    Verify + extract mark-and-sweep to C
 #   make snapshot   Verify + extract + create snapshot/
 #   make clean      Clean all build artifacts
 
-FSTAR_HOME ?= $(CURDIR)/FStar
+FSTAR_HOME ?= $(CURDIR)/fstar
 KRML_HOME  ?= $(FSTAR_HOME)/karamel
 
-.PHONY: all prep verify extract snapshot clean
+.PHONY: all verify extract snapshot clean
 
 all: verify
-
-# Build the fstar2 toolchain: stage3 F*+Pulse and KaRaMeL
-prep:
-	+$(MAKE) -C $(FSTAR_HOME) -j8
-	+$(MAKE) -C $(FSTAR_HOME) karamel
 
 verify:
 	+$(MAKE) -C mark-and-sweep FSTAR_HOME=$(FSTAR_HOME)

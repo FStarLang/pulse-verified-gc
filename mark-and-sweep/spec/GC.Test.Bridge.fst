@@ -1332,8 +1332,10 @@ private let init_alloc_oom (g: heap) (wz: nat)
     alloc_search_invalid g0 fp0 fp0 0UL wz' (fuel - 1)
 #pop-options
 
+#restart-solver
+
 /// For the split case: header reads in the post-alloc heap.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
 private let init_alloc_split_headers (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let wz' = if wz = 0 then 1 else wz in
@@ -1819,6 +1821,8 @@ private let init_alloc_split_no_pointer_to_blue (g: heap) (wz: nat)
     no_pointer_to_blue_two_objects g' rem_obj
 #pop-options
 
+#restart-solver
+
 /// After init + alloc, no_pointer_to_blue holds.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let init_alloc_no_pointer_to_blue (g: heap) (wz: nat)
@@ -1914,6 +1918,8 @@ private let graph_wf_empty_edges (g: heap)
     in
     Classical.forall_intro aux
 #pop-options
+
+#restart-solver
 
 /// Standalone helper: each field of mword is 0UL after init + exact alloc.
 /// Factored out of init_alloc_exact_empty_pointer_fields to avoid Z3 explosion
@@ -2234,6 +2240,8 @@ private let mem_cons_pair (#a: eqtype) (x: a) (y: a) (z: a)
   = ()
 #pop-options
 
+#restart-solver
+
 /// Standalone helper: density step for the split case.
 /// Uses obj_addr types consistently with objects return type.
 /// Uses mem_two_objects pattern proven to work in no_pointer_to_blue_two_objects.
@@ -2394,7 +2402,7 @@ private let init_alloc_fp_in_heap_exact (g: heap) (wz: nat)
 #pop-options
 
 /// After init + alloc, fp_in_heap holds — split case.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
 private let init_alloc_fp_in_heap_split (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let wz' = if wz = 0 then 1 else wz in
@@ -2474,8 +2482,10 @@ private let init_alloc_fp_valid_exact (g: heap) (wz: nat)
     fp_valid_not_pointer 0UL g'
 #pop-options
 
+#restart-solver
+
 /// After init + alloc, fp_valid holds — split case.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
 private let init_alloc_fp_valid_split (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let wz' = if wz = 0 then 1 else wz in
@@ -2519,8 +2529,10 @@ let init_alloc_fp_valid (g: heap) (wz: nat)
       init_alloc_fp_valid_split g wz
 #pop-options
 
+#restart-solver
+
 /// After init + alloc, no object is gray.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
 private let init_alloc_no_gray (g: heap) (wz: nat) (obj: obj_addr)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let (g0, fp0) = init_heap_spec g in
