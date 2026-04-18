@@ -1,0 +1,73 @@
+name: Nightly (latest F*)
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install F* nightly
+        run: ./setup.sh --nightly
+
+      - name: Show F* version
+        run: fstar/bin/fstar.exe --version
+
+      - name: Verify all modules
+        id: verify
+        continue-on-error: true
+        run: make -j$(nproc) 2>&1 | tee verify.log
+
+      - name: Extract to C
+        id: extract
+        if: steps.verify.outcome == 'success'
+        continue-on-error: true
+        run: make extract 2>&1 | tee extract.log
+
+      - name: Compile snapshot
+        if: steps.extract.outcome == 'success'
+        continue-on-error: true
+        run: make -C mark-and-sweep/snapshot 2>&1 | tee snapshot.log
+
+      - name: Report results
+        if: always()
+        run: |
+          FSTAR_VERSION=$(fstar/bin/fstar.exe --version 2>/dev/null | head -1 || echo "unknown")
+          echo "## Nightly F* Build Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**F* version:** $FSTAR_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Verify | ${{ steps.verify.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Extract | ${{ steps.extract.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.verify.outcome }}" != "success" ]; then
+            echo "<details><summary>Verification errors</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -i "error\|failed" verify.log | tail -30 >> $GITHUB_STEP_SUMMARY || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload logs
+        if: failure() || steps.verify.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-logs
+          path: |
+            verify.log
+            extract.log
+            snapshot.log
+          retention-days: 14
+
+      - name: Fail if verification failed
+        if: steps.verify.outcome != 'success'
+        run: exit 1
