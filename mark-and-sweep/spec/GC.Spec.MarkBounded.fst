@@ -436,6 +436,59 @@ let mark_step_bounded_preserves_objects
     else push_children_bounded_preserves_objects g1 (Seq.tail st) obj 1UL ws cap
 
 /// ---------------------------------------------------------------------------
+/// Density preservation through mark_step_bounded
+/// ---------------------------------------------------------------------------
+
+val push_children_bounded_preserves_density :
+  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
+  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
+  Lemma (requires SweepInv.heap_objects_dense g)
+        (ensures SweepInv.heap_objects_dense (fst (push_children_bounded g st obj i ws cap)))
+        (decreases (U64.v ws - U64.v i))
+
+let rec push_children_bounded_preserves_density g st obj i ws cap =
+  if U64.v i > U64.v ws then ()
+  else begin
+    let v = HeapGraph.get_field g obj i in
+    if HeapGraph.is_pointer_field v then begin
+      HeapGraph.is_pointer_field_is_obj_addr v;
+      let child_raw : obj_addr = v in
+      let child = resolve_object child_raw g in
+      if is_white child g then begin
+        let g' = makeGray child g in
+        makeGray_eq child g;
+        SweepInv.color_change_preserves_density child g Header.Gray;
+        let st' = if Seq.length st < cap then Seq.cons child st else st in
+        if U64.v i < U64.v ws then
+          push_children_bounded_preserves_density g' st' obj (U64.add i 1UL) ws cap
+        else ()
+      end else begin
+        if U64.v i < U64.v ws then
+          push_children_bounded_preserves_density g st obj (U64.add i 1UL) ws cap
+        else ()
+      end
+    end else begin
+      if U64.v i < U64.v ws then
+        push_children_bounded_preserves_density g st obj (U64.add i 1UL) ws cap
+      else ()
+    end
+  end
+
+let mark_step_bounded_preserves_density
+  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
+  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
+                   SweepInv.heap_objects_dense g)
+          (ensures SweepInv.heap_objects_dense (fst (mark_step_bounded g st cap)))
+  = let obj = Seq.head st in
+    bounded_stack_head_is_gray g st;
+    makeBlack_eq obj g;
+    SweepInv.color_change_preserves_density obj g Header.Black;
+    let g1 = makeBlack obj g in
+    let ws = wosize_of_object obj g in
+    if is_no_scan obj g then ()
+    else push_children_bounded_preserves_density g1 (Seq.tail st) obj 1UL ws cap
+
+/// ---------------------------------------------------------------------------
 /// Key lemma: mark_step_bounded decreases count_non_black
 /// ---------------------------------------------------------------------------
 
@@ -714,6 +767,23 @@ let rec rescan_heap_monotone
         else st
       in
       rescan_heap_monotone g (Seq.tail objs) st' cap
+    end
+
+/// rescan never exceeds cap
+let rec rescan_heap_cap_bound
+  (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
+  : Lemma (requires Seq.length st <= cap)
+          (ensures Seq.length (rescan_heap g objs st cap) <= cap)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let obj = Seq.head objs in
+      let st' =
+        if is_gray obj g && not (Seq.mem obj st) && Seq.length st < cap then
+          Seq.cons obj st
+        else st
+      in
+      rescan_heap_cap_bound g (Seq.tail objs) st' cap
     end
 
 /// If rescan returns empty with cap > 0, it started empty and no grays in objs
