@@ -18,6 +18,7 @@ open GC.Impl.Heap
 open GC.Impl.Object
 open GC.Impl.Stack
 open GC.Impl.Fields
+open GC.Impl.Sweep.Lemmas
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module U8 = FStar.UInt8
@@ -660,10 +661,214 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
 }
 #pop-options
 
+/// objects 0UL g is non-empty implies 8 < heap_size
+/// (from objects def: returns empty when 0+8 >= len g)
+#push-options "--fuel 1 --ifuel 0"
+let objects_nonempty_implies_heap_gt_8 (g: heap_state)
+  : Lemma (requires Seq.length (SpecFields.objects 0UL g) > 0 /\
+                    Seq.length g == heap_size)
+          (ensures 8 < heap_size)
+  = ()
+#pop-options
+
 /// ---------------------------------------------------------------------------
-/// Top-level: bounded mark with rescan
+/// Rescan helpers
 /// ---------------------------------------------------------------------------
 
+/// Bridge: connect objects_dense_obj_in output to f_address form.
+/// objects_dense_obj_in gives: obj_in_objects (uint_to_t (next_val + 8)) g
+/// We need: obj_in_objects (f_address (uint_to_t next_val)) g
+/// These are equal when next_val + 8 < heap_size (so f_address is defined).
+let rescan_density_bridge (start: hp_addr) (g: heap_state)
+  : Lemma (requires SweepInv.heap_objects_dense g /\
+                    U64.v start + 8 < heap_size /\
+                    Seq.mem (SpecHeap.f_address start) (SpecFields.objects 0UL g) /\
+                    Seq.length (SpecFields.objects start g) > 0)
+          (ensures (let wz = SpecObject.getWosize (SpecHeap.read_word g start) in
+                    let next_val = U64.v start + (U64.v wz + 1) * 8 in
+                    next_val + 8 < heap_size ==>
+                    (let next_hp : hp_addr = U64.uint_to_t next_val in
+                     SweepInv.obj_in_objects (SpecHeap.f_address next_hp) g)))
+  = SweepInv.objects_dense_obj_in start g;
+    let wz = SpecObject.getWosize (SpecHeap.read_word g start) in
+    let next_val = U64.v start + (U64.v wz + 1) * 8 in
+    if next_val + 8 < heap_size then begin
+      let next_hp : hp_addr = U64.uint_to_t next_val in
+      SpecHeap.f_address_spec next_hp;
+      // f_address next_hp = uint_to_t (next_val + 8) = uint_to_t (next_val + 8)
+      assert (SpecHeap.f_address next_hp == U64.uint_to_t (next_val + 8))
+    end
+
+/// Advance to next object (duplicated from Sweep for self-containment)
+#push-options "--z3rlimit 50 --split_queries always"
+fn rescan_next_object (h_addr: hp_addr) (wz: wosize)
+  requires pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size)
+  returns addr: U64.t
+  ensures pure (U64.v addr % 8 == 0 /\
+                U64.v addr == U64.v h_addr + (1 + U64.v wz) * 8)
+{
+  lemma_object_size_no_overflow (U64.v wz);
+  GC.Impl.Sweep.Lemmas.lemma_next_addr_no_overflow (U64.v h_addr) (U64.v wz);
+  GC.Impl.Sweep.Lemmas.lemma_next_addr_aligned (U64.v h_addr) (U64.v wz);
+  let skip = U64.add 1UL wz;
+  let offset = U64.mul skip mword;
+  U64.add h_addr offset
+}
+#pop-options
+
+/// Check if an object is gray (runtime color check)
+#push-options "--z3rlimit 50"
+fn is_gray_check (heap: heap_t) (h_addr: hp_addr)
+  requires is_heap heap 's **
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 U64.v h_addr + 8 < heap_size /\
+                 Seq.length 's == heap_size)
+  returns b: bool
+  ensures is_heap heap 's **
+          pure (b == (getColor (SpecHeap.read_word 's h_addr) = GC.Lib.Header.Gray))
+{
+  let hdr = read_word heap h_addr;
+  let c = getColor hdr;
+  (c = gray)
+}
+#pop-options
+
+/// Rescan one object: if gray and stack not full, push it
+#push-options "--z3rlimit 100 --z3refresh"
+fn rescan_push_if_gray (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 U64.v h_addr + 8 < heap_size /\
+                 Seq.length 's == heap_size /\
+                 Seq.length 'st <= stack_capacity st)
+  ensures is_heap heap 's ** (exists* st2. is_gray_stack st st2 **
+          pure (Seq.length st2 <= Seq.length 'st + 1 /\
+                Seq.length st2 >= Seq.length 'st /\
+                Seq.length st2 <= stack_capacity st))
+{
+  let b = is_gray_check heap h_addr;
+  if b {
+    let full = is_full st;
+    if full {
+      ()
+    } else {
+      let obj = f_address h_addr;
+      push st obj;
+      ()
+    }
+  } else {
+    ()
+  }
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Rescan heap: iterate all objects, push grays to stack
+/// ---------------------------------------------------------------------------
+
+/// The rescan postcondition properties we need for the outer loop.
+/// Rather than matching the pure spec rescan_heap exactly, we prove
+/// the key properties directly: bounded_mark_inv and completeness.
+///
+/// ADMITS: The invariant maintenance (bounded_stack_props, no_gray_objects)
+/// requires detailed proofs connecting the heap walk to the objects list.
+/// These are left as admits for now.
+
+#push-options "--z3rlimit 200 --z3refresh"
+fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (SpecFields.well_formed_heap 's /\
+                 SweepInv.heap_objects_dense 's /\
+                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
+                 Seq.length 'st == 0 /\
+                 stack_capacity st == cap /\ cap > 0)
+  ensures exists* st2. is_heap heap 's ** is_gray_stack st st2 **
+          pure (SpecMarkBoundedInv.bounded_mark_inv 's st2 cap /\
+                (Seq.length st2 == 0 ==> SweepInv.no_gray_objects 's))
+{
+  is_heap_length heap;
+  let heap_sz = U64.uint_to_t heap_size;
+
+  // objects > 0 implies 8 < heap_size
+  objects_nonempty_implies_heap_gt_8 's;
+  // Establish initial obj_in_objects for head object  
+  obj_in_objects_head_bridge 's;
+  // Bridge: f_address 0UL == uint_to_t 8
+  SpecHeap.f_address_spec 0UL;
+  lemma_addr_plus_8_no_overflow 0;
+  
+  let mut current = 0UL;
+
+  while (
+    let v = !current;
+    (U64.lt (U64.add v mword) heap_sz)
+  )
+    invariant exists* vc st_cur.
+      pts_to current vc **
+      is_heap heap 's **
+      is_gray_stack st st_cur **
+      pure (U64.v vc % 8 == 0 /\
+            U64.v vc <= heap_size /\
+            U64.v vc + 8 < pow2 64 /\
+            Seq.length st_cur <= cap /\
+            SpecFields.well_formed_heap 's /\
+            SweepInv.heap_objects_dense 's /\
+            (U64.v vc + U64.v mword < heap_size ==>
+              SweepInv.obj_in_objects (SpecHeap.f_address vc) 's))
+  {
+    let v = !current;
+    hp_addr_plus_8 v;
+    
+    // Derive obj_in_objects and objects_nonempty for wz computation
+    SweepInv.obj_in_objects_elim (SpecHeap.f_address v) 's;
+    SweepInv.member_implies_objects_nonempty v 's;
+    
+    let hdr = read_word heap v;
+    getWosize_eq hdr;
+    let wz = getWosize hdr;
+    SpecObject.wosize_of_object_bound (SpecHeap.f_address v) 's;
+
+    rescan_push_if_gray heap st v;
+    with st_after. assert (is_gray_stack st st_after);
+
+    // Advance to next object: establish density chain
+    SpecFields.wf_object_size_bound 's (SpecHeap.f_address v);
+    lemma_object_size_no_overflow (U64.v wz);
+    lemma_next_addr_no_overflow (U64.v v) (U64.v wz);
+    lemma_next_addr_aligned (U64.v v) (U64.v wz);
+    
+    // Derive obj_in_objects for next position via density bridge
+    rescan_density_bridge v 's;
+    
+    let skip = U64.add 1UL wz;
+    let offset = U64.mul skip mword;
+    let next = U64.add v offset;
+    
+    current := next
+  };
+
+  // After scanning all objects, establish postcondition
+  with vc_fin st_fin. assert (
+    pts_to current vc_fin **
+    is_heap heap 's **
+    is_gray_stack st st_fin);
+
+  // ADMIT: bounded_mark_inv and no_gray_objects when empty
+  // These require connecting the heap walk to the objects list
+  // and proving bounded_stack_props (stack_points_to_gray, stack_elements_valid, stack_no_dups)
+  admit ()
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Top-level: bounded mark with rescan (outer loop)
+/// ---------------------------------------------------------------------------
+
+/// The outer loop drains the stack, rescans for grays, and repeats
+/// until no grays remain. Termination: count_non_black strictly
+/// decreases each iteration (inner loop blackens at least one object).
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st (stack_capacity st))
@@ -672,11 +877,59 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
                 SweepInv.no_gray_objects s2 /\
                 SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's)
 {
-  // Drain the inner loop. The full outer loop with rescan will be added next.
-  mark_inner_loop_impl heap st (stack_capacity st);
+  // Establish cap > 0 before everything
+  SpecMarkBoundedInv.bounded_mark_inv_elim_cap 's 'st (stack_capacity st);
   
-  // After inner loop, stack is empty. Check if any grays remain via rescan.
-  // TODO: implement rescan loop and outer iteration
-  with s_fin st_fin. assert (is_heap heap s_fin ** is_gray_stack st st_fin);
-  admit ()
+  // Phase 1: drain the initial stack
+  mark_inner_loop_impl heap st (stack_capacity st);
+
+  with s1 st1. assert (is_heap heap s1 ** is_gray_stack st st1);
+
+  // Phase 2: outer loop — rescan → if empty done, else drain → repeat
+  let mut go = true;
+
+  while (!go)
+    invariant exists* vg s st_cur.
+      pts_to go vg **
+      is_heap heap s **
+      is_gray_stack st st_cur **
+      pure (SpecFields.well_formed_heap s /\
+            SweepInv.heap_objects_dense s /\
+            Seq.length (SpecFields.objects zero_addr s) > 0 /\
+            Seq.length st_cur == 0 /\
+            stack_capacity st > 0 /\
+            SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's /\
+            (~vg ==> SweepInv.no_gray_objects s))
+  {
+    with _vg s_cur st_cur. assert (
+      pts_to go _vg **
+      is_heap heap s_cur **
+      is_gray_stack st st_cur);
+
+    // Rescan the heap for remaining gray objects
+    rescan_heap_impl heap st (stack_capacity st);
+
+    with st_rescan. assert (is_gray_stack st st_rescan);
+
+    let empty = is_empty st;
+    if empty {
+      // No grays found — we're done
+      with _vg2 s_now st_now. assert (
+        pts_to go _vg2 **
+        is_heap heap s_now **
+        is_gray_stack st st_now);
+      forget_init go;
+      go := false
+    } else {
+      // Grays found — drain the stack again
+      mark_inner_loop_impl heap st (stack_capacity st);
+      ()
+    }
+  };
+
+  with _vg s_final st_final. assert (
+    pts_to go _vg **
+    is_heap heap s_final **
+    is_gray_stack st st_final);
+  ()
 }
