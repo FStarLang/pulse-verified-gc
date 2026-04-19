@@ -120,7 +120,7 @@ let mark_step_field_bound_rt (g: heap_state) (f_addr: obj_addr) (h: U64.t) (w: U
     SpecObject.wosize_of_object_spec f_addr g;
     getWosize_eq (SpecHeap.read_word g (SpecHeap.hd_address f_addr))
 
-#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let blacken_eq (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_gray f_addr g /\
@@ -144,7 +144,7 @@ let blacken_eq (g: heap_state) (f_addr: obj_addr)
     SpecObject.makeBlack_spec f_addr g
 #pop-options
 
-#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let grayen_eq (g: heap_state) (child: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_white child g /\
@@ -1074,6 +1074,9 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   // Initial coverage: no objects visited yet
   no_gray_visited_at_init 's;
   
+  // Provide pow2 64 value to Z3 to avoid fuel-4 retry
+  FStar.UInt.pow2_values 64;
+
   let mut current = 0UL;
 
   while (
@@ -1142,6 +1145,9 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
     // next = v + (1+wz)*8 >= v+8, so f_address(v) = v+8 <= next < next+8.
     // Hence x < next+8 for all x in st_after.
     assert (pure (U64.v next >= U64.v v + 8));
+    
+    // Help Z3 with pow2 64 value (avoids fuel-4 retry)
+    FStar.UInt.pow2_values 64;
     
     current := next
   };

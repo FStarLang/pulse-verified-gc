@@ -78,7 +78,7 @@ verify-impl: $(addsuffix .checked,$(ALL_SRC))
 
 # --- Pattern rules (verification) -------------------------------------------
 
-# Bridge lemmas: restart-solver breaks manage solver state accumulation
+# Bridge lemmas: no z3refresh (some queries benefit from accumulated state)
 spec/GC.Test.Bridge.fst.checked: spec/GC.Test.Bridge.fst
 	$(FSTAR) $<
 
@@ -102,9 +102,9 @@ impl/%.checked: impl/%
 impl/GC.Impl.Allocator.fst.checked: impl/GC.Impl.Allocator.fst
 	$(FSTAR) --z3rlimit 100 $<
 
-# MarkBounded proof: high rlimit, no split_queries (nat-indexed wrappers handle invariant typing)
+# MarkBounded proof: split_queries for faster SMT; z3refresh for isolation
 impl/GC.Impl.MarkBounded.fst.checked: impl/GC.Impl.MarkBounded.fst
-	$(FSTAR) --z3rlimit 300 $<
+	$(FSTAR) --z3rlimit 300 --split_queries always --z3refresh $<
 
 $(C)/impl/%.checked: $(C)/impl/%
 	$(FSTAR) --split_queries always $<
