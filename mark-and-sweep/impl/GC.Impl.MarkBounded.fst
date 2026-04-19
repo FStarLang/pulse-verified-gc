@@ -10,7 +10,7 @@ module GC.Impl.MarkBounded
 
 #lang-pulse
 
-#set-options "--z3rlimit 50"
+#set-options "--z3rlimit 100"
 
 open FStar.Mul
 open Pulse.Lib.Pervasives
@@ -718,63 +718,334 @@ fn rescan_next_object (h_addr: hp_addr) (wz: wosize)
 
 /// Check if an object is gray (runtime color check)
 #push-options "--z3rlimit 50"
-fn is_gray_check (heap: heap_t) (h_addr: hp_addr)
+fn is_gray_check (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   requires is_heap heap 's **
-           pure (U64.v h_addr + U64.v mword < heap_size /\
-                 U64.v h_addr + 8 < heap_size /\
-                 Seq.length 's == heap_size)
+           pure (Seq.length 's == heap_size)
   returns b: bool
   ensures is_heap heap 's **
-          pure (b == (getColor (SpecHeap.read_word 's h_addr) = GC.Lib.Header.Gray))
+          pure (b <==> SpecObject.color_of_object (SpecHeap.f_address h_addr) 's = GC.Lib.Header.Gray)
 {
+  hp_addr_plus_8 h_addr;
+  is_heap_length heap;
+  spec_read_word_eq 's h_addr;
   let hdr = read_word heap h_addr;
   let c = getColor hdr;
+  getColor_eq hdr;
+
+  f_address_valid h_addr;
+  let obj : obj_addr = f_address h_addr;
+  SpecObject.color_of_object_spec obj 's;
+  SpecHeap.hd_address_spec obj;
+  U64.v_inj h_addr (SpecHeap.hd_address obj);
+  f_address_eq h_addr;
+  SpecObject.is_gray_iff obj 's;
+
   (c = gray)
 }
 #pop-options
 
 /// Rescan one object: if gray and stack not full, push it
-#push-options "--z3rlimit 100 --z3refresh"
-fn rescan_push_if_gray (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
+/// Maintains bounded_stack_props when obj is not already on stack.
+let rescan_push_postcondition (g: heap_state) (st_old st_new: Seq.seq obj_addr) (cap: nat) (bound: nat) (obj: obj_addr) : prop =
+  Seq.length st_new <= Seq.length st_old + 1 /\
+  Seq.length st_new >= Seq.length st_old /\
+  Seq.length st_new <= cap /\
+  SpecMarkBounded.bounded_stack_props g st_new /\
+  (forall (x: obj_addr). Seq.mem x st_new ==> U64.v x <= bound) /\
+  // If stack didn't grow and was empty, object wasn't gray
+  (Seq.length st_new == 0 ==> ~(SpecObject.is_gray obj g))
+
+/// Helper: after cons, all elements satisfy address bound
+let cons_preserves_addr_bound
+  (obj: obj_addr) (st: Seq.seq obj_addr) (bound: nat)
+  : Lemma (requires U64.v obj <= bound /\
+                    (forall (x: obj_addr). Seq.mem x st ==> U64.v x <= bound))
+          (ensures (forall (x: obj_addr). Seq.mem x (Seq.cons obj st) ==> U64.v x <= bound))
+  = Seq.mem_cons obj st
+
+/// Helper: cons establishes rescan_push_postcondition
+let cons_establishes_postcondition
+  (g: heap_state) (obj: obj_addr) (st: Seq.seq obj_addr) (cap: nat) (bound: nat)
+  : Lemma (requires Seq.length st < cap /\
+                    SpecMarkBounded.bounded_stack_props g (Seq.cons obj st) /\
+                    U64.v obj <= bound /\
+                    (forall (x: obj_addr). Seq.mem x st ==> U64.v x <= bound))
+          (ensures rescan_push_postcondition g st (Seq.cons obj st) cap bound obj)
+  = cons_preserves_addr_bound obj st bound
+
+#push-options "--z3rlimit 200 --z3refresh --retry 3"
+fn rescan_push_if_gray (heap: heap_t) (st: gray_stack) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (U64.v h_addr + U64.v mword < heap_size /\
-                 U64.v h_addr + 8 < heap_size /\
-                 Seq.length 's == heap_size /\
-                 Seq.length 'st <= stack_capacity st)
+           pure (Seq.length 's == heap_size /\
+                 Seq.length 'st <= stack_capacity st /\
+                 stack_capacity st > 0 /\
+                 SpecMarkBounded.bounded_stack_props 's 'st /\
+                 SweepInv.obj_in_objects (SpecHeap.f_address h_addr) 's /\
+                 ~(Seq.mem (SpecHeap.f_address h_addr) 'st) /\
+                 (forall (x: obj_addr). Seq.mem x 'st ==> U64.v x < U64.v h_addr + U64.v mword))
   ensures is_heap heap 's ** (exists* st2. is_gray_stack st st2 **
-          pure (Seq.length st2 <= Seq.length 'st + 1 /\
-                Seq.length st2 >= Seq.length 'st /\
-                Seq.length st2 <= stack_capacity st))
+          pure (rescan_push_postcondition 's 'st st2 (stack_capacity st) (U64.v h_addr + U64.v mword) (SpecHeap.f_address h_addr)))
 {
   let b = is_gray_check heap h_addr;
   if b {
     let full = is_full st;
     if full {
+      // Stack full: is_gray is true, but Seq.length 'st > 0 (since cap > 0 and full)
+      // so the is_gray implication is vacuous
+      assert (pure (Seq.length 'st > 0));
       ()
     } else {
+      f_address_valid h_addr;
       let obj = f_address h_addr;
+      f_address_eq h_addr;
+      assert (pure (obj == SpecHeap.f_address h_addr));
+      SweepInv.obj_in_objects_elim obj 's;
+      assert (pure (Seq.mem (obj <: obj_addr) (objects 0UL 's)));
+      SpecObject.is_gray_iff obj 's;
+      assert (pure (SpecObject.is_gray obj 's));
+      SpecMarkBounded.cons_gray_preserves_bsp 's obj 'st;
+      SpecHeap.f_address_spec h_addr;
+      assert (pure (U64.v obj = U64.v h_addr + U64.v mword));
+      cons_establishes_postcondition 's obj 'st (stack_capacity st) (U64.v h_addr + U64.v mword);
       push st obj;
       ()
     }
   } else {
+    // Not gray: bridge to is_gray for postcondition
+    f_address_valid h_addr;
+    f_address_eq h_addr;
+    SpecObject.is_gray_iff (SpecHeap.f_address h_addr) 's;
     ()
   }
 }
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// Coverage proof: no_gray_visited predicate and helpers
+/// ---------------------------------------------------------------------------
+
+/// All objects that have been "visited" (not in remaining objects at vc) are not gray.
+/// This is the key coverage invariant for the rescan loop.
+let no_gray_visited (vc: hp_addr) (g: heap_state) : prop =
+  forall (obj: obj_addr). Seq.mem obj (SpecFields.objects zero_addr g) ==>
+    ~(Seq.mem obj (SpecFields.objects vc g)) ==>
+    ~(SpecObject.is_gray obj g)
+
+/// Nat-indexed wrapper: avoids hp_addr subtyping in Pulse invariants.
+/// Universally quantifies over hp_addr with matching value instead of converting nat → hp_addr.
+let no_gray_visited_at (vc_val: nat) (g: heap_state) : prop =
+  forall (h: hp_addr). U64.v h == vc_val ==>
+    (forall (obj: obj_addr). Seq.mem obj (SpecFields.objects zero_addr g) ==>
+      ~(Seq.mem obj (SpecFields.objects h g)) ==>
+      ~(SpecObject.is_gray obj g))
+/// Bridge: for v: hp_addr, no_gray_visited_at (U64.v v) g <==> no_gray_visited v g
+let no_gray_visited_at_eq (v: hp_addr) (g: heap_state)
+  : Lemma (no_gray_visited_at (U64.v v) g <==> no_gray_visited v g)
+  = ()
+
+/// Initial: no objects visited yet, so vacuously true
+let no_gray_visited_init (g: heap_state)
+  : Lemma (no_gray_visited zero_addr g)
+  = ()
+
+let no_gray_visited_at_init (g: heap_state)
+  : Lemma (no_gray_visited_at 0 g)
+  = no_gray_visited_at_eq zero_addr g;
+    no_gray_visited_init g
+
+/// Decompose objects list when nonempty — works even when next == heap_size.
+/// objects_nonempty_next only gives decomposition when next < heap_size.
+/// This extends it to next <= heap_size (= Seq.length g).
+///
+/// Split into two parts: arithmetic (next_nat is valid hp_addr) and 
+/// decomposition (objects start = cons ... (objects next)).
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 200"
+let objects_nonempty_decompose_arith (start: hp_addr) (g: heap_state)
+  : Lemma (requires Seq.length (SpecFields.objects start g) > 0 /\
+                    Seq.length g == heap_size)
+          (ensures (let wz = SpecObject.getWosize (SpecHeap.read_word g start) in
+                    let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                    next_nat <= heap_size /\ next_nat < pow2 64 /\
+                    next_nat % 8 == 0))
+  = FStar.Math.Lemmas.lemma_mod_plus_distr_l
+      (U64.v start) (FStar.Mul.((U64.v (SpecObject.getWosize (SpecHeap.read_word g start)) + 1) * 8)) 8;
+    FStar.Math.Lemmas.lemma_mod_mul_distr_r
+      (U64.v (SpecObject.getWosize (SpecHeap.read_word g start)) + 1) 8 8
+#pop-options
+
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 100"
+let objects_nonempty_decompose (start: hp_addr) (g: heap_state)
+  (next: hp_addr)
+  : Lemma (requires Seq.length (SpecFields.objects start g) > 0 /\
+                    Seq.length g == heap_size /\
+                    (let wz = SpecObject.getWosize (SpecHeap.read_word g start) in
+                     U64.v next == U64.v start + FStar.Mul.((U64.v wz + 1) * 8)))
+          (ensures SpecFields.objects start g == Seq.cons (SpecHeap.f_address start) (SpecFields.objects next g))
+  = ()
+#pop-options
+
+/// Step: extend no_gray_visited when we check an object and find it non-gray.
+/// Also handles the case when the stack is non-empty (LHS of implication becomes false).
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let no_gray_visited_step (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state) (next: hp_addr)
+  : Lemma (requires no_gray_visited v g /\
+                    ~(SpecObject.is_gray (SpecHeap.f_address v) g) /\
+                    Seq.length (SpecFields.objects v g) > 0 /\
+                    Seq.length g == heap_size /\
+                    (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
+                     U64.v next == U64.v v + FStar.Mul.((U64.v wz + 1) * 8)) /\
+                    SpecFields.objects v g == Seq.cons (SpecHeap.f_address v) (SpecFields.objects next g))
+          (ensures no_gray_visited next g)
+  = let fv = SpecHeap.f_address v in
+    let aux (obj: obj_addr) : Lemma
+      (requires Seq.mem obj (SpecFields.objects zero_addr g) /\
+                ~(Seq.mem obj (SpecFields.objects next g)))
+      (ensures ~(SpecObject.is_gray obj g))
+    = Seq.mem_cons fv (SpecFields.objects next g)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// Complete: after scanning all objects, derive no_gray_objects
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 50"
+let no_gray_visited_complete (vc: hp_addr) (g: heap_state)
+  : Lemma (requires no_gray_visited vc g /\
+                    Seq.length (SpecFields.objects vc g) == 0)
+          (ensures SweepInv.no_gray_objects g)
+  = SweepInv.no_gray_intro g
+#pop-options
+
+/// Combined coverage maintenance: handles both empty and non-empty stack cases.
+/// If the stack is empty after push_if_gray, the object wasn't gray (from the postcondition),
+/// so we can extend coverage. If non-empty, coverage is vacuous.
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let no_gray_visited_maintain
+  (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state) (st_old st_new: Seq.seq obj_addr) (cap: nat)
+  (next: hp_addr)
+  : Lemma (requires (Seq.length st_old == 0 ==> no_gray_visited v g) /\
+                    Seq.length st_new >= Seq.length st_old /\
+                    Seq.length (SpecFields.objects v g) > 0 /\
+                    Seq.length g == heap_size /\
+                    cap > 0 /\
+                    Seq.length st_new <= cap /\
+                    // The key: if stack ends empty, object wasn't gray
+                    (Seq.length st_new == 0 ==> ~(SpecObject.is_gray (SpecHeap.f_address v) g)) /\
+                    (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
+                     U64.v next == U64.v v + FStar.Mul.((U64.v wz + 1) * 8)))
+          (ensures Seq.length st_new == 0 ==> no_gray_visited next g)
+  = if Seq.length st_new = 0 then begin
+      // st_new empty → st_old empty (monotonicity) → no_gray_visited v g
+      // Also: object at f_address v is not gray (from postcondition)
+      objects_nonempty_decompose_arith v g;
+      objects_nonempty_decompose v g next;
+      no_gray_visited_step v g next
+    end else ()
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Rescan heap: iterate all objects, push grays to stack
 /// ---------------------------------------------------------------------------
 
-/// The rescan postcondition properties we need for the outer loop.
-/// Rather than matching the pure spec rescan_heap exactly, we prove
-/// the key properties directly: bounded_mark_inv and completeness.
-///
-/// ADMITS: The invariant maintenance (bounded_stack_props, no_gray_objects)
-/// requires detailed proofs connecting the heap walk to the objects list.
-/// These are left as admits for now.
+/// Helper: when objects list is empty and no_gray_visited holds (if stack empty),
+/// derive no_gray_objects (if stack empty).
+let no_gray_when_scan_complete
+  (vc: hp_addr) (g: heap_state) (st: Seq.seq obj_addr)
+  : Lemma (requires Seq.length (SpecFields.objects vc g) == 0 /\
+                    (Seq.length st == 0 ==> no_gray_visited vc g))
+          (ensures Seq.length st == 0 ==> SweepInv.no_gray_objects g)
+  = if Seq.length st = 0 then
+      no_gray_visited_complete vc g
+    else ()
 
-#push-options "--z3rlimit 200 --z3refresh"
+/// Boundary case: when v is the last object (next >= heap_size),
+/// no_gray_visited v g + v not gray → no_gray_objects g.
+/// objects(v, g) is the singleton [f_address(v)] when next >= heap_size.
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+let no_gray_visited_boundary
+  (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state)
+  : Lemma (requires no_gray_visited v g /\
+                    ~(SpecObject.is_gray (SpecHeap.f_address v) g) /\
+                    Seq.length (SpecFields.objects v g) > 0 /\
+                    Seq.length g == heap_size /\
+                    (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
+                     U64.v v + FStar.Mul.((U64.v wz + 1) * 8) >= heap_size))
+          (ensures SweepInv.no_gray_objects g)
+  = let fv = SpecHeap.f_address v in
+    // With fuel 1, objects(v, g) unfolds to Seq.cons fv Seq.empty
+    // (because next >= heap_size triggers the base case)
+    let objs_v = SpecFields.objects v g in
+    assert (objs_v == Seq.cons fv Seq.empty);
+    // For each object: either it's fv (not gray) or it was visited before v (not gray)
+    let aux (obj: obj_addr) : Lemma
+      (requires Seq.mem obj (SpecFields.objects zero_addr g))
+      (ensures ~(SpecObject.is_gray obj g))
+    = SpecFields.mem_cons_lemma obj fv Seq.empty;
+      if Seq.mem obj objs_v then ()  // obj == fv, which is not gray
+      else ()  // obj not in objects(v,g), from no_gray_visited: not gray
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+    SweepInv.no_gray_intro g
+#pop-options
+
+/// Combined coverage maintenance: no `next` parameter needed (computed internally).
+/// Returns fact about no_gray_visited_at next_val where next_val is the nat value.
+/// Also establishes no_gray_objects when the next position goes past heap_size.
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+let no_gray_visited_maintain_at
+  (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state) (st_old st_new: Seq.seq obj_addr) (cap: nat)
+  : Lemma (requires (Seq.length st_old == 0 ==> no_gray_visited_at (U64.v v) g) /\
+                    Seq.length st_new >= Seq.length st_old /\
+                    Seq.length (SpecFields.objects v g) > 0 /\
+                    Seq.length g == heap_size /\
+                    cap > 0 /\
+                    Seq.length st_new <= cap /\
+                    (Seq.length st_new == 0 ==> ~(SpecObject.is_gray (SpecHeap.f_address v) g)))
+          (ensures (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
+                    let next_val = U64.v v + FStar.Mul.((U64.v wz + 1) * 8) in
+                    (Seq.length st_new == 0 ==> no_gray_visited_at next_val g) /\
+                    (Seq.length st_new == 0 /\ next_val >= heap_size ==> SweepInv.no_gray_objects g)))
+  = if Seq.length st_new = 0 then begin
+      no_gray_visited_at_eq v g;
+      objects_nonempty_decompose_arith v g;
+      let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
+      let next_val = U64.v v + FStar.Mul.((U64.v wz + 1) * 8) in
+      if next_val < heap_size then begin
+        let next : hp_addr = U64.uint_to_t next_val in
+        objects_nonempty_decompose v g next;
+        no_gray_visited_step v g next;
+        no_gray_visited_at_eq next g
+      end else begin
+        // next_val >= heap_size: this was the last object
+        no_gray_visited_boundary v g
+      end
+    end else ()
+#pop-options
+
+/// Scan complete: nat-indexed version for Pulse post-loop code.
+/// Handles both vc < heap_size (use no_gray_when_scan_complete) and
+/// vc >= heap_size (use the boundary fact from the invariant).
+let no_gray_when_scan_complete_nat
+  (vc_val: nat) (g: heap_state) (st: Seq.seq obj_addr)
+  : Lemma (requires vc_val % 8 == 0 /\ vc_val <= heap_size /\
+                    Seq.length g == heap_size /\
+                    vc_val + 8 >= heap_size /\
+                    (Seq.length st == 0 ==> no_gray_visited_at vc_val g) /\
+                    (Seq.length st == 0 /\ vc_val >= heap_size ==> SweepInv.no_gray_objects g))
+          (ensures Seq.length st == 0 ==> SweepInv.no_gray_objects g)
+  = if Seq.length st = 0 then begin
+      if vc_val >= heap_size then ()
+      else begin
+        let vc : hp_addr = U64.uint_to_t vc_val in
+        no_gray_visited_at_eq vc g;
+        no_gray_when_scan_complete vc g st
+      end
+    end else ()
+
+/// The rescan loop maintains bounded_stack_props and tracks coverage
+/// via no_gray_visited. When the stack is empty at the end, all objects
+/// have been visited and found non-gray.
+
+#push-options "--z3rlimit 400 --z3refresh"
 fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecFields.well_formed_heap 's /\
@@ -797,6 +1068,12 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   SpecHeap.f_address_spec 0UL;
   lemma_addr_plus_8_no_overflow 0;
   
+  // Initial bounded_stack_props for empty stack
+  SpecMarkBounded.empty_bounded_stack_props 's;
+  
+  // Initial coverage: no objects visited yet
+  no_gray_visited_at_init 's;
+  
   let mut current = 0UL;
 
   while (
@@ -813,8 +1090,15 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
             Seq.length st_cur <= cap /\
             SpecFields.well_formed_heap 's /\
             SweepInv.heap_objects_dense 's /\
+            Seq.length 's == heap_size /\
+            SpecMarkBounded.bounded_stack_props 's st_cur /\
             (U64.v vc + U64.v mword < heap_size ==>
-              SweepInv.obj_in_objects (SpecHeap.f_address vc) 's))
+              SweepInv.obj_in_objects (SpecHeap.f_address vc) 's) /\
+            (forall (x: obj_addr). Seq.mem x st_cur ==> U64.v x < U64.v vc + U64.v mword) /\
+            // Coverage: when stack is empty, all visited objects are not gray
+            (Seq.length st_cur == 0 ==> no_gray_visited_at (U64.v vc) 's) /\
+            // Boundary: when past heap_size and stack empty, no_gray_objects holds
+            (Seq.length st_cur == 0 /\ U64.v vc >= heap_size ==> SweepInv.no_gray_objects 's))
   {
     let v = !current;
     hp_addr_plus_8 v;
@@ -823,11 +1107,18 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
     SweepInv.obj_in_objects_elim (SpecHeap.f_address v) 's;
     SweepInv.member_implies_objects_nonempty v 's;
     
+    // Prove f_address v is not on stack (from address bound)
+    SpecHeap.f_address_spec v;
+    // All stack elems have addr < v + 8 = f_address(v), so f_address(v) not on stack
+    
     let hdr = read_word heap v;
     getWosize_eq hdr;
     let wz = getWosize hdr;
     SpecObject.wosize_of_object_bound (SpecHeap.f_address v) 's;
 
+    // Capture the ghost stack sequence before rescan_push_if_gray
+    with st_before. assert (is_gray_stack st st_before);
+    
     rescan_push_if_gray heap st v;
     with st_after. assert (is_gray_stack st st_after);
 
@@ -837,12 +1128,20 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
     lemma_next_addr_no_overflow (U64.v v) (U64.v wz);
     lemma_next_addr_aligned (U64.v v) (U64.v wz);
     
-    // Derive obj_in_objects for next position via density bridge
-    rescan_density_bridge v 's;
+    // Maintain coverage invariant (computes next internally as nat)
+    no_gray_visited_maintain_at v 's st_before st_after (reveal cap);
     
     let skip = U64.add 1UL wz;
     let offset = U64.mul skip mword;
     let next = U64.add v offset;
+    
+    // Derive obj_in_objects for next position via density bridge
+    rescan_density_bridge v 's;
+    
+    // Address bound transfer: all stack elems x satisfy x < v+8 or x == f_address(v) = v+8.
+    // next = v + (1+wz)*8 >= v+8, so f_address(v) = v+8 <= next < next+8.
+    // Hence x < next+8 for all x in st_after.
+    assert (pure (U64.v next >= U64.v v + 8));
     
     current := next
   };
@@ -853,10 +1152,15 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
     is_heap heap 's **
     is_gray_stack st st_fin);
 
-  // ADMIT: bounded_mark_inv and no_gray_objects when empty
-  // These require connecting the heap walk to the objects list
-  // and proving bounded_stack_props (stack_points_to_gray, stack_elements_valid, stack_no_dups)
-  admit ()
+  // We have bounded_stack_props 's st_fin from the loop invariant.
+  // Construct bounded_mark_inv directly.
+  SpecMarkBoundedInv.bounded_mark_inv_intro 's st_fin cap;
+  
+  // For no_gray_objects when empty: loop exited because vc_fin + mword >= heap_size.
+  // Two cases: if vc_fin >= heap_size, the boundary invariant gives no_gray_objects directly.
+  // If vc_fin < heap_size, objects(vc_fin, g) is empty (base case), use no_gray_when_scan_complete.
+  no_gray_when_scan_complete_nat (U64.v vc_fin) 's st_fin;
+  ()
 }
 #pop-options
 
@@ -933,3 +1237,4 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
     is_gray_stack st st_final);
   ()
 }
+#pop-options

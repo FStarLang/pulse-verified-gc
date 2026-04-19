@@ -102,6 +102,10 @@ impl/%.checked: impl/%
 impl/GC.Impl.Allocator.fst.checked: impl/GC.Impl.Allocator.fst
 	$(FSTAR) --z3rlimit 100 $<
 
+# MarkBounded proof: high rlimit, no split_queries (nat-indexed wrappers handle invariant typing)
+impl/GC.Impl.MarkBounded.fst.checked: impl/GC.Impl.MarkBounded.fst
+	$(FSTAR) --z3rlimit 300 $<
+
 $(C)/impl/%.checked: $(C)/impl/%
 	$(FSTAR) --split_queries always $<
 
