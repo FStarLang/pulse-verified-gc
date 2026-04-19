@@ -1190,7 +1190,7 @@ private let init_alloc_spec_unfold (g: heap) (wz: nat)
 
 /// After init + alloc_from_block, all field addresses read as 0UL.
 /// Excludes header addresses (0 and rem_hd in split case).
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let init_alloc_from_block_field_zero (g: heap) (wz: nat) (addr: hp_addr)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let wz' = if wz = 0 then 1 else wz in
@@ -1214,34 +1214,18 @@ private let init_alloc_from_block_field_zero (g: heap) (wz: nat) (addr: hp_addr)
     let bwz = heap_size / U64.v mword - 1 in
     let leftover = bwz - wz' in
     if leftover < 2 then begin
-      // Exact fit: only writes at hd=0
-      alloc_from_block_exact g0 mword wz' 0UL;
-      let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
-      read_write_different g0 zero_addr addr ahdr
+      // Exact fit: only writes at hd=0, addr >= 8
+      alloc_exact_read_other g0 mword wz' 0UL addr
     end
     else begin
       // Split: writes at hd=0, rem_hd=(1+wz')*8, rem_obj=(2+wz')*8
-      alloc_from_block_split_normal g0 mword wz' 0UL;
-      let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
-      let g1 = write_word g0 zero_addr ahdr in
-      let rhn = (1 + wz') * 8 in
-      let rh : hp_addr = U64.uint_to_t rhn in
-      let rhdr = make_header (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL in
-      let g2 = write_word g1 rh rhdr in
       let ron = (2 + wz') * 8 in
-      let ro : hp_addr = U64.uint_to_t ron in
-      let g3 = write_word g2 ro 0UL in
       if U64.v addr = ron then
         // addr is the remainder link field: written with 0UL
-        read_write_same g2 ro 0UL
-      else begin
-        // addr is not hd(=0), not rem_hd, not rem_obj
-        read_write_different g2 ro addr 0UL;
-        // addr <> rhn (from precondition: leftover >= 2 ==> addr <> rhn)
-        read_write_different g1 rh addr rhdr;
-        // addr >= 8 > 0
-        read_write_different g0 zero_addr addr ahdr
-      end
+        alloc_split_normal_read_rem_field g0 mword wz' 0UL
+      else
+        // addr doesn't overlap any written word
+        alloc_split_normal_read_other g0 mword wz' 0UL addr
     end
 #pop-options
 
@@ -1265,9 +1249,7 @@ private let init_alloc_exact_wosize (g: heap) (wz: nat)
     hd_address_spec (mword <: obj_addr);
     let wz' = if wz = 0 then 1 else wz in
     let bwz = heap_size / U64.v mword - 1 in
-    alloc_from_block_exact g0 mword wz' 0UL;
-    let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
-    read_write_same g0 zero_addr ahdr;
+    alloc_exact_read_hd g0 mword wz' 0UL;
     make_header_getWosize (U64.uint_to_t bwz) white_bits 0UL
 #pop-options
 
@@ -1335,7 +1317,7 @@ private let init_alloc_oom (g: heap) (wz: nat)
 #restart-solver
 
 /// For the split case: header reads in the post-alloc heap.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0 --split_queries always"
 private let init_alloc_split_headers (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let wz' = if wz = 0 then 1 else wz in
@@ -1360,26 +1342,13 @@ private let init_alloc_split_headers (g: heap) (wz: nat)
     hd_address_spec (mword <: obj_addr);
     let wz' = if wz = 0 then 1 else wz in
     let bwz = heap_size / U64.v mword - 1 in
-    alloc_from_block_split_normal g0 mword wz' 0UL;
-    let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
-    let g1 = write_word g0 zero_addr ahdr in
-    let rhn = (1 + wz') * 8 in
-    let rh : hp_addr = U64.uint_to_t rhn in
-    let rw = bwz - wz' - 1 in
-    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-    let g2 = write_word g1 rh rhdr in
-    let ron = (2 + wz') * 8 in
-    let ro : hp_addr = U64.uint_to_t ron in
-    let g3 = write_word g2 ro 0UL in
-    // Header at 0: chain reads back
-    read_write_different g2 ro zero_addr 0UL;
-    read_write_different g1 rh zero_addr rhdr;
-    read_write_same g0 zero_addr ahdr;
+    // Use read-level bridge lemmas (no write_word in Z3 context)
+    alloc_split_normal_read_hd g0 mword wz' 0UL;
     make_header_getWosize (U64.uint_to_t wz') white_bits 0UL;
-    // Header at rem_hd: chain reads back
-    read_write_different g2 ro rh 0UL;
-    read_write_same g1 rh rhdr;
-    make_header_getWosize (U64.uint_to_t rw) blue_bits 0UL
+    alloc_split_normal_read_rem_hd g0 mword wz' 0UL;
+    let rw = bwz - wz' - 1 in
+    make_header_getWosize (U64.uint_to_t rw) blue_bits 0UL;
+    alloc_split_normal_length g0 mword wz' 0UL
 #pop-options
 
 /// Split case helper: objects starting at the remainder header position.
@@ -1538,7 +1507,7 @@ private let init_alloc_mword_field_zero_at (g: heap) (wz: nat) (idx: nat)
 /// Helper: remainder object is blue after split allocation
 /// =========================================================================
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let init_alloc_split_rem_blue (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let wz' = if wz = 0 then 1 else wz in
@@ -1557,31 +1526,19 @@ private let init_alloc_split_rem_blue (g: heap) (wz: nat)
     hd_address_spec (mword <: obj_addr);
     let wz' = if wz = 0 then 1 else wz in
     let bwz = heap_size / U64.v mword - 1 in
-    alloc_from_block_split_normal g0 mword wz' 0UL;
-    let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
-    let g1 = write_word g0 zero_addr ahdr in
-    let rhn = (1 + wz') * 8 in
-    let rh : hp_addr = U64.uint_to_t rhn in
     let rw = bwz - wz' - 1 in
-    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-    let g2 = write_word g1 rh rhdr in
-    let ron = (2 + wz') * 8 in
-    let ro : hp_addr = U64.uint_to_t ron in
-    let g3 = write_word g2 ro 0UL in
-    // Chain reads: read_word g3 rh = rhdr
-    read_write_different g2 ro rh 0UL;
-    read_write_same g1 rh rhdr;
-    assert (read_word g3 rh == rhdr);
-    // Color of remainder header is Blue
+    // Use bridge lemma: read_word g' rh == make_header rw blue 0
+    alloc_split_normal_read_rem_hd g0 mword wz' 0UL;
     make_header_color_blue (U64.uint_to_t rw);
-    // Connect to is_blue via rem_obj
+    let ron = (2 + wz') * 8 in
     let rem_obj : obj_addr = U64.uint_to_t ron in
     hd_address_spec rem_obj;
-    color_of_object_spec rem_obj g3;
-    is_blue_iff rem_obj g3
+    let g' = fst (alloc_from_block g0 (mword <: obj_addr) wz' 0UL) in
+    color_of_object_spec rem_obj g';
+    is_blue_iff rem_obj g'
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 /// After init + alloc (split), mword is NOT blue (it's white).
 private let init_alloc_split_mword_not_blue (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy /\
@@ -1598,27 +1555,12 @@ private let init_alloc_split_mword_not_blue (g: heap) (wz: nat)
     init_header_at_zero g;
     hd_address_spec (mword <: obj_addr);
     let wz' = if wz = 0 then 1 else wz in
-    let bwz = heap_size / U64.v mword - 1 in
-    alloc_from_block_split_normal g0 mword wz' 0UL;
-    let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
-    let g1 = write_word g0 zero_addr ahdr in
-    let rhn = (1 + wz') * 8 in
-    let rh : hp_addr = U64.uint_to_t rhn in
-    let rw = bwz - wz' - 1 in
-    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-    let g2 = write_word g1 rh rhdr in
-    let ron = (2 + wz') * 8 in
-    let ro : hp_addr = U64.uint_to_t ron in
-    let g3 = write_word g2 ro 0UL in
-    // Chain reads: read_word g3 zero_addr = ahdr
-    read_write_different g2 ro zero_addr 0UL;
-    read_write_different g1 rh zero_addr rhdr;
-    read_write_same g0 zero_addr ahdr;
-    assert (read_word g3 zero_addr == ahdr);
-    // Color of allocated header is White ≠ Blue
+    // Use bridge lemma: read_word g' zero_addr == make_header wz' white 0
+    alloc_split_normal_read_hd g0 mword wz' 0UL;
     make_header_color_white (U64.uint_to_t wz');
-    color_of_object_spec (mword <: obj_addr) g3;
-    is_blue_iff (mword <: obj_addr) g3
+    let g' = fst (alloc_from_block g0 (mword <: obj_addr) wz' 0UL) in
+    color_of_object_spec (mword <: obj_addr) g';
+    is_blue_iff (mword <: obj_addr) g'
 #pop-options
 
 /// After init + alloc, all fields of mword (the allocated object) read as 0UL.
@@ -2575,24 +2517,14 @@ private let init_alloc_no_gray (g: heap) (wz: nat) (obj: obj_addr)
         assert (objects 0UL g' == s2);
         mem_two_objects obj mword rem_obj;
         init_alloc_split_headers g wz;
-        alloc_from_block_split_normal g0 mword wz' 0UL;
-        let ahdr = make_header (U64.uint_to_t wz') white_bits 0UL in
-        let g1 = write_word g0 zero_addr ahdr in
-        let rh : hp_addr = U64.uint_to_t ((1 + wz') * 8) in
-        let rhdr = make_header (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL in
-        let g2 = write_word g1 rh rhdr in
-        let ro : hp_addr = U64.uint_to_t ron in
-        read_write_different g2 ro zero_addr 0UL;
-        read_write_different g1 rh zero_addr rhdr;
-        read_write_same g0 zero_addr ahdr;
+        alloc_split_normal_read_hd g0 mword wz' 0UL;
         make_header_getColor_bridge (U64.uint_to_t wz') white_bits 0UL;
         getColor_raw (read_word g' (hd_address (mword <: obj_addr)));
         color_of_object_spec (mword <: obj_addr) g';
         is_gray_iff (mword <: obj_addr) g';
         if obj = rem_obj then begin
           hd_address_spec rem_obj;
-          read_write_different g2 ro rh 0UL;
-          read_write_same g1 rh rhdr;
+          alloc_split_normal_read_rem_hd g0 mword wz' 0UL;
           make_header_getColor_bridge (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL;
           getColor_raw (read_word g' (hd_address rem_obj));
           color_of_object_spec rem_obj g';

@@ -312,6 +312,7 @@ let alloc_exact_preserves_wf
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
     let new_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+    alloc_from_block_exact g obj wz next_fp;
     let g' = write_word g hd new_hdr in
     hd_address_spec obj;
     hd_address_bounds obj;
@@ -1781,6 +1782,7 @@ private let alloc_from_block_objects_facts
     end else begin
       // Exact fit case: objects are the same, rem_fp = next_fp
       alloc_exact_preserves_wf g obj wz next_fp;
+      alloc_from_block_exact g obj wz next_fp;
       // In exact fit: alloc_from_block returns (write_word g hd new_hdr, next_fp)
       // objects are preserved (header_write_same_wosize_preserves_objects)
       let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
@@ -1882,6 +1884,7 @@ let rec alloc_search_preserves_wf
             end;
             assert (U64.v (hd_address prev) <> U64.v hd);
             let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+            alloc_from_block_exact g obj wz next_fp;
             assert (fst (alloc_from_block g obj wz next_fp) == write_word g hd alloc_hdr);
             read_write_different g hd (hd_address prev) alloc_hdr
           end;
@@ -2467,13 +2470,13 @@ private let alloc_exact_fl_transfer_pre
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
     let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+    alloc_from_block_exact g obj wz next_fp;
     let g' = write_word g hd alloc_hdr in
     hd_address_spec obj;
     hd_address_bounds obj;
     getWosize_bound hdr;
     make_header_getWosize (U64.uint_to_t block_wz) white_bits 0UL;
     header_write_same_wosize_preserves_objects g obj alloc_hdr;
-    // objects(0, g') == objects(0, g)
     alloc_exact_preserves_wf g obj wz next_fp;
     if U64.v (wosize_of_object a g) >= 1 then begin
       hd_address_spec a;
@@ -2601,6 +2604,7 @@ let rec alloc_search_preserves_fl_valid
             // Need to show rem_obj is valid and call fl_valid_step
             assert (Seq.mem new_fp (objects 0UL g'));
             // Reconstruct intermediate heaps to read back new_fp's fields
+            alloc_from_block_split_normal g obj wz next_fp;
             let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
             let g1 = write_word g hd alloc_hdr in
             let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
@@ -2672,6 +2676,7 @@ let rec alloc_search_preserves_fl_valid
           end else begin
             // ===== Exact-fit case: new_fp = next_fp =====
             alloc_exact_preserves_wf g obj wz next_fp;
+            alloc_from_block_exact g obj wz next_fp;
             // Transfer fl_valid g next_fp big_fuel to g'
             // Use obj_addr parameter to avoid subtyping issues in ensures
             let transfer_aux (a: obj_addr) : Lemma
@@ -2731,6 +2736,7 @@ let rec alloc_search_preserves_fl_valid
             fl_valid_weaken g' next_fp big_fuel (big_fuel - 1);
             assert (Seq.mem new_fp (objects 0UL g'));
             // Reconstruct intermediate heaps
+            alloc_from_block_split_normal g obj wz next_fp;
             let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
             let g1 = write_word g hd alloc_hdr in
             let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
@@ -2810,6 +2816,7 @@ let rec alloc_search_preserves_fl_valid
           end else begin
             // ----- Exact-fit sub-case -----
             alloc_exact_preserves_wf g obj wz next_fp;
+            alloc_from_block_exact g obj wz next_fp;
             // Step 1: Transfer fl_valid from g to g' for head_fp
             let transfer_aux_e (a: obj_addr) : Lemma
               (requires Seq.mem a (objects 0UL g))
@@ -3042,6 +3049,7 @@ private let alloc_from_block_preserves_no_black
       FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
     end else begin
       // Exact fit case
+      alloc_from_block_exact g obj wz next_fp;
       let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
       make_header_getWosize (U64.uint_to_t block_wz) white_bits 0UL;
       header_write_same_wosize_preserves_objects g obj alloc_hdr;
@@ -3151,6 +3159,7 @@ let rec alloc_search_preserves_no_black
               objects_separated 0UL g obj prev;
             assert (U64.v (hd_address prev) <> U64.v hd);
             let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+            alloc_from_block_exact g obj wz next_fp;
             assert (fst (alloc_from_block g obj wz next_fp) == write_word g hd alloc_hdr);
             read_write_different g hd (hd_address prev) alloc_hdr
           end;
