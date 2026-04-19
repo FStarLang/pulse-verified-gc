@@ -169,6 +169,32 @@ fn is_empty (st: gray_stack)
   b
 }
 
+fn is_full (st: gray_stack)
+  requires is_gray_stack st 's
+  returns b: bool
+  ensures is_gray_stack st 's ** pure (b <==> (Seq.length 's == stack_capacity st))
+{
+  unfold is_gray_stack;
+  with t contents. _;
+  let top_val = B.op_Bang st.top;
+  let b = (top_val = 0sz);
+  fold (is_gray_stack st 's);
+  b
+}
+
+fn stack_len (st: gray_stack)
+  requires is_gray_stack st 's
+  returns n: SZ.t
+  ensures is_gray_stack st 's ** pure (SZ.v n == Seq.length 's)
+{
+  unfold is_gray_stack;
+  with t contents. _;
+  let top_val = B.op_Bang st.top;
+  let n = SZ.sub st.cap top_val;
+  fold (is_gray_stack st 's);
+  n
+}
+
 #push-options "--z3rlimit 20"
 fn push (st: gray_stack) (addr: obj_addr)
   requires is_gray_stack st 's ** pure (Seq.length 's < stack_capacity st)

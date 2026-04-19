@@ -65,6 +65,18 @@ fn is_empty (st: gray_stack)
   returns b: bool
   ensures is_gray_stack st 's ** pure (b <==> (Seq.length 's == 0))
 
+/// Check if stack is full (no more capacity)
+fn is_full (st: gray_stack)
+  requires is_gray_stack st 's
+  returns b: bool
+  ensures is_gray_stack st 's ** pure (b <==> (Seq.length 's == stack_capacity st))
+
+/// Return the current number of elements on the stack
+fn stack_len (st: gray_stack)
+  requires is_gray_stack st 's
+  returns n: SZ.t
+  ensures is_gray_stack st 's ** pure (SZ.v n == Seq.length 's)
+
 /// Push an object address onto the gray stack.
 /// Precondition: stack has remaining capacity.
 fn push (st: gray_stack) (addr: obj_addr)
