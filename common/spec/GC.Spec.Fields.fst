@@ -790,6 +790,35 @@ let is_valid_header (header: U64.t) : bool =
 /// ---------------------------------------------------------------------------
 
 /// Helper: objects use at least 8 bytes each
+
+/// Any member of the objects walk satisfies the size bound:
+/// hd_address(obj) + 8 + wosize * 8 <= Seq.length g
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
+let rec objects_member_size_bound (start: hp_addr) (g: heap) (obj: obj_addr)
+  : Lemma
+    (requires Seq.mem obj (objects start g))
+    (ensures (
+      let wz = getWosize (read_word g (hd_address obj)) in
+      let obj_words = U64.v wz + 1 in
+      U64.v (hd_address obj) + FStar.Mul.(obj_words * U64.v mword) <= Seq.length g))
+    (decreases Seq.length g - U64.v start)
+  = objects_nonempty_next start g;
+    f_address_spec start;
+    if f_address start = obj then begin
+      hd_address_spec obj
+    end
+    else begin
+      let wz = getWosize (read_word g start) in
+      let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * U64.v mword) in
+      if next_nat < heap_size then begin
+        let next : hp_addr = U64.uint_to_t next_nat in
+        Seq.lemma_tl (f_address start) (objects next g);
+        objects_member_size_bound next g obj
+      end
+    end
+#pop-options
+
+
 /// Generalized version: length (objects start g) * 8 <= length g - start
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 50"
 let rec objects_count_le_remaining (start: hp_addr) (g: heap)
