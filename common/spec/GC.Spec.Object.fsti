@@ -136,6 +136,18 @@ val makeHeader_eq_colorHeader : (hdr: U64.t) -> (c: color) ->
   Lemma (requires valid_header64 hdr)
         (ensures makeHeader (getWosize hdr) c (getTag hdr) == colorHeader hdr c)
 
+/// makeHeader roundtrip: getWosize recovers the wosize
+val makeHeader_getWosize : (wz: wosize) -> (c: color) -> (tag: U64.t{U64.v tag < 256}) ->
+  Lemma (getWosize (makeHeader wz c tag) == wz)
+
+/// makeHeader roundtrip: getColor recovers the color
+val makeHeader_getColor : (wz: wosize) -> (c: color) -> (tag: U64.t{U64.v tag < 256}) ->
+  Lemma (getColor (makeHeader wz c tag) == c)
+
+/// makeHeader roundtrip: getTag recovers the tag
+val makeHeader_getTag : (wz: wosize) -> (c: color) -> (tag: U64.t{U64.v tag < 256}) ->
+  Lemma (getTag (makeHeader wz c tag) == tag)
+
 /// ---------------------------------------------------------------------------
 /// Object Color Predicates
 /// ---------------------------------------------------------------------------
