@@ -148,6 +148,10 @@ val makeHeader_getColor : (wz: wosize) -> (c: color) -> (tag: U64.t{U64.v tag < 
 val makeHeader_getTag : (wz: wosize) -> (c: color) -> (tag: U64.t{U64.v tag < 256}) ->
   Lemma (getTag (makeHeader wz c tag) == tag)
 
+/// makeHeader definition: exposes connection to pack_header64 for bridging
+val makeHeader_is_pack_header64 : (wz: wosize) -> (c: color) -> (tag: U64.t{U64.v tag < 256}) ->
+  Lemma (makeHeader wz c tag == pack_header64 { wosize = U64.v wz; color = c; tag = U64.v tag })
+
 /// ---------------------------------------------------------------------------
 /// Object Color Predicates
 /// ---------------------------------------------------------------------------

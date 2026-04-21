@@ -297,6 +297,11 @@ let makeHeader_getTag (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
     assert (U64.v (getTag hdr) == get_tag (U64.v hdr))
 #pop-options
 
+/// makeHeader definition: exposes connection to pack_header64 for bridging
+let makeHeader_is_pack_header64 (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
+  : Lemma (makeHeader wz c tag == pack_header64 { wosize = U64.v wz; color = c; tag = U64.v tag })
+  = ()
+
 /// Helper: word-aligned addresses that differ are separated by >= 8 bytes
 /// This makes the "else" branch unreachable in read_write_different proofs
 #push-options "--z3rlimit 50"
