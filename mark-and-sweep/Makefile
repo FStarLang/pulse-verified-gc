@@ -131,7 +131,7 @@ _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 # --- KaRaMeL bundling (.krml → C) ------------------------------------------
 
 EXTRACT_MODULES = \
-  GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.Sweep GC.Impl \
+  GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.Sweep GC.Impl.Coalesce GC.Impl \
   GC.Impl.Allocator \
   GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address

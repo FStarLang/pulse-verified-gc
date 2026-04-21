@@ -136,3 +136,9 @@ val push_children_stack_monotone : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
 val mark_inv_no_gray : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st /\ Seq.length st = 0)
         (ensures SweepInv.no_gray_objects g)
+
+/// Same as mark_inv_no_gray but with Mark.noGreyObjects postcondition
+/// (boolean negation `not` instead of propositional `~`)
+val mark_inv_noGreyObjects : (g: heap) -> (st: seq obj_addr) ->
+  Lemma (requires mark_inv g st /\ Seq.length st = 0)
+        (ensures GC.Spec.Mark.noGreyObjects g)

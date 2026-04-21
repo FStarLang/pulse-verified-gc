@@ -75,3 +75,7 @@ let push_children_stack_monotone g st obj i ws =
 let mark_inv_no_gray g st =
   empty_stack_no_grey g st;
   SweepInv.no_gray_intro g
+
+let mark_inv_noGreyObjects g st =
+  mark_inv_elim_sp g st;
+  empty_stack_no_grey g st

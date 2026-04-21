@@ -414,3 +414,143 @@ let sweep_post_sweep_strong h_init st fp =
   in
   FStar.Classical.forall_intro wrap
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Density Preservation Through Sweep
+/// ---------------------------------------------------------------------------
+///
+/// Sweep only modifies headers via colorHeader (preserving wosize) and writes
+/// field 1 via set_field (not touching headers). Therefore wosize at every
+/// object header position is preserved, which preserves the objects walk
+/// structure and hence heap_objects_dense.
+
+/// Helper: sweep_aux preserves wosize_of_object for any object x (any color).
+/// Key insight: sweep_object preserves wosize of x whether x is the processed
+/// object (sweep_object_preserves_self_wosize) or a different one
+/// (sweep_object_preserves_other_header). No color condition is needed.
+#push-options "--z3rlimit 1500 --fuel 2 --ifuel 1"
+private let rec sweep_aux_preserves_wosize
+  (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires
+      well_formed_heap g /\
+      (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+      fp_in_heap fp g /\
+      Seq.mem x (objects 0UL g) /\
+      is_vertex_set (HeapGraph.coerce_to_vertex_list objs))
+    (ensures wosize_of_object x g == wosize_of_object x (fst (sweep_aux g objs fp)))
+    (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let obj = Seq.head objs in
+      let (g', fp') = sweep_object g obj fp in
+      Seq.lemma_index_is_nth objs 0;
+      sweep_object_preserves_objects g obj fp;
+      sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
+      // Establish fp_in_heap fp' g'
+      if is_white obj g then begin
+        assert (fp' == obj);
+        assert (Seq.mem obj (objects 0UL g'));
+        assert (fp_in_heap fp' g')
+      end else begin
+        assert (fp' == fp);
+        assert (fp_in_heap fp' g')
+      end;
+      // Tail preserves vertex_set
+      HeapGraph.coerce_tail_lemma objs;
+      is_vertex_set_tail (HeapGraph.coerce_to_vertex_list objs);
+      // Wosize preservation at this step + recursion
+      if obj = x then begin
+        // Self case: sweep_object preserves wosize of processed object (all colors)
+        sweep_object_preserves_self_wosize g x fp;
+        // x ∉ tail: from vertex set, head ∉ tail (via coerce)
+        HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
+        // Recurse on tail (x ∉ tail, so always uses the obj≠x branch internally)
+        sweep_aux_preserves_wosize g' (Seq.tail objs) fp' x
+      end else begin
+        // Other case: sweep_object preserves wosize of different object
+        sweep_object_preserves_other_header g obj fp x;
+        // Recurse on tail
+        sweep_aux_preserves_wosize g' (Seq.tail objs) fp' x
+      end
+    end
+#pop-options
+
+/// Sweep preserves wosize of any object (wrapper for the full sweep)
+private let sweep_preserves_wosize_any (g: heap) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ fp_in_heap fp g /\
+                    Seq.mem x (objects 0UL g))
+          (ensures wosize_of_object x g == wosize_of_object x (fst (sweep g fp)))
+  = objects_is_vertex_set g;
+    sweep_aux_preserves_wosize g (objects 0UL g) fp x
+
+/// Main lemma: sweep preserves heap_objects_dense.
+/// Proof strategy: use heap_objects_dense_intro on g_sweep by showing the
+/// density condition holds at each header position. At each such position,
+/// wosize matches between g and g_sweep (from sweep_preserves_wosize_any),
+/// so the walk stride is identical. The density of g then transfers the
+/// conclusion about the next position, and objects equality + wfh give the
+/// length conditions.
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let sweep_preserves_density (g: heap) (fp: U64.t) =
+  let g_sweep = fst (sweep g fp) in
+  sweep_preserves_objects g fp;
+  assert (objects 0UL g_sweep == objects 0UL g);
+  sweep_preserves_wf g fp;
+
+  let aux (start: hp_addr) : Lemma
+    (U64.v start + 8 < heap_size ==>
+     Seq.mem (f_address start) (objects 0UL g_sweep) ==>
+     Seq.length (objects start g_sweep) > 0 ==>
+     (let wz = getWosize (read_word g_sweep start) in
+      let next = U64.v start + ((U64.v wz + 1) * 8) in
+      next + 8 < heap_size ==>
+      Seq.length (objects (U64.uint_to_t next) g_sweep) > 0 /\
+      Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g_sweep)))
+  = if U64.v start + 8 < heap_size &&
+       Seq.mem (f_address start) (objects 0UL g_sweep) then begin
+      let x : obj_addr = f_address start in
+      // hd_address (f_address start) == start
+      GC.Spec.Heap.hd_f_roundtrip start;
+      assert (hd_address x == start);
+      // Wosize preserved through sweep at this header position
+      sweep_preserves_wosize_any g fp x;
+      wosize_of_object_spec x g;
+      wosize_of_object_spec x g_sweep;
+      assert (getWosize (read_word g_sweep start) == getWosize (read_word g start));
+      // objects start g > 0 (from well_formed_heap g and membership)
+      GC.Spec.SweepInv.member_implies_objects_nonempty start g;
+      // Density of g gives us info about the next position
+      GC.Spec.SweepInv.objects_dense_step start g;
+      GC.Spec.SweepInv.objects_dense_obj_in start g;
+      let wz = getWosize (read_word g_sweep start) in
+      let next = U64.v start + ((U64.v wz + 1) * 8) in
+      if next + 8 < heap_size then begin
+        // obj_in_objects (uint_to_t (next + 8)) g from objects_dense_obj_in
+        // Eliminate to get Seq.mem in objects 0UL g
+        GC.Spec.SweepInv.obj_in_objects_elim (U64.uint_to_t (next + 8)) g;
+        // f_address (uint_to_t next) == uint_to_t (next + 8)
+        GC.Spec.Heap.f_address_spec (U64.uint_to_t next);
+        // Transfer membership: objects 0UL g == objects 0UL g_sweep
+        assert (Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g_sweep));
+        // Length from well_formed_heap g_sweep and membership
+        GC.Spec.SweepInv.member_implies_objects_nonempty (U64.uint_to_t next) g_sweep
+      end
+    end
+  in
+  FStar.Classical.forall_intro aux;
+  GC.Spec.SweepInv.heap_objects_dense_intro g_sweep
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Coalesce Precondition Bridge
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let coalesce_precondition_bridge h_mark fp =
+  let h_sweep = fst (sweep h_mark fp) in
+  // sweep_preserves_objects: objects zero_addr h_sweep == objects zero_addr h_mark
+  sweep_preserves_objects h_mark fp;
+  // sweep_preserves_density
+  sweep_preserves_density h_mark fp
+#pop-options

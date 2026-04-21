@@ -246,3 +246,39 @@ val sweep_post_sweep_strong :
       no_black_objects h_init /\
       no_pointer_to_blue h_init)
     (ensures GC.Spec.Coalesce.post_sweep_strong (fst (sweep (mark h_init st) fp)))
+
+/// ---------------------------------------------------------------------------
+/// Density Preservation Through Sweep
+/// ---------------------------------------------------------------------------
+
+/// Density is preserved through sweep
+val sweep_preserves_density :
+  (g: heap) -> (fp: U64.t) ->
+  Lemma
+    (requires
+      well_formed_heap g /\
+      GC.Spec.Mark.noGreyObjects g /\
+      GC.Spec.Sweep.fp_in_heap fp g /\
+      GC.Spec.SweepInv.heap_objects_dense g)
+    (ensures GC.Spec.SweepInv.heap_objects_dense (fst (sweep g fp)))
+
+/// ---------------------------------------------------------------------------
+/// Coalesce Precondition Bridge
+/// ---------------------------------------------------------------------------
+
+/// Establishes objects > 0 and density for the post-sweep heap.
+/// Takes the post-mark heap directly so the caller can provide
+/// mark_inv-derived properties (density, objects > 0, wfh, noGrey).
+val coalesce_precondition_bridge :
+  (h_mark: heap) -> (fp: U64.t) ->
+  Lemma
+    (requires
+      well_formed_heap h_mark /\
+      noGreyObjects h_mark /\
+      fp_in_heap fp h_mark /\
+      GC.Spec.SweepInv.heap_objects_dense h_mark /\
+      Seq.length (objects zero_addr h_mark) > 0)
+    (ensures
+      (let h_sweep = fst (sweep h_mark fp) in
+       Seq.length (objects zero_addr h_sweep) > 0 /\
+       GC.Spec.SweepInv.heap_objects_dense h_sweep))
