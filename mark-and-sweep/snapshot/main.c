@@ -1,6 +1,6 @@
 /* Minimal test harness for the verified mark-and-sweep GC.
  *
- * Provides the heap_size_u64 and heap_size externs required by GC_Impl.c,
+ * Provides the heap_size_u64 extern required by GC_Impl.c,
  * allocates a heap, initializes it, allocates objects, then collects.
  */
 
@@ -10,9 +10,8 @@
 #include <string.h>
 #include "GC_Impl.h"
 
-/* Configurable heap size (bytes).  GC_Impl.c references these as extern. */
+/* Configurable heap size (bytes).  GC_Impl.c references this as extern. */
 uint64_t heap_size_u64 = 1024;
-intmax_t heap_size = 1024;  /* krml_checked_int_t = intmax_t */
 
 int main(void)
 {
@@ -63,10 +62,28 @@ int main(void)
   uint64_t result_fp = collect(heap, st, fp);
   printf("collect returned fp = %llu\n", (unsigned long long)result_fp);
 
-  /* Allocate again after collection */
-  K___uint64_t_uint64_t r4 = allocate(heap, result_fp, 4);
-  printf("  alloc(4) after GC: fp=%llu, obj=%llu\n",
+  /* Verify coalescing: fp should point to the first object position (8),
+   * meaning all three freed blocks were merged into one contiguous block. */
+  if (result_fp != 8) {
+    printf("FAIL: expected coalesced fp=8, got %llu\n", (unsigned long long)result_fp);
+    free(gray_storage); free(heap_data);
+    return 1;
+  }
+
+  /* Allocate a large object that wouldn't fit without coalescing.
+   * Without coalescing, the largest free block would be the original remainder
+   * (heap_size/8 - 2 - 3 - 4 - 2 - 1 = 116 words for 1024-byte heap).
+   * With coalescing, we get heap_size/8 - 2 = 126 words. */
+  uint64_t big_wosize = heap_size_u64 / 8 - 2; /* max possible allocation */
+  K___uint64_t_uint64_t r4 = allocate(heap, result_fp, big_wosize);
+  printf("  alloc(%llu) after GC: fp=%llu, obj=%llu\n",
+         (unsigned long long)big_wosize,
          (unsigned long long)r4.fst, (unsigned long long)r4.snd);
+  if (r4.snd == 0) {
+    printf("FAIL: large allocation after coalesce returned null\n");
+    free(gray_storage); free(heap_data);
+    return 1;
+  }
 
   printf("All tests passed.\n");
   free(gray_storage);
