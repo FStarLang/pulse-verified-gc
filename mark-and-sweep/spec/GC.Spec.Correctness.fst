@@ -287,3 +287,130 @@ let gc_safety h_init st roots fp =
 
 let gc_completeness h_init st roots fp =
   mark_black_is_reachable h_init st roots
+
+/// ---------------------------------------------------------------------------
+/// BRIDGE: post_sweep_strong from mark + sweep
+/// ---------------------------------------------------------------------------
+
+/// Helper: no_black_objects implies tri_color_invariant (vacuously true)
+let no_black_implies_tri_color (g: heap) : Lemma
+  (requires no_black_objects g)
+  (ensures tri_color_invariant g)
+= ()
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let sweep_post_sweep_strong h_init st fp =
+  let h_mark = mark h_init st in
+  let h_sweep = fst (sweep h_mark fp) in
+
+  // Phase 1: Mark invariants
+  mark_preserves_wf h_init st;
+  mark_no_grey_remains h_init st;
+  mark_preserves_no_pointer_to_blue h_init st;
+  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  assert (objects 0UL h_mark == objects 0UL h_init);
+  assert (fp_in_heap fp h_mark);
+
+  // tri_color_invariant h_init is vacuously true (no black objects)
+  no_black_implies_tri_color h_init;
+  mark_preserves_tri_color h_init st;
+  assert (tri_color_invariant h_mark);
+
+  // Phase 2: Sweep invariants
+  sweep_preserves_wf h_mark fp;
+  sweep_preserves_objects h_mark fp;
+  assert (objects 0UL h_sweep == objects 0UL h_mark);
+  sweep_resets_colors h_mark fp;
+  sweep_black_survives h_mark fp;
+  sweep_white_becomes_blue h_mark fp;
+  sweep_blue_stays_blue h_mark fp;
+  objects_is_vertex_set h_mark;
+
+  // post_sweep part
+  assert (well_formed_heap h_sweep);
+
+  // Phase 3: Inner quantifier — for white objects, fields don't point to blue objects
+  let aux (x: obj_addr) (i: nat) : Lemma
+    (requires Seq.mem x (objects 0UL h_sweep) /\ is_white x h_sweep)
+    (ensures
+      (i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64) ==>
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_sweep x iu in
+       field_val = 0UL \/
+       U64.v field_val < U64.v mword \/
+       U64.v field_val >= heap_size \/
+       U64.v field_val % U64.v mword <> 0 \/
+       ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
+         is_blue (field_val <: obj_addr) h_sweep)))
+  = if i < 1 || i > U64.v (wosize_of_object x h_sweep) || i >= pow2 64 then ()
+    else begin
+    // x is white in h_sweep; determine x's color in h_mark
+    assert (Seq.mem x (objects 0UL h_mark));
+    color_exhaustive x h_mark;
+    colors_exclusive x h_mark;
+    colors_exclusive x h_sweep;
+    // white in h_mark → blue in h_sweep (contradiction: x white in h_sweep)
+    // gray in h_mark → contradiction with noGreyObjects
+    // blue in h_mark → blue in h_sweep (contradiction: x white in h_sweep)
+    // So x must be black in h_mark
+    assert (is_black x h_mark);
+
+    let iu = U64.uint_to_t i in
+
+    // wosize preserved through sweep for black objects
+    sweep_preserves_wosize_black h_mark fp x;
+    assert (wosize_of_object x h_sweep == wosize_of_object x h_mark);
+
+    // field preserved through sweep for black objects
+    sweep_preserves_field h_mark fp x iu;
+    let field_val = HeapGraph.get_field h_sweep x iu in
+    assert (field_val == HeapGraph.get_field h_mark x iu);
+
+    if field_val = 0UL then ()
+    else if U64.v field_val < U64.v mword then ()
+    else if U64.v field_val >= heap_size then ()
+    else if U64.v field_val % U64.v mword <> 0 then ()
+    else begin
+      // field_val <> 0, >= mword(=8), < heap_size, % 8 = 0
+      if is_no_scan x h_mark then
+        // TODO: no_scan objects have raw data fields that could coincidentally
+        // match unreachable (blue-after-sweep) object addresses.
+        // The tri_color_invariant excludes no_scan objects with ~(is_no_scan obj g),
+        // so black_successor_is_black cannot be applied here.
+        admit ()
+      else begin
+        // HeapGraph.is_pointer_field: v % mword = 0 && v > 0 && v < heap_size
+        assert (HeapGraph.is_pointer_field field_val);
+
+        wf_implies_object_fits h_mark x;
+        mark_preserves_wosize h_init st x;
+        HeapGraph.pointer_field_is_graph_edge h_mark (objects 0UL h_mark) x iu;
+        // mem_graph_edge (create_graph_from_heap h_mark (objects 0UL h_mark)) x field_val
+        // = mem_graph_edge (create_graph h_mark) x field_val
+
+        if Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) then begin
+          black_successor_is_black h_mark x (field_val <: obj_addr);
+          // field_val is black in h_mark → white in h_sweep (via sweep_black_survives)
+          colors_exclusive (field_val <: obj_addr) h_sweep
+          // white → not blue, so ~(is_blue field_val h_sweep)
+        end else ()
+      end
+    end
+    end
+  in
+  let wrap (x: obj_addr) : Lemma
+    (forall (i: nat).
+      Seq.mem x (objects 0UL h_sweep) /\ is_white x h_sweep /\
+      i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64 ==>
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_sweep x iu in
+       field_val = 0UL \/
+       U64.v field_val < U64.v mword \/
+       U64.v field_val >= heap_size \/
+       U64.v field_val % U64.v mword <> 0 \/
+       ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
+         is_blue (field_val <: obj_addr) h_sweep)))
+  = FStar.Classical.forall_intro (FStar.Classical.move_requires (aux x))
+  in
+  FStar.Classical.forall_intro wrap
+#pop-options

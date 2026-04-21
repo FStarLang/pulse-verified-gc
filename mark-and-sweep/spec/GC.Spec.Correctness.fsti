@@ -234,3 +234,15 @@ val gc_completeness : (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_ad
                     mem_graph_vertex graph x /\
                     ~(Seq.mem x (reachable_set graph roots')) ==>
                     ~(is_black x h_mark)))
+
+/// Coalesce bridge: sweep output satisfies post_sweep_strong
+val sweep_post_sweep_strong :
+  (h_init: heap) -> (st: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires
+      well_formed_heap h_init /\
+      stack_props h_init st /\
+      fp_in_heap fp h_init /\
+      no_black_objects h_init /\
+      no_pointer_to_blue h_init)
+    (ensures GC.Spec.Coalesce.post_sweep_strong (fst (sweep (mark h_init st) fp)))
