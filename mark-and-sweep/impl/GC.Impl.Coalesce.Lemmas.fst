@@ -57,6 +57,14 @@ let flush_blue_length g fb rw fp =
   flush_blue_preserves_length g fb rw fp
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
+let objects_mem_at_zero g =
+  objects_nonempty_head 0UL g;
+  let objs = objects 0UL g in
+  Seq.Properties.cons_head_tail objs;
+  Seq.Properties.mem_cons (f_address 0UL) (Seq.tail objs)
+#pop-options
+
 let coalesce_unfold g = ()
 
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
@@ -113,6 +121,139 @@ let set_field_1_eq_write_word g fb fp =
   assert (U64.v (U64.mul mword 1UL) = U64.v mword);
   assert (U64.v (U64.add (hd_address fb) (U64.mul mword 1UL)) = U64.v fb);
   U64.v_inj (U64.add (hd_address fb) (U64.mul mword 1UL)) fb
+#pop-options
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let blue_step_coalesce_aux_eq g0 g start first_blue run_words fp =
+  coalesce_step_blue g0 g start (objects start g0) first_blue run_words fp;
+  let wz = getWosize (read_word g0 start) in
+  let ws = U64.v wz in
+  let obj = f_address start in
+  let new_first : U64.t = if run_words = 0 then obj else first_blue in
+  let new_rw = run_words + ws + 1 in
+  let next_nat = U64.v start + (ws + 1) * U64.v mword in
+  let tail_objs = Seq.tail (objects start g0) in
+  // From step lemma + old invariant: transitivity
+  assert (coalesce_aux g0 g tail_objs new_first new_rw fp == coalesce g0);
+  // Alignment: start % 8 = 0 and (ws + 1) * 8 % 8 = 0
+  FStar.Math.Lemmas.lemma_mod_plus (U64.v start) (ws + 1) (U64.v mword);
+  // Run geometry
+  f_address_spec start;
+  assert (U64.v obj == U64.v start + U64.v mword);
+  assert (new_rw > 0);
+  // new_first properties
+  (if run_words = 0 then begin
+    assert (new_first == obj);
+    assert (U64.v new_first == U64.v start + U64.v mword);
+    assert (U64.v new_first >= U64.v mword);
+    assert (U64.v new_first - U64.v mword + new_rw * U64.v mword ==
+            U64.v start + (ws + 1) * U64.v mword)
+  end else begin
+    assert (new_first == first_blue);
+    assert (U64.v new_first - U64.v mword + new_rw * U64.v mword ==
+            U64.v first_blue - U64.v mword + (run_words + ws + 1) * U64.v mword);
+    FStar.Math.Lemmas.distributivity_add_left run_words (ws + 1) (U64.v mword);
+    assert (U64.v first_blue - U64.v mword + run_words * U64.v mword + (ws + 1) * U64.v mword ==
+            U64.v start + (ws + 1) * U64.v mword)
+  end);
+  // new_rw < pow2 54: from new_rw * 8 <= heap_size < pow2 57 = 8 * pow2 54
+  assert (U64.v new_first - U64.v mword + new_rw * U64.v mword == next_nat);
+  assert (next_nat <= heap_size);
+  assert (U64.v new_first >= U64.v mword);
+  assert (new_rw * U64.v mword <= next_nat);
+  FStar.Math.Lemmas.lemma_div_le (new_rw * U64.v mword) heap_size (U64.v mword);
+  FStar.Math.Lemmas.cancel_mul_div new_rw (U64.v mword);
+  assert (new_rw <= heap_size / U64.v mword);
+  // heap_size < pow2 57 = 8 * pow2 54, and heap_size is a multiple of 8
+  // => heap_size / 8 < pow2 54
+  FStar.Math.Lemmas.pow2_plus 3 54;
+  assert (pow2 57 == U64.v mword * pow2 54);
+  FStar.Math.Lemmas.lemma_div_exact heap_size (U64.v mword);
+  // heap_size = 8 * (heap_size / 8) and heap_size < 8 * pow2 54
+  // => heap_size / 8 < pow2 54
+  assert (heap_size == U64.v mword * (heap_size / U64.v mword));
+  assert (U64.v mword * (heap_size / U64.v mword) < U64.v mword * pow2 54);
+  // next_nat + 8 < pow2 64: next_nat <= heap_size < pow2 57, 8 <= pow2 57, pow2 58 < pow2 64
+  FStar.Math.Lemmas.pow2_le_compat 57 3;
+  FStar.Math.Lemmas.pow2_double_sum 57;
+  FStar.Math.Lemmas.pow2_lt_compat 64 58;
+  // Seq.equal → == for both cases
+  if next_nat < heap_size then begin
+    Seq.lemma_eq_elim tail_objs (objects (U64.uint_to_t next_nat) g0);
+    assert (tail_objs == objects (U64.uint_to_t next_nat) g0)
+  end;
+  if next_nat >= heap_size then begin
+    Seq.lemma_eq_elim tail_objs (Seq.empty #obj_addr);
+    assert (tail_objs == Seq.empty #obj_addr)
+  end
+#pop-options
+
+/// Top-level suffix chain: composes flush_blue_preserves_outside (for specific addr)
+/// with g→g0 suffix to get g'→g0 suffix.
+/// Avoids universals that fail to instantiate with --split_queries always.
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+private let flush_blue_suffix_chain
+  (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  (start_val: nat) (addr: hp_addr)
+  : Lemma
+    (requires
+      Seq.length g == heap_size /\
+      Seq.length g0 == heap_size /\
+      U64.v addr >= start_val /\
+      (forall (a: hp_addr). U64.v a >= start_val ==> read_word g a == read_word g0 a) /\
+      (run_words > 0 ==>
+        U64.v first_blue >= U64.v mword /\
+        U64.v first_blue < heap_size /\
+        U64.v first_blue % U64.v mword == 0 /\
+        U64.v first_blue - U64.v mword + run_words * U64.v mword == start_val))
+    (ensures (
+      let (g', _) = flush_blue g first_blue run_words fp in
+      read_word g' addr == read_word g0 addr))
+  = // Call the pointwise lemma (no universal in postcondition)
+    flush_blue_preserves_outside g first_blue run_words fp addr;
+    assert (read_word (fst (flush_blue g first_blue run_words fp)) addr == read_word g addr)
+#pop-options
+
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let white_step_coalesce_aux_eq g0 g start first_blue run_words fp =
+  coalesce_step_white g0 g start (objects start g0) first_blue run_words fp;
+  let wz = getWosize (read_word g0 start) in
+  let ws = U64.v wz in
+  let (g', fp') = flush_blue g first_blue run_words fp in
+  let next_nat = U64.v start + (ws + 1) * U64.v mword in
+  let tail_objs = Seq.tail (objects start g0) in
+  // From step lemma + old invariant: transitivity
+  assert (coalesce_aux g0 g' tail_objs 0UL 0 fp' == coalesce g0);
+  // Alignment: start % 8 = 0 and (ws + 1) * 8 % 8 = 0
+  FStar.Math.Lemmas.lemma_mod_plus (U64.v start) (ws + 1) (U64.v mword);
+  // Heap length preservation
+  flush_blue_length g first_blue run_words fp;
+  assert (Seq.length g' == heap_size);
+  // Build chained suffix: forall addr >= next_nat. read_word g' addr == read_word g0 addr
+  // Uses top-level helper to avoid local-function scoping issues with --split_queries
+  let chain (addr: hp_addr) : Lemma
+    (requires U64.v addr >= next_nat)
+    (ensures read_word g' addr == read_word g0 addr)
+  = flush_blue_suffix_chain g0 g first_blue run_words fp (U64.v start) addr
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires chain);
+  // next_nat + 8 < pow2 64: from next_nat <= heap_size < pow2 57
+  assert (next_nat <= heap_size);
+  FStar.Math.Lemmas.pow2_le_compat 57 3;
+  assert (U64.v mword <= pow2 57);
+  FStar.Math.Lemmas.pow2_double_sum 57;
+  assert (pow2 57 + pow2 57 = pow2 58);
+  FStar.Math.Lemmas.pow2_lt_compat 64 58;
+  assert (pow2 58 < pow2 64);
+  // Seq.equal → == for both cases
+  if next_nat < heap_size then begin
+    Seq.lemma_eq_elim tail_objs (objects (U64.uint_to_t next_nat) g0);
+    assert (tail_objs == objects (U64.uint_to_t next_nat) g0)
+  end;
+  if next_nat >= heap_size then begin
+    Seq.lemma_eq_elim tail_objs (Seq.empty #obj_addr);
+    assert (tail_objs == Seq.empty #obj_addr)
+  end
 #pop-options
 
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"

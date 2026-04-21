@@ -103,6 +103,12 @@ val flush_blue_length
   (g: heap) (fb: U64.t) (rw: nat) (fp: U64.t)
   : Lemma (Seq.length (fst (flush_blue g fb rw fp)) == Seq.length g)
 
+/// When objects 0UL g is non-empty, f_address 0UL is in it
+val objects_mem_at_zero (g: heap)
+  : Lemma
+    (requires Seq.length g == heap_size /\ Seq.length (objects 0UL g) > 0)
+    (ensures Seq.mem (f_address 0UL) (objects 0UL g))
+
 /// The initial call to coalesce matches coalesce_aux with initial state
 val coalesce_unfold (g: heap)
   : Lemma
@@ -180,6 +186,86 @@ val set_field_1_eq_write_word
   : Lemma
     (requires U64.v (hd_address fb) + U64.v mword * 2 <= heap_size)
     (ensures HeapGraph.set_field g fb 1UL fp == write_word g fb fp)
+
+/// Blue step: produce coalesce_aux == coalesce equality for the next iteration.
+/// Handles both next < heap_size and next >= heap_size via Seq.lemma_eq_elim.
+val blue_step_coalesce_aux_eq
+  (g0 g: heap) (start: hp_addr)
+  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  : Lemma
+    (requires
+      U64.v start + U64.v mword < heap_size /\
+      Seq.length (objects start g0) > 0 /\
+      is_blue (Seq.head (objects start g0)) g0 /\
+      Seq.length g0 == heap_size /\
+      coalesce_aux g0 g (objects start g0) first_blue run_words fp == coalesce g0 /\
+      (run_words > 0 ==>
+        U64.v first_blue >= U64.v mword /\
+        U64.v first_blue < heap_size /\
+        U64.v first_blue % U64.v mword == 0 /\
+        U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start))
+    (ensures (
+      let wz = getWosize (read_word g0 start) in
+      let ws = U64.v wz in
+      let obj = f_address start in
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      let new_rw = run_words + ws + 1 in
+      let next_nat = U64.v start + (ws + 1) * U64.v mword in
+      next_nat <= heap_size /\
+      next_nat % U64.v mword = 0 /\
+      next_nat + U64.v mword < pow2 64 /\
+      new_rw > 0 /\
+      new_rw < pow2 54 /\
+      U64.v new_first >= U64.v mword /\
+      U64.v new_first < heap_size /\
+      U64.v new_first % U64.v mword == 0 /\
+      U64.v new_first - U64.v mword + new_rw * U64.v mword == next_nat /\
+      (next_nat < heap_size /\ next_nat % U64.v mword = 0 ==>
+        coalesce_aux g0 g (objects (U64.uint_to_t next_nat) g0)
+          new_first new_rw fp == coalesce g0) /\
+      (next_nat >= heap_size ==>
+        coalesce_aux g0 g Seq.empty
+          new_first new_rw fp == coalesce g0)))
+
+/// White step: produce coalesce_aux == coalesce equality for the next iteration.
+/// Unlike the blue case, the heap changes to g' = fst (flush_blue g ...) and
+/// the free pointer changes to fp' = snd (flush_blue g ...).
+/// Also chains suffix preservation through the flush.
+val white_step_coalesce_aux_eq
+  (g0 g: heap) (start: hp_addr)
+  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  : Lemma
+    (requires
+      U64.v start + U64.v mword < heap_size /\
+      Seq.length (objects start g0) > 0 /\
+      ~(is_blue (Seq.head (objects start g0)) g0) /\
+      Seq.length g0 == heap_size /\
+      Seq.length g == heap_size /\
+      coalesce_aux g0 g (objects start g0) first_blue run_words fp == coalesce g0 /\
+      (run_words > 0 ==>
+        U64.v first_blue >= U64.v mword /\
+        U64.v first_blue < heap_size /\
+        U64.v first_blue % U64.v mword == 0 /\
+        U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start) /\
+      (forall (addr: hp_addr). U64.v addr >= U64.v start ==>
+        read_word g addr == read_word g0 addr))
+    (ensures (
+      let wz = getWosize (read_word g0 start) in
+      let ws = U64.v wz in
+      let (g', fp') = flush_blue g first_blue run_words fp in
+      let next_nat = U64.v start + (ws + 1) * U64.v mword in
+      Seq.length g' == heap_size /\
+      next_nat <= heap_size /\
+      next_nat % U64.v mword = 0 /\
+      next_nat + U64.v mword < pow2 64 /\
+      (forall (addr: hp_addr). U64.v addr >= next_nat ==>
+        read_word g' addr == read_word g0 addr) /\
+      (next_nat < heap_size /\ next_nat % U64.v mword = 0 ==>
+        coalesce_aux g0 g' (objects (U64.uint_to_t next_nat) g0)
+          0UL 0 fp' == coalesce g0) /\
+      (next_nat >= heap_size ==>
+        coalesce_aux g0 g' Seq.empty
+          0UL 0 fp' == coalesce g0)))
 
 /// Bridge lemmas: flush_blue equals chain of write operations for each branch.
 /// Split into three lemmas to avoid refined-type scoping issues.

@@ -23,10 +23,11 @@ module U8 = FStar.UInt8
 inline_for_extraction
 let mword : U64.t = 8UL
 
-/// Heap size in bytes (abstract — proofs work for any word-aligned size up to pow2 57)
-/// The pow2 57 bound ensures h_addr + (1+wosize)*mword doesn't overflow U64.
+/// Heap size in bytes (abstract — proofs work for any word-aligned size below pow2 57)
+/// The strict pow2 57 bound ensures accumulated blue run words fit in pow2 54 - 1.
+/// Combined with mword=8, h_addr + (1+wosize)*mword doesn't overflow U64.
 /// Minimum 16 bytes (header + one field) to hold at least one object.
-val heap_size : n:pos{n % U64.v mword == 0 /\ n >= 16 /\ n <= pow2 57 /\ n < pow2 64}
+val heap_size : n:pos{n % U64.v mword == 0 /\ n >= 16 /\ n < pow2 57 /\ n < pow2 64}
 
 /// Heap size as U64 — left as an extern so the runtime can configure it.
 val heap_size_u64 : n:U64.t{U64.v n == heap_size}
