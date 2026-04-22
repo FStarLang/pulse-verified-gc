@@ -3,7 +3,7 @@
 # Modules: GC.Spec.* (pure spec), GC.Lib.* (utilities), GC.Impl.* (Pulse impl)
 # Hand-written dependency graph for parallel-safe builds (make -j8).
 
-FSTAR_HOME ?= $(CURDIR)/../FStar
+FSTAR_HOME ?= $(CURDIR)/../fstar
 FSTAR ?= $(FSTAR_HOME)/bin/fstar.exe
 
 # Include paths

@@ -1,7 +1,7 @@
 (*
    Pulse GC - Top-Level Module Interface
 
-   Exports the collect entry point combining mark and sweep phases.
+   Exports the collect entry point combining mark, sweep, and coalesce phases.
 *)
 
 module GC.Impl
@@ -18,6 +18,7 @@ module SpecGCPost = GC.Spec.Correctness
 module SpecMark = GC.Spec.Mark
 module SpecMarkInv = GC.Spec.MarkInv
 module SpecSweep = GC.Spec.Sweep
+module SpecCoalesce = GC.Spec.Coalesce
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
@@ -38,11 +39,14 @@ let gc_precondition (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr) (
    SpecGraph.subset_vertices roots' graph.vertices)
 
 /// Main garbage collection entry point
+/// 1. Mark: process gray stack until empty
+/// 2. Sweep: reset black objects to white, build free list
+/// 3. Coalesce: merge adjacent free blocks
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (gc_precondition 's 'st fp /\ stack_capacity st >= heap_size)
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\ Seq.length st2 == 0 /\
-                s2 == fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp) /\
-                SpecGCPost.full_gc_correctness 's s2 'st)
+                (s2, final_fp) == SpecCoalesce.coalesce (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) /\
+                SpecGCPost.full_gc_correctness 's (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) 'st)

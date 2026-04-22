@@ -258,6 +258,50 @@ let makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
     repack_set_color64 hdr c
 #pop-options
 
+/// makeHeader roundtrip: getWosize recovers the wosize
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+let makeHeader_getWosize (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
+  : Lemma (getWosize (makeHeader wz c tag) == wz)
+  = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
+    get_wosize_pack_header h;
+    assert (get_wosize (pack_header h) == U64.v wz);
+    // makeHeader wz c tag == pack_header64 h, and U64.v (pack_header64 h) == pack_header h
+    let hdr = makeHeader wz c tag in
+    assert (U64.v hdr == pack_header h);
+    // getWosize hdr = U64.shift_right hdr 10ul, so
+    // U64.v (getWosize hdr) == shift_right (U64.v hdr) 10 == get_wosize (pack_header h) == U64.v wz
+    ()
+#pop-options
+
+/// makeHeader roundtrip: getColor recovers the color
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+let makeHeader_getColor (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
+  : Lemma (getColor (makeHeader wz c tag) == c)
+  = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
+    get_color_pack_header h;
+    all_headers_valid (makeHeader wz c tag);
+    let hdr = makeHeader wz c tag in
+    assert (U64.v hdr == pack_header h);
+    ()
+#pop-options
+
+/// makeHeader roundtrip: getTag recovers the tag
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+let makeHeader_getTag (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
+  : Lemma (getTag (makeHeader wz c tag) == tag)
+  = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
+    get_tag_pack_header h;
+    let hdr = makeHeader wz c tag in
+    assert (U64.v hdr == pack_header h);
+    getTag_Header hdr;
+    assert (U64.v (getTag hdr) == get_tag (U64.v hdr))
+#pop-options
+
+/// makeHeader definition: exposes connection to pack_header64 for bridging
+let makeHeader_is_pack_header64 (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
+  : Lemma (makeHeader wz c tag == pack_header64 { wosize = U64.v wz; color = c; tag = U64.v tag })
+  = ()
+
 /// Helper: word-aligned addresses that differ are separated by >= 8 bytes
 /// This makes the "else" branch unreachable in read_write_different proofs
 #push-options "--z3rlimit 50"
