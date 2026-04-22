@@ -51,14 +51,15 @@ let gc_precondition (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr) (
    SpecGraph.graph_wf graph /\ SpecGraph.is_vertex_set roots' /\
    SpecGraph.subset_vertices roots' graph.vertices)
 
-/// Bridge lemma: call full_gc_correctness_from_end_to_end from bundled precondition
+/// Bridge lemma: call full_gc_correctness_through_coalesce from bundled precondition
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10 --split_queries no"
 let gc_correctness_bridge (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr) (fp: U64.t)
   : Lemma (requires gc_precondition s st fp)
-          (ensures SpecGCPost.full_gc_correctness s (fst (SpecSweep.sweep (SpecMark.mark s st) fp)) st)
+          (ensures SpecGCPost.full_gc_correctness s
+                     (fst (SpecCoalesce.coalesce (fst (SpecSweep.sweep (SpecMark.mark s st) fp)))) st)
   = SpecMarkInv.mark_inv_elim_wfh s st;
     SpecMarkInv.mark_inv_elim_sp s st;
-    SpecGCPost.full_gc_correctness_from_end_to_end s st st fp
+    SpecGCPost.full_gc_correctness_through_coalesce s st st fp
 #pop-options
 
 
@@ -75,7 +76,7 @@ let gc_correctness_bridge (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_a
 /// The gray stack 'st doubles as the root set.
 /// Postcondition:
 /// - gc_postcondition: well_formed_heap preserved, all objects white or blue
-/// - full_gc_correctness on the sweep output (before coalesce)
+/// - full_gc_correctness on the coalesced output
 /// - Coalesced heap matches spec: (s2, final_fp) == coalesce(fst(sweep(mark s st, fp)))
 #push-options "--z3rlimit 100"
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
@@ -85,7 +86,7 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\ Seq.length st2 == 0 /\
                 (s2, final_fp) == SpecCoalesce.coalesce (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) /\
-                SpecGCPost.full_gc_correctness 's (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) 'st)
+                SpecGCPost.full_gc_correctness 's s2 'st)
 {
   // Establish initial-state facts needed later
   SpecMarkInv.mark_inv_elim_wfh 's 'st;
@@ -143,7 +144,7 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   SpecCoalesce.coalesce_all_white_or_blue (fst (SpecSweep.sweep s_mark fp));
   SpecGCPost.gc_postcondition_intro s_fused;
   
-  // Full GC correctness on sweep output (before coalesce)
+  // Full GC correctness on coalesced output
   gc_correctness_bridge 's 'st fp;
   
   final_fp

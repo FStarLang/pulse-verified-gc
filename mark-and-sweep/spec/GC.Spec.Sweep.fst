@@ -1515,7 +1515,7 @@ private let sweep_aux_preserves_all_fields
 
 /// Recursive lemma: HeapGraph.get_pointer_fields_aux is preserved when fields are preserved
 #push-options "--z3rlimit 2000 --fuel 3 --ifuel 2"
-private let rec get_pointer_fields_aux_preserved
+let rec get_pointer_fields_aux_preserved
   (g: heap) (g': heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : Lemma (requires (forall (j: U64.t). U64.v j >= U64.v i /\ U64.v j <= U64.v ws ==>
                                          HeapGraph.get_field g obj j == HeapGraph.get_field g' obj j))
