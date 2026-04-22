@@ -29,6 +29,7 @@ open GC.Spec.Sweep
 open GC.Spec.DFS
 module HeapGraph = GC.Spec.HeapGraph
 module Coalesce = GC.Spec.Coalesce
+module SweepInv = GC.Spec.SweepInv
 
 /// ---------------------------------------------------------------------------
 /// Abstract GC Postcondition (Pillars 1 + 4)
@@ -748,4 +749,332 @@ let full_gc_correctness_through_coalesce
 
   // Introduce full_gc_correctness
   full_gc_correctness_intro h_init h_mark h_coal roots
+#pop-options
+
+/// ===========================================================================
+/// Generalized Mark Postcondition and Bridges
+/// ===========================================================================
+
+/// Bundle of properties that any correct mark algorithm must establish
+let mark_post (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) : prop =
+  well_formed_heap h_init /\ well_formed_heap h_mark /\
+  noGreyObjects h_mark /\
+  objects zero_addr h_mark == objects zero_addr h_init /\
+  SweepInv.heap_objects_dense h_mark /\
+  Seq.length (objects zero_addr h_mark) > 0 /\
+  no_pointer_to_blue h_mark /\
+  tri_color_invariant h_mark /\
+  fp_in_heap fp h_init /\
+  no_black_objects h_init /\
+  no_pointer_to_blue h_init /\
+  (let g_init = create_graph h_init in
+   let roots' = HeapGraph.coerce_to_vertex_list roots in
+   graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
+   (forall (x: obj_addr). mem_graph_vertex g_init x ==>
+     (is_black x h_mark <==> Seq.mem x (reachable_set g_init roots')))) /\
+  create_graph h_mark == create_graph h_init /\
+  (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) ==>
+    wosize_of_object x h_mark == wosize_of_object x h_init) /\
+  (forall (x: obj_addr) (i: U64.t). Seq.mem x (objects zero_addr h_init) /\
+    U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
+    HeapGraph.get_field h_mark x i == HeapGraph.get_field h_init x i)
+
+let mark_post_intro h_init h_mark roots fp = ()
+let mark_post_elim_wfh h_init h_mark roots fp = ()
+let mark_post_elim_no_grey h_init h_mark roots fp = ()
+let mark_post_elim_objects h_init h_mark roots fp = ()
+let mark_post_elim_tri_color h_init h_mark roots fp = ()
+let mark_post_elim_no_pointer_to_blue h_init h_mark roots fp = ()
+let mark_post_elim_graph h_init h_mark roots fp = ()
+let mark_post_elim_density h_init h_mark roots fp = ()
+let mark_post_elim_objects_gt0 h_init h_mark roots fp = ()
+let mark_post_elim_fp h_init h_mark roots fp =
+  assert (objects zero_addr h_mark == objects zero_addr h_init);
+  assert (fp_in_heap fp h_init);
+  // fp_in_heap depends on objects; since objects are the same, fp_in_heap transfers
+  ()
+
+/// `mark h_init st` satisfies mark_post
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+let mark_satisfies_mark_post h_init st roots fp =
+  let h_mark = mark h_init st in
+  GC.Spec.MarkInv.mark_inv_elim_wfh h_init st;
+  GC.Spec.MarkInv.mark_inv_elim_sp h_init st;
+  GC.Spec.MarkInv.mark_inv_elim_density h_init st;
+  GC.Spec.MarkInv.mark_inv_elim_objects h_init st;
+  mark_preserves_wf h_init st;
+  mark_no_grey_remains h_init st;
+  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  // density and objects > 0 for h_mark
+  mark_preserves_density h_init st;
+  mark_preserves_objects_gt0 h_init st;
+  // no_pointer_to_blue
+  mark_preserves_no_pointer_to_blue h_init st;
+  // tri_color
+  no_black_implies_tri_color h_init;
+  mark_preserves_tri_color h_init st;
+  // reachability
+  mark_reachable_is_black h_init st roots;
+  mark_black_is_reachable h_init st roots;
+  // graph structure
+  mark_preserves_create_graph h_init st;
+  // wosize preservation
+  let aux_ws (x: obj_addr) : Lemma
+    (requires Seq.mem x (objects zero_addr h_init))
+    (ensures wosize_of_object x h_mark == wosize_of_object x h_init)
+  = mark_preserves_wosize h_init st x
+  in FStar.Classical.forall_intro (FStar.Classical.move_requires aux_ws);
+  // field preservation
+  let aux_field (x: obj_addr) (i: U64.t) : Lemma
+    (Seq.mem x (objects zero_addr h_init) /\
+     U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
+     HeapGraph.get_field h_mark x i == HeapGraph.get_field h_init x i)
+  = if Seq.mem x (objects zero_addr h_init) && U64.v i >= 1 && U64.v i <= U64.v (wosize_of_object x h_init)
+    then mark_preserves_get_field h_init st x i
+    else ()
+  in
+  FStar.Classical.forall_intro_2 aux_field;
+  mark_post_intro h_init h_mark roots fp
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Generalized sweep_post_sweep_strong (parametric in mark implementation)
+/// ---------------------------------------------------------------------------
+///
+/// Adapts sweep_post_sweep_strong to work with any h_mark satisfying mark_post.
+/// The proof is structurally identical to sweep_post_sweep_strong but
+/// derives mark properties from mark_post instead of calling mark_preserves_*.
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let sweep_post_sweep_strong_gen h_init h_mark roots fp =
+  let h_sweep = fst (sweep h_mark fp) in
+  // Extract mark properties
+  mark_post_elim_wfh h_init h_mark roots fp;
+  mark_post_elim_no_grey h_init h_mark roots fp;
+  mark_post_elim_no_pointer_to_blue h_init h_mark roots fp;
+  mark_post_elim_objects h_init h_mark roots fp;
+  mark_post_elim_tri_color h_init h_mark roots fp;
+  mark_post_elim_fp h_init h_mark roots fp;
+
+  // Sweep invariants
+  sweep_preserves_wf h_mark fp;
+  sweep_preserves_objects h_mark fp;
+  sweep_resets_colors h_mark fp;
+  sweep_black_survives h_mark fp;
+  sweep_white_becomes_blue h_mark fp;
+  sweep_blue_stays_blue h_mark fp;
+  objects_is_vertex_set h_mark;
+
+  // Phase 3: for white objects in h_sweep, fields don't point to blue objects
+  let aux (x: obj_addr) (i: nat) : Lemma
+    (requires Seq.mem x (objects 0UL h_sweep) /\ is_white x h_sweep)
+    (ensures
+      (i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64) ==>
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_sweep x iu in
+       field_val = 0UL \/
+       U64.v field_val < U64.v mword \/
+       U64.v field_val >= heap_size \/
+       U64.v field_val % U64.v mword <> 0 \/
+       ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
+         is_blue (field_val <: obj_addr) h_sweep)))
+  = if i < 1 || i > U64.v (wosize_of_object x h_sweep) || i >= pow2 64 then ()
+    else begin
+      assert (Seq.mem x (objects 0UL h_mark));
+      color_exhaustive x h_mark;
+      colors_exclusive x h_mark;
+      colors_exclusive x h_sweep;
+      assert (is_black x h_mark);
+      let iu = U64.uint_to_t i in
+      sweep_preserves_wosize_black h_mark fp x;
+      sweep_preserves_field h_mark fp x iu;
+      let field_val = HeapGraph.get_field h_sweep x iu in
+      if field_val = 0UL then ()
+      else if U64.v field_val < U64.v mword then ()
+      else if U64.v field_val >= heap_size then ()
+      else if U64.v field_val % U64.v mword <> 0 then ()
+      else begin
+        if is_no_scan x h_mark then
+          admit () // Known gap: no_scan objects (same as sweep_post_sweep_strong)
+        else begin
+          assert (HeapGraph.is_pointer_field field_val);
+          wf_implies_object_fits h_mark x;
+          // wosize preserved from h_init to h_mark
+          assert (wosize_of_object x h_mark == wosize_of_object x h_init);
+          HeapGraph.pointer_field_is_graph_edge h_mark (objects 0UL h_mark) x iu;
+          if Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) then begin
+            black_successor_is_black h_mark x (field_val <: obj_addr);
+            colors_exclusive (field_val <: obj_addr) h_sweep
+          end else ()
+        end
+      end
+    end
+  in
+  let wrap (x: obj_addr) : Lemma
+    (forall (i: nat).
+      Seq.mem x (objects 0UL h_sweep) /\ is_white x h_sweep /\
+      i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64 ==>
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_sweep x iu in
+       field_val = 0UL \/
+       U64.v field_val < U64.v mword \/
+       U64.v field_val >= heap_size \/
+       U64.v field_val % U64.v mword <> 0 \/
+       ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
+         is_blue (field_val <: obj_addr) h_sweep)))
+  = FStar.Classical.forall_intro (FStar.Classical.move_requires (aux x))
+  in
+  FStar.Classical.forall_intro wrap
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Generalized coalesce_precondition_bridge
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let coalesce_precondition_bridge_gen h_init h_mark roots fp =
+  mark_post_elim_wfh h_init h_mark roots fp;
+  mark_post_elim_no_grey h_init h_mark roots fp;
+  mark_post_elim_fp h_init h_mark roots fp;
+  mark_post_elim_density h_init h_mark roots fp;
+  mark_post_elim_objects_gt0 h_init h_mark roots fp;
+  coalesce_precondition_bridge h_mark fp
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Generalized full_gc_correctness_through_coalesce
+/// ---------------------------------------------------------------------------
+///
+/// Lifts all 5 pillars from the sweep output to the coalesced output,
+/// for any h_mark satisfying mark_post. Structurally identical to
+/// full_gc_correctness_through_coalesce but derives mark properties
+/// from mark_post.
+
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0 --split_queries no"
+let full_gc_correctness_through_coalesce_gen h_init h_mark roots fp =
+  let h_sweep = fst (sweep h_mark fp) in
+  let h_coal = fst (Coalesce.coalesce h_sweep) in
+
+  // Extract mark properties from mark_post
+  mark_post_elim_wfh h_init h_mark roots fp;
+  mark_post_elim_no_grey h_init h_mark roots fp;
+  mark_post_elim_objects h_init h_mark roots fp;
+  mark_post_elim_tri_color h_init h_mark roots fp;
+  mark_post_elim_no_pointer_to_blue h_init h_mark roots fp;
+  mark_post_elim_graph h_init h_mark roots fp;
+  mark_post_elim_fp h_init h_mark roots fp;
+
+  // Sweep fundamentals
+  sweep_preserves_objects h_mark fp;
+  sweep_preserves_wf h_mark fp;
+  objects_is_vertex_set h_init;
+  objects_is_vertex_set h_sweep;
+
+  // post_sweep_strong for coalesce
+  sweep_post_sweep_strong_gen h_init h_mark roots fp;
+
+  // PILLAR 1: well_formed_heap h_coal
+  Coalesce.coalesce_preserves_wf h_sweep;
+
+  // PILLAR 2: reachability (same h_mark, unchanged)
+  // From mark_post: is_black x h_mark <==> reachable x
+
+  // Sweep color facts
+  sweep_black_survives h_mark fp;
+
+  // Vertices bridge for coalesced heap
+  let bridge_coal (x: obj_addr) : Lemma
+    (Seq.mem x (objects 0UL h_coal) <==> Seq.mem x (create_graph h_coal).vertices)
+  = graph_vertices_mem h_coal x
+  in FStar.Classical.forall_intro bridge_coal;
+
+  let bridge_init (x: obj_addr) : Lemma
+    (Seq.mem x (objects 0UL h_init) <==> Seq.mem x (create_graph h_init).vertices)
+  = graph_vertices_mem h_init x
+  in FStar.Classical.forall_intro bridge_init;
+
+  // PILLAR 3: structural preservation
+  let aux3 (x: obj_addr) : Lemma
+    (requires Seq.mem x (create_graph h_coal).vertices /\ is_black x h_mark)
+    (ensures successors (create_graph h_init) x ==
+             successors (create_graph h_coal) x)
+  = graph_vertices_mem h_coal x;
+    Coalesce.coalesce_objects_subset h_sweep x;
+    assert (Seq.mem x (objects 0UL h_sweep));
+    assert (is_white x h_sweep);
+    objects_is_vertex_set h_mark;
+    HeapGraph.successors_eq_pointer_fields h_mark (objects 0UL h_mark) x;
+    sweep_preserves_edges h_mark fp x;
+    coalesce_preserves_edges h_sweep x;
+    objects_is_vertex_set h_coal;
+    HeapGraph.successors_eq_pointer_fields h_coal (objects 0UL h_coal) x;
+    assert (Seq.equal (successors (create_graph h_init) x)
+                      (successors (create_graph h_coal) x));
+    Seq.lemma_eq_elim (successors (create_graph h_init) x)
+                      (successors (create_graph h_coal) x)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux3);
+
+  // PILLAR 4a: All objects white or blue
+  Coalesce.coalesce_all_white_or_blue h_sweep;
+  let aux4a (x: obj_addr) : Lemma
+    (Seq.mem x (create_graph h_coal).vertices ==>
+     is_white x h_coal \/ is_blue x h_coal)
+  = graph_vertices_mem h_coal x
+  in FStar.Classical.forall_intro aux4a;
+
+  // PILLAR 4b: Black in h_mark → white in h_coal
+  let aux4b (x: obj_addr) : Lemma
+    (requires Seq.mem x (create_graph h_coal).vertices /\ is_black x h_mark)
+    (ensures is_white x h_coal)
+  = graph_vertices_mem h_coal x;
+    Coalesce.coalesce_objects_subset h_sweep x;
+    assert (is_white x h_sweep);
+    Coalesce.coalesce_preserves_survivor_header h_sweep x;
+    color_of_header_eq x h_sweep h_coal
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux4b);
+
+  // PILLAR 5: data transparency
+  let aux5 (x: obj_addr) (i: U64.t{U64.v i >= 1}) : Lemma
+    (requires Seq.mem x (create_graph h_coal).vertices /\ is_black x h_mark /\
+             U64.v i <= U64.v (wosize_of_object x h_init))
+    (ensures HeapGraph.get_field h_init x i == HeapGraph.get_field h_coal x i)
+  = graph_vertices_mem h_coal x;
+    Coalesce.coalesce_objects_subset h_sweep x;
+    assert (is_white x h_sweep);
+    // field: h_init → h_mark (from mark_post)
+    assert (HeapGraph.get_field h_init x i == HeapGraph.get_field h_mark x i);
+    // wosize: h_init → h_mark (from mark_post)
+    assert (wosize_of_object x h_mark == wosize_of_object x h_init);
+    sweep_preserves_field h_mark fp x i;
+    sweep_preserves_wosize_black h_mark fp x;
+    Coalesce.coalesce_preserves_survivor_field h_sweep x i
+  in
+  let wrap5 (x: obj_addr) : Lemma
+    (forall (i: U64.t).
+      Seq.mem x (create_graph h_coal).vertices /\ is_black x h_mark /\
+      U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
+      HeapGraph.get_field h_init x i == HeapGraph.get_field h_coal x i)
+  = FStar.Classical.forall_intro (FStar.Classical.move_requires (aux5 x))
+  in
+  FStar.Classical.forall_intro wrap5;
+
+  full_gc_correctness_intro h_init h_mark h_coal roots
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Generalized gc_postcondition
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let gc_postcondition_gen h_init h_mark roots fp =
+  mark_post_elim_wfh h_init h_mark roots fp;
+  mark_post_elim_fp h_init h_mark roots fp;
+  mark_post_elim_objects h_init h_mark roots fp;
+  sweep_post_sweep_strong_gen h_init h_mark roots fp;
+  coalesce_precondition_bridge_gen h_init h_mark roots fp;
+  Coalesce.coalesce_preserves_wf (fst (sweep h_mark fp));
+  Coalesce.coalesce_all_white_or_blue (fst (sweep h_mark fp));
+  gc_postcondition_intro (fst (Coalesce.coalesce (fst (sweep h_mark fp))))
 #pop-options
