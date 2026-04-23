@@ -145,7 +145,7 @@ private let rec efptu_congruence
     end
 
 /// Monotonicity: efptu with smaller wosize implies efptu with bigger wosize.
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
 private let rec efptu_monotone
   (g: heap) (src: obj_addr) (small_wz: U64.t{U64.v small_wz < pow2 54}) (big_wz: U64.t{U64.v big_wz < pow2 54}) (dst: obj_addr)
   : Lemma (requires U64.v small_wz <= U64.v big_wz /\
@@ -507,7 +507,7 @@ private let split_next_hd_objects_eq
 /// If objects(start, g) is non-empty (contains any h), then f_address start
 /// is also a member (it's the first element).
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let objects_nonempty_first_mem
   (start: hp_addr) (g: heap) (h: obj_addr)
   : Lemma (requires Seq.mem h (objects start g))
@@ -596,7 +596,7 @@ private let rec objects_later_in_earlier
 
 /// If h ∈ objects(start, g), then h ∈ objects(start, g3).
 /// Walk from start in g; at positions before hd, g3 agrees; at hd, handle split.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 0"
 private let rec split_old_mem_in_new
   (start: hp_addr) (g g3: heap)
   (obj: obj_addr) (wz block_wz: nat)
@@ -770,7 +770,7 @@ private let rec split_old_mem_in_new
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 0"
 private let rec split_new_mem_in_old_or_rem
   (start: hp_addr) (g g3: heap)
   (obj: obj_addr) (wz block_wz: nat)
@@ -1126,7 +1126,7 @@ private let alloc_split_old_in_new
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 100 --fuel 2 --ifuel 0"
+#push-options "--split_queries always --z3rlimit 100 --fuel 1 --ifuel 0"
 private let alloc_split_rem_in_objects
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires alloc_split_pre g obj wz next_fp)

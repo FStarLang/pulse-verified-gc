@@ -330,7 +330,7 @@ let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
 #pop-options
 
 /// Split, normal: all bounds pass
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 100 --fuel 1"
 let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   : Lemma (requires (let hd = hd_address obj in
                      let hdr = read_word g hd in
@@ -373,7 +373,7 @@ let alloc_from_block_split_rem_hd_oob (g: heap) (obj: obj_addr) (wz: nat) (next:
 #pop-options
 
 /// Split, rem_obj out of bounds (rem_hd ok but rem_obj >= heap_size)
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 100 --fuel 1"
 let alloc_from_block_split_rem_obj_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   : Lemma (requires (let hd = hd_address obj in
                      let hdr = read_word g hd in
@@ -422,7 +422,7 @@ let alloc_split_normal_result (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) 
 let alloc_split_normal_heap (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) : GTot heap =
   fst (alloc_split_normal_result g obj wz next)
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 100 --fuel 1"
 /// The result heap has the same length as the input heap
 let alloc_split_normal_length (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   : Lemma (requires alloc_split_normal_pre g obj wz)
@@ -444,7 +444,7 @@ let alloc_split_normal_length (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
     ()
 #pop-options
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 100 --fuel 1"
 /// Reading the alloc header: header at hd_address obj == make_header wz white 0
 let alloc_split_normal_read_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   : Lemma (requires alloc_split_normal_pre g obj wz)
@@ -474,7 +474,7 @@ let alloc_split_normal_read_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
     read_write_same g hd ahdr
 #pop-options
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 100 --fuel 1"
 /// Reading the remainder header: header at rem_hd == make_header rem_wz blue 0
 let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   : Lemma (requires alloc_split_normal_pre g obj wz)
@@ -506,7 +506,7 @@ let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U6
     read_write_same g1 rh rhdr
 #pop-options
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 100 --fuel 1"
 /// Reading the remainder field: read_word g' ro == next_fp
 let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   : Lemma (requires alloc_split_normal_pre g obj wz)
@@ -533,7 +533,7 @@ let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next:
     read_write_same g2 ro next
 #pop-options
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 100 --fuel 1"
 /// Reading an unwritten address: result equals original
 let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr)
   : Lemma (requires alloc_split_normal_pre g obj wz /\

@@ -674,7 +674,7 @@ private let black_case_conclude
 /// Main theorem
 /// ========================================================================
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 2"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 2"
 
 let rec combined_proof
   (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
