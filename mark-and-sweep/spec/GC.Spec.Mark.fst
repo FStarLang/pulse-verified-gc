@@ -2032,6 +2032,30 @@ let mark_step_preserves_density g st =
     push_children_preserves_density g' (Seq.tail st) obj 1UL ws
 #pop-options
 
+/// mark_aux preserves heap_objects_dense (induction on fuel, uses mark_step_preserves_density)
+val mark_aux_preserves_density : (g: heap) -> (st: seq obj_addr) -> (fuel: nat) ->
+  Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
+        (ensures SweepInv.heap_objects_dense (mark_aux g st fuel))
+        (decreases fuel)
+
+let rec mark_aux_preserves_density g st fuel =
+  if Seq.length st = 0 then ()
+  else if fuel = 0 then ()
+  else begin
+    let (g', st') = mark_step g st in
+    mark_step_preserves_density g st;
+    mark_step_preserves_stack_props g st;
+    mark_step_preserves_wf g st;
+    mark_aux_preserves_density g' st' (fuel - 1)
+  end
+
+/// mark preserves heap_objects_dense
+let mark_preserves_density (g: heap) (st: seq obj_addr)
+  : Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
+          (ensures SweepInv.heap_objects_dense (mark g st))
+= mark_aux_preserves_density g st (heap_size / U64.v mword)
+
+
 /// push_children preserves resolve_object for any address
 /// (resolve_object depends only on tag and wosize bits, which are unchanged by color changes)
 val push_children_preserves_resolve : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
@@ -2294,6 +2318,18 @@ let rec mark_aux_preserves_objects g st fuel =
     end
   end
 #pop-options
+
+/// mark_aux preserves objects > 0 (follows from mark_aux_preserves_objects)
+let mark_aux_preserves_objects_gt0 (g: heap) (st: seq obj_addr) (fuel: nat)
+  : Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length (objects 0UL g) > 0)
+          (ensures Seq.length (objects 0UL (mark_aux g st fuel)) > 0)
+= mark_aux_preserves_objects g st fuel
+
+/// mark preserves objects > 0
+let mark_preserves_objects_gt0 (g: heap) (st: seq obj_addr)
+  : Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length (objects 0UL g) > 0)
+          (ensures Seq.length (objects 0UL (mark g st)) > 0)
+= mark_aux_preserves_objects g st (heap_size / U64.v mword)
 
 /// mark_step never makes objects white (only gray->black and white->gray)
 val mark_step_no_new_white : (g: heap) -> (st: seq obj_addr{Seq.length st > 0 /\ stack_props g st}) ->

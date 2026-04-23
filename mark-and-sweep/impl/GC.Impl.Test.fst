@@ -81,18 +81,10 @@ fn test_init_collect_alloc (_: unit)
   let stack_storage = V.alloc 0UL heap_size_sz;
   let st = create_stack stack_storage heap_size_sz;
 
-  // Establish gc_precondition for the initialized heap with empty roots
-  // init_enables_collect proves: mark_inv, fp_valid, root_props,
-  //   no_black, no_pointer_to_blue, graph_wf, dense
-  Test.init_enables_collect (Seq.create heap_size 0uy);
-  // init_fp_in_heap proves: fp_in_heap fp0 s0
-  Test.init_fp_in_heap (Seq.create heap_size 0uy);
-  // empty vertex set properties for empty roots
-  Test.empty_coerce ();
-  Test.empty_is_vertex_set ();
+  // Establish gc_precondition for the initialized heap with empty roots (bounded variant)
+  Test.init_enables_bounded_collect (Seq.create heap_size 0uy) (stack_capacity st);
 
-  // Now gc_precondition s0 Seq.empty fp0 holds
-  // and stack_capacity st == heap_size >= heap_size
+  // Now gc_precondition s0 Seq.empty fp0 (stack_capacity st) holds
 
   // Run mark + sweep with empty roots
   let fp1 = collect heap st fp0;

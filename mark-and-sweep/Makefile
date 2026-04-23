@@ -131,7 +131,8 @@ _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 # --- KaRaMeL bundling (.krml → C) ------------------------------------------
 
 EXTRACT_MODULES = \
-  GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.Sweep GC.Impl.Coalesce \
+  GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
+  GC.Impl.Coalesce \
   GC.Impl.FusedSweepCoalesce GC.Impl \
   GC.Impl.Allocator \
   GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
@@ -146,7 +147,7 @@ KRML_FLAGS = \
   -bundle 'GC.Impl+GC.Impl.Allocator=GC.Impl.*[rename=GC_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
-  $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.Sweep \
+  $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
     GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
     GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce) \
   -warn-error -2-9-15
