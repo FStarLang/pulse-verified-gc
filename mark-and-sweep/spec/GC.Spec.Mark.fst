@@ -263,10 +263,6 @@ let rec push_children_stack_monotone (g: heap) (st: seq obj_addr) (obj: obj_addr
 /// Pillar 1: Mark Preserves Well-Formedness
 /// ---------------------------------------------------------------------------
 
-val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
-        (ensures well_formed_heap (set_object_color obj g c))
-
 #push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let color_change_preserves_wf g obj c =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
@@ -335,16 +331,14 @@ let color_change_preserves_wf g obj c =
 #pop-options
 
 /// push_children only applies color changes, which preserve wf
-val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
-                                  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+let rec push_children_preserves_wf g st obj i ws
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures well_formed_heap (fst (push_children g st obj i ws)))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
-let rec push_children_preserves_wf g st obj i ws =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -403,16 +397,15 @@ let rec push_children_preserves_wf g st obj i ws =
 #pop-options
 /// push_children preserves all stack properties
 #push-options "--z3rlimit 800 --fuel 2 --ifuel 1"
-val push_children_preserves_stack_props :
-  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\
+let rec push_children_preserves_stack_props g st obj i ws
+  : Lemma (requires well_formed_heap g /\ stack_props g st /\
                   is_black obj g /\ Seq.mem obj (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ~(Seq.mem obj st))
         (ensures (let (g', st') = push_children g st obj i ws in stack_props g' st'))
         (decreases (U64.v ws - U64.v i))
-let rec push_children_preserves_stack_props g st obj i ws =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -512,11 +505,6 @@ let mark_step_unfold (g: heap{well_formed_heap g}) (st: seq obj_addr{Seq.length 
   = ()
 
 /// mark_step preserves stack_props
-val mark_step_preserves_stack_props : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures (let (g', st') = mark_step g st in
-                  stack_props g' st'))
-
 #push-options "--z3rlimit 800"
 let mark_step_preserves_stack_props g st =
   let obj = Seq.head st in
@@ -681,10 +669,6 @@ let mark_step_preserves_stack_props g st =
 
 /// ---------------------------------------------------------------------------
 
-val mark_step_preserves_wf : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures well_formed_heap (fst (mark_step g st)))
-
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let mark_step_preserves_wf g st =
   let obj = Seq.head st in
@@ -797,14 +781,12 @@ let total_non_black (g: heap) : GTot nat =
   non_black_count g (objects 0UL g)
 
 /// push_children preserves black color of parent
-val push_children_preserves_parent_black : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
-                                            (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires is_black obj g)
+#push-options "--z3rlimit 100 --fuel 2"
+let rec push_children_preserves_parent_black g st obj i ws
+  : Lemma (requires is_black obj g)
         (ensures is_black obj (fst (push_children g st obj i ws)))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 100 --fuel 2"
-let rec push_children_preserves_parent_black g st obj i ws =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -841,14 +823,12 @@ let rec push_children_preserves_parent_black g st obj i ws =
 #pop-options
 
 /// push_children preserves black color of other objects (not the parent)
-val push_children_preserves_other_black : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
-                                           (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
-  Lemma (requires is_black x g /\ x <> obj)
+#push-options "--z3rlimit 100 --fuel 2"
+let rec push_children_preserves_other_black g st obj i ws x
+  : Lemma (requires is_black x g /\ x <> obj)
         (ensures is_black x (fst (push_children g st obj i ws)))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 100 --fuel 2"
-let rec push_children_preserves_other_black g st obj i ws x =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -885,14 +865,12 @@ let rec push_children_preserves_other_black g st obj i ws x =
 #pop-options
 
 /// push_children does not blacken any object that is not black
-val push_children_not_blackens : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
-                                 (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
-  Lemma (requires ~(is_black x g))
+#push-options "--z3rlimit 100 --fuel 2"
+let rec push_children_not_blackens g st obj i ws x
+  : Lemma (requires ~(is_black x g))
         (ensures ~(is_black x (fst (push_children g st obj i ws))))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 100 --fuel 2"
-let rec push_children_not_blackens g st obj i ws x =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -1079,10 +1057,6 @@ let non_black_count_unfold (g: heap) (objs: seq obj_addr)
   = ()
 
 
-val mark_preserves_wf : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures well_formed_heap (mark g st))
-
 let rec mark_aux_preserves_wf (g: heap{well_formed_heap g}) (st: seq obj_addr{stack_props g st}) (fuel: nat)
   : Lemma (ensures well_formed_heap (mark_aux g st fuel))
           (decreases fuel)
@@ -1103,18 +1077,8 @@ let mark_preserves_wf g st =
 /// Color Exhaustiveness
 /// ---------------------------------------------------------------------------
 
-val color_exhaustive : (obj: obj_addr) -> (g: heap) ->
-  Lemma (is_white obj g \/ is_gray obj g \/ is_black obj g \/ is_blue obj g)
-
 let color_exhaustive obj g =
   colors_exhaustive_and_exclusive obj g
-
-val colors_exclusive : (obj: obj_addr) -> (g: heap) ->
-  Lemma (
-    (is_white obj g ==> ~(is_gray obj g) /\ ~(is_black obj g) /\ ~(is_blue obj g)) /\
-    (is_gray obj g ==> ~(is_white obj g) /\ ~(is_black obj g) /\ ~(is_blue obj g)) /\
-    (is_black obj g ==> ~(is_white obj g) /\ ~(is_gray obj g) /\ ~(is_blue obj g)) /\
-    (is_blue obj g ==> ~(is_white obj g) /\ ~(is_gray obj g) /\ ~(is_black obj g)))
 
 let colors_exclusive obj g = colors_exhaustive_and_exclusive obj g
 
@@ -1125,33 +1089,7 @@ let colors_exclusive obj g = colors_exhaustive_and_exclusive obj g
 let stack_to_vertices (st: seq obj_addr) : seq vertex_id =
   HeapGraph.coerce_to_vertex_list st
 
-val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
-                  no_black_objects g /\ no_pointer_to_blue g /\
-                  (forall (r: obj_addr). Seq.mem r roots ==> Seq.mem r st))
-        (ensures (forall (x: obj_addr). 
-                   (let graph = create_graph g in
-                    let roots' = HeapGraph.coerce_to_vertex_list roots in
-                    graph_wf graph /\ is_vertex_set roots' /\ 
-                    subset_vertices roots' graph.vertices /\
-                    mem_graph_vertex graph x /\
-                    Seq.mem x (reachable_set graph roots')) ==> 
-                   is_black x (mark g st)))
-
 /// (defined at end of file after all infrastructure)
-
-val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
-                  no_black_objects g /\
-                  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-                  (let graph = create_graph g in
-                   let roots' = HeapGraph.coerce_to_vertex_list roots in
-                   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-        (ensures (let graph = create_graph g in
-                  let roots' = HeapGraph.coerce_to_vertex_list roots in
-                  forall (x: obj_addr). 
-                    mem_graph_vertex graph x /\ is_black x (mark g st) ==> 
-                    Seq.mem x (reachable_set graph roots')))
 
 /// (defined at end of file after all infrastructure)
 
@@ -1408,10 +1346,6 @@ let rec non_black_count_bound (g: heap) (objs: seq obj_addr)
   = if Seq.length objs = 0 then ()
     else non_black_count_bound g (Seq.tail objs)
 
-val mark_no_grey_remains : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures noGreyObjects (mark g st))
-
 let mark_no_grey_remains g st =
   non_black_count_bound g (objects 0UL g);
   objects_count_le_remaining 0UL g;
@@ -1428,17 +1362,15 @@ let mark_no_grey_remains g st =
 /// ---------------------------------------------------------------------------
 
 /// push_children never makes any object white (only gray→gray, white→gray, black→black)
-val push_children_no_new_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
-  Lemma (requires ~(is_white x g) /\ Seq.mem x (objects 0UL g) /\ 
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec push_children_no_new_white g st obj i ws x
+  : Lemma (requires ~(is_white x g) /\ Seq.mem x (objects 0UL g) /\
                   well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_white x (fst (push_children g st obj i ws))))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let rec push_children_no_new_white g st obj i ws x =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -1648,15 +1580,6 @@ let rec push_children_grays_white_at_field (g: heap) (st: seq obj_addr) (obj: ob
 #pop-options
 
 /// push_children makes all children of obj non-white
-val push_children_obj_children_non_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (child: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
-                  U64.v (wosize_of_object obj g) < pow2 54 /\
-                  points_to g obj child)
-        (ensures (let ws = wosize_of_object obj g in
-                  let (g', _) = push_children g st obj 1UL ws in
-                  ~(is_white (resolve_object child g) g')))
-
 let push_children_obj_children_non_white g st obj child =
   let ws = wosize_of_object obj g in
   let rc = resolve_object child g in
@@ -1679,18 +1602,16 @@ let push_children_obj_children_non_white g st obj child =
 
 /// push_children preserves points_to for any object pair
 /// (color changes don't affect field values, so pointer structure is unchanged)
-val push_children_preserves_points_to : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) -> (child: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec push_children_preserves_points_to g st obj i ws b child
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   Seq.mem b (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   points_to g' b child == points_to g b child))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
-let rec push_children_preserves_points_to g st obj i ws b child =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -1743,17 +1664,15 @@ let rec push_children_preserves_points_to g st obj i ws b child =
 
 /// If b is black after push_children, b was black before
 /// (push_children only does makeGray: white→gray, never creates black)
-val push_children_black_backward : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec push_children_black_backward g st obj i ws b
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   is_black b (fst (push_children g st obj i ws)))
         (ensures is_black b g)
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
-let rec push_children_black_backward g st obj i ws b =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -1818,18 +1737,16 @@ let rec push_children_black_backward g st obj i ws b =
 /// mark_step preserves tri-color invariant
 /// push_children preserves is_no_scan for any object
 /// (is_no_scan depends only on tag bits, which are preserved by color changes)
-val push_children_preserves_is_no_scan : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec push_children_preserves_is_no_scan g st obj i ws b
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   Seq.mem b (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   is_no_scan b g' == is_no_scan b g))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
-let rec push_children_preserves_is_no_scan g st obj i ws b =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -1878,17 +1795,15 @@ let rec push_children_preserves_is_no_scan g st obj i ws b =
 #pop-options
 
 /// push_children preserves objects list (objects 0UL g' == objects 0UL g)
-val push_children_preserves_objects : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec push_children_preserves_objects g st obj i ws
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   objects 0UL g' == objects 0UL g))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
-let rec push_children_preserves_objects g st obj i ws =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -1932,10 +1847,6 @@ let rec push_children_preserves_objects g st obj i ws =
 #pop-options
 
 /// mark_step preserves objects enumeration (only does color changes)
-val mark_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures objects 0UL (fst (mark_step g st)) == objects 0UL g)
-
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let mark_step_preserves_objects g st =
   let obj = Seq.head st in
@@ -2010,10 +1921,6 @@ let rec push_children_preserves_density g st obj i ws =
 #pop-options
 
 /// mark_step preserves heap_objects_dense
-val mark_step_preserves_density : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
-        (ensures SweepInv.heap_objects_dense (fst (mark_step g st)))
-
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let mark_step_preserves_density g st =
   let obj = Seq.head st in
@@ -2058,17 +1965,15 @@ let mark_preserves_density (g: heap) (st: seq obj_addr)
 
 /// push_children preserves resolve_object for any address
 /// (resolve_object depends only on tag and wosize bits, which are unchanged by color changes)
-val push_children_preserves_resolve : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (addr: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+let rec push_children_preserves_resolve g st obj i ws addr
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   resolve_object addr g' == resolve_object addr g))
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
-let rec push_children_preserves_resolve g st obj i ws addr =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -2259,10 +2164,6 @@ let rec mark_aux_preserves_tri_color g st fuel =
   end
 #pop-options
 
-val mark_preserves_tri_color : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ tri_color_invariant g)
-        (ensures noGreyObjects (mark g st) ==> tri_color_invariant (mark g st))
-
 let mark_preserves_tri_color g st = 
   mark_aux_preserves_tri_color g st (heap_size / U64.v mword)
 
@@ -2276,13 +2177,11 @@ let mark_preserves_tri_color g st =
 /// ---------------------------------------------------------------------------
 
 /// mark_aux preserves the objects list (colors don't affect objects enumeration)
-val mark_aux_preserves_objects : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  (fuel: nat) ->
-  Lemma (ensures objects 0UL (mark_aux g st fuel) == objects 0UL g)
-        (decreases fuel)
-
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
-let rec mark_aux_preserves_objects g st fuel =
+let rec mark_aux_preserves_objects g st fuel
+  : Lemma (ensures objects 0UL (mark_aux g st fuel) == objects 0UL g)
+        (decreases fuel)
+  =
   if Seq.length st = 0 then ()
   else if fuel = 0 then ()
   else begin
@@ -2943,13 +2842,6 @@ let edge_implies_points_to g src dst =
 /// ---------------------------------------------------------------------------
 
 /// Core lemma: black objects are closed under graph successor after mark terminates
-val black_successor_is_black : (g: heap) -> (src: obj_addr) -> (dst: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ noGreyObjects g /\ tri_color_invariant g /\
-                  no_pointer_to_blue g /\
-                  Seq.mem src (objects 0UL g) /\ Seq.mem dst (objects 0UL g) /\
-                  is_black src g /\ mem_graph_edge (create_graph g) src dst)
-        (ensures is_black dst g)
-
 #push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries no"
 let black_successor_is_black g src dst =
   edge_implies_points_to g src dst;
@@ -2964,10 +2856,6 @@ let black_successor_is_black g src dst =
 
 /// Graph vertex is always a valid obj_addr (vertices come from objects list)
 /// Proof: coerce_to_vertex_list preserves values, objects all have addr >= 8
-val vertex_is_obj_addr : (g: heap) -> (x: vertex_id) ->
-  Lemma (requires mem_graph_vertex (create_graph g) x)
-        (ensures U64.v x >= 8)
-
 let rec coerce_vertex_ge_8 (objs: seq obj_addr) (x: vertex_id)
   : Lemma (requires Seq.mem x (HeapGraph.coerce_to_vertex_list objs))
           (ensures U64.v x >= 8)
@@ -2986,18 +2874,14 @@ let vertex_is_obj_addr g x =
   coerce_vertex_ge_8 (objects 0UL g) x
 
 /// Induction on reach: if root is black and x is reachable from root, then x is black
-val black_reach_is_black : (graph: graph_state{graph_wf graph}) -> (g: heap{well_formed_heap g}) ->
-  (r: obj_addr{mem_graph_vertex graph r}) ->
-  (x: obj_addr{mem_graph_vertex graph x}) ->
-  (p: reach graph r x) ->
-  Lemma (requires noGreyObjects g /\ tri_color_invariant g /\ no_pointer_to_blue g /\
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries no"
+let rec black_reach_is_black graph g r x p
+  : Lemma (requires noGreyObjects g /\ tri_color_invariant g /\ no_pointer_to_blue g /\
                   graph == create_graph g /\
                   is_black r g)
         (ensures is_black x g)
         (decreases p)
-
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries no"
-let rec black_reach_is_black graph g r x p =
+  =
   match p with
   | ReachRefl _ -> ()
   | ReachTrans _ y _ p_ry ->
@@ -3027,12 +2911,6 @@ let color_preserves_objects obj g c =
 #pop-options
 
 /// Color change preserves get_field for any field i within bounds
-val color_preserves_get_field :
-  (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) -> (i: U64.t{U64.v i >= 1}) ->
-  Lemma (requires Seq.mem target (objects 0UL g) /\ Seq.mem h (objects 0UL g) /\
-                  U64.v i <= U64.v (wosize_of_object h g))
-        (ensures HeapGraph.get_field (set_object_color target g c) h i == HeapGraph.get_field g h i)
-
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let color_preserves_get_field target h g c i =
   set_object_color_length target g c;
@@ -3158,11 +3036,6 @@ let rec color_preserves_all_edges obj g c objs =
 #pop-options
 
 /// set_object_color preserves the abstract graph
-val color_preserves_create_graph :
-  (obj: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
-  Lemma (requires Seq.mem obj (objects 0UL g))
-        (ensures create_graph (set_object_color obj g c) == create_graph g)
-
 #push-options "--z3rlimit 100"
 let color_preserves_create_graph obj g c =
   let g' = set_object_color obj g c in
@@ -3179,16 +3052,13 @@ let color_preserves_create_graph obj g c =
 /// ---------------------------------------------------------------------------
 
 /// push_children preserves the abstract graph (by induction on field scanning)
-val push_children_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_addr) -> 
-                                          (obj: obj_addr{Seq.mem obj (objects 0UL g)}) ->
-                                          (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let rec push_children_preserves_create_graph g st obj i ws
+  : Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures create_graph (fst (push_children g st obj i ws)) == create_graph g)
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
-let rec push_children_preserves_create_graph g st obj i ws =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -3301,9 +3171,6 @@ let rec mark_aux_preserves_create_graph g st fuel =
 #pop-options
 
 /// mark preserves the abstract graph (top-level)
-val mark_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  Lemma (ensures create_graph (mark g st) == create_graph g)
-
 let mark_preserves_create_graph g st =
   mark_aux_preserves_create_graph g st (heap_size / U64.v mword)
 
@@ -3329,18 +3196,16 @@ let color_preserves_object_fits (target: obj_addr) (hd: obj_addr) (g: heap) (c: 
 
 /// mark_aux preserves get_field (field reads don't change, only colors do)
 /// Helper: push_children preserves wosize_of_object for any x
-val push_children_preserves_wosize : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let rec push_children_preserves_wosize g st obj i ws x
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   Seq.mem x (objects 0UL g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
         (ensures wosize_of_object x (fst (push_children g st obj i ws)) == wosize_of_object x g)
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
-let rec push_children_preserves_wosize g st obj i ws x =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -3391,19 +3256,17 @@ let rec push_children_preserves_wosize g st obj i ws x =
 #pop-options
 
 /// Helper: push_children preserves get_field
-val push_children_preserves_get_field : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) -> (j: U64.t{U64.v j >= 1}) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+let rec push_children_preserves_get_field g st obj i ws x j
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
                   Seq.mem x (objects 0UL g) /\ U64.v j <= U64.v (wosize_of_object x g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
-        (ensures HeapGraph.get_field (fst (push_children g st obj i ws)) x j == 
+        (ensures HeapGraph.get_field (fst (push_children g st obj i ws)) x j ==
                  HeapGraph.get_field g x j)
         (decreases (U64.v ws - U64.v i))
-
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
-let rec push_children_preserves_get_field g st obj i ws x j =
+  =
   if U64.v i > U64.v ws then ()
   else begin
     let v = HeapGraph.get_field g obj i in
@@ -3529,11 +3392,6 @@ let rec mark_aux_preserves_get_field g st fuel x i =
 #pop-options
 
 /// mark preserves get_field (top-level)
-val mark_preserves_get_field : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  (x: obj_addr) -> (i: U64.t{U64.v i >= 1}) ->
-  Lemma (requires Seq.mem x (objects 0UL g) /\ U64.v i <= U64.v (wosize_of_object x g))
-        (ensures HeapGraph.get_field (mark g st) x i == HeapGraph.get_field g x i)
-
 let mark_preserves_get_field g st x i =
   mark_aux_preserves_get_field g st (heap_size / U64.v mword) x i
 
@@ -3581,11 +3439,6 @@ let rec mark_aux_preserves_wosize g st fuel x =
 #pop-options
 
 /// mark preserves wosize_of_object (top-level)
-val mark_preserves_wosize : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  (x: obj_addr) ->
-  Lemma (requires Seq.mem x (objects 0UL g))
-        (ensures wosize_of_object x (mark g st) == wosize_of_object x g)
-
 let mark_preserves_wosize g st x =
   mark_aux_preserves_wosize g st (heap_size / U64.v mword) x
 
@@ -3641,10 +3494,6 @@ let mark_preserves_points_to g st src dst =
   mark_preserves_efptu g st src wz dst
 
 /// mark preserves no_pointer_to_blue (field data unchanged + no new blue)
-val mark_preserves_no_pointer_to_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  Lemma (requires no_pointer_to_blue g)
-        (ensures no_pointer_to_blue (mark g st))
-
 #push-options "--z3rlimit 400 --fuel 0 --ifuel 0"
 let mark_preserves_no_pointer_to_blue g st =
   let gm = mark g st in
