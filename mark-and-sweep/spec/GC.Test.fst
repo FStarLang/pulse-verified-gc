@@ -36,6 +36,7 @@ open GC.Spec.Graph
 open GC.Test.Bridge
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module SpecMarkBoundedInv = GC.Spec.MarkBoundedInv
 
 /// =========================================================================
 /// Direction 1: collect → allocate (FULLY VERIFIED)
@@ -399,3 +400,44 @@ let init_fp_in_heap (g: heap)
     init_objects_eq g;
     Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
     assert (Seq.mem (mword <: obj_addr) (objects 0UL g'))
+
+/// After init, all gc_precondition properties hold for bounded mark.
+/// This is the bounded variant of init_enables_collect.
+#push-options "--z3rlimit 50"
+let init_enables_bounded_collect (g: heap) (cap: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\ cap > 0)
+          (ensures (let (g', fp) = init_heap_spec g in
+                    let st = Seq.empty #obj_addr in
+                    SpecMarkBoundedInv.bounded_mark_inv g' st cap /\
+                    fp_valid fp g' /\
+                    root_props g' st /\
+                    no_black_objects g' /\
+                    no_pointer_to_blue g' /\
+                    graph_wf (create_graph g') /\
+                    heap_objects_dense g' /\
+                    fp_in_heap fp g' /\
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g') /\
+                      (is_gray x g' \/ is_black x g') ==> Seq.mem x st) /\
+                    (let roots' = coerce_to_vertex_list st in
+                     is_vertex_set roots' /\
+                     subset_vertices roots' (create_graph g').vertices)))
+  = init_enables_collect g;
+    init_fp_in_heap g;
+    empty_coerce ();
+    empty_is_vertex_set ();
+    let (g', fp) = init_heap_spec g in
+    let st = Seq.empty #obj_addr in
+    // mark_inv gives stack_props — explicitly decompose for bounded_mark_inv_from_full
+    mark_inv_elim_wfh g' st;
+    mark_inv_elim_sp g' st;
+    mark_inv_elim_objects g' st;
+    SpecMarkBoundedInv.bounded_mark_inv_from_full g' st cap;
+    // gray_iff_root: vacuously true since no gray/black objects after init
+    let aux (x: obj_addr) : Lemma
+      (requires Seq.mem x (objects zero_addr g') /\ (is_gray x g' \/ is_black x g'))
+      (ensures Seq.mem x st)
+    = init_no_black g; init_no_gray g;
+      is_gray_iff x g'; is_black_iff x g'
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+#pop-options

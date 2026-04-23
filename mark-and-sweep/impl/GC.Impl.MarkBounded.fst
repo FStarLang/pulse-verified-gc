@@ -27,6 +27,7 @@ module ML = FStar.Math.Lemmas
 module SpecMark = GC.Spec.Mark
 module SpecMarkBounded = GC.Spec.MarkBounded
 module SpecMarkBoundedInv = GC.Spec.MarkBoundedInv
+module SpecMarkBoundedCorr = GC.Spec.MarkBoundedCorrectness
 module SpecHeap = GC.Spec.Heap
 module SpecObject = GC.Spec.Object
 module SpecFields = GC.Spec.Fields
@@ -611,15 +612,24 @@ fn mark_step_bounded_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
+                        (g_init: Ghost.erased heap_state)
+                        (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st cap /\
-                 stack_capacity st == Ghost.reveal cap)
+                 stack_capacity st == Ghost.reveal cap /\
+                 SpecMarkBoundedCorr.mark_color_inv g_init 's /\
+                 SpecMarkBoundedCorr.gray_black_reachable g_init 's roots /\
+                 SpecMarkBoundedCorr.gray_stays g_init 's /\
+                 SpecMarkBoundedCorr.stack_elems_reachable g_init 'st roots)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (well_formed_heap s2 /\
                 Seq.length (objects zero_addr s2) > 0 /\
                 SweepInv.heap_objects_dense s2 /\
                 Seq.length st2 == 0 /\
-                SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's)
+                SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
+                SpecMarkBoundedCorr.mark_color_inv g_init s2 /\
+                SpecMarkBoundedCorr.gray_black_reachable g_init s2 roots /\
+                SpecMarkBoundedCorr.gray_stays g_init s2)
 {
   // Use count_non_black as fuel for inner loop spec
   let mut go = true;
@@ -631,7 +641,11 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
       is_gray_stack st st_cur **
       pure (SpecMarkBoundedInv.bounded_mark_inv s st_cur cap /\
             (~vc ==> Seq.length st_cur == 0) /\
-            SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's)
+            SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's /\
+            SpecMarkBoundedCorr.mark_color_inv g_init s /\
+            SpecMarkBoundedCorr.gray_black_reachable g_init s roots /\
+            SpecMarkBoundedCorr.gray_stays g_init s /\
+            SpecMarkBoundedCorr.stack_elems_reachable g_init st_cur roots)
   {
     let empty = is_empty st;
     if empty {
@@ -646,7 +660,19 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
         pts_to go _vc **
         is_heap heap s_cur **
         is_gray_stack st st_cur);
+      // Establish preconditions for the spec lemma
+      SpecMarkBoundedInv.bounded_mark_inv_elim_bsp s_cur st_cur (Ghost.reveal cap);
       mark_step_bounded_impl heap st cap;
+      with s2 st2. assert (is_heap heap s2 ** is_gray_stack st st2);
+      // Preserve mark_color_inv through step
+      SpecMarkBoundedCorr.mark_step_bounded_preserves_color_inv
+        (Ghost.reveal g_init) s_cur st_cur (Ghost.reveal cap);
+      // Preserve gray_black_reachable + stack reachability
+      SpecMarkBoundedCorr.mark_step_bounded_preserves_gbr
+        (Ghost.reveal g_init) s_cur st_cur (Ghost.reveal cap) (Ghost.reveal roots);
+      // Preserve gray_stays
+      SpecMarkBoundedCorr.mark_step_bounded_preserves_gray_stays
+        (Ghost.reveal g_init) s_cur st_cur (Ghost.reveal cap);
       ()
     }
   };
@@ -1058,7 +1084,7 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
                 (Seq.length st2 == 0 ==> SweepInv.no_gray_objects 's))
 {
   is_heap_length heap;
-  let heap_sz = U64.uint_to_t heap_size;
+  let heap_sz = heap_size_u64;
 
   // objects > 0 implies 8 < heap_size
   objects_nonempty_implies_heap_gt_8 's;
@@ -1180,18 +1206,45 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
+                     (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st (stack_capacity st))
+           pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st (stack_capacity st) /\
+                 SpecMark.no_black_objects 's /\
+                 SpecMark.no_pointer_to_blue 's /\
+                 SpecMark.root_props 's roots /\
+                 (forall (x:GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) /\
+                   (GC.Spec.Object.is_gray x 's \/ GC.Spec.Object.is_black x 's) ==> Seq.mem x roots) /\
+                 (let graph = GC.Spec.HeapModel.create_graph 's in
+                  let roots' = GC.Spec.HeapGraph.coerce_to_vertex_list roots in
+                  GC.Spec.Graph.graph_wf graph /\ GC.Spec.Graph.is_vertex_set roots' /\
+                  GC.Spec.Graph.subset_vertices roots' graph.vertices))
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecFields.well_formed_heap s2 /\
                 SweepInv.no_gray_objects s2 /\
-                SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's)
+                SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
+                SpecMarkBoundedCorr.mark_color_inv 's s2 /\
+                SpecMarkBoundedCorr.gray_black_reachable 's s2 roots /\
+                SpecMarkBoundedCorr.gray_stays 's s2)
 {
   // Establish cap > 0 before everything
   SpecMarkBoundedInv.bounded_mark_inv_elim_cap 's 'st (stack_capacity st);
   
-  // Phase 1: drain the initial stack
-  mark_inner_loop_impl heap st (stack_capacity st);
+  // Establish mark_color_inv 's 's from the initial state properties
+  SpecMarkBoundedInv.bounded_mark_inv_elim_wfh 's 'st (stack_capacity st);
+  SpecMarkBoundedInv.bounded_mark_inv_elim_objects 's 'st (stack_capacity st);
+  SpecMarkBoundedInv.bounded_mark_inv_elim_density 's 'st (stack_capacity st);
+  SpecMarkBoundedCorr.mark_color_inv_init 's;
+
+  // Establish initial gray_black_reachable and gray_stays
+  SpecMarkBoundedCorr.gray_black_reachable_init 's (Ghost.reveal roots);
+  SpecMarkBoundedCorr.gray_stays_init 's;
+  
+  // Establish initial stack reachability
+  SpecMarkBoundedInv.bounded_mark_inv_elim_bsp 's 'st (stack_capacity st);
+  SpecMarkBoundedCorr.stack_reachable_from_bsp_gbr 's 's 'st (Ghost.reveal roots);
+
+  // Phase 1: drain the initial stack (carrying mark_color_inv + gbr + gray_stays)
+  mark_inner_loop_impl heap st (stack_capacity st) 's (Ghost.reveal roots);
 
   with s1 st1. assert (is_heap heap s1 ** is_gray_stack st st1);
 
@@ -1209,7 +1262,10 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
             Seq.length st_cur == 0 /\
             stack_capacity st > 0 /\
             SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's /\
-            (~vg ==> SweepInv.no_gray_objects s))
+            (~vg ==> SweepInv.no_gray_objects s) /\
+            SpecMarkBoundedCorr.mark_color_inv 's s /\
+            SpecMarkBoundedCorr.gray_black_reachable 's s roots /\
+            SpecMarkBoundedCorr.gray_stays 's s)
   {
     with _vg s_cur st_cur. assert (
       pts_to go _vg **
@@ -1231,8 +1287,11 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
       forget_init go;
       go := false
     } else {
-      // Grays found — drain the stack again
-      mark_inner_loop_impl heap st (stack_capacity st);
+      // Grays found — establish stack reachability from bounded_stack_props + gbr
+      SpecMarkBoundedInv.bounded_mark_inv_elim_bsp s_cur st_rescan (stack_capacity st);
+      SpecMarkBoundedCorr.stack_reachable_from_bsp_gbr 's s_cur st_rescan (Ghost.reveal roots);
+      // Drain the stack again (carrying mark_color_inv + gbr + gray_stays)
+      mark_inner_loop_impl heap st (stack_capacity st) 's (Ghost.reveal roots);
       ()
     }
   };
