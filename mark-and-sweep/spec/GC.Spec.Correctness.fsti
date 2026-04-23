@@ -23,6 +23,7 @@ open GC.Spec.DFS
 open GC.Spec.Mark
 open GC.Spec.Sweep
 module HeapGraph = GC.Spec.HeapGraph
+module Coalesce = GC.Spec.Coalesce
 module U64 = FStar.UInt64
 
 /// ---------------------------------------------------------------------------
@@ -282,3 +283,29 @@ val coalesce_precondition_bridge :
       (let h_sweep = fst (sweep h_mark fp) in
        Seq.length (objects zero_addr h_sweep) > 0 /\
        GC.Spec.SweepInv.heap_objects_dense h_sweep))
+
+/// ---------------------------------------------------------------------------
+/// Full GC Correctness Through Coalesce
+/// ---------------------------------------------------------------------------
+///
+/// Lifts full_gc_correctness from the sweep output to the coalesced output.
+/// The key bridge: coalesce_objects_subset ensures all objects in the
+/// coalesced walk were in the original walk, enabling reuse of sweep-level proofs.
+
+val full_gc_correctness_through_coalesce :
+  (h_init: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) -> (fp: U64.t) ->
+  Lemma
+    (requires
+      well_formed_heap h_init /\
+      stack_props h_init st /\
+      root_props h_init roots /\
+      fp_in_heap fp h_init /\
+      no_black_objects h_init /\
+      no_pointer_to_blue h_init /\
+      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
+      (let graph = create_graph h_init in
+       let roots' = HeapGraph.coerce_to_vertex_list roots in
+       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+    (ensures
+      full_gc_correctness h_init
+        (fst (Coalesce.coalesce (fst (sweep (mark h_init st) fp)))) roots)

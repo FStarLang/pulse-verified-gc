@@ -1184,7 +1184,7 @@ private let sweep_object_self_preserves_tag
 /// When x is processed: makeWhite only (x is black, not white → no set_field)
 /// Then x ∉ tail (vertex set), so use nonmember helper for remaining
 #push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
-private let rec sweep_aux_preserves_field_member
+let rec sweep_aux_preserves_field_member
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
@@ -1253,7 +1253,7 @@ private let rec sweep_aux_preserves_field_member
 
 /// Helper 1: sweep_aux preserves wosize for x when x ∉ objs
 #push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
-private let rec sweep_aux_preserves_wosize_nonmember
+let rec sweep_aux_preserves_wosize_nonmember
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
@@ -1515,7 +1515,7 @@ private let sweep_aux_preserves_all_fields
 
 /// Recursive lemma: HeapGraph.get_pointer_fields_aux is preserved when fields are preserved
 #push-options "--z3rlimit 2000 --fuel 3 --ifuel 2"
-private let rec get_pointer_fields_aux_preserved
+let rec get_pointer_fields_aux_preserved
   (g: heap) (g': heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : Lemma (requires (forall (j: U64.t). U64.v j >= U64.v i /\ U64.v j <= U64.v ws ==>
                                          HeapGraph.get_field g obj j == HeapGraph.get_field g' obj j))

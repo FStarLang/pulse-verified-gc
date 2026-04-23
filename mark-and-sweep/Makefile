@@ -131,7 +131,8 @@ _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 # --- KaRaMeL bundling (.krml → C) ------------------------------------------
 
 EXTRACT_MODULES = \
-  GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.Sweep GC.Impl.Coalesce GC.Impl \
+  GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.Sweep GC.Impl.Coalesce \
+  GC.Impl.FusedSweepCoalesce GC.Impl \
   GC.Impl.Allocator \
   GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
@@ -147,7 +148,7 @@ KRML_FLAGS = \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.Sweep \
     GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
-    GC.Impl.Allocator) \
+    GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce) \
   -warn-error -2-9-15
 
 $(EXTRACT_DIR):
@@ -171,6 +172,7 @@ snapshot: extract
 	     -e 's/^krml_checked_int_t heap_size;/\/\* heap_size: defined by the application (e.g., main.c) \*\//' \
 	  $(EXTRACT_DIR)/GC_Impl.c > $(SNAPSHOT_DIR)/GC_Impl.c
 	@cp $(EXTRACT_DIR)/GC_Impl.h $(SNAPSHOT_DIR)/
+	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.c $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/internal/*.h $(SNAPSHOT_DIR)/internal/ 2>/dev/null || true
 	@cp $(KRML_HOME)/include/krmllib.h $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true

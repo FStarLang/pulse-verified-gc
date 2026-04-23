@@ -20,8 +20,7 @@ open GC.Impl.Heap
 open GC.Impl.Object
 open GC.Impl.Stack
 open GC.Impl.Mark
-open GC.Impl.Sweep
-open GC.Impl.Coalesce
+open GC.Impl.FusedSweepCoalesce
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
@@ -36,6 +35,8 @@ module SI = GC.Spec.SweepInv
 module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
+module Defs = GC.Spec.SweepCoalesce.Defs
+module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 
 
 /// Precondition bundle for full GC correctness
@@ -50,14 +51,15 @@ let gc_precondition (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr) (
    SpecGraph.graph_wf graph /\ SpecGraph.is_vertex_set roots' /\
    SpecGraph.subset_vertices roots' graph.vertices)
 
-/// Bridge lemma: call full_gc_correctness_from_end_to_end from bundled precondition
+/// Bridge lemma: call full_gc_correctness_through_coalesce from bundled precondition
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10 --split_queries no"
 let gc_correctness_bridge (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr) (fp: U64.t)
   : Lemma (requires gc_precondition s st fp)
-          (ensures SpecGCPost.full_gc_correctness s (fst (SpecSweep.sweep (SpecMark.mark s st) fp)) st)
+          (ensures SpecGCPost.full_gc_correctness s
+                     (fst (SpecCoalesce.coalesce (fst (SpecSweep.sweep (SpecMark.mark s st) fp)))) st)
   = SpecMarkInv.mark_inv_elim_wfh s st;
     SpecMarkInv.mark_inv_elim_sp s st;
-    SpecGCPost.full_gc_correctness_from_end_to_end s st st fp
+    SpecGCPost.full_gc_correctness_through_coalesce s st st fp
 #pop-options
 
 
@@ -74,7 +76,7 @@ let gc_correctness_bridge (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_a
 /// The gray stack 'st doubles as the root set.
 /// Postcondition:
 /// - gc_postcondition: well_formed_heap preserved, all objects white or blue
-/// - full_gc_correctness on the sweep output (before coalesce)
+/// - full_gc_correctness on the coalesced output
 /// - Coalesced heap matches spec: (s2, final_fp) == coalesce(fst(sweep(mark s st, fp)))
 #push-options "--z3rlimit 100"
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
@@ -84,13 +86,11 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\ Seq.length st2 == 0 /\
                 (s2, final_fp) == SpecCoalesce.coalesce (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) /\
-                SpecGCPost.full_gc_correctness 's (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) 'st)
+                SpecGCPost.full_gc_correctness 's s2 'st)
 {
-  // Establish initial-state facts needed later for coalesce bridge
-  // (mark_inv 's 'st will be consumed by mark_loop, so extract facts now)
+  // Establish initial-state facts needed later
   SpecMarkInv.mark_inv_elim_wfh 's 'st;
   SpecMarkInv.mark_inv_elim_sp 's 'st;
-  // Frame fp_in_heap and no_black/no_pointer_to_blue through mark_loop
   assert (pure (SpecSweep.fp_in_heap fp 's));
   assert (pure (SpecMark.no_black_objects 's));
   assert (pure (SpecMark.no_pointer_to_blue 's));
@@ -120,40 +120,31 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   // fp_in_heap transfers from 's to s_mark since objects list is preserved
   assert (pure (SpecSweep.fp_in_heap fp s_mark));
   
-  // Sweep phase: reset black to white, build free list
-  let sweep_fp = sweep heap fp;
+  // Fused sweep+coalesce: single pass that whitens survivors and merges free blocks
+  let final_fp = fused_sweep_coalesce heap;
   
-  // After sweep: well_formed_heap AND all_objects_white_or_blue AND spec equality
-  with s_sweep. assert (is_heap heap s_sweep **
-    pure (SpecFields.well_formed_heap s_sweep /\
-          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr s_sweep) ==>
-            (SpecObject.is_white x s_sweep \/ SpecObject.is_blue x s_sweep)) /\
-          (s_sweep, sweep_fp) == SpecSweep.sweep s_mark fp));
+  // After fused: (s_fused, final_fp) == fused_sweep_coalesce s_mark
+  with s_fused. assert (is_heap heap s_fused **
+    pure ((s_fused, final_fp) == Defs.fused_sweep_coalesce s_mark));
 
-  // --- Bridge to coalesce preconditions ---
-  
-  // 1. post_sweep_strong: initial-state facts already established before mark_loop
+  // Bridge: fused_sweep_coalesce == coalesce . fst . sweep
+  SpecSweepCoalesce.fused_eq_sweep_coalesce s_mark fp;
+  // Now: Defs.fused_sweep_coalesce s_mark == SpecCoalesce.coalesce (fst (SpecSweep.sweep s_mark fp))
+  // Since s_mark == mark 's 'st:
+  // (s_fused, final_fp) == SpecCoalesce.coalesce (fst (SpecSweep.sweep (mark 's 'st) fp))
+
+  // Establish gc_postcondition on s_fused:
+  //   - well_formed_heap s_fused
+  //   - all objects white or blue in s_fused
+  // These follow from coalesce_preserves_wf and coalesce_all_white_or_blue
+  // applied to fst (sweep s_mark fp), since fused result == coalesce result.
   SpecGCPost.sweep_post_sweep_strong 's 'st fp;
-  
-  // 2+3. objects nonempty + density: bridge from post-mark to post-sweep
-  //       This calls sweep_preserves_objects and sweep_preserves_density internally,
-  //       connecting noGreyObjects (Mark) with no_gray_objects (SweepInv) in pure F*.
   SpecGCPost.coalesce_precondition_bridge s_mark fp;
-
-  // Coalesce phase: merge adjacent free blocks
-  let final_fp = coalesce heap;
+  SpecCoalesce.coalesce_preserves_wf (fst (SpecSweep.sweep s_mark fp));
+  SpecCoalesce.coalesce_all_white_or_blue (fst (SpecSweep.sweep s_mark fp));
+  SpecGCPost.gc_postcondition_intro s_fused;
   
-  // After coalesce: well_formed_heap AND all_objects_white_or_blue AND spec equality
-  with s_coal. assert (is_heap heap s_coal **
-    pure (SpecFields.well_formed_heap s_coal /\
-          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr s_coal) ==>
-            (SpecObject.is_white x s_coal \/ SpecObject.is_blue x s_coal)) /\
-          (s_coal, final_fp) == SpecCoalesce.coalesce s_sweep));
-
-  // gc_postcondition on coalesced heap (wf + all white or blue)
-  SpecGCPost.gc_postcondition_intro s_coal;
-  
-  // Full GC correctness on sweep output (before coalesce)
+  // Full GC correctness on coalesced output
   gc_correctness_bridge 's 'st fp;
   
   final_fp

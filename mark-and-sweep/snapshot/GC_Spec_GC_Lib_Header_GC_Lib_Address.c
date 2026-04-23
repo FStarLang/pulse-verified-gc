@@ -5,15 +5,22 @@
   KaRaMeL version: 772e4f63642524f6fb3c15fcb1b9398dd6afea7f
  */
 
-#ifndef internal_GC_Impl_H
-#define internal_GC_Impl_H
+#include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 
-#include "krmllib.h"
+bool GC_Lib_Header_uu___is_Black(GC_Lib_Header_color_sem projectee)
+{
+  switch (projectee)
+  {
+    case GC_Lib_Header_Black:
+      {
+        return true;
+      }
+    default:
+      {
+        return false;
+      }
+  }
+}
 
-#include "../GC_Impl.h"
+uint64_t GC_Spec_Base_heap_size_u64 = 1024ULL;
 
-extern uint64_t heap_size_u64;
-
-
-#define internal_GC_Impl_H_DEFINED
-#endif /* internal_GC_Impl_H */

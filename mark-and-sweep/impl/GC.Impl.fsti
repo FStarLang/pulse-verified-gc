@@ -49,4 +49,4 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\ Seq.length st2 == 0 /\
                 (s2, final_fp) == SpecCoalesce.coalesce (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) /\
-                SpecGCPost.full_gc_correctness 's (fst (SpecSweep.sweep (SpecMark.mark 's 'st) fp)) 'st)
+                SpecGCPost.full_gc_correctness 's s2 'st)
