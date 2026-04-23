@@ -1103,7 +1103,7 @@ val coalesce_aux_survivors_in_walk
       Seq.mem x (objects sync (coalesce_heap g0 g objs first_blue run_words fp))))
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 1 --split_queries always"
 let rec coalesce_aux_survivors_in_walk g0 g start objs first_blue run_words fp all_objs x =
   if Seq.length objs = 0 then ()
   else begin
@@ -1274,7 +1274,7 @@ val coalesce_aux_walk_all_wb
       (Seq.mem y objs /\ is_white y g0) \/ is_blue y g'))
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 1 --split_queries always"
 let rec coalesce_aux_walk_all_wb g0 g start objs first_blue run_words fp all_objs y =
   if Seq.length objs = 0 then begin
     assert (Seq.equal objs Seq.empty);
@@ -1637,7 +1637,7 @@ val coalesce_aux_blue_tag_zero
     (ensures tag_of_object y (coalesce_heap g0 g objs first_blue run_words fp) == 0UL)
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 1 --split_queries always"
 let rec coalesce_aux_blue_tag_zero g0 g start objs first_blue run_words fp all_objs y =
   let g' = coalesce_heap g0 g objs first_blue run_words fp in
   if Seq.length objs = 0 then begin
@@ -2300,7 +2300,7 @@ private let blue_field0_white_tail_empty
     end
 #pop-options
 
-#push-options "--z3rlimit 600 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 600 --fuel 1 --ifuel 1 --split_queries always"
 let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_words fp src =
   let g' = coalesce_heap g0 g objs first_blue run_words fp in
   let sync : hp_addr =
@@ -2991,7 +2991,7 @@ val coalesce_aux_fp_in_walk
        Seq.mem (fp' <: obj_addr) (objects sync g'))))
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 1 --split_queries always"
 let rec coalesce_aux_fp_in_walk g0 g start objs all_objs first_blue run_words fp =
   if Seq.length objs = 0 then begin
     assert (Seq.equal objs Seq.empty);
@@ -3229,7 +3229,7 @@ val coalesce_aux_objects_subset
     (ensures Seq.mem y all_objs)
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 1 --split_queries always"
 let rec coalesce_aux_objects_subset g0 g start objs first_blue run_words fp all_objs y =
   if Seq.length objs = 0 then begin
     assert (Seq.equal objs Seq.empty);
