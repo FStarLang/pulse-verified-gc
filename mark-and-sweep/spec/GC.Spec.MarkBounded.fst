@@ -98,6 +98,55 @@ let rec push_children_bounded
     else
       (g', st')
 
+/// The heap output of push_children_bounded is identical to push_children.
+/// Both perform the same makeGray mutations; only the stack differs.
+let rec push_children_bounded_heap_eq
+  (g: heap) (st_b: seq obj_addr) (st_u: seq obj_addr)
+  (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t) (cap: nat)
+  : Lemma (ensures fst (push_children_bounded g st_b obj i ws cap) ==
+                   fst (push_children g st_u obj i ws))
+          (decreases (U64.v ws - U64.v i))
+  =
+  if U64.v i > U64.v ws then ()
+  else
+    let v = HeapGraph.get_field g obj i in
+    // Compute the common g' — same in both functions
+    let g' =
+      if HeapGraph.is_pointer_field v then begin
+        HeapGraph.is_pointer_field_is_obj_addr v;
+        let child_raw : obj_addr = v in
+        let child = resolve_object child_raw g in
+        if is_white child g then makeGray child g
+        else g
+      end else g
+    in
+    if U64.v i < U64.v ws then
+      // Recursive case: compute respective st' and apply IH on the same g'
+      let st'_b =
+        if HeapGraph.is_pointer_field v then begin
+          HeapGraph.is_pointer_field_is_obj_addr v;
+          let child_raw : obj_addr = v in
+          let child = resolve_object child_raw g in
+          if is_white child g then
+            if Seq.length st_b < cap then Seq.cons child st_b
+            else st_b
+          else st_b
+        end else st_b
+      in
+      let st'_u =
+        if HeapGraph.is_pointer_field v then begin
+          HeapGraph.is_pointer_field_is_obj_addr v;
+          let child_raw : obj_addr = v in
+          let child = resolve_object child_raw g in
+          if is_white child g then Seq.cons child st_u
+          else st_u
+        end else st_u
+      in
+      push_children_bounded_heap_eq g' st'_b st'_u obj (U64.add i 1UL) ws cap
+    else
+      // Terminal case (i == ws): both return (g', _), so fst is g'
+      ()
+
 /// ---------------------------------------------------------------------------
 /// Bounded mark step
 /// ---------------------------------------------------------------------------
@@ -116,6 +165,19 @@ let mark_step_bounded (g: heap) (st: seq obj_addr) (cap: nat)
       (g', st')
     else
       push_children_bounded g' st' obj 1UL ws cap
+
+/// The heap output of mark_step_bounded is identical to mark_step
+/// (given stacks with the same head, since both pop the head).
+let mark_step_bounded_heap_eq (g: heap) (st_b: seq obj_addr) (st_u: seq obj_addr) (cap: nat)
+  : Lemma (requires Seq.length st_b > 0 /\ Seq.length st_u > 0 /\
+                    Seq.head st_b == Seq.head st_u)
+          (ensures fst (mark_step_bounded g st_b cap) ==
+                   fst (mark_step g st_u))
+= let obj = Seq.head st_b in
+  let g' = makeBlack obj g in
+  let ws = wosize_of_object obj g in
+  if is_no_scan obj g then ()
+  else push_children_bounded_heap_eq g' (Seq.tail st_b) (Seq.tail st_u) obj 1UL ws cap
 
 /// ---------------------------------------------------------------------------
 /// Inner mark loop (drain stack)
