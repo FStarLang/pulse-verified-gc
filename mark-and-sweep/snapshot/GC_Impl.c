@@ -517,10 +517,7 @@ uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
 
 static bool is_valid_fp(uint64_t v)
 {
-  if (v >= mword && v < heap_size_u64)
-    return v % mword == 0ULL;
-  else
-    return false;
+  return v >= mword && v < heap_size_u64 && v % mword == 0ULL;
 }
 
 uint64_t init_heap(heap_t heap)
