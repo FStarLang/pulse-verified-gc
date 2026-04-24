@@ -11,7 +11,6 @@ module GC.Impl.Coalesce
 #lang-pulse
 
 #set-options "--z3rlimit 100 --split_queries always"
-open FStar.Mul
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object

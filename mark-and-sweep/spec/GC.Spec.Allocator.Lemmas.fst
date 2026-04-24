@@ -13,7 +13,6 @@ open GC.Spec.Fields
 open GC.Spec.Allocator
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
-open FStar.Mul
 
 /// ===========================================================================
 /// Section 1: Preliminary lemmas about make_header

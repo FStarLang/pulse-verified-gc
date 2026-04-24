@@ -14,7 +14,6 @@ module GC.Spec.Correctness
 #set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 

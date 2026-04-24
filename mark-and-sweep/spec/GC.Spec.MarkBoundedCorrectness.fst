@@ -14,7 +14,6 @@
 module GC.Spec.MarkBoundedCorrectness
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 
@@ -406,6 +405,7 @@ let mark_step_bounded_preserves_color_inv
 /// Part 6: mark_inner_loop preserves mark_color_inv
 /// =========================================================================
 
+#push-options "--z3rlimit 10"
 let rec mark_inner_loop_preserves_color_inv
   (h_init: heap) (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires mark_color_inv h_init g /\ bounded_stack_props g st)
@@ -418,6 +418,7 @@ let rec mark_inner_loop_preserves_color_inv
       let (g', st') = mark_step_bounded g st cap in
       mark_inner_loop_preserves_color_inv h_init g' st' cap (fuel - 1)
     end
+#pop-options
 
 /// =========================================================================
 /// Part 7: mark_bounded preserves mark_color_inv

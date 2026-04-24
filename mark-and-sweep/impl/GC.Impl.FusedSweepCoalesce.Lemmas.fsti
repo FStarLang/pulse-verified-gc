@@ -7,7 +7,6 @@
 module GC.Impl.FusedSweepCoalesce.Lemmas
 
 open FStar.Seq
-open FStar.Mul
 module U64 = FStar.UInt64
 
 open GC.Spec.Base

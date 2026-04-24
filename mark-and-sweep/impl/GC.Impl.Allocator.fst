@@ -24,7 +24,6 @@ module SF = GC.Spec.Fields
 module SO = GC.Spec.Object
 module SH = GC.Spec.Heap
 module SI = GC.Spec.SweepInv
-open FStar.Mul
 
 /// ---------------------------------------------------------------------------
 /// Pure helper lemmas (all proven — no admits)

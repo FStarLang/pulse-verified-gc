@@ -69,7 +69,7 @@ val mark_inv_head_gray : (g: heap) -> (st: seq obj_addr) ->
 val mark_inv_obj_fields_bound : (g: heap) -> (obj: obj_addr) ->
   Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
         (ensures U64.v (hd_address obj) + U64.v mword +
-                 FStar.Mul.(U64.v (wosize_of_object obj g) * U64.v mword) <= heap_size)
+                 (U64.v (wosize_of_object obj g) * U64.v mword) <= heap_size)
 
 /// ---------------------------------------------------------------------------
 /// Preservation through mark_step

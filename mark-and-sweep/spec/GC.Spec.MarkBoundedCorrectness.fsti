@@ -5,7 +5,6 @@
 module GC.Spec.MarkBoundedCorrectness
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 

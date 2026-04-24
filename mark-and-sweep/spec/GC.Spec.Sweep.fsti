@@ -5,7 +5,6 @@
 module GC.Spec.Sweep
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 
@@ -136,7 +135,7 @@ val sweep_object_preserves_objects_suffix : (h_addr: hp_addr) -> (g: heap) -> (f
                   Seq.mem (f_address h_addr) (objects 0UL g))
         (ensures (let obj = f_address h_addr in
                   let wz = getWosize (read_word g h_addr) in
-                  let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+                  let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
                   next_nat <= heap_size /\
                   (next_nat < heap_size ==>
                     (let next : hp_addr = U64.uint_to_t next_nat in
@@ -162,7 +161,7 @@ val sweep_aux_objects_step : (h_addr: hp_addr) -> (g: heap) -> (fp: U64.t) ->
                   U64.v h_addr + 8 < heap_size)
         (ensures (let obj = f_address h_addr in
                   let wz = getWosize (read_word g h_addr) in
-                  let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+                  let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
                   let (g', fp') = sweep_object g obj fp in
                   next_nat <= heap_size /\
                   (next_nat < heap_size ==>
@@ -292,7 +291,7 @@ val sweep_object_preserves_other_body_read :
                   Seq.mem x (objects 0UL g) /\
                   obj <> x /\
                   U64.v a >= U64.v x /\
-                  U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8 /\
+                  U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
                   U64.v a % 8 = 0)
         (ensures read_word (fst (sweep_object g obj fp)) a == read_word g a)
 
@@ -328,7 +327,7 @@ val sweep_aux_preserves_field_member :
                   is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                   is_black x g /\
                   U64.v a >= U64.v x /\
-                  U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8 /\
+                  U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
                   U64.v a % 8 = 0)
         (ensures read_word (fst (sweep_aux g objs fp)) a == read_word g a)
 

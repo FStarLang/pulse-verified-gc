@@ -13,9 +13,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FSTAR_DIR="$SCRIPT_DIR/fstar"
 
-# Default: official release
-SOURCE="--release"
-VERSION="v2026.04.17"
+# Default: nightly release
+SOURCE="--nightly"
+VERSION="nightly-2026-04-21"
 
 if [[ "${1:-}" == "--nightly" ]]; then
   SOURCE="--nightly"

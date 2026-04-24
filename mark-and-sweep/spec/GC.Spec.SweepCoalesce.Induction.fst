@@ -6,7 +6,6 @@
 module GC.Spec.SweepCoalesce.Induction
 
 open FStar.Seq
-open FStar.Mul
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module ML = FStar.Math.Lemmas

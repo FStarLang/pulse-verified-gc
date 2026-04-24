@@ -13,7 +13,6 @@ module GC.Impl.Sweep
 #lang-pulse
 
 #set-options "--z3rlimit 50 --split_queries always"
-open FStar.Mul
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -74,7 +73,7 @@ fn sweep_white_field_write (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v 
                  SpecFields.objects zero_addr s1 == SpecFields.objects zero_addr 's /\
                  SpecObject.is_white (SpecHeap.f_address h_addr) s1 /\
                  SI.headers_preserved_from
-                   (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+                   (U64.v h_addr + ((U64.v wz + 1) * 8))
                    s1 's /\
                  SI.headers_preserved_before (U64.v h_addr) s1 's /\
                  SpecObject.getWosize (SpecHeap.read_word s1 h_addr) ==
@@ -95,7 +94,7 @@ fn sweep_white_field_write (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v 
   sweep_white_write_preserves 's h_addr wz fp;
   sweep_white_header_preserved 's h_addr wz fp;
   headers_preserved_from_spec_write
-    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+    (U64.v h_addr + ((U64.v wz + 1) * 8))
     's field1_addr fp;
   sweep_white_color_preserved 's h_addr wz fp;
   ()
@@ -138,7 +137,7 @@ fn sweep_white_blue_mark (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mw
                  SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's1 /\
                  SpecObject.is_blue (SpecHeap.f_address h_addr) s2 /\
                  SI.headers_preserved_from
-                   (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+                   (U64.v h_addr + ((U64.v wz + 1) * 8))
                    s2 's1 /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's1 /\
                  SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
@@ -155,7 +154,7 @@ fn sweep_white_blue_mark (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mw
   SpecFields.color_change_preserves_objects 's1 obj GC.Lib.Header.Blue;
   SpecHeap.hd_f_roundtrip h_addr;
   makeBlue_headers_preserved_from
-    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+    (U64.v h_addr + ((U64.v wz + 1) * 8))
     's1 h_addr;
   makeBlue_headers_preserved_before 's1 h_addr;
   makeBlue_preserves_getWosize 's1 h_addr;
@@ -166,7 +165,7 @@ fn sweep_white_blue_mark (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mw
   assert (pure (SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's1));
   assert (pure (SpecObject.is_blue (SpecHeap.f_address h_addr) s2));
   assert (pure (SI.headers_preserved_from
-    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8)) s2 's1));
+    (U64.v h_addr + ((U64.v wz + 1) * 8)) s2 's1));
   assert (pure (SI.headers_preserved_before (U64.v h_addr) s2 's1));
   assert (pure (SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
     SpecObject.getWosize (SpecHeap.read_word 's1 h_addr)));
@@ -189,7 +188,7 @@ fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
                  SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
                  new_fp == SpecHeap.f_address h_addr /\
                  SI.headers_preserved_from
-                   (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+                   (U64.v h_addr + ((U64.v wz + 1) * 8))
                    s2 's /\
                  SpecObject.is_blue (SpecHeap.f_address h_addr) s2 /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
@@ -209,8 +208,8 @@ fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
     with s2. assert (is_heap heap s2);
     // Chain preservation facts: 's -> s1 -> s2
     headers_preserved_from_trans_bridge
-      (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
-      (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+      (U64.v h_addr + ((U64.v wz + 1) * 8))
+      (U64.v h_addr + ((U64.v wz + 1) * 8))
       's s1 s2;
     SI.headers_preserved_before_trans (U64.v h_addr) 's s1 s2;
     // Bridge: makeBlue obj s1 == fst(sweep_object 's obj fp)
@@ -268,7 +267,7 @@ fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
            pure (SpecFields.well_formed_heap s2 /\
                  SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
                  SI.headers_preserved_from
-                   (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+                   (U64.v h_addr + ((U64.v wz + 1) * 8))
                    s2 's /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
                  SpecObject.is_white (SpecHeap.f_address h_addr) s2 /\
@@ -288,7 +287,7 @@ fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   sweep_object_black_eq_spec 's h_addr fp;
   makeWhite_preserves_getWosize 's h_addr;
   makeWhite_headers_preserved_from
-    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+    (U64.v h_addr + ((U64.v wz + 1) * 8))
     's h_addr;
   makeWhite_headers_preserved_before_spec 's h_addr;
   // Explicit equality: connect existential witness s2 to lemma conclusions
@@ -297,7 +296,7 @@ fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   assert (pure (SpecFields.well_formed_heap s2));
   assert (pure (SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's));
   assert (pure (SI.headers_preserved_from
-    (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8)) s2 's));
+    (U64.v h_addr + ((U64.v wz + 1) * 8)) s2 's));
   assert (pure (SI.headers_preserved_before (U64.v h_addr) s2 's));
   assert (pure (SpecObject.is_white (SpecHeap.f_address h_addr) s2));
   assert (pure (SpecObject.getWosize (SpecHeap.read_word s2 h_addr) ==
@@ -320,7 +319,7 @@ fn sweep_white_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   ensures exists* s2. is_heap heap s2 **
            pure (SI.sweep_post 's s2 new_fp /\
                  SI.headers_preserved_from
-                   (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+                   (U64.v h_addr + ((U64.v wz + 1) * 8))
                    s2 's /\
                  (SpecObject.is_white (SpecHeap.f_address h_addr) s2 \/ SpecObject.is_blue (SpecHeap.f_address h_addr) s2) /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
@@ -356,7 +355,7 @@ fn sweep_black_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   ensures exists* s2. is_heap heap s2 **
            pure (SI.sweep_post 's s2 new_fp /\
                  SI.headers_preserved_from
-                   (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+                   (U64.v h_addr + ((U64.v wz + 1) * 8))
                    s2 's /\
                  SpecObject.is_white (SpecHeap.f_address h_addr) s2 /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
@@ -391,7 +390,7 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < hea
   ensures exists* s2. is_heap heap s2 **
            pure (SI.sweep_post 's s2 new_fp /\
                  SI.headers_preserved_from
-                   (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8))
+                   (U64.v h_addr + ((U64.v wz + 1) * 8))
                    s2 's /\
                  (SpecObject.is_white (SpecHeap.f_address h_addr) s2 \/ SpecObject.is_blue (SpecHeap.f_address h_addr) s2) /\
                  SI.headers_preserved_before (U64.v h_addr) s2 's /\
@@ -428,7 +427,7 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < hea
     sweep_object_else_bridge h_addr 's fp;
     sweep_post_intro_bridge 's 's fp;
     SI.headers_preserved_from_refl
-      (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8)) 's;
+      (U64.v h_addr + ((U64.v wz + 1) * 8)) 's;
     SI.headers_preserved_before_refl (U64.v h_addr) 's;
     fp
   }
@@ -558,7 +557,7 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
   fp_valid_transfer_bridge new_fp s_post s_post;
   lemma_addr_plus_8_no_overflow (U64.v next_addr);
   assert (pure (U64.v next_addr <= heap_size));
-  assert (pure (U64.v next_addr == U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8)));
+  assert (pure (U64.v next_addr == U64.v h_addr + ((U64.v wz + 1) * 8)));
   // Maintain objects_white_before
   SI.objects_white_before_step h_addr s_cur s_post;
   // Combined bridge: headers chain + density → all next-iteration facts
