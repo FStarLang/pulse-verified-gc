@@ -1,0 +1,16 @@
+{
+  "fstar_exe": "fstar/bin/fstar.exe",
+  "options": [
+    "--cache_checked_modules",
+    "--warn_error", "-321",
+    "--report_assumes", "warn",
+    "--already_cached", "Prims FStar Pulse PulseCore -GC"
+  ],
+  "include_dirs": [
+    "common/spec",
+    "common/lib",
+    "common/impl",
+    "mark-and-sweep/spec",
+    "mark-and-sweep/impl"
+  ]
+}
