@@ -68,28 +68,28 @@ generational/
 - [x] 2.3 Verify GC.Gen.MinorHeap
 
 ### Phase 3: Promotion/Copying Spec
-- [ ] 3.1 Write `GC.Gen.Promote.fsti` — promote_object spec, promote_all spec
-- [ ] 3.2 Write `GC.Gen.Promote.fst` — copy object to major, update forwarding
-- [ ] 3.3 Prove: promoted objects preserve field data
+- [x] 3.1 Write `GC.Gen.Promote.fsti` — promote_object spec, promote_all spec
+- [x] 3.2 Write `GC.Gen.Promote.fst` — copy object to major, update forwarding
+- [ ] 3.3 Prove: promoted objects preserve field data (True postconditions — needs strengthening)
 - [ ] 3.4 Prove: all reachable minor objects get promoted
-- [ ] 3.5 Verify GC.Gen.Promote
+- [x] 3.5 Verify GC.Gen.Promote
 
 ### Phase 4: Remembered Set Spec (scan-based)
-- [ ] 4.1 Write `GC.Gen.Remembered.fsti` — find_minor_refs spec
-- [ ] 4.2 Write `GC.Gen.Remembered.fst` — scan major heap for minor pointers
-- [ ] 4.3 Prove: scan finds all inter-generational pointers
-- [ ] 4.4 Verify GC.Gen.Remembered
+- [x] 4.1 Write `GC.Gen.Remembered.fsti` — find_minor_refs spec
+- [x] 4.2 Write `GC.Gen.Remembered.fst` — scan major heap for minor pointers
+- [ ] 4.3 Prove: scan finds all inter-generational pointers (1 admit: scan_complete)
+- [x] 4.4 Verify GC.Gen.Remembered
 
 ### Phase 5: Unified Allocator Spec
-- [ ] 5.1 Write `GC.Gen.Allocator.fsti` — routes by size to minor bump or major free-list
-- [ ] 5.2 Write `GC.Gen.Allocator.fst` — spec functions
-- [ ] 5.3 Verify GC.Gen.Allocator
+- [x] 5.1 Write `GC.Gen.Allocator.fsti` — routes by size to minor bump or major free-list
+- [x] 5.2 Write `GC.Gen.Allocator.fst` — spec functions
+- [x] 5.3 Verify GC.Gen.Allocator (1 admit: small_alloc_goes_to_minor)
 
 ### Phase 6: Composed Correctness
-- [ ] 6.1 Define `gen_gc_correctness` theorem in `GC.Gen.Correctness.fsti`
+- [x] 6.1 Define `gen_gc_correctness` theorem in `GC.Gen.Correctness.fsti`
 - [ ] 6.2 Prove minor collection correctness (copying preserves reachability)
 - [ ] 6.3 Prove composed correctness (minor + major)
-- [ ] 6.4 Verify GC.Gen.Correctness
+- [x] 6.4 Verify GC.Gen.Correctness (placeholder admits)
 
 ### Phase 7: Pulse Implementations
 - [ ] 7.1 `GC.Gen.MinorHeap` impl — bump pointer with array

@@ -15,7 +15,7 @@ open GC.Gen.Base
 /// Initial state
 /// ---------------------------------------------------------------------------
 
-let minor_init (data: minor_heap) : GTot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0}) =
+let minor_init (data: minor_heap) : Tot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0}) =
   { data = data; bump = 0UL }
 
 /// ---------------------------------------------------------------------------
@@ -38,14 +38,11 @@ let make_minor_header (wosize: nat{wosize > 0 /\ wosize < pow2 54})
 #push-options "--z3rlimit 20"
 let minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                      (tag: nat{tag < 256})
-  : GTot minor_alloc_result =
+  : Tot minor_alloc_result =
   if not (minor_can_alloc ms wosize) || U64.v ms.bump % 8 <> 0 then
     { ms_out = ms; obj_addr = 0UL }
   else begin
     assert_norm (pow2 57 < pow2 64);
-    // minor_heap_size < pow2 57 (from fsti refinement)
-    // new_bump <= minor_heap_size (from minor_can_alloc)
-    // Therefore new_bump < pow2 64
     let hdr = make_minor_header wosize tag in
     let new_bump = U64.v ms.bump + (wosize + 1) * 8 in
     let data' = minor_write_word ms.data ms.bump hdr in
@@ -122,5 +119,5 @@ let minor_alloc_preserves_existing (ms: minor_state)
 /// Reset
 /// ---------------------------------------------------------------------------
 
-let minor_reset (ms: minor_state) : GTot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0}) =
+let minor_reset (ms: minor_state) : Tot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0}) =
   { data = ms.data; bump = 0UL }

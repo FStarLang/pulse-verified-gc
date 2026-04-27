@@ -66,7 +66,7 @@ spec/%.checked: spec/%
 	$(FSTAR) $<
 
 impl/%.checked: impl/%
-	$(FSTAR) $<
+	$(FSTAR) --z3rlimit 80 $<
 
 $(OUTPUT_DIR):
 	@mkdir -p $@

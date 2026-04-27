@@ -52,6 +52,12 @@ let minor_read_word (h: minor_heap) (addr: U64.t{U64.v addr + 8 <= minor_heap_si
     (Seq.index h (U64.v addr + 6))
     (Seq.index h (U64.v addr + 7))
 
+/// Total version of minor_read_word (no argument refinement) for use in Pulse specs
+let minor_read_word_t (h: minor_heap) (addr: U64.t) : U64.t =
+  if U64.v addr + 8 <= minor_heap_size && U64.v addr % 8 = 0
+  then minor_read_word h addr
+  else 0UL
+
 /// Decompose a U64 into its low byte
 let minor_byte_of (x: U64.t) : U8.t =
   FStar.Int.Cast.uint64_to_uint8 x
@@ -69,6 +75,12 @@ let minor_write_word (h: minor_heap) (addr: U64.t{U64.v addr + 8 <= minor_heap_s
   let h = Seq.upd h (a + 6) (minor_byte_of (U64.shift_right v 48ul)) in
   let h = Seq.upd h (a + 7) (minor_byte_of (U64.shift_right v 56ul)) in
   h
+
+/// Total version of minor_write_word (no argument refinement)
+let minor_write_word_t (h: minor_heap) (addr: U64.t) (v: U64.t) : minor_heap =
+  if U64.v addr + 8 <= minor_heap_size && U64.v addr % 8 = 0
+  then minor_write_word h addr v
+  else h
 
 /// ---------------------------------------------------------------------------
 /// Minor Heap State
@@ -88,7 +100,7 @@ let minor_wf (ms: minor_state) : prop =
   U64.v ms.bump <= minor_heap_size
 
 /// Initial (empty) minor heap state
-val minor_init (data: minor_heap) : GTot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0})
+val minor_init (data: minor_heap) : Tot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0})
 
 /// ---------------------------------------------------------------------------
 /// Bump Allocation Spec
@@ -114,7 +126,7 @@ let minor_can_alloc (ms: minor_state) (wosize: nat) : bool =
 /// The header is written as: wosize in bits 10-63, white color (0), tag.
 val minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                      (tag: nat{tag < 256})
-  : GTot minor_alloc_result
+  : Tot minor_alloc_result
 
 /// ---------------------------------------------------------------------------
 /// Minor Heap Object Enumeration
@@ -183,4 +195,4 @@ val minor_alloc_preserves_existing (ms: minor_state)
                       minor_read_field res.ms_out x i == minor_read_field ms x i)))
 
 /// Resetting the minor heap (after collection)
-val minor_reset (ms: minor_state) : GTot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0})
+val minor_reset (ms: minor_state) : Tot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0})
