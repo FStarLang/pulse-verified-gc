@@ -119,8 +119,11 @@ fn minor_collect (gh: gen_heap_t)
             pos := bump
           } else {
             // Promote this object
-            assume (pure (U64.v obj_addr >= 8 /\ U64.v obj_addr < minor_heap_size /\
-                          U64.v obj_addr % 8 == 0));
+            // obj_addr = p + 8, p >= 0, p % 8 == 0, p + 8 < bump <= minor_heap_size
+            assert (pure (U64.v obj_addr == U64.v p + 8));
+            assert (pure (U64.v obj_addr >= 8));
+            assert (pure (U64.v obj_addr < minor_heap_size));
+            assert (pure (U64.v obj_addr % 8 == 0));
             let _new = promote_one gh.minor gh.major gh.fp_ref obj_addr;
             // Re-assert arithmetic facts (local vars unchanged by promote_one)
             assert (pure (U64.v (U64.add p total_bytes) <= U64.v bump));
