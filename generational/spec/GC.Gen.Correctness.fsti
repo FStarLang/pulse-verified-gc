@@ -29,6 +29,7 @@ open GC.Gen.Allocator
 
 module MajorCorrectness = GC.Spec.Correctness
 module HeapGraph = GC.Spec.HeapGraph
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
 /// Minor Collection Correctness
@@ -114,7 +115,8 @@ val gen_gc_correct
 /// This means major GC preconditions are preserved through minor collection.
 val minor_preserves_major_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires minor_wf minor /\ well_formed_heap major)
+  : Lemma (requires minor_wf minor /\ well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword))
           (ensures (let res = minor_collect_spec minor major fp roots in
                     // All objects that existed before still exist
                     (forall (x: obj_addr). Seq.mem x (objects 0UL major) ==>
