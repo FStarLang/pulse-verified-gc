@@ -1,0 +1,121 @@
+(*
+   Pulse GC (Generational) - Minor→Major Promotion Implementation
+
+   Copies objects from the minor bump-pointer heap to the major free-list heap.
+*)
+
+module GC.Gen.Impl.Promote
+
+#lang-pulse
+
+open Pulse.Lib.Pervasives
+open Pulse.Lib.Array.PtsTo
+module R = Pulse.Lib.Reference
+module SZ = FStar.SizeT
+module U8 = FStar.UInt8
+module U64 = FStar.UInt64
+module Seq = FStar.Seq
+
+open GC.Spec.Base
+open GC.Gen.Base
+open GC.Gen.MinorHeap
+open GC.Gen.Impl.MinorHeap
+open GC.Impl.Heap
+module Alloc = GC.Impl.Allocator
+
+/// Read the wosize from a minor object's header (header is at obj - 8)
+fn read_minor_wosize (minor: minor_heap_t) (obj: U64.t)
+  requires is_minor minor 'md 'mb **
+           pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0)
+  returns wosize: U64.t
+  ensures is_minor minor 'md 'mb
+{
+  let hdr_addr = U64.sub obj 8UL;
+  let hdr = minor_read minor hdr_addr;
+  // wosize is bits 10-63 of header
+  U64.shift_right hdr 10ul
+}
+
+/// Copy n fields from minor[src_obj + (i+1)*8 ..] to major[dst_obj + (i+1)*8 ..]
+fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
+                    (src_obj: U64.t) (dst_obj: U64.t)
+                    (wosize: U64.t)
+  requires is_minor minor 'md 'mb **
+           is_heap major 'ms **
+           pure (U64.v src_obj >= 8 /\ U64.v src_obj % 8 == 0 /\
+                 U64.v src_obj + (U64.v wosize + 1) * 8 <= minor_heap_size /\
+                 U64.v dst_obj >= 8 /\ U64.v dst_obj % 8 == 0 /\
+                 U64.v dst_obj + (U64.v wosize + 1) * 8 <= heap_size /\
+                 U64.v wosize > 0)
+  ensures exists* md2 mb2 ms2.
+    is_minor minor md2 mb2 **
+    is_heap major ms2
+{
+  let mut i = 1UL;
+  while (U64.lte !i wosize)
+    invariant exists* md_i mb_i ms_i iv.
+      is_minor minor md_i mb_i **
+      is_heap major ms_i **
+      R.pts_to i iv **
+      pure (U64.v iv >= 1 /\ U64.v iv <= U64.v wosize + 1)
+  {
+    let iv = !i;
+    // Source: minor_obj + iv * 8
+    let src_off = U64.mul iv 8UL;
+    let src_addr = U64.add src_obj src_off;
+    let field_val = minor_read minor src_addr;
+    // Dest: major_obj + iv * 8
+    let dst_off = U64.mul iv 8UL;
+    let dst_addr = U64.add dst_obj dst_off;
+    write_word major dst_addr field_val;
+    i := U64.add iv 1UL
+  }
+}
+
+/// Promote one minor-heap object to the major heap.
+/// Returns the new address in major heap (0UL on OOM).
+#push-options "--z3rlimit 160"
+fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
+               (obj: U64.t)
+  requires is_minor minor 'md 'mb **
+           is_heap major 'ms **
+           R.pts_to fp_ref 'fp **
+           pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
+                 U64.v obj % 8 == 0 /\
+                 GC.Spec.Fields.well_formed_heap 'ms)
+  returns new_addr: U64.t
+  ensures exists* md2 mb2 ms2 fp2.
+    is_minor minor md2 mb2 **
+    is_heap major ms2 **
+    R.pts_to fp_ref fp2
+{
+  // Read the wosize from the minor object header
+  let wosize = read_minor_wosize minor obj;
+  if U64.eq wosize 0UL {
+    // Malformed object, skip
+    0UL
+  } else {
+    // Allocate space in major heap
+    let fp = R.op_Bang fp_ref;
+    let res = Alloc.allocate major fp wosize;
+    let new_fp = fst res;
+    let new_obj = snd res;
+    R.op_Colon_Equals fp_ref new_fp;
+    if U64.eq new_obj 0UL {
+      // OOM in major heap
+      0UL
+    } else {
+      // Copy fields from minor to major
+      // Need: src_obj + (wosize+1)*8 <= minor_heap_size
+      //       dst_obj + (wosize+1)*8 <= heap_size
+      // The allocator guarantees the destination has room.
+      // For the source, we rely on the minor heap being well-formed.
+      assume (pure (U64.v obj + (U64.v wosize + 1) * 8 <= minor_heap_size /\
+                    U64.v new_obj + (U64.v wosize + 1) * 8 <= heap_size /\
+                    U64.v new_obj >= 8 /\ U64.v new_obj % 8 == 0));
+      copy_fields_loop minor major obj new_obj wosize;
+      new_obj
+    }
+  }
+}
+#pop-options

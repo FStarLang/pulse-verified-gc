@@ -100,7 +100,7 @@ generational/
 - [x] 7.6 Verify all Pulse impl modules
 
 ### Phase 8: Extraction & Testing
-- [ ] 8.1 KaRaMeL extraction setup (bundles)
+- [x] 8.1 KaRaMeL extraction setup (bundles) — clean C with no externs for byte ops
 - [ ] 8.2 Snapshot + test harness
 - [ ] 8.3 Integration test: alloc small → fill minor → minor_collect → major_collect
 

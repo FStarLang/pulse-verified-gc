@@ -1,2 +1,3 @@
-generational/_output/
-generational/_extract/
+_output/
+_extract/
+*.checked
