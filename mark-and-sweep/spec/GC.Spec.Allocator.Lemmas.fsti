@@ -140,6 +140,15 @@ val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: n
         (ensures (let r = alloc_spec g fp requested_wz in
                   fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
 
+/// **Theorem**: alloc_spec preserves object membership.
+/// Every object that existed before allocation still exists afterward.
+val alloc_spec_preserves_objects : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires well_formed_heap g /\
+                  fl_valid g fp (heap_size / U64.v mword))
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  (forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
+                    Seq.mem x (objects 0UL r.heap_out))))
+
 /// **Theorem**: alloc_spec preserves no_black_objects.
 val alloc_spec_preserves_no_black : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires GC.Spec.Mark.no_black_objects g /\
