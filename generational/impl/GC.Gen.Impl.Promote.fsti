@@ -32,6 +32,7 @@ open GC.Impl.Heap
 /// Returns the new major-heap address (0 if OOM).
 /// ---------------------------------------------------------------------------
 
+inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)
   requires is_minor minor 'md 'mb **

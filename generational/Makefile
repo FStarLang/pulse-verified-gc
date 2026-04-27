@@ -83,22 +83,22 @@ EXTRACT_SPEC_MODULES = GC.Gen.Base
 
 ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_IMPL_MODULES) $(EXTRACT_SPEC_MODULES)))
 
-# Extract impl modules (need higher rlimit)
+# Extract impl modules
+# Note: GC.Gen.Impl.Promote is inline_for_extraction, inlined into GC.Gen.Impl
 $(OUTPUT_DIR)/GC_Gen_Impl_MinorHeap.krml: impl/GC.Gen.Impl.MinorHeap.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --z3rlimit 160 --codegen krml --extract_module GC.Gen.Impl.MinorHeap impl/GC.Gen.Impl.MinorHeap.fst
+	$(FSTAR) --odir $(OUTPUT_DIR) --z3rlimit 160 --split_queries always --codegen krml --extract_module GC.Gen.Impl.MinorHeap impl/GC.Gen.Impl.MinorHeap.fst
 
 $(OUTPUT_DIR)/GC_Gen_Impl.krml: impl/GC.Gen.Impl.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --z3rlimit 160 --codegen krml --extract_module GC.Gen.Impl impl/GC.Gen.Impl.fst
+	$(FSTAR) --odir $(OUTPUT_DIR) --z3rlimit 160 --split_queries always --codegen krml --extract_module GC.Gen.Impl impl/GC.Gen.Impl.fst
 
 $(OUTPUT_DIR)/GC_Gen_Base.krml: spec/GC.Gen.Base.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --codegen krml --extract_module GC.Gen.Base spec/GC.Gen.Base.fst
+	$(FSTAR) --odir $(OUTPUT_DIR) --codegen krml --extract_module GC.Gen.Base spec/GC.Gen.Base.fst
 
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
   -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Base=[rename=GC_Gen_Impl]' \
-  -bundle 'GC.Gen.MinorHeap,GC.Spec.*,GC.Lib.*' \
-  -bundle 'GC.Impl.*' \
+  -bundle 'GC.Gen.Impl.Promote,GC.Gen.MinorHeap,GC.Spec.*,GC.Lib.*,GC.Impl.*' \
   -bundle 'Prims,FStar.*,Pulse.*' \
   $(patsubst %,-no-prefix %,GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Base) \
   -warn-error -2-9-15

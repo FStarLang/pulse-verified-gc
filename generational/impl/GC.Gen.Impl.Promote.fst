@@ -24,6 +24,7 @@ open GC.Impl.Heap
 module Alloc = GC.Impl.Allocator
 
 /// Read the wosize from a minor object's header (header is at obj - 8)
+inline_for_extraction
 fn read_minor_wosize (minor: minor_heap_t) (obj: U64.t)
   requires is_minor minor 'md 'mb **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0)
@@ -37,6 +38,7 @@ fn read_minor_wosize (minor: minor_heap_t) (obj: U64.t)
 }
 
 /// Copy n fields from minor[src_obj + (i+1)*8 ..] to major[dst_obj + (i+1)*8 ..]
+inline_for_extraction
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
                     (src_obj: U64.t) (dst_obj: U64.t)
                     (wosize: U64.t)
@@ -75,6 +77,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 /// Promote one minor-heap object to the major heap.
 /// Returns the new address in major heap (0UL on OOM).
 #push-options "--z3rlimit 160"
+inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)
   requires is_minor minor 'md 'mb **
