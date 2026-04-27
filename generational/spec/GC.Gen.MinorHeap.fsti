@@ -41,6 +41,7 @@ let minor_combine_bytes (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) : U64.t =
   (FStar.Int.Cast.uint8_to_uint64 b7 <<^ 56ul)
 
 /// Read a 64-bit word from the minor heap at a word-aligned offset
+noextract
 let minor_read_word (h: minor_heap) (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0}) : U64.t =
   minor_combine_bytes
     (Seq.index h (U64.v addr))
@@ -53,16 +54,19 @@ let minor_read_word (h: minor_heap) (addr: U64.t{U64.v addr + 8 <= minor_heap_si
     (Seq.index h (U64.v addr + 7))
 
 /// Total version of minor_read_word (no argument refinement) for use in Pulse specs
+noextract
 let minor_read_word_t (h: minor_heap) (addr: U64.t) : U64.t =
   if U64.v addr + 8 <= minor_heap_size && U64.v addr % 8 = 0
   then minor_read_word h addr
   else 0UL
 
 /// Decompose a U64 into its low byte
+noextract
 let minor_byte_of (x: U64.t) : U8.t =
   FStar.Int.Cast.uint64_to_uint8 x
 
 /// Write a 64-bit word to the minor heap at a word-aligned offset
+noextract
 let minor_write_word (h: minor_heap) (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0}) (v: U64.t)
   : minor_heap =
   let a = U64.v addr in
@@ -77,6 +81,7 @@ let minor_write_word (h: minor_heap) (addr: U64.t{U64.v addr + 8 <= minor_heap_s
   h
 
 /// Total version of minor_write_word (no argument refinement)
+noextract
 let minor_write_word_t (h: minor_heap) (addr: U64.t) (v: U64.t) : minor_heap =
   if U64.v addr + 8 <= minor_heap_size && U64.v addr % 8 = 0
   then minor_write_word h addr v

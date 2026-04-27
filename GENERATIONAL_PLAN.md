@@ -92,12 +92,12 @@ generational/
 - [x] 6.4 Verify GC.Gen.Correctness (placeholder admits)
 
 ### Phase 7: Pulse Implementations
-- [ ] 7.1 `GC.Gen.MinorHeap` impl — bump pointer with array
+- [x] 7.1 `GC.Gen.MinorHeap` impl — bump pointer with array (0 admits)
 - [ ] 7.2 `GC.Gen.Promote` impl — copy loop using major allocator
 - [ ] 7.3 `GC.Gen.Remembered` impl — scan loop
-- [ ] 7.4 `GC.Gen.Allocator` impl — size check + dispatch
-- [ ] 7.5 `GC.Gen.fst` — top-level entry points (minor_collect, major_collect, alloc)
-- [ ] 7.6 Verify all Pulse impl modules
+- [x] 7.4 `GC.Gen.Allocator` impl — size check + dispatch (merged into Gen.Impl)
+- [x] 7.5 `GC.Gen.fst` — top-level entry points (gen_alloc, minor_collect) (0 admits)
+- [x] 7.6 Verify all Pulse impl modules
 
 ### Phase 8: Extraction & Testing
 - [ ] 8.1 KaRaMeL extraction setup (bundles)

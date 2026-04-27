@@ -33,6 +33,7 @@ let max_young_wosize_u64 : n:U64.t{U64.v n == max_young_wosize} = 128UL
 /// Address classification
 /// ---------------------------------------------------------------------------
 
+noextract
 let is_minor_addr (a: U64.t) : bool =
   U64.v a >= 0 && U64.v a < minor_heap_size && U64.v a % 8 = 0
 

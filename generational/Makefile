@@ -66,7 +66,7 @@ spec/%.checked: spec/%
 	$(FSTAR) $<
 
 impl/%.checked: impl/%
-	$(FSTAR) --z3rlimit 80 $<
+	$(FSTAR) --z3rlimit 160 $<
 
 $(OUTPUT_DIR):
 	@mkdir -p $@
@@ -75,7 +75,46 @@ $(OUTPUT_DIR):
 verify: $(addsuffix .checked,$(ALL_SRC))
 	@echo "=== all generational modules verified ==="
 
+# --- Extraction (.krml → C) -------------------------------------------------
+
+EXTRACT_DIR = _extract
+
+EXTRACT_IMPL_MODULES = GC.Gen.Impl.MinorHeap GC.Gen.Impl
+EXTRACT_SPEC_MODULES = GC.Gen.Base
+
+ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_IMPL_MODULES) $(EXTRACT_SPEC_MODULES)))
+
+# Extract impl modules (need higher rlimit)
+$(OUTPUT_DIR)/GC_Gen_Impl_MinorHeap.krml: impl/GC.Gen.Impl.MinorHeap.fst.checked | $(OUTPUT_DIR)
+	$(FSTAR) --z3rlimit 160 --codegen krml --extract_module GC.Gen.Impl.MinorHeap impl/GC.Gen.Impl.MinorHeap.fst
+
+$(OUTPUT_DIR)/GC_Gen_Impl.krml: impl/GC.Gen.Impl.fst.checked | $(OUTPUT_DIR)
+	$(FSTAR) --z3rlimit 160 --codegen krml --extract_module GC.Gen.Impl impl/GC.Gen.Impl.fst
+
+$(OUTPUT_DIR)/GC_Gen_Base.krml: spec/GC.Gen.Base.fst.checked | $(OUTPUT_DIR)
+	$(FSTAR) --codegen krml --extract_module GC.Gen.Base spec/GC.Gen.Base.fst
+
+KRML_FLAGS = \
+  -tmpdir $(EXTRACT_DIR) \
+  -skip-compilation -skip-linking \
+  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Base=[rename=GC_Gen_Impl]' \
+  -bundle 'GC.Gen.MinorHeap,GC.Spec.*,GC.Lib.*' \
+  -bundle 'GC.Impl.*' \
+  -bundle 'Prims,FStar.*,Pulse.*' \
+  $(patsubst %,-no-prefix %,GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Base) \
+  -warn-error -2-9-15
+
+$(EXTRACT_DIR):
+	@mkdir -p $@
+
+$(EXTRACT_DIR)/GC_Gen_Impl.c: $(ALL_KRML) | $(EXTRACT_DIR)
+	$(KRML) $(KRML_FLAGS) $(ALL_KRML)
+
+.PHONY: extract
+extract: verify $(EXTRACT_DIR)/GC_Gen_Impl.c
+	@echo "=== Extraction complete: $(EXTRACT_DIR)/GC_Gen_Impl.{c,h} ==="
+
 clean:
 	rm -f spec/*.checked impl/*.checked
 	rm -f .depend .depend.raw
-	rm -rf $(OUTPUT_DIR)
+	rm -rf $(OUTPUT_DIR) $(EXTRACT_DIR)

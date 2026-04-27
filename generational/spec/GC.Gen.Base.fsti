@@ -72,10 +72,12 @@ let minor_obj_addr = a:U64.t{
 /// ---------------------------------------------------------------------------
 
 /// Is a pointer value within the minor heap?
+noextract
 val is_minor_addr (a: U64.t) : bool
 
 /// Is a pointer value within the major heap?  
 /// (Re-export from GC.Spec.Base for convenience)
+noextract
 let is_major_addr (a: U64.t) : bool = is_hp_addr a
 
 /// ---------------------------------------------------------------------------

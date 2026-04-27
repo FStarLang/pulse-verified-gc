@@ -39,7 +39,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
 {
   unfold is_gen_heap;
-  if U64.lte wosize (U64.uint_to_t max_young_wosize) {
+  if U64.lte wosize max_young_wosize_u64 {
     // Small object → try minor heap
     let obj = minor_alloc gh.minor wosize tag;
     if U64.eq obj 0UL {

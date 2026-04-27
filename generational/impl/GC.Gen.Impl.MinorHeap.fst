@@ -33,6 +33,19 @@ let minor_heap_size_sz : (n:SZ.t{SZ.v n == minor_heap_size}) =
 let make_header (wosize: U64.t) (tag: U64.t) : U64.t =
   U64.logor (U64.shift_left wosize 10ul) tag
 
+/// Combine 8 bytes into a U64 (little-endian) — extractable implementation
+inline_for_extraction
+let combine_bytes_impl (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) : (r:U64.t{r == minor_combine_bytes b0 b1 b2 b3 b4 b5 b6 b7}) =
+  let open U64 in
+  FStar.Int.Cast.uint8_to_uint64 b0 |^
+  (FStar.Int.Cast.uint8_to_uint64 b1 <<^ 8ul) |^
+  (FStar.Int.Cast.uint8_to_uint64 b2 <<^ 16ul) |^
+  (FStar.Int.Cast.uint8_to_uint64 b3 <<^ 24ul) |^
+  (FStar.Int.Cast.uint8_to_uint64 b4 <<^ 32ul) |^
+  (FStar.Int.Cast.uint8_to_uint64 b5 <<^ 40ul) |^
+  (FStar.Int.Cast.uint8_to_uint64 b6 <<^ 48ul) |^
+  (FStar.Int.Cast.uint8_to_uint64 b7 <<^ 56ul)
+
 /// ---------------------------------------------------------------------------
 /// Read / Write
 /// ---------------------------------------------------------------------------
@@ -54,7 +67,7 @@ fn minor_read (mh: minor_heap_t) (addr: U64.t)
   let b5 = mh.data.(SZ.add base 5sz);
   let b6 = mh.data.(SZ.add base 6sz);
   let b7 = mh.data.(SZ.add base 7sz);
-  let v = minor_combine_bytes b0 b1 b2 b3 b4 b5 b6 b7;
+  let v = combine_bytes_impl b0 b1 b2 b3 b4 b5 b6 b7;
   fold (is_minor mh 'd 'b);
   v
 }
@@ -89,7 +102,7 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
 /// Allocation
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 80"
+#push-options "--z3rlimit 160"
 fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
@@ -105,7 +118,7 @@ fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
   // (wosize + 1) * 8 = total object bytes (header + fields)
   let obj_bytes = U64.mul (U64.add wosize 1UL) 8UL;
   let new_bump = U64.add bump obj_bytes;
-  if U64.lte new_bump (U64.uint_to_t minor_heap_size) {
+  if U64.lte new_bump minor_heap_size_u64 {
     // Write header at bump
     let hdr = make_header wosize tag;
     let base = SZ.uint64_to_sizet bump;
@@ -127,6 +140,9 @@ fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
     mh.data.(SZ.add base 7sz) <- b7;
     // Advance bump
     R.op_Colon_Equals mh.bump_ref new_bump;
+    assert (pure (U64.v new_bump <= minor_heap_size));
+    assert (pure (U64.v obj_bytes % 8 == 0));
+    assert (pure (U64.v new_bump % 8 == 0));
     let obj_addr = U64.add bump 8UL;
     fold (is_minor mh _ new_bump);
     obj_addr
