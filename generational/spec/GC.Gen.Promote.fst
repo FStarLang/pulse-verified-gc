@@ -30,6 +30,81 @@ let rec copy_fields (minor: minor_state) (major: heap)
       let major' = write_word major (U64.uint_to_t dst_offset) field_val in
       copy_fields minor major' src_obj dst_obj (i + 1) n
 
+/// ---------------------------------------------------------------------------
+/// copy_fields correctness lemmas
+/// ---------------------------------------------------------------------------
+
+/// copy_fields does not modify reads at addresses outside its write range.
+/// Specifically, if address `a` does not overlap with any dst + k*8 for
+/// k in (i, n], then reading `a` after copy_fields gives the original value.
+#push-options "--z3rlimit 20 --fuel 2"
+let rec copy_fields_preserves_other
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  (a: hp_addr)
+  : Lemma
+    (requires
+      U64.v dst_obj % 8 == 0 /\
+      (n > i ==> U64.v dst_obj + n * 8 + 8 <= heap_size) /\
+      (forall (k:nat). i < k /\ k <= n ==>
+        (U64.v a + 8 <= U64.v dst_obj + k * 8 \/ U64.v dst_obj + k * 8 + 8 <= U64.v a)))
+    (ensures
+      read_word (copy_fields minor major src_obj dst_obj i n) a == read_word major a)
+    (decreases (n - i))
+  = if i >= n then ()
+    else begin
+      let field_val = minor_read_field minor src_obj (i + 1) in
+      let dst_offset = U64.v dst_obj + (i + 1) * 8 in
+      assert (dst_offset + 8 <= heap_size);
+      assert (dst_offset % 8 == 0);
+      assert (dst_offset >= 0);
+      let dst_addr : hp_addr = U64.uint_to_t dst_offset in
+      let major' = write_word major dst_addr field_val in
+      // a doesn't overlap with dst_addr (from precondition instantiated at k = i+1)
+      assert (U64.v a + 8 <= dst_offset \/ dst_offset + 8 <= U64.v a);
+      read_write_different major dst_addr a field_val;
+      assert (read_word major' a == read_word major a);
+      // Recursive call also preserves a
+      copy_fields_preserves_other minor major' src_obj dst_obj (i + 1) n a
+    end
+#pop-options
+
+/// After copy_fields from index i to n, reading field j (with i < j <= n) at
+/// address dst + j*8 returns minor_read_field minor src j.
+#push-options "--z3rlimit 20 --fuel 2"
+let rec copy_fields_preserves
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat) (j: nat)
+  : Lemma
+    (requires
+      i < j /\ j <= n /\
+      U64.v dst_obj % 8 == 0 /\
+      U64.v dst_obj + n * 8 + 8 <= heap_size)
+    (ensures
+      (let result = copy_fields minor major src_obj dst_obj i n in
+       let addr_nat = U64.v dst_obj + j * 8 in
+       addr_nat + 8 <= heap_size /\
+       addr_nat % 8 == 0 /\
+       read_word result (U64.uint_to_t addr_nat) == minor_read_field minor src_obj j))
+    (decreases (n - i))
+  = let field_val = minor_read_field minor src_obj (i + 1) in
+    let dst_offset = U64.v dst_obj + (i + 1) * 8 in
+    assert (dst_offset + 8 <= heap_size);
+    assert (dst_offset % 8 == 0);
+    let dst_addr : hp_addr = U64.uint_to_t dst_offset in
+    let major' = write_word major dst_addr field_val in
+    if j = i + 1 then begin
+      // Field j was just written at dst_addr
+      read_write_same major dst_addr field_val;
+      // The recursive call writes at dst + k*8 for k = i+2,...,n
+      // None of these overlap with dst_addr (they are all strictly greater)
+      copy_fields_preserves_other minor major' src_obj dst_obj (i + 1) n dst_addr
+    end else begin
+      // j > i + 1, so field j is written by the recursive call; apply IH
+      copy_fields_preserves minor major' src_obj dst_obj (i + 1) n j
+    end
+#pop-options
+
 /// Promote a single object from minor to major heap.
 /// Uses the major-heap allocator spec to get space, then copies fields.
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
@@ -131,8 +206,91 @@ let minor_collect_spec (minor: minor_state) (major: heap)
     mc_minor = minor_reset minor }
 
 /// ---------------------------------------------------------------------------
-/// Correctness lemmas (placeholders)
+/// Correctness lemmas (matching .fsti declaration order)
 /// ---------------------------------------------------------------------------
+
+/// copy_fields doesn't modify addresses outside the dst region [dst+1*8, dst+n*8].
+/// Proved by delegating to the internal copy_fields_preserves_other.
+#push-options "--z3rlimit 20 --fuel 2"
+let copy_fields_frame
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  (addr: hp_addr)
+  : Lemma
+    (requires
+      dst_fields_valid dst_obj n /\
+      U64.v dst_obj % 8 == 0 /\
+      (U64.v addr + 8 <= U64.v dst_obj + 1 * 8 \/
+       U64.v addr >= U64.v dst_obj + (n + 1) * 8))
+    (ensures
+      read_word (copy_fields minor major src_obj dst_obj i n) addr ==
+      read_word major addr) =
+  copy_fields_preserves_other minor major src_obj dst_obj i n addr
+#pop-options
+
+/// Key lemma: copy_fields correctly copies all fields (starting from index 0).
+/// Proved by instantiating the internal copy_fields_preserves for each j.
+#push-options "--z3rlimit 20 --fuel 2"
+let copy_fields_all_correct
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (n: nat)
+  : Lemma
+    (requires
+      dst_fields_valid dst_obj n /\
+      U64.v dst_obj % 8 == 0)
+    (ensures
+      (let result = copy_fields minor major src_obj dst_obj 0 n in
+       (forall (j:nat). j >= 1 /\ j <= n ==>
+         read_word result (U64.uint_to_t (U64.v dst_obj + j * 8)) ==
+         minor_read_field minor src_obj j))) =
+  if n = 0 then ()
+  else begin
+    assert (U64.v dst_obj + n * 8 + 8 <= heap_size);
+    let rec aux (k: nat)
+      : Lemma (requires k <= n)
+              (ensures (forall (j:nat). j >= 1 /\ j <= k ==>
+                (let result = copy_fields minor major src_obj dst_obj 0 n in
+                 read_word result (U64.uint_to_t (U64.v dst_obj + j * 8)) ==
+                 minor_read_field minor src_obj j)))
+              (decreases k) =
+      if k = 0 then ()
+      else begin
+        aux (k - 1);
+        copy_fields_preserves minor major src_obj dst_obj 0 n k
+      end
+    in
+    aux n
+  end
+#pop-options
+
+/// After promote_object, if allocation succeeds AND the destination
+/// has valid bounds, all field data is preserved.
+#push-options "--z3rlimit 20 --fuel 2"
+let promote_preserves_fields
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires
+             U64.v obj >= 8 /\ U64.v obj < minor_heap_size)
+          (ensures
+             (let res = promote_object minor major obj fp wosize in
+              res.new_addr <> 0UL ==>
+              dst_fields_valid res.new_addr wosize ==>
+              U64.v res.new_addr % 8 == 0 ==>
+              (forall (j:nat). j >= 1 /\ j <= wosize ==>
+                read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8)) ==
+                minor_read_field minor obj j))) =
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+  if alloc_res.obj_out = 0UL then ()
+  else begin
+    // When dst_fields_valid holds and alignment holds, copy_fields_all_correct applies
+    // We need to show: assuming those preconditions, the conclusion follows
+    // Use assume to type-check the call, then let SMT connect the dots
+    if U64.v alloc_res.obj_out % 8 = 0 &&
+       U64.v alloc_res.obj_out + wosize * 8 + 8 <= heap_size then
+      copy_fields_all_correct minor alloc_res.heap_out obj alloc_res.obj_out wosize
+    else ()
+  end
+#pop-options
 
 let minor_collect_preserves_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -143,16 +301,4 @@ let minor_collect_preserves_reachable
           (ensures
              (let res = minor_collect_spec minor major fp roots in
               True)) =
-  ()
-
-let promote_preserves_fields
-  (minor: minor_state) (major: heap) (obj: U64.t)
-  (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires
-             U64.v obj >= 8 /\ U64.v obj < minor_heap_size)
-          (ensures
-             (let res = promote_object minor major obj fp wosize in
-              res.new_addr <> 0UL ==>
-              (forall (i:nat). i >= 1 /\ i <= wosize ==>
-                True))) =
   ()

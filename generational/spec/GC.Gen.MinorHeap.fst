@@ -35,7 +35,7 @@ let make_minor_header (wosize: nat{wosize > 0 /\ wosize < pow2 54})
 /// Bump allocation
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 40"
 let minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                      (tag: nat{tag < 256})
   : Tot minor_alloc_result =
@@ -43,6 +43,12 @@ let minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_
     { ms_out = ms; obj_addr = 0UL }
   else begin
     assert_norm (pow2 57 < pow2 64);
+    // max_young_wosize: (n+1)*8 <= minor_heap_size < pow2 57, so n < pow2 54
+    GC.Gen.Base.max_young_object_fits ();
+    assert ((wosize + 1) * 8 <= minor_heap_size);
+    assert (minor_heap_size < pow2 57);
+    assert_norm (pow2 57 == 8 * pow2 54);
+    assert (wosize < pow2 54);
     let hdr = make_minor_header wosize tag in
     let new_bump = U64.v ms.bump + (wosize + 1) * 8 in
     let data' = minor_write_word ms.data ms.bump hdr in
@@ -85,13 +91,49 @@ let minor_objects (ms: minor_state) : GTot (seq U64.t) =
   else minor_objects_aux ms.data 0 (U64.v ms.bump)
 
 /// ---------------------------------------------------------------------------
-/// Lemmas (admitted for now — will prove in Phase 2.3)
+/// Lemmas
 /// ---------------------------------------------------------------------------
+
+/// Helper: all elements of minor_objects_aux satisfy the bounds
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 80"
+let rec minor_objects_aux_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) 
+                                 (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+                                 (x: U64.t)
+  : Lemma (requires Seq.mem x (minor_objects_aux data pos bump))
+          (ensures U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0)
+          (decreases (bump - pos)) =
+  if pos + 8 > bump then ()
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    if wz = 0 then ()
+    else
+      let next_pos = pos + (wz + 1) * 8 in
+      if next_pos > bump then ()
+      else begin
+        assert (wz >= 1);
+        assert ((wz + 1) * 8 >= 16);
+        let obj_addr = U64.uint_to_t (pos + 8) in
+        // minor_objects_aux returns Seq.cons obj_addr (minor_objects_aux data next_pos bump)
+        // Seq.mem x (Seq.cons a s) iff x = a \/ Seq.mem x s
+        if x = obj_addr then begin
+          assert (U64.v x = pos + 8);
+          assert (pos + 8 >= 8);
+          // next_pos <= bump <= minor_heap_size, and pos + 8 < next_pos
+          assert (pos + 8 < minor_heap_size);
+          assert ((pos + 8) % 8 == 0)
+        end else
+          minor_objects_aux_valid data next_pos bump x
+      end
+  end
+#pop-options
 
 let minor_objects_valid (ms: minor_state) (x: U64.t)
   : Lemma (requires Seq.mem x (minor_objects ms))
           (ensures U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0) =
-  admit ()
+  if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
+  else minor_objects_aux_valid ms.data 0 (U64.v ms.bump) x
 
 let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256})

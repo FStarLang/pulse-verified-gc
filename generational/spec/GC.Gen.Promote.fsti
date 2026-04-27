@@ -45,6 +45,11 @@ let extend_forwarding (fwd: forwarding_map) (minor_addr: U64.t) (major_addr: U64
 /// Promote a Single Object
 /// ---------------------------------------------------------------------------
 
+/// Copy `n` fields (words) from minor heap at `src_obj + (i+1)*8` to major heap at `dst + (i+1)*8`
+val copy_fields (minor: minor_state) (major: heap) 
+                (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  : GTot heap
+
 /// Result of promoting one object
 noeq
 type promote_one_result = {
@@ -135,20 +140,43 @@ val minor_collect_spec (minor: minor_state) (major: heap)
 /// Correctness Properties
 /// ---------------------------------------------------------------------------
 
-/// After minor collection, every object that was reachable from roots
-/// in (minor ∪ major) is present in the post-collection major heap.
-val minor_collect_preserves_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (obj: U64.t)
-  : Lemma (requires
-             minor_wf minor /\
-             Seq.mem obj (minor_objects minor))  // obj is in minor heap
-          (ensures
-             (let res = minor_collect_spec minor major fp roots in
-              // If obj was live, it's now in the major heap at fwd_map(obj)
-              True))  // Placeholder — refined when we define reachability
+/// Helper: all destination addresses in copy_fields are valid hp_addr
+let dst_fields_valid (dst_obj: U64.t) (n: nat) : prop =
+  (forall (j:nat). j >= 1 /\ j <= n ==>
+    (U64.v dst_obj + j * 8 + 8 <= heap_size /\
+     (U64.v dst_obj + j * 8) % 8 == 0))
 
-/// After promotion, field data is preserved
+/// copy_fields doesn't modify addresses outside the dst region
+val copy_fields_frame
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  (addr: hp_addr)
+  : Lemma
+    (requires
+      dst_fields_valid dst_obj n /\
+      U64.v dst_obj % 8 == 0 /\
+      (U64.v addr + 8 <= U64.v dst_obj + 1 * 8 \/
+       U64.v addr >= U64.v dst_obj + (n + 1) * 8))
+    (ensures
+      read_word (copy_fields minor major src_obj dst_obj i n) addr ==
+      read_word major addr)
+
+/// Key lemma: copy_fields correctly copies all fields
+val copy_fields_all_correct
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (n: nat)
+  : Lemma
+    (requires
+      dst_fields_valid dst_obj n /\
+      U64.v dst_obj % 8 == 0)
+    (ensures
+      (let result = copy_fields minor major src_obj dst_obj 0 n in
+       (forall (j:nat). j >= 1 /\ j <= n ==>
+         read_word result (U64.uint_to_t (U64.v dst_obj + j * 8)) ==
+         minor_read_field minor src_obj j)))
+
+/// After promotion, field data is preserved: every field of the promoted
+/// object in the major heap equals the corresponding minor-heap field.
 val promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
@@ -157,6 +185,20 @@ val promote_preserves_fields
           (ensures
              (let res = promote_object minor major obj fp wosize in
               res.new_addr <> 0UL ==>
-              (forall (i:nat). i >= 1 /\ i <= wosize ==>
-                // Field data matches (modulo pointer forwarding)
-                True)))  // Placeholder — refined with forwarding map
+              dst_fields_valid res.new_addr wosize ==>
+              U64.v res.new_addr % 8 == 0 ==>
+              (forall (j:nat). j >= 1 /\ j <= wosize ==>
+                read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8)) ==
+                minor_read_field minor obj j)))
+
+/// After minor collection, every object that was reachable from roots
+/// in (minor + major) is present in the post-collection major heap.
+val minor_collect_preserves_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: U64.t)
+  : Lemma (requires
+             minor_wf minor /\
+             Seq.mem obj (minor_objects minor))
+          (ensures
+             (let res = minor_collect_spec minor major fp roots in
+              True))  // TODO: strengthen when reachability is defined

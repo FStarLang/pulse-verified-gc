@@ -1,4 +1,121 @@
-# Generational Garbage Collector — Implementation Plan
+# Generational Garbage Collector — Revised Plan
+
+## Current State Assessment
+
+The implementation is structurally complete but has **NO meaningful correctness guarantees**:
+
+1. **`minor_collect` promotes ALL objects** linearly — no root tracing
+2. **Spec lemmas are vacuous** — `ensures True` everywhere
+3. **`Impl.fsti` postcondition is trivial** — only guarantees `bump == 0`
+4. **`update_major_pointers` is a no-op placeholder**
+5. **6 admits + 3 assumes remain**
+
+## Revised Approach
+
+### Design Decision: Conservative Promotion (v1)
+
+For v1, we keep the current "promote everything" strategy, which is **sound** (it's a
+superset of promoting only reachable objects). The correctness theorem states:
+
+> After `minor_collect`, every minor-heap object's field data exists verbatim
+> at a fresh major-heap address, existing major objects are untouched, and
+> the minor heap is reset.
+
+This matches what OCaml's minor GC actually does when the minor heap is small — it's
+fast to just copy everything. Root tracing is v2.
+
+### Correctness Properties to Prove
+
+**P1 (Field Preservation):** For each promoted object with wosize `w`, for all `1 <= i <= w`:
+```
+read_word major_out (fwd(obj) + i*8) == minor_read_field minor_pre obj i
+```
+
+**P2 (Major Heap Monotonicity):** Pre-existing major objects survive unchanged:
+```
+∀ x ∈ objects(major_pre). x ∈ objects(major_post) ∧ fields_unchanged x
+```
+
+**P3 (Well-Formedness):** `well_formed_heap major_post`
+
+**P4 (Complete Reset):** `bump_post == 0`
+
+## Task Breakdown
+
+### Phase A: Prove `promote_preserves_fields` [spec/GC.Gen.Promote]
+
+**Goal:** For `promote_object minor major obj fp wosize`:
+```
+res.new_addr <> 0 ==>
+  (∀ i. 1 <= i <= wosize ==>
+    read_word res.major_out (U64.v res.new_addr + i*8) == minor_read_field minor obj i)
+```
+
+**Approach:**
+- Prove `copy_fields` by induction: after `copy_fields minor major src dst i n`,
+  for all `j` with `i <= j < n`, the field at `dst + (j+1)*8` equals `minor_read_field minor src (j+1)`
+- Use `write_word`/`read_word` round-trip lemma from `GC.Spec.Heap`
+- Key lemma: `write_word` at address `a` doesn't affect `read_word` at address `b ≠ a`
+
+**Status:** NOT STARTED
+
+### Phase B: Prove `minor_objects_valid` [spec/GC.Gen.MinorHeap]
+
+**Goal:** Every address in `minor_objects ms` satisfies `v >= 8 ∧ v < minor_heap_size ∧ v % 8 == 0`
+
+**Approach:**
+- Induction on `minor_objects_aux data pos bump`
+- Each obj addr is `pos + 8`; from guards: `pos + 8 <= bump <= minor_heap_size` and `pos % 8 == 0`
+- Need helper: `Seq.mem x (Seq.cons a rest) ==> x == a \/ Seq.mem x rest`
+
+**Status:** NOT STARTED
+
+### Phase C: Prove `minor_preserves_major_objects` [spec/GC.Gen.Correctness]
+
+**Goal:** After `minor_collect_spec`, all pre-existing major objects still exist with same fields.
+
+**Approach:**
+- `promote_all_spec` only calls `promote_object` which only calls `alloc_spec` + `copy_fields`
+- `alloc_spec` writes header into a free block — doesn't touch existing non-free objects
+- `copy_fields` writes into the freshly allocated region — disjoint from existing objects
+- Need: `alloc_spec_preserves_existing_objects` (may exist in mark-and-sweep spec)
+- Need: `write_word` at addr in [new_obj, new_obj+wosize*8] doesn't affect objects elsewhere
+
+**Status:** NOT STARTED
+
+### Phase D: Remove assumes from Pulse impl [impl/GC.Gen.Impl.Promote.fst]
+
+**Goal:** Eliminate 2 assumes + 1 assume in GC.Gen.Impl.fst
+
+1. `well_formed_heap 'ms` — Derive from allocator's postcondition:
+   `alloc_spec` preserves `well_formed_heap` (already proven in M&S)
+2. Bounds assume in copy_fields_loop — Derive from allocator's postcondition:
+   `alloc_spec` guarantees `new_obj + (wosize+1)*8 <= heap_size`
+3. `obj_addr >= 8` in minor_collect — Trivially true from `obj_addr = p + 8` where `p >= 0`
+
+**Status:** NOT STARTED
+
+### Phase E: Strengthen `Impl.fsti` postconditions
+
+**Goal:** Connect Pulse implementation to pure spec
+
+- `promote_one` postcondition references `promote_object` spec
+- `minor_collect` postcondition references `minor_collect_spec`
+- Caller can then use spec-level lemmas to reason about the result
+
+**Status:** NOT STARTED
+
+### Phase F: End-to-end `gen_gc_correct`
+
+**Goal:** Compose minor + major correctness into single theorem
+
+**Status:** NOT STARTED (depends on A-E)
+
+## Priority Order
+
+Start with **Phase A** (field preservation) since it's the most impactful correctness
+property and is self-contained in pure F*. Then **B** (minor_objects_valid), then **D**
+(removing assumes), then **C** and **E** in parallel.
 
 ## Overview
 
