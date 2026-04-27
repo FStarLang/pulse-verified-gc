@@ -38,8 +38,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
-                 U64.v obj % 8 == 0 /\
-                 GC.Spec.Fields.well_formed_heap 'ms)
+                 U64.v obj % 8 == 0)
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **

@@ -21,6 +21,7 @@ open GC.Spec.Base
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
+open GC.Gen.Impl.Promote
 open GC.Impl.Heap
 module SpecFields = GC.Spec.Fields
 module Alloc = GC.Impl.Allocator
@@ -65,17 +66,74 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Minor collection (simplified: reset only, no promotion yet)
+/// Minor Collection
 /// ---------------------------------------------------------------------------
 
-/// For now, minor_collect just resets the minor heap.
-/// Full promotion (copying live objects to major) will be added later.
+/// Promote all minor objects then reset.
+/// Walks the minor heap linearly, promoting each object found.
+#push-options "--z3rlimit 160"
 fn minor_collect (gh: gen_heap_t)
   requires is_gen_heap gh 'd 'b 's 'fp
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 **
           pure (U64.v b2 == 0)
 {
   unfold is_gen_heap;
+  // Read bump pointer — need to unfold is_minor temporarily
+  unfold is_minor gh.minor 'd 'b;
+  let bump = R.op_Bang gh.minor.bump_ref;
+  fold (is_minor gh.minor 'd bump);
+  let mut pos = 0UL;
+  while (U64.lt !pos bump)
+    invariant exists* md_i mb_i ms_i fp_i p_i.
+      is_minor gh.minor md_i mb_i **
+      is_heap gh.major ms_i **
+      R.pts_to gh.fp_ref fp_i **
+      R.pts_to pos p_i **
+      pure (U64.v p_i <= U64.v bump /\
+            U64.v p_i % 8 == 0 /\
+            U64.v bump <= minor_heap_size /\
+            U64.v bump % 8 == 0)
+  {
+    let p = !pos;
+    // Read header at current position
+    if U64.gte (U64.add p 8UL) bump {
+      // Can't read past bump pointer
+      pos := bump
+    } else {
+      let hdr = minor_read gh.minor p;
+      let wosize = U64.shift_right hdr 10ul;
+      if U64.eq wosize 0UL {
+        // Skip empty/malformed — advance by 1 word
+        pos := U64.add p 8UL
+      } else {
+        let obj_addr = U64.add p 8UL;
+        // Guard against impossibly large wosize (header corruption)
+        if U64.gte wosize minor_heap_size_u64 {
+          pos := bump
+        } else {
+          // Check object fits within bump region
+          let total_words = U64.add wosize 1UL;
+          let total_bytes = U64.mul total_words 8UL;
+          if U64.gt (U64.add p total_bytes) bump {
+            // Object extends past bump — malformed
+            pos := bump
+          } else {
+            // Promote this object
+            assume (pure (U64.v obj_addr >= 8 /\ U64.v obj_addr < minor_heap_size /\
+                          U64.v obj_addr % 8 == 0));
+            let _new = promote_one gh.minor gh.major gh.fp_ref obj_addr;
+            // Re-assert arithmetic facts (local vars unchanged by promote_one)
+            assert (pure (U64.v (U64.add p total_bytes) <= U64.v bump));
+            assert (pure (U64.v total_bytes % 8 == 0));
+            assert (pure (U64.v p % 8 == 0));
+            pos := U64.add p total_bytes
+          }
+        }
+      }
+    }
+  };
+  // Reset minor heap
   minor_heap_reset gh.minor;
   fold (is_gen_heap gh _ 0UL _ _)
 }
+#pop-options

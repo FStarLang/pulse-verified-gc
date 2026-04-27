@@ -18,7 +18,6 @@ OUTPUT_DIR  = _output
 
 FSTAR_FLAGS = \
   --cache_checked_modules \
-  --odir $(OUTPUT_DIR) \
   --warn_error -321 \
   --report_assumes warn \
   --already_cached 'Prims FStar Pulse PulseCore -GC' \
@@ -66,7 +65,7 @@ spec/%.checked: spec/%
 	$(FSTAR) $<
 
 impl/%.checked: impl/%
-	$(FSTAR) --z3rlimit 160 $<
+	$(FSTAR) --z3rlimit 160 --split_queries always $<
 
 $(OUTPUT_DIR):
 	@mkdir -p $@

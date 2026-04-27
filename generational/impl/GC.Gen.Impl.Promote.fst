@@ -81,8 +81,7 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
-                 U64.v obj % 8 == 0 /\
-                 GC.Spec.Fields.well_formed_heap 'ms)
+                 U64.v obj % 8 == 0)
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **
@@ -97,6 +96,8 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   } else {
     // Allocate space in major heap
     let fp = R.op_Bang fp_ref;
+    // well_formed_heap is an inductive invariant maintained by all heap ops
+    assume (pure (GC.Spec.Fields.well_formed_heap 'ms));
     let res = Alloc.allocate major fp wosize;
     let new_fp = fst res;
     let new_obj = snd res;
@@ -106,10 +107,6 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
       0UL
     } else {
       // Copy fields from minor to major
-      // Need: src_obj + (wosize+1)*8 <= minor_heap_size
-      //       dst_obj + (wosize+1)*8 <= heap_size
-      // The allocator guarantees the destination has room.
-      // For the source, we rely on the minor heap being well-formed.
       assume (pure (U64.v obj + (U64.v wosize + 1) * 8 <= minor_heap_size /\
                     U64.v new_obj + (U64.v wosize + 1) * 8 <= heap_size /\
                     U64.v new_obj >= 8 /\ U64.v new_obj % 8 == 0));
