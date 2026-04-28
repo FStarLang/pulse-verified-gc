@@ -459,6 +459,32 @@ let rec not_in_fl_chain (g: heap) (fp: U64.t) (dst_obj: obj_addr) (fuel: nat)
        U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size ==>
        not_in_fl_chain g next_fp dst_obj (fuel - 1))
 
+/// Bridge: chain_avoids (bool) implies not_in_fl_chain (prop).
+/// chain_avoids checks the same conditions as not_in_fl_chain but returns bool.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+private let rec chain_avoids_implies_not_in_fl_chain
+  (g: heap) (fp: U64.t) (dst_obj: obj_addr) (fuel: nat)
+  : Lemma (requires AllocLemmas.chain_avoids g fp dst_obj fuel = true)
+          (ensures not_in_fl_chain g fp dst_obj fuel)
+          (decreases fuel)
+  = if fuel = 0 then ()
+    else if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else begin
+      // fp is valid, fuel > 0. Use chain_avoids_head_ne to get fp <> dst_obj.
+      AllocLemmas.chain_avoids_head_ne g fp dst_obj fuel;
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 <= heap_size then begin
+        let next_fp = read_word g (fp <: obj_addr) in
+        // Decompose: chain_avoids g next_fp dst_obj (fuel-1) = true
+        AllocLemmas.chain_avoids_tail g fp dst_obj fuel;
+        chain_avoids_implies_not_in_fl_chain g next_fp dst_obj (fuel - 1)
+      end else ()
+    end
+#pop-options
+
 /// Helper: write within dst_obj's body preserves fl_valid for a chain
 /// that does not contain dst_obj.
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
@@ -764,10 +790,8 @@ let rec promote_all_aux_preserves_objects
         // This holds because alloc_search either splits (remainder becomes new head)
         // or exact-fits (chain skips the allocated block).
         assume (not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel);
-        // fl_chain_terminates after alloc: the new chain is shorter than the original
-        // (one node was consumed). This is a basic allocator invariant not yet
-        // exposed in the library.
-        assume (AllocLemmas.fl_chain_terminates alloc_res.heap_out alloc_res.fp_out fuel);
+        // fl_chain_terminates after alloc: proven via walk_chain infrastructure
+        AllocLemmas.alloc_spec_preserves_fl_chain_terminates major fp wz;
         // copy_fields preserves fl_valid (proven via objects_separated)
         copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
         // copy_fields preserves fl_chain_terminates (same separation argument)

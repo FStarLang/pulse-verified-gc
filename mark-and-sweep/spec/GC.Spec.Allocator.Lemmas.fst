@@ -3169,6 +3169,23 @@ let chain_avoids_unfold_step (g: heap) (fp excl: U64.t) (steps: nat)
                    chain_avoids g (read_word g (fp <: obj_addr)) excl (steps - 1))
   = ()
 
+/// chain_avoids_head_ne: extract fp ≠ excl from chain_avoids = true.
+let chain_avoids_head_ne (g: heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\ fuel > 0)
+          (ensures fp <> excl)
+  = ()
+
+/// chain_avoids_tail: one-step decomposition — successor chain also avoids excl.
+let chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\ fuel > 0 /\
+                    U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
+          (ensures chain_avoids g (read_word g (fp <: obj_addr)) excl (fuel - 1) = true)
+  = ()
+
 /// first_hit: if chain_avoids = false (i.e., dst_obj IS in chain), gives the position where
 /// dst_obj first appears.
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"

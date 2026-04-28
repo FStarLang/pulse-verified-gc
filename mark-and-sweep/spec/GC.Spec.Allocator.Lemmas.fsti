@@ -204,6 +204,24 @@ val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: n
 /// chain_avoids: boolean test for "fp chain does not visit excl".
 val chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool
 
+/// chain_avoids_head_ne: if chain_avoids is true and fp is a valid chain node with fuel > 0,
+/// then fp ≠ excl.
+val chain_avoids_head_ne (g: heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\ fuel > 0)
+          (ensures fp <> excl)
+
+/// chain_avoids_tail: one-step decomposition of chain_avoids.
+/// When chain_avoids is true at a valid node with hd+16 <= heap_size,
+/// the successor chain also avoids excl.
+val chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\ fuel > 0 /\
+                    U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
+          (ensures chain_avoids g (read_word g (fp <: obj_addr)) excl (fuel - 1) = true)
+
 /// first_hit: position of first occurrence of dst_obj when chain_avoids = false.
 val first_hit (g: heap) (fp dst_obj: U64.t) (fuel: nat) : Tot nat
 
