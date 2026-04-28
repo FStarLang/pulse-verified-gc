@@ -132,6 +132,24 @@ val fl_chain_terminates_step (g: heap) (fp: U64.t) (steps: nat)
                      fl_chain_terminates g (read_word g (fp <: obj_addr)) (steps - 1)))
           (ensures fl_chain_terminates g fp steps)
 
+/// Elimination: if fl_chain_terminates and fp is valid with hd+16 <= heap_size,
+/// then the tail also terminates.
+val fl_chain_terminates_elim (g: heap) (fp: U64.t) (steps: nat)
+  : Lemma (requires fl_chain_terminates g fp steps /\
+                    steps > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
+          (ensures fl_chain_terminates g (read_word g (fp <: obj_addr)) (steps - 1) = true)
+
+/// Valid fp with 0 steps never terminates.
+val fl_chain_terminates_valid_zero (g: heap) (fp: U64.t)
+  : Lemma (requires U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0)
+          (ensures fl_chain_terminates g fp 0 = false)
+
 /// alloc_spec preserves fl_valid: the free-list chain remains valid after allocation.
 val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\

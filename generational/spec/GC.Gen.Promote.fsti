@@ -233,7 +233,8 @@ val promote_all_preserves_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires
              well_formed_heap major /\
-             GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword))
+             GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             GC.Spec.Allocator.Lemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures
              (let res = promote_all_spec minor major fp live_set in
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>

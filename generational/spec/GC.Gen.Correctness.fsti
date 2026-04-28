@@ -116,7 +116,8 @@ val gen_gc_correct
 val minor_preserves_major_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires minor_wf minor /\ well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures (let res = minor_collect_spec minor major fp roots in
                     // All objects that existed before still exist
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>

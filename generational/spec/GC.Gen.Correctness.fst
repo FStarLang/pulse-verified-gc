@@ -48,7 +48,8 @@ let gen_gc_correct
 let minor_preserves_major_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires minor_wf minor /\ well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures (let res = minor_collect_spec minor major fp roots in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.mc_major)))) =

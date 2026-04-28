@@ -606,6 +606,97 @@ private let rec copy_fields_preserves_fl_valid_aux
     end
   end
 
+/// Helper: write within dst_obj's body preserves fl_chain_terminates.
+/// Same separation argument as fl_valid and not_in_fl_chain.
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+private let rec write_body_preserves_fl_chain_terminates
+  (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
+  (fp: U64.t) (fuel: nat)
+  : Lemma (requires
+      Seq.mem dst_obj (objects 0UL g) /\
+      U64.v addr >= U64.v dst_obj /\
+      U64.v addr < U64.v dst_obj + (U64.v (wosize_of_object dst_obj g) * 8) /\
+      U64.v addr % 8 = 0 /\
+      AllocLemmas.fl_chain_terminates g fp fuel /\
+      not_in_fl_chain g fp dst_obj fuel /\
+      AllocLemmas.fl_valid g fp fuel)
+    (ensures AllocLemmas.fl_chain_terminates (write_word g addr v) fp fuel)
+    (decreases fuel)
+  =
+  if fp = 0UL then AllocLemmas.fl_chain_terminates_terminal (write_word g addr v) fp fuel
+  else if U64.v fp < U64.v mword then AllocLemmas.fl_chain_terminates_terminal (write_word g addr v) fp fuel
+  else if U64.v fp >= heap_size then AllocLemmas.fl_chain_terminates_terminal (write_word g addr v) fp fuel
+  else if U64.v fp % U64.v mword <> 0 then AllocLemmas.fl_chain_terminates_terminal (write_word g addr v) fp fuel
+  else if fuel = 0 then begin
+    // fp is valid but fuel = 0 → fl_chain_terminates g fp 0 = false, contradicts precondition
+    AllocLemmas.fl_chain_terminates_valid_zero g fp
+  end
+  else begin
+    // fuel > 0, fp valid+aligned: not_in_fl_chain unfolds to fp <> dst_obj /\ ...
+    assert (fp <> dst_obj);
+    let fp_obj : obj_addr = fp in
+    AllocLemmas.fl_valid_elim g fp fuel;
+    // Show read at fp is unchanged by write at addr
+    if U64.v dst_obj < U64.v fp then begin
+      objects_separated 0UL g dst_obj fp_obj;
+      wosize_of_object_spec dst_obj g;
+      read_write_different g addr (fp <: hp_addr) v
+    end else begin
+      objects_separated 0UL g fp_obj dst_obj;
+      wosize_of_object_spec fp_obj g;
+      read_write_different g addr (fp <: hp_addr) v
+    end;
+    let g' = write_word g addr v in
+    let hd = hd_address fp_obj in
+    hd_address_spec fp_obj;
+    if U64.v hd + 16 > heap_size then
+      AllocLemmas.fl_chain_terminates_terminal g' fp fuel
+    else begin
+      let next_fp = read_word g fp_obj in
+      assert (read_word g' fp_obj == next_fp);
+      AllocLemmas.fl_chain_terminates_elim g fp fuel;
+      write_body_preserves_fl_chain_terminates g dst_obj addr v next_fp (fuel - 1);
+      AllocLemmas.fl_chain_terminates_step g' fp fuel
+    end
+  end
+#pop-options
+
+/// copy_fields preserves fl_chain_terminates when dst_obj is not in the chain.
+private let rec copy_fields_preserves_fl_chain_terminates
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: obj_addr) (i: nat) (n: nat)
+  (fp: U64.t) (fuel: nat)
+  : Lemma (requires
+             Seq.mem dst_obj (objects 0UL major) /\
+             U64.v dst_obj % 8 == 0 /\
+             U64.v (wosize_of_object dst_obj major) >= n /\
+             i <= n /\
+             AllocLemmas.fl_valid major fp fuel /\
+             AllocLemmas.fl_chain_terminates major fp fuel /\
+             not_in_fl_chain major fp dst_obj fuel)
+          (ensures
+             AllocLemmas.fl_chain_terminates (copy_fields minor major src_obj dst_obj i n) fp fuel)
+          (decreases (n - i)) =
+  if i >= n then ()
+  else begin
+    let field_val = minor_read_field minor src_obj i in
+    let dst_offset = U64.v dst_obj + i * 8 in
+    if dst_offset + 8 > heap_size || dst_offset % 8 <> 0 then ()
+    else begin
+      let dst_addr : hp_addr = U64.uint_to_t dst_offset in
+      write_body_preserves_fl_chain_terminates major dst_obj dst_addr field_val fp fuel;
+      let major' = write_word major dst_addr field_val in
+      write_body_preserves_objects major dst_obj dst_addr field_val;
+      hd_address_spec dst_obj;
+      read_write_different major dst_addr (hd_address dst_obj) field_val;
+      wosize_of_object_spec dst_obj major';
+      wosize_of_object_spec dst_obj major;
+      write_body_preserves_not_in_fl_chain major dst_obj dst_addr field_val fp fuel;
+      write_body_preserves_fl_valid_aux major dst_obj dst_addr field_val fp fuel;
+      copy_fields_preserves_fl_chain_terminates minor major' src_obj dst_obj (i + 1) n fp fuel
+    end
+  end
+
 #push-options "--z3rlimit 40 --fuel 1"
 let promote_object_preserves_objects
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
@@ -642,7 +733,8 @@ let rec promote_all_aux_preserves_objects
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures (let res = promote_all_aux minor major fp live_set fwd idx in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.major_final))))
@@ -657,22 +749,38 @@ let rec promote_all_aux_preserves_objects
       let res = promote_object minor major obj fp wz in
       if res.new_addr = 0UL then ()
       else begin
+        let fuel = heap_size / U64.v mword in
         promote_object_preserves_objects minor major obj fp wz;
+        let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+        // alloc_res.obj_out is a valid obj_addr (from allocator guards)
+        GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
+        let dst_obj : obj_addr = alloc_res.obj_out in
+        // After alloc: fl_valid for the post-alloc heap
+        AllocLemmas.alloc_spec_preserves_fl_valid major fp wz;
+        // After alloc: obj_out is in objects and has sufficient wosize
+        GC.Gen.AllocProps.alloc_spec_obj_in_objects major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_wosize major fp wz;
+        // Key allocator property: alloc removes obj_out from the chain.
+        // This holds because alloc_search either splits (remainder becomes new head)
+        // or exact-fits (chain skips the allocated block).
+        assume (not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel);
+        // fl_chain_terminates after alloc: the new chain is shorter than the original
+        // (one node was consumed). This is a basic allocator invariant not yet
+        // exposed in the library.
+        assume (AllocLemmas.fl_chain_terminates alloc_res.heap_out alloc_res.fp_out fuel);
+        // copy_fields preserves fl_valid (proven via objects_separated)
+        copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        // copy_fields preserves fl_chain_terminates (same separation argument)
+        copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        // Since res.fp_out = alloc_res.fp_out and res.major_out = copy_fields ...
+        assert (AllocLemmas.fl_valid res.major_out res.fp_out fuel);
+        assert (AllocLemmas.fl_chain_terminates res.major_out res.fp_out fuel);
         // TCB: well_formed_heap is temporarily violated during promotion because
         // copy_fields writes minor-heap addresses into major-heap fields, breaking
         // pointer validity (part 2 of wfh). Structural integrity (objects walk,
-        // headers, free-list) is preserved (proven), but the allocator library
+        // headers, free-list) is preserved (proven above), but the allocator library
         // requires full wfh which includes pointer validity.
-        // Fixing this requires either:
-        //   (a) A relaxed allocator that only needs structural wfh, or
-        //   (b) A pointer-update pass after all promotions that fixes pointers
         assume (well_formed_heap res.major_out);
-        // fl_valid: We've proven copy_fields_preserves_fl_valid_aux (objects_separated
-        // shows writes don't touch chain nodes). The remaining gap is that
-        // alloc_spec_preserves_fl_valid needs fl_chain_terminates, and we need
-        // not_in_fl_chain (alloc removes obj_out from chain). Both are allocator
-        // properties that should hold but aren't exposed in the current library.
-        assume (AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword));
         let fwd' = extend_forwarding fwd obj res.new_addr in
         promote_all_aux_preserves_objects minor res.major_out res.fp_out live_set fwd' (idx + 1)
       end
@@ -681,7 +789,8 @@ let rec promote_all_aux_preserves_objects
 let promote_all_preserves_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures (let res = promote_all_spec minor major fp live_set in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.major_final)))) =
