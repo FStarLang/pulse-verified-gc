@@ -3,10 +3,10 @@
 # The mark-and-sweep/ Makefile builds all modules (common/ + mark-and-sweep/)
 # in a single incremental build via `fstar.exe --dep full`.
 #
-# Run `./setup.sh` once after cloning to install the F* toolchain.
+# Run `./setup.sh` once after cloning to build the F* toolchain from source.
 #
 # Usage:
-#   ./setup.sh      Install F* binary release
+#   ./setup.sh      Build F* from source (one-time)
 #   make            Verify all modules (common/ + mark-and-sweep/)
 #   make extract    Verify + extract mark-and-sweep to C
 #   make snapshot   Verify + extract + create snapshot/
