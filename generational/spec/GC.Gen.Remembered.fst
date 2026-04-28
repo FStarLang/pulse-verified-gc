@@ -73,9 +73,81 @@ let minor_roots_from_major (major: heap) : GTot (seq U64.t) =
   extract_targets (scan_major_for_minor_refs major) 0
 
 /// ---------------------------------------------------------------------------
-/// Correctness (admitted — to be proven)
+/// Helper lemmas for correctness proof
 /// ---------------------------------------------------------------------------
 
+/// extract_targets includes the .rem_target of any element at a known index
+#push-options "--fuel 1 --z3rlimit 20"
+let rec extract_targets_mem (refs: seq remembered_ref) (idx: nat) (j: nat)
+  : Lemma (requires j >= idx /\ j < Seq.length refs)
+    (ensures Seq.mem (Seq.index refs j).rem_target (extract_targets refs idx))
+    (decreases (Seq.length refs - idx)) =
+  if idx = j then
+    Seq.mem_cons (Seq.index refs j).rem_target (extract_targets refs (idx + 1))
+  else begin
+    extract_targets_mem refs (idx + 1) j;
+    Seq.mem_cons (Seq.index refs idx).rem_target (extract_targets refs (idx + 1))
+  end
+#pop-options
+
+/// scan_object_fields produces an entry whose .rem_target is the target field value.
+/// Returns the concrete index of that entry as a Ghost witness.
+#push-options "--fuel 2 --z3rlimit 40"
+let rec scan_object_fields_witness (major: heap) (obj: obj_addr) (wosize: nat) (i: nat) (field_idx: nat)
+  : Ghost nat
+    (requires
+      i <= field_idx - 1 /\ field_idx - 1 < wosize /\
+      U64.v obj + field_idx * 8 + 8 <= heap_size /\
+      (U64.v obj + field_idx * 8) % 8 == 0 /\
+      is_minor_addr (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
+    (ensures (fun j ->
+      let result = scan_object_fields major obj wosize i in
+      let target = read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) in
+      j < Seq.length result /\ (Seq.index result j).rem_target == target))
+    (decreases (wosize - i)) =
+  let target = read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) in
+  let field_offset_i = U64.v obj + (i + 1) * 8 in
+  // Intermediate field offsets are valid since (i+1) <= field_idx
+  assert (field_offset_i + 8 <= U64.v obj + field_idx * 8 + 8);
+  assert (field_offset_i + 8 <= heap_size);
+  if i = field_idx - 1 then
+    0
+  else begin
+    let rest_witness = scan_object_fields_witness major obj wosize (i + 1) field_idx in
+    let field_val = read_word major (U64.uint_to_t field_offset_i) in
+    if is_minor_addr field_val then
+      rest_witness + 1
+    else
+      rest_witness
+  end
+#pop-options
+
+/// If an entry at index j0 in scan_object_for_minor_refs of object k appears
+/// in the full scan_objects_list, returns the concrete index in the combined result.
+#push-options "--fuel 1 --z3rlimit 30"
+let rec scan_objects_list_witness (major: heap) (objs: seq obj_addr) (idx: nat) (k: nat) (j0: nat)
+  : Ghost nat
+    (requires
+      k >= idx /\ k < Seq.length objs /\
+      j0 < Seq.length (scan_object_for_minor_refs major (Seq.index objs k)))
+    (ensures (fun j ->
+      j < Seq.length (scan_objects_list major objs idx) /\
+      Seq.index (scan_objects_list major objs idx) j ==
+      Seq.index (scan_object_for_minor_refs major (Seq.index objs k)) j0))
+    (decreases (Seq.length objs - idx)) =
+  if k = idx then
+    j0
+  else
+    let first_len = Seq.length (scan_object_for_minor_refs major (Seq.index objs idx)) in
+    let j' = scan_objects_list_witness major objs (idx + 1) k j0 in
+    first_len + j'
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Correctness
+/// ---------------------------------------------------------------------------
+
+#push-options "--fuel 2 --z3rlimit 40"
 let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   : Lemma (requires
              well_formed_heap major /\
@@ -87,4 +159,20 @@ let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
           (ensures
              Seq.mem (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))
                      (minor_roots_from_major major)) =
-  admit ()
+  let target = read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) in
+  let objs = objects 0UL major in
+  let wz = U64.v (wosize_of_object obj major) in
+
+  // Step 1: find an entry in scan_object_fields with .rem_target == target
+  let j0 = scan_object_fields_witness major obj wz 0 field_idx in
+
+  // Step 2: locate obj in the objects sequence
+  let k = Seq.index_mem obj objs in
+
+  // Step 3: lift to a position in scan_objects_list (= scan_major_for_minor_refs)
+  let j = scan_objects_list_witness major objs 0 k j0 in
+
+  // Step 4: conclude membership of target in extract_targets output
+  assert ((Seq.index (scan_major_for_minor_refs major) j).rem_target == target);
+  extract_targets_mem (scan_major_for_minor_refs major) 0 j
+#pop-options

@@ -1,0 +1,66 @@
+/// ---------------------------------------------------------------------------
+/// GC.Gen.Reachability — Minor-heap reachability specification
+/// ---------------------------------------------------------------------------
+///
+/// Defines which minor-heap objects are reachable from a set of root addresses
+/// following intra-minor pointer fields. Used to determine liveness during
+/// minor collection.
+///
+/// An object is reachable if:
+/// 1. It is a valid minor object AND a root, OR
+/// 2. It is a successor (via intra-minor pointer field) of a reachable object.
+
+module GC.Gen.Reachability
+
+open FStar.Seq
+module U64 = FStar.UInt64
+module U8 = FStar.UInt8
+
+open GC.Spec.Base
+open GC.Gen.Base
+open GC.Gen.MinorHeap
+
+/// ---------------------------------------------------------------------------
+/// Successors: intra-minor pointer targets from an object's fields
+/// ---------------------------------------------------------------------------
+
+/// Given a minor-heap state and an object address, return the sequence of
+/// intra-minor pointer targets reachable from that object's fields.
+/// A field value is included if:
+///   - is_minor_addr returns true for it (word-aligned, within minor heap bounds)
+///   - It is a member of minor_objects ms (actually allocated)
+val minor_successors (ms: minor_state) (obj: U64.t) : GTot (seq U64.t)
+
+/// Every successor is a valid minor object
+val minor_successors_valid (ms: minor_state) (obj: U64.t) (x: U64.t)
+  : Lemma (requires Seq.mem x (minor_successors ms obj))
+          (ensures Seq.mem x (minor_objects ms))
+
+/// ---------------------------------------------------------------------------
+/// Reachability: transitive closure from roots
+/// ---------------------------------------------------------------------------
+
+/// Compute the set of minor-heap objects reachable from `roots` by
+/// transitively following intra-minor pointers. Uses a worklist-based BFS
+/// with sufficient fuel to guarantee convergence (the minor heap is finite).
+val minor_reachable (ms: minor_state) (roots: seq U64.t) : GTot (seq U64.t)
+
+/// ---------------------------------------------------------------------------
+/// Properties
+/// ---------------------------------------------------------------------------
+
+/// The reachable set is a subset of minor_objects
+val minor_reachable_subset (ms: minor_state) (roots: seq U64.t)
+  : Lemma (ensures forall x. Seq.mem x (minor_reachable ms roots) ==>
+                             Seq.mem x (minor_objects ms))
+
+/// Every root that is a valid minor object is in the reachable set
+val minor_reachable_roots (ms: minor_state) (roots: seq U64.t)
+  : Lemma (ensures forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==>
+                             Seq.mem r (minor_reachable ms roots))
+
+/// The reachable set is closed under minor_successors
+val minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
+  : Lemma (requires Seq.mem x (minor_reachable ms roots) /\
+                    Seq.mem y (minor_successors ms x))
+          (ensures Seq.mem y (minor_reachable ms roots))

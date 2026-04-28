@@ -189,6 +189,11 @@ let minor_wosize (ms: minor_state) (obj: U64.t) : GTot nat =
 /// Properties
 /// ---------------------------------------------------------------------------
 
+/// Every object in minor_objects has wosize that fits in the heap
+val minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)
+  : Lemma (requires Seq.mem obj (minor_objects ms))
+          (ensures (minor_wosize ms obj + 1) * 8 <= minor_heap_size)
+
 /// After allocation, the new object appears in minor_objects
 val minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256})

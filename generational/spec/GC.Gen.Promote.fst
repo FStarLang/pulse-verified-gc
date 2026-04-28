@@ -346,7 +346,9 @@ let rec copy_fields_preserves_objects_aux
       // We use the fact that this is a TCB boundary — the objects walk is
       // determined by headers, and we've already shown it's unchanged.
       assume (well_formed_heap major');
-      assume (Seq.mem dst_obj (objects 0UL major'));
+      // Since objects 0UL major' == objects 0UL major (line above),
+      // and dst_obj is in objects 0UL major (from precondition):
+      assert (Seq.mem dst_obj (objects 0UL major'));
       // wosize is read from header at hd_address dst_obj, which was not written
       // (write at dst_obj + i*8 doesn't overlap with hd_address dst_obj = dst_obj - 8)
       let hdr_addr = hd_address dst_obj in
@@ -396,14 +398,13 @@ let promote_object_preserves_objects
     // The newly allocated object is in the objects walk
     // alloc_spec_preserves_wf gives well_formed_heap for the post-alloc heap
     AllocLemmas.alloc_spec_preserves_wf major fp wosize;
-    // alloc_res.obj_out is a valid obj_addr (from allocator guards: >= mword, < heap_size, aligned)
-    assume (U64.v alloc_res.obj_out >= U64.v mword /\
-            U64.v alloc_res.obj_out + U64.v mword <= heap_size /\
-            U64.v alloc_res.obj_out % U64.v mword == 0);
+    // alloc_res.obj_out is a valid obj_addr (from allocator guards)
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
+    // obj_out is in objects of the output heap
+    GC.Gen.AllocProps.alloc_spec_obj_in_objects major fp wosize;
+    // wosize of obj_out in output heap >= requested wosize
+    GC.Gen.AllocProps.alloc_spec_obj_wosize major fp wosize;
     let dst_obj : obj_addr = alloc_res.obj_out in
-    // After copy_fields: objects walk is unchanged
-    assume (Seq.mem dst_obj (objects 0UL alloc_res.heap_out));
-    assume (U64.v (wosize_of_object dst_obj alloc_res.heap_out) >= wosize);
     copy_fields_preserves_objects minor alloc_res.heap_out obj dst_obj wosize;
     assert (objects 0UL (copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize) ==
             objects 0UL alloc_res.heap_out)

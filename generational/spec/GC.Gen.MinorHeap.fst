@@ -312,6 +312,61 @@ let minor_objects_valid (ms: minor_state) (x: U64.t)
           (ensures U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0) =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
   else minor_objects_aux_valid ms.data 0 (U64.v ms.bump) x
+/// ---------------------------------------------------------------------------
+/// Wosize bound for minor objects
+/// ---------------------------------------------------------------------------
+
+/// Objects returned by minor_objects_aux have wosize < minor_heap_size.
+/// Proof: at each step, pos + (wz+1)*8 <= bump <= minor_heap_size,
+/// so wz+1 <= minor_heap_size/8, thus wz < minor_heap_size.
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 60"
+private let rec minor_objects_aux_wosize_bound_raw
+  (data: minor_heap) (pos: nat{pos % 8 == 0})
+  (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  (x: U64.t)
+  : Lemma (requires Seq.mem x (minor_objects_aux data pos bump) /\
+                    U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0)
+          (ensures (let hdr_addr = U64.v x - 8 in
+                    hdr_addr >= 0 /\
+                    (let hdr = minor_read_word data (U64.uint_to_t hdr_addr) in
+                     (U64.v (U64.shift_right hdr 10ul) + 1) * 8 <= minor_heap_size)))
+          (decreases (bump - pos)) =
+  if pos + 8 > bump then ()
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    if wz = 0 then ()
+    else begin
+      let next_pos = pos + (wz + 1) * 8 in
+      next_pos_mod8 pos wz;
+      if next_pos > bump then ()
+      else begin
+        let obj_addr = U64.uint_to_t (pos + 8) in
+        let tail = minor_objects_aux data next_pos bump in
+        FStar.Seq.Properties.mem_cons obj_addr tail;
+        if x = obj_addr then begin
+          // x = obj_addr = pos + 8, so hdr_addr = pos
+          // wz read from header at pos, and next_pos = pos + (wz+1)*8 <= bump <= minor_heap_size
+          assert (U64.v x - 8 == pos);
+          assert (pos + (wz + 1) * 8 <= minor_heap_size)
+        end else begin
+          minor_objects_aux_valid data next_pos bump x;
+          minor_objects_aux_wosize_bound_raw data next_pos bump x
+        end
+      end
+    end
+  end
+#pop-options
+
+let minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)
+  : Lemma (requires Seq.mem obj (minor_objects ms))
+          (ensures (minor_wosize ms obj + 1) * 8 <= minor_heap_size) =
+  if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
+  else begin
+    minor_objects_aux_valid ms.data 0 (U64.v ms.bump) obj;
+    minor_objects_aux_wosize_bound_raw ms.data 0 (U64.v ms.bump) obj
+  end
 
 /// Walk produces same results when data agrees below bump
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
