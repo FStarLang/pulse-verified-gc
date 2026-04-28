@@ -2,13 +2,27 @@
 
 ## Current State Assessment
 
-The implementation is structurally complete but has **NO meaningful correctness guarantees**:
+The generational GC spec is **largely verified** with root-traced reachability:
 
-1. **`minor_collect` promotes ALL objects** linearly — no root tracing
-2. **Spec lemmas are vacuous** — `ensures True` everywhere
-3. **`Impl.fsti` postcondition is trivial** — only guarantees `bump == 0`
-4. **`update_major_pointers` is a no-op placeholder**
-5. **6 admits + 3 assumes remain**
+### Fully verified modules (0 admits, 0 assumes):
+- `GC.Gen.Base` — configuration
+- `GC.Gen.MinorHeap` — bump allocator + wosize bounds
+- `GC.Gen.Remembered` — major→minor scan completeness
+- `GC.Gen.Reachability` — BFS closure (transitive reachability)
+- `GC.Gen.Correctness` — minor_preserves_major_objects
+- `GC.Gen.Allocator` — unified allocator routing
+
+### Modules with documented TCB boundaries:
+- `GC.Gen.AllocProps` — 1 assume: `prev_fp <> hd_address obj` (free-list acyclicity)
+- `GC.Gen.Promote` — 3 assumes: wfh preservation through copy_fields/promote_object + fl_valid preservation
+  - These are genuine TCB: during promotion, minor-heap addresses are written into major fields,
+    temporarily violating well_formed_heap_part2 (pointer validity). The objects walk and size
+    bounds (parts 1, 3, 4) are unaffected.
+
+### Remaining work:
+- Strengthen `gen_gc_correct` from `ensures True` to full correctness theorem
+- Prove field preservation in Correctness (compose promote_preserves_fields + reachability)
+- Pulse impl for promotion + extraction
 
 ## Revised Approach
 
@@ -195,19 +209,28 @@ generational/
 ### Phase 4: Remembered Set Spec (scan-based)
 - [x] 4.1 Write `GC.Gen.Remembered.fsti` — find_minor_refs spec
 - [x] 4.2 Write `GC.Gen.Remembered.fst` — scan major heap for minor pointers
-- [ ] 4.3 Prove: scan finds all inter-generational pointers (1 admit: scan_complete)
-- [x] 4.4 Verify GC.Gen.Remembered
+- [x] 4.3 Prove: scan finds all inter-generational pointers ✅ scan_complete PROVEN
+- [x] 4.4 Verify GC.Gen.Remembered (0 admits, 0 assumes)
 
 ### Phase 5: Unified Allocator Spec
 - [x] 5.1 Write `GC.Gen.Allocator.fsti` — routes by size to minor bump or major free-list
 - [x] 5.2 Write `GC.Gen.Allocator.fst` — spec functions
-- [x] 5.3 Verify GC.Gen.Allocator (1 admit: small_alloc_goes_to_minor)
+- [x] 5.3 Verify GC.Gen.Allocator (0 admits)
+- [x] 5.4 AllocProps module: alloc_spec_obj_valid, alloc_spec_obj_in_objects, alloc_spec_obj_wosize PROVEN (1 assume: free-list acyclicity TCB)
+
+### Phase 5b: Minor-Heap Reachability
+- [x] 5b.1 GC.Gen.Reachability.fsti — minor_reachable, closure property, roots inclusion
+- [x] 5b.2 GC.Gen.Reachability.fst — BFS worklist implementation with termination
+- [x] 5b.3 Prove minor_reachable_subset (all reachable ⊆ minor_objects)
+- [x] 5b.4 Prove minor_reachable_roots (roots ∩ minor_objects ⊆ reachable)
+- [x] 5b.5 Prove minor_reachable_closed (reachable set closed under successors) ✅
+- [x] 5b.6 Verify GC.Gen.Reachability (0 admits, 0 assumes)
 
 ### Phase 6: Composed Correctness
 - [x] 6.1 Define `gen_gc_correctness` theorem in `GC.Gen.Correctness.fsti`
-- [ ] 6.2 Prove minor collection correctness (copying preserves reachability)
-- [ ] 6.3 Prove composed correctness (minor + major)
-- [x] 6.4 Verify GC.Gen.Correctness (placeholder admits)
+- [x] 6.2 Prove minor_preserves_major_objects (objects walk preserved through promotion) ✅
+- [ ] 6.3 Prove composed correctness (minor + major) — needs wfh preservation + field preservation theorem
+- [x] 6.4 Verify GC.Gen.Correctness (0 admits, 0 assumes)
 
 ### Phase 7: Pulse Implementations
 - [x] 7.1 `GC.Gen.MinorHeap` impl — bump pointer with array (0 admits)
