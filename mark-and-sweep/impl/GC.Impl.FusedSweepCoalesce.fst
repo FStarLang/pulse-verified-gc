@@ -113,7 +113,7 @@ fn fused_sweep_coalesce (heap: heap_t)
               U64.v fb >= U64.v mword /\
               U64.v fb < heap_size /\
               U64.v fb % U64.v mword == 0 /\
-              U64.v fb - U64.v mword + op_Multiply (U64.v rw) (U64.v mword) == U64.v v) /\
+              U64.v fb - U64.v mword + op_Star (U64.v rw) (U64.v mword) == U64.v v) /\
             // Spec equivalence
             fused_spec_inv 's s (U64.v v) fb (U64.v rw) fv)
   {
@@ -265,7 +265,7 @@ fn fused_sweep_coalesce (heap: heap_t)
       assert (pure (U64.v new_fb >= U64.v mword));
       assert (pure (U64.v new_fb < heap_size));
       assert (pure (U64.v new_fb % U64.v mword == 0));
-      assert (pure (U64.v new_fb - U64.v mword + op_Multiply (U64.v new_rw) (U64.v mword) == U64.v next));
+      assert (pure (U64.v new_fb - U64.v mword + op_Star (U64.v new_rw) (U64.v mword) == U64.v next));
 
       // Suffix preservation: no writes happened, next >= cur
       assert (pure (U64.v next >= U64.v cur));

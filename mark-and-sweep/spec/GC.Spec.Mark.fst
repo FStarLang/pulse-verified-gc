@@ -8,7 +8,6 @@
 module GC.Spec.Mark
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 
@@ -277,7 +276,7 @@ let color_change_preserves_wf g obj c =
   let aux1 (h: obj_addr) : Lemma
     (requires Seq.mem h (objects 0UL g))
     (ensures (let wz = wosize_of_object h g' in
-              U64.v (hd_address h) + 8 + FStar.Mul.(U64.v wz * 8) <= Seq.length g'))
+              U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length g'))
   = wosize_of_object_spec h g;
     wosize_of_object_spec h g';
     if h = obj then
@@ -3055,8 +3054,8 @@ let color_preserves_get_field target h g c i =
       // hd_address target = target - 8 > h + wosize*8 - 8
       // field_addr = h - 8 + 8*i <= h - 8 + 8*wosize (since i <= wosize)
       let ws = wosize_of_object h g in
-      assert (U64.v target > U64.v h + FStar.Mul.(U64.v ws * 8));
-      assert (U64.v field_addr <= U64.v h - 8 + FStar.Mul.(8 * U64.v ws))
+      assert (U64.v target > U64.v h + (U64.v ws * 8));
+      assert (U64.v field_addr <= U64.v h - 8 + (8 * U64.v ws))
     end else begin
       // target < h, so hd_address target = target - 8 < h - 8 = hd <= field_addr
       ()
@@ -3210,7 +3209,7 @@ let rec push_children_preserves_create_graph g st obj i ws =
         wosize_of_object_bound obj g;
         wf_object_size_bound g obj;
         assert (Seq.mem obj (objects 0UL g));
-        assert (U64.v (hd_address obj) + 8 + FStar.Mul.(U64.v wz_full * 8) <= Seq.length g);
+        assert (U64.v (hd_address obj) + 8 + (U64.v wz_full * 8) <= Seq.length g);
         assert (U64.v mword = 8);
         assert (Seq.length g = heap_size);
         assert (U64.v (hd_address obj) + U64.v mword * (U64.v wz_full + 1) <= heap_size);

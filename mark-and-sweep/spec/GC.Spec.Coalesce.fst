@@ -22,7 +22,6 @@ module GC.Spec.Coalesce
 #set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 
@@ -240,21 +239,21 @@ let addr_in_object_outside_other g x o addr =
   if U64.v x < U64.v o then begin
     objects_separated 0UL g x o;
     // objects_separated gives: o > x + wosize_of_object_as_wosize(x,g) * 8
-    assert (U64.v o > U64.v x + FStar.Mul.(U64.v wz_x * 8));
+    assert (U64.v o > U64.v x + (U64.v wz_x * 8));
     // hd_address(o) = o - 8, hd_address(x) = x - 8
     // addr < hd(x) + (wz_x + 1) * 8 = x - 8 + (wz_x + 1) * 8 = x + wz_x * 8
     // o > x + wz_x * 8 → hd(o) = o - 8 >= x + wz_x * 8 = hd(x) + (wz_x + 1) * 8 > addr
-    assert (U64.v addr < U64.v x + FStar.Mul.(U64.v wz_x * 8));
-    assert (U64.v (hd_address o) >= U64.v x + FStar.Mul.(U64.v wz_x * 8));
+    assert (U64.v addr < U64.v x + (U64.v wz_x * 8));
+    assert (U64.v (hd_address o) >= U64.v x + (U64.v wz_x * 8));
     assert (U64.v addr + U64.v mword <= U64.v (hd_address o))
   end else begin
     assert (U64.v x > U64.v o);
     objects_separated 0UL g o x;
     // x > o + wosize_of_object_as_wosize(o,g) * 8
-    assert (U64.v x > U64.v o + FStar.Mul.(U64.v wz_o * 8));
+    assert (U64.v x > U64.v o + (U64.v wz_o * 8));
     // hd(x) = x - 8 >= o + wz_o * 8 = hd(o) + (wz_o + 1) * 8
     // addr >= hd(x) ≥ hd(o) + (wz_o + 1) * 8
-    assert (U64.v (hd_address x) >= U64.v o + FStar.Mul.(U64.v wz_o * 8));
+    assert (U64.v (hd_address x) >= U64.v o + (U64.v wz_o * 8));
     assert (U64.v addr >= U64.v (hd_address o) + (U64.v wz_o + 1) * U64.v mword)
   end
 #pop-options
@@ -1585,10 +1584,10 @@ private let efptu_field_addr_arith (h: obj_addr) (idx: U64.t{U64.v idx < pow2 54
       U64.v (U64.mul_mod idx mword) == U64.v idx * U64.v mword /\
       U64.v (U64.add_mod h (U64.mul_mod idx mword)) == U64.v h + U64.v idx * U64.v mword)
   = FStar.Math.Lemmas.pow2_plus 54 3;
-    assert (FStar.Mul.(pow2 54 * pow2 3) == pow2 57);
-    assert (FStar.Mul.(U64.v idx * U64.v mword) < pow2 57);
+    assert ((pow2 54 * pow2 3) == pow2 57);
+    assert ((U64.v idx * U64.v mword) < pow2 57);
     FStar.Math.Lemmas.pow2_lt_compat 64 57;
-    FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+    FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
     FStar.Math.Lemmas.pow2_double_sum 57;
     FStar.Math.Lemmas.pow2_lt_compat 64 58;
     FStar.Math.Lemmas.modulo_lemma (U64.v h + U64.v idx * U64.v mword) (pow2 64)

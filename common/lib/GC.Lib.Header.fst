@@ -86,7 +86,7 @@ let set_color (v: uint_t 64) (c: uint_t 64{c < 4}) : uint_t 64 =
   logor #64 (logand #64 v (lognot #64 mask_color)) (shift_left #64 c 8)
 
 /// Bounds lemmas needed for unpacking
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 100"
 let get_tag_bound (v: uint_t 64) : Lemma (get_tag v < 256) =
   logand_le #64 v 255
 #pop-options
@@ -125,8 +125,10 @@ let get_color_bound (v: uint_t 64) : Lemma (get_color v < 4) =
   logand_le #64 (shift_right #64 v 8) mask_2bit
 
 /// Expose get_color definition in terms of 3 (not private mask_2bit)
+#push-options "--z3rlimit 20"
 let get_color_val (v: uint_t 64) : Lemma (get_color v == logand #64 (shift_right #64 v 8) 3) =
   logor_disjoint #64 2 1 1; logor_commutative #64 1 2
+#pop-options
 
 /// Therefore unpack_header succeeds when color bits are valid (not 0)
 let unpack_header_total (w: uint_t 64) : Lemma 
@@ -171,9 +173,11 @@ private let nth_mask_2bit (i: nat{i < 64}) : Lemma (nth #64 mask_2bit i = (i >= 
   one_nth_lemma #64 i; pow2_nth_lemma #64 1 i;
   assert_norm (pow2_n #64 1 = 2); logor_definition #64 1 2 i
 
+#push-options "--z3rlimit 20"
 private let c_eq_c_and_mask2 (c: uint_t 64{c < 4}) : Lemma (logand #64 c mask_2bit = c) =
   logor_1_2_eq_3 (); logand_mask #64 c 2;
   assert_norm (pow2 2 = 4); assert_norm (pow2 2 - 1 = 3)
+#pop-options
 
 private let small_nth_zero (c: uint_t 64{c < 4}) (i: nat{i < 64 /\ i < 62}) : Lemma (nth #64 c i = false) =
   c_eq_c_and_mask2 c; logand_definition #64 c mask_2bit i; nth_mask_2bit i

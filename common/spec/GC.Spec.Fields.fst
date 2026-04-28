@@ -34,11 +34,11 @@ let wosize_of_object_as_wosize (h_addr: obj_addr) (g: heap) : GTot wosize =
 
 /// Helper: prove multiplication bound for field offset
 private let field_offset_bound (field_idx: U64.t{U64.v field_idx < pow2 61}) : Lemma 
-  (FStar.UInt.size FStar.Mul.(U64.v field_idx * 8) 64)
+  (FStar.UInt.size (U64.v field_idx * 8) 64)
 = 
   FStar.Math.Lemmas.pow2_plus 61 3;
-  assert (FStar.Mul.(pow2 61 * pow2 3) == pow2 64);
-  assert (FStar.Mul.(U64.v field_idx * 8) < pow2 64)
+  assert ((pow2 61 * pow2 3) == pow2 64);
+  assert ((U64.v field_idx * 8) < pow2 64)
 
 /// Field offset from index
 let field_offset (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t = 
@@ -54,8 +54,8 @@ let field_address_raw (obj_addr: hp_addr) (field_idx: U64.t{U64.v field_idx < po
 /// Requires: object at obj_addr has wosize >= field_idx and fits in heap
 let field_address (obj_addr: hp_addr) (field_idx: U64.t{U64.v field_idx < pow2 61})
   : Pure hp_addr
-    (requires U64.v obj_addr + FStar.Mul.(U64.v field_idx * 8) < heap_size)
-    (ensures fun r -> U64.v r = U64.v obj_addr + FStar.Mul.(U64.v field_idx * 8))
+    (requires U64.v obj_addr + (U64.v field_idx * 8) < heap_size)
+    (ensures fun r -> U64.v r = U64.v obj_addr + (U64.v field_idx * 8))
   = 
   field_offset_bound field_idx;
   let offset = field_offset field_idx in
@@ -85,7 +85,7 @@ let wosize_fits_field_index (wz: wosize)
 /// Object is well-formed: fits entirely within heap
 let well_formed_object (g: heap) (h: obj_addr) : prop =
   let wz = wosize_of_object h g in
-  U64.v (hd_address h) + 8 + FStar.Mul.(U64.v wz * 8) <= heap_size
+  U64.v (hd_address h) + 8 + (U64.v wz * 8) <= heap_size
 
 /// Unchecked version - does not require well_formed_object precondition  
 /// Used in well_formed_heap definition to avoid circularity
@@ -141,24 +141,24 @@ let rec field_read_implies_exists_pointing g h wz k target =
   FStar.Math.Lemmas.pow2_lt_compat 61 54;
   wosize_fits_field_index wz;
   field_offset_bound idx;
-  assert (FStar.Mul.(U64.v idx * U64.v mword) < pow2 64);
-  FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+  assert ((U64.v idx * U64.v mword) < pow2 64);
+  FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
   // Prove sum fits in U64 for modulo_lemma: h < heap_size < 2^30, idx*8 < 2^57
   assert (U64.v h < heap_size);
   FStar.Math.Lemmas.pow2_lt_compat 57 54;
-  assert (FStar.Mul.(U64.v idx * 8) < pow2 57);
+  assert ((U64.v idx * 8) < pow2 57);
   // heap_size <= pow2 57, so h + idx*8 < pow2 57 + pow2 57 = pow2 58 < pow2 64
   assert (U64.v h < pow2 57);
   FStar.Math.Lemmas.pow2_double_sum 57;
-  assert (U64.v h + FStar.Mul.(U64.v idx * 8) < pow2 58);
+  assert (U64.v h + (U64.v idx * 8) < pow2 58);
   FStar.Math.Lemmas.pow2_lt_compat 64 58;
-  FStar.Math.Lemmas.modulo_lemma (U64.v h + FStar.Mul.(U64.v idx * 8)) (pow2 64);
+  FStar.Math.Lemmas.modulo_lemma (U64.v h + (U64.v idx * 8)) (pow2 64);
   let far_idx = U64.add_mod h (U64.mul_mod idx mword) in
-  assert (U64.v far_idx = U64.v h + FStar.Mul.(U64.v idx * 8));
+  assert (U64.v far_idx = U64.v h + (U64.v idx * 8));
   // well_formed_object: hd_address h + 8 + wz*8 <= heap_size, i.e. h + wz*8 <= heap_size
   hd_address_spec h;
   assert (U64.v far_idx < heap_size);
-  FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) (FStar.Mul.(U64.v idx * 8)) 8;
+  FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) ((U64.v idx * 8)) 8;
   assert (U64.v far_idx % 8 = 0);
   let fv_idx = read_word g (far_idx <: hp_addr) in
   if is_pointer_to fv_idx target then
@@ -186,7 +186,7 @@ let rec exists_field_pointing_to (g: heap) (h: obj_addr) (wz: wosize) (target: o
     // h = hd_address h + 8, so h + wz*8 <= heap_size
     // idx = wz - 1, so h + idx*8 < h + wz*8 <= heap_size
     hd_address_spec h;
-    assert (U64.v h + FStar.Mul.(U64.v idx * 8) < heap_size);
+    assert (U64.v h + (U64.v idx * 8) < heap_size);
     let field_addr = field_address h idx in
     let field_val = read_word g field_addr in
     if is_pointer_to field_val target then true
@@ -210,28 +210,28 @@ let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (
     FStar.Math.Lemmas.pow2_lt_compat 61 54;
     
     hd_address_spec h;
-    assert (U64.v h + FStar.Mul.(U64.v idx * 8) < heap_size);
+    assert (U64.v h + (U64.v idx * 8) < heap_size);
     
     // Show mul_mod idx mword = field_offset idx (no overflow for idx < pow2 54)
     field_offset_bound idx;
-    assert (FStar.Mul.(U64.v idx * 8) < pow2 64);
-    FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
-    assert (U64.v (U64.mul_mod idx mword) = FStar.Mul.(U64.v idx * U64.v mword));
+    assert ((U64.v idx * 8) < pow2 64);
+    FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
+    assert (U64.v (U64.mul_mod idx mword) = (U64.v idx * U64.v mword));
     
     // Show add_mod h (mul_mod idx mword) = field_address_raw h idx (no overflow)
-    assert (U64.v h + FStar.Mul.(U64.v idx * 8) < pow2 64);
-    FStar.Math.Lemmas.modulo_lemma (U64.v h + FStar.Mul.(U64.v idx * 8)) (pow2 64);
+    assert (U64.v h + (U64.v idx * 8) < pow2 64);
+    FStar.Math.Lemmas.modulo_lemma (U64.v h + (U64.v idx * 8)) (pow2 64);
     let far_unchecked = U64.add_mod h (U64.mul_mod idx mword) in
     let far_raw = field_address_raw h idx in
-    assert (U64.v far_unchecked = U64.v h + FStar.Mul.(U64.v idx * 8));
-    assert (U64.v far_raw = U64.v h + FStar.Mul.(U64.v idx * 8));
+    assert (U64.v far_unchecked = U64.v h + (U64.v idx * 8));
+    assert (U64.v far_raw = U64.v h + (U64.v idx * 8));
     assert (far_unchecked == far_raw);
     
     // Bounds checks pass
     assert (U64.v far_unchecked < heap_size);
     assert (U64.v h % 8 = 0);
-    assert (FStar.Mul.(U64.v idx * 8) % 8 = 0);
-    FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) (FStar.Mul.(U64.v idx * 8)) 8;
+    assert ((U64.v idx * 8) % 8 = 0);
+    FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) ((U64.v idx * 8)) 8;
     assert (U64.v far_unchecked % 8 = 0);
     assert (not (U64.v far_unchecked >= heap_size || U64.v far_unchecked % 8 <> 0));
     
@@ -275,7 +275,7 @@ let rec objects (start: hp_addr) (g: heap) : GTot (Seq.seq obj_addr) (decreases 
     let header = read_word g start in
     let wz = getWosize header in
     let obj_size_nat = U64.v wz + 1 in
-    let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+    let next_start_nat = U64.v start + (obj_size_nat * 8) in
     if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then Seq.empty
     else begin
       // f_address start = start + 8, already typed as obj_addr
@@ -319,7 +319,7 @@ let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: obj_addr)
       let header = read_word g start in
       let wz = getWosize header in
       let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+      let next_start_nat = U64.v start + (obj_size_nat * 8) in
       if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()  // objects returns empty
       else begin
         // First object is at start + 8, which is > start
@@ -365,7 +365,7 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
             let wz = getWosize header in
             let obj_addr = f_address start in
             let obj_size_nat = U64.v wz + 1 in
-            let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+            let next_start_nat = U64.v start + (obj_size_nat * 8) in
             (next_start_nat < Seq.length g /\ next_start_nat < pow2 64 /\ next_start_nat < heap_size) ==>
             (let next_start : hp_addr = U64.uint_to_t next_start_nat in
              ~(Seq.mem obj_addr (objects next_start g)))))
@@ -374,7 +374,7 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
     let obj_addr = f_address start in
     f_address_spec start;
     let obj_size_nat = U64.v wz + 1 in
-    let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+    let next_start_nat = U64.v start + (obj_size_nat * 8) in
     if next_start_nat < Seq.length g && next_start_nat < pow2 64 && next_start_nat < heap_size then begin
       let next_start : hp_addr = U64.uint_to_t next_start_nat in
       // obj_addr = start + 8
@@ -414,7 +414,7 @@ let objects_addresses_ge_8 (g: heap) (x: obj_addr)
 let rec objects_separated (start: hp_addr) (g: heap) (src y: obj_addr)
   : Lemma (ensures Seq.mem src (objects start g) /\ Seq.mem y (objects start g) /\
                    U64.v src < U64.v y ==>
-                   U64.v y > U64.v src + FStar.Mul.(U64.v (wosize_of_object_as_wosize src g) * 8))
+                   U64.v y > U64.v src + (U64.v (wosize_of_object_as_wosize src g) * 8))
           (decreases (Seq.length g - U64.v start))
   = if U64.v start + 8 >= Seq.length g then ()
     else begin
@@ -423,7 +423,7 @@ let rec objects_separated (start: hp_addr) (g: heap) (src y: obj_addr)
       let obj_addr_raw = f_address start in
       f_address_spec start;
       let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+      let next_start_nat = U64.v start + (obj_size_nat * 8) in
       if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()
       else begin
         assert (U64.v obj_addr_raw = U64.v start + 8);
@@ -445,7 +445,7 @@ let rec objects_separated (start: hp_addr) (g: heap) (src y: obj_addr)
             // All objects in rest have addr > next_start
             objects_addresses_gt_start next_start g y;
             // next_start = start + (wz+1)*8 = first + wz*8
-            assert (next_start_nat = U64.v first + FStar.Mul.(U64.v wz * 8));
+            assert (next_start_nat = U64.v first + (U64.v wz * 8));
             // wosize_of_object first g = getWosize(read_word g (hd_address first))
             // hd_address first = first - 8 = start (since first = start + 8)
             hd_address_spec first;
@@ -628,7 +628,7 @@ let points_to (g: heap) (src dst: obj_addr) : GTot bool =
 let well_formed_heap_part1 (g: heap) : prop =
   (forall (h: obj_addr). Seq.mem h (objects 0UL g) ==>
     (let wz = wosize_of_object h g in
-     U64.v (hd_address h) + 8 + FStar.Mul.(U64.v wz * 8) <= Seq.length g))
+     U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length g))
 
 let well_formed_heap_part2 (g: heap) : prop =
   (forall (src dst: obj_addr). 
@@ -654,14 +654,14 @@ let well_formed_heap (g: heap) : prop =
 /// Extract part 1 of well_formed_heap: object size bounds
 let wf_object_size_bound (g: heap) (h: obj_addr) : Lemma
   (requires well_formed_heap g /\ Seq.mem h (objects 0UL g))
-  (ensures U64.v (hd_address h) + 8 + op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  (ensures U64.v (hd_address h) + 8 + op_Star (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
   = reveal_opaque (`%well_formed_heap) well_formed_heap
 
 /// Extract part 1 without hd_address (for cross-module use with HeapGraph.object_fits_in_heap)
 /// Since hd_address h = h - 8 for obj_addr h, we get: h + wosize*8 <= Seq.length g
 let wf_object_bound (g: heap) (h: obj_addr) : Lemma
   (requires well_formed_heap g /\ Seq.mem h (objects 0UL g))
-  (ensures U64.v h + op_Multiply (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  (ensures U64.v h + op_Star (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
   = reveal_opaque (`%well_formed_heap) well_formed_heap;
     hd_address_spec h
 
@@ -727,7 +727,7 @@ let points_to_target_in_objects (g: heap) (src dst: obj_addr) : Lemma
 let objects_nonempty_head_fits (start: hp_addr) (g: heap) : Lemma
   (requires Seq.length (objects start g) > 0)
   (ensures (let wz = getWosize (read_word g start) in
-            U64.v start + FStar.Mul.((U64.v wz + 1) * 8) <= Seq.length g))
+            U64.v start + ((U64.v wz + 1) * 8) <= Seq.length g))
   = ()
 
 /// When objects start g is nonempty, the head object is f_address start
@@ -742,13 +742,13 @@ let objects_nonempty_head (start: hp_addr) (g: heap) : Lemma
 let objects_nonempty_next (start: hp_addr) (g: heap) : Lemma
   (requires Seq.length (objects start g) > 0)
   (ensures (let wz = getWosize (read_word g start) in
-            let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+            let next = U64.v start + ((U64.v wz + 1) * 8) in
             next <= Seq.length g /\ next < pow2 64 /\
             next % 8 == 0 /\
             (next < heap_size ==>
               (let next_hp : hp_addr = U64.uint_to_t next in
                objects start g == Seq.cons (f_address start) (objects next_hp g)))))
-  = FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v start) (FStar.Mul.((U64.v (getWosize (read_word g start)) + 1) * 8)) 8;
+  = FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v start) (((U64.v (getWosize (read_word g start)) + 1) * 8)) 8;
     FStar.Math.Lemmas.lemma_mod_mul_distr_r (U64.v (getWosize (read_word g start)) + 1) 8 8
 
 /// Members of objects from a later start are also members of objects from an earlier start
@@ -757,7 +757,7 @@ let objects_nonempty_next (start: hp_addr) (g: heap) : Lemma
 let objects_later_subset (start: hp_addr) (g: heap) (x: obj_addr)
   : Lemma (requires Seq.length (objects start g) > 0)
           (ensures (let wz = getWosize (read_word g start) in
-                    let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                    let next_nat = U64.v start + ((U64.v wz + 1) * 8) in
                     next_nat < heap_size /\ next_nat < pow2 64 /\ next_nat % 8 == 0 ==>
                     (let next : hp_addr = U64.uint_to_t next_nat in
                      Seq.mem x (objects next g) ==> Seq.mem x (objects start g))))
@@ -765,7 +765,7 @@ let objects_later_subset (start: hp_addr) (g: heap) (x: obj_addr)
     else begin
       let header = read_word g start in
       let wz = getWosize header in
-      let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+      let next_nat = U64.v start + ((U64.v wz + 1) * 8) in
       if next_nat > Seq.length g || next_nat >= pow2 64 then ()
       else if next_nat >= heap_size then ()
       else begin
@@ -800,7 +800,7 @@ let rec objects_member_size_bound (start: hp_addr) (g: heap) (obj: obj_addr)
     (ensures (
       let wz = getWosize (read_word g (hd_address obj)) in
       let obj_words = U64.v wz + 1 in
-      U64.v (hd_address obj) + FStar.Mul.(obj_words * U64.v mword) <= Seq.length g))
+      U64.v (hd_address obj) + (obj_words * U64.v mword) <= Seq.length g))
     (decreases Seq.length g - U64.v start)
   = objects_nonempty_next start g;
     f_address_spec start;
@@ -809,7 +809,7 @@ let rec objects_member_size_bound (start: hp_addr) (g: heap) (obj: obj_addr)
     end
     else begin
       let wz = getWosize (read_word g start) in
-      let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * U64.v mword) in
+      let next_nat = U64.v start + ((U64.v wz + 1) * U64.v mword) in
       if next_nat < heap_size then begin
         let next : hp_addr = U64.uint_to_t next_nat in
         Seq.lemma_tl (f_address start) (objects next g);
@@ -823,7 +823,7 @@ let rec objects_member_size_bound (start: hp_addr) (g: heap) (obj: obj_addr)
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 50"
 let rec objects_count_le_remaining (start: hp_addr) (g: heap)
   : Lemma 
-    (ensures FStar.Mul.(Seq.length (objects start g) * 8) <= Seq.length g - U64.v start)
+    (ensures (Seq.length (objects start g) * 8) <= Seq.length g - U64.v start)
     (decreases Seq.length g - U64.v start)
   = if U64.v start + 8 >= Seq.length g then begin
       // objects returns empty, so length = 0
@@ -833,7 +833,7 @@ let rec objects_count_le_remaining (start: hp_addr) (g: heap)
       let header = read_word g start in
       let wz = getWosize header in
       let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+      let next_start_nat = U64.v start + (obj_size_nat * 8) in
       
       if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then begin
         // objects returns empty
@@ -863,7 +863,7 @@ let rec objects_count_le_remaining (start: hp_addr) (g: heap)
           
           // IH: length (objects next_start g) * 8 <= length g - next_start_nat
           let tail_len = Seq.length (objects next_start g) in
-          assert (FStar.Mul.(tail_len * 8) <= Seq.length g - next_start_nat);
+          assert ((tail_len * 8) <= Seq.length g - next_start_nat);
           
           // length (cons obj_addr tail) = 1 + tail_len
           let total_len = 1 + tail_len in
@@ -879,16 +879,16 @@ let rec objects_count_le_remaining (start: hp_addr) (g: heap)
           // Thus: total_len * 8 <= length g - start
           
           assert (obj_size_nat >= 1);
-          assert (FStar.Mul.(obj_size_nat * 8) >= 8);
-          assert (next_start_nat == U64.v start + FStar.Mul.(obj_size_nat * 8));
+          assert ((obj_size_nat * 8) >= 8);
+          assert (next_start_nat == U64.v start + (obj_size_nat * 8));
           
           FStar.Math.Lemmas.lemma_mult_le_right 8 1 obj_size_nat;
-          assert (FStar.Mul.(total_len * 8) == 8 + FStar.Mul.(tail_len * 8));
-          assert (FStar.Mul.(tail_len * 8) <= Seq.length g - next_start_nat);
+          assert ((total_len * 8) == 8 + (tail_len * 8));
+          assert ((tail_len * 8) <= Seq.length g - next_start_nat);
           assert (8 + (Seq.length g - next_start_nat) == 8 + Seq.length g - next_start_nat);
-          assert (next_start_nat == U64.v start + FStar.Mul.(obj_size_nat * 8));
+          assert (next_start_nat == U64.v start + (obj_size_nat * 8));
           assert (8 + Seq.length g - next_start_nat == 
-                  8 + Seq.length g - U64.v start - FStar.Mul.(obj_size_nat * 8));
+                  8 + Seq.length g - U64.v start - (obj_size_nat * 8));
           ()
         end
       end
@@ -903,7 +903,7 @@ let object_count_bound g =
   objects_count_le_remaining 0UL g;
   // We have: length (objects 0UL g) * 8 <= length g - 0 = length g
   // Therefore: length (objects 0UL g) <= length g / 8
-  FStar.Math.Lemmas.lemma_div_le (FStar.Mul.(Seq.length (objects 0UL g) * 8)) (Seq.length g) 8
+  FStar.Math.Lemmas.lemma_div_le ((Seq.length (objects 0UL g) * 8)) (Seq.length g) 8
 
 /// Helper: colors are exhaustive and mutually exclusive
 let colors_exhaustive_and_exclusive (h: obj_addr) (g: heap)
@@ -1041,7 +1041,7 @@ let rec color_change_preserves_objects_aux start g obj c =
   if U64.v start + 8 >= Seq.length g then ()
   else begin
     let wz = getWosize (read_word g start) in
-    let next_start_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+    let next_start_nat = U64.v start + ((U64.v wz + 1) * 8) in
     if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()
     else if next_start_nat >= heap_size then ()
     else
@@ -1082,7 +1082,7 @@ private let rec write_word_preserves_objects_past (start: hp_addr) (g: heap) (ad
       let wz = getWosize header in
       assert (getWosize (read_word g' start) == wz);
       let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+      let next_start_nat = U64.v start + (obj_size_nat * 8) in
       if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then begin
         assert (objects start g == Seq.empty);
         assert (objects start g' == Seq.empty)
@@ -1112,7 +1112,7 @@ private val write_word_preserves_objects_aux : (start: hp_addr) -> (g: heap) -> 
   Lemma (requires well_formed_heap g /\
                   Seq.mem obj (objects start g) /\
                   U64.v addr >= U64.v obj /\
-                  U64.v addr < U64.v obj + FStar.Mul.(U64.v (wosize_of_object obj g) * 8) /\
+                  U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                   U64.v addr % 8 = 0)
         (ensures objects start (write_word g addr v) == objects start g)
         (decreases (Seq.length g - U64.v start))
@@ -1123,7 +1123,7 @@ let rec write_word_preserves_objects_aux start g obj addr v =
     let header = read_word g start in
     let wz = getWosize header in
     let obj_size_nat = U64.v wz + 1 in
-    let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+    let next_start_nat = U64.v start + (obj_size_nat * 8) in
     if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()
     else begin
       let obj_addr_raw = f_address start in
@@ -1180,7 +1180,7 @@ val write_word_preserves_objects : (g: heap) -> (obj: obj_addr) -> (addr: hp_add
   Lemma (requires well_formed_heap g /\
                   Seq.mem obj (objects 0UL g) /\
                   U64.v addr >= U64.v obj /\
-                  U64.v addr < U64.v obj + FStar.Mul.(U64.v (wosize_of_object obj g) * 8) /\
+                  U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                   U64.v addr % 8 = 0)
         (ensures objects 0UL (write_word g addr v) == objects 0UL g)
 
@@ -1192,7 +1192,7 @@ val write_word_preserves_objects_from : (start: hp_addr) -> (g: heap) -> (obj: o
   Lemma (requires well_formed_heap g /\
                   Seq.mem obj (objects start g) /\
                   U64.v addr >= U64.v obj /\
-                  U64.v addr < U64.v obj + FStar.Mul.(U64.v (wosize_of_object obj g) * 8) /\
+                  U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                   U64.v addr % 8 = 0)
         (ensures objects start (write_word g addr v) == objects start g)
 
@@ -1217,7 +1217,7 @@ let write_word_preserves_objects_before start g addr v =
 
 /// Helper: in the non-overflow case, field address raw value matches arithmetic sum
 private let field_addr_raw_value (h: obj_addr) (idx: U64.t{U64.v idx < pow2 61})
-  : Lemma (U64.v (field_address_raw h idx) = (U64.v h + FStar.Mul.(U64.v idx * 8)) % pow2 64)
+  : Lemma (U64.v (field_address_raw h idx) = (U64.v h + (U64.v idx * 8)) % pow2 64)
   = field_offset_bound idx
 
 /// Helper: field address ≠ hd_address for obj_addr when idx < pow2 54
@@ -1231,14 +1231,14 @@ private let field_addr_ne_hd (h: obj_addr) (idx: U64.t{U64.v idx < pow2 54})
   = FStar.Math.Lemmas.pow2_lt_compat 61 54;
     field_addr_raw_value h idx;
     GC.Spec.Heap.hd_address_spec h;
-    let sum = U64.v h + FStar.Mul.(U64.v idx * 8) in
+    let sum = U64.v h + (U64.v idx * 8) in
     if sum < pow2 64 then ()
     else begin
       // Overflow: field_addr = sum - 2^64, hd_address = h - 8
       // Equality would require idx*8 = 2^64 - 8, but idx*8 < 2^57 < 2^64 - 8
       FStar.Math.Lemmas.pow2_lt_compat 64 57;
       FStar.Math.Lemmas.pow2_lt_compat 57 54;
-      assert (FStar.Mul.(U64.v idx * 8) < pow2 57);
+      assert ((U64.v idx * 8) < pow2 57);
       assert (pow2 57 < pow2 64 - 8)
     end
 #pop-options
@@ -1255,7 +1255,7 @@ let rec color_change_preserves_field_pointing_self (g: heap) (h: obj_addr) (c: c
       FStar.Math.Lemmas.pow2_lt_compat 61 54;
       // Show add_mod/mul_mod matches field_address_raw
       field_offset_bound idx;
-      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
       let far = U64.add_mod h (U64.mul_mod idx mword) in
       let far_raw = field_address_raw h idx in
       assert (U64.v far = U64.v far_raw);
@@ -1300,11 +1300,11 @@ private let field_addr_ne_hd_other (g: heap) (src: obj_addr) (obj: obj_addr)
     field_addr_raw_value src idx;
     GC.Spec.Heap.hd_address_spec obj;
     let ws = U64.v (wosize_of_object_as_wosize src g) in
-    let sum = U64.v src + FStar.Mul.(U64.v idx * 8) in
+    let sum = U64.v src + (U64.v idx * 8) in
     // Prove overflow is impossible: wf_object_bound gives src + ws*8 <= heap_size.
     // Since idx < ws, we get sum = src + idx*8 < src + ws*8 <= heap_size < pow2 64.
     wf_object_bound g src;
-    assert (U64.v src + op_Multiply ws 8 <= heap_size);
+    assert (U64.v src + op_Star ws 8 <= heap_size);
     assert (sum < pow2 64);
     // Now in the non-overflow case:
     if U64.v src > U64.v obj then ()
@@ -1334,7 +1334,7 @@ let rec color_change_preserves_field_pointing_other (g: heap) (obj: obj_addr) (c
       FStar.Math.Lemmas.pow2_lt_compat 61 54;
       // Show add_mod/mul_mod matches field_address_raw
       field_offset_bound idx;
-      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
       let far = U64.add_mod src (U64.mul_mod idx mword) in
       let far_raw = field_address_raw src idx in
       assert (U64.v far = U64.v far_raw);
@@ -1377,7 +1377,7 @@ private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_ad
                      Seq.mem obj (objects 0UL g) /\
                      well_formed_heap g /\
                      U64.v addr >= U64.v obj /\
-                     U64.v addr < U64.v obj + op_Multiply (U64.v (wosize_of_object obj g)) 8 /\
+                     U64.v addr < U64.v obj + op_Star (U64.v (wosize_of_object obj g)) 8 /\
                      U64.v addr % 8 = 0 /\
                      U64.v wz <= U64.v (wosize_of_object_as_wosize src g))
           (ensures exists_field_pointing_to_unchecked (write_word g addr v) src wz target
@@ -1388,7 +1388,7 @@ private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_ad
       let idx = U64.sub wz 1UL in
       FStar.Math.Lemmas.pow2_lt_compat 61 54;
       field_offset_bound idx;
-      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
       let far = U64.add_mod src (U64.mul_mod idx mword) in
       let far_raw = field_address_raw src idx in
       assert (U64.v far = U64.v far_raw);
@@ -1438,7 +1438,7 @@ private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr)
   : Lemma (requires Seq.mem obj (objects 0UL g) /\
                      well_formed_heap g /\
                      U64.v addr >= U64.v obj /\
-                     U64.v addr < U64.v obj + op_Multiply (U64.v (wosize_of_object obj g)) 8 /\
+                     U64.v addr < U64.v obj + op_Star (U64.v (wosize_of_object obj g)) 8 /\
                      U64.v addr % 8 = 0 /\
                      U64.v wz <= U64.v (wosize_of_object_as_wosize obj g) /\
                      exists_field_pointing_to_unchecked (write_word g addr v) obj wz dst /\
@@ -1451,7 +1451,7 @@ private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr)
       let idx = U64.sub wz 1UL in
       FStar.Math.Lemmas.pow2_lt_compat 61 54;
       field_offset_bound idx;
-      FStar.Math.Lemmas.modulo_lemma (FStar.Mul.(U64.v idx * U64.v mword)) (pow2 64);
+      FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
       let far = U64.add_mod obj (U64.mul_mod idx mword) in
       let far_raw = field_address_raw obj idx in
       assert (U64.v far = U64.v far_raw);
@@ -1518,7 +1518,7 @@ private let field_write_preserves_infix_wf
   : Lemma (requires well_formed_heap g /\
                     Seq.mem obj (objects 0UL g) /\
                     U64.v addr >= U64.v obj /\
-                    U64.v addr < U64.v obj + op_Multiply (U64.v (wosize_of_object obj g)) 8 /\
+                    U64.v addr < U64.v obj + op_Star (U64.v (wosize_of_object obj g)) 8 /\
                     U64.v addr % 8 = 0)
           (ensures GC.Spec.Object.infix_wf (write_word g addr v) (objects 0UL (write_word g addr v)))
   = reveal_opaque (`%well_formed_heap) well_formed_heap;
@@ -1574,7 +1574,7 @@ val field_write_preserves_wf : (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -
   Lemma (requires well_formed_heap g /\
                   Seq.mem obj (objects 0UL g) /\
                   U64.v addr >= U64.v obj /\
-                  U64.v addr < U64.v obj + op_Multiply (U64.v (wosize_of_object obj g)) 8 /\
+                  U64.v addr < U64.v obj + op_Star (U64.v (wosize_of_object obj g)) 8 /\
                   U64.v addr % 8 = 0 /\
                   (is_pointer_field v ==> Seq.mem v (objects 0UL g)))
         (ensures well_formed_heap (write_word g addr v))
@@ -1590,7 +1590,7 @@ let field_write_preserves_wf g obj addr v =
   let aux (h: obj_addr) : Lemma
     (requires Seq.mem h (objects 0UL g'))
     (ensures (let wz = wosize_of_object h g' in
-              U64.v (hd_address h) + 8 + FStar.Mul.(U64.v wz * 8) <= Seq.length g'))
+              U64.v (hd_address h) + 8 + (U64.v wz * 8) <= Seq.length g'))
     = wosize_of_object_spec h g;
       wosize_of_object_spec h g';
       GC.Spec.Heap.hd_address_spec h;

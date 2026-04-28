@@ -118,7 +118,7 @@ let heap_objects_dense (g: heap) : prop =
     Seq.mem (f_address start) (objects 0UL g) ==>
     Seq.length (objects start g) > 0 ==>
     (let wz = getWosize (read_word g start) in
-     let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+     let next = U64.v start + ((U64.v wz + 1) * 8) in
      next + 8 < heap_size ==>
      Seq.length (objects (U64.uint_to_t next) g) > 0 /\
      Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))
@@ -129,7 +129,7 @@ let heap_objects_dense_intro (g: heap)
                       Seq.mem (f_address start) (objects 0UL g) ==>
                       Seq.length (objects start g) > 0 ==>
                       (let wz = getWosize (read_word g start) in
-                       let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                       let next = U64.v start + ((U64.v wz + 1) * 8) in
                        next + 8 < heap_size ==>
                        Seq.length (objects (U64.uint_to_t next) g) > 0 /\
                        Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))))
@@ -142,7 +142,7 @@ let objects_dense_step (start: hp_addr) (g: heap)
                     Seq.mem (f_address start) (objects 0UL g) /\
                     Seq.length (objects start g) > 0)
           (ensures (let wz = getWosize (read_word g start) in
-                    let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                    let next = U64.v start + ((U64.v wz + 1) * 8) in
                     next + 8 < heap_size ==>
                     Seq.length (objects (U64.uint_to_t next) g) > 0))
   = ()
@@ -154,11 +154,11 @@ let objects_dense_obj_in (start: hp_addr) (g: heap)
                     Seq.mem (f_address start) (objects 0UL g) /\
                     Seq.length (objects start g) > 0)
           (ensures (let wz = getWosize (read_word g start) in
-                    let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                    let next = U64.v start + ((U64.v wz + 1) * 8) in
                     next + 8 < heap_size ==>
                     obj_in_objects (U64.uint_to_t (next + 8)) g))
   = let wz = getWosize (read_word g start) in
-    let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+    let next = U64.v start + ((U64.v wz + 1) * 8) in
     if next + 8 < heap_size then begin
       // From density: mem (f_address next_hp) (objects 0UL g)
       let next_hp : hp_addr = U64.uint_to_t next in
@@ -185,7 +185,7 @@ let rec objects_eq_from_wosize (start: hp_addr) (g1 g2: heap)
       let wz1 = getWosize (read_word g1 start) in
       let wz2 = getWosize (read_word g2 start) in
       assert (wz2 == wz1);
-      let next = U64.v start + FStar.Mul.((U64.v wz1 + 1) * 8) in
+      let next = U64.v start + ((U64.v wz1 + 1) * 8) in
       if next > Seq.length g1 || next >= pow2 64 then ()
       else if next >= heap_size then ()
       else objects_eq_from_wosize (U64.uint_to_t next) g1 g2
@@ -202,7 +202,7 @@ let heap_objects_dense_transfer (g1 g2: heap)
        Seq.mem (f_address start) (objects 0UL g2) ==>
        Seq.length (objects start g2) > 0 ==>
        (let wz = getWosize (read_word g2 start) in
-        let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+        let next = U64.v start + ((U64.v wz + 1) * 8) in
         next + 8 < heap_size ==>
         Seq.length (objects (U64.uint_to_t next) g2) > 0 /\
         Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g2)))
@@ -212,7 +212,7 @@ let heap_objects_dense_transfer (g1 g2: heap)
         if Seq.length (objects start g2) > 0 then begin
           let wz = getWosize (read_word g2 start) in
           assert (wz == getWosize (read_word g1 start));
-          let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+          let next = U64.v start + ((U64.v wz + 1) * 8) in
           if next + 8 < heap_size then begin
             objects_eq_from_wosize (U64.uint_to_t next) g1 g2
           end
@@ -340,10 +340,10 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
       getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
       Seq.mem (f_address h_addr) (objects 0UL g_post))
     (ensures objects_white_before 
-      (U64.v h_addr + FStar.Mul.((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
+      (U64.v h_addr + ((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
   = let obj : obj_addr = f_address h_addr in
     let wz = getWosize (read_word g_pre h_addr) in
-    let next = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+    let next = U64.v h_addr + ((U64.v wz + 1) * 8) in
     GC.Spec.Heap.hd_address_spec obj;
     f_address_spec h_addr;
     assert (U64.v (hd_address obj) = U64.v h_addr);
@@ -373,9 +373,9 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
           wosize_of_object_spec obj g_post;
           assert (U64.v (hd_address obj) = U64.v h_addr);
           assert (wosize_of_object obj g_post == wz);
-          assert (U64.v x > U64.v obj + FStar.Mul.(U64.v wz * 8));
+          assert (U64.v x > U64.v obj + (U64.v wz * 8));
           assert (U64.v (hd_address x) = U64.v x - 8);
-          assert (U64.v (hd_address x) > U64.v h_addr + FStar.Mul.(U64.v wz * 8) - 8 + 8);
+          assert (U64.v (hd_address x) > U64.v h_addr + (U64.v wz * 8) - 8 + 8);
           assert false
         end
         else begin

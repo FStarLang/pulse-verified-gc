@@ -122,7 +122,7 @@ val heap_objects_dense_intro : (g: heap) ->
                     Seq.mem (f_address start) (objects 0UL g) ==>
                     Seq.length (objects start g) > 0 ==>
                     (let wz = getWosize (read_word g start) in
-                     let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                     let next = U64.v start + ((U64.v wz + 1) * 8) in
                      next + 8 < heap_size ==>
                      Seq.length (objects (U64.uint_to_t next) g) > 0 /\
                      Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))))
@@ -136,7 +136,7 @@ val objects_dense_step : (start: hp_addr) -> (g: heap) ->
                   Seq.mem (f_address start) (objects 0UL g) /\
                   Seq.length (objects start g) > 0)
         (ensures (let wz = getWosize (read_word g start) in
-                  let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                  let next = U64.v start + ((U64.v wz + 1) * 8) in
                   next + 8 < heap_size ==>
                   Seq.length (objects (U64.uint_to_t next) g) > 0))
 
@@ -147,7 +147,7 @@ val objects_dense_obj_in : (start: hp_addr) -> (g: heap) ->
                   Seq.mem (f_address start) (objects 0UL g) /\
                   Seq.length (objects start g) > 0)
         (ensures (let wz = getWosize (read_word g start) in
-                  let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                  let next = U64.v start + ((U64.v wz + 1) * 8) in
                   next + 8 < heap_size ==>
                   obj_in_objects (U64.uint_to_t (next + 8)) g))
 
@@ -261,7 +261,7 @@ val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: h
     getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
     Seq.mem (f_address h_addr) (objects 0UL g_post))
   (ensures objects_white_before 
-    (U64.v h_addr + FStar.Mul.((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
+    (U64.v h_addr + ((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
 
 /// Final: when pos covers all of heap_size, all objects are white or blue
 val objects_white_before_all : (pos: nat) -> (g: heap) ->

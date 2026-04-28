@@ -11,7 +11,6 @@
 module GC.Spec.Heap
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8

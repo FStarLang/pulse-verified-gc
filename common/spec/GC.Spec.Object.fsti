@@ -15,7 +15,6 @@
 module GC.Spec.Object
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 module U32 = FStar.UInt32
@@ -419,7 +418,7 @@ val parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int
 /// parent_closure_addr_nat specification: depends only on wosize_of_object
 val parent_closure_addr_nat_spec : (infix_obj: obj_addr) -> (g: heap) ->
   Lemma (parent_closure_addr_nat infix_obj g ==
-         U64.v infix_obj - 8 - FStar.Mul.(U64.v (wosize_of_object infix_obj g) * 8))
+         U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8))
 
 /// Resolve an address: if infix, return parent closure; otherwise return self.
 /// Defensive: if the computed parent address is invalid, returns the input unchanged.
