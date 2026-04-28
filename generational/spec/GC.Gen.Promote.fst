@@ -309,16 +309,86 @@ let promote_preserves_fields
 /// within an object body [dst_obj, dst_obj + (n-1)*8], never at header positions.
 /// Therefore the objects walk is unchanged.
 ///
-/// Proof strategy: use copy_fields_preserves_other to show all header reads
-/// outside [dst_obj, dst_obj + n*8) are unchanged. Since headers are at
-/// obj - 8 for each object, and in a well-formed heap objects don't overlap,
-/// no header falls within another object's body.
+/// The library's write_word_preserves_objects requires well_formed_heap, but the
+/// proof structure doesn't actually need it. We prove a local version without
+/// that requirement, using the same inductive structure.
+
+/// Helper: write at addr < start preserves objects from start.
+private let write_before_preserves (start: hp_addr) (g: heap) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires U64.v addr < U64.v start /\ U64.v addr % 8 = 0)
+          (ensures objects start (write_word g addr v) == objects start g) =
+  write_word_preserves_objects_before start g addr v
+
+/// Core proof: writing within an object body preserves the objects walk.
+/// Does NOT require well_formed_heap — only membership and bounds.
+/// Same proof structure as the library's write_word_preserves_objects_aux.
+#push-options "--z3rlimit 1600 --fuel 4 --ifuel 2"
+private let rec write_body_preserves_objects_aux
+  (start: hp_addr) (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires
+      Seq.mem obj (objects start g) /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
+      U64.v addr % 8 = 0)
+    (ensures objects start (write_word g addr v) == objects start g)
+    (decreases (Seq.length g - U64.v start))
+  =
+  if U64.v start + 8 >= Seq.length g then ()
+  else begin
+    let header = read_word g start in
+    let wz = getWosize header in
+    let obj_size_nat = U64.v wz + 1 in
+    let next_start_nat = U64.v start + (obj_size_nat * 8) in
+    if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()
+    else begin
+      let obj_addr_raw = f_address start in
+      f_address_spec start;
+      let oa : obj_addr = obj_addr_raw in
+      hd_address_spec oa;
+      if oa = obj then begin
+        // addr >= obj = start + 8, so addr > start, separated
+        read_write_different g addr start v;
+        if next_start_nat >= heap_size then ()
+        else begin
+          let next_start : hp_addr = U64.uint_to_t next_start_nat in
+          wosize_of_object_spec obj g;
+          // addr < obj + wosize*8 = (start+8) + wz*8 = start + (wz+1)*8 = next_start
+          assert (U64.v addr < next_start_nat);
+          write_word_preserves_objects_before next_start g addr v
+        end
+      end else begin
+        if next_start_nat >= heap_size then begin
+          mem_cons_lemma obj oa (Seq.empty #obj_addr);
+          assert (obj = oa)
+        end else begin
+          let next_start : hp_addr = U64.uint_to_t next_start_nat in
+          mem_cons_lemma obj oa (objects next_start g);
+          objects_addresses_gt_start start g obj;
+          // obj > start, so addr >= obj > start
+          read_write_different g addr start v;
+          write_body_preserves_objects_aux next_start g obj addr v
+        end
+      end
+    end
+  end
+#pop-options
+
+/// Top-level: writing within an object body preserves objects from 0.
+private let write_body_preserves_objects
+  (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires
+      Seq.mem obj (objects 0UL g) /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
+      U64.v addr % 8 = 0)
+    (ensures objects 0UL (write_word g addr v) == objects 0UL g) =
+  write_body_preserves_objects_aux 0UL g obj addr v
+
 #push-options "--z3rlimit 40 --fuel 1"
 let rec copy_fields_preserves_objects_aux
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (i: nat) (n: nat)
   : Lemma (requires
-             well_formed_heap major /\
              Seq.mem dst_obj (objects 0UL major) /\
              U64.v dst_obj % 8 == 0 /\
              U64.v (wosize_of_object dst_obj major) >= n /\
@@ -335,22 +405,13 @@ let rec copy_fields_preserves_objects_aux
       let dst_addr : hp_addr = U64.uint_to_t dst_offset in
       assert (U64.v dst_addr >= U64.v dst_obj);
       assert (U64.v dst_addr < U64.v dst_obj + U64.v (wosize_of_object dst_obj major) * 8);
-      write_word_preserves_objects major dst_obj dst_addr field_val;
+      // Use our local proof that doesn't require well_formed_heap
+      write_body_preserves_objects major dst_obj dst_addr field_val;
       let major' = write_word major dst_addr field_val in
       assert (objects 0UL major' == objects 0UL major);
-      // For the recursive call: well_formed_heap major' is needed.
-      // Writing within an object body preserves well_formed_heap parts 1, 3, 4
-      // (which depend only on headers/objects, not field data).
-      // Part 2 (pointer validity) may technically fail for the written field,
-      // but write_word_preserves_objects only needs objects equality.
-      // We use the fact that this is a TCB boundary — the objects walk is
-      // determined by headers, and we've already shown it's unchanged.
-      assume (well_formed_heap major');
-      // Since objects 0UL major' == objects 0UL major (line above),
-      // and dst_obj is in objects 0UL major (from precondition):
-      assert (Seq.mem dst_obj (objects 0UL major'));
-      // wosize is read from header at hd_address dst_obj, which was not written
-      // (write at dst_obj + i*8 doesn't overlap with hd_address dst_obj = dst_obj - 8)
+      // dst_obj is in objects 0UL major' (by objects equality)
+      assert (Seq.mem dst_obj (objects 0UL major') = true);
+      // wosize preserved: write at dst_obj + i*8 doesn't overlap hd_address(dst_obj)
       let hdr_addr = hd_address dst_obj in
       hd_address_spec dst_obj;
       read_write_different major dst_addr hdr_addr field_val;
@@ -366,7 +427,6 @@ let copy_fields_preserves_objects
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
   : Lemma (requires
-             well_formed_heap major /\
              Seq.mem dst_obj (objects 0UL major) /\
              U64.v dst_obj % 8 == 0 /\
              U64.v (wosize_of_object dst_obj major) >= n)
@@ -432,7 +492,15 @@ let rec promote_all_aux_preserves_objects
       if res.new_addr = 0UL then ()
       else begin
         promote_object_preserves_objects minor major obj fp wz;
+        // TCB: well_formed_heap is temporarily violated during promotion because
+        // copy_fields writes minor-heap addresses into major-heap fields, breaking
+        // pointer validity (part 2 of wfh). The objects walk and allocator structure
+        // are preserved (proven above), but full wfh requires the allocator library
+        // to be generalized to not require pointer validity.
         assume (well_formed_heap res.major_out);
+        // TCB: fl_valid is preserved because copy_fields only writes within the
+        // newly allocated object's body, which is no longer in the free list.
+        // Formal proof requires a separation lemma between obj_out and the free chain.
         assume (AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword));
         let fwd' = extend_forwarding fwd obj res.new_addr in
         promote_all_aux_preserves_objects minor res.major_out res.fp_out live_set fwd' (idx + 1)
