@@ -11,7 +11,7 @@
 > build system for incremental parallel verification, adding `.fsti`
 > interfaces for modular compilation, adding a verified memory allocator,
 > extracting verified C code via KaRaMeL, integrating with OCaml 4.14's
-> bytecode runtime, and tracking the upstream `fstar2` branch.
+> bytecode runtime, and tracking the upstream F* master branch.
 
 ---
 
@@ -37,7 +37,7 @@ and integrated with OCaml 4.14's bytecode runtime.
 git clone <this-repo>
 cd pulse-verified-gc
 
-# Build F*/Pulse/KaRaMeL from source (~15-30 min, one-time)
+# Install pinned F* nightly (~2 min, one-time)
 ./setup.sh
 
 # Verify all modules + extract to C + update snapshot
@@ -170,14 +170,15 @@ GC.Spec.HeapModel              graph construction from heap (create_graph)
 
 ## Building & Verification
 
-Run `./setup.sh` once after cloning to build the F*/Pulse/KaRaMeL toolchain
-from source (the `fstar2` branch of [FStar](https://github.com/FStarLang/FStar)).
+Run `./setup.sh` once after cloning to install the pinned
+[F* nightly](https://github.com/FStarLang/FStar-nightly) build.
 This creates a `fstar/` directory with `bin/fstar.exe` and `karamel/krml`.
 
 ```bash
-./setup.sh          # Build from source (default, ~15-30 min)
-./setup.sh --update # Pull latest F* and rebuild
-./setup.sh --nightly # Install nightly binary instead (faster, ~2 min)
+./setup.sh              # Install pinned nightly (default, ~2 min)
+./setup.sh --nightly    # Install latest nightly instead
+./setup.sh --source     # Build from source (~15-30 min)
+./setup.sh --update     # Pull latest source and rebuild
 
 make            # Verify all modules (common/ + mark-and-sweep/)
 make -j$(nproc) # Parallel verification
@@ -253,12 +254,11 @@ make benchmark  # Run hyperfine benchmarks (requires hyperfine)
 
 ## Prerequisites
 
-- **Source build (default):** git, make, [opam](https://opam.ocaml.org/doc/Install.html)
+- **Binary install (default):** curl, bash
+- **Source build (`--source`):** git, make, [opam](https://opam.ocaml.org/doc/Install.html)
   with OCaml >= 4.14 (5.3.0 recommended), Z3 SMT solver
-- **Binary install (`--nightly`):** curl, bash
 
-Run `./setup.sh` after cloning to build or install the F* toolchain.
-For Z3, after cloning you can run: `bash fstar/.scripts/get_fstar_z3.sh ~/.local/bin`
+Run `./setup.sh` after cloning to install the F* toolchain.
 
 ## References
 

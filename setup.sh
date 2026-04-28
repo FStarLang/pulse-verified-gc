@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# setup.sh — Build F* toolchain from source for pulse-verified-gc
+# setup.sh — Install or build F* toolchain for pulse-verified-gc
 #
 # Usage:
-#   ./setup.sh              Clone & build F* from fstar2 branch (default)
-#   ./setup.sh --update     Pull latest changes and rebuild
-#   ./setup.sh --release    Install binary release instead (faster, ~2 min)
-#   ./setup.sh --nightly    Install latest nightly binary instead
+#   ./setup.sh                        Install pinned F* nightly (default, fast)
+#   ./setup.sh --nightly              Install latest nightly binary
+#   ./setup.sh --nightly 2026-04-28   Install a specific nightly date
+#   ./setup.sh --release              Install latest stable release
+#   ./setup.sh --source               Clone & build F* from master (slow, 15-30 min)
+#   ./setup.sh --update               Pull latest source and rebuild
 #
-# Prerequisites (source build): git, make, opam, OCaml >= 4.14, Z3
 # Prerequisites (binary):       curl, bash
+# Prerequisites (source build): git, make, opam, OCaml >= 4.14, Z3
 #
 # Result: fstar/ directory with bin/fstar.exe, karamel/krml, etc.
+
+# ── Pinned nightly version ──────────────────────────────────────────────
+# Update this to track a known-good nightly build.
+FSTAR_NIGHTLY_VERSION="2026-04-28"
 
 set -euo pipefail
 
@@ -20,13 +26,22 @@ FSTAR_REPO="https://github.com/FStarLang/FStar.git"
 FSTAR_BRANCH="master"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
-MODE="source"  # default: build from source
+MODE="pinned"  # default: install pinned nightly
+NIGHTLY_DATE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --update)  MODE="update"; shift ;;
     --release) MODE="release"; shift ;;
-    --nightly) MODE="nightly"; shift ;;
+    --source)  MODE="source"; shift ;;
+    --nightly)
+      MODE="nightly"
+      shift
+      # Optional date argument (not starting with --)
+      if [[ $# -gt 0 && "$1" != --* ]]; then
+        NIGHTLY_DATE="$1"; shift
+      fi
+      ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -39,6 +54,7 @@ info()  { printf '\033[1;34m=> %s\033[0m\n' "$*"; }
 
 install_binary() {
   local flags="$1"
+  local version="${2:-}"
   for cmd in curl bash; do
     if ! command -v "$cmd" &>/dev/null; then
       red "Missing prerequisite: $cmd"
@@ -52,8 +68,12 @@ install_binary() {
     info "Remove fstar/ directory to force reinstall."
   else
     info "Installing F* binary to $FSTAR_DIR ..."
+    local version_flag=""
+    if [ -n "$version" ]; then
+      version_flag="--version $version"
+    fi
     curl -fsSL https://aka.ms/install-fstar | bash -s -- \
-      $flags --dest "$FSTAR_DIR" --no-link
+      $flags $version_flag --dest "$FSTAR_DIR" --no-link
 
     if [ ! -x "$FSTAR_DIR/bin/fstar.exe" ]; then
       red "Install failed — $FSTAR_DIR/bin/fstar.exe not found."
@@ -170,6 +190,9 @@ update_source() {
 # ── Main ────────────────────────────────────────────────────────────────
 
 case "$MODE" in
+  pinned)
+    install_binary "--nightly" "$FSTAR_NIGHTLY_VERSION"
+    ;;
   source)
     build_from_source
     ;;
@@ -177,10 +200,10 @@ case "$MODE" in
     update_source
     ;;
   release)
-    install_binary "--release"
+    install_binary "--release" ""
     ;;
   nightly)
-    install_binary "--nightly"
+    install_binary "--nightly" "$NIGHTLY_DATE"
     ;;
 esac
 
