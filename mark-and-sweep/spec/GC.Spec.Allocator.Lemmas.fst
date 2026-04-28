@@ -3186,6 +3186,66 @@ let chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
           (ensures chain_avoids g (read_word g (fp <: obj_addr)) excl (fuel - 1) = true)
   = ()
 
+/// chain_avoids_transfer: if chain_avoids holds in heap g, and all link reads along the chain
+/// are preserved in heap g' (for objects in objects(g) with wosize >= 1), then chain_avoids
+/// also holds in g'. Uses fl_valid to know chain nodes are in objects(g).
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    fl_valid g fp fuel /\
+                    (forall (a: obj_addr). Seq.mem a (objects 0UL g) /\
+                      U64.v (wosize_of_object a g) >= 1 /\
+                      U64.v (hd_address a) + 16 <= heap_size /\
+                      a <> excl ==>
+                        read_word g' a == read_word g a))
+          (ensures chain_avoids g' fp excl fuel = true)
+          (decreases fuel)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if fuel = 0 then ()
+    else begin
+      chain_avoids_head_ne g fp excl fuel;
+      // fl_valid gives: fp ∈ objects(g), wosize >= 1
+      fl_valid_gives_mem g fp fuel;
+      fl_valid_gives_wosize g fp fuel;
+      let hd = hd_address (fp <: obj_addr) in
+      hd_address_spec (fp <: obj_addr);
+      if U64.v hd + 16 > heap_size then ()
+      else begin
+        // fp ∈ objects(g), wosize >= 1, hd+16 <= heap_size, fp <> excl → read preserved
+        assert (read_word g' (fp <: obj_addr) == read_word g (fp <: obj_addr));
+        chain_avoids_tail g fp excl fuel;
+        fl_valid_next g fp fuel;
+        chain_avoids_transfer g g' (read_word g (fp <: obj_addr)) excl (fuel - 1)
+      end
+    end
+#pop-options
+
+/// chain_avoids_weaken: if chain_avoids holds for fuel steps, it also holds for fewer steps.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let rec chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\ fuel' <= fuel)
+          (ensures chain_avoids g fp excl fuel' = true)
+          (decreases fuel')
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if fuel' = 0 then ()
+    else begin
+      chain_avoids_head_ne g fp excl fuel;
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else begin
+        chain_avoids_tail g fp excl fuel;
+        chain_avoids_weaken g (read_word g (fp <: obj_addr)) excl (fuel - 1) (fuel' - 1)
+      end
+    end
+#pop-options
+
 /// first_hit: if chain_avoids = false (i.e., dst_obj IS in chain), gives the position where
 /// dst_obj first appears.
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
@@ -4092,6 +4152,462 @@ let alloc_spec_preserves_no_black (g: heap) (fp: U64.t) (requested_wz: nat)
                     no_black_objects r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_no_black g fp 0UL fp wz (heap_size / U64.v mword)
+
+
+/// ===========================================================================
+/// Section I: alloc_spec removes obj_out from the chain
+/// ===========================================================================
+
+/// ---------------------------------------------------------------------------
+/// Helper: chain_avoids_shrink — chain_avoids true at more steps implies true
+/// at fewer steps (fewer checks = easier to pass).
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let rec chain_avoids_shrink (g: heap) (fp excl: U64.t) (s_small s_big: nat)
+  : Lemma (requires chain_avoids g fp excl s_big = true /\ s_small <= s_big)
+          (ensures chain_avoids g fp excl s_small = true)
+          (decreases s_small)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if s_small = 0 then ()
+    else begin
+      chain_avoids_head_ne g fp excl s_big;
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else begin
+        chain_avoids_tail g fp excl s_big;
+        chain_avoids_shrink g (read_word g (fp <: obj_addr)) excl (s_small - 1) (s_big - 1)
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Helper: chain_avoids_strengthen — if chain_avoids at s1 and chain terminates
+/// at s1, then chain_avoids at s2 >= s1.
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let rec chain_avoids_strengthen (g: heap) (fp excl: U64.t) (s1 s2: nat)
+  : Lemma (requires chain_avoids g fp excl s1 = true /\
+                    fl_chain_terminates g fp s1 /\
+                    s2 >= s1)
+          (ensures chain_avoids g fp excl s2 = true)
+          (decreases s1)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if s1 = 0 then ()
+    else begin
+      assert (fp <> excl);
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else
+        chain_avoids_strengthen g (read_word g (fp <: obj_addr)) excl (s1 - 1) (s2 - 1)
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Helper: chain_avoids_transfer_excl — transfer chain_avoids from g to g'
+/// when all link reads are preserved except possibly at excl.
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let rec chain_avoids_transfer_excl
+  (g g': heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma
+    (requires chain_avoids g fp excl fuel = true /\
+              fl_valid g fp fuel /\
+              (forall (a: U64.t).
+                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
+                  Seq.mem a (objects 0UL g) /\ a <> excl) ==>
+                 (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                    read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
+    (ensures chain_avoids g' fp excl fuel = true)
+    (decreases fuel)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if fuel = 0 then ()
+    else begin
+      assert (fp <> excl);
+      fl_valid_gives_mem g fp fuel;
+      fl_valid_gives_wosize g fp fuel;
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else
+        chain_avoids_transfer_excl g g' (read_word g (fp <: obj_addr)) excl (fuel - 1)
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Helper: chain_avoids_transfer_excl2 — transfer chain_avoids from g to g'
+/// when all link reads are preserved except possibly at excl or excl2.
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let rec chain_avoids_transfer_excl2
+  (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
+  : Lemma
+    (requires chain_avoids g fp excl fuel = true /\
+              chain_avoids g fp excl2 fuel = true /\
+              fl_valid g fp fuel /\
+              (forall (a: U64.t).
+                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
+                  Seq.mem a (objects 0UL g) /\ a <> excl /\ a <> excl2) ==>
+                 (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                    read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
+    (ensures chain_avoids g' fp excl fuel = true)
+    (decreases fuel)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if fuel = 0 then ()
+    else begin
+      assert (fp <> excl);
+      assert (fp <> excl2);
+      fl_valid_gives_mem g fp fuel;
+      fl_valid_gives_wosize g fp fuel;
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else
+        chain_avoids_transfer_excl2 g g' (read_word g (fp <: obj_addr)) excl excl2 (fuel - 1)
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Helper: chain_avoids_unfold_steps — unfold n valid steps.
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let rec chain_avoids_unfold_steps (g: heap) (fp excl: U64.t) (n fuel: nat)
+  : Lemma (requires n <= fuel /\ walk_chain_valid g fp n /\
+                    chain_avoids g fp excl n = true)
+          (ensures chain_avoids g fp excl fuel =
+                   chain_avoids g (walk_chain g fp n) excl (fuel - n))
+          (decreases n)
+  = if n = 0 then ()
+    else begin
+      let next = read_word g (fp <: obj_addr) in
+      chain_avoids_unfold_steps g next excl (n - 1) (fuel - 1)
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// The main recursive proof: alloc_search_obj_not_in_chain
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 1600 --fuel 1 --ifuel 0"
+let rec alloc_search_obj_not_in_chain
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma (requires well_formed_heap g /\
+                    fl_valid g cur_fp fuel /\
+                    fl_chain_terminates g cur_fp fuel /\
+                    fl_valid g head_fp (heap_size / U64.v mword) /\
+                    fl_chain_terminates g head_fp (heap_size / U64.v mword) /\
+                    wz >= 1 /\
+                    fuel <= heap_size / U64.v mword /\
+                    (prev_fp <> 0UL ==>
+                      (prev_fp <> cur_fp /\
+                       U64.v prev_fp >= U64.v mword /\
+                       U64.v prev_fp < heap_size /\
+                       U64.v prev_fp % U64.v mword = 0 /\
+                       Seq.mem prev_fp (objects 0UL g) /\
+                       U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1 /\
+                       U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
+                       read_word g (prev_fp <: obj_addr) = cur_fp)) /\
+                    // Walk-chain invariants
+                    walk_chain g head_fp (heap_size / U64.v mword - fuel) = cur_fp /\
+                    walk_chain_valid g head_fp (heap_size / U64.v mword - fuel) /\
+                    (prev_fp <> 0UL ==> fuel < heap_size / U64.v mword /\
+                                        walk_chain g head_fp (heap_size / U64.v mword - fuel - 1) = prev_fp))
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+                    r.obj_out <> 0UL ==>
+                    chain_avoids r.heap_out r.fp_out r.obj_out (heap_size / U64.v mword) = true))
+          (decreases fuel)
+  = let big_fuel = heap_size / U64.v mword in
+    if fuel = 0 then ()
+    else if cur_fp = 0UL then ()
+    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp >= heap_size then ()
+    else if U64.v cur_fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = cur_fp in
+      let hd = hd_address obj in
+      let hdr = read_word g hd in
+      let block_wz = U64.v (getWosize hdr) in
+      hd_address_spec obj;
+      hd_address_bounds obj;
+      fl_valid_gives_mem g cur_fp fuel;
+      fl_valid_gives_wosize g cur_fp fuel;
+      fl_valid_next g cur_fp fuel;
+      assert (Seq.mem obj (objects 0UL g));
+      assert (U64.v (wosize_of_object obj g) >= 1);
+      wosize_of_object_spec obj g;
+      wosize_of_object_bound obj g;
+      wf_object_size_bound g obj;
+      getWosize_bound hdr;
+      let next_fp =
+        if U64.v hd + 16 <= heap_size then read_word g obj
+        else 0UL
+      in
+      assert (U64.v hd + 16 <= heap_size);
+      assert (fl_valid g next_fp (fuel - 1));
+      assert (fl_chain_terminates g next_fp (fuel - 1));
+      if block_wz >= wz then begin
+        // ===== Found a suitable block: obj_out = cur_fp =====
+        next_fp_in_objects g obj;
+        alloc_from_block_preserves_wf g obj wz next_fp;
+        let (g', new_fp) = alloc_from_block g obj wz next_fp in
+        fl_valid_any_fuel g next_fp (fuel - 1) big_fuel;
+        fl_chain_terminates_weaken g next_fp (fuel - 1) big_fuel;
+        // Key: cur_fp not in successor chain
+        fl_chain_predecessor_not_in_suffix_b g cur_fp fuel;
+        assert (chain_avoids g next_fp cur_fp (fuel - 1) = true);
+        if prev_fp = 0UL then begin
+          // ===== prev_fp = 0: fp_out = new_fp =====
+          if block_wz - wz >= 2 then begin
+            // ----- Split: new_fp = rem_obj -----
+            alloc_split_facts g obj wz next_fp;
+            alloc_from_block_objects_facts g obj wz next_fp;
+            alloc_from_block_split_normal g obj wz next_fp;
+            let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+            let g1 = write_word g hd alloc_hdr in
+            let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+            let rem_obj_nat = rem_hd_nat + 8 in
+            let rem_wz = block_wz - wz - 1 in
+            let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
+            let g2 = write_word g1 (U64.uint_to_t rem_hd_nat <: hp_addr) rem_hdr in
+            let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+            let g3 = write_word g2 rem_obj next_fp in
+            assert (g' == g3);
+            assert (new_fp == rem_obj);
+            assert (U64.v new_fp > U64.v cur_fp);
+            read_write_same g2 rem_obj next_fp;
+            assert (read_word g' new_fp == next_fp);
+            let transfer_aux (a: obj_addr) : Lemma
+              (requires Seq.mem a (objects 0UL g))
+              (ensures Seq.mem a (objects 0UL g') /\
+                       (U64.v (wosize_of_object a g) >= 1 ==>
+                         U64.v (wosize_of_object a g') >= 1) /\
+                       (U64.v (wosize_of_object a g) >= 1 /\
+                        U64.v (hd_address a) + 16 <= heap_size ==>
+                         read_word g' a == read_word g a))
+            = alloc_split_fl_transfer_pre g obj wz next_fp a
+            in
+            FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux);
+            chain_avoids_transfer_excl g g' next_fp cur_fp (fuel - 1);
+            fl_chain_terminates_transfer g g' next_fp (fuel - 1);
+            chain_avoids_strengthen g' next_fp cur_fp (fuel - 1) (big_fuel - 1);
+            let next_hd_nat = U64.v hd + (block_wz + 1) * 8 in
+            assert (next_hd_nat <= heap_size);
+            assert (rem_obj_nat + 8 <= next_hd_nat);
+            hd_address_spec (new_fp <: obj_addr);
+            assert (U64.v (hd_address (new_fp <: obj_addr)) + 16 <= heap_size);
+            chain_avoids_unfold_step g' new_fp cur_fp big_fuel
+          end else begin
+            // ----- Exact-fit: new_fp = next_fp -----
+            alloc_exact_preserves_wf g obj wz next_fp;
+            alloc_from_block_exact g obj wz next_fp;
+            let transfer_aux_e (a: obj_addr) : Lemma
+              (requires Seq.mem a (objects 0UL g))
+              (ensures Seq.mem a (objects 0UL g') /\
+                       (U64.v (wosize_of_object a g) >= 1 ==>
+                         U64.v (wosize_of_object a g') >= 1) /\
+                       (U64.v (wosize_of_object a g) >= 1 /\
+                        U64.v (hd_address a) + 16 <= heap_size ==>
+                         read_word g' a == read_word g a))
+            = alloc_exact_fl_transfer_pre g obj wz next_fp a
+            in
+            FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux_e);
+            chain_avoids_transfer_excl g g' next_fp cur_fp (fuel - 1);
+            fl_chain_terminates_transfer g g' next_fp (fuel - 1);
+            chain_avoids_strengthen g' next_fp cur_fp (fuel - 1) big_fuel
+          end
+        end
+        else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
+                U64.v prev_fp % U64.v mword = 0 then begin
+          // ===== prev_fp != 0: fp_out = head_fp, heap_out = g2 =====
+          let prev_obj : obj_addr = prev_fp in
+          let g2 = write_word g' (prev_obj <: hp_addr) new_fp in
+          let d = big_fuel - fuel - 1 in
+          if block_wz - wz >= 2 then begin
+            // ----- Split sub-case (prev != 0) -----
+            alloc_split_facts g obj wz next_fp;
+            alloc_from_block_objects_facts g obj wz next_fp;
+            alloc_from_block_split_normal g obj wz next_fp;
+            let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
+            let g1 = write_word g hd alloc_hdr in
+            let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+            let rem_obj_nat = rem_hd_nat + 8 in
+            let rem_wz = block_wz - wz - 1 in
+            let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
+            let g2_tmp = write_word g1 (U64.uint_to_t rem_hd_nat <: hp_addr) rem_hdr in
+            let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+            let g3 = write_word g2_tmp rem_obj next_fp in
+            assert (g' == g3);
+            assert (new_fp == rem_obj);
+            let transfer_aux_s (a: obj_addr) : Lemma
+              (requires Seq.mem a (objects 0UL g))
+              (ensures Seq.mem a (objects 0UL g') /\
+                       (U64.v (wosize_of_object a g) >= 1 ==>
+                         U64.v (wosize_of_object a g') >= 1) /\
+                       (U64.v (wosize_of_object a g) >= 1 /\
+                        U64.v (hd_address a) + 16 <= heap_size ==>
+                         read_word g' a == read_word g a))
+            = alloc_split_fl_transfer_pre g obj wz next_fp a
+            in
+            FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux_s);
+            write_word_locality g' (prev_obj <: hp_addr) new_fp;
+            (if U64.v prev_fp <= U64.v obj then begin
+               objects_separated 0UL g prev_obj obj;
+               assert (U64.v new_fp > U64.v prev_fp)
+             end else begin
+               objects_separated 0UL g obj prev_obj;
+               assert (U64.v prev_fp > U64.v obj + block_wz * 8);
+               assert (U64.v new_fp < U64.v obj + block_wz * 8);
+               assert (U64.v new_fp < U64.v prev_fp)
+             end);
+            assert (new_fp <> prev_fp);
+            assert (U64.v new_fp > U64.v cur_fp);
+            read_write_different g' (prev_obj <: hp_addr) (new_fp <: hp_addr) new_fp;
+            read_write_same g2_tmp rem_obj next_fp;
+            assert (read_word g2 (new_fp <: obj_addr) == next_fp);
+            read_write_same g' (prev_obj <: hp_addr) new_fp;
+            assert (read_word g2 (prev_fp <: obj_addr) == new_fp);
+            // Transfer chain_avoids for next_fp chain to g2
+            chain_avoids_prev g prev_fp cur_fp next_fp (fuel - 1);
+            chain_avoids_transfer_excl2 g g2 next_fp cur_fp prev_fp (fuel - 1);
+            fl_chain_terminates_transfer_excl g g2 next_fp prev_fp (fuel - 1);
+            // chain_avoids g2 new_fp cur_fp big_fuel
+            let next_hd_nat = U64.v hd + (block_wz + 1) * 8 in
+            assert (next_hd_nat <= heap_size);
+            assert (rem_obj_nat + 8 <= next_hd_nat);
+            hd_address_spec (new_fp <: obj_addr);
+            assert (U64.v (hd_address (new_fp <: obj_addr)) + 16 <= heap_size);
+            chain_avoids_strengthen g2 next_fp cur_fp (fuel - 1) (big_fuel - 1);
+            chain_avoids_unfold_step g2 new_fp cur_fp big_fuel;
+            assert (chain_avoids g2 new_fp cur_fp big_fuel = true);
+            // chain_avoids g2 prev_fp cur_fp (fuel + 1)
+            chain_avoids_shrink g2 new_fp cur_fp fuel big_fuel;
+            chain_avoids_unfold_step g2 prev_fp cur_fp (fuel + 1);
+            assert (chain_avoids g2 prev_fp cur_fp (fuel + 1) = true);
+            // Get chain_avoids g2 head_fp cur_fp big_fuel
+            if d = 0 then begin
+              // d = 0: head_fp = prev_fp. Strengthen (fuel+1) to big_fuel.
+              fl_chain_terminates_step g2 new_fp fuel;
+              fl_chain_terminates_step g2 prev_fp (fuel + 1);
+              chain_avoids_strengthen g2 prev_fp cur_fp (fuel + 1) big_fuel
+            end else begin
+              // d > 0: use prefix walk transfer + unfold
+              walk_chain_valid_prefix g head_fp (big_fuel - fuel) d;
+              fl_chain_no_early_repeat g head_fp d big_fuel;
+              walk_chain_valid_preserved g g2 head_fp prev_fp d big_fuel;
+              assert (walk_chain_valid g2 head_fp d);
+              assert (walk_chain g2 head_fp d = prev_fp);
+              fl_chain_no_early_repeat g head_fp (d + 1) big_fuel;
+              chain_avoids_shrink g head_fp cur_fp d (d + 1);
+              fl_valid_weaken g head_fp big_fuel d;
+              chain_avoids_transfer_excl2 g g2 head_fp cur_fp prev_fp d;
+              chain_avoids_unfold_steps g2 head_fp cur_fp d big_fuel
+            end
+          end else begin
+            // ----- Exact-fit sub-case (prev != 0) -----
+            alloc_exact_preserves_wf g obj wz next_fp;
+            alloc_from_block_exact g obj wz next_fp;
+            let transfer_aux_e (a: obj_addr) : Lemma
+              (requires Seq.mem a (objects 0UL g))
+              (ensures Seq.mem a (objects 0UL g') /\
+                       (U64.v (wosize_of_object a g) >= 1 ==>
+                         U64.v (wosize_of_object a g') >= 1) /\
+                       (U64.v (wosize_of_object a g) >= 1 /\
+                        U64.v (hd_address a) + 16 <= heap_size ==>
+                         read_word g' a == read_word g a))
+            = alloc_exact_fl_transfer_pre g obj wz next_fp a
+            in
+            FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux_e);
+            write_word_locality g' (prev_obj <: hp_addr) new_fp;
+            (if new_fp = prev_fp then begin
+               assert (read_word g (prev_fp <: obj_addr) == cur_fp);
+               assert (read_word g obj == next_fp);
+               assert (next_fp == prev_fp);
+               fl_chain_2cycle_not_terminates g prev_fp cur_fp (fuel - 1);
+               assert false
+             end else ());
+            assert (new_fp <> prev_fp);
+            read_write_same g' (prev_obj <: hp_addr) new_fp;
+            assert (read_word g2 (prev_fp <: obj_addr) == new_fp);
+            chain_avoids_prev g prev_fp cur_fp next_fp (fuel - 1);
+            chain_avoids_transfer_excl2 g g2 next_fp cur_fp prev_fp (fuel - 1);
+            fl_chain_terminates_transfer_excl g g2 next_fp prev_fp (fuel - 1);
+            // chain_avoids g2 new_fp cur_fp big_fuel (new_fp = next_fp)
+            chain_avoids_strengthen g2 next_fp cur_fp (fuel - 1) big_fuel;
+            assert (chain_avoids g2 new_fp cur_fp big_fuel = true);
+            // chain_avoids g2 prev_fp cur_fp (fuel + 1)
+            chain_avoids_shrink g2 new_fp cur_fp fuel big_fuel;
+            chain_avoids_unfold_step g2 prev_fp cur_fp (fuel + 1);
+            assert (chain_avoids g2 prev_fp cur_fp (fuel + 1) = true);
+            // Get chain_avoids g2 head_fp cur_fp big_fuel
+            if d = 0 then begin
+              // d = 0: head_fp = prev_fp. Strengthen (fuel+1) to big_fuel.
+              fl_chain_terminates_weaken g2 next_fp (fuel - 1) fuel;
+              fl_chain_terminates_step g2 prev_fp (fuel + 1);
+              chain_avoids_strengthen g2 prev_fp cur_fp (fuel + 1) big_fuel
+            end else begin
+              // d > 0: use prefix walk transfer + unfold
+              walk_chain_valid_prefix g head_fp (big_fuel - fuel) d;
+              fl_chain_no_early_repeat g head_fp d big_fuel;
+              walk_chain_valid_preserved g g2 head_fp prev_fp d big_fuel;
+              fl_chain_no_early_repeat g head_fp (d + 1) big_fuel;
+              chain_avoids_shrink g head_fp cur_fp d (d + 1);
+              fl_valid_weaken g head_fp big_fuel d;
+              chain_avoids_transfer_excl2 g g2 head_fp cur_fp prev_fp d;
+              chain_avoids_unfold_steps g2 head_fp cur_fp d big_fuel
+            end
+          end
+        end
+        else ()
+      end
+      else begin
+        // ===== Advance: block too small, continue search =====
+        assert (cur_fp <> next_fp);
+        assert (read_word g obj == next_fp);
+        assert (U64.v hd + 16 <= heap_size);
+        walk_chain_append g head_fp (big_fuel - fuel) 1;
+        walk_chain_one_step g cur_fp;
+        walk_chain_valid_snoc g head_fp (big_fuel - fuel);
+        alloc_search_obj_not_in_chain g head_fp cur_fp next_fp wz (fuel - 1)
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Top-level: alloc_spec_obj_not_in_chain
+/// ---------------------------------------------------------------------------
+
+let alloc_spec_obj_not_in_chain (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires well_formed_heap g /\
+                    fl_valid g fp (heap_size / U64.v mword) /\
+                    fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    requested_wz >= 1 /\
+                    (alloc_spec g fp requested_wz).obj_out <> 0UL)
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    chain_avoids r.heap_out r.fp_out r.obj_out (heap_size / U64.v mword) = true))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_obj_not_in_chain g fp 0UL fp wz (heap_size / U64.v mword)
 
 #pop-options // Module-level z3rlimit 20
 

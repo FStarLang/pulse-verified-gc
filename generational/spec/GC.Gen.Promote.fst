@@ -789,7 +789,8 @@ let rec promote_all_aux_preserves_objects
         // Key allocator property: alloc removes obj_out from the chain.
         // This holds because alloc_search either splits (remainder becomes new head)
         // or exact-fits (chain skips the allocated block).
-        assume (not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel);
+        AllocLemmas.alloc_spec_obj_not_in_chain major fp wz;
+        chain_avoids_implies_not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel;
         // fl_chain_terminates after alloc: proven via walk_chain infrastructure
         AllocLemmas.alloc_spec_preserves_fl_chain_terminates major fp wz;
         // copy_fields preserves fl_valid (proven via objects_separated)

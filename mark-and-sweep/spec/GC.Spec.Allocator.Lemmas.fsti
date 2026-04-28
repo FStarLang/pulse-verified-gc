@@ -222,6 +222,23 @@ val chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
                     U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
           (ensures chain_avoids g (read_word g (fp <: obj_addr)) excl (fuel - 1) = true)
 
+/// chain_avoids_transfer: transfer chain_avoids between heaps when link reads are preserved
+/// for chain nodes (objects in objects(g) with wosize >= 1).
+val chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    fl_valid g fp fuel /\
+                    (forall (a: obj_addr). Seq.mem a (objects 0UL g) /\
+                      U64.v (wosize_of_object a g) >= 1 /\
+                      U64.v (hd_address a) + 16 <= heap_size /\
+                      a <> excl ==>
+                        read_word g' a == read_word g a))
+          (ensures chain_avoids g' fp excl fuel = true)
+
+/// chain_avoids_weaken: if chain_avoids holds for fuel steps, it also holds for fewer steps.
+val chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\ fuel' <= fuel)
+          (ensures chain_avoids g fp excl fuel' = true)
+
 /// first_hit: position of first occurrence of dst_obj when chain_avoids = false.
 val first_hit (g: heap) (fp dst_obj: U64.t) (fuel: nat) : Tot nat
 
@@ -270,3 +287,13 @@ val alloc_spec_preserves_no_black : (g: heap) -> (fp: U64.t) -> (requested_wz: n
                   fl_valid g fp (heap_size / U64.v mword))
         (ensures (let r = alloc_spec g fp requested_wz in
                   GC.Spec.Mark.no_black_objects r.heap_out))
+
+/// **Theorem**: alloc_spec removes obj_out from the chain.
+val alloc_spec_obj_not_in_chain : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires well_formed_heap g /\
+                  fl_valid g fp (heap_size / U64.v mword) /\
+                  fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                  requested_wz >= 1 /\
+                  (alloc_spec g fp requested_wz).obj_out <> 0UL)
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  chain_avoids r.heap_out r.fp_out r.obj_out (heap_size / U64.v mword) = true))
