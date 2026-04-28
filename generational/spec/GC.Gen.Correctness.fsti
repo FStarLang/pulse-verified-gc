@@ -119,5 +119,5 @@ val minor_preserves_major_objects
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword))
           (ensures (let res = minor_collect_spec minor major fp roots in
                     // All objects that existed before still exist
-                    (forall (x: obj_addr). Seq.mem x (objects 0UL major) ==>
-                      Seq.mem x (objects 0UL res.mc_major))))
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
+                      Seq.mem x (objects zero_addr res.mc_major))))

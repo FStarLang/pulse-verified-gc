@@ -60,7 +60,7 @@ let small_alloc_goes_to_minor (gs: gen_state) (wosize: nat{wosize > 0 /\ wosize 
           (ensures (let res = gen_alloc_spec gs wosize tag roots in
                     res.ga_in_minor == true /\
                     res.ga_addr <> 0UL)) =
-  admit ()
+  minor_alloc_adds_object gs.gs_minor wosize tag
 
 let large_alloc_goes_to_major (gs: gen_state) (wosize: nat{wosize > max_young_wosize})
                               (tag: nat{tag < 256}) (roots: seq U64.t)

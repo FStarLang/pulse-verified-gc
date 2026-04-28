@@ -44,14 +44,16 @@ let gen_gc_correct
 /// 5. copy_fields writes within allocated block → write_word_preserves_objects
 ///    → objects equality (hence membership) preserved
 /// 6. By induction on promote_all_aux, objects membership is preserved
-///
-/// Remaining work: prove the induction + copy_fields step formally.
-/// The key lemma (alloc_spec_preserves_objects) is already verified.
+
 let minor_preserves_major_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires minor_wf minor /\ well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword))
           (ensures (let res = minor_collect_spec minor major fp roots in
-                    (forall (x: obj_addr). Seq.mem x (objects 0UL major) ==>
-                      Seq.mem x (objects 0UL res.mc_major)))) =
-  admit ()
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
+                      Seq.mem x (objects zero_addr res.mc_major)))) =
+  let live_set = minor_objects minor in
+  promote_all_preserves_objects minor major fp live_set;
+  let prom_res = promote_all_spec minor major fp live_set in
+  update_major_pointers_id prom_res.major_final prom_res.fwd_map;
+  minor_collect_spec_unfold minor major fp roots

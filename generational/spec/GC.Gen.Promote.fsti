@@ -23,6 +23,8 @@ module U8 = FStar.UInt8
 
 open GC.Spec.Base
 open GC.Spec.Heap
+open GC.Spec.Object
+open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -109,6 +111,10 @@ val promote_all_spec (minor: minor_state) (major: heap)
 val update_major_pointers (major: heap) (fwd: forwarding_map)
   : GTot heap
 
+/// update_major_pointers is currently identity (placeholder)
+val update_major_pointers_id (major: heap) (fwd: forwarding_map)
+  : Lemma (update_major_pointers major fwd == major)
+
 /// ---------------------------------------------------------------------------
 /// Minor Collection (Full Spec)
 /// ---------------------------------------------------------------------------
@@ -136,13 +142,21 @@ val minor_collect_spec (minor: minor_state) (major: heap)
                        (fp: U64.t) (roots: seq U64.t)
   : GTot minor_collect_result
 
+/// Unfold lemma: mc_major is update_major_pointers applied to promote_all result
+val minor_collect_spec_unfold (minor: minor_state) (major: heap)
+                              (fp: U64.t) (roots: seq U64.t)
+  : Lemma (let live_set = minor_objects minor in
+           let prom_res = promote_all_spec minor major fp live_set in
+           (minor_collect_spec minor major fp roots).mc_major ==
+             update_major_pointers prom_res.major_final prom_res.fwd_map)
+
 /// ---------------------------------------------------------------------------
 /// Correctness Properties
 /// ---------------------------------------------------------------------------
 
 /// Helper: all destination addresses in copy_fields are valid hp_addr
 let dst_fields_valid (dst_obj: U64.t) (n: nat) : prop =
-  (forall (j:nat). j >= 1 /\ j <= n ==>
+  (forall (j:nat). j < n ==>
     (U64.v dst_obj + j * 8 + 8 <= heap_size /\
      (U64.v dst_obj + j * 8) % 8 == 0))
 
@@ -155,8 +169,8 @@ val copy_fields_frame
     (requires
       dst_fields_valid dst_obj n /\
       U64.v dst_obj % 8 == 0 /\
-      (U64.v addr + 8 <= U64.v dst_obj + 1 * 8 \/
-       U64.v addr >= U64.v dst_obj + (n + 1) * 8))
+      (U64.v addr + 8 <= U64.v dst_obj \/
+       U64.v addr >= U64.v dst_obj + n * 8))
     (ensures
       read_word (copy_fields minor major src_obj dst_obj i n) addr ==
       read_word major addr)
@@ -171,7 +185,7 @@ val copy_fields_all_correct
       U64.v dst_obj % 8 == 0)
     (ensures
       (let result = copy_fields minor major src_obj dst_obj 0 n in
-       (forall (j:nat). j >= 1 /\ j <= n ==>
+       (forall (j:nat). j < n ==>
          read_word result (U64.uint_to_t (U64.v dst_obj + j * 8)) ==
          minor_read_field minor src_obj j)))
 
@@ -187,9 +201,43 @@ val promote_preserves_fields
               res.new_addr <> 0UL ==>
               dst_fields_valid res.new_addr wosize ==>
               U64.v res.new_addr % 8 == 0 ==>
-              (forall (j:nat). j >= 1 /\ j <= wosize ==>
+              (forall (j:nat). j < wosize ==>
                 read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8)) ==
                 minor_read_field minor obj j)))
+
+/// copy_fields preserves the objects walk (writes only within object bodies, never headers)
+val copy_fields_preserves_objects
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
+  : Lemma (requires
+             well_formed_heap major /\
+             Seq.mem dst_obj (objects 0UL major) /\
+             U64.v dst_obj % 8 == 0 /\
+             U64.v (wosize_of_object dst_obj major) >= n)
+          (ensures
+             objects 0UL (copy_fields minor major src_obj dst_obj 0 n) == objects 0UL major)
+
+/// promote_object preserves existing object membership
+val promote_object_preserves_objects
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires
+             well_formed_heap major /\
+             GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword))
+          (ensures
+             (let res = promote_object minor major obj fp wosize in
+              (forall (x: obj_addr). Seq.mem x (objects 0UL major) ==>
+                Seq.mem x (objects 0UL res.major_out))))
+
+/// promote_all_spec preserves existing object membership
+val promote_all_preserves_objects
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires
+             well_formed_heap major /\
+             GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword))
+          (ensures
+             (let res = promote_all_spec minor major fp live_set in
+              (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
+                Seq.mem x (objects zero_addr res.major_final))))
 
 /// After minor collection, every object that was reachable from roots
 /// in (minor + major) is present in the post-collection major heap.

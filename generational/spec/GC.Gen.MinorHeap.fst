@@ -520,6 +520,8 @@ let minor_alloc_preserves_existing (ms: minor_state)
   let old_bump = U64.v ms.bump in
   let new_bump = old_bump + (wosize + 1) * 8 in
   assert (wosize < pow2 54);
+  next_pos_mod8 old_bump wosize;
+  FStar.Math.Lemmas.lemma_mult_le_right 8 2 (wosize + 1);
   let hdr = make_minor_header wosize tag in
   let data' = minor_write_word ms.data ms.bump hdr in
   
@@ -527,17 +529,10 @@ let minor_alloc_preserves_existing (ms: minor_state)
   minor_chain_valid_write_preserved ms.data old_bump ms.bump hdr;
   minor_read_write_same ms.data ms.bump hdr;
   make_header_wosize wosize tag;
-  assert (new_bump <= minor_heap_size);
-  next_pos_mod8 old_bump wosize;
-  assert (new_bump % 8 == 0);
-  FStar.Math.Lemmas.lemma_mult_le_right 8 2 (wosize + 1);
-  assert (new_bump > old_bump);
   minor_chain_valid_extend data' old_bump new_bump hdr;
   
   // Part 1: Seq.mem x (minor_objects res.ms_out)
   // data' agrees with ms.data below old_bump
-  assert (forall (i:nat). i < old_bump ==> Seq.index data' i == Seq.index ms.data i);
-  // So the walk from 0 to old_bump produces the same objects
   minor_objects_aux_data_eq ms.data data' 0 old_bump;
   // x is in walk from 0 to old_bump in data'
   // Everything in walk to old_bump is also in walk to new_bump (subset)
@@ -565,14 +560,11 @@ let minor_alloc_preserves_existing (ms: minor_state)
                            (ensures minor_read_field {data=data'; bump=U64.uint_to_t new_bump} x i == 
                                    minor_read_field ms x i) =
     let byte_offset = xv + i * 8 in
-    // byte_offset = (hdr_addr + 8) + i * 8 = hdr_addr + (i+1)*8
-    // byte_offset + 8 = hdr_addr + (i+2)*8
-    // Since i < wz_x: (i+2) <= (wz_x+1), so (i+2)*8 <= (wz_x+1)*8
-    // Therefore byte_offset + 8 <= hdr_addr + (wz_x+1)*8 <= old_bump
+    // byte_offset + 8 = hdr_addr + (i+2)*8 <= hdr_addr + (wz_x+1)*8 <= old_bump
+    FStar.Math.Lemmas.lemma_mult_le_right 8 (i + 2) (wz_x + 1);
     assert (byte_offset + 8 <= old_bump);
-    assert (byte_offset < old_bump);
+    FStar.Math.Lemmas.modulo_addition_lemma hdr_addr 8 (i + 1);
     assert (byte_offset % 8 == 0);
-    assert (byte_offset + 8 <= minor_heap_size);
     minor_read_write_different ms.data ms.bump (U64.uint_to_t byte_offset) hdr
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)

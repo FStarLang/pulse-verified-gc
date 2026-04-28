@@ -99,10 +99,18 @@ type minor_state = {
   bump : U64.t;  // next free byte offset (0 <= bump <= minor_heap_size, word-aligned)
 }
 
-/// Well-formed minor state: bump pointer is word-aligned and in bounds
+/// Chain validity: the walk from pos to bump never encounters a zero-wosize
+/// header or jumps past bump. This guarantees the object enumeration reaches
+/// all allocated objects.
+val minor_chain_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : GTot bool
+
+/// Well-formed minor state: bump pointer is word-aligned, in bounds, and
+/// the chain from 0 to bump is valid (walk reaches all allocated objects).
 let minor_wf (ms: minor_state) : prop =
   U64.v ms.bump % 8 == 0 /\
-  U64.v ms.bump <= minor_heap_size
+  U64.v ms.bump <= minor_heap_size /\
+  minor_chain_valid ms.data 0 (U64.v ms.bump) == true
 
 /// Initial (empty) minor heap state
 val minor_init (data: minor_heap) : Tot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0})
@@ -156,6 +164,10 @@ val minor_objects_valid (ms: minor_state) (x: U64.t)
 ///
 /// We model this abstractly here; the remembered set module provides the scan.
 
+/// Establish pow2 bounds needed for U64.uint_to_t below
+let minor_heap_size_bound : squash (minor_heap_size < pow2 64) =
+  assert_norm (pow2 57 < pow2 64)
+
 /// Read a field from a minor heap object
 let minor_read_field (ms: minor_state) (obj: U64.t) (field_idx: nat) : GTot U64.t =
   let byte_offset = U64.v obj + field_idx * 8 in
@@ -196,7 +208,7 @@ val minor_alloc_preserves_existing (ms: minor_state)
           (ensures (let res = minor_alloc_spec ms wosize tag in
                     Seq.mem x (minor_objects res.ms_out) /\
                     minor_wosize res.ms_out x == minor_wosize ms x /\
-                    (forall (i:nat). i >= 1 /\ i <= minor_wosize ms x ==>
+                    (forall (i:nat). i < minor_wosize ms x ==>
                       minor_read_field res.ms_out x i == minor_read_field ms x i)))
 
 /// Resetting the minor heap (after collection)

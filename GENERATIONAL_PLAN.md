@@ -57,7 +57,7 @@ res.new_addr <> 0 ==>
 - Use `write_word`/`read_word` round-trip lemma from `GC.Spec.Heap`
 - Key lemma: `write_word` at address `a` doesn't affect `read_word` at address `b ≠ a`
 
-**Status:** NOT STARTED
+**Status:** ✅ DONE — `copy_fields_preserves`, `copy_fields_preserves_other`, `copy_fields_all_correct`, `copy_fields_frame`, `promote_preserves_fields` all proven (0 admits)
 
 ### Phase B: Prove `minor_objects_valid` [spec/GC.Gen.MinorHeap]
 
@@ -68,7 +68,7 @@ res.new_addr <> 0 ==>
 - Each obj addr is `pos + 8`; from guards: `pos + 8 <= bump <= minor_heap_size` and `pos % 8 == 0`
 - Need helper: `Seq.mem x (Seq.cons a rest) ==> x == a \/ Seq.mem x rest`
 
-**Status:** NOT STARTED
+**Status:** ✅ DONE — `minor_objects_aux_valid` proven by induction with --fuel 2
 
 ### Phase C: Prove `minor_preserves_major_objects` [spec/GC.Gen.Correctness]
 
@@ -78,10 +78,11 @@ res.new_addr <> 0 ==>
 - `promote_all_spec` only calls `promote_object` which only calls `alloc_spec` + `copy_fields`
 - `alloc_spec` writes header into a free block — doesn't touch existing non-free objects
 - `copy_fields` writes into the freshly allocated region — disjoint from existing objects
-- Need: `alloc_spec_preserves_existing_objects` (may exist in mark-and-sweep spec)
-- Need: `write_word` at addr in [new_obj, new_obj+wosize*8] doesn't affect objects elsewhere
+- ✅ `alloc_spec_preserves_objects` PROVEN and exposed in GC.Spec.Allocator.Lemmas.fsti
+- `write_word_preserves_objects` already available in GC.Spec.Fields
+- Remaining: induction over promote_all_aux threading both invariants
 
-**Status:** NOT STARTED
+**Status:** IN PROGRESS — key lemma proven, induction skeleton written, 1 admit remaining
 
 ### Phase D: Remove assumes from Pulse impl [impl/GC.Gen.Impl.Promote.fst]
 
@@ -91,9 +92,9 @@ res.new_addr <> 0 ==>
    `alloc_spec` preserves `well_formed_heap` (already proven in M&S)
 2. Bounds assume in copy_fields_loop — Derive from allocator's postcondition:
    `alloc_spec` guarantees `new_obj + (wosize+1)*8 <= heap_size`
-3. `obj_addr >= 8` in minor_collect — Trivially true from `obj_addr = p + 8` where `p >= 0`
+3. ✅ `obj_addr >= 8` in minor_collect — DONE (replaced with proven assertions)
 
-**Status:** NOT STARTED
+**Status:** 1/3 DONE
 
 ### Phase E: Strengthen `Impl.fsti` postconditions
 
