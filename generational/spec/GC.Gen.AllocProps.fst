@@ -375,3 +375,142 @@ let alloc_spec_obj_wosize (g: heap) (fp: U64.t) (requested_wz: nat)
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_obj_wosize g fp 0UL fp wz (heap_size / U64.v mword)
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Part1-only versions: weaker preconditions (no full well_formed_heap)
+/// ---------------------------------------------------------------------------
+
+/// obj_out was in objects of the ORIGINAL heap (from fl_valid alone, no wfh needed)
+#push-options "--z3rlimit 200 --fuel 4 --ifuel 1"
+let rec alloc_search_obj_in_objects_pre_part1
+  (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
+  (cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma
+    (requires AllocLemmas.fl_valid g cur_fp fuel)
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+              r.obj_out <> 0UL ==>
+              (U64.v r.obj_out >= U64.v mword /\
+               U64.v r.obj_out < heap_size /\
+               U64.v r.obj_out % U64.v mword == 0 /\
+               Seq.mem (r.obj_out <: obj_addr) (objects zero_addr g))))
+    (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if cur_fp = 0UL then ()
+  else if U64.v cur_fp < U64.v mword then ()
+  else if U64.v cur_fp >= heap_size then ()
+  else if U64.v cur_fp % U64.v mword <> 0 then ()
+  else begin
+    AllocLemmas.fl_valid_elim g cur_fp fuel;
+    let obj : obj_addr = cur_fp in
+    let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let next_fp =
+      if U64.v hd + 16 <= heap_size then read_word g obj
+      else 0UL
+    in
+    if block_wz >= wz then ()
+    else begin
+      if U64.v hd + 16 <= heap_size then
+        alloc_search_obj_in_objects_pre_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+      else ()
+    end
+  end
+#pop-options
+
+/// After alloc, obj_out is in objects of the output heap (part1 only)
+let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword))
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    r.obj_out <> 0UL ==>
+                    (U64.v r.obj_out >= U64.v mword /\
+                     U64.v r.obj_out < heap_size /\
+                     U64.v r.obj_out % U64.v mword == 0 /\
+                     Seq.mem (r.obj_out <: obj_addr) (objects zero_addr r.heap_out))))
+  =
+  let wz = if requested_wz = 0 then 1 else requested_wz in
+  let fuel = heap_size / U64.v mword in
+  // obj_out was in objects(0, g) (from fl_valid)
+  alloc_search_obj_in_objects_pre_part1 g fp 0UL fp wz fuel;
+  // alloc preserves objects (part1 version)
+  AllocLemmas.alloc_spec_preserves_objects_part1 g fp requested_wz
+
+/// wosize of obj_out >= requested (no wfh — only fl_valid needed)
+#push-options "--z3rlimit 200 --fuel 4 --ifuel 1 --split_queries always"
+private let rec alloc_search_obj_wosize_part1
+  (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
+  (cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma
+    (requires AllocLemmas.fl_valid g cur_fp fuel /\
+              (prev_fp <> 0UL ==>
+                (prev_fp <> cur_fp /\
+                 U64.v prev_fp >= U64.v mword /\
+                 U64.v prev_fp < heap_size /\
+                 U64.v prev_fp % U64.v mword = 0 /\
+                 Seq.mem prev_fp (objects 0UL g) /\
+                 U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+              r.obj_out <> 0UL ==>
+              (U64.v r.obj_out >= U64.v mword /\
+               U64.v r.obj_out < heap_size /\
+               U64.v r.obj_out % U64.v mword == 0 /\
+               U64.v (wosize_of_object (r.obj_out <: obj_addr) r.heap_out) >= wz)))
+    (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if cur_fp = 0UL then ()
+  else if U64.v cur_fp < U64.v mword then ()
+  else if U64.v cur_fp >= heap_size then ()
+  else if U64.v cur_fp % U64.v mword <> 0 then ()
+  else begin
+    AllocLemmas.fl_valid_elim g cur_fp fuel;
+    let obj : obj_addr = cur_fp in
+    let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let next_fp =
+      if U64.v hd + 16 <= heap_size then read_word g obj
+      else 0UL
+    in
+    if block_wz >= wz then begin
+      alloc_from_block_wosize_lemma g obj wz next_fp;
+      let (g', new_rem_fp) = alloc_from_block g obj wz next_fp in
+      if prev_fp = 0UL then ()
+      else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size && U64.v prev_fp % U64.v mword = 0 then begin
+        let prev_obj : obj_addr = prev_fp in
+        hd_address_spec obj;
+        wosize_of_object_spec prev_obj g;
+        if U64.v prev_fp < U64.v obj then begin
+          objects_separated 0UL g prev_obj obj;
+          assert (prev_fp <> hd_address obj)
+        end else begin
+          objects_separated 0UL g obj prev_obj;
+          wosize_of_object_spec obj g;
+          assert (prev_fp <> hd_address obj)
+        end;
+        write_prev_preserves_wosize g' obj prev_fp new_rem_fp wz
+      end
+      else ()
+    end
+    else begin
+      if U64.v hd + 16 <= heap_size then
+        alloc_search_obj_wosize_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+      else ()
+    end
+  end
+#pop-options
+
+let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires AllocLemmas.fl_valid g fp (heap_size / U64.v mword))
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    r.obj_out <> 0UL ==>
+                    (U64.v r.obj_out >= U64.v mword /\
+                     U64.v r.obj_out < heap_size /\
+                     U64.v r.obj_out % U64.v mword == 0 /\
+                     U64.v (wosize_of_object (r.obj_out <: obj_addr) r.heap_out) >= 
+                       (if requested_wz = 0 then 1 else requested_wz))))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_obj_wosize_part1 g fp 0UL fp wz (heap_size / U64.v mword)
