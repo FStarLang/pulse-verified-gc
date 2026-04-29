@@ -326,3 +326,33 @@ val update_major_pointers_field_effect
        let new_val = read_word updated field_addr in
        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_val)))
+
+/// ---------------------------------------------------------------------------
+/// Field correspondence: promote_all_spec preserves all promoted fields
+/// ---------------------------------------------------------------------------
+
+/// Predicate: all promoted objects in the major heap have field data matching
+/// the original minor-heap values (pre-pointer-update).
+let fields_match_minor (minor: minor_state) (major: heap) (fwd: forwarding_map)
+                       (live_set: seq U64.t) (idx: nat) : prop =
+  forall (k:nat). k < idx /\ k < Seq.length live_set ==>
+    (let obj = Seq.index live_set k in
+     let wz = minor_wosize minor obj in
+     fwd obj <> 0UL /\ wz > 0 ==>
+     (let new_addr = fwd obj in
+      dst_fields_valid new_addr wz /\
+      U64.v new_addr % 8 == 0 ==>
+      (forall (j:nat). j < wz ==>
+        read_word major (U64.uint_to_t (U64.v new_addr + j * 8)) ==
+        minor_read_field minor obj j)))
+
+/// After promote_all_spec, all promoted objects' fields match the minor heap values.
+/// This is the pre-pointer-update field correspondence.
+val promote_all_preserves_fields
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = promote_all_spec minor major fp live_set in
+                    fields_match_minor minor res.major_final res.fwd_map
+                                       live_set (Seq.length live_set)))

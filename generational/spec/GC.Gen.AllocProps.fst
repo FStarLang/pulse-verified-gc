@@ -514,3 +514,131 @@ let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                        (if requested_wz = 0 then 1 else requested_wz))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_obj_wosize_part1 g fp 0UL fp wz (heap_size / U64.v mword)
+
+/// ---------------------------------------------------------------------------
+/// alloc_spec returns an object that is IN the pre-alloc chain.
+/// Equivalently: if chain_avoids g fp excl fuel = true, then excl ≠ obj_out.
+/// ---------------------------------------------------------------------------
+///
+/// Proof strategy: induction on alloc_search. The invariant is
+/// chain_avoids g cur_fp excl fuel = true. At the found step,
+/// chain_avoids_head_ne gives cur_fp ≠ excl = obj_out ≠ excl.
+/// At the advance step, chain_avoids_tail gives the invariant for next_fp.
+
+#push-options "--z3rlimit 100 --fuel 4 --ifuel 1"
+let rec alloc_search_obj_ne_excl
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: U64.t)
+  : Lemma
+    (requires well_formed_heap_part1 g /\
+              AllocLemmas.fl_valid g cur_fp fuel /\
+              AllocLemmas.chain_avoids g cur_fp excl fuel = true /\
+              wz >= 1)
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+              r.obj_out <> 0UL ==> r.obj_out <> excl))
+    (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if cur_fp = 0UL then ()
+  else if U64.v cur_fp < U64.v mword then ()
+  else if U64.v cur_fp >= heap_size then ()
+  else if U64.v cur_fp % U64.v mword <> 0 then ()
+  else begin
+    // cur_fp is a valid obj_addr with fuel > 0
+    AllocLemmas.fl_valid_elim g cur_fp fuel;
+    // fl_valid_elim gives: Seq.mem cur_fp (objects 0UL g), wosize >= 1
+    // From well_formed_heap_part1 + wosize >= 1: hd + 16 <= heap_size
+    let obj : obj_addr = cur_fp in
+    hd_address_spec obj;
+    let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let next_fp =
+      if U64.v hd + 16 <= heap_size then read_word g obj
+      else 0UL
+    in
+    // chain_avoids_head_ne: cur_fp ≠ excl
+    AllocLemmas.chain_avoids_head_ne g cur_fp excl fuel;
+    if block_wz >= wz then
+      // Found: obj_out = cur_fp, and cur_fp ≠ excl from chain_avoids_head_ne
+      ()
+    else begin
+      // Advance: need chain_avoids g next_fp excl (fuel-1)
+      if U64.v hd + 16 <= heap_size then begin
+        AllocLemmas.chain_avoids_tail g cur_fp excl fuel;
+        alloc_search_obj_ne_excl g head_fp cur_fp next_fp wz (fuel - 1) excl
+      end
+      else ()
+    end
+  end
+#pop-options
+
+/// Top-level: if chain_avoids g fp excl fuel = true, then alloc_spec obj_out ≠ excl
+let alloc_spec_obj_ne_excl (g: heap) (fp: U64.t) (requested_wz: nat) (excl: U64.t)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.chain_avoids g fp excl (heap_size / U64.v mword) = true)
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    r.obj_out <> 0UL ==> r.obj_out <> excl))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_obj_ne_excl g fp 0UL fp wz (heap_size / U64.v mword) excl
+
+/// ---------------------------------------------------------------------------
+/// Pre-alloc wosize of obj_out >= requested_wz
+/// ---------------------------------------------------------------------------
+///
+/// The allocator returns obj_out = cur_fp only when block_wz >= wz.
+/// block_wz = wosize_of_object(cur_fp, g). So wosize_of_object(obj_out, g) >= wz.
+
+#push-options "--z3rlimit 100 --fuel 4 --ifuel 1"
+private let rec alloc_search_obj_wosize_pre_part1
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma
+    (requires AllocLemmas.fl_valid g cur_fp fuel /\ wz >= 1)
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+              r.obj_out <> 0UL ==>
+              (U64.v r.obj_out >= U64.v mword /\
+               U64.v r.obj_out < heap_size /\
+               U64.v r.obj_out % U64.v mword == 0 /\
+               U64.v (wosize_of_object (r.obj_out <: obj_addr) g) >= wz)))
+    (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if cur_fp = 0UL then ()
+  else if U64.v cur_fp < U64.v mword then ()
+  else if U64.v cur_fp >= heap_size then ()
+  else if U64.v cur_fp % U64.v mword <> 0 then ()
+  else begin
+    AllocLemmas.fl_valid_elim g cur_fp fuel;
+    let obj : obj_addr = cur_fp in
+    hd_address_spec obj;
+    let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    wosize_of_object_spec obj g;
+    let next_fp =
+      if U64.v hd + 16 <= heap_size then read_word g obj
+      else 0UL
+    in
+    if block_wz >= wz then
+      // Found: obj_out = cur_fp, wosize_of_object(cur_fp, g) = block_wz >= wz
+      ()
+    else begin
+      if U64.v hd + 16 <= heap_size then
+        alloc_search_obj_wosize_pre_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+      else ()
+    end
+  end
+#pop-options
+
+/// Top-level: pre-alloc wosize of allocated object >= requested
+let alloc_spec_obj_wosize_pre_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires AllocLemmas.fl_valid g fp (heap_size / U64.v mword))
+          (ensures (let wz = (if requested_wz = 0 then 1 else requested_wz) in
+                    let r = alloc_spec g fp requested_wz in
+                    r.obj_out <> 0UL ==>
+                    (U64.v r.obj_out >= U64.v mword /\
+                     U64.v r.obj_out < heap_size /\
+                     U64.v r.obj_out % U64.v mword == 0 /\
+                     U64.v (wosize_of_object (r.obj_out <: obj_addr) g) >= wz)))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_obj_wosize_pre_part1 g fp 0UL fp wz (heap_size / U64.v mword)
