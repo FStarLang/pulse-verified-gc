@@ -23,6 +23,8 @@ open GC.Gen.Allocator
 module MajorCorrectness = GC.Spec.Correctness
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module Mark = GC.Spec.Mark
+module Sweep = GC.Spec.Sweep
 
 /// ---------------------------------------------------------------------------
 /// Composition bridge
@@ -75,7 +77,8 @@ let gen_gc_correct
                     fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major /\
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr gs.gs_major) ==>
                       Seq.mem x (objects zero_addr res.mc_major)) /\
-                    minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0)) =
+                    minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0 /\
+                    well_formed_heap_part1 res.mc_major)) =
   let minor = gs.gs_minor in
   let major = gs.gs_major in
   assert (minor_wf minor);
@@ -94,4 +97,44 @@ let gen_gc_correct
   minor_preserves_major_objects minor major fp roots;
   // Part 3: minor heap reset
   minor_collect_resets_minor minor major fp roots;
+  // Part 4: well_formed_heap_part1 of mc_major
+  // mc_major == update_major_pointers prom_res.major_final prom_res.fwd_map
+  // update_major_pointers preserves objects (proven above)
+  // well_formed_heap_part1 is about size bounds for objects in the walk
+  // Since objects are the same and headers are preserved by update_major_pointers,
+  // well_formed_heap_part1 is preserved.
+  update_major_pointers_preserves_wfh_part1 prom_res.major_final prom_res.fwd_map;
   ()
+
+/// ---------------------------------------------------------------------------
+/// Composition: Minor collection + Major GC = Full generational correctness
+/// ---------------------------------------------------------------------------
+
+let gen_gc_composition
+  (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
+  (major_roots: seq obj_addr) (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      gen_wf gs /\
+      well_formed_heap gs.gs_major /\
+      AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword) /\
+      (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+       well_formed_heap res.mc_major /\
+       Mark.stack_props res.mc_major major_stack /\
+       Mark.root_props res.mc_major major_roots /\
+       Sweep.fp_in_heap major_fp res.mc_major /\
+       Mark.no_black_objects res.mc_major /\
+       Mark.no_pointer_to_blue res.mc_major /\
+       (forall (r: obj_addr). Seq.mem r major_roots <==> Seq.mem r major_stack) /\
+       (let g = create_graph res.mc_major in
+        let roots' = HeapGraph.coerce_to_vertex_list major_roots in
+        graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices)))
+    (ensures
+      (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+       let h_swept = fst (Sweep.sweep (Mark.mark res.mc_major major_stack) major_fp) in
+       MajorCorrectness.full_gc_correctness res.mc_major h_swept major_roots)) =
+  let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+  // Apply the mark-and-sweep end-to-end correctness theorem
+  MajorCorrectness.full_gc_correctness_from_end_to_end
+    res.mc_major major_stack major_roots major_fp

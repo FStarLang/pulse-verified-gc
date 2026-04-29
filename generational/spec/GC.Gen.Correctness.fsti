@@ -30,6 +30,8 @@ open GC.Gen.Allocator
 module MajorCorrectness = GC.Spec.Correctness
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module Mark = GC.Spec.Mark
+module Sweep = GC.Spec.Sweep
 
 /// ---------------------------------------------------------------------------
 /// Minor Collection Correctness
@@ -112,12 +114,48 @@ val minor_preserves_major_objects
                       Seq.mem x (objects zero_addr res.mc_major))))
 
 /// ---------------------------------------------------------------------------
+/// Field Correspondence (Injection between minor objects and promoted copies)
+/// ---------------------------------------------------------------------------
+
+/// After minor collection, each promoted object's fields correspond to the
+/// original minor object's fields, with pointer rewriting applied:
+/// - Fields that were minor pointers with a successful forwarding are rewritten
+/// - All other fields are preserved verbatim from the minor heap
+///
+/// NOTE: The full field_correspondence proof requires an alloc_spec frame lemma
+/// (showing allocation doesn't modify fields of previously allocated objects).
+/// The key building block (update_major_pointers_field_effect) IS fully proven
+/// and exported from GC.Gen.Promote. Once an alloc_spec_read_other bridge is
+/// added to GC.Spec.Allocator.Lemmas, the full field_correspondence follows
+/// by composing promote_preserves_fields + copy_fields_frame + the alloc frame
+/// + update_major_pointers_field_effect.
+let field_correspondence (minor: minor_state) (mc_major: heap) (fwd: forwarding_map) : prop =
+  forall (obj: U64.t).
+    Seq.mem obj (minor_objects minor) /\ fwd obj <> 0UL ==>
+    (let new_addr = fwd obj in
+     let wz = minor_wosize minor obj in
+     forall (j:nat). j < wz ==>
+       (let minor_val = minor_read_field minor obj j in
+        let field_addr_v = U64.v new_addr + j * 8 in
+        field_addr_v + 8 <= heap_size /\
+        field_addr_v % 8 == 0 ==>
+        (let major_val = read_word mc_major (U64.uint_to_t field_addr_v) in
+         // If the minor field was a minor pointer that was forwarded, it gets rewritten
+         (is_minor_pointer minor_val /\ fwd minor_val <> 0UL ==>
+           major_val == fwd minor_val) /\
+         // If the minor field was NOT a forwardable minor pointer, it's preserved
+         (~(is_minor_pointer minor_val /\ fwd minor_val <> 0UL) ==>
+           major_val == minor_val))))
+
+/// ---------------------------------------------------------------------------
 /// The main theorem: minor + major collection is correct
 /// ---------------------------------------------------------------------------
 
-/// After a minor collection followed by a major collection,
-/// the generational correctness property holds.
-/// Currently proves: minor_gc_correctness (promoted objects land in major heap).
+/// After a minor collection, the following hold:
+/// 1. All promoted objects exist in the post-minor major heap
+/// 2. All pre-existing major objects survive
+/// 3. Minor heap is reset
+/// 4. Major heap satisfies well_formed_heap_part1 (size bounds)
 val gen_gc_correct
   (gs: gen_state) (roots: seq U64.t) (gray_stack: seq obj_addr)
   (fp: U64.t)
@@ -134,4 +172,45 @@ val gen_gc_correct
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr gs.gs_major) ==>
                       Seq.mem x (objects zero_addr res.mc_major)) /\
                     // 3. Minor heap is reset
-                    minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0))
+                    minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0 /\
+                    // 4. Major heap well-formed (size bounds)
+                    well_formed_heap_part1 res.mc_major))
+
+/// ---------------------------------------------------------------------------
+/// Composition: Minor collection + Major GC = Full generational correctness
+/// ---------------------------------------------------------------------------
+
+/// Conditional composition: IF the post-minor major heap satisfies the
+/// mark-and-sweep preconditions, THEN running a major GC yields
+/// full_gc_correctness over the composed heap.
+///
+/// The conditions that the caller must establish for the major heap:
+///   - well_formed_heap (full, including pointer closure)
+///   - stack/root properties for the mark phase
+///   - no black objects (fresh state for marking)
+///   - no pointer to blue (no dangling free-list refs in live objects)
+val gen_gc_composition
+  (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
+  (major_roots: seq obj_addr) (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      gen_wf gs /\
+      well_formed_heap gs.gs_major /\
+      AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword) /\
+      // Major GC preconditions on the post-minor heap
+      (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+       well_formed_heap res.mc_major /\
+       Mark.stack_props res.mc_major major_stack /\
+       Mark.root_props res.mc_major major_roots /\
+       Sweep.fp_in_heap major_fp res.mc_major /\
+       Mark.no_black_objects res.mc_major /\
+       Mark.no_pointer_to_blue res.mc_major /\
+       (forall (r: obj_addr). Seq.mem r major_roots <==> Seq.mem r major_stack) /\
+       (let g = create_graph res.mc_major in
+        let roots' = HeapGraph.coerce_to_vertex_list major_roots in
+        graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices)))
+    (ensures
+      (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+       let h_swept = fst (Sweep.sweep (Mark.mark res.mc_major major_stack) major_fp) in
+       MajorCorrectness.full_gc_correctness res.mc_major h_swept major_roots))

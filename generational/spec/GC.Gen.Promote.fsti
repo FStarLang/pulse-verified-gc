@@ -109,6 +109,10 @@ val promote_all_spec (minor: minor_state) (major: heap)
 ///
 /// This ensures no dangling references to the (about to be reset) minor heap.
 
+/// Check if a value looks like a minor-heap pointer
+let is_minor_pointer (v: U64.t) : bool =
+  U64.v v >= 8 && U64.v v < minor_heap_size && U64.v v % 8 = 0
+
 /// Update all pointers in the major heap that refer to minor addresses
 val update_major_pointers (major: heap) (fwd: forwarding_map)
   : GTot heap
@@ -257,6 +261,11 @@ val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
     (ensures objects zero_addr (update_major_pointers major fwd) == objects zero_addr major)
 
+/// update_major_pointers preserves well_formed_heap_part1
+val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major)
+    (ensures well_formed_heap_part1 (update_major_pointers major fwd))
+
 /// Predicate: every forwarded object's address is in the objects of heap g
 let fwd_targets_in_objects (fwd: forwarding_map) (live_set: seq U64.t) (idx: nat) (g: heap) : prop =
   forall (k:nat). k < idx /\ k < Seq.length live_set ==>
@@ -292,3 +301,28 @@ val minor_collect_preserves_reachable
               let live_set = minor_objects minor in
               let prom_res = promote_all_spec minor major fp live_set in
               fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major))
+
+/// ---------------------------------------------------------------------------
+/// Field effect of update_major_pointers
+/// ---------------------------------------------------------------------------
+
+/// Specifies the effect of update_major_pointers on a single field:
+/// After the update, field j of object obj is either:
+///   - fwd(old_value) if the old value was a minor pointer with valid forwarding
+///   - the old value otherwise
+val update_major_pointers_field_effect
+  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      well_formed_heap_part1 major /\
+      Seq.mem obj (objects zero_addr major) /\
+      j < U64.v (wosize_of_object obj major) /\
+      U64.v obj + j * 8 + 8 <= heap_size /\
+      (U64.v obj + j * 8) % 8 == 0)
+    (ensures
+      (let updated = update_major_pointers major fwd in
+       let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
+       let old_val = read_word major field_addr in
+       let new_val = read_word updated field_addr in
+       (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
+       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_val)))
