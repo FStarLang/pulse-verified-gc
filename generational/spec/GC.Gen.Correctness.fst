@@ -47,9 +47,15 @@ let minor_preserves_major_objects
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.mc_major)))) =
   let live_set = minor_objects minor in
+  // promote_all preserves existing objects
   promote_all_preserves_objects minor major fp live_set;
   let prom_res = promote_all_spec minor major fp live_set in
-  update_major_pointers_id prom_res.major_final prom_res.fwd_map;
+  // update_major_pointers preserves objects list
+  // Need well_formed_heap_part1 prom_res.major_final — proven by promote_all
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  promote_all_preserves_wfh_part1 minor major fp live_set;
+  update_major_pointers_preserves_objects prom_res.major_final prom_res.fwd_map;
+  // Bridge: mc_major == update_major_pointers prom_res.major_final prom_res.fwd_map
   minor_collect_spec_unfold minor major fp roots
 
 /// ---------------------------------------------------------------------------
@@ -77,10 +83,13 @@ let gen_gc_correct
   // Part 1: promoted objects land in promote_all_spec's major_final
   promote_all_adds_promoted minor major fp live_set;
   let prom_res = promote_all_spec minor major fp live_set in
-  // Bridge: mc_major == update_major_pointers prom_res.major_final prom_res.fwd_map == prom_res.major_final
+  // Bridge: mc_major == update_major_pointers prom_res.major_final prom_res.fwd_map
   minor_collect_spec_unfold minor major fp roots;
-  update_major_pointers_id prom_res.major_final prom_res.fwd_map;
-  // Now: mc_major == prom_res.major_final, so fwd_targets_in_objects transfers
+  // update_major_pointers preserves objects list
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  promote_all_preserves_wfh_part1 minor major fp live_set;
+  update_major_pointers_preserves_objects prom_res.major_final prom_res.fwd_map;
+  // Now: objects(mc_major) == objects(prom_res.major_final), so fwd_targets_in_objects transfers
   // Part 2: existing major objects survive
   minor_preserves_major_objects minor major fp roots;
   // Part 3: minor heap reset

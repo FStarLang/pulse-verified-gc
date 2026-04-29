@@ -113,10 +113,6 @@ val promote_all_spec (minor: minor_state) (major: heap)
 val update_major_pointers (major: heap) (fwd: forwarding_map)
   : GTot heap
 
-/// update_major_pointers is currently identity (placeholder)
-val update_major_pointers_id (major: heap) (fwd: forwarding_map)
-  : Lemma (update_major_pointers major fwd == major)
-
 /// ---------------------------------------------------------------------------
 /// Minor Collection (Full Spec)
 /// ---------------------------------------------------------------------------
@@ -247,6 +243,19 @@ val promote_all_preserves_objects
              (let res = promote_all_spec minor major fp live_set in
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                 Seq.mem x (objects zero_addr res.major_final))))
+
+/// promote_all_spec preserves well_formed_heap_part1
+val promote_all_preserves_wfh_part1
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures well_formed_heap_part1 (promote_all_spec minor major fp live_set).major_final)
+
+/// update_major_pointers preserves the objects walk
+val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major)
+    (ensures objects zero_addr (update_major_pointers major fwd) == objects zero_addr major)
 
 /// Predicate: every forwarded object's address is in the objects of heap g
 let fwd_targets_in_objects (fwd: forwarding_map) (live_set: seq U64.t) (idx: nat) (g: heap) : prop =
