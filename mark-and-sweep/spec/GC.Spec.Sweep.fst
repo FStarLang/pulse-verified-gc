@@ -9,7 +9,6 @@ module GC.Spec.Sweep
 #set-options "--split_queries always --z3rlimit 50 --fuel 2 --ifuel 1"
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 
@@ -284,7 +283,7 @@ val sweep_object_preserves_objects_suffix : (h_addr: hp_addr) -> (g: heap) -> (f
                   Seq.mem (f_address h_addr) (objects 0UL g))
         (ensures (let obj = f_address h_addr in
                   let wz = getWosize (read_word g h_addr) in
-                  let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+                  let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
                   next_nat <= heap_size /\
                   (next_nat < heap_size ==>
                     (let next : hp_addr = U64.uint_to_t next_nat in
@@ -295,7 +294,7 @@ let sweep_object_preserves_objects_suffix h_addr g fp =
   let obj = f_address h_addr in
   f_address_spec h_addr;
   let wz = getWosize (read_word g h_addr) in
-  let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+  let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
   objects_nonempty_head_fits h_addr g;
   if next_nat >= heap_size then ()
   else begin
@@ -352,7 +351,7 @@ let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
                     U64.v h_addr + 8 < heap_size)
           (ensures (let obj = f_address h_addr in
                     let wz = getWosize (read_word g h_addr) in
-                    let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+                    let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
                     let (g', fp') = sweep_object g obj fp in
                     next_nat <= heap_size /\
                     (next_nat < heap_size ==>
@@ -363,7 +362,7 @@ let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
   = let obj = f_address h_addr in
     f_address_spec h_addr;
     let wz = getWosize (read_word g h_addr) in
-    let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+    let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
     objects_nonempty_head_fits h_addr g;
     objects_nonempty_next h_addr g;
     if next_nat >= heap_size then ()
@@ -849,7 +848,7 @@ val sweep_object_preserves_other_body_read :
                   Seq.mem x (objects 0UL g) /\
                   obj <> x /\
                   U64.v a >= U64.v x /\
-                  U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8 /\
+                  U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
                   U64.v a % 8 = 0)
         (ensures read_word (fst (sweep_object g obj fp)) a == read_word g a)
 
@@ -862,7 +861,7 @@ let sweep_object_preserves_other_body_read
                     Seq.mem x (objects 0UL g) /\
                     obj <> x /\
                     U64.v a >= U64.v x /\
-                    U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8 /\
+                    U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
                     U64.v a % 8 = 0)
           (ensures read_word (fst (sweep_object g obj fp)) a == read_word g a)
   = let (g', fp') = sweep_object g obj fp in
@@ -891,14 +890,14 @@ let sweep_object_preserves_other_body_read
       // x < obj, so objects_separated gives: obj > x + ws(x)*8
       objects_separated 0UL g x obj;
       // a < x + ws(x)*8 ≤ obj, and hd_address(obj) = obj - 8
-      assert (U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8);
-      assert (U64.v obj > U64.v x + op_Multiply (U64.v (wosize_of_object_as_wosize x g)) 8);
+      assert (U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8);
+      assert (U64.v obj > U64.v x + op_Star (U64.v (wosize_of_object_as_wosize x g)) 8);
       // Since ws(x) > 0 (objects have positive size), obj > x + ws(x)*8 > a
       assert (U64.v obj > U64.v a);
       assert (U64.v (GC.Spec.Heap.hd_address obj) = U64.v obj - 8);
       // obj - 8 ≥ x + ws(x)*8 - 8. Since both obj and x+ws(x)*8 are 8-aligned and obj > x+ws(x)*8:
       // obj - 8 ≥ x + ws(x)*8. But a < x + ws(x)*8, so hd_address(obj) > a.
-      assert (U64.v (GC.Spec.Heap.hd_address obj) >= U64.v x + op_Multiply (U64.v (wosize_of_object_as_wosize x g)) 8 - 8);
+      assert (U64.v (GC.Spec.Heap.hd_address obj) >= U64.v x + op_Star (U64.v (wosize_of_object_as_wosize x g)) 8 - 8);
       assert (U64.v (GC.Spec.Heap.hd_address obj) > U64.v a)
     end;
     
@@ -1101,7 +1100,7 @@ private let rec sweep_aux_preserves_field_nonmember
                     Seq.mem x (objects 0UL g) /\
                     ~(Seq.mem x objs) /\
                     U64.v a >= U64.v x /\
-                    U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8 /\
+                    U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
                     U64.v a % 8 = 0)
           (ensures read_word (fst (sweep_aux g objs fp)) a == read_word g a)
           (decreases Seq.length objs)
@@ -1119,7 +1118,7 @@ private let rec sweep_aux_preserves_field_nonmember
       // wosize of x unchanged — use single-step header helper
       sweep_object_preserves_other_header g obj fp x;
       assert (wosize_of_object x g' == wosize_of_object x g);
-      assert (U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g')) 8);
+      assert (U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g')) 8);
       assert (Seq.mem x (objects 0UL g'));
       assert (~(Seq.mem x (Seq.tail objs)));
       if is_white obj g then ()
@@ -1194,7 +1193,7 @@ let rec sweep_aux_preserves_field_member
                     is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                     is_black x g /\
                     U64.v a >= U64.v x /\
-                    U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g)) 8 /\
+                    U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
                     U64.v a % 8 = 0)
           (ensures read_word (fst (sweep_aux g objs fp)) a == read_word g a)
           (decreases Seq.length objs)
@@ -1215,7 +1214,7 @@ let rec sweep_aux_preserves_field_member
         sweep_object_self_fp g x fp;
         // x ∉ tail objs (vertex set: head ∉ tail)
         HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
-        assert (U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g')) 8);
+        assert (U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g')) 8);
         // x still in objects g'
         assert (Seq.mem x (objects 0UL g'));
         // Now use nonmember helper for tail (x ∉ tail, g' wf)
@@ -1232,7 +1231,7 @@ let rec sweep_aux_preserves_field_member
         // wosize preserved via header helper
         sweep_object_preserves_other_header g obj fp x;
         assert (wosize_of_object x g' == wosize_of_object x g);
-        assert (U64.v a < U64.v x + op_Multiply (U64.v (wosize_of_object x g')) 8);
+        assert (U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g')) 8);
         // x ∈ tail objs
         Seq.lemma_mem_inversion objs;
         assert (Seq.mem x (Seq.tail objs));

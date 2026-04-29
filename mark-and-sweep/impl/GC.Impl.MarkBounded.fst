@@ -12,7 +12,6 @@ module GC.Impl.MarkBounded
 
 #set-options "--z3rlimit 100"
 
-open FStar.Mul
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -890,11 +889,11 @@ let objects_nonempty_decompose_arith (start: hp_addr) (g: heap_state)
   : Lemma (requires Seq.length (SpecFields.objects start g) > 0 /\
                     Seq.length g == heap_size)
           (ensures (let wz = SpecObject.getWosize (SpecHeap.read_word g start) in
-                    let next_nat = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+                    let next_nat = U64.v start + ((U64.v wz + 1) * 8) in
                     next_nat <= heap_size /\ next_nat < pow2 64 /\
                     next_nat % 8 == 0))
   = FStar.Math.Lemmas.lemma_mod_plus_distr_l
-      (U64.v start) (FStar.Mul.((U64.v (SpecObject.getWosize (SpecHeap.read_word g start)) + 1) * 8)) 8;
+      (U64.v start) (((U64.v (SpecObject.getWosize (SpecHeap.read_word g start)) + 1) * 8)) 8;
     FStar.Math.Lemmas.lemma_mod_mul_distr_r
       (U64.v (SpecObject.getWosize (SpecHeap.read_word g start)) + 1) 8 8
 #pop-options
@@ -905,7 +904,7 @@ let objects_nonempty_decompose (start: hp_addr) (g: heap_state)
   : Lemma (requires Seq.length (SpecFields.objects start g) > 0 /\
                     Seq.length g == heap_size /\
                     (let wz = SpecObject.getWosize (SpecHeap.read_word g start) in
-                     U64.v next == U64.v start + FStar.Mul.((U64.v wz + 1) * 8)))
+                     U64.v next == U64.v start + ((U64.v wz + 1) * 8)))
           (ensures SpecFields.objects start g == Seq.cons (SpecHeap.f_address start) (SpecFields.objects next g))
   = ()
 #pop-options
@@ -919,7 +918,7 @@ let no_gray_visited_step (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: hea
                     Seq.length (SpecFields.objects v g) > 0 /\
                     Seq.length g == heap_size /\
                     (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
-                     U64.v next == U64.v v + FStar.Mul.((U64.v wz + 1) * 8)) /\
+                     U64.v next == U64.v v + ((U64.v wz + 1) * 8)) /\
                     SpecFields.objects v g == Seq.cons (SpecHeap.f_address v) (SpecFields.objects next g))
           (ensures no_gray_visited next g)
   = let fv = SpecHeap.f_address v in
@@ -957,7 +956,7 @@ let no_gray_visited_maintain
                     // The key: if stack ends empty, object wasn't gray
                     (Seq.length st_new == 0 ==> ~(SpecObject.is_gray (SpecHeap.f_address v) g)) /\
                     (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
-                     U64.v next == U64.v v + FStar.Mul.((U64.v wz + 1) * 8)))
+                     U64.v next == U64.v v + ((U64.v wz + 1) * 8)))
           (ensures Seq.length st_new == 0 ==> no_gray_visited next g)
   = if Seq.length st_new = 0 then begin
       // st_new empty → st_old empty (monotonicity) → no_gray_visited v g
@@ -994,7 +993,7 @@ let no_gray_visited_boundary
                     Seq.length (SpecFields.objects v g) > 0 /\
                     Seq.length g == heap_size /\
                     (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
-                     U64.v v + FStar.Mul.((U64.v wz + 1) * 8) >= heap_size))
+                     U64.v v + ((U64.v wz + 1) * 8) >= heap_size))
           (ensures SweepInv.no_gray_objects g)
   = let fv = SpecHeap.f_address v in
     // With fuel 1, objects(v, g) unfolds to Seq.cons fv Seq.empty
@@ -1027,14 +1026,14 @@ let no_gray_visited_maintain_at
                     Seq.length st_new <= cap /\
                     (Seq.length st_new == 0 ==> ~(SpecObject.is_gray (SpecHeap.f_address v) g)))
           (ensures (let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
-                    let next_val = U64.v v + FStar.Mul.((U64.v wz + 1) * 8) in
+                    let next_val = U64.v v + ((U64.v wz + 1) * 8) in
                     (Seq.length st_new == 0 ==> no_gray_visited_at next_val g) /\
                     (Seq.length st_new == 0 /\ next_val >= heap_size ==> SweepInv.no_gray_objects g)))
   = if Seq.length st_new = 0 then begin
       no_gray_visited_at_eq v g;
       objects_nonempty_decompose_arith v g;
       let wz = SpecObject.getWosize (SpecHeap.read_word g v) in
-      let next_val = U64.v v + FStar.Mul.((U64.v wz + 1) * 8) in
+      let next_val = U64.v v + ((U64.v wz + 1) * 8) in
       if next_val < heap_size then begin
         let next : hp_addr = U64.uint_to_t next_val in
         objects_nonempty_decompose v g next;

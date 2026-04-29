@@ -49,7 +49,7 @@ fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
                    U64.v fb >= U64.v mword /\
                    U64.v fb < heap_size /\
                    U64.v fb % U64.v mword == 0 /\
-                   U64.v fb - U64.v mword + op_Multiply (U64.v rw) (U64.v mword) <= heap_size))
+                   U64.v fb - U64.v mword + op_Star (U64.v rw) (U64.v mword) <= heap_size))
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
            pure ((s2, snd res) == SpecCoalesce.flush_blue 's fb (U64.v rw) fp /\

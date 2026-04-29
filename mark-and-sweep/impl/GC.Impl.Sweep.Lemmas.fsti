@@ -8,7 +8,6 @@
 module GC.Impl.Sweep.Lemmas
 
 #set-options "--z3rlimit 50 --split_queries always"
-open FStar.Mul
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -140,9 +139,9 @@ val density_next_bridge (h_addr: hp_addr) (g_init g_post: GC.Spec.Base.heap) (wz
       wz == SpecObject.getWosize (SpecHeap.read_word g_init h_addr) /\
       SpecFields.objects zero_addr g_post == SpecFields.objects zero_addr g_init /\
       SpecFields.well_formed_heap g_post /\
-      (let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+      (let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
        next_nat + 8 < heap_size))
-    (ensures (let next_nat = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+    (ensures (let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
               next_nat % 8 == 0 /\
               next_nat + 8 <= heap_size /\
               SI.obj_in_objects (U64.uint_to_t (next_nat + 8)) g_post /\
@@ -189,9 +188,9 @@ val sweep_loop_next_bridge
       // From sweep_object postcondition
       SI.sweep_post s_cur s_post new_fp /\
       SI.headers_preserved_from
-        (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8)) s_post s_cur)
+        (U64.v h_addr + ((U64.v wz + 1) * 8)) s_post s_cur)
     (ensures (
-      let next_v = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+      let next_v = U64.v h_addr + ((U64.v wz + 1) * 8) in
       SI.headers_preserved_from next_v s_post g_init /\
       (next_v + 8 < heap_size ==>
         next_v % 8 == 0 /\
@@ -217,9 +216,9 @@ val sweep_loop_next_spec
       Seq.length s_cur == heap_size /\
       SI.sweep_post s_cur s_post new_fp /\
       SI.headers_preserved_from
-        (U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8)) s_post s_cur)
+        (U64.v h_addr + ((U64.v wz + 1) * 8)) s_post s_cur)
     (ensures (
-      let next_v = U64.v h_addr + FStar.Mul.((U64.v wz + 1) * 8) in
+      let next_v = U64.v h_addr + ((U64.v wz + 1) * 8) in
       SI.headers_preserved_from next_v s_post g_init /\
       (next_v + 8 < heap_size ==>
         next_v % 8 == 0 /\

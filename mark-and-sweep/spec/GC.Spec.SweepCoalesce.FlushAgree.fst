@@ -11,7 +11,6 @@
 module GC.Spec.SweepCoalesce.FlushAgree
 
 open FStar.Seq
-open FStar.Mul
 
 module U64 = FStar.UInt64
 module U32 = FStar.UInt32

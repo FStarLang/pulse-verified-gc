@@ -13,7 +13,6 @@ module GC.Spec.HeapModel
 
 open FStar.Seq
 open FStar.Seq.Properties
-open FStar.Mul
 
 module U64 = FStar.UInt64
 

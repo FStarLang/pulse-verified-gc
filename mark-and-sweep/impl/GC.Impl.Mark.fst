@@ -16,7 +16,6 @@ module GC.Impl.Mark
 
 #set-options "--z3rlimit 50"
 
-open FStar.Mul
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object

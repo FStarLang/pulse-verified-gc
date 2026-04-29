@@ -11,7 +11,6 @@
 
 module GC.Spec.SweepCoalesce.Helpers
 
-open FStar.Mul
 open FStar.Seq
 
 module U8 = FStar.UInt8

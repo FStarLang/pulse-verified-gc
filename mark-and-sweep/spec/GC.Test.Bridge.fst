@@ -8,7 +8,6 @@
 module GC.Test.Bridge
 
 open FStar.Seq
-open FStar.Mul
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
@@ -597,7 +596,7 @@ let init_dense (g: heap)
        Seq.mem (f_address start) (objects 0UL g') ==>
        Seq.length (objects start g') > 0 ==>
        (let wz = getWosize (read_word g' start) in
-        let next = U64.v start + FStar.Mul.((U64.v wz + 1) * 8) in
+        let next = U64.v start + ((U64.v wz + 1) * 8) in
         next + 8 < heap_size ==>
         Seq.length (objects (U64.uint_to_t next) g') > 0 /\
         Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
@@ -610,7 +609,7 @@ let init_dense (g: heap)
         assert (start == zero_addr);
         assert (getWosize (read_word g' start) == wz_u64);
         // next = 0 + (wz+1)*8 = heap_size
-        let next = U64.v start + FStar.Mul.((U64.v wz_u64 + 1) * 8) in
+        let next = U64.v start + ((U64.v wz_u64 + 1) * 8) in
         assert (next == heap_size);
         // next + 8 >= heap_size → implication is vacuously true
         assert (~ (next + 8 < heap_size))

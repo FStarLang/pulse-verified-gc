@@ -44,11 +44,11 @@ let wosize_shift : U32.t = 10ul   // shift amount for wosize
 
 /// Helper: prove multiplication bound
 private let field_offset_bound (field_idx: U64.t{U64.v field_idx < pow2 61}) : Lemma 
-  (FStar.UInt.size FStar.Mul.(U64.v field_idx * 8) 64)
+  (FStar.UInt.size (U64.v field_idx * 8) 64)
 = 
   FStar.Math.Lemmas.pow2_plus 61 3;
-  assert (FStar.Mul.(pow2 61 * pow2 3) == pow2 64);
-  assert (FStar.Mul.(U64.v field_idx * 8) < pow2 64)
+  assert ((pow2 61 * pow2 3) == pow2 64);
+  assert ((U64.v field_idx * 8) < pow2 64)
 
 /// Convert address to field offset
 let field_offset (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t = 
@@ -658,7 +658,7 @@ let rec objects (start: hp_addr) (g: heap) : GTot (Seq.seq hp_addr) (decreases (
     let obj_addr : hp_addr = obj_addr_raw in
     // Calculate next_start in nat arithmetic to avoid overflow issues
     let obj_size_nat = U64.v wz + 1 in  // wosize + 1 word for header
-    let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+    let next_start_nat = U64.v start + (obj_size_nat * 8) in
     if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then Seq.empty
     else if next_start_nat >= heap_size then Seq.cons obj_addr Seq.empty
     else begin
@@ -696,7 +696,7 @@ let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: hp_addr)
       f_address_spec start;
       let obj_addr : hp_addr = obj_addr_raw in
       let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+      let next_start_nat = U64.v start + (obj_size_nat * 8) in
       if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()
       else if next_start_nat >= heap_size then (
         // objects start g = cons obj_addr empty
@@ -745,7 +745,7 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
             let wz = getWosize header in
             let obj_addr = f_address start in
             let obj_size_nat = U64.v wz + 1 in
-            let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+            let next_start_nat = U64.v start + (obj_size_nat * 8) in
             next_start_nat <= Seq.length g /\ next_start_nat < pow2 64 ==>
             (U64.v (U64.uint_to_t next_start_nat) < heap_size /\ U64.v (U64.uint_to_t next_start_nat) % U64.v mword == 0 ==>
              U64.v obj_addr < heap_size /\ U64.v obj_addr % U64.v mword == 0 ==>
@@ -754,7 +754,7 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
     let wz = getWosize header in
     let obj_addr = f_address start in
     let obj_size_nat = U64.v wz + 1 in
-    let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+    let next_start_nat = U64.v start + (obj_size_nat * 8) in
     if next_start_nat <= Seq.length g && next_start_nat < pow2 64 then (
       let next_start_raw = U64.uint_to_t next_start_nat in
       assert (U64.v next_start_raw = next_start_nat);
@@ -803,7 +803,7 @@ let rec objects_addresses_ge_8 (g: heap) (x: hp_addr)
       assert (U64.v obj_addr_raw = U64.v start + 8);
       let obj_addr : hp_addr = obj_addr_raw in
       let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + FStar.Mul.(obj_size_nat * 8) in
+      let next_start_nat = U64.v start + (obj_size_nat * 8) in
       if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then (
         // objects 0 g = empty in this case - vacuously true
         ()
@@ -986,11 +986,11 @@ let color_change_preserves_other_color (obj1: hp_addr{U64.v obj1 >= U64.v mword}
 ///   infix_hdr = hd_address(infix_obj) = infix_obj - 8
 ///   parent_obj_addr = infix_hdr - offset * 8 = infix_obj - 8 - wosize * 8
 let parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int =
-  U64.v infix_obj - 8 - FStar.Mul.(U64.v (wosize_of_object infix_obj g) * 8)
+  U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8)
 
 let parent_closure_addr_nat_spec (infix_obj: obj_addr) (g: heap)
   : Lemma (parent_closure_addr_nat infix_obj g ==
-           U64.v infix_obj - 8 - FStar.Mul.(U64.v (wosize_of_object infix_obj g) * 8))
+           U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8))
   = ()
 
 /// Resolve: if infix with valid parent, return parent; otherwise return self.

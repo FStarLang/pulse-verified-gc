@@ -8,7 +8,6 @@ module GC.Impl.Closure
 
 #lang-pulse
 
-open FStar.Mul
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object

@@ -13,7 +13,6 @@
 module GC.Spec.SweepCoalesce
 
 open FStar.Seq
-open FStar.Mul
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 

@@ -11,7 +11,7 @@
 > build system for incremental parallel verification, adding `.fsti`
 > interfaces for modular compilation, adding a verified memory allocator,
 > extracting verified C code via KaRaMeL, integrating with OCaml 4.14's
-> bytecode runtime, and tracking the upstream `fstar2` branch.
+> bytecode runtime, and tracking the upstream F* master branch.
 
 ---
 
@@ -34,13 +34,13 @@ and integrated with OCaml 4.14's bytecode runtime.
 ## Quick Start
 
 ```bash
-# Clone with submodules
-git clone --recursive <this-repo>
+git clone <this-repo>
+cd pulse-verified-gc
 
-# Build the F*/Pulse/KaRaMeL toolchain (~30 min, one-time)
-make prep
+# Install pinned F* nightly (~2 min, one-time)
+./setup.sh
 
-# Verify all 46 modules + extract to C + update snapshot
+# Verify all modules + extract to C + update snapshot
 make snapshot
 
 # Or just build the pre-extracted C (no F* needed):
@@ -170,12 +170,17 @@ GC.Spec.HeapModel              graph construction from heap (create_graph)
 
 ## Building & Verification
 
-The `FStar/` submodule (`fstar2` branch) provides F*, Pulse, and KaRaMeL
-in a single repository.
+Run `./setup.sh` once after cloning to install the pinned
+[F* nightly](https://github.com/FStarLang/FStar-nightly) build.
+This creates a `fstar/` directory with `bin/fstar.exe` and `karamel/krml`.
 
 ```bash
-make prep       # Build fstar.exe (stage3) and KaRaMeL (one-time)
-make            # Verify all 46 modules (common/ + mark-and-sweep/)
+./setup.sh              # Install pinned nightly (default, ~2 min)
+./setup.sh --nightly    # Install latest nightly instead
+./setup.sh --source     # Build from source (~15-30 min)
+./setup.sh --update     # Pull latest source and rebuild
+
+make            # Verify all modules (common/ + mark-and-sweep/)
 make -j$(nproc) # Parallel verification
 make extract    # Verify + extract to C via KaRaMeL
 make snapshot   # Verify + extract + update snapshot/
@@ -249,11 +254,11 @@ make benchmark  # Run hyperfine benchmarks (requires hyperfine)
 
 ## Prerequisites
 
-- [F*](https://github.com/FStarLang/FStar) `fstar2` branch (included as Git submodule)
-- OCaml 4.14+ with opam (for building F* and KaRaMeL)
-- Z3 SMT solver (bundled with the F* build)
+- **Binary install (default):** curl, bash
+- **Source build (`--source`):** git, make, [opam](https://opam.ocaml.org/doc/Install.html)
+  with OCaml >= 4.14 (5.3.0 recommended), Z3 SMT solver
 
-Run `make prep` after cloning to build the full toolchain.
+Run `./setup.sh` after cloning to install the F* toolchain.
 
 ## References
 

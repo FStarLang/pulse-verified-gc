@@ -41,23 +41,6 @@ module Defs = GC.Spec.SweepCoalesce.Defs
 module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 
 
-/// Precondition bundle for full GC correctness (bounded mark variant)
-let gc_precondition (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr)
-                    (fp: U64.t) (cap: nat) : prop =
-  SpecMarkBoundedInv.bounded_mark_inv s st cap /\
-  SI.fp_valid fp s /\
-  SpecMark.root_props s st /\
-  SpecSweep.fp_in_heap fp s /\
-  SpecMark.no_black_objects s /\
-  SpecMark.no_pointer_to_blue s /\
-  (forall (x: GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects GC.Spec.Base.zero_addr s) /\
-    (GC.Spec.Object.is_gray x s \/ GC.Spec.Object.is_black x s) ==> Seq.mem x st) /\
-  (let graph = SpecHeapModel.create_graph s in
-   let roots' = SpecHeapGraph.coerce_to_vertex_list st in
-   SpecGraph.graph_wf graph /\ SpecGraph.is_vertex_set roots' /\
-   SpecGraph.subset_vertices roots' graph.vertices)
-
-
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------

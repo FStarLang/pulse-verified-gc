@@ -6,7 +6,7 @@
 # Run `./setup.sh` once after cloning to install the F* toolchain.
 #
 # Usage:
-#   ./setup.sh      Install F* binary release
+#   ./setup.sh      Install pinned F* nightly (one-time)
 #   make            Verify all modules (common/ + mark-and-sweep/)
 #   make extract    Verify + extract mark-and-sweep to C
 #   make snapshot   Verify + extract + create snapshot/

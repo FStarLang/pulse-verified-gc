@@ -7,7 +7,6 @@ module GC.Lib.Address
 /// The actual types remain U64.t for compatibility with existing code.
 
 open FStar.UInt64
-open FStar.Mul
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
