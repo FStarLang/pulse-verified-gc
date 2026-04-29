@@ -95,18 +95,6 @@ let gen_gc_correctness (gs_init: gen_state) (major_final: heap)
      successors g_init x == successors g_final x))
 
 /// ---------------------------------------------------------------------------
-/// The main theorem: minor + major collection is correct
-/// ---------------------------------------------------------------------------
-
-/// After a minor collection followed by a major collection,
-/// the generational correctness property holds.
-val gen_gc_correct
-  (gs: gen_state) (roots: seq U64.t) (gray_stack: seq obj_addr)
-  (fp: U64.t)
-  : Lemma (requires gen_wf gs)
-          (ensures True)  // Placeholder — will be refined with full theorem
-
-/// ---------------------------------------------------------------------------
 /// Composition bridge
 /// ---------------------------------------------------------------------------
 
@@ -122,3 +110,28 @@ val minor_preserves_major_objects
                     // All objects that existed before still exist
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.mc_major))))
+
+/// ---------------------------------------------------------------------------
+/// The main theorem: minor + major collection is correct
+/// ---------------------------------------------------------------------------
+
+/// After a minor collection followed by a major collection,
+/// the generational correctness property holds.
+/// Currently proves: minor_gc_correctness (promoted objects land in major heap).
+val gen_gc_correct
+  (gs: gen_state) (roots: seq U64.t) (gray_stack: seq obj_addr)
+  (fp: U64.t)
+  : Lemma (requires gen_wf gs /\
+                    well_formed_heap gs.gs_major /\
+                    AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword))
+          (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+                    let live_set = minor_objects gs.gs_minor in
+                    let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
+                    // 1. All promoted objects exist in the post-minor major heap
+                    fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major /\
+                    // 2. All pre-existing major objects survive
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr gs.gs_major) ==>
+                      Seq.mem x (objects zero_addr res.mc_major)) /\
+                    // 3. Minor heap is reset
+                    minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0))

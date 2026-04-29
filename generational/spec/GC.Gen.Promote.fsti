@@ -28,6 +28,8 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
+module AllocLemmas = GC.Spec.Allocator.Lemmas
+
 /// ---------------------------------------------------------------------------
 /// Forwarding Map
 /// ---------------------------------------------------------------------------
@@ -150,6 +152,12 @@ val minor_collect_spec_unfold (minor: minor_state) (major: heap)
            (minor_collect_spec minor major fp roots).mc_major ==
              update_major_pointers prom_res.major_final prom_res.fwd_map)
 
+/// Unfold lemma: mc_minor is minor_reset minor (well-formed, bump = 0)
+val minor_collect_resets_minor (minor: minor_state) (major: heap)
+                               (fp: U64.t) (roots: seq U64.t)
+  : Lemma (let res = minor_collect_spec minor major fp roots in
+           minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0)
+
 /// ---------------------------------------------------------------------------
 /// Correctness Properties
 /// ---------------------------------------------------------------------------
@@ -240,14 +248,38 @@ val promote_all_preserves_objects
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                 Seq.mem x (objects zero_addr res.major_final))))
 
-/// After minor collection, every object that was reachable from roots
-/// in (minor + major) is present in the post-collection major heap.
+/// Predicate: every forwarded object's address is in the objects of heap g
+let fwd_targets_in_objects (fwd: forwarding_map) (live_set: seq U64.t) (idx: nat) (g: heap) : prop =
+  forall (k:nat). k < idx /\ k < Seq.length live_set ==>
+    (let obj = Seq.index live_set k in
+     fwd obj <> 0UL ==>
+     (U64.v (fwd obj) >= U64.v mword /\
+      U64.v (fwd obj) < heap_size /\
+      U64.v (fwd obj) % U64.v mword == 0 /\
+      Seq.mem ((fwd obj) <: obj_addr) (objects zero_addr g)))
+
+/// After promote_all_spec, every forwarded object's address is in objects of the final heap.
+val promote_all_adds_promoted
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = promote_all_spec minor major fp live_set in
+                    fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final))
+
+/// After minor collection, every promoted object's forwarded address
+/// is in the post-collection major heap's objects list.
 val minor_collect_preserves_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: U64.t)
   : Lemma (requires
              minor_wf minor /\
+             well_formed_heap major /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
              Seq.mem obj (minor_objects minor))
           (ensures
              (let res = minor_collect_spec minor major fp roots in
-              True))  // TODO: strengthen when reachability is defined
+              let live_set = minor_objects minor in
+              let prom_res = promote_all_spec minor major fp live_set in
+              fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major))

@@ -219,6 +219,11 @@ let minor_collect_spec_unfold (minor: minor_state) (major: heap)
            (minor_collect_spec minor major fp roots).mc_major ==
              update_major_pointers prom_res.major_final prom_res.fwd_map) = ()
 
+let minor_collect_resets_minor (minor: minor_state) (major: heap)
+                               (fp: U64.t) (roots: seq U64.t)
+  : Lemma (let res = minor_collect_spec minor major fp roots in
+           minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0) = ()
+
 /// ---------------------------------------------------------------------------
 /// Correctness lemmas (matching .fsti declaration order)
 /// ---------------------------------------------------------------------------
@@ -914,13 +919,144 @@ let promote_all_preserves_objects
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   promote_all_aux_preserves_objects minor major fp live_set empty_forwarding 0
 
+/// ---------------------------------------------------------------------------
+/// Promoted objects land in the final major heap's objects list
+/// ---------------------------------------------------------------------------
+
+/// After promote_object succeeds (new_addr ≠ 0), new_addr ∈ objects(result).
+#push-options "--z3rlimit 40 --fuel 1"
+private let promote_object_adds_new_addr
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures
+             (let res = promote_object minor major obj fp wosize in
+              res.new_addr <> 0UL ==>
+              (U64.v res.new_addr >= U64.v mword /\
+               U64.v res.new_addr < heap_size /\
+               U64.v res.new_addr % U64.v mword == 0 /\
+               Seq.mem (res.new_addr <: obj_addr) (objects zero_addr res.major_out)))) =
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+  if alloc_res.obj_out = 0UL then ()
+  else begin
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
+    let dst_obj : obj_addr = alloc_res.obj_out in
+    copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wosize;
+    assert (objects 0UL (copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize) ==
+            objects 0UL alloc_res.heap_out)
+  end
+#pop-options
+
+/// Predicate: every already-forwarded object's address is in the objects of heap g
+let fwd_targets_in_objects (fwd: forwarding_map) (live_set: seq U64.t) (idx: nat) (g: heap) : prop =
+  forall (k:nat). k < idx /\ k < Seq.length live_set ==>
+    (let obj = Seq.index live_set k in
+     fwd obj <> 0UL ==>
+     (U64.v (fwd obj) >= U64.v mword /\
+      U64.v (fwd obj) < heap_size /\
+      U64.v (fwd obj) % U64.v mword == 0 /\
+      Seq.mem ((fwd obj) <: obj_addr) (objects zero_addr g)))
+
+/// The core induction: promote_all_aux puts every forwarded address into objects of the final heap.
+#push-options "--z3rlimit 200 --fuel 1 --split_queries always"
+let rec promote_all_aux_adds_promoted
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    fwd_targets_in_objects fwd live_set idx major)
+          (ensures (let res = promote_all_aux minor major fp live_set fwd idx in
+                    fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final))
+          (decreases (Seq.length live_set - idx)) =
+  if idx >= Seq.length live_set then ()
+  else
+    let obj = Seq.index live_set idx in
+    let wz = minor_wosize minor obj in
+    if wz = 0 then begin
+      // Skip: fwd unchanged, so invariant still holds for idx; recurse for idx+1
+      // fwd obj = fwd (live_set[idx]) — but fwd wasn't extended, so fwd_targets unchanged
+      assert (fwd_targets_in_objects fwd live_set (idx + 1) major);
+      promote_all_aux_adds_promoted minor major fp live_set fwd (idx + 1)
+    end else begin
+      let res = promote_object minor major obj fp wz in
+      if res.new_addr = 0UL then begin
+        // OOM: no further promotions. fwd unchanged, heap unchanged.
+        // Need to show fwd_targets_in_objects fwd live_set (length) major
+        // But fwd was not extended past idx, so for k >= idx, fwd (live_set[k]) = old fwd value.
+        // The result is { major_final = major; fp_final = fp; fwd_map = fwd }.
+        // We just need that existing targets are still in objects — trivially they are (heap unchanged).
+        ()
+      end else begin
+        let fuel = heap_size / U64.v mword in
+        // new_addr is in objects of res.major_out
+        promote_object_adds_new_addr minor major obj fp wz;
+        // existing objects persist
+        promote_object_preserves_objects_part1 minor major obj fp wz;
+        // allocator properties for recursion
+        let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+        GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
+        let dst_obj : obj_addr = alloc_res.obj_out in
+        AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+        AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wz;
+        chain_avoids_implies_not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel;
+        AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wz;
+        copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+        copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+        // fwd' extends fwd with obj -> new_addr
+        let fwd' = extend_forwarding fwd obj res.new_addr in
+        // Show fwd_targets_in_objects fwd' live_set (idx+1) res.major_out
+        // For k < idx: fwd' (live_set[k]) = fwd (live_set[k]) (since live_set[k] ≠ obj unless dup)
+        //   and fwd (live_set[k]) ≠ 0 ==> target was in objects(major) ==> still in objects(res.major_out)
+        // For k = idx: fwd' (live_set[idx]) = fwd' obj = new_addr, which is in objects(res.major_out)
+        assert (fwd_targets_in_objects fwd' live_set (idx + 1) res.major_out);
+        promote_all_aux_adds_promoted minor res.major_out res.fp_out live_set fwd' (idx + 1)
+      end
+    end
+#pop-options
+
+/// Top-level: after promote_all_spec, every forwarded object's address is in objects of the final heap.
+let promote_all_adds_promoted
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = promote_all_spec minor major fp live_set in
+                    fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final)) =
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  assert (fwd_targets_in_objects empty_forwarding live_set 0 major);
+  promote_all_aux_adds_promoted minor major fp live_set empty_forwarding 0
+
+/// ---------------------------------------------------------------------------
+/// Minor collection correctness (strengthened)
+/// ---------------------------------------------------------------------------
+
+/// After minor collection, every promoted object's forwarded address
+/// is in the post-collection major heap's objects list.
 let minor_collect_preserves_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: U64.t)
   : Lemma (requires
              minor_wf minor /\
+             well_formed_heap major /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
              Seq.mem obj (minor_objects minor))
           (ensures
              (let res = minor_collect_spec minor major fp roots in
-              True)) =
-  ()
+              let live_set = minor_objects minor in
+              let prom_res = promote_all_spec minor major fp live_set in
+              fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major)) =
+  let live_set = minor_objects minor in
+  promote_all_adds_promoted minor major fp live_set;
+  let prom_res = promote_all_spec minor major fp live_set in
+  update_major_pointers_id prom_res.major_final prom_res.fwd_map;
+  minor_collect_spec_unfold minor major fp roots
