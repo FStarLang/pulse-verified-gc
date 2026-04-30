@@ -27,6 +27,8 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Reachability
+open GC.Gen.Remembered
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
@@ -118,28 +120,57 @@ val update_major_pointers (major: heap) (fwd: forwarding_map)
   : GTot heap
 
 /// ---------------------------------------------------------------------------
+/// Live Set and Root Rewriting
+/// ---------------------------------------------------------------------------
+
+/// Compute the live set: minor objects reachable from program roots combined
+/// with the remembered set (major-heap objects pointing into the minor heap).
+let live_set_of (minor: minor_state) (major: heap) (roots: seq U64.t) : GTot (seq U64.t) =
+  let remembered = minor_roots_from_major major in
+  minor_reachable minor (Seq.append roots remembered)
+
+/// Rewrite a single root: if it's a minor pointer that was forwarded, use the new address
+let rewrite_root (r: U64.t) (fwd: forwarding_map) : GTot U64.t =
+  if is_minor_pointer r && fwd r <> 0UL then fwd r else r
+
+/// Rewrite all roots using the forwarding map
+val rewrite_roots (roots: seq U64.t) (fwd: forwarding_map) : GTot (seq U64.t)
+
+/// rewrite_roots has the same length as roots
+val rewrite_roots_length (roots: seq U64.t) (fwd: forwarding_map)
+  : Lemma (Seq.length (rewrite_roots roots fwd) == Seq.length roots)
+
+/// rewrite_roots applies rewrite_root pointwise
+val rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
+  : Lemma (requires i < Seq.length roots)
+          (ensures Seq.index (rewrite_roots roots fwd) i == rewrite_root (Seq.index roots i) fwd)
+
+/// ---------------------------------------------------------------------------
 /// Minor Collection (Full Spec)
 /// ---------------------------------------------------------------------------
 
 /// Result of a complete minor collection
 noeq
 type minor_collect_result = {
-  mc_major  : heap;          // post-collection major heap
-  mc_fp     : U64.t;         // post-collection free-list pointer
-  mc_minor  : minor_state;   // reset minor heap (bump = 0)
+  mc_major  : heap;            // post-collection major heap
+  mc_fp     : U64.t;           // post-collection free-list pointer
+  mc_minor  : minor_state;     // reset minor heap (bump = 0)
+  mc_roots  : seq U64.t;       // rewritten roots (minor pointers → major addresses)
+  mc_fwd    : forwarding_map;  // forwarding map (for spec-level reasoning)
 }
 
 /// Full minor collection specification:
-/// 1. Determine live set (reachable from roots)
+/// 1. Determine live set (reachable from roots + remembered set)
 /// 2. Promote all live objects to major heap
 /// 3. Update pointers in major heap
-/// 4. Reset minor heap
+/// 4. Rewrite roots to point to new major addresses
+/// 5. Reset minor heap
 ///
 /// Parameters:
 ///   minor: current minor heap state
 ///   major: current major heap state
 ///   fp: current major-heap free-list pointer
-///   roots: addresses of root pointers (in stack + remembered set)
+///   roots: addresses of root pointers (program stack)
 val minor_collect_spec (minor: minor_state) (major: heap)
                        (fp: U64.t) (roots: seq U64.t)
   : GTot minor_collect_result
@@ -147,16 +178,24 @@ val minor_collect_spec (minor: minor_state) (major: heap)
 /// Unfold lemma: mc_major is update_major_pointers applied to promote_all result
 val minor_collect_spec_unfold (minor: minor_state) (major: heap)
                               (fp: U64.t) (roots: seq U64.t)
-  : Lemma (let live_set = minor_objects minor in
+  : Lemma (let live_set = live_set_of minor major roots in
            let prom_res = promote_all_spec minor major fp live_set in
            (minor_collect_spec minor major fp roots).mc_major ==
-             update_major_pointers prom_res.major_final prom_res.fwd_map)
+             update_major_pointers prom_res.major_final prom_res.fwd_map /\
+           (minor_collect_spec minor major fp roots).mc_fwd == prom_res.fwd_map /\
+           (minor_collect_spec minor major fp roots).mc_fp == prom_res.fp_final)
 
 /// Unfold lemma: mc_minor is minor_reset minor (well-formed, bump = 0)
 val minor_collect_resets_minor (minor: minor_state) (major: heap)
                                (fp: U64.t) (roots: seq U64.t)
   : Lemma (let res = minor_collect_spec minor major fp roots in
            minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0)
+
+/// Unfold lemma: mc_roots is rewrite_roots applied to roots
+val minor_collect_rewrites_roots (minor: minor_state) (major: heap)
+                                  (fp: U64.t) (roots: seq U64.t)
+  : Lemma (let res = minor_collect_spec minor major fp roots in
+           res.mc_roots == rewrite_roots roots res.mc_fwd)
 
 /// ---------------------------------------------------------------------------
 /// Correctness Properties
@@ -330,10 +369,10 @@ val minor_collect_preserves_reachable
              well_formed_heap major /\
              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
              AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-             Seq.mem obj (minor_objects minor))
+             Seq.mem obj (live_set_of minor major roots))
           (ensures
              (let res = minor_collect_spec minor major fp roots in
-              let live_set = minor_objects minor in
+              let live_set = live_set_of minor major roots in
               let prom_res = promote_all_spec minor major fp live_set in
               fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major))
 

@@ -14,6 +14,8 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Reachability
+open GC.Gen.Remembered
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
@@ -200,32 +202,66 @@ let update_major_pointers (major: heap) (fwd: forwarding_map) : GTot heap =
   update_all_objects_aux major (objects zero_addr major) fwd 0
 
 /// ---------------------------------------------------------------------------
+/// Root rewriting
+/// ---------------------------------------------------------------------------
+
+let rec rewrite_roots (roots: seq U64.t) (fwd: forwarding_map)
+  : GTot (seq U64.t) (decreases (Seq.length roots)) =
+  if Seq.length roots = 0 then Seq.empty
+  else
+    let r = Seq.index roots 0 in
+    let new_r = rewrite_root r fwd in
+    let rest = Seq.slice roots 1 (Seq.length roots) in
+    Seq.cons new_r (rewrite_roots rest fwd)
+
+let rec rewrite_roots_length (roots: seq U64.t) (fwd: forwarding_map)
+  : Lemma (ensures Seq.length (rewrite_roots roots fwd) == Seq.length roots)
+          (decreases (Seq.length roots)) =
+  if Seq.length roots = 0 then ()
+  else rewrite_roots_length (Seq.slice roots 1 (Seq.length roots)) fwd
+
+let rec rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
+  : Lemma (requires i < Seq.length roots)
+          (ensures Seq.index (rewrite_roots roots fwd) i == rewrite_root (Seq.index roots i) fwd)
+          (decreases i) =
+  if i = 0 then ()
+  else rewrite_roots_index (Seq.slice roots 1 (Seq.length roots)) fwd (i - 1)
+
+/// ---------------------------------------------------------------------------
 /// Full minor collection
 /// ---------------------------------------------------------------------------
 
 let minor_collect_spec (minor: minor_state) (major: heap)
                        (fp: U64.t) (roots: seq U64.t)
   : GTot minor_collect_result =
-  // For now: promote ALL minor objects (conservative — treats everything as live)
-  // A more precise version would compute reachability from roots
-  let live_set = minor_objects minor in
+  let live_set = live_set_of minor major roots in
   let prom_res = promote_all_spec minor major fp live_set in
   let updated_major = update_major_pointers prom_res.major_final prom_res.fwd_map in
+  let new_roots = rewrite_roots roots prom_res.fwd_map in
   { mc_major = updated_major;
     mc_fp = prom_res.fp_final;
-    mc_minor = minor_reset minor }
+    mc_minor = minor_reset minor;
+    mc_roots = new_roots;
+    mc_fwd = prom_res.fwd_map }
 
 let minor_collect_spec_unfold (minor: minor_state) (major: heap)
                               (fp: U64.t) (roots: seq U64.t)
-  : Lemma (let live_set = minor_objects minor in
+  : Lemma (let live_set = live_set_of minor major roots in
            let prom_res = promote_all_spec minor major fp live_set in
            (minor_collect_spec minor major fp roots).mc_major ==
-             update_major_pointers prom_res.major_final prom_res.fwd_map) = ()
+             update_major_pointers prom_res.major_final prom_res.fwd_map /\
+           (minor_collect_spec minor major fp roots).mc_fwd == prom_res.fwd_map /\
+           (minor_collect_spec minor major fp roots).mc_fp == prom_res.fp_final) = ()
 
 let minor_collect_resets_minor (minor: minor_state) (major: heap)
                                (fp: U64.t) (roots: seq U64.t)
   : Lemma (let res = minor_collect_spec minor major fp roots in
            minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0) = ()
+
+let minor_collect_rewrites_roots (minor: minor_state) (major: heap)
+                                  (fp: U64.t) (roots: seq U64.t)
+  : Lemma (let res = minor_collect_spec minor major fp roots in
+           res.mc_roots == rewrite_roots roots res.mc_fwd) = ()
 
 /// ---------------------------------------------------------------------------
 /// Correctness lemmas (matching .fsti declaration order)
@@ -1653,13 +1689,13 @@ let minor_collect_preserves_reachable
              well_formed_heap major /\
              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
              AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-             Seq.mem obj (minor_objects minor))
+             Seq.mem obj (live_set_of minor major roots))
           (ensures
              (let res = minor_collect_spec minor major fp roots in
-              let live_set = minor_objects minor in
+              let live_set = live_set_of minor major roots in
               let prom_res = promote_all_spec minor major fp live_set in
               fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major)) =
-  let live_set = minor_objects minor in
+  let live_set = live_set_of minor major roots in
   promote_all_adds_promoted minor major fp live_set;
   let prom_res = promote_all_spec minor major fp live_set in
   promote_all_preserves_wfh_part1 minor major fp live_set;
