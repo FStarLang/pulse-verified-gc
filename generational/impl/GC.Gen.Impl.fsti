@@ -25,6 +25,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module SpecFields = GC.Spec.Fields
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -65,6 +66,9 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// Trigger a minor collection: promote all minor objects to major heap,
 /// then reset the minor heap.
 fn minor_collect (gh: gen_heap_t)
-  requires is_gen_heap gh 'd 'b 's 'fp
+  requires is_gen_heap gh 'd 'b 's 'fp **
+           pure (SpecFields.well_formed_heap_part1 's /\
+                 GC.Spec.Allocator.Lemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
+                 GC.Spec.Allocator.Lemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword))
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 **
           pure (U64.v b2 == 0)  // minor heap reset after collection
