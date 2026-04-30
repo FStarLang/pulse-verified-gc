@@ -170,6 +170,27 @@ let rec field_read_implies_exists_pointing g h wz k target =
   end
 #pop-options
 
+/// Contrapositive of field_read_implies_exists_pointing:
+/// If no field of h matches target, then exists_field_pointing_to_unchecked returns false.
+let rec efptu_false_if_no_field_matches
+  (g: heap) (h: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
+  : Lemma
+    (requires
+      (forall (idx: nat{idx < U64.v wz}).
+        (let far = U64.add_mod h (U64.mul_mod (U64.uint_to_t idx) mword) in
+         U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
+         ~(is_pointer_to (read_word g (far <: hp_addr)) target))))
+    (ensures exists_field_pointing_to_unchecked g h wz target = false)
+    (decreases U64.v wz)
+  = if wz = 0UL then ()
+    else begin
+      let idx = U64.sub wz 1UL in
+      let far = U64.add_mod h (U64.mul_mod idx mword) in
+      if U64.v far >= heap_size || U64.v far % 8 <> 0 then ()
+      else
+        efptu_false_if_no_field_matches g h idx target
+    end
+
 /// Helper: check if any field points to target
 /// Requires: object is well-formed (fits in heap)
 let rec exists_field_pointing_to (g: heap) (h: obj_addr) (wz: wosize) (target: obj_addr) 
@@ -720,6 +741,79 @@ let points_to_target_in_objects (g: heap) (src dst: obj_addr) : Lemma
   (ensures Seq.mem dst (objects 0UL g))
   = wosize_of_object_bound src g;
     wf_field_target_in_objects g src dst
+
+/// Derive well_formed_heap_part2 from a per-field closure property.
+/// If every pointer-valued field of every object targets another object,
+/// then well_formed_heap_part2 holds.
+///
+/// The field_closure hypothesis says: for any object src in objects, and any field index j,
+/// if the field value is a pointer, then it targets an object in the objects list.
+/// From this we derive that efptu(g, src, wz, dst) = false for all dst ∉ objects,
+/// which is well_formed_heap_part2.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+let well_formed_heap_part2_from_field_closure (g: heap)
+    (field_closure: (src: obj_addr) -> (j: nat) ->
+      Lemma (requires Seq.mem src (objects 0UL g) /\ j < U64.v (wosize_of_object src g) /\
+                      U64.v src + j * 8 + 8 <= heap_size)
+            (ensures (let v = read_word g (U64.uint_to_t (U64.v src + j * 8)) in
+                      is_pointer v ==> Seq.mem (v <: obj_addr) (objects 0UL g))))
+  : Lemma (requires well_formed_heap_part1 g)
+    (ensures well_formed_heap_part2 g)
+  = let aux (src dst: obj_addr)
+    : Lemma (requires Seq.mem src (objects 0UL g) /\
+                      U64.v (wosize_of_object src g) < pow2 54 /\
+                      exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst)
+            (ensures Seq.mem dst (objects 0UL g))
+    = if Seq.mem dst (objects 0UL g) then ()
+      else begin
+        let wz = wosize_of_object src g in
+        // wfh_part1 gives: hd_address(src) + 8 + wz * 8 <= Seq.length g = heap_size
+        // i.e., (src - 8) + 8 + wz * 8 = src + wz * 8 <= heap_size
+        hd_address_spec src;
+        assert (U64.v src + U64.v wz * 8 <= heap_size);
+        // For each field idx, show ~(is_pointer_to (read_word g field_addr) dst)
+        let field_not_dst (idx: nat{idx < U64.v wz})
+          : Lemma (let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
+                   U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
+                   ~(is_pointer_to (read_word g (far <: hp_addr)) dst))
+          = let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
+            // Show add_mod/mul_mod don't overflow
+            assert (idx * 8 < pow2 64);
+            assert (U64.v (U64.mul_mod (U64.uint_to_t idx) mword) == idx * 8);
+            assert (U64.v src + idx * 8 < pow2 64);
+            assert (U64.v far == U64.v src + idx * 8);
+            if U64.v far >= heap_size || U64.v far % 8 <> 0 then ()
+            else begin
+              let fv = read_word g (far <: hp_addr) in
+              if is_pointer_to fv dst then begin
+                // is_pointer_to fv dst ==> is_pointer_field fv /\ hd_address fv == hd_address dst
+                hd_address_spec (fv <: obj_addr);
+                hd_address_spec dst;
+                // hd_address fv = fv - 8, hd_address dst = dst - 8, equal ==> fv == dst
+                assert (fv == dst);
+                assert (is_pointer fv);
+                // Instantiate field_closure with src and idx
+                field_closure src idx;
+                assert (Seq.mem (fv <: obj_addr) (objects 0UL g))
+                // Contradicts dst ∉ objects since fv == dst
+              end else ()
+            end
+        in
+        Classical.forall_intro field_not_dst;
+        efptu_false_if_no_field_matches g src wz dst
+      end
+    in
+    let aux_wrapped (src: obj_addr) (dst: obj_addr) : Lemma
+      (requires Seq.mem src (objects 0UL g) /\
+                (let wz = wosize_of_object src g in
+                 U64.v wz < pow2 54 /\ exists_field_pointing_to_unchecked g src wz dst))
+      (ensures Seq.mem dst (objects 0UL g))
+      [SMTPat (Seq.mem src (objects 0UL g));
+       SMTPat (exists_field_pointing_to_unchecked g src (wosize_of_object src g) dst)]
+      = aux src dst
+    in
+    assert (well_formed_heap_part2 g)
+#pop-options
 
 /// When objects start g is nonempty, the first object fits in heap:
 /// start + (1 + wz) * 8 <= Seq.length g

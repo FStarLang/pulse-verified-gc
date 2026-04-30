@@ -78,7 +78,9 @@ let gen_gc_correct
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr gs.gs_major) ==>
                       Seq.mem x (objects zero_addr res.mc_major)) /\
                     minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0 /\
-                    well_formed_heap_part1 res.mc_major)) =
+                    well_formed_heap_part1 res.mc_major /\
+                    well_formed_heap_part3 res.mc_major /\
+                    well_formed_heap_part4 res.mc_major)) =
   let minor = gs.gs_minor in
   let major = gs.gs_major in
   assert (minor_wf minor);
@@ -91,20 +93,59 @@ let gen_gc_correct
   // update_major_pointers preserves objects list
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   promote_all_preserves_wfh_part1 minor major fp live_set;
+  promote_all_preserves_wfh_part4 minor major fp live_set;
   update_major_pointers_preserves_objects prom_res.major_final prom_res.fwd_map;
   // Now: objects(mc_major) == objects(prom_res.major_final), so fwd_targets_in_objects transfers
-  // Part 2: existing major objects survive
+  // Existing major objects survive
   minor_preserves_major_objects minor major fp roots;
-  // Part 3: minor heap reset
+  // Minor heap reset
   minor_collect_resets_minor minor major fp roots;
-  // Part 4: well_formed_heap_part1 of mc_major
-  // mc_major == update_major_pointers prom_res.major_final prom_res.fwd_map
-  // update_major_pointers preserves objects (proven above)
-  // well_formed_heap_part1 is about size bounds for objects in the walk
-  // Since objects are the same and headers are preserved by update_major_pointers,
-  // well_formed_heap_part1 is preserved.
+  // well_formed_heap_part1 of mc_major
   update_major_pointers_preserves_wfh_part1 prom_res.major_final prom_res.fwd_map;
+  // well_formed_heap_part4 of mc_major (no infix objects)
+  update_major_pointers_preserves_wfh_part4 prom_res.major_final prom_res.fwd_map;
+  // well_formed_heap_part3 (infix_wf — vacuous since part4 holds)
+  update_major_pointers_preserves_wfh_part3 prom_res.major_final prom_res.fwd_map;
   ()
+
+/// ---------------------------------------------------------------------------
+/// Full well_formed_heap for post-minor major heap
+/// ---------------------------------------------------------------------------
+
+let gen_gc_correct_full
+  (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
+  : Lemma (requires gen_wf gs /\
+                    well_formed_heap gs.gs_major /\
+                    AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword) /\
+                    minor_fields_well_formed gs.gs_minor gs.gs_major /\
+                    all_promotions_succeed gs.gs_minor gs.gs_major fp /\
+                    allocated_objects_avoid_chain gs.gs_major fp /\
+                    post_promote_pointer_closure gs.gs_minor gs.gs_major fp)
+          (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+                    well_formed_heap res.mc_major)) =
+  let minor = gs.gs_minor in
+  let major = gs.gs_major in
+  let live_set = minor_objects minor in
+  let prom_res = promote_all_spec minor major fp live_set in
+  minor_collect_spec_unfold minor major fp roots;
+  let res = minor_collect_spec minor major fp roots in
+  // Establish parts 1, 3, 4 via gen_gc_correct
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  promote_all_preserves_wfh_part1 minor major fp live_set;
+  promote_all_preserves_wfh_part4 minor major fp live_set;
+  update_major_pointers_preserves_wfh_part1 prom_res.major_final prom_res.fwd_map;
+  update_major_pointers_preserves_wfh_part4 prom_res.major_final prom_res.fwd_map;
+  update_major_pointers_preserves_wfh_part3 prom_res.major_final prom_res.fwd_map;
+  // Establish part 2 (pointer closure) via the new lemma
+  promote_all_fwd_all_targets_valid minor major fp live_set;
+  // post_promote_pointer_closure gives us pointer_closure_modulo_fwd on prom_res.major_final
+  update_major_pointers_preserves_wfh_part2 prom_res.major_final prom_res.fwd_map;
+  // Combine all 4 parts
+  assert (well_formed_heap_part1 res.mc_major);
+  assert (well_formed_heap_part2 res.mc_major);
+  assert (well_formed_heap_part3 res.mc_major);
+  assert (well_formed_heap_part4 res.mc_major)
 
 /// ---------------------------------------------------------------------------
 /// Composition: Minor collection + Major GC = Full generational correctness

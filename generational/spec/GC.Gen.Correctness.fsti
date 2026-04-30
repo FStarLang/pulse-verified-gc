@@ -155,7 +155,7 @@ let field_correspondence (minor: minor_state) (mc_major: heap) (fwd: forwarding_
 /// 1. All promoted objects exist in the post-minor major heap
 /// 2. All pre-existing major objects survive
 /// 3. Minor heap is reset
-/// 4. Major heap satisfies well_formed_heap_part1 (size bounds)
+/// 4. Major heap well-formed (parts 1, 3, 4 — size bounds, infix, no-infix)
 val gen_gc_correct
   (gs: gen_state) (roots: seq U64.t) (gray_stack: seq obj_addr)
   (fp: U64.t)
@@ -173,8 +173,70 @@ val gen_gc_correct
                       Seq.mem x (objects zero_addr res.mc_major)) /\
                     // 3. Minor heap is reset
                     minor_wf res.mc_minor /\ U64.v res.mc_minor.bump == 0 /\
-                    // 4. Major heap well-formed (size bounds)
-                    well_formed_heap_part1 res.mc_major))
+                    // 4. Major heap well-formed (parts 1, 3, 4)
+                    well_formed_heap_part1 res.mc_major /\
+                    well_formed_heap_part3 res.mc_major /\
+                    well_formed_heap_part4 res.mc_major))
+
+/// ---------------------------------------------------------------------------
+/// Preconditions for full well_formed_heap (part 2: pointer closure)
+/// ---------------------------------------------------------------------------
+
+/// All minor object fields that are pointers either:
+/// - Are minor pointers targeting objects in the minor live_set (will be promoted)
+///   AND those targets have wosize > 0 (ensuring they get promoted), or
+/// - Are non-minor pointers targeting objects in the original major heap
+let minor_fields_well_formed (minor: minor_state) (major: heap) : prop =
+  forall (obj: U64.t) (j: nat).
+    Seq.mem obj (minor_objects minor) /\ j < minor_wosize minor obj ==>
+    (let v = minor_read_field minor obj j in
+     is_pointer v ==>
+       (is_minor_pointer v ==> (Seq.mem v (minor_objects minor) /\ minor_wosize minor v > 0)) /\
+       (~(is_minor_pointer v) ==>
+         (U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+          Seq.mem (v <: obj_addr) (objects 0UL major))))
+
+/// All minor objects with wosize > 0 get successfully promoted (alloc succeeds)
+let all_promotions_succeed (minor: minor_state) (major: heap) (fp: U64.t) : prop =
+  let live_set = minor_objects minor in
+  let prom_res = promote_all_spec minor major fp live_set in
+  forall (k:nat). k < Seq.length live_set ==>
+    (let obj = Seq.index live_set k in
+     minor_wosize minor obj > 0 ==>
+     prom_res.fwd_map obj <> 0UL)
+
+/// Allocated (non-blue) objects in the major heap are not on the free chain.
+/// This is a standard allocator invariant: the free list contains only blue/free blocks.
+let allocated_objects_avoid_chain (major: heap) (fp: U64.t) : prop =
+  forall (obj: obj_addr).
+    Seq.mem obj (objects 0UL major) /\ ~(is_blue obj major) ==>
+    AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true
+
+/// After promote_all, pointer fields that are NOT rewritable minor pointers still
+/// target valid objects. This is a frame property: non-promoted objects' pointer fields
+/// are unchanged (preserved by wfh_part2 of the original heap), and promoted objects'
+/// pointer fields that are NOT minor-with-fwd are already valid major pointers.
+/// Provable from: well_formed_heap(major) + fl_valid + allocator frame properties.
+let post_promote_pointer_closure (minor: minor_state) (major: heap) (fp: U64.t) : prop =
+  let live_set = minor_objects minor in
+  let prom_res = promote_all_spec minor major fp live_set in
+  pointer_closure_modulo_fwd prom_res.major_final prom_res.fwd_map
+
+/// Full correctness theorem: under additional minor-field and promotion-success
+/// preconditions, the post-minor major heap satisfies full well_formed_heap.
+/// This enables direct composition with the mark-and-sweep major GC.
+val gen_gc_correct_full
+  (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
+  : Lemma (requires gen_wf gs /\
+                    well_formed_heap gs.gs_major /\
+                    AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword) /\
+                    minor_fields_well_formed gs.gs_minor gs.gs_major /\
+                    all_promotions_succeed gs.gs_minor gs.gs_major fp /\
+                    allocated_objects_avoid_chain gs.gs_major fp /\
+                    post_promote_pointer_closure gs.gs_minor gs.gs_major fp)
+          (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+                    well_formed_heap res.mc_major))
 
 /// ---------------------------------------------------------------------------
 /// Composition: Minor collection + Major GC = Full generational correctness

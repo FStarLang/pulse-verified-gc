@@ -973,6 +973,103 @@ let promote_all_preserves_wfh_part1
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   promote_all_aux_preserves_wfh_part1 minor major fp live_set empty_forwarding 0
 
+/// copy_fields preserves well_formed_heap_part4 (no infix objects).
+/// Since copy_fields only writes to field addresses (>= dst_obj), no headers change.
+#push-options "--z3rlimit 40 --fuel 0 --split_queries always"
+private let copy_fields_preserves_wfh_part4
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             well_formed_heap_part4 major /\
+             Seq.mem dst_obj (objects 0UL major) /\
+             U64.v dst_obj % 8 == 0 /\
+             U64.v (wosize_of_object dst_obj major) >= n /\
+             n > 0)
+          (ensures
+             well_formed_heap_part4 (copy_fields minor major src_obj dst_obj 0 n)) =
+  let g' = copy_fields minor major src_obj dst_obj 0 n in
+  copy_fields_preserves_objects_aux minor major src_obj dst_obj 0 n;
+  assert (objects 0UL g' == objects 0UL major);
+  let wz_dst = U64.v (wosize_of_object dst_obj major) in
+  let aux (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects 0UL major))
+    (ensures ~(GC.Spec.Object.is_infix h g'))
+  = let hdr_addr = hd_address h in
+    hd_address_spec h;
+    hd_address_spec dst_obj;
+    if U64.v h > U64.v dst_obj then begin
+      objects_separated 0UL major dst_obj h;
+      wosize_of_object_spec dst_obj major
+    end else ();
+    assert (forall (k:nat). 0 <= k /\ k < n ==>
+      (U64.v hdr_addr + 8 <= U64.v dst_obj + k * 8 \/ U64.v dst_obj + k * 8 + 8 <= U64.v hdr_addr));
+    assert (U64.v dst_obj + (n - 1) * 8 + 8 <= heap_size);
+    copy_fields_preserves_other minor major src_obj dst_obj 0 n hdr_addr;
+    GC.Spec.Object.tag_of_object_spec h g';
+    GC.Spec.Object.tag_of_object_spec h major;
+    GC.Spec.Object.is_infix_spec h g';
+    GC.Spec.Object.is_infix_spec h major
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// promote_all_aux preserves well_formed_heap_part4 (no infix objects).
+#push-options "--z3rlimit 200 --fuel 1 --split_queries always"
+let rec promote_all_aux_preserves_wfh_part4
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    well_formed_heap_part4 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures well_formed_heap_part4 (promote_all_aux minor major fp live_set fwd idx).major_final)
+          (decreases (Seq.length live_set - idx)) =
+  if idx >= Seq.length live_set then ()
+  else
+    let obj = Seq.index live_set idx in
+    let wz = minor_wosize minor obj in
+    if wz = 0 then
+      promote_all_aux_preserves_wfh_part4 minor major fp live_set fwd (idx + 1)
+    else
+      let res = promote_object minor major obj fp wz in
+      if res.new_addr = 0UL then ()
+      else begin
+        let fuel = heap_size / U64.v mword in
+        let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+        GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
+        let dst_obj : obj_addr = alloc_res.obj_out in
+        AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+        AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wz;
+        chain_avoids_implies_not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel;
+        AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wz;
+        copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        // alloc preserves part1 and part4
+        AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+        AllocLemmas.alloc_spec_preserves_wfh_part4 major fp wz;
+        // copy_fields preserves part1 and part4
+        copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+        copy_fields_preserves_wfh_part4 minor alloc_res.heap_out obj dst_obj wz;
+        assert (well_formed_heap_part1 res.major_out);
+        assert (well_formed_heap_part4 res.major_out);
+        let fwd' = extend_forwarding fwd obj res.new_addr in
+        promote_all_aux_preserves_wfh_part4 minor res.major_out res.fp_out live_set fwd' (idx + 1)
+      end
+#pop-options
+
+/// Top-level: promote_all_spec preserves well_formed_heap_part4
+let promote_all_preserves_wfh_part4
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures well_formed_heap_part4 (promote_all_spec minor major fp live_set).major_final) =
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  promote_all_aux_preserves_wfh_part4 minor major fp live_set empty_forwarding 0
+
 
 /// ---------------------------------------------------------------------------
 /// Pointer update preserves objects
@@ -1302,6 +1399,111 @@ let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map
   update_all_objects_aux_preserves_wfh_part1 major (objects zero_addr major) fwd 0
 
 /// ---------------------------------------------------------------------------
+/// update_major_pointers preserves headers (tag, wosize, color)
+/// ---------------------------------------------------------------------------
+
+/// Inductive: update_all_objects_aux preserves the header word of any object.
+#push-options "--z3rlimit 80 --fuel 1 --split_queries always"
+let rec update_all_objects_aux_preserves_header
+  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat) (h: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      objs == objects zero_addr major /\
+      Seq.mem h objs)
+    (ensures read_word (update_all_objects_aux major objs fwd idx) (hd_address h) ==
+             read_word major (hd_address h))
+    (decreases (Seq.length objs - idx)) =
+  if idx >= Seq.length objs then ()
+  else begin
+    let obj = Seq.index objs idx in
+    assert (Seq.mem obj objs);
+    let wz = U64.v (wosize_of_object obj major) in
+    hd_address_spec obj;
+    assert (U64.v (hd_address obj) + 8 + (wz * 8) <= Seq.length major);
+    update_object_pointers_preserves_objects major obj wz fwd 0;
+    let major' = update_object_pointers major obj wz fwd 0 in
+    assert (objects zero_addr major' == objs);
+    // Show header of h is preserved through this step
+    hd_address_spec h;
+    if h = obj then
+      update_object_pointers_preserves_self_header major obj wz fwd 0
+    else if U64.v h > U64.v obj then
+      update_object_pointers_preserves_other_header major obj wz fwd 0 h
+    else
+      update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address h);
+    assert (read_word major' (hd_address h) == read_word major (hd_address h));
+    // Establish wfh_part1 for major' (needed for recursive call)
+    let aux_wfh (x: obj_addr) : Lemma
+      (requires Seq.mem x (objects 0UL major'))
+      (ensures U64.v (hd_address x) + 8 + (U64.v (wosize_of_object x major') * 8) <= Seq.length major')
+    = hd_address_spec x;
+      if x = obj then begin
+        update_object_pointers_preserves_self_header major obj wz fwd 0;
+        wosize_of_object_spec x major'; wosize_of_object_spec x major
+      end else if U64.v x > U64.v obj then begin
+        update_object_pointers_preserves_other_header major obj wz fwd 0 x;
+        wosize_of_object_spec x major'; wosize_of_object_spec x major
+      end else begin
+        update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address x);
+        wosize_of_object_spec x major; wosize_of_object_spec x major'
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
+    assert (well_formed_heap_part1 major');
+    // Recurse
+    update_all_objects_aux_preserves_header major' objs fwd (idx + 1) h
+  end
+#pop-options
+
+/// update_major_pointers preserves the header word of any object in the objects list.
+let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
+  : Lemma (requires well_formed_heap_part1 major /\ Seq.mem h (objects 0UL major))
+    (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
+             read_word major (hd_address h)) =
+  update_all_objects_aux_preserves_header major (objects zero_addr major) fwd 0 h
+
+/// update_major_pointers preserves well_formed_heap_part4 (no infix objects).
+#push-options "--z3rlimit 20"
+let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
+    (ensures well_formed_heap_part4 (update_major_pointers major fwd)) =
+  update_major_pointers_preserves_objects major fwd;
+  let mc = update_major_pointers major fwd in
+  let aux (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects 0UL mc))
+    (ensures ~(GC.Spec.Object.is_infix h mc))
+  = update_major_pointers_preserves_header major fwd h;
+    GC.Spec.Object.tag_of_object_spec h mc;
+    GC.Spec.Object.tag_of_object_spec h major;
+    GC.Spec.Object.is_infix_spec h mc;
+    GC.Spec.Object.is_infix_spec h major
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// update_major_pointers preserves well_formed_heap_part3 (infix well-formedness).
+/// Since part4 holds (no objects are infix), infix_wf is vacuously true.
+#push-options "--z3rlimit 20"
+let update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
+    (ensures well_formed_heap_part3 (update_major_pointers major fwd)) =
+  update_major_pointers_preserves_wfh_part4 major fwd;
+  update_major_pointers_preserves_objects major fwd;
+  let mc = update_major_pointers major fwd in
+  let pf (h: obj_addr) : Lemma
+    (requires Seq.mem h (objects 0UL mc) /\ GC.Spec.Object.is_infix h mc)
+    (ensures (let p = GC.Spec.Object.parent_closure_addr_nat h mc in
+              p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+              Seq.mem (U64.uint_to_t p) (objects 0UL mc) /\
+              GC.Spec.Object.is_closure (U64.uint_to_t p) mc))
+  = // part4 says ~(is_infix h mc), contradiction
+    assert (well_formed_heap_part4 mc);
+    assert (Seq.mem h (objects 0UL mc) ==> ~(GC.Spec.Object.is_infix h mc))
+  in
+  GC.Spec.Object.infix_wf_intro mc (objects 0UL mc) pf
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Promoted objects land in the final major heap's objects list
 /// ---------------------------------------------------------------------------
 
@@ -1413,6 +1615,18 @@ let rec promote_all_aux_adds_promoted
     end
 #pop-options
 
+/// Top-level: promote_all_spec produces fwd_all_targets_valid for its final heap.
+let promote_all_fwd_all_targets_valid
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = promote_all_spec minor major fp live_set in
+                    fwd_all_targets_valid res.fwd_map res.major_final)) =
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  assert (fwd_all_targets_valid empty_forwarding major);
+  promote_all_aux_adds_promoted minor major fp live_set empty_forwarding 0
+
 /// Top-level: after promote_all_spec, every forwarded object's address is in objects of the final heap.
 let promote_all_adds_promoted
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
@@ -1421,9 +1635,7 @@ let promote_all_adds_promoted
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final)) =
-  reveal_opaque (`%well_formed_heap) well_formed_heap;
-  assert (fwd_all_targets_valid empty_forwarding major);
-  promote_all_aux_adds_promoted minor major fp live_set empty_forwarding 0;
+  promote_all_fwd_all_targets_valid minor major fp live_set;
   let res = promote_all_spec minor major fp live_set in
   fwd_all_implies_positional res.fwd_map live_set (Seq.length live_set) res.major_final
 
@@ -1901,6 +2113,49 @@ let update_major_pointers_field_effect
   objects_below_before major obj pos;
   update_all_objects_aux_field_effect major objs fwd 0 obj j pos
 
+/// update_major_pointers establishes well_formed_heap_part2 (pointer closure).
+/// Uses pointer_closure_modulo_fwd (weaker than full part2) + fwd_all_targets_valid.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+let update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    pointer_closure_modulo_fwd major fwd /\
+                    fwd_all_targets_valid fwd major)
+    (ensures well_formed_heap_part2 (update_major_pointers major fwd)) =
+  let mc = update_major_pointers major fwd in
+  update_major_pointers_preserves_objects major fwd;
+  let field_closure (src: obj_addr) (j: nat)
+    : Lemma (requires Seq.mem src (objects 0UL mc) /\
+                      j < U64.v (wosize_of_object src mc) /\
+                      U64.v src + j * 8 + 8 <= heap_size)
+            (ensures (let v = read_word mc (U64.uint_to_t (U64.v src + j * 8)) in
+                      is_pointer v ==> Seq.mem (v <: obj_addr) (objects 0UL mc)))
+    = update_major_pointers_preserves_header major fwd src;
+      assert (read_word mc (hd_address src) == read_word major (hd_address src));
+      GC.Spec.Object.wosize_of_object_spec src mc;
+      GC.Spec.Object.wosize_of_object_spec src major;
+      assert (wosize_of_object src mc == wosize_of_object src major);
+      let field_addr = U64.uint_to_t (U64.v src + j * 8) in
+      assert ((U64.v src + j * 8) % 8 == 0);
+      update_major_pointers_field_effect major fwd src j;
+      let old_val = read_word major field_addr in
+      let new_val = read_word mc field_addr in
+      if is_minor_pointer old_val && fwd old_val <> 0UL then begin
+        // Case 1: rewritten to fwd(old_val), which is in objects by fwd_all_targets_valid
+        assert (new_val == fwd old_val);
+        assert (is_pointer new_val ==> Seq.mem ((fwd old_val) <: obj_addr) (objects zero_addr major))
+      end else begin
+        // Case 2: unchanged. new_val = old_val.
+        assert (new_val == old_val);
+        // If is_pointer(old_val), then is_minor_pointer(old_val) (heap_size < minor_heap_size).
+        // Combined with ~(is_minor_pointer /\ fwd≠0), we get fwd(old_val)==0.
+        // pointer_closure_modulo_fwd then gives old_val ∈ objects(major).
+        ()
+      end
+  in
+  update_major_pointers_preserves_wfh_part1 major fwd;
+  well_formed_heap_part2_from_field_closure mc field_closure
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Promote_all field preservation
 /// ---------------------------------------------------------------------------
@@ -2192,3 +2447,80 @@ let promote_all_preserves_fields
                     fields_match_minor minor res.major_final res.fwd_map
                                        live_set (Seq.length live_set)))
   = promote_all_aux_preserves_fields minor major fp live_set empty_forwarding 0
+
+/// ---------------------------------------------------------------------------
+/// Frame lemma: promote_all_spec preserves body reads for non-promoted objects
+/// ---------------------------------------------------------------------------
+
+/// Inductive: promote_all_aux preserves reads in the body of an object
+/// that avoids the free chain.
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
+private let rec promote_all_aux_read_other
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
+  (other: obj_addr) (addr: hp_addr)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      Seq.mem other (objects 0UL major) /\
+      AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true /\
+      U64.v addr >= U64.v other /\
+      U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8)
+    (ensures
+      (let res = promote_all_aux minor major fp live_set fwd idx in
+       read_word res.major_final addr == read_word major addr))
+    (decreases (Seq.length live_set - idx))
+  = if idx >= Seq.length live_set then ()
+    else begin
+      let obj = Seq.index live_set idx in
+      let wz = minor_wosize minor obj in
+      if wz = 0 then
+        promote_all_aux_read_other minor major fp live_set fwd (idx + 1) other addr
+      else begin
+        let res = promote_object minor major obj fp wz in
+        if res.new_addr = 0UL then ()
+        else begin
+          let fuel = heap_size / U64.v mword in
+          // promote_object preserves the read at addr (body of other)
+          promote_object_read_other minor major obj fp wz other addr;
+          assert (read_word res.major_out addr == read_word major addr);
+          // Maintain invariants for recursion:
+          // wfh_part1
+          AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+          let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+          copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj (alloc_res.obj_out <: obj_addr) wz;
+          // fl_valid
+          AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
+          GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
+          let dst_obj : obj_addr = alloc_res.obj_out in
+          copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+          // fl_chain_terminates
+          AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wz;
+          copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+          // chain_avoids preserved for other
+          promote_object_preserves_chain_avoids minor major obj fp wz other;
+          // other still in objects
+          promote_object_preserves_objects_part1 minor major obj fp wz;
+          // Recurse
+          let fwd' = extend_forwarding fwd obj res.new_addr in
+          promote_all_aux_read_other minor res.major_out res.fp_out
+                                     live_set fwd' (idx + 1) other addr
+        end
+      end
+    end
+#pop-options
+
+let promote_all_read_other
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  (other: obj_addr) (addr: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    Seq.mem other (objects 0UL major) /\
+                    AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true /\
+                    U64.v addr >= U64.v other /\
+                    U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8)
+          (ensures (let res = promote_all_spec minor major fp live_set in
+                    read_word res.major_final addr == read_word major addr))
+  = promote_all_aux_read_other minor major fp live_set empty_forwarding 0 other addr

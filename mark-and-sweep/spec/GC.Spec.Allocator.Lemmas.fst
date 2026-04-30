@@ -7444,5 +7444,253 @@ let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz:
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_chain_avoids_other g fp 0UL fp wz (heap_size / U64.v mword) excl
 
+/// ===========================================================================
+/// Section P4: alloc_spec preserves well_formed_heap_part4 (no infix objects)
+/// ===========================================================================
+
+/// ---------------------------------------------------------------------------
+/// P4a: alloc_from_block_preserves_wfh_part4
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0 --split_queries always"
+private let alloc_from_block_preserves_wfh_part4
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    well_formed_heap_part4 g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    (let hdr = read_word g (hd_address obj) in
+                     U64.v (getWosize hdr) >= wz) /\
+                    wz >= 1)
+          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                    well_formed_heap_part4 g'))
+  = let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let (g', _) = alloc_from_block g obj wz next_fp in
+    hd_address_spec obj;
+    hd_address_bounds obj;
+    if block_wz - wz >= 2 then begin
+      // Split case
+      alloc_split_facts_part1 g obj wz next_fp;
+      let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+      let rem_obj_nat = rem_hd_nat + 8 in
+      let rem_obj_addr : obj_addr = U64.uint_to_t rem_obj_nat in
+      let aux (h: obj_addr) : Lemma
+        (requires Seq.mem h (objects 0UL g'))
+        (ensures ~(is_infix h g'))
+      = tag_of_object_spec h g';
+        is_infix_spec h g';
+        hd_address_spec h;
+        if h = obj then begin
+          // Header = make_header wz white_bits 0UL → tag = 0
+          make_header_getTag (U64.uint_to_t wz) white_bits 0UL;
+          infix_tag_val ()
+        end else if h = rem_obj_addr then begin
+          // Header = make_header rem_wz blue_bits 0UL → tag = 0
+          let rem_wz = block_wz - wz - 1 in
+          make_header_getTag (U64.uint_to_t rem_wz) blue_bits 0UL;
+          infix_tag_val ()
+        end else begin
+          // Header unchanged from g, use part4 of g
+          let aux_before (p: hp_addr) : Lemma
+            (requires U64.v p < U64.v hd)
+            (ensures read_word g' p == read_word g p)
+          = alloc_split_g3_agrees_part1 g obj wz next_fp p
+          in
+          FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
+          split_new_mem_in_old_or_rem_part1 0UL g g' obj wz block_wz h;
+          assert (Seq.mem h (objects 0UL g));
+          wosize_of_object_spec obj g;
+          if U64.v h < U64.v obj then begin
+            objects_separated 0UL g h obj;
+            alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
+          end else begin
+            objects_separated 0UL g obj h;
+            alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
+          end;
+          // Now read_word g' (hd_address h) == read_word g (hd_address h)
+          tag_of_object_spec h g;
+          is_infix_spec h g
+        end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    end else begin
+      // Exact fit case: g' = write_word g hd (make_header block_wz white_bits 0UL)
+      alloc_from_block_exact g obj wz next_fp;
+      let new_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+      make_header_getWosize (U64.uint_to_t block_wz) white_bits 0UL;
+      header_write_same_wosize_preserves_objects g obj new_hdr;
+      let aux (h: obj_addr) : Lemma
+        (requires Seq.mem h (objects 0UL g'))
+        (ensures ~(is_infix h g'))
+      = tag_of_object_spec h g';
+        is_infix_spec h g';
+        hd_address_spec h;
+        if h = obj then begin
+          make_header_getTag (U64.uint_to_t block_wz) white_bits 0UL;
+          read_write_same g hd new_hdr;
+          infix_tag_val ()
+        end else begin
+          if U64.v h < U64.v obj then
+            objects_separated 0UL g h obj
+          else
+            objects_separated 0UL g obj h;
+          read_write_different g hd (hd_address h) new_hdr;
+          tag_of_object_spec h g;
+          is_infix_spec h g
+        end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// P4b: write_body_preserves_wfh_part4
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+private let write_body_preserves_wfh_part4
+  (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    well_formed_heap_part4 g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    U64.v addr >= U64.v obj /\
+                    U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
+                    U64.v addr % 8 = 0)
+          (ensures well_formed_heap_part4 (write_word g addr v))
+  = write_body_preserves_objects_local 0UL g obj addr v;
+    let g' = write_word g addr v in
+    assert (objects 0UL g' == objects 0UL g);
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects 0UL g'))
+      (ensures ~(is_infix h g'))
+    = hd_address_spec h;
+      hd_address_spec obj;
+      tag_of_object_spec h g';
+      tag_of_object_spec h g;
+      is_infix_spec h g';
+      is_infix_spec h g;
+      if h = obj then
+        read_write_different g addr (hd_address h) v
+      else begin
+        if U64.v h < U64.v obj then begin
+          objects_separated 0UL g h obj;
+          read_write_different g addr (hd_address h) v
+        end else begin
+          objects_separated 0UL g obj h;
+          read_write_different g addr (hd_address h) v
+        end
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// P4c: alloc_search_preserves_wfh_part4 — recursive proof
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+private let rec alloc_search_preserves_wfh_part4
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    well_formed_heap_part4 g /\
+                    fl_valid g cur_fp fuel /\
+                    fl_chain_terminates g cur_fp fuel /\
+                    wz >= 1 /\
+                    (prev_fp <> 0UL ==>
+                      (prev_fp <> cur_fp /\
+                       U64.v prev_fp >= U64.v mword /\
+                       U64.v prev_fp < heap_size /\
+                       U64.v prev_fp % U64.v mword = 0 /\
+                       Seq.mem prev_fp (objects 0UL g) /\
+                       U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+                    well_formed_heap_part4 r.heap_out))
+          (decreases fuel)
+  = if fuel = 0 then ()
+    else if cur_fp = 0UL then ()
+    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp >= heap_size then ()
+    else if U64.v cur_fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = cur_fp in
+      let hd = hd_address obj in
+      let hdr = read_word g hd in
+      let block_wz = U64.v (getWosize hdr) in
+      hd_address_spec obj;
+      hd_address_bounds obj;
+      fl_valid_gives_mem g cur_fp fuel;
+      fl_valid_gives_wosize g cur_fp fuel;
+      assert (Seq.mem obj (objects 0UL g));
+      let next_fp =
+        if U64.v hd + 16 <= heap_size then read_word g obj
+        else 0UL
+      in
+      if block_wz >= wz then begin
+        alloc_from_block_preserves_wfh_part4 g obj wz next_fp;
+        alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
+        let (g', new_fp) = alloc_from_block g obj wz next_fp in
+        if prev_fp = 0UL then ()
+        else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
+                U64.v prev_fp % U64.v mword = 0 then begin
+          let prev : obj_addr = prev_fp in
+          alloc_from_block_objects_facts_part1 g obj wz next_fp;
+          assert (Seq.mem prev (objects 0UL g'));
+          wosize_of_object_spec prev g;
+          wosize_of_object_bound prev g;
+          hd_address_spec prev;
+          if block_wz - wz >= 2 then begin
+            let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+            if U64.v prev < U64.v obj then begin
+              objects_separated 0UL g prev obj;
+              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
+            end else begin
+              wosize_of_object_spec obj g;
+              objects_separated 0UL g obj prev;
+              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
+            end
+          end else begin
+            assert (prev <> obj);
+            if U64.v prev < U64.v obj then
+              objects_separated 0UL g prev obj
+            else
+              objects_separated 0UL g obj prev;
+            let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+            alloc_from_block_exact g obj wz next_fp;
+            read_write_different g hd (hd_address prev) alloc_hdr
+          end;
+          wosize_of_object_spec prev g';
+          assert (wosize_of_object prev g' == wosize_of_object prev g);
+          assert (U64.v (wosize_of_object prev g') >= 1);
+          write_body_preserves_wfh_part4 g' prev (prev <: hp_addr) new_fp;
+          write_body_preserves_wfh_part1 g' prev (prev <: hp_addr) new_fp
+        end
+        else ()
+      end
+      else begin
+        fl_valid_next g cur_fp fuel;
+        assert (cur_fp <> next_fp);
+        alloc_search_preserves_wfh_part4 g head_fp cur_fp next_fp wz (fuel - 1)
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// P4d: Top-level alloc_spec_preserves_wfh_part4
+/// ---------------------------------------------------------------------------
+
+let alloc_spec_preserves_wfh_part4 (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    well_formed_heap_part4 g /\
+                    fl_valid g fp (heap_size / U64.v mword) /\
+                    fl_chain_terminates g fp (heap_size / U64.v mword))
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    well_formed_heap_part4 r.heap_out))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_preserves_wfh_part4 g fp 0UL fp wz (heap_size / U64.v mword)
+
 #pop-options // Module-level z3rlimit 20
 

@@ -234,19 +234,6 @@ val chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
                         read_word g' a == read_word g a))
           (ensures chain_avoids g' fp excl fuel = true)
 
-/// chain_avoids_transfer_excl2: transfer chain_avoids when reads preserved except at excl or excl2.
-val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
-  : Lemma (requires chain_avoids g fp excl fuel = true /\
-                    chain_avoids g fp excl2 fuel = true /\
-                    fl_valid g fp fuel /\
-                    (forall (a: U64.t).
-                       (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
-                        Seq.mem a (objects 0UL g) /\ a <> excl /\ a <> excl2) ==>
-                       (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
-                        U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
-                          read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
-          (ensures chain_avoids g' fp excl fuel = true)
-
 /// chain_avoids_weaken: if chain_avoids holds for fuel steps, it also holds for fewer steps.
 val chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\ fuel' <= fuel)
@@ -300,6 +287,19 @@ val alloc_spec_preserves_no_black : (g: heap) -> (fp: U64.t) -> (requested_wz: n
                   fl_valid g fp (heap_size / U64.v mword))
         (ensures (let r = alloc_spec g fp requested_wz in
                   GC.Spec.Mark.no_black_objects r.heap_out))
+
+/// chain_avoids_transfer_excl2: transfer chain_avoids when reads preserved except at excl or excl2.
+val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    chain_avoids g fp excl2 fuel = true /\
+                    fl_valid g fp fuel /\
+                    (forall (a: U64.t).
+                       (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
+                        Seq.mem a (objects 0UL g) /\ a <> excl /\ a <> excl2) ==>
+                       (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
+                        U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
+                          read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
+          (ensures chain_avoids g' fp excl fuel = true)
 
 /// **Theorem**: alloc_spec removes obj_out from the chain.
 val alloc_spec_obj_not_in_chain : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
@@ -407,3 +407,15 @@ val alloc_spec_preserves_chain_avoids_other : (g: heap) -> (fp: U64.t) -> (reque
                   Seq.mem (excl <: obj_addr) (objects 0UL g))
         (ensures (let r = alloc_spec g fp requested_wz in
                   chain_avoids r.heap_out r.fp_out excl (heap_size / U64.v mword) = true))
+
+/// **Theorem**: alloc_spec preserves well_formed_heap_part4 (no infix objects).
+/// Under just well_formed_heap_part1, fl_valid, fl_chain_terminates.
+/// All newly created headers (allocated block + remainder) have tag=0 ≠ infix_tag.
+/// Existing non-free-list objects have unchanged headers.
+val alloc_spec_preserves_wfh_part4 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  well_formed_heap_part4 g /\
+                  fl_valid g fp (heap_size / U64.v mword) /\
+                  fl_chain_terminates g fp (heap_size / U64.v mword))
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  well_formed_heap_part4 r.heap_out))
