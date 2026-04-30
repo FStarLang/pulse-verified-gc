@@ -56,6 +56,26 @@ val copy_fields (minor: minor_state) (major: heap)
                 (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
   : GTot heap
 
+/// Base case: copy_fields with i >= n is identity
+val copy_fields_base (minor: minor_state) (major: heap) 
+                     (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  : Lemma (requires i >= n)
+          (ensures copy_fields minor major src_obj dst_obj i n == major)
+          [SMTPat (copy_fields minor major src_obj dst_obj i n)]
+
+/// Step lemma: one recursive unfolding of copy_fields
+val copy_fields_step (minor: minor_state) (major: heap) 
+                     (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  : Lemma (requires i < n /\
+                     U64.v dst_obj + i * 8 + 8 <= heap_size /\
+                     (U64.v dst_obj + i * 8) % 8 == 0)
+           (ensures copy_fields minor major src_obj dst_obj i n ==
+                    copy_fields minor
+                      (write_word major (U64.uint_to_t (U64.v dst_obj + i * 8))
+                                       (minor_read_field minor src_obj i))
+                      src_obj dst_obj (i + 1) n)
+           [SMTPat (copy_fields minor major src_obj dst_obj i n)]
+
 /// Result of promoting one object
 noeq
 type promote_one_result = {
@@ -138,7 +158,8 @@ val rewrite_roots (roots: seq U64.t) (fwd: forwarding_map) : GTot (seq U64.t)
 
 /// rewrite_roots has the same length as roots
 val rewrite_roots_length (roots: seq U64.t) (fwd: forwarding_map)
-  : Lemma (Seq.length (rewrite_roots roots fwd) == Seq.length roots)
+  : Lemma (ensures Seq.length (rewrite_roots roots fwd) == Seq.length roots)
+    [SMTPat (rewrite_roots roots fwd)]
 
 /// rewrite_roots applies rewrite_root pointwise
 val rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
@@ -274,6 +295,26 @@ val promote_object_preserves_objects
              (let res = promote_object minor major obj fp wosize in
               (forall (x: obj_addr). Seq.mem x (objects 0UL major) ==>
                 Seq.mem x (objects 0UL res.major_out))))
+
+/// copy_fields preserves the allocator invariants (wfh_part1, fl_valid, fl_chain_terminates)
+/// when dst_obj is not in the free-list chain.
+/// This is the key lemma enabling Pulse promote_one to maintain loop invariants.
+val copy_fields_preserves_alloc_invariants
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: obj_addr) (n: nat{n > 0})
+  (fp: U64.t)
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             Seq.mem dst_obj (objects 0UL major) /\
+             U64.v dst_obj % 8 == 0 /\
+             U64.v (wosize_of_object dst_obj major) >= n /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             AllocLemmas.chain_avoids major fp dst_obj (heap_size / U64.v mword) = true)
+           (ensures (let g' = copy_fields minor major src_obj dst_obj 0 n in
+                     well_formed_heap_part1 g' /\
+                     AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
+                     AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword)))
 
 /// promote_all_spec preserves existing object membership
 val promote_all_preserves_objects

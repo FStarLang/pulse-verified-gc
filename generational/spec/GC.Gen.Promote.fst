@@ -36,6 +36,26 @@ let rec copy_fields (minor: minor_state) (major: heap)
       let major' = write_word major (U64.uint_to_t dst_offset) field_val in
       copy_fields minor major' src_obj dst_obj (i + 1) n
 
+/// Base case: copy_fields with i >= n is identity
+let copy_fields_base (minor: minor_state) (major: heap) 
+                     (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  : Lemma (requires i >= n)
+          (ensures copy_fields minor major src_obj dst_obj i n == major)
+  = ()
+
+/// Step lemma: one recursive unfolding of copy_fields
+let copy_fields_step (minor: minor_state) (major: heap) 
+                     (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  : Lemma (requires i < n /\
+                     U64.v dst_obj + i * 8 + 8 <= heap_size /\
+                     (U64.v dst_obj + i * 8) % 8 == 0)
+           (ensures copy_fields minor major src_obj dst_obj i n ==
+                    copy_fields minor
+                      (write_word major (U64.uint_to_t (U64.v dst_obj + i * 8))
+                                       (minor_read_field minor src_obj i))
+                      src_obj dst_obj (i + 1) n)
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// copy_fields correctness lemmas
 /// ---------------------------------------------------------------------------
@@ -863,6 +883,32 @@ private let copy_fields_preserves_wfh_part1
     assert (wosize_of_object h g' == wosize_of_object h major)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// Composite lemma: copy_fields preserves all allocator invariants together.
+/// Uses chain_avoids (bool) from the allocator, avoiding the need to export not_in_fl_chain.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+let copy_fields_preserves_alloc_invariants
+  (minor: minor_state) (major: heap)
+  (src_obj: U64.t) (dst_obj: obj_addr) (n: nat{n > 0})
+  (fp: U64.t)
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             Seq.mem dst_obj (objects 0UL major) /\
+             U64.v dst_obj % 8 == 0 /\
+             U64.v (wosize_of_object dst_obj major) >= n /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             AllocLemmas.chain_avoids major fp dst_obj (heap_size / U64.v mword) = true)
+           (ensures (let g' = copy_fields minor major src_obj dst_obj 0 n in
+                     well_formed_heap_part1 g' /\
+                     AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
+                     AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword)))
+  = let fuel = heap_size / U64.v mword in
+    chain_avoids_implies_not_in_fl_chain major fp dst_obj fuel;
+    copy_fields_preserves_wfh_part1 minor major src_obj dst_obj n;
+    copy_fields_preserves_fl_valid_aux minor major src_obj dst_obj 0 n fp fuel;
+    copy_fields_preserves_fl_chain_terminates minor major src_obj dst_obj 0 n fp fuel
 #pop-options
 
 /// promote_object preserves objects (part1 version — no full well_formed_heap needed)
