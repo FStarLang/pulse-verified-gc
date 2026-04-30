@@ -39,7 +39,11 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
            pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
-                 U64.v obj % 8 == 0)
+                 U64.v obj % 8 == 0 /\
+                 U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
+                 GC.Spec.Fields.well_formed_heap 'ms /\
+                 GC.Spec.Allocator.Lemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
+                 GC.Spec.Allocator.Lemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword))
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **

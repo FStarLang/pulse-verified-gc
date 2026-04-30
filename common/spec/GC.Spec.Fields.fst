@@ -686,6 +686,13 @@ let wf_object_bound (g: heap) (h: obj_addr) : Lemma
   = reveal_opaque (`%well_formed_heap) well_formed_heap;
     hd_address_spec h
 
+/// Extract part 1 from well_formed_heap_part1 only (no full wfh needed).
+/// Since hd_address h = h - 8 for obj_addr h, part1 gives: h + wosize*8 <= heap_size.
+let wfh_part1_obj_bound (g: heap) (h: obj_addr) : Lemma
+  (requires well_formed_heap_part1 g /\ Seq.mem h (objects 0UL g))
+  (ensures U64.v h + op_Star (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
+  = hd_address_spec h
+
 /// Extract part 4: objects in the list are non-infix
 let wf_objects_non_infix (g: heap) (h: obj_addr) : Lemma
   (requires well_formed_heap g /\ Seq.mem h (objects 0UL g))
