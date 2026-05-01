@@ -220,6 +220,30 @@ let rec update_object_pointers (major: heap) (obj: U64.t) (wosize: nat)
       else
         update_object_pointers major obj wosize fwd (i + 1)
 
+/// Unfold lemma: one step of update_object_pointers
+let update_object_pointers_step (major: heap) (obj: U64.t) (wosize: nat)
+                                (fwd: forwarding_map) (i: nat)
+  : Lemma (requires i < wosize /\
+                    U64.v obj + i * 8 + 8 <= heap_size /\
+                    (U64.v obj + i * 8) % 8 = 0)
+          (ensures (let field_offset = U64.v obj + i * 8 in
+                    let field_val = read_word major (U64.uint_to_t field_offset) in
+                    update_object_pointers major obj wosize fwd i ==
+                    (if is_minor_pointer field_val then
+                       let new_val = fwd field_val in
+                       if new_val <> 0UL then
+                         update_object_pointers (write_word major (U64.uint_to_t field_offset) new_val) obj wosize fwd (i + 1)
+                       else
+                         update_object_pointers major obj wosize fwd (i + 1)
+                     else
+                       update_object_pointers major obj wosize fwd (i + 1)))) = ()
+
+/// Base case: identity at i >= wosize
+let update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
+                                (fwd: forwarding_map) (i: nat)
+  : Lemma (requires i >= wosize)
+          (ensures update_object_pointers major obj wosize fwd i == major) = ()
+
 /// Fold update_object_pointers over a sequence of objects
 let rec update_all_objects_aux (major: heap) (objs: seq obj_addr)
                                (fwd: forwarding_map) (idx: nat)
@@ -262,14 +286,22 @@ let rec rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
   if i = 0 then ()
   else rewrite_roots_index (Seq.slice roots 1 (Seq.length roots)) fwd (i - 1)
 
+#push-options "--z3rlimit 200"
 let rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U64.t)
   : Lemma (requires Seq.length rs2 == Seq.length roots /\
                     (forall (j: nat). j < Seq.length roots ==>
                       Seq.index rs2 j == rewrite_root (Seq.index roots j) fwd))
           (ensures rs2 == rewrite_roots roots fwd) =
   rewrite_roots_length roots fwd;
-  Classical.forall_intro (Classical.move_requires (rewrite_roots_index roots fwd));
-  Seq.lemma_eq_intro rs2 (rewrite_roots roots fwd)
+  let rr = rewrite_roots roots fwd in
+  assert (Seq.length rr == Seq.length rs2);
+  let aux (i: nat{i < Seq.length rs2})
+    : Lemma (Seq.index rs2 i == Seq.index rr i) =
+    rewrite_roots_index roots fwd i
+  in
+  Classical.forall_intro aux;
+  Seq.lemma_eq_intro rs2 rr
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Full minor collection
@@ -2423,7 +2455,7 @@ private let promote_object_preserves_chain_avoids
 ///   - fl_chain_terminates major fp fuel
 ///   - For all k < idx: if fwd(live_set[k]) ≠ 0, then fields match minor
 ///     AND chain_avoids holds for fwd(live_set[k]) in current state
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 500 --fuel 1 --ifuel 0 --split_queries always"
 private let rec promote_all_aux_preserves_fields
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -2437,7 +2469,7 @@ private let rec promote_all_aux_preserves_fields
       (forall (k:nat). k < idx /\ k < Seq.length live_set ==>
         (let obj = Seq.index live_set k in
          let wz_k = minor_wosize minor obj in
-         fwd obj <> 0UL /\ wz_k > 0 ==>
+         fwd obj <> 0UL /\ wz_k > 0 /\ is_val_addr (fwd obj) ==>
          (Seq.mem ((fwd obj) <: obj_addr) (objects 0UL major) /\
           U64.v (wosize_of_object ((fwd obj) <: obj_addr) major) >= wz_k /\
           AllocLemmas.chain_avoids major fp (fwd obj) (heap_size / U64.v mword) = true))))
@@ -2483,7 +2515,7 @@ private let rec promote_all_aux_preserves_fields
             (requires k < idx /\ k < Seq.length live_set /\
                      (let prev_obj = Seq.index live_set k in
                       let prev_wz = minor_wosize minor prev_obj in
-                      fwd prev_obj <> 0UL /\ prev_wz > 0))
+                      fwd prev_obj <> 0UL /\ prev_wz > 0 /\ is_val_addr (fwd prev_obj)))
             (ensures (let prev_obj = Seq.index live_set k in
                       let prev_wz = minor_wosize minor prev_obj in
                       let prev_addr = fwd prev_obj in
@@ -2517,7 +2549,7 @@ private let rec promote_all_aux_preserves_fields
             (requires k < idx /\ k < Seq.length live_set /\
                      (let prev_obj = Seq.index live_set k in
                       let prev_wz = minor_wosize minor prev_obj in
-                      fwd prev_obj <> 0UL /\ prev_wz > 0))
+                      fwd prev_obj <> 0UL /\ prev_wz > 0 /\ is_val_addr (fwd prev_obj)))
             (ensures (let prev_obj = Seq.index live_set k in
                       AllocLemmas.chain_avoids res.major_out res.fp_out (fwd prev_obj) fuel = true))
           = let prev_obj = Seq.index live_set k in

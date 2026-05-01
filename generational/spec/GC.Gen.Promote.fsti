@@ -152,6 +152,36 @@ val promote_all_spec (minor: minor_state) (major: heap)
 let is_minor_pointer (v: U64.t) : bool =
   U64.v v >= 8 && U64.v v < minor_heap_size && U64.v v % 8 = 0
 
+/// Update pointers in one object's fields: iterate fields [i, wosize) and rewrite
+/// minor-heap pointers via the forwarding map.
+val update_object_pointers (major: heap) (obj: U64.t) (wosize: nat)
+                           (fwd: forwarding_map) (i: nat)
+  : GTot heap
+
+/// Unfold lemma: one step of update_object_pointers when i < wosize
+val update_object_pointers_step (major: heap) (obj: U64.t) (wosize: nat)
+                                (fwd: forwarding_map) (i: nat)
+  : Lemma (requires i < wosize /\
+                    U64.v obj + i * 8 + 8 <= heap_size /\
+                    (U64.v obj + i * 8) % 8 = 0)
+          (ensures (let field_offset = U64.v obj + i * 8 in
+                    let field_val = read_word major (U64.uint_to_t field_offset) in
+                    update_object_pointers major obj wosize fwd i ==
+                    (if is_minor_pointer field_val then
+                       let new_val = fwd field_val in
+                       if new_val <> 0UL then
+                         update_object_pointers (write_word major (U64.uint_to_t field_offset) new_val) obj wosize fwd (i + 1)
+                       else
+                         update_object_pointers major obj wosize fwd (i + 1)
+                     else
+                       update_object_pointers major obj wosize fwd (i + 1))))
+
+/// Base case: update_object_pointers at i >= wosize is identity
+val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
+                                (fwd: forwarding_map) (i: nat)
+  : Lemma (requires i >= wosize)
+          (ensures update_object_pointers major obj wosize fwd i == major)
+
 /// Update all pointers in the major heap that refer to minor addresses
 val update_major_pointers (major: heap) (fwd: forwarding_map)
   : GTot heap

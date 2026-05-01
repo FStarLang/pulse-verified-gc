@@ -53,3 +53,25 @@ fn rewrite_roots_impl
     pts_to fwd_arr 'farr **
     pure (Seq.length rs2 == Seq.length 'rs /\
           rs2 == PromoteSpec.rewrite_roots 'rs 'fwd)
+
+/// ---------------------------------------------------------------------------
+/// Update pointers in one object's fields
+/// ---------------------------------------------------------------------------
+
+/// Update all pointer fields in a single major-heap object.
+/// For each field [0, wosize), reads the value, checks if it's a minor-heap
+/// pointer with a forwarding entry, and rewrites it if so.
+fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
+                     (obj: U64.t) (wosize: U64.t)
+                     (#fwd: erased PromoteSpec.forwarding_map)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
+                 U64.v wosize > 0 /\
+                 U64.v obj + U64.v wosize * 8 <= heap_size /\
+                 Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pure (ms2 == PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)

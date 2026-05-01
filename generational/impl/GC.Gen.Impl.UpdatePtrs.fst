@@ -138,3 +138,107 @@ fn rewrite_roots_impl
   PromoteSpec.rewrite_roots_length 'rs 'fwd
 }
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Update pointers in one object's fields
+/// ---------------------------------------------------------------------------
+
+module U8 = FStar.UInt8
+
+/// Factored-out helper: handle one field in the pointer update loop.
+/// Reads field, checks if minor pointer + forwarded, conditionally writes.
+#push-options "--z3rlimit 150 --fuel 0 --ifuel 0"
+inline_for_extraction
+fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
+                    (obj: U64.t) (wosize: U64.t) (iv: U64.t)
+                    (#fwd: erased PromoteSpec.forwarding_map)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (U64.v iv < U64.v wosize /\
+                 U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
+                 U64.v obj + U64.v wosize * 8 <= heap_size /\
+                 U64.v wosize > 0 /\
+                 Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pure (PromoteSpec.update_object_pointers ms2 obj (U64.v wosize) fwd (U64.v iv + 1) ==
+          PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd (U64.v iv))
+{
+  let field_addr_u64 = U64.add obj (U64.mul iv 8UL);
+  let field_val = read_word major field_addr_u64;
+  // Invoke the unfold lemma to establish the one-step equality
+  PromoteSpec.update_object_pointers_step 'ms obj (U64.v wosize) fwd (U64.v iv);
+  if U64.gte field_val 8UL {
+    if U64.lt field_val minor_heap_size_u64 {
+      if U64.eq (U64.rem field_val 8UL) 0UL {
+        // Minor pointer — look up forwarding
+        let idx = SZ.uint64_to_sizet (U64.div field_val 8UL);
+        let fwd_val = fwd_arr.(idx);
+        if U64.eq fwd_val 0UL {
+          ()
+        } else {
+          write_word major field_addr_u64 fwd_val
+        }
+      } else {
+        ()
+      }
+    } else {
+      ()
+    }
+  } else {
+    ()
+  }
+}
+#pop-options
+
+/// Update pointers in one object: iterate fields [0, wosize) and rewrite
+/// minor-heap pointers via the forwarding array.
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+inline_for_extraction
+fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
+                     (obj: U64.t) (wosize: U64.t)
+                     (#fwd: erased PromoteSpec.forwarding_map)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
+                 U64.v wosize > 0 /\
+                 U64.v obj + U64.v wosize * 8 <= heap_size /\
+                 Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pure (ms2 == PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)
+{
+  let mut i = 0UL;
+  while (U64.lt !i wosize)
+    invariant exists* ms_i iv.
+      is_heap major ms_i **
+      pts_to fwd_arr 'farr **
+      R.pts_to i iv **
+      pure (U64.v iv <= U64.v wosize /\
+            U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
+            U64.v obj + U64.v wosize * 8 <= heap_size /\
+            U64.v wosize > 0 /\
+            Seq.length 'farr == fwd_array_size /\
+            represents_fwd 'farr fwd /\
+            PromoteSpec.update_object_pointers ms_i obj (U64.v wosize) fwd (U64.v iv) ==
+            PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)
+  {
+    let iv = !i;
+    update_one_field major fwd_arr obj wosize iv #fwd;
+    i := U64.add iv 1UL
+  };
+  // After loop: iv == wosize, so update_object_pointers ms_final ... wosize == ms_final
+  with ms_final. assert (is_heap major ms_final);
+  with iv_final. assert (R.pts_to i iv_final);
+  PromoteSpec.update_object_pointers_done ms_final obj (U64.v wosize) fwd (U64.v iv_final);
+  // Now we know:
+  //   (1) update_object_pointers ms_final obj wosize fwd (v iv_final) == ms_final  [from done lemma]
+  //   (2) update_object_pointers ms_final obj wosize fwd (v iv_final) == update_object_pointers 'ms obj wosize fwd 0  [from invariant]
+  // Therefore ms_final == update_object_pointers 'ms obj wosize fwd 0
+  assert (pure (ms_final == PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0))
+}
+#pop-options
