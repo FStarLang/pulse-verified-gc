@@ -642,3 +642,46 @@ let alloc_spec_obj_wosize_pre_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                      U64.v (wosize_of_object (r.obj_out <: obj_addr) g) >= wz)))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_obj_wosize_pre_part1 g fp 0UL fp wz (heap_size / U64.v mword)
+
+/// ---------------------------------------------------------------------------
+/// OOM lemma: when alloc_spec fails, heap and fp are unchanged
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
+private let rec alloc_search_oom_unchanged
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma
+    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+              r.obj_out == 0UL ==>
+              (r.heap_out == g /\ r.fp_out == head_fp)))
+    (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if cur_fp = 0UL then ()
+  else if U64.v cur_fp < U64.v mword then ()
+  else if U64.v cur_fp >= heap_size then ()
+  else if U64.v cur_fp % U64.v mword <> 0 then ()
+  else begin
+    let obj : obj_addr = cur_fp in
+    let hd = hd_address obj in
+    let hdr = read_word g hd in
+    let block_wz = U64.v (getWosize hdr) in
+    let next_fp =
+      if U64.v hd + 16 <= heap_size then read_word g obj
+      else 0UL
+    in
+    if block_wz >= wz then
+      // Found: obj_out = cur_fp ≠ 0UL, so the implication is vacuous
+      ()
+    else
+      alloc_search_oom_unchanged g head_fp cur_fp next_fp wz (fuel - 1)
+  end
+#pop-options
+
+/// Top-level: when alloc_spec fails (obj_out = 0UL), heap and fp are unchanged
+let alloc_spec_oom_unchanged (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (ensures (let r = alloc_spec g fp requested_wz in
+                    r.obj_out == 0UL ==>
+                    (r.heap_out == g /\ r.fp_out == fp)))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_oom_unchanged g fp 0UL fp wz (heap_size / U64.v mword)

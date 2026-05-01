@@ -111,7 +111,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 /// during a promotion loop, pointer closure (part2) is temporarily violated
 /// (minor pointers are written into the major heap body). The allocator only
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)
@@ -131,9 +131,18 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
-    pure (SF.well_formed_heap_part1 ms2 /\
+    pure (let minor_st = {data='md; bump='mb} in
+          let wz = minor_wosize minor_st obj in
+          md2 == 'md /\ mb2 == 'mb /\
+          SF.well_formed_heap_part1 ms2 /\
           AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword))
+          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          (wz > 0 ==>
+            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz in
+             ms2 == spec_res.major_out /\
+             fp2 == spec_res.fp_out /\
+             new_addr == spec_res.new_addr)) /\
+          (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ new_addr == 0UL))
 {
   // Read the wosize from the minor object header
   let wosize = read_minor_wosize minor obj;
@@ -149,45 +158,38 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     R.op_Colon_Equals fp_ref new_fp;
     if U64.eq new_obj 0UL {
       // OOM — alloc_spec with obj_out=0 returns heap unchanged
-      // So wfh_part1, fl_valid, fl_chain_terminates are preserved trivially
       AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
       AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
       AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
+      // Spec refinement for OOM: promote_object returns {major_out='ms; fp_out='fp; new_addr=0UL}
+      AllocProps.alloc_spec_oom_unchanged 'ms fp (U64.v wosize);
+      PromoteSpec.promote_object_oom {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
       0UL
     } else {
       // Derive bounds from allocator postconditions:
-      // 1. wfh_part1 is already our precondition (no need to reveal_opaque)
-      // 2. new_obj is a valid obj_addr in the output heap
       AllocProps.alloc_spec_obj_in_objects_part1 'ms fp (U64.v wosize);
       assert (pure (U64.v new_obj >= U64.v mword /\
                     U64.v new_obj < heap_size /\
                     U64.v new_obj % U64.v mword == 0));
-      // 3. The output heap preserves wfh_part1
       AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
-      // 4. Preserve fl_valid and fl_chain_terminates
       AllocLemmas.alloc_spec_preserves_fl_valid_part1 'ms fp (U64.v wosize);
       AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 'ms fp (U64.v wosize);
-      // 5. The output object has wosize >= requested
       AllocProps.alloc_spec_obj_wosize_part1 'ms fp (U64.v wosize);
-      // 6. From wfh_part1 + mem: obj + wosize_of_object * 8 <= heap_size
       SF.wfh_part1_obj_bound
         (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
         (new_obj <: obj_addr);
-      // 7. Since wosize_of_object >= requested_wz and obj + wz_actual*8 <= heap_size:
       assert (pure (U64.v new_obj + U64.v wosize * 8 <= heap_size));
-      // 8. chain_avoids: new_obj is not in the free-list chain of the output
       AllocLemmas.alloc_spec_obj_not_in_chain_part1 'ms fp (U64.v wosize);
-      // 9. Invoke composite lemma: copy_fields preserves all allocator invariants.
-      //    This is a pure lemma — we call it BEFORE copy_fields_loop so its conclusion
-      //    (about copy_fields applied to the alloc result) is in the pure context.
+      // Invoke composite lemma: copy_fields preserves allocator invariants
       PromoteSpec.copy_fields_preserves_alloc_invariants
         {data='md; bump='mb}
         (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
         obj (new_obj <: obj_addr) (U64.v wosize) new_fp;
       // Copy all fields (0..wosize-1) from minor to major
       copy_fields_loop minor major obj new_obj wosize;
-      // After copy_fields_loop: ms2 == copy_fields ... (alloc_spec ...).heap_out ...
-      // Combined with the lemma ensures, we get wfh_part1/fl_valid/fl_chain_terminates ms2
+      // After copy_fields_loop: ms2 == copy_fields minor (alloc_spec ...).heap_out obj new_obj 0 wosize
+      // Unfold promote_object for the success case to match
+      PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
       new_obj
     }
   }

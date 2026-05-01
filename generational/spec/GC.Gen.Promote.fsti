@@ -95,6 +95,23 @@ val promote_object (minor: minor_state) (major: heap) (obj: U64.t)
                    (fp: U64.t) (wosize: nat{wosize > 0})
   : GTot promote_one_result
 
+/// Unfold: when alloc fails (OOM), promote_object returns original heap/fp unchanged.
+val promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
+                       (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out == 0UL)
+          (ensures (let res = promote_object minor major obj fp wosize in
+                    res.major_out == major /\ res.fp_out == fp /\ res.new_addr == 0UL))
+
+/// Unfold: when alloc succeeds, promote_object = alloc + copy_fields.
+val promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
+                           (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL)
+          (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+                    let res = promote_object minor major obj fp wosize in
+                    res.major_out == copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize /\
+                    res.fp_out == alloc_res.fp_out /\
+                    res.new_addr == alloc_res.obj_out))
+
 /// ---------------------------------------------------------------------------
 /// Promote All Live Objects
 /// ---------------------------------------------------------------------------

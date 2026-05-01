@@ -21,6 +21,7 @@ open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
+module PromoteSpec = GC.Gen.Promote
 
 /// ---------------------------------------------------------------------------
 /// Promote a single object from minor heap to major heap.
@@ -49,6 +50,15 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
-    pure (GC.Spec.Fields.well_formed_heap_part1 ms2 /\
+    pure (let minor_st = {data='md; bump='mb} in
+          let wz = minor_wosize minor_st obj in
+          md2 == 'md /\ mb2 == 'mb /\
+          GC.Spec.Fields.well_formed_heap_part1 ms2 /\
           GC.Spec.Allocator.Lemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword))
+          GC.Spec.Allocator.Lemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          (wz > 0 ==>
+            (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz in
+             ms2 == spec_res.major_out /\
+             fp2 == spec_res.fp_out /\
+             new_addr == spec_res.new_addr)) /\
+          (wz == 0 ==> ms2 == 'ms /\ fp2 == 'fp /\ new_addr == 0UL))
