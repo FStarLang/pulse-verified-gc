@@ -73,7 +73,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// Walks the minor heap linearly, promoting each object found.
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
-#push-options "--z3rlimit 200"
+#push-options "--z3rlimit 20 --fuel 8 --ifuel 2 --split_queries no"
 fn minor_collect (gh: gen_heap_t)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pure (SpecFields.well_formed_heap_part1 's /\
@@ -122,6 +122,8 @@ fn minor_collect (gh: gen_heap_t)
         } else {
           // Check object fits within bump region
           let total_words = U64.add wosize 1UL;
+          assert (pure (U64.v total_words == U64.v wosize + 1));
+          assert (pure (U64.v total_words * 8 < pow2 64));
           let total_bytes = U64.mul total_words 8UL;
           if U64.gt (U64.add p total_bytes) bump {
             // Object extends past bump — malformed
@@ -132,16 +134,23 @@ fn minor_collect (gh: gen_heap_t)
             assert (pure (U64.v obj_addr >= 8));
             assert (pure (U64.v obj_addr < minor_heap_size));
             assert (pure (U64.v obj_addr % 8 == 0));
-            // Connect wosize to minor_wosize:
-            // hdr == minor_read_word_t 'd p
-            // wosize == shift_right hdr 10
-            // minor_wosize {data='d; bump=bump} obj_addr == shift_right (minor_read_word 'd p) 10
-            // With p < bump <= minor_heap_size and p%8==0:
-            //   minor_read_word_t 'd p == minor_read_word 'd p
-            // So wosize == minor_wosize ... obj_addr
             assert (pure (U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size));
+            // minor_read returns minor_read_word_t 'd p
+            // Since p + 8 <= minor_heap_size and p % 8 == 0:
+            //   minor_read_word_t 'd p == minor_read_word 'd p
+            // minor_wosize {data='d; bump=bump} obj_addr unfolds to:
+            //   U64.v (shift_right (minor_read_word 'd (uint_to_t (U64.v obj_addr - 8))) 10ul)
+            //   = U64.v (shift_right (minor_read_word 'd p) 10ul)
+            //   = U64.v (shift_right hdr 10ul)
+            //   = U64.v wosize
+            assert (pure (U64.v p + 8 <= minor_heap_size));
+            assert (pure (U64.v p % 8 == 0));
+            assert (pure (minor_read_word_t 'd p == minor_read_word 'd p));
             assert (pure (U64.v wosize == minor_wosize {data='d; bump=bump} obj_addr));
             let _new = promote_one gh.minor gh.major gh.fp_ref obj_addr;
+            // Re-establish loop invariant for pos update
+            assert (pure (U64.v p + U64.v total_bytes <= U64.v bump));
+            assert (pure ((U64.v p + U64.v total_bytes) % 8 == 0));
             pos := U64.add p total_bytes
           }
         }
