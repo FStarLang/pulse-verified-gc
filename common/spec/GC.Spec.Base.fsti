@@ -77,6 +77,12 @@ val is_hp_addr (a: U64.t) : bool
 /// Check if address has room for header
 val is_val_addr (a: U64.t) : bool
 
+/// Specification of is_val_addr (unfolds its definition for SMT)
+val is_val_addr_spec (a: U64.t)
+  : Lemma (ensures is_val_addr a <==>
+                   (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword == 0))
+    [SMTPat (is_val_addr a)]
+
 /// ---------------------------------------------------------------------------
 /// Address Arithmetic Lemmas
 /// ---------------------------------------------------------------------------

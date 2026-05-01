@@ -328,6 +328,8 @@ private let rec minor_objects_aux_wosize_bound_raw
                     U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0)
           (ensures (let hdr_addr = U64.v x - 8 in
                     hdr_addr >= 0 /\
+                    hdr_addr + 8 <= minor_heap_size /\
+                    hdr_addr % 8 == 0 /\
                     (let hdr = minor_read_word data (U64.uint_to_t hdr_addr) in
                      (U64.v (U64.shift_right hdr 10ul) + 1) * 8 <= minor_heap_size)))
           (decreases (bump - pos)) =

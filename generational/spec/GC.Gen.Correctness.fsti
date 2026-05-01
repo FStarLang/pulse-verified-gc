@@ -189,7 +189,11 @@ val gen_gc_correct
 /// All live-set object fields that are pointers either:
 /// - Are minor pointers targeting objects in the live set (will be promoted)
 ///   AND those targets have wosize > 0 (ensuring they get promoted), or
-/// - Are non-minor pointers targeting objects in the original major heap
+/// - Are non-minor pointers targeting valid objects in the original major heap
+let minor_field_targets_major (v: U64.t) (major: heap) : prop =
+  U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+  Seq.mem (v <: obj_addr) (objects 0UL major)
+
 let minor_fields_well_formed (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
   let live_set = live_set_of minor major roots in
   forall (obj: U64.t) (j: nat).
@@ -197,9 +201,7 @@ let minor_fields_well_formed (minor: minor_state) (major: heap) (roots: seq U64.
     (let v = minor_read_field minor obj j in
      is_pointer v ==>
        (is_minor_pointer v ==> (Seq.mem v live_set /\ minor_wosize minor v > 0)) /\
-       (~(is_minor_pointer v) ==>
-         (U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-          Seq.mem (v <: obj_addr) (objects 0UL major))))
+       (~(is_minor_pointer v) ==> minor_field_targets_major v major))
 
 /// All live-set objects with wosize > 0 get successfully promoted (alloc succeeds)
 let all_promotions_succeed (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
