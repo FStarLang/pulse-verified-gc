@@ -183,6 +183,13 @@ val rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
   : Lemma (requires i < Seq.length roots)
           (ensures Seq.index (rewrite_roots roots fwd) i == rewrite_root (Seq.index roots i) fwd)
 
+/// If a sequence has rewrite_root applied pointwise, it equals rewrite_roots
+val rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U64.t)
+  : Lemma (requires Seq.length rs2 == Seq.length roots /\
+                    (forall (j: nat). j < Seq.length roots ==>
+                      Seq.index rs2 j == rewrite_root (Seq.index roots j) fwd))
+          (ensures rs2 == rewrite_roots roots fwd)
+
 /// ---------------------------------------------------------------------------
 /// Minor Collection (Full Spec)
 /// ---------------------------------------------------------------------------

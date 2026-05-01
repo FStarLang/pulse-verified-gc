@@ -262,6 +262,15 @@ let rec rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
   if i = 0 then ()
   else rewrite_roots_index (Seq.slice roots 1 (Seq.length roots)) fwd (i - 1)
 
+let rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U64.t)
+  : Lemma (requires Seq.length rs2 == Seq.length roots /\
+                    (forall (j: nat). j < Seq.length roots ==>
+                      Seq.index rs2 j == rewrite_root (Seq.index roots j) fwd))
+          (ensures rs2 == rewrite_roots roots fwd) =
+  rewrite_roots_length roots fwd;
+  Classical.forall_intro (Classical.move_requires (rewrite_roots_index roots fwd));
+  Seq.lemma_eq_intro rs2 (rewrite_roots roots fwd)
+
 /// ---------------------------------------------------------------------------
 /// Full minor collection
 /// ---------------------------------------------------------------------------
