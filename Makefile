@@ -1,33 +1,60 @@
 # Root Makefile for pulse-verified-gc
 #
-# The mark-and-sweep/ Makefile builds all modules (common/ + mark-and-sweep/)
-# in a single incremental build via `fstar.exe --dep full`.
+# Builds all sub-projects: common/, mark-and-sweep/, generational/.
+# Each sub-directory has its own Makefile; this orchestrates the full build.
 #
 # Run `./setup.sh` once after cloning to install the F* toolchain.
 #
 # Usage:
-#   ./setup.sh      Install F* binary release
-#   make            Verify all modules (common/ + mark-and-sweep/)
-#   make extract    Verify + extract mark-and-sweep to C
-#   make snapshot   Verify + extract + create snapshot/
-#   make clean      Clean all build artifacts
+#   ./setup.sh          Install F* binary release
+#   make                Verify all modules (common + mark-and-sweep + generational)
+#   make common         Verify common/ only
+#   make mark-and-sweep Verify mark-and-sweep/ (includes common/)
+#   make generational   Verify generational/ (includes common/ + mark-and-sweep/)
+#   make extract        Verify + extract both GCs to C
+#   make snapshot       Verify + extract mark-and-sweep + create snapshot/
+#   make clean          Clean all build artifacts
 
 FSTAR_HOME ?= $(CURDIR)/fstar
 KRML_HOME  ?= $(FSTAR_HOME)/karamel
 
-.PHONY: all verify extract snapshot clean
+.PHONY: all verify common mark-and-sweep generational extract snapshot clean
 
 all: verify
 
-verify:
+# --- Verification targets ---------------------------------------------------
+
+verify: common mark-and-sweep generational
+
+common:
+	+$(MAKE) -C common FSTAR_HOME=$(FSTAR_HOME)
+
+mark-and-sweep: common
 	+$(MAKE) -C mark-and-sweep FSTAR_HOME=$(FSTAR_HOME)
 
-extract:
+generational: mark-and-sweep
+	+$(MAKE) -C generational FSTAR_HOME=$(FSTAR_HOME)
+
+# --- Extraction targets -----------------------------------------------------
+
+extract: extract-mark-and-sweep extract-generational
+
+.PHONY: extract-mark-and-sweep extract-generational
+
+extract-mark-and-sweep: mark-and-sweep
 	+$(MAKE) -C mark-and-sweep extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
 
-snapshot:
+extract-generational: generational
+	+$(MAKE) -C generational extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
+
+# --- Snapshot (mark-and-sweep only) -----------------------------------------
+
+snapshot: extract-mark-and-sweep
 	+$(MAKE) -C mark-and-sweep snapshot FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
 
+# --- Clean ------------------------------------------------------------------
+
 clean:
+	+$(MAKE) -C common clean
 	+$(MAKE) -C mark-and-sweep clean
-	+$(MAKE) -C common clean 2>/dev/null || true
+	+$(MAKE) -C generational clean
