@@ -568,3 +568,33 @@ val promote_all_read_other
                     U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     read_word res.major_final addr == read_word major addr))
+
+/// ---------------------------------------------------------------------------
+/// All-Objects Minor Collection (matches linear-walk implementation)
+/// ---------------------------------------------------------------------------
+
+/// Minor collection that promotes ALL minor objects (not just reachable ones).
+/// This matches the implementation's linear walk from 0 to bump.
+/// Sound overapproximation: live_set_of ⊆ minor_objects, so all live objects
+/// are promoted. Extra promotions don't break any invariant.
+let minor_collect_all_spec (minor: minor_state) (major: heap)
+                            (fp: U64.t) (roots: seq U64.t)
+  : GTot minor_collect_result =
+  let all_objs = minor_objects minor in
+  let prom_res = promote_all_spec minor major fp all_objs in
+  let updated = update_major_pointers prom_res.major_final prom_res.fwd_map in
+  { mc_major = updated;
+    mc_fp    = prom_res.fp_final;
+    mc_minor = minor_reset minor;
+    mc_roots = rewrite_roots roots prom_res.fwd_map;
+    mc_fwd   = prom_res.fwd_map }
+
+/// Unfold: mc_major of all-objects collection
+val minor_collect_all_spec_unfold (minor: minor_state) (major: heap)
+                                   (fp: U64.t) (roots: seq U64.t)
+  : Lemma (let all_objs = minor_objects minor in
+           let prom_res = promote_all_spec minor major fp all_objs in
+           (minor_collect_all_spec minor major fp roots).mc_major ==
+             update_major_pointers prom_res.major_final prom_res.fwd_map /\
+           (minor_collect_all_spec minor major fp roots).mc_fwd == prom_res.fwd_map /\
+           (minor_collect_all_spec minor major fp roots).mc_fp == prom_res.fp_final)

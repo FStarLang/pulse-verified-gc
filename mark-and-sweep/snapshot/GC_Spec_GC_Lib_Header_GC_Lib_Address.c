@@ -7,6 +7,8 @@
 
 #include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 
+uint64_t GC_Spec_Base_heap_size_u64 = 1024ULL;
+
 bool GC_Lib_Header_uu___is_Black(GC_Lib_Header_color_sem projectee)
 {
   switch (projectee)
@@ -21,6 +23,4 @@ bool GC_Lib_Header_uu___is_Black(GC_Lib_Header_color_sem projectee)
       }
   }
 }
-
-uint64_t GC_Spec_Base_heap_size_u64 = 1024ULL;
 

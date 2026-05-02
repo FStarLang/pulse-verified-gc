@@ -5,13 +5,9 @@
   KaRaMeL version: 772e4f63642524f6fb3c15fcb1b9398dd6afea7f
  */
 
-#include "internal/GC_Impl.h"
+#include "GC_Impl.h"
 
 #include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
-
-static uint64_t mword = 8ULL;
-
-/* heap_size_u64: defined by the application (e.g., main.c) */
 
 static uint64_t zero_addr = 0ULL;
 
@@ -80,12 +76,12 @@ static void write_word(heap_t h, uint64_t addr, uint64_t v)
 
 static uint64_t hd_address(uint64_t f_addr)
 {
-  return f_addr - mword;
+  return f_addr - 8ULL;
 }
 
 static uint64_t f_address(uint64_t h_addr)
 {
-  return h_addr + mword;
+  return h_addr + 8ULL;
 }
 
 static GC_Lib_Header_color_sem white = GC_Lib_Header_White;
@@ -146,7 +142,7 @@ static uint64_t makeHeader(uint64_t wz, GC_Lib_Header_color_sem c, uint64_t t)
 
 static uint64_t field_address_pure(uint64_t h_addr, uint64_t i)
 {
-  uint64_t offset = i * mword;
+  uint64_t offset = i * 8ULL;
   return h_addr + offset;
 }
 
@@ -161,11 +157,11 @@ static bool is_pointer(uint64_t v)
 {
   if (v == 0ULL)
     return false;
-  else if (v >= heap_size_u64)
+  else if (v >= GC_Spec_Base_heap_size_u64)
     return false;
   else
   {
-    uint64_t rem = v % mword;
+    uint64_t rem = v % 8ULL;
     return rem == 0ULL;
   }
 }
@@ -234,7 +230,7 @@ static void check_and_darken_bounded(heap_t heap, gray_stack_rec st, uint64_t v)
   bool is_ptr = is_pointer(v);
   if (is_ptr)
   {
-    uint64_t target_hdr_raw = v - mword;
+    uint64_t target_hdr_raw = v - 8ULL;
     uint64_t target_hdr = target_hdr_raw;
     darken_if_white_bounded(heap, st, target_hdr);
   }
@@ -293,7 +289,7 @@ static uint64_t snd__uint64_t_uint64_t(K___uint64_t_uint64_t x)
 static void mark_step_bounded_impl(heap_t heap, gray_stack_rec st)
 {
   uint64_t f_addr = pop(st);
-  uint64_t h_addr_raw = f_addr - mword;
+  uint64_t h_addr_raw = f_addr - 8ULL;
   uint64_t h_addr = h_addr_raw;
   K___uint64_t_uint64_t r = mark_read_header(heap, h_addr);
   uint64_t wz = fst__uint64_t_uint64_t(r);
@@ -350,10 +346,10 @@ static void rescan_push_if_gray(heap_t heap, gray_stack_rec st, uint64_t h_addr)
 
 static void rescan_heap_impl(heap_t heap, gray_stack_rec st)
 {
-  uint64_t heap_sz = heap_size_u64;
+  uint64_t heap_sz = GC_Spec_Base_heap_size_u64;
   uint64_t current = 0ULL;
   uint64_t v0 = current;
-  bool cond = v0 + mword < heap_sz;
+  bool cond = v0 + 8ULL < heap_sz;
   while (cond)
   {
     uint64_t v = current;
@@ -361,11 +357,11 @@ static void rescan_heap_impl(heap_t heap, gray_stack_rec st)
     uint64_t wz = getWosize(hdr);
     rescan_push_if_gray(heap, st, v);
     uint64_t skip = 1ULL + wz;
-    uint64_t offset = skip * mword;
+    uint64_t offset = skip * 8ULL;
     uint64_t next = v + offset;
     current = next;
     uint64_t v0 = current;
-    cond = v0 + mword < heap_sz;
+    cond = v0 + 8ULL < heap_sz;
   }
 }
 
@@ -386,7 +382,7 @@ static void mark_loop_bounded(heap_t heap, gray_stack_rec st)
 
 static void flush_blue_write_header(heap_t heap, uint64_t fb, uint64_t rw)
 {
-  uint64_t hd = fb - mword;
+  uint64_t hd = fb - 8ULL;
   uint64_t wz = rw - 1ULL;
   uint64_t hdr = makeHeader(wz, blue, 0ULL);
   write_word(heap, hd, hdr);
@@ -408,7 +404,7 @@ static void zero_fields_loop(heap_t heap, uint64_t start_addr, uint64_t n)
     uint64_t cur_a = addr;
     uint64_t cur_i = idx;
     write_word(heap, cur_a, 0ULL);
-    uint64_t next_a = cur_a + mword;
+    uint64_t next_a = cur_a + 8ULL;
     uint64_t next_i = cur_i + 1ULL;
     addr = next_a;
     idx = next_i;
@@ -431,7 +427,7 @@ flush_blue_impl(heap_t heap, uint64_t fb, uint64_t rw, uint64_t fp)
       flush_blue_write_link(heap, fb, fp);
       if (wz > 1ULL)
       {
-        uint64_t zero_start = fb + mword;
+        uint64_t zero_start = fb + 8ULL;
         uint64_t n_zero = wz - 1ULL;
         zero_fields_loop(heap, zero_start, n_zero);
         return ((K___uint64_t_uint64_t){ .fst = 0ULL, .snd = fb });
@@ -451,7 +447,7 @@ static uint64_t fused_sweep_coalesce(heap_t heap)
   uint64_t rw_ref = 0ULL;
   uint64_t fp_ref = 0ULL;
   uint64_t __anf0 = current;
-  bool cond = __anf0 + mword < heap_size_u64;
+  bool cond = __anf0 + 8ULL < GC_Spec_Base_heap_size_u64;
   while (cond)
   {
     uint64_t cur = current;
@@ -462,7 +458,7 @@ static uint64_t fused_sweep_coalesce(heap_t heap)
     uint64_t wz = getWosize(hdr);
     uint64_t obj = cur + 8ULL;
     uint64_t ws_plus_1 = wz + 1ULL;
-    uint64_t offset = ws_plus_1 * mword;
+    uint64_t offset = ws_plus_1 * 8ULL;
     uint64_t next = cur + offset;
     uint64_t raw = hdr >> 8U & 3ULL;
     GC_Lib_Header_color_sem clr;
@@ -499,7 +495,7 @@ static uint64_t fused_sweep_coalesce(heap_t heap)
       rw_ref = new_rw;
     }
     uint64_t __anf0 = current;
-    cond = __anf0 + mword < heap_size_u64;
+    cond = __anf0 + 8ULL < GC_Spec_Base_heap_size_u64;
   }
   uint64_t final_fb = fb_ref;
   uint64_t final_rw = rw_ref;
@@ -517,12 +513,12 @@ uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
 
 static bool is_valid_fp(uint64_t v)
 {
-  return v >= mword && v < heap_size_u64 && v % mword == 0ULL;
+  return v >= 8ULL && v < GC_Spec_Base_heap_size_u64 && v % 8ULL == 0ULL;
 }
 
 uint64_t init_heap(heap_t heap)
 {
-  uint64_t total_words = heap_size_u64 / mword;
+  uint64_t total_words = GC_Spec_Base_heap_size_u64 / 8ULL;
   if (total_words < 2ULL)
     return 0ULL;
   else
@@ -530,8 +526,8 @@ uint64_t init_heap(heap_t heap)
     uint64_t wz = total_words - 1ULL;
     uint64_t hdr = makeHeader(wz, blue, 0ULL);
     write_word(heap, zero_addr, hdr);
-    write_word(heap, mword, 0ULL);
-    return mword;
+    write_word(heap, 8ULL, 0ULL);
+    return 8ULL;
   }
 }
 
@@ -547,7 +543,7 @@ K___uint64_t_uint64_t allocate(heap_t heap, uint64_t fp, uint64_t wosize)
   uint64_t cur_fp = fp;
   uint64_t result_obj = 0ULL;
   bool go = true;
-  uint64_t fuel_ref = heap_size_u64 / mword;
+  uint64_t fuel_ref = GC_Spec_Base_heap_size_u64 / 8ULL;
   while (go)
   {
     uint64_t vfuel = fuel_ref;
@@ -572,9 +568,9 @@ K___uint64_t_uint64_t allocate(heap_t heap, uint64_t fp, uint64_t wosize)
           if (leftover >= 2ULL)
           {
             uint64_t wz_plus_1 = wz + 1ULL;
-            uint64_t offset = wz_plus_1 * mword;
+            uint64_t offset = wz_plus_1 * 8ULL;
             uint64_t rem_hd_off = hd_addr + offset;
-            if (rem_hd_off >= heap_size_u64)
+            if (rem_hd_off >= GC_Spec_Base_heap_size_u64)
             {
               uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
               write_word(heap, hd_addr, alloc_hdr);
@@ -593,8 +589,142 @@ K___uint64_t_uint64_t allocate(heap_t heap, uint64_t fp, uint64_t wosize)
             }
             else
             {
-              uint64_t rem_obj = rem_hd_off + mword;
-              if (rem_obj >= heap_size_u64)
+              uint64_t rem_obj = rem_hd_off + 8ULL;
+              if (rem_obj >= GC_Spec_Base_heap_size_u64)
+              {
+                uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
+                write_word(heap, hd_addr, alloc_hdr);
+                uint64_t rem_wz_u = leftover - 1ULL;
+                uint64_t rem_hdr = makeHeader(rem_wz_u, blue, 0ULL);
+                write_word(heap, rem_hd_off, rem_hdr);
+                if (vp == 0ULL)
+                {
+                  head_fp = rem_obj;
+                  result_obj = vcur;
+                  go = false;
+                }
+                else
+                {
+                  write_word(heap, vp, rem_obj);
+                  result_obj = vcur;
+                  go = false;
+                }
+              }
+              else
+              {
+                uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
+                write_word(heap, hd_addr, alloc_hdr);
+                uint64_t rem_wz_u = leftover - 1ULL;
+                uint64_t rem_hdr = makeHeader(rem_wz_u, blue, 0ULL);
+                write_word(heap, rem_hd_off, rem_hdr);
+                write_word(heap, rem_obj, next);
+                if (vp == 0ULL)
+                {
+                  head_fp = rem_obj;
+                  result_obj = vcur;
+                  go = false;
+                }
+                else
+                {
+                  write_word(heap, vp, rem_obj);
+                  result_obj = vcur;
+                  go = false;
+                }
+              }
+            }
+          }
+          else
+          {
+            uint64_t alloc_hdr = makeHeader(block_wz, white, 0ULL);
+            write_word(heap, hd_addr, alloc_hdr);
+            if (vp == 0ULL)
+            {
+              head_fp = next;
+              result_obj = vcur;
+              go = false;
+            }
+            else
+            {
+              write_word(heap, vp, next);
+              result_obj = vcur;
+              go = false;
+            }
+          }
+        }
+        else
+        {
+          prev_fp = vcur;
+          cur_fp = next;
+          fuel_ref = vfuel - 1ULL;
+        }
+      }
+    }
+  }
+  uint64_t final_fp = head_fp;
+  uint64_t final_obj = result_obj;
+  return ((K___uint64_t_uint64_t){ .fst = final_fp, .snd = final_obj });
+}
+
+K___uint64_t_uint64_t allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
+{
+  uint64_t wz;
+  if (wosize == 0ULL)
+    wz = 1ULL;
+  else
+    wz = wosize;
+  uint64_t head_fp = fp;
+  uint64_t prev_fp = 0ULL;
+  uint64_t cur_fp = fp;
+  uint64_t result_obj = 0ULL;
+  bool go = true;
+  uint64_t fuel_ref = GC_Spec_Base_heap_size_u64 / 8ULL;
+  while (go)
+  {
+    uint64_t vfuel = fuel_ref;
+    if (vfuel == 0ULL)
+      go = false;
+    else
+    {
+      uint64_t vcur = cur_fp;
+      bool valid = is_valid_fp(vcur);
+      if (!valid)
+        go = false;
+      else
+      {
+        uint64_t hd_addr = hd_address(vcur);
+        uint64_t hdr = read_word(heap, hd_addr);
+        uint64_t block_wz = getWosize(hdr);
+        uint64_t next = read_word(heap, vcur);
+        if (block_wz >= wz)
+        {
+          uint64_t leftover = block_wz - wz;
+          uint64_t vp = prev_fp;
+          if (leftover >= 2ULL)
+          {
+            uint64_t wz_plus_1 = wz + 1ULL;
+            uint64_t offset = wz_plus_1 * 8ULL;
+            uint64_t rem_hd_off = hd_addr + offset;
+            if (rem_hd_off >= GC_Spec_Base_heap_size_u64)
+            {
+              uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
+              write_word(heap, hd_addr, alloc_hdr);
+              if (vp == 0ULL)
+              {
+                head_fp = next;
+                result_obj = vcur;
+                go = false;
+              }
+              else
+              {
+                write_word(heap, vp, next);
+                result_obj = vcur;
+                go = false;
+              }
+            }
+            else
+            {
+              uint64_t rem_obj = rem_hd_off + 8ULL;
+              if (rem_obj >= GC_Spec_Base_heap_size_u64)
               {
                 uint64_t alloc_hdr = makeHeader(wz, white, 0ULL);
                 write_word(heap, hd_addr, alloc_hdr);

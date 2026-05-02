@@ -24,7 +24,7 @@ all: test
 test: $(TARGET)
 	./$(TARGET)
 
-$(TARGET): $(SOURCES) GC_Impl.h internal/GC_Impl.h
+$(TARGET): $(SOURCES) GC_Impl.h internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h
 	$(CC) $(CFLAGS) $(SOURCES) -o $@
 
 clean:

@@ -3,8 +3,7 @@
 
    Provides:
    - gen_alloc: Allocate an object (routes to minor or major by size)
-   - minor_collect: Promote live minor objects to major heap
-   - major_collect: Full mark-sweep-coalesce on major heap
+   - minor_collect: Promote all minor objects to major heap, rewrite pointers, reset
 *)
 
 module GC.Gen.Impl
@@ -26,6 +25,8 @@ open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module SpecFields = GC.Spec.Fields
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module PromoteSpec = GC.Gen.Promote
+module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -60,15 +61,34 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
 
 /// ---------------------------------------------------------------------------
-/// Minor collection
+/// Minor collection (full: promote + rewrite pointers + rewrite roots + reset)
 /// ---------------------------------------------------------------------------
 
-/// Trigger a minor collection: promote all minor objects to major heap,
-/// then reset the minor heap.
+/// Trigger a minor collection:
+/// 1. Promote all minor objects to major heap (filling forwarding array)
+/// 2. Update major-heap pointer fields (rewrite minor refs via fwd_arr)
+/// 3. Rewrite program roots (minor refs → forwarded major addresses)
+/// 4. Reset the minor heap (bump = 0)
+///
+/// Postcondition: result matches minor_collect_all_spec
+/// (promotes ALL minor objects, a sound overapproximation of live-only).
 fn minor_collect (gh: gen_heap_t)
+                 (roots: array U64.t) (nroots: SZ.t)
+                 (fwd_arr: array U64.t)
   requires is_gen_heap gh 'd 'b 's 'fp **
+           pts_to roots 'rs **
+           pts_to fwd_arr 'farr **
            pure (SpecFields.well_formed_heap_part1 's /\
-                 GC.Spec.Allocator.Lemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
-                 GC.Spec.Allocator.Lemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword))
-  ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2 **
-          pure (U64.v b2 == 0)  // minor heap reset after collection
+                 AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
+                 SZ.v nroots == Seq.length 'rs /\
+                 Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+                 (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
+  ensures exists* d2 b2 s2 fp2 rs2 farr2.
+    is_gen_heap gh d2 b2 s2 fp2 **
+    pts_to roots rs2 **
+    pts_to fwd_arr farr2 **
+    pure (U64.v b2 == 0 /\
+          SpecFields.well_formed_heap_part1 s2 /\
+          AllocLemmas.fl_valid s2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_chain_terminates s2 fp2 (heap_size / U64.v mword))

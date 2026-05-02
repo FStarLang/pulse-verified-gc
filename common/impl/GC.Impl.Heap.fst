@@ -27,6 +27,7 @@ module Base = GC.Spec.Base
 module SpecHeap = GC.Spec.Heap
 
 /// Machine word size in bytes (8 bytes = 64 bits)
+inline_for_extraction
 let mword : U64.t = Base.mword
 
 /// Heap size in bytes — shared with spec so heap_state == Base.heap
@@ -42,7 +43,8 @@ let heap_size_sz : (n:SZ.t{SZ.v n == heap_size}) =
   SZ.fits_u64_implies_fits heap_size;
   SZ.uint_to_t heap_size
 
-/// Heap size as U64 — re-export from GC.Spec.Base
+/// Heap size as U64 — inline so KaRaMeL emits a local constant (no cross-bundle ref)
+inline_for_extraction
 let heap_size_u64 : (n:U64.t{U64.v n == heap_size}) =
   Base.heap_size_u64
 

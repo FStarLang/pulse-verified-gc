@@ -2785,3 +2785,14 @@ let promote_all_read_other
           (ensures (let res = promote_all_spec minor major fp live_set in
                     read_word res.major_final addr == read_word major addr))
   = promote_all_aux_read_other minor major fp live_set empty_forwarding 0 other addr
+
+/// Trivial unfold lemma for minor_collect_all_spec
+let minor_collect_all_spec_unfold (minor: minor_state) (major: heap)
+                                   (fp: U64.t) (roots: seq U64.t)
+  : Lemma (let all_objs = minor_objects minor in
+           let prom_res = promote_all_spec minor major fp all_objs in
+           (minor_collect_all_spec minor major fp roots).mc_major ==
+             update_major_pointers prom_res.major_final prom_res.fwd_map /\
+           (minor_collect_all_spec minor major fp roots).mc_fwd == prom_res.fwd_map /\
+           (minor_collect_all_spec minor major fp roots).mc_fp == prom_res.fp_final)
+  = ()

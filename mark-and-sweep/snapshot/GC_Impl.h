@@ -40,6 +40,8 @@ uint64_t init_heap(heap_t heap);
 
 K___uint64_t_uint64_t allocate(heap_t heap, uint64_t fp, uint64_t wosize);
 
+K___uint64_t_uint64_t allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize);
+
 
 #define GC_Impl_H_DEFINED
 #endif /* GC_Impl_H */
