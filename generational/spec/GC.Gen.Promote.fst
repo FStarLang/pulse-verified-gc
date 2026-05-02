@@ -1646,18 +1646,63 @@ let update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
 /// Positional step lemma — connects position-based walk to spec
 /// ---------------------------------------------------------------------------
 
-/// Helper: update_object_pointers preserves objects at any start position
-/// (since it only writes field bytes, not headers)
-#push-options "--z3rlimit 80 --fuel 1 --split_queries always"
-private let update_object_pointers_preserves_objects_at_pos
-  (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (pos: hp_addr)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    Seq.mem obj (objects 0UL major) /\
-                    U64.v obj + wz * 8 <= heap_size /\
-                    wz == U64.v (wosize_of_object obj major))
-          (ensures objects pos (update_object_pointers major obj wz fwd 0) ==
-                   objects pos major)
-  = admit () // TEMPORARY: requires showing all-position objects preservation from header preservation
+/// Sub-lemma: if two heaps agree on all read_word from start onward, objects from start agree.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+private let rec objects_eq_when_reads_agree (g1 g2: heap) (start: hp_addr)
+  : Lemma (requires Seq.length g1 == Seq.length g2 /\
+                    (forall (a: hp_addr). U64.v a >= U64.v start ==>
+                      read_word g1 a == read_word g2 a))
+          (ensures objects start g1 == objects start g2)
+          (decreases (Seq.length g1 - U64.v start)) =
+  if U64.v start + 8 >= Seq.length g1 then ()
+  else begin
+    assert (read_word g1 start == read_word g2 start);
+    let header = read_word g1 start in
+    let wz = getWosize header in
+    let obj_size_nat = U64.v wz + 1 in
+    let next_start_nat = U64.v start + (obj_size_nat * 8) in
+    if next_start_nat > Seq.length g1 || next_start_nat >= pow2 64 then ()
+    else if next_start_nat >= heap_size then ()
+    else begin
+      let next_start : hp_addr = U64.uint_to_t next_start_nat in
+      objects_eq_when_reads_agree g1 g2 next_start
+    end
+  end
+#pop-options
+
+/// Objects from start are preserved when start >= obj + wz*8.
+/// Since all field writes are at addresses < obj + wz*8 <= start,
+/// all reads from start onward are unchanged.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+private let update_object_pointers_preserves_objects_above
+  (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
+  (start: hp_addr)
+  : Lemma (requires
+      Seq.mem obj (objects 0UL major) /\
+      U64.v obj % 8 == 0 /\
+      wosize == U64.v (wosize_of_object obj major) /\
+      U64.v start >= U64.v obj + wosize * 8 /\
+      (forall (j:nat). j < wosize ==>
+        (U64.v obj + j * 8 + 8 <= heap_size /\ (U64.v obj + j * 8) % 8 == 0)))
+    (ensures objects start (update_object_pointers major obj wosize fwd 0) == objects start major)
+  = let major' = update_object_pointers major obj wosize fwd 0 in
+    let read_above_helper (a: hp_addr) : Lemma
+      (requires U64.v a >= U64.v start)
+      (ensures read_word major' a == read_word major a)
+    = update_object_pointers_preserves_addr_above major obj wosize fwd 0 a
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires read_above_helper);
+    objects_eq_when_reads_agree major' major start
+#pop-options
+
+/// Objects nonemptiness depends only on the header read at start.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
+  : Lemma (requires Seq.length g1 == Seq.length g2 /\
+                    read_word g1 start == read_word g2 start /\
+                    Seq.length (objects start g1) > 0)
+          (ensures Seq.length (objects start g2) > 0)
+  = ()
 #pop-options
 
 /// Helper: density is preserved through update_object_pointers
@@ -1670,7 +1715,62 @@ private let update_object_pointers_preserves_density
                     U64.v obj + wz * 8 <= heap_size /\
                     wz == U64.v (wosize_of_object obj major))
           (ensures heap_objects_dense (update_object_pointers major obj wz fwd 0))
-  = admit () // TEMPORARY: follows from header preservation → objects preserved → density preserved
+  = let major' = update_object_pointers major obj wz fwd 0 in
+    let field_bounds_helper () : Lemma
+      (forall (j:nat). j < wz ==>
+        (U64.v obj + j * 8 + 8 <= heap_size /\ (U64.v obj + j * 8) % 8 == 0))
+      = assert (U64.v obj % 8 == 0);
+        assert (U64.v obj + wz * 8 <= heap_size)
+    in
+    field_bounds_helper ();
+    update_object_pointers_preserves_objects major obj wz fwd 0;
+    assert (objects 0UL major' == objects 0UL major);
+    let aux (start: hp_addr) : Lemma
+      (requires U64.v start + 8 < heap_size /\
+               Seq.mem (f_address start) (objects 0UL major') /\
+               Seq.length (objects start major') > 0)
+      (ensures (let wz' = getWosize (read_word major' start) in
+                let next = U64.v start + ((U64.v wz' + 1) * 8) in
+                next + 8 < heap_size ==>
+                Seq.length (objects (U64.uint_to_t next) major') > 0 /\
+                Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL major')))
+    = // Header at start is preserved
+      let fa = f_address start in
+      f_address_spec start;
+      hd_address_spec fa;
+      if U64.v fa = U64.v obj then
+        update_object_pointers_preserves_self_header major obj wz fwd 0
+      else if U64.v fa > U64.v obj then
+        update_object_pointers_preserves_other_header major obj wz fwd 0 fa
+      else
+        update_object_pointers_preserves_addr_below major obj wz fwd 0 start;
+      assert (read_word major' start == read_word major start);
+      // Membership transfers
+      assert (Seq.mem (f_address start) (objects 0UL major));
+      // Nonemptiness of objects start in major
+      objects_nonempty_from_header major' major start;
+      assert (Seq.length (objects start major) > 0);
+      // Transfer density from major
+      let wz' = getWosize (read_word major start) in
+      let next = U64.v start + ((U64.v wz' + 1) * 8) in
+      if next + 8 < heap_size then begin
+        assert (Seq.length (objects (U64.uint_to_t next) major) > 0);
+        assert (Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL major));
+        let next_hp : hp_addr = U64.uint_to_t next in
+        let fa_next = f_address next_hp in
+        f_address_spec next_hp;
+        hd_address_spec fa_next;
+        if U64.v fa_next = U64.v obj then
+          update_object_pointers_preserves_self_header major obj wz fwd 0
+        else if U64.v fa_next > U64.v obj then
+          update_object_pointers_preserves_other_header major obj wz fwd 0 fa_next
+        else
+          update_object_pointers_preserves_addr_below major obj wz fwd 0 next_hp;
+        assert (read_word major' next_hp == read_word major next_hp);
+        objects_nonempty_from_header major major' next_hp
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
 /// Shift lemma: processing cons hd tl from index (k+1) is the same as processing tl from index k.
@@ -1721,7 +1821,91 @@ let update_all_objects_positional_step
                     (next_nat + 8 < heap_size ==>
                       Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major') /\
                       Seq.length (objects (U64.uint_to_t next_nat) major') > 0)))
-  = admit () // TEMPORARY: full proof requires composing objects decomposition + shift reasoning
+  = // Step 1: Establish bounds
+    let obj : obj_addr = f_address pos in
+    objects_nonempty_head_fits pos major;
+    wfh_part1_obj_bound major obj;
+    f_address_spec pos;
+    let hdr = read_word major pos in
+    let wz = U64.v (getWosize hdr) in
+    let next_nat = U64.v pos + (wz + 1) * 8 in
+    wosize_of_object_spec obj major;
+    FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v pos) ((wz + 1) * 8) 8;
+    FStar.Math.Lemmas.lemma_mod_mul_distr_r (wz + 1) 8 8;
+    objects_nonempty_head pos major;
+    objects_nonempty_next pos major;
+
+    // Field bounds
+    let field_bounds () : Lemma
+      (forall (j:nat). j < wz ==>
+        (U64.v obj + j * 8 + 8 <= heap_size /\ (U64.v obj + j * 8) % 8 == 0))
+      = assert (U64.v obj % 8 == 0);
+        assert (U64.v obj + wz * 8 <= heap_size)
+    in
+    field_bounds ();
+
+    // Step 2: well_formed_heap_part1 major'
+    let major' = update_object_pointers major obj wz fwd 0 in
+    let aux_wfh (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects 0UL major'))
+      (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
+    = update_object_pointers_preserves_objects major obj wz fwd 0;
+      hd_address_spec h;
+      if h = obj then begin
+        update_object_pointers_preserves_self_header major obj wz fwd 0;
+        wosize_of_object_spec h major'; wosize_of_object_spec h major
+      end else if U64.v h > U64.v obj then begin
+        update_object_pointers_preserves_other_header major obj wz fwd 0 h;
+        wosize_of_object_spec h major'; wosize_of_object_spec h major
+      end else begin
+        update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address h);
+        wosize_of_object_spec h major; wosize_of_object_spec h major'
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
+    assert (well_formed_heap_part1 major');
+
+    // Step 3: density preserved
+    update_object_pointers_preserves_density major obj wz fwd;
+
+    // Step 4: objects 0UL preserved
+    update_object_pointers_preserves_objects major obj wz fwd 0;
+    assert (objects 0UL major' == objects 0UL major);
+
+    // Step 5: Spec equality
+    if next_nat < heap_size then begin
+      let next_hp : hp_addr = U64.uint_to_t next_nat in
+      // next_hp = pos + (wz+1)*8 = obj + wz*8 (since obj = pos + 8)
+      // All field writes are at addresses [obj, obj+(wz-1)*8], all < next_hp
+      update_object_pointers_preserves_objects_above major obj wz fwd next_hp;
+      assert (objects pos major == Seq.cons obj (objects next_hp major));
+      assert (objects next_hp major' == objects next_hp major);
+      // Use shift lemma
+      update_all_objects_aux_shift major' obj (objects next_hp major) fwd 0;
+      ()
+    end else begin
+      // Terminal case
+      assert (Seq.length (objects pos major) == 1);
+      assert (Seq.index (objects pos major) 0 == obj);
+      ()
+    end;
+    // Step 6: Density at next position
+    if next_nat + 8 < heap_size then begin
+      let next_hp : hp_addr = U64.uint_to_t next_nat in
+      update_object_pointers_preserves_objects_above major obj wz fwd next_hp;
+      assert (objects next_hp major' == objects next_hp major);
+      f_address_spec next_hp;
+      let fa_next = f_address next_hp in
+      hd_address_spec fa_next;
+      if U64.v fa_next = U64.v obj then
+        update_object_pointers_preserves_self_header major obj wz fwd 0
+      else if U64.v fa_next > U64.v obj then
+        update_object_pointers_preserves_other_header major obj wz fwd 0 fa_next
+      else
+        update_object_pointers_preserves_addr_below major obj wz fwd 0 next_hp;
+      assert (Seq.mem (f_address pos) (objects 0UL major));
+      assert (Seq.length (objects pos major) > 0)
+    end
 #pop-options
 
 /// Terminal step
@@ -1741,7 +1925,27 @@ let update_all_objects_terminal_step
                     (next_nat + 8 >= heap_size ==>
                       (let major' = update_object_pointers major obj wz fwd 0 in
                        major' == update_all_objects_aux major (objects pos major) fwd 0))))
-  = admit () // TEMPORARY: requires unfolding update_all_objects_aux on singleton objects list
+  = // With fuel 2, Z3 unfolds update_all_objects_aux on singleton [obj]:
+    //   idx=0 < length [obj]=1: unfolds to aux major' [obj] fwd 1
+    //   idx=1 >= length [obj]=1: returns major'
+    // So result = major'
+    let obj : obj_addr = f_address pos in
+    objects_nonempty_head_fits pos major;
+    wfh_part1_obj_bound major obj;
+    f_address_spec pos;
+    wosize_of_object_spec obj major;
+    let hdr = read_word major pos in
+    let wz = U64.v (getWosize hdr) in
+    let next_nat = U64.v pos + (wz + 1) * 8 in
+    FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v pos) ((wz + 1) * 8) 8;
+    FStar.Math.Lemmas.lemma_mod_mul_distr_r (wz + 1) 8 8;
+    objects_nonempty_head pos major;
+    objects_nonempty_next pos major;
+    if next_nat + 8 >= heap_size then begin
+      assert (Seq.length (objects pos major) == 1);
+      assert (Seq.index (objects pos major) 0 == obj);
+      ()
+    end
 #pop-options
 
 /// Initial membership: first object is at f_address 0UL when heap has objects.
