@@ -34,6 +34,18 @@ let represents_fwd (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map) : pro
   (forall (i: nat). i < fwd_array_size ==>
     Seq.index farr i == fwd (U64.uint_to_t (i * 8)))
 
+/// Construct a ghost forwarding map from a concrete array
+let ghost_fwd_of (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
+  : PromoteSpec.forwarding_map =
+  fun (a: U64.t) ->
+    if U64.v a % 8 = 0 && U64.v a / 8 < fwd_array_size
+    then Seq.index farr (U64.v a / 8)
+    else 0UL
+
+/// ghost_fwd_of establishes represents_fwd
+val ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
+  : Lemma (represents_fwd farr (ghost_fwd_of farr))
+
 /// ---------------------------------------------------------------------------
 /// Rewrite roots
 /// ---------------------------------------------------------------------------
@@ -67,7 +79,6 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
   requires is_heap major 'ms **
            pts_to fwd_arr 'farr **
            pure (U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
-                 U64.v wosize > 0 /\
                  U64.v obj + U64.v wosize * 8 <= heap_size /\
                  Seq.length 'farr == fwd_array_size /\
                  represents_fwd 'farr fwd)
@@ -75,3 +86,25 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pure (ms2 == PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)
+
+/// ---------------------------------------------------------------------------
+/// Update ALL major-heap objects' pointer fields
+/// ---------------------------------------------------------------------------
+
+/// Walk the major heap linearly and for each object call update_one_object.
+/// Result equals PromoteSpec.update_major_pointers applied to the initial heap.
+fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
+                      (#fwd: erased PromoteSpec.forwarding_map)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (GC.Spec.Fields.well_formed_heap_part1 'ms /\
+                 PromoteSpec.heap_objects_dense 'ms /\
+                 heap_size > 8 /\
+                 Seq.length (GC.Spec.Fields.objects 0UL 'ms) > 0 /\
+                 Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pure (GC.Spec.Fields.well_formed_heap_part1 ms2 /\
+          ms2 == PromoteSpec.update_major_pointers 'ms fwd)

@@ -182,6 +182,15 @@ val update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
   : Lemma (requires i >= wosize)
           (ensures update_object_pointers major obj wosize fwd i == major)
 
+/// ---------------------------------------------------------------------------
+/// update_all_objects_aux — exposed for Pulse implementation
+/// ---------------------------------------------------------------------------
+
+/// Exposed recursive worker: processes objects in `objs` starting at index `idx`
+val update_all_objects_aux (major: heap) (objs: seq obj_addr)
+                           (fwd: forwarding_map) (idx: nat)
+  : GTot heap
+
 /// Update all pointers in the major heap that refer to minor addresses
 val update_major_pointers (major: heap) (fwd: forwarding_map)
   : GTot heap
@@ -398,6 +407,10 @@ val promote_all_preserves_wfh_part4
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures well_formed_heap_part4 (promote_all_spec minor major fp live_set).major_final)
 
+/// ---------------------------------------------------------------------------
+/// update_major_pointers preservation and loop support lemmas
+/// ---------------------------------------------------------------------------
+
 /// update_major_pointers preserves the objects walk
 val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
@@ -407,6 +420,96 @@ val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
 val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
     (ensures well_formed_heap_part1 (update_major_pointers major fwd))
+
+/// Step lemma: unfold one iteration of update_all_objects_aux
+val update_all_objects_aux_step (major: heap) (objs: seq obj_addr)
+                                (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length objs /\ well_formed_heap_part1 major /\
+                    objs == objects zero_addr major)
+          (ensures (let obj = Seq.index objs idx in
+                    let wz = U64.v (wosize_of_object obj major) in
+                    update_all_objects_aux major objs fwd idx ==
+                    update_all_objects_aux (update_object_pointers major obj wz fwd 0) objs fwd (idx + 1)))
+
+/// Done lemma: identity when idx >= Seq.length objs
+val update_all_objects_aux_done (major: heap) (objs: seq obj_addr)
+                                (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx >= Seq.length objs)
+          (ensures update_all_objects_aux major objs fwd idx == major)
+
+/// Connection: update_major_pointers unfolds to update_all_objects_aux at index 0
+val update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
+  : Lemma (update_major_pointers major fwd ==
+           update_all_objects_aux major (objects zero_addr major) fwd 0)
+
+/// ---------------------------------------------------------------------------
+/// Positional step lemma for Pulse implementation
+/// ---------------------------------------------------------------------------
+
+/// Heap objects density: all objects reachable from the linear scan are valid.
+let heap_objects_dense (g: heap) : prop =
+  forall (start: hp_addr).
+    U64.v start + 8 < heap_size ==>
+    Seq.mem (f_address start) (objects 0UL g) ==>
+    Seq.length (objects start g) > 0 ==>
+    (let wz = getWosize (read_word g start) in
+     let next = U64.v start + ((U64.v wz + 1) * 8) in
+     next + 8 < heap_size ==>
+     Seq.length (objects (U64.uint_to_t next) g) > 0 /\
+     Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))
+
+/// Master positional step lemma for the Pulse loop.
+val update_all_objects_positional_step
+  (major: heap) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    U64.v pos + 8 < heap_size /\
+                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.length (objects pos major) > 0)
+          (ensures (let hdr = read_word major pos in
+                    let wz = U64.v (getWosize hdr) in
+                    let obj : obj_addr = f_address pos in
+                    let major' = update_object_pointers major obj wz fwd 0 in
+                    let next_nat = U64.v pos + (wz + 1) * 8 in
+                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    well_formed_heap_part1 major' /\
+                    heap_objects_dense major' /\
+                    objects 0UL major' == objects 0UL major /\
+                    // Spec equality: when next is still within heap bounds
+                    (next_nat < heap_size ==>
+                      update_all_objects_aux major' (objects (U64.uint_to_t next_nat) major') fwd 0 ==
+                        update_all_objects_aux major (objects pos major) fwd 0) /\
+                    // Terminal: when next reaches/exceeds heap_size
+                    (next_nat >= heap_size ==>
+                      major' == update_all_objects_aux major (objects pos major) fwd 0) /\
+                    // Density: next position is valid (when not done)
+                    (next_nat + 8 < heap_size ==>
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major') /\
+                      Seq.length (objects (U64.uint_to_t next_nat) major') > 0)))
+
+/// Terminal step: when next_pos >= heap_size, processing gives the final result.
+val update_all_objects_terminal_step
+  (major: heap) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    U64.v pos + 8 < heap_size /\
+                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.length (objects pos major) > 0)
+          (ensures (let hdr = read_word major pos in
+                    let wz = U64.v (getWosize hdr) in
+                    let obj : obj_addr = f_address pos in
+                    let next_nat = U64.v pos + (wz + 1) * 8 in
+                    next_nat <= heap_size /\ next_nat % 8 == 0 /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    (next_nat + 8 >= heap_size ==>
+                      (let major' = update_object_pointers major obj wz fwd 0 in
+                       major' == update_all_objects_aux major (objects pos major) fwd 0))))
+
+/// The first object in objects 0UL is at position 0 (when heap_size > 8)
+val objects_initial_membership (g: heap)
+  : Lemma (requires heap_size > 8 /\ well_formed_heap_part1 g /\
+                    Seq.length (objects 0UL g) > 0)
+          (ensures Seq.mem (f_address 0UL) (objects 0UL g))
 
 /// update_major_pointers preserves well_formed_heap_part4 (no infix objects)
 val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)

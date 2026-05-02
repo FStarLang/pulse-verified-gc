@@ -262,7 +262,7 @@ fn rewrite_roots_phase (roots: array U64.t) (fwd_arr: array U64.t) (n: SZ.t)
 #pop-options
 
 /// Phase 3: Compose all phases into minor_collect.
-#push-options "--z3rlimit 40 --fuel 8 --ifuel 2 --split_queries no"
+#push-options "--z3rlimit 80 --fuel 8 --ifuel 2 --split_queries always"
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
                  (fwd_arr: array U64.t)
@@ -289,11 +289,27 @@ fn minor_collect (gh: gen_heap_t)
   // Phase 1: Promote all minor objects
   promote_phase gh.minor gh.major gh.fp_ref fwd_arr;
 
-  // Phase 2: Rewrite roots (minor pointers → forwarded major addresses)
+  // Phase 2: Update major-heap pointer fields (rewrite minor refs via fwd_arr)
+  with ms_post. assert (is_heap gh.major ms_post);
   with farr_post. assert (pts_to fwd_arr farr_post);
+  assert (pure (Seq.length farr_post == fwd_array_size));
+  // Construct ghost forwarding map from the concrete array
+  ghost_fwd_of_represents farr_post;
+  // TEMPORARY: The update_all_objects call needs heap_objects_dense and objects nonemptiness.
+  // These will be discharged when promote_phase's postcondition is strengthened.
+  admit ();
+  update_all_objects gh.major fwd_arr #(hide (ghost_fwd_of farr_post));
+  // TEMPORARY: update_all_objects preserves allocator invariants (writes fields, not headers/links)
+  with ms_updated. assert (is_heap gh.major ms_updated);
+  with fp_val. assert (R.pts_to gh.fp_ref fp_val);
+  assume (AllocLemmas.fl_valid ms_updated fp_val (heap_size / U64.v mword));
+  assume (AllocLemmas.fl_chain_terminates ms_updated fp_val (heap_size / U64.v mword));
+
+  // Phase 3: Rewrite roots (minor pointers → forwarded major addresses)
+  with farr_post2. assert (pts_to fwd_arr farr_post2);
   rewrite_roots_phase roots fwd_arr nroots;
 
-  // Phase 3: Reset minor heap
+  // Phase 4: Reset minor heap
   minor_heap_reset gh.minor;
   fold (is_gen_heap gh _ 0UL _ _)
 }

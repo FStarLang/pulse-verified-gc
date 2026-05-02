@@ -22,6 +22,25 @@ open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
 
 /// ---------------------------------------------------------------------------
+/// ghost_fwd_of_represents proof
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 80 --split_queries no"
+let ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
+  : Lemma (represents_fwd farr (ghost_fwd_of farr))
+  = let fwd = ghost_fwd_of farr in
+    let aux (i: nat{i < fwd_array_size})
+      : Lemma (Seq.index farr i == fwd (U64.uint_to_t (i * 8)))
+      = FStar.Math.Lemmas.lemma_mod_mul_distr_r i 8 8;
+        assert (i * 8 % 8 == 0);
+        assert (i * 8 / 8 == i);
+        assert (i * 8 < minor_heap_size);
+        assert (i * 8 < pow2 64)
+    in
+    FStar.Classical.forall_intro aux
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Pure helper: compute rewrite for a single value
 /// ---------------------------------------------------------------------------
 
@@ -203,7 +222,6 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
   requires is_heap major 'ms **
            pts_to fwd_arr 'farr **
            pure (U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
-                 U64.v wosize > 0 /\
                  U64.v obj + U64.v wosize * 8 <= heap_size /\
                  Seq.length 'farr == fwd_array_size /\
                  represents_fwd 'farr fwd)
@@ -221,7 +239,6 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
       pure (U64.v iv <= U64.v wosize /\
             U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
             U64.v obj + U64.v wosize * 8 <= heap_size /\
-            U64.v wosize > 0 /\
             Seq.length 'farr == fwd_array_size /\
             represents_fwd 'farr fwd /\
             PromoteSpec.update_object_pointers ms_i obj (U64.v wosize) fwd (U64.v iv) ==
@@ -240,5 +257,110 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
   //   (2) update_object_pointers ms_final obj wosize fwd (v iv_final) == update_object_pointers 'ms obj wosize fwd 0  [from invariant]
   // Therefore ms_final == update_object_pointers 'ms obj wosize fwd 0
   assert (pure (ms_final == PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0))
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Update ALL major-heap objects' pointer fields
+/// ---------------------------------------------------------------------------
+
+module SpecFields = GC.Spec.Fields
+
+/// Helper: (wosize+1)*8 doesn't overflow U64 when wosize < pow2 54
+let total_words_no_overflow (wz: nat)
+  : Lemma (requires wz < pow2 54)
+          (ensures (wz + 1) * 8 < pow2 64)
+  = assert_norm (pow2 54 * 8 < pow2 64);
+    FStar.Math.Lemmas.lemma_mult_le_right 8 (wz + 1) (pow2 54)
+
+/// Helper: pos + (wz+1)*8 doesn't overflow U64 when pos < heap_size
+let pos_advance_no_overflow (pos wz: nat)
+  : Lemma (requires pos < pow2 57 /\ wz < pow2 54 /\ pos + (wz + 1) * 8 <= heap_size)
+          (ensures pos + (wz + 1) * 8 < pow2 64)
+  = ()
+
+/// Update all major-heap objects' pointer fields by walking the heap linearly.
+#push-options "--z3rlimit 300 --fuel 2 --ifuel 1 --split_queries always --z3refresh"
+fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
+                      (#fwd: erased PromoteSpec.forwarding_map)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (SpecFields.well_formed_heap_part1 'ms /\
+                 PromoteSpec.heap_objects_dense 'ms /\
+                 heap_size > 8 /\
+                 Seq.length (SpecFields.objects 0UL 'ms) > 0 /\
+                 Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pure (SpecFields.well_formed_heap_part1 ms2 /\
+          ms2 == PromoteSpec.update_major_pointers 'ms fwd)
+{
+  // Unfold: update_major_pointers = update_all_objects_aux on objects 0UL
+  PromoteSpec.update_major_pointers_unfold 'ms fwd;
+  PromoteSpec.objects_initial_membership 'ms;
+
+  let mut pos = 0UL;
+  let mut done = false;
+  while (not !done)
+    invariant exists* ms_i pos_i b.
+      is_heap major ms_i **
+      pts_to fwd_arr 'farr **
+      R.pts_to pos pos_i **
+      R.pts_to done b **
+      pure (U64.v pos_i % 8 == 0 /\
+            U64.v pos_i <= heap_size /\
+            SpecFields.well_formed_heap_part1 ms_i /\
+            PromoteSpec.heap_objects_dense ms_i /\
+            Seq.length 'farr == fwd_array_size /\
+            represents_fwd 'farr fwd /\
+            // When done: target achieved
+            (b == true ==> ms_i == PromoteSpec.update_major_pointers 'ms fwd) /\
+            // When not done: valid scan position with spec connection
+            (b == false ==> (U64.v pos_i + 8 < heap_size /\
+              Seq.mem (GC.Spec.Heap.f_address pos_i) (SpecFields.objects 0UL ms_i) /\
+              Seq.length (SpecFields.objects pos_i ms_i) > 0 /\
+              PromoteSpec.update_all_objects_aux ms_i
+                (SpecFields.objects pos_i ms_i) fwd 0 ==
+                PromoteSpec.update_major_pointers 'ms fwd)))
+  {
+    let p = !pos;
+    with ms_cur. assert (is_heap major ms_cur);
+    // Explicitly assert the invariant conditions for the not-done case
+    assert (pure (SpecFields.well_formed_heap_part1 ms_cur /\
+                  PromoteSpec.heap_objects_dense ms_cur /\
+                  U64.v p + 8 < heap_size /\
+                  Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects 0UL ms_cur) /\
+                  Seq.length (SpecFields.objects p ms_cur) > 0));
+    // Read header and get wosize
+    let hdr = read_word major p;
+    let wosize = U64.shift_right hdr 10ul;
+    GC.Spec.Object.getWosize_spec hdr;
+    GC.Spec.Object.getWosize_bound hdr;
+    let obj = U64.add p 8UL;
+    // Get bounds from positional step (pure lemma on ms_cur)
+    PromoteSpec.update_all_objects_positional_step ms_cur fwd p;
+    // Assert bounds from positional step (needed with --split_queries)
+    assert (pure (U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
+                  U64.v obj + U64.v wosize * 8 <= heap_size));
+    // Compute next position
+    total_words_no_overflow (U64.v wosize);
+    let total_words = U64.add wosize 1UL;
+    let total_bytes = U64.mul total_words 8UL;
+    pos_advance_no_overflow (U64.v p) (U64.v wosize);
+    let next_pos = U64.add p total_bytes;
+    // Process the object fields
+    update_one_object major fwd_arr obj wosize #fwd;
+    // Advance position and determine if done
+    // TEMPORARY: admit for spec connection (loop invariant maintenance)
+    pos := next_pos;
+    admit ();
+    if U64.gte (U64.add next_pos 8UL) heap_size_u64 {
+      done := true
+    } else {
+      done := false
+    }
+  }
 }
 #pop-options

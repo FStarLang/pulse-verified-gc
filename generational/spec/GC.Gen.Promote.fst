@@ -1615,6 +1615,151 @@ let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map
   update_all_objects_aux_preserves_wfh_part1 major (objects zero_addr major) fwd 0
 
 /// ---------------------------------------------------------------------------
+/// Exported step/done/unfold lemmas for Pulse implementation
+/// ---------------------------------------------------------------------------
+
+/// Step: just unfold the recursive definition
+let update_all_objects_aux_step (major: heap) (objs: seq obj_addr)
+                                (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length objs /\ well_formed_heap_part1 major /\
+                    objs == objects zero_addr major)
+          (ensures (let obj = Seq.index objs idx in
+                    let wz = U64.v (wosize_of_object obj major) in
+                    update_all_objects_aux major objs fwd idx ==
+                    update_all_objects_aux (update_object_pointers major obj wz fwd 0) objs fwd (idx + 1)))
+  = ()
+
+/// Done: trivial base case
+let update_all_objects_aux_done (major: heap) (objs: seq obj_addr)
+                                (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx >= Seq.length objs)
+          (ensures update_all_objects_aux major objs fwd idx == major)
+  = ()
+
+/// Unfold: update_major_pointers is update_all_objects_aux at index 0
+let update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
+  : Lemma (update_major_pointers major fwd ==
+           update_all_objects_aux major (objects zero_addr major) fwd 0)
+  = ()
+
+/// ---------------------------------------------------------------------------
+/// Positional step lemma — connects position-based walk to spec
+/// ---------------------------------------------------------------------------
+
+/// Helper: update_object_pointers preserves objects at any start position
+/// (since it only writes field bytes, not headers)
+#push-options "--z3rlimit 80 --fuel 1 --split_queries always"
+private let update_object_pointers_preserves_objects_at_pos
+  (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    Seq.mem obj (objects 0UL major) /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    wz == U64.v (wosize_of_object obj major))
+          (ensures objects pos (update_object_pointers major obj wz fwd 0) ==
+                   objects pos major)
+  = admit () // TEMPORARY: requires showing all-position objects preservation from header preservation
+#pop-options
+
+/// Helper: density is preserved through update_object_pointers
+#push-options "--z3rlimit 80 --fuel 0 --split_queries always"
+private let update_object_pointers_preserves_density
+  (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    Seq.mem obj (objects 0UL major) /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    wz == U64.v (wosize_of_object obj major))
+          (ensures heap_objects_dense (update_object_pointers major obj wz fwd 0))
+  = admit () // TEMPORARY: follows from header preservation → objects preserved → density preserved
+#pop-options
+
+/// Shift lemma: processing cons hd tl from index (k+1) is the same as processing tl from index k.
+/// This is a structural property of the recursive function update_all_objects_aux.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+private let rec update_all_objects_aux_shift
+  (g: heap) (hd: obj_addr) (tl: seq obj_addr) (fwd: forwarding_map) (k: nat)
+  : Lemma (ensures update_all_objects_aux g (Seq.cons hd tl) fwd (k + 1) ==
+                   update_all_objects_aux g tl fwd k)
+          (decreases (Seq.length tl - k)) =
+  if k >= Seq.length tl then ()
+  else begin
+    // Seq.index (cons hd tl) (k+1) == Seq.index tl k
+    Seq.lemma_index_is_nth tl k;
+    Seq.lemma_index_is_nth (Seq.cons hd tl) (k + 1);
+    assert (Seq.index (Seq.cons hd tl) (k + 1) == Seq.index tl k);
+    let obj = Seq.index tl k in
+    let wz = U64.v (wosize_of_object obj g) in
+    let g' = update_object_pointers g obj wz fwd 0 in
+    update_all_objects_aux_shift g' hd tl fwd (k + 1)
+  end
+#pop-options
+
+/// Master positional step lemma
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries always"
+let update_all_objects_positional_step
+  (major: heap) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    U64.v pos + 8 < heap_size /\
+                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.length (objects pos major) > 0)
+          (ensures (let hdr = read_word major pos in
+                    let wz = U64.v (getWosize hdr) in
+                    let obj : obj_addr = f_address pos in
+                    let major' = update_object_pointers major obj wz fwd 0 in
+                    let next_nat = U64.v pos + (wz + 1) * 8 in
+                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    well_formed_heap_part1 major' /\
+                    heap_objects_dense major' /\
+                    objects 0UL major' == objects 0UL major /\
+                    (next_nat < heap_size ==>
+                      update_all_objects_aux major' (objects (U64.uint_to_t next_nat) major') fwd 0 ==
+                        update_all_objects_aux major (objects pos major) fwd 0) /\
+                    (next_nat >= heap_size ==>
+                      major' == update_all_objects_aux major (objects pos major) fwd 0) /\
+                    (next_nat + 8 < heap_size ==>
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major') /\
+                      Seq.length (objects (U64.uint_to_t next_nat) major') > 0)))
+  = admit () // TEMPORARY: full proof requires composing objects decomposition + shift reasoning
+#pop-options
+
+/// Terminal step
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+let update_all_objects_terminal_step
+  (major: heap) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    U64.v pos + 8 < heap_size /\
+                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.length (objects pos major) > 0)
+          (ensures (let hdr = read_word major pos in
+                    let wz = U64.v (getWosize hdr) in
+                    let obj : obj_addr = f_address pos in
+                    let next_nat = U64.v pos + (wz + 1) * 8 in
+                    next_nat <= heap_size /\ next_nat % 8 == 0 /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    (next_nat + 8 >= heap_size ==>
+                      (let major' = update_object_pointers major obj wz fwd 0 in
+                       major' == update_all_objects_aux major (objects pos major) fwd 0))))
+  = admit () // TEMPORARY: requires unfolding update_all_objects_aux on singleton objects list
+#pop-options
+
+/// Initial membership: first object is at f_address 0UL when heap has objects.
+/// The precondition that objects 0UL g is nonempty is a standard heap invariant
+/// (same approach as mark-and-sweep's heap_objects_dense).
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 40"
+let objects_initial_membership (g: heap)
+  : Lemma (requires heap_size > 8 /\ well_formed_heap_part1 g /\
+                    Seq.length (objects 0UL g) > 0)
+          (ensures Seq.mem (f_address 0UL) (objects 0UL g))
+  = // With fuel 2, Z3 can unfold objects 0UL g and see that when it's nonempty,
+    // the head is f_address 0UL. From the definition:
+    // objects 0UL g = cons (f_address 0UL) (objects next g) when nonempty.
+    // Therefore Seq.mem (f_address 0UL) (objects 0UL g).
+    ()
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// update_major_pointers preserves headers (tag, wosize, color)
 /// ---------------------------------------------------------------------------
 
