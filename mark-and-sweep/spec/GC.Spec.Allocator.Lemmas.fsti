@@ -13,7 +13,7 @@ open GC.Spec.Fields
 open GC.Spec.Allocator
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
-
+module Header = GC.Lib.Header
 /// getWosize of make_header returns the original wosize
 val make_header_getWosize : (wz: U64.t{U64.v wz < pow2 54}) ->
                             (c: U64.t{U64.v c < 4}) ->
@@ -57,6 +57,19 @@ val fl_valid_gives_wosize : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
                   U64.v fp % U64.v mword = 0 /\
                   fl_valid g fp fuel)
         (ensures U64.v (wosize_of_object (fp <: obj_addr) g) >= 1)
+
+/// **Theorem**: alloc_from_block preserves object membership AND the remainder
+/// (if split) is in the post-alloc objects list.
+val alloc_from_block_objects_facts :
+  (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
+  Lemma (requires well_formed_heap g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  (let hdr = read_word g (hd_address obj) in
+                   U64.v (getWosize hdr) >= wz) /\
+                  (is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g)))
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz next_fp in
+                  (forall (h: obj_addr). Seq.mem h (objects 0UL g) ==> Seq.mem h (objects 0UL g')) /\
+                  (is_pointer_field rem_fp ==> Seq.mem rem_fp (objects 0UL g'))))
 
 /// **Main theorem**: alloc_spec preserves well_formed_heap.
 val alloc_spec_preserves_wf : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
@@ -419,3 +432,27 @@ val alloc_spec_preserves_wfh_part4 : (g: heap) -> (fp: U64.t) -> (requested_wz: 
                   fl_chain_terminates g fp (heap_size / U64.v mword))
         (ensures (let r = alloc_spec g fp requested_wz in
                   well_formed_heap_part4 r.heap_out))
+
+/// ---------------------------------------------------------------------------
+/// Allocation framing: field reads for non-allocated objects
+/// ---------------------------------------------------------------------------
+
+/// **Theorem**: alloc_spec preserves reads at non-first-field positions
+/// of objects that are NOT the allocated block.
+/// (Works for objects ON the free-list chain too — no chain_avoids needed.)
+val alloc_spec_read_field_gt0 :
+  (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  (src: obj_addr) -> (j: nat) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  fl_valid g fp (heap_size / U64.v mword) /\
+                  fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                  requested_wz >= 1 /\
+                  (alloc_spec g fp requested_wz).obj_out <> 0UL /\
+                  Seq.mem src (objects 0UL g) /\
+                  src <> (alloc_spec g fp requested_wz).obj_out /\
+                  j > 0 /\
+                  j < U64.v (wosize_of_object src g) /\
+                  U64.v src + j * 8 + 8 <= heap_size)
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  let addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
+                  read_word r.heap_out addr == read_word g addr))
