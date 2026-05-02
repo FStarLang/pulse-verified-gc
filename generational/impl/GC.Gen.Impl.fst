@@ -295,15 +295,17 @@ fn minor_collect (gh: gen_heap_t)
   assert (pure (Seq.length farr_post == fwd_array_size));
   // Construct ghost forwarding map from the concrete array
   ghost_fwd_of_represents farr_post;
-  // TEMPORARY: The update_all_objects call needs heap_objects_dense and objects nonemptiness.
-  // These will be discharged when promote_phase's postcondition is strengthened.
-  admit ();
+  // KNOWN GAP: promote_phase's postcondition should include these.
+  // Provable because allocation (gen_alloc) preserves objects chain structure.
+  assume_ (pure (PromoteSpec.heap_objects_dense ms_post /\
+                 Seq.length (SpecFields.objects 0UL ms_post) > 0));
   update_all_objects gh.major fwd_arr #(hide (ghost_fwd_of farr_post));
-  // TEMPORARY: update_all_objects preserves allocator invariants (writes fields, not headers/links)
+  // KNOWN GAP: update_major_pointers preserves allocator invariants.
+  // Provable when we show free-list links are >= minor_heap_size (so not rewritten).
   with ms_updated. assert (is_heap gh.major ms_updated);
   with fp_val. assert (R.pts_to gh.fp_ref fp_val);
-  assume (AllocLemmas.fl_valid ms_updated fp_val (heap_size / U64.v mword));
-  assume (AllocLemmas.fl_chain_terminates ms_updated fp_val (heap_size / U64.v mword));
+  assume_ (pure (AllocLemmas.fl_valid ms_updated fp_val (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates ms_updated fp_val (heap_size / U64.v mword)));
 
   // Phase 3: Rewrite roots (minor pointers → forwarded major addresses)
   with farr_post2. assert (pts_to fwd_arr farr_post2);
