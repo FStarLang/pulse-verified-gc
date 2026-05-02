@@ -279,6 +279,12 @@ let pos_advance_no_overflow (pos wz: nat)
           (ensures pos + (wz + 1) * 8 < pow2 64)
   = ()
 
+/// Helper: next_pos + 8 doesn't overflow U64 when next_pos <= heap_size
+let next_pos_no_overflow (np: nat)
+  : Lemma (requires np <= heap_size)
+          (ensures np + 8 < pow2 64)
+  = assert_norm (heap_size + 8 < pow2 64)
+
 /// Update all major-heap objects' pointer fields by walking the heap linearly.
 #push-options "--z3rlimit 300 --fuel 2 --ifuel 1 --split_queries always --z3refresh"
 fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
@@ -350,17 +356,43 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     let total_bytes = U64.mul total_words 8UL;
     pos_advance_no_overflow (U64.v p) (U64.v wosize);
     let next_pos = U64.add p total_bytes;
+    // Assert overflow safety while arithmetic facts are fresh
+    assert (pure (U64.v next_pos <= heap_size));
+    next_pos_no_overflow (U64.v next_pos);
     // Process the object fields
     update_one_object major fwd_arr obj wosize #fwd;
-    // Advance position and determine if done
-    // TEMPORARY: admit for spec connection (loop invariant maintenance)
+    // After update_one_object: bind new heap state
+    with ms_after. assert (is_heap major ms_after);
+    // Call lemmas to establish facts for both branches
+    GC.Spec.Heap.f_address_spec p;
+    PromoteSpec.update_all_objects_terminal_step ms_cur fwd p;
+    // Assert facts Z3 needs for loop invariant re-establishment
+    assert (pure (
+      ms_after == PromoteSpec.update_object_pointers ms_cur obj (U64.v wosize) fwd 0 /\
+      obj == GC.Spec.Heap.f_address p /\
+      SpecFields.well_formed_heap_part1 ms_after /\
+      PromoteSpec.heap_objects_dense ms_after /\
+      Seq.length 'farr == fwd_array_size /\
+      represents_fwd 'farr fwd
+    ));
     pos := next_pos;
-    admit ();
-    if U64.gte (U64.add next_pos 8UL) heap_size_u64 {
-      done := true
-    } else {
-      done := false
-    }
+    done := U64.gte (U64.add next_pos 8UL) heap_size_u64;
+    // Invariant re-establishment: Z3 needs next_pos % 8 == 0 and the spec connection
+    // positional_step's next_nat == U64.v next_pos; its ensures give % 8 == 0
+    assert (pure (U64.v next_pos % 8 == 0));
+    // For done=true case: terminal_step gives ms_after == update_all_objects_aux ms_cur (objects p ms_cur) fwd 0
+    //   combined with invariant gives ms_after == update_major_pointers 'ms fwd
+    // For done=false case: positional_step gives membership, length > 0, and spec equality
+    assert (pure (
+      (U64.v next_pos + 8 >= heap_size ==>
+        ms_after == PromoteSpec.update_major_pointers 'ms fwd) /\
+      (U64.v next_pos + 8 < heap_size ==>
+        (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_after) /\
+         Seq.length (SpecFields.objects next_pos ms_after) > 0 /\
+         PromoteSpec.update_all_objects_aux ms_after
+           (SpecFields.objects next_pos ms_after) fwd 0 ==
+           PromoteSpec.update_major_pointers 'ms fwd))
+    ))
   }
 }
 #pop-options
