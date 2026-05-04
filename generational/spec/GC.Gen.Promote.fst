@@ -3349,7 +3349,7 @@ private let promote_object_preserves_bfc
 /// Helper: promote_object preserves chain_objects_blue.
 /// After alloc_spec + copy_fields, non-blue objects still avoid the chain.
 #push-options "--z3rlimit 400 --fuel 1 --ifuel 0 --z3refresh"
-private let promote_object_preserves_chain_objects_blue
+let promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   : Lemma (requires

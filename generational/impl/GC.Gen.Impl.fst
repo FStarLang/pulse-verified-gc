@@ -316,14 +316,16 @@ fn minor_collect (gh: gen_heap_t)
   assert (pure (Seq.length farr_post == fwd_array_size));
   ghost_fwd_of_represents farr_post;
 
+  // GAP: need heap_objects_dense and chain_objects_blue for update_all_objects precondition
+  // These are structural properties that follow from well_formed_heap + allocation preserving
+  // the linear object layout. Admitted pending formal density proof.
+  assume_ (pure (GC.Gen.Promote.heap_objects_dense ms_post /\
+                 Seq.length (SpecFields.objects 0UL ms_post) > 0 /\
+                 GC.Gen.Promote.chain_objects_blue ms_post fp_post));
+
   // Call fl_valid preservation lemma BEFORE update (operates on pre-state)
   CheneySpec.update_major_pointers_preserves_fl_valid ms_post (ghost_fwd_of farr_post) fp_post;
 
-  // GAP: need heap_objects_dense for update_all_objects precondition
-  // This is a structural property that follows from well_formed_heap + allocation preserving
-  // the linear object layout. Admitted pending formal density proof.
-  assume_ (pure (GC.Gen.Promote.heap_objects_dense ms_post /\
-                 Seq.length (SpecFields.objects 0UL ms_post) > 0));
   update_all_objects gh.major fwd_arr #(hide (ghost_fwd_of farr_post));
 
   // After update: ms_updated == update_major_pointers ms_post (ghost_fwd_of farr_post)

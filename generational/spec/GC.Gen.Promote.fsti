@@ -579,6 +579,25 @@ val objects_initial_membership (g: heap)
                     Seq.length (objects 0UL g) > 0)
           (ensures Seq.mem (f_address 0UL) (objects 0UL g))
 
+/// update_major_pointers preserves object headers
+val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
+  : Lemma (requires well_formed_heap_part1 major /\ Seq.mem h (objects zero_addr major))
+    (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
+             read_word major (hd_address h))
+
+/// update_major_pointers preserves all fields of blue objects
+val update_major_pointers_preserves_blue_field
+  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    Seq.mem h (objects zero_addr major) /\
+                    is_blue h major /\
+                    j < U64.v (wosize_of_object h major) /\
+                    U64.v h + j * 8 + 8 <= heap_size /\
+                    (U64.v h + j * 8) % 8 == 0)
+    (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
+              read_word (update_major_pointers major fwd) field_addr ==
+              read_word major field_addr))
+
 /// update_major_pointers preserves well_formed_heap_part4 (no infix objects)
 val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
@@ -768,6 +787,20 @@ let chain_objects_blue (major: heap) (fp: U64.t) : prop =
   forall (obj: obj_addr).
     Seq.mem obj (objects 0UL major) /\ ~(is_blue obj major) ==>
     AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true
+
+/// promote_object preserves chain_objects_blue
+val promote_object_preserves_chain_objects_blue
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+    (ensures
+      chain_objects_blue (promote_object minor major obj fp wosize).major_out
+                         (promote_object minor major obj fp wosize).fp_out)
 
 /// After promote_all_spec, blue objects' pointer fields still target valid objects.
 /// Requires chain_objects_blue: the free chain only contains blue objects.

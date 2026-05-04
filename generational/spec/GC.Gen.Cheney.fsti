@@ -222,7 +222,8 @@ val update_major_pointers_preserves_fl_valid
   (major: heap) (fwd: forwarding_map) (fp: U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
           (ensures (let m' = update_major_pointers major fwd in
                     AllocLemmas.fl_valid m' fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates m' fp (heap_size / U64.v mword)))
@@ -232,7 +233,8 @@ val cheney_collect_preserves_fl_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword)))

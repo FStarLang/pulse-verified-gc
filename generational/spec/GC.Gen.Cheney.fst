@@ -19,6 +19,8 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module AllocProps = GC.Gen.AllocProps
 module Allocator = GC.Spec.Allocator
 module WriteBody = GC.Gen.WriteBodyLemmas
+module Object = GC.Spec.Object
+module Heap = GC.Spec.Heap
 
 /// ---------------------------------------------------------------------------
 /// Helper: promote_object preserves allocator invariants
@@ -300,6 +302,132 @@ let cheney_promote_preserves_wfh_part1
   cheney_scan_preserves_wfh_part1 minor cs1 0 (cheney_fuel minor)
 
 /// ---------------------------------------------------------------------------
+/// chain_objects_blue preservation through Cheney BFS
+/// ---------------------------------------------------------------------------
+
+/// cheney_forward_one preserves chain_objects_blue.
+/// When addr is not forwarded or doesn't qualify, state is unchanged → trivial.
+/// When successful, promote_object preserves chain_objects_blue (from Promote).
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let cheney_forward_one_preserves_cob
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    chain_objects_blue cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_one minor cs addr in
+                    chain_objects_blue cs'.cs_major cs'.cs_fp))
+  =
+  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
+  then ()
+  else
+    let wz = minor_wosize minor addr in
+    if wz = 0 then ()
+    else
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      if res.new_addr = 0UL then ()
+      else
+        promote_object_preserves_chain_objects_blue minor cs.cs_major addr cs.cs_fp wz
+
+#pop-options
+
+/// cheney_forward_fields preserves chain_objects_blue by induction.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_fields_preserves_cob
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    chain_objects_blue cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in
+                    chain_objects_blue cs'.cs_major cs'.cs_fp))
+          (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then ()
+  else begin
+    let field_val = minor_read_field minor parent idx in
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_one_preserves_wfh_part1 minor cs field_val;
+    cheney_forward_one_preserves_cob minor cs field_val;
+    cheney_forward_fields_preserves_cob minor cs' parent (idx + 1) wosize
+  end
+
+#pop-options
+
+/// cheney_forward_roots preserves chain_objects_blue by induction.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_roots_preserves_cob
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    chain_objects_blue cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_roots minor cs roots idx in
+                    chain_objects_blue cs'.cs_major cs'.cs_fp))
+          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then ()
+  else begin
+    let r = Seq.index roots idx in
+    let cs' = cheney_forward_one minor cs r in
+    cheney_forward_one_preserves_wfh_part1 minor cs r;
+    cheney_forward_one_preserves_cob minor cs r;
+    cheney_forward_roots_preserves_cob minor cs' roots (idx + 1)
+  end
+
+#pop-options
+
+/// cheney_scan preserves chain_objects_blue by induction on fuel.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+
+private let rec cheney_scan_preserves_cob
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    chain_objects_blue cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_scan minor cs scan fuel in
+                    chain_objects_blue cs'.cs_major cs'.cs_fp))
+          (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if scan >= Seq.length cs.cs_queue then ()
+  else begin
+    assert (fuel > 0);
+    let obj = Seq.index cs.cs_queue scan in
+    let wz = minor_wosize minor obj in
+    let cs' = cheney_forward_fields minor cs obj 0 wz in
+    cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
+    cheney_forward_fields_preserves_cob minor cs obj 0 wz;
+    let fuel' : nat = fuel - 1 in
+    cheney_scan_preserves_cob minor cs' (scan + 1) fuel'
+  end
+
+#pop-options
+
+/// Full cheney_promote preserves chain_objects_blue.
+private let cheney_promote_preserves_chain_objects_blue
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
+          (ensures (let res = cheney_promote minor major fp roots in
+                    chain_objects_blue res.major_final res.fp_final))
+  =
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  cheney_forward_roots_preserves_cob minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_scan_preserves_cob minor cs1 0 (cheney_fuel minor)
+
+/// ---------------------------------------------------------------------------
 /// Object preservation
 /// ---------------------------------------------------------------------------
 
@@ -483,31 +611,119 @@ let cheney_collect_preserves_wfh
 /// Therefore, free-list structure (headers + next pointers in field 0 of blue objects)
 /// is unchanged, preserving fl_valid.
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+/// Recursive helper: by induction on fuel, show fl_valid and fl_chain_terminates
+/// are preserved in the updated heap.  The avoids hypothesis generalises
+/// chain_objects_blue to arbitrary fuel so that it shrinks in lock-step with
+/// fl_valid / fl_chain_terminates.
 
-/// Helper: show update_major_pointers preserves read_word for blue object headers and fields.
-/// update_all_objects_aux_preserves_header already gives us header preservation.
-/// For field 0 of blue objects: since blue objects are skipped, their fields are unchanged.
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+
+private let rec update_preserves_fl_valid_aux
+  (major: heap) (fwd: forwarding_map) (fp: U64.t) (fuel: nat)
+  : Lemma
+    (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp fuel /\
+      AllocLemmas.fl_chain_terminates major fp fuel /\
+      (forall (obj: obj_addr).
+        Seq.mem obj (objects zero_addr major) /\ Object.is_blue obj major = false ==>
+        AllocLemmas.chain_avoids major fp obj fuel = true))
+    (ensures (let m' = update_major_pointers major fwd in
+              AllocLemmas.fl_valid m' fp fuel /\
+              AllocLemmas.fl_chain_terminates m' fp fuel))
+    (decreases fuel)
+  =
+  let m' = update_major_pointers major fwd in
+  update_major_pointers_preserves_objects major fwd;
+
+  // Terminal fp: fl_valid and fl_chain_terminates hold for any heap/fuel
+  if fp = 0UL || U64.v fp < U64.v mword || U64.v fp >= heap_size || U64.v fp % U64.v mword <> 0
+  then begin
+    (if fuel = 0 then AllocLemmas.fl_valid_zero m' fp
+     else AllocLemmas.fl_valid_terminal m' fp fuel);
+    AllocLemmas.fl_chain_terminates_terminal m' fp fuel
+  end
+  // fuel = 0, valid fp: fl_chain_terminates major fp 0 = false (contradicting precondition)
+  else if fuel = 0 then
+    AllocLemmas.fl_chain_terminates_valid_zero major fp
+  else begin
+    // Inductive case: fuel > 0, valid fp
+    let fp_obj : obj_addr = fp in
+
+    // Step 1: chain_avoids major fp fp fuel = false (by contradiction)
+    // If chain_avoids were true, chain_avoids_head_ne would give fp ≠ fp
+    (if AllocLemmas.chain_avoids major fp fp fuel then
+       AllocLemmas.chain_avoids_head_ne major fp fp fuel
+     else ());
+
+    // Step 2: fp is blue (contrapositive of the forall)
+    // mem fp objects ∧ ¬is_blue  ⟹  chain_avoids = true  (from forall)
+    // But chain_avoids = false  ⟹  contradiction
+    // Therefore is_blue = true
+    AllocLemmas.fl_valid_gives_mem major fp fuel;
+
+    // Step 3: header preserved → wosize preserved
+    update_major_pointers_preserves_header major fwd fp_obj;
+    Object.wosize_of_object_spec fp_obj m';
+    Object.wosize_of_object_spec fp_obj major;
+
+    // Step 4: wosize >= 1 (from fl_valid)
+    AllocLemmas.fl_valid_gives_wosize major fp fuel;
+
+    // Step 5: hd_address arithmetic
+    Heap.hd_address_spec fp_obj;
+    let hd = Heap.hd_address fp_obj in
+
+    if U64.v hd + 16 > heap_size then begin
+      // hd + 16 > heap_size: implication premises false → use intro lemmas
+      AllocLemmas.fl_valid_step m' fp fuel;
+      AllocLemmas.fl_chain_terminates_step m' fp fuel
+    end
+    else begin
+      // hd + 16 ≤ heap_size
+
+      // Step 6: field 0 preserved (blue object, j = 0)
+      update_major_pointers_preserves_blue_field major fwd fp_obj 0;
+
+      // Step 7: Eliminate fl_valid/fl_chain_terminates on major
+      AllocLemmas.fl_valid_elim major fp fuel;
+      AllocLemmas.fl_chain_terminates_elim major fp fuel;
+      let next_fp = Heap.read_word major fp in
+
+      // Step 8: avoids hypothesis for tail (∀ non-blue obj, chain_avoids at next_fp)
+      let avoids_next (obj: obj_addr) : Lemma
+        (requires Seq.mem obj (objects zero_addr major) /\ Object.is_blue obj major = false)
+        (ensures AllocLemmas.chain_avoids major next_fp obj (fuel - 1) = true)
+        = AllocLemmas.chain_avoids_tail major fp obj fuel
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires avoids_next);
+
+      // Step 9: recurse on next_fp with fuel - 1
+      update_preserves_fl_valid_aux major fwd next_fp (fuel - 1);
+
+      // Step 10: Build fl_valid and fl_chain_terminates on m'
+      AllocLemmas.fl_valid_step m' fp fuel;
+      AllocLemmas.fl_chain_terminates_step m' fp fuel
+    end
+  end
+
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
 let update_major_pointers_preserves_fl_valid
   (major: heap) (fwd: forwarding_map) (fp: U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
           (ensures (let m' = update_major_pointers major fwd in
                     AllocLemmas.fl_valid m' fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates m' fp (heap_size / U64.v mword)))
   =
-  // update_major_pointers preserves objects and headers (proven in Promote.fsti).
-  // Since blue objects are skipped, the free chain is byte-for-byte identical.
-  // fl_valid walks the chain: at each blue node, reads header (preserved) and
-  // field 0 (next pointer, preserved since blue objects are skipped).
-  // By induction on the chain, fl_valid and fl_chain_terminates hold.
-  update_major_pointers_preserves_objects major fwd;
-  update_major_pointers_preserves_wfh_part1 major fwd;
-  // The actual proof requires showing read_word equality for each chain node.
-  // Since update_object_pointers never touches blue objects (skipped by aux),
-  // and fl_valid/fl_chain only read blue object data, the invariants hold.
-  admit ()  // TODO: prove by induction on the free-list chain
+  let fuel = heap_size / U64.v mword in
+  reveal_opaque (`%chain_objects_blue) chain_objects_blue;
+  update_preserves_fl_valid_aux major fwd fp fuel
 
 #pop-options
 
@@ -516,13 +732,15 @@ let cheney_collect_preserves_fl_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword)))
   =
-  // Promotion preserves fl_valid (already proven in cheney_promote_preserves_wfh_part1)
+  // Promotion preserves fl_valid and chain_objects_blue
   cheney_promote_preserves_wfh_part1 minor major fp roots;
+  cheney_promote_preserves_chain_objects_blue minor major fp roots;
   let prom = cheney_promote minor major fp roots in
   // update_major_pointers preserves fl_valid
   update_major_pointers_preserves_fl_valid prom.major_final prom.fwd_map prom.fp_final
