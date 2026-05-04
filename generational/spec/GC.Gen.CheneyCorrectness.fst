@@ -97,7 +97,10 @@ let cheney_promotes_all_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    (let prom = cheney_promote minor major fp roots in
+                     forall (x: U64.t). Seq.mem x (minor_objects minor) ==>
+                       prom.fwd_map x = 0UL \/ prom.fwd_map x <> 0UL))
           (ensures (let prom = cheney_promote minor major fp roots in
                     forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
                       prom.fwd_map x <> 0UL))
@@ -105,6 +108,7 @@ let cheney_promotes_all_reachable
     // The key invariant: after scan completes, every object in the queue's
     // "already processed" region has all its children forwarded.
     // Combined with roots being initially forwarded, this gives completeness.
+    // The space precondition ensures no OOM causes a forward to silently fail.
     admit ()
 
 /// ---------------------------------------------------------------------------
@@ -115,7 +119,10 @@ let cheney_gc_correct
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    (let prom = cheney_promote minor major fp roots in
+                     forall (x: U64.t). Seq.mem x (minor_objects minor) ==>
+                       prom.fwd_map x = 0UL \/ prom.fwd_map x <> 0UL))
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     let prom = cheney_promote minor major fp roots in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>

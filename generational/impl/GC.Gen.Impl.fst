@@ -36,7 +36,7 @@ module ML = FStar.Math.Lemmas
 /// ---------------------------------------------------------------------------
 
 /// Allocate: try minor first (if small enough), fall back to major.
-#push-options "--z3rlimit 80"
+#push-options "--z3rlimit 40"
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pure (U64.v wosize > 0 /\ U64.v tag < 256 /\
@@ -108,7 +108,7 @@ let add_no_overflow (p tw: nat)
 /// Phase 1: Promote all minor objects and fill forwarding array.
 /// Walks minor heap linearly from 0 to bump, promoting each object.
 /// Records forwarding: fwd_arr[obj/8] := new_major_addr.
-#push-options "--z3rlimit 200 --fuel 8 --ifuel 2 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1 --split_queries always"
 fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                  (fwd_arr: array U64.t)
   requires is_minor minor 'md 'mb **
@@ -160,6 +160,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
       let hdr = minor_read minor p;
       let wosize = U64.shift_right hdr 10ul;
       if U64.eq wosize 0UL {
+        advance_aligned (U64.v p) 1;
         pos := U64.add p 8UL
       } else {
         let obj_addr = U64.add p 8UL;
@@ -199,7 +200,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
 /// Phase 2: Rewrite roots using forwarding array.
 /// For each root, if it's a minor pointer with a non-zero forwarding entry,
 /// replace it with the forwarded address.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 inline_for_extraction
 fn rewrite_one_root (roots: array U64.t) (fwd_arr: array U64.t) (riv: SZ.t)
   requires pts_to roots 'rs **
@@ -234,7 +235,7 @@ fn rewrite_one_root (roots: array U64.t) (fwd_arr: array U64.t) (riv: SZ.t)
 }
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 fn rewrite_roots_phase (roots: array U64.t) (fwd_arr: array U64.t) (n: SZ.t)
   requires pts_to roots 'rs **
            pts_to fwd_arr 'farr **
@@ -311,18 +312,27 @@ fn minor_collect (gh: gen_heap_t)
   // Phase 2: Update major-heap pointer fields (rewrite minor refs via fwd_arr)
   with ms_post. assert (is_heap gh.major ms_post);
   with farr_post. assert (pts_to fwd_arr farr_post);
+  with fp_post. assert (R.pts_to gh.fp_ref fp_post);
   assert (pure (Seq.length farr_post == fwd_array_size));
   ghost_fwd_of_represents farr_post;
-  // GAP: need heap_objects_dense for update_all_objects
+
+  // Call fl_valid preservation lemma BEFORE update (operates on pre-state)
+  CheneySpec.update_major_pointers_preserves_fl_valid ms_post (ghost_fwd_of farr_post) fp_post;
+
+  // GAP: need heap_objects_dense for update_all_objects precondition
+  // This is a structural property that follows from well_formed_heap + allocation preserving
+  // the linear object layout. Admitted pending formal density proof.
   assume_ (pure (GC.Gen.Promote.heap_objects_dense ms_post /\
                  Seq.length (SpecFields.objects 0UL ms_post) > 0));
   update_all_objects gh.major fwd_arr #(hide (ghost_fwd_of farr_post));
 
-  // GAP: update_major_pointers preserves allocator invariants
+  // After update: ms_updated == update_major_pointers ms_post (ghost_fwd_of farr_post)
+  // fl_valid/fl_chain_terminates follow from the preservation lemma called above.
   with ms_updated. assert (is_heap gh.major ms_updated);
-  with fp_val. assert (R.pts_to gh.fp_ref fp_val);
-  assume_ (pure (AllocLemmas.fl_valid ms_updated fp_val (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates ms_updated fp_val (heap_size / U64.v mword)));
+  // ms_updated == PromoteSpec.update_major_pointers ms_post (ghost_fwd_of farr_post)
+  // and from the lemma: fl_valid (update_major_pointers ms_post fwd) fp_post ...
+  // Since fp_post was framed (update_all_objects doesn't touch fp_ref):
+  assert (R.pts_to gh.fp_ref fp_post);
 
   // Phase 3: Rewrite roots (minor pointers → forwarded major addresses)
   with farr_post2. assert (pts_to fwd_arr farr_post2);
@@ -332,6 +342,8 @@ fn minor_collect (gh: gen_heap_t)
   minor_heap_reset gh.minor;
 
   // SPEC REFINEMENT: connect imperative result to pure spec
+  // This requires proving that cheney_promote_phase computes cheney_promote,
+  // i.e., ghost-state threading through the BFS loops. Pending formal proof.
   with s2 fp2 rs2. assert (is_heap gh.major s2 ** R.pts_to gh.fp_ref fp2 ** pts_to roots rs2);
   assume_ (pure (
     let minor_st : minor_state = { data = 'd; bump = 'b } in
@@ -339,7 +351,6 @@ fn minor_collect (gh: gen_heap_t)
     s2 == res.mc_major /\
     fp2 == res.mc_fp /\
     rs2 == res.mc_roots));
-  // wfh_part1 is framed from update_all_objects' postcondition
 
   fold (is_gen_heap gh _ 0UL _ _)
 }

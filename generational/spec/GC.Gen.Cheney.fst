@@ -292,13 +292,11 @@ let cheney_promote_preserves_wfh_part1
                     AllocLemmas.fl_chain_terminates res.major_final res.fp_final (heap_size / U64.v mword)))
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
-  let remembered = minor_roots_from_major major in
-  let all_roots = Seq.append roots remembered in
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
-  cheney_forward_roots_preserves_wfh_part1 minor cs0 all_roots 0;
-  let cs1 = cheney_forward_roots minor cs0 all_roots 0 in
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_wfh_part1 minor cs1 0 (cheney_fuel minor)
 
 /// ---------------------------------------------------------------------------
@@ -450,14 +448,12 @@ let cheney_promote_preserves_objects
                       Seq.mem x (objects zero_addr res.major_final)))
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
-  let remembered = minor_roots_from_major major in
-  let all_roots = Seq.append roots remembered in
   let cs0 : cheney_state =
     { cs_major = major; cs_fp = fp;
       cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
-  cheney_forward_roots_preserves_wfh_part1 minor cs0 all_roots 0;
-  cheney_forward_roots_preserves_objects minor cs0 all_roots 0;
-  let cs1 = cheney_forward_roots minor cs0 all_roots 0 in
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  cheney_forward_roots_preserves_objects minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_both minor cs1 0 (cheney_fuel minor)
 
 /// ---------------------------------------------------------------------------
@@ -477,3 +473,80 @@ let cheney_collect_preserves_wfh
   cheney_promote_preserves_wfh_part1 minor major fp roots;
   let prom = cheney_promote minor major fp roots in
   update_major_pointers_preserves_wfh_part1 prom.major_final prom.fwd_map
+
+/// ---------------------------------------------------------------------------
+/// update_major_pointers_preserves_fl_valid
+/// ---------------------------------------------------------------------------
+
+/// Key insight: update_major_pointers only modifies field data of non-blue objects.
+/// Blue objects (free-list entries) are skipped entirely by the update.
+/// Therefore, free-list structure (headers + next pointers in field 0 of blue objects)
+/// is unchanged, preserving fl_valid.
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+
+/// Helper: show update_major_pointers preserves read_word for blue object headers and fields.
+/// update_all_objects_aux_preserves_header already gives us header preservation.
+/// For field 0 of blue objects: since blue objects are skipped, their fields are unchanged.
+let update_major_pointers_preserves_fl_valid
+  (major: heap) (fwd: forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let m' = update_major_pointers major fwd in
+                    AllocLemmas.fl_valid m' fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates m' fp (heap_size / U64.v mword)))
+  =
+  // update_major_pointers preserves objects and headers (proven in Promote.fsti).
+  // Since blue objects are skipped, the free chain is byte-for-byte identical.
+  // fl_valid walks the chain: at each blue node, reads header (preserved) and
+  // field 0 (next pointer, preserved since blue objects are skipped).
+  // By induction on the chain, fl_valid and fl_chain_terminates hold.
+  update_major_pointers_preserves_objects major fwd;
+  update_major_pointers_preserves_wfh_part1 major fwd;
+  // The actual proof requires showing read_word equality for each chain node.
+  // Since update_object_pointers never touches blue objects (skipped by aux),
+  // and fl_valid/fl_chain only read blue object data, the invariants hold.
+  admit ()  // TODO: prove by induction on the free-list chain
+
+#pop-options
+
+/// Full Cheney collection preserves fl_valid
+let cheney_collect_preserves_fl_valid
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = cheney_collect_spec minor major fp roots in
+                    AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword)))
+  =
+  // Promotion preserves fl_valid (already proven in cheney_promote_preserves_wfh_part1)
+  cheney_promote_preserves_wfh_part1 minor major fp roots;
+  let prom = cheney_promote minor major fp roots in
+  // update_major_pointers preserves fl_valid
+  update_major_pointers_preserves_fl_valid prom.major_final prom.fwd_map prom.fp_final
+
+/// ---------------------------------------------------------------------------
+/// cheney_promote_preserves_dense
+/// ---------------------------------------------------------------------------
+
+/// Density: allocating into the heap (via promote_object) extends the objects list
+/// while maintaining the linear structure. Each new allocation appends an object
+/// at the end (after the previous last object), maintaining the "next" relationship.
+let cheney_promote_preserves_dense
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    heap_objects_dense major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = cheney_promote minor major fp roots in
+                    heap_objects_dense res.major_final /\
+                    Seq.length (objects zero_addr res.major_final) > 0))
+  =
+  // Promotion only adds objects via alloc + copy_fields.
+  // alloc_spec splits a free-list block: the objects list is unchanged for existing
+  // objects, and the newly allocated object takes the place of a free-list node.
+  // Since the linear walk structure is preserved through allocation (proven via
+  // alloc_spec_preserves_objects_part1), density is maintained.
+  admit ()  // TODO: prove by induction on promotion steps

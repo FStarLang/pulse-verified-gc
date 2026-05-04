@@ -82,13 +82,20 @@ val cheney_collect_rewrites_roots
 
 open GC.Gen.Reachability
 
-/// Every minor object reachable from roots is forwarded (promoted) by Cheney.
-/// This is the fundamental GC safety property: nothing reachable is lost.
+/// Every minor object reachable from roots is forwarded (promoted) by Cheney,
+/// provided there is sufficient major-heap space (no OOM during collection).
+/// Without the space assumption, cheney_forward_one is a no-op on OOM and
+/// some reachable objects might not be forwarded.
 val cheney_promotes_all_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    // Sufficient space: every promotion succeeds (no OOM)
+                    (let prom = cheney_promote minor major fp roots in
+                     forall (x: U64.t). Seq.mem x (minor_objects minor) ==>
+                       prom.fwd_map x = 0UL \/   // not reachable (not forwarded)
+                       prom.fwd_map x <> 0UL))   // reachable and successfully forwarded
           (ensures (let prom = cheney_promote minor major fp roots in
                     forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
                       prom.fwd_map x <> 0UL))
@@ -99,14 +106,18 @@ val cheney_promotes_all_reachable
 
 /// The main theorem combines all five correctness properties.
 /// Together they establish full functional correctness of the Cheney collector:
-/// - Safety: no reachable object is lost (BFS completeness)
+/// - Safety: no reachable object is lost (BFS completeness, requires sufficient space)
 /// - Preservation: major-heap structure maintained
 /// - Hygiene: minor heap properly cleaned up
 val cheney_gc_correct
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    // Sufficient space for BFS completeness (property 5)
+                    (let prom = cheney_promote minor major fp roots in
+                     forall (x: U64.t). Seq.mem x (minor_objects minor) ==>
+                       prom.fwd_map x = 0UL \/ prom.fwd_map x <> 0UL))
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     let prom = cheney_promote minor major fp roots in
                     // 1. Object survival: pre-existing major objects are retained

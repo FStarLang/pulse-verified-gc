@@ -115,17 +115,18 @@ val cheney_fuel (minor: minor_state) : GTot nat
 /// ---------------------------------------------------------------------------
 
 /// Complete promotion via Cheney BFS:
-/// 1. Compute remembered-set roots from old major heap
-/// 2. Forward all roots (program roots ++ remembered)
-/// 3. BFS scan until queue exhausted
+/// 1. Forward all roots (caller provides program roots + remembered-set roots)
+/// 2. BFS scan until queue exhausted
+///
+/// NOTE: The caller is responsible for including remembered-set roots in `roots`.
+/// This keeps the spec aligned with the implementation, where remembered-set
+/// discovery is a separate concern handled before calling the collector.
 let cheney_promote (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : GTot promote_all_result
-  = let remembered = minor_roots_from_major major in
-    let all_roots = Seq.append roots remembered in
-    let cs0 : cheney_state =
+  = let cs0 : cheney_state =
       { cs_major = major; cs_fp = fp;
         cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
-    let cs1 = cheney_forward_roots minor cs0 all_roots 0 in
+    let cs1 = cheney_forward_roots minor cs0 roots 0 in
     let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
     { major_final = cs2.cs_major;
       fp_final    = cs2.cs_fp;
@@ -207,8 +208,46 @@ val cheney_collect_preserves_wfh
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
                     chain_objects_blue major fp /\
-                    // All promotions succeed (no OOM during collection)
-                    // TODO: refine once OOM handling is decided
                     True)
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     well_formed_heap_part1 res.mc_major))
+
+/// --- Allocator (fl_valid) preservation through full collection ---
+
+/// update_major_pointers preserves fl_valid.
+/// Proof: update_major_pointers skips blue objects (free-list nodes), so
+/// both the free-list headers and the next-pointers (field 0 of blue objects)
+/// are unchanged, leaving the free-chain structure intact.
+val update_major_pointers_preserves_fl_valid
+  (major: heap) (fwd: forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let m' = update_major_pointers major fwd in
+                    AllocLemmas.fl_valid m' fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates m' fp (heap_size / U64.v mword)))
+
+/// Full Cheney collection preserves fl_valid.
+val cheney_collect_preserves_fl_valid
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = cheney_collect_spec minor major fp roots in
+                    AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword)))
+
+/// --- Density preservation ---
+
+/// Cheney promote preserves heap_objects_dense.
+/// Since promote only allocates new objects (extending the objects list),
+/// the density structure is maintained.
+val cheney_promote_preserves_dense
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    heap_objects_dense major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = cheney_promote minor major fp roots in
+                    heap_objects_dense res.major_final /\
+                    Seq.length (objects zero_addr res.major_final) > 0))

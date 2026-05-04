@@ -103,9 +103,20 @@ fn forward_if_minor
       // Already forwarded — no-op
       ()
     } else {
-      // Valid unforwarded minor object — promote it
-      // Safety: addr is valid and aligned. Assume fields fit in minor heap.
-      assume_ (pure (U64.v addr + minor_wosize {data='md; bump='mb} addr * 8 <= minor_heap_size));
+      // Valid unforwarded minor object — read wosize and bounds-check
+      let wosize = read_minor_wosize minor addr;
+      // Guard against overflow: wosize must be < minor_heap_size to safely multiply by 8
+      if U64.gte wosize minor_heap_size_u64 {
+        // wosize impossibly large — skip
+        ()
+      } else {
+      // Now: wosize < minor_heap_size < pow2 57, so wosize*8 < pow2 60 < pow2 64
+      // And: addr < minor_heap_size < pow2 57, so addr + wosize*8 < pow2 61 < pow2 64
+      // Runtime bounds check: addr + wosize*8 must fit in minor heap
+      if U64.gt (U64.add addr (U64.mul wosize 8UL)) minor_heap_size_u64 {
+        // Malformed object — skip
+        ()
+      } else {
       let new_addr = promote_one minor major fp_ref addr;
       if U64.eq new_addr 0UL {
         // OOM or zero-sized — don't enqueue
@@ -122,6 +133,8 @@ fn forward_if_minor
           // Queue full (shouldn't happen if queue_size >= max minor objects)
           ()
         }
+      }
+      }
       }
     }
   }
@@ -272,6 +285,16 @@ fn scan_loop
       scan := SZ.add s 1sz
     } else {
       let wosize = read_minor_wosize minor obj;
+      // Guard against overflow: wosize must be < minor_heap_size to safely multiply by 8
+      if U64.gte wosize minor_heap_size_u64 {
+        // wosize impossibly large — skip
+        scan := SZ.add s 1sz
+      } else {
+      // Runtime bounds check: obj + wosize*8 must fit in minor heap
+      if U64.gt (U64.add obj (U64.mul wosize 8UL)) minor_heap_size_u64 {
+        // Malformed — skip this queue entry
+        scan := SZ.add s 1sz
+      } else {
       // Forward each field of this object
       let mut field_idx = 0UL;
       while (U64.lt !field_idx wosize)
@@ -294,13 +317,15 @@ fn scan_loop
                 Seq.length q_f == queue_size /\
                 U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
                 U64.v obj % 8 == 0 /\
+                U64.v obj + U64.v wosize * 8 <= minor_heap_size /\
                 SZ.v s < SZ.v bk_f)
       {
         let fi = !field_idx;
-        // Bounds: fi < wosize, wosize*8 + obj <= minor_heap_size < pow2 57
-        assume_ (pure (U64.v fi * 8 + U64.v obj < pow2 64 /\
-                       U64.v fi * 8 + U64.v obj + 8 <= minor_heap_size));
-        // Read field[fi] from minor heap: address = obj + (fi+1) * 8
+        // fi < wosize and obj + wosize*8 <= minor_heap_size
+        // so obj + fi*8 + 8 <= obj + wosize*8 <= minor_heap_size
+        assert (pure (U64.v fi < U64.v wosize));
+        assert (pure (U64.v obj + U64.v wosize * 8 <= minor_heap_size));
+        // Read field[fi] from minor heap: address = obj + fi * 8
         let field_addr = U64.add obj (U64.mul fi 8UL);
         let child = minor_read minor field_addr;
         // Forward this child (forward_if_minor handles queue-full gracefully)
@@ -308,6 +333,8 @@ fn scan_loop
         field_idx := U64.add fi 1UL
       };
       scan := SZ.add s 1sz
+      }
+      }
     }
   }
 }
