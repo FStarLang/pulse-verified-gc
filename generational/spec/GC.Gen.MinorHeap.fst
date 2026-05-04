@@ -32,6 +32,7 @@ let rec minor_chain_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat
     if wz = 0 then false
     else
       let next_pos = pos + (wz + 1) * 8 in
+      next_pos_mod8 pos wz;
       if next_pos > bump then false
       else minor_chain_valid data next_pos bump
   end
