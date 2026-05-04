@@ -293,6 +293,12 @@ val alloc_spec_preserves_objects : (g: heap) -> (fp: U64.t) -> (requested_wz: na
                   (forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
                     Seq.mem x (objects 0UL r.heap_out))))
 
+/// get_color of make_header returns the original color bits
+val make_header_getColor : (wz: U64.t{U64.v wz < pow2 54}) ->
+                           (c: U64.t{U64.v c < 4}) ->
+                           (t: U64.t{U64.v t < 256}) ->
+  Lemma (Header.get_color (U64.v (make_header wz c t)) == U64.v c)
+
 /// **Theorem**: alloc_spec preserves no_black_objects.
 val alloc_spec_preserves_no_black : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires GC.Spec.Mark.no_black_objects g /\
@@ -456,3 +462,59 @@ val alloc_spec_read_field_gt0 :
         (ensures (let r = alloc_spec g fp requested_wz in
                   let addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
                   read_word r.heap_out addr == read_word g addr))
+
+/// **Theorem**: In the split case (block_wz - wz >= 2), the remainder fp
+/// returned by alloc_from_block is a valid pointer AND is in objects of
+/// the output heap. Requires only well_formed_heap_part1.
+val alloc_from_block_rem_in_objects_part1 :
+  (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  (let hdr = read_word g (hd_address obj) in
+                   let bwz = U64.v (getWosize hdr) in
+                   bwz >= wz /\ bwz - wz >= 2))
+        (ensures (let (g', rem_fp) = alloc_from_block g obj wz next_fp in
+                  is_pointer_field rem_fp /\
+                  Seq.mem rem_fp (objects 0UL g')))
+
+/// **Theorem**: alloc_from_block preserves object membership under just
+/// well_formed_heap_part1. (Public wrapper for internal part1 proof.)
+val alloc_from_block_preserves_objects_part1 :
+  (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  (let hdr = read_word g (hd_address obj) in
+                   U64.v (getWosize hdr) >= wz))
+        (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                  (forall (h: obj_addr). Seq.mem h (objects 0UL g) ==> Seq.mem h (objects 0UL g'))))
+
+/// **Theorem**: Any object in the post-alloc heap that was NOT in the pre-alloc
+/// heap is blue. (The only possible new object is the remainder block,
+/// which receives a blue header.)
+val alloc_spec_new_objects_blue_part1 :
+  (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  fl_valid g fp (heap_size / U64.v mword) /\
+                  fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                  requested_wz >= 1 /\
+                  (alloc_spec g fp requested_wz).obj_out <> 0UL)
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  forall (x: obj_addr).
+                    Seq.mem x (objects 0UL r.heap_out) /\
+                    ~(Seq.mem x (objects 0UL g)) ==>
+                    is_blue x r.heap_out = true))
+
+/// **Theorem**: Backward inclusion for alloc_from_block (split case).
+/// If h is in objects of the output heap but NOT in objects of the input heap,
+/// then h must be the remainder address returned by alloc_from_block.
+val alloc_from_block_objects_backward_part1 :
+  (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (h: obj_addr) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  (let hdr = read_word g (hd_address obj) in
+                   let bwz = U64.v (getWosize hdr) in
+                   bwz >= wz /\ wz >= 1 /\ bwz - wz >= 2) /\
+                  (let (g', _) = alloc_from_block g obj wz next_fp in
+                   Seq.mem h (objects 0UL g') /\
+                   ~(Seq.mem h (objects 0UL g))))
+        (ensures h == snd (alloc_from_block g obj wz next_fp))

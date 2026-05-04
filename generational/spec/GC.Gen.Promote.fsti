@@ -131,11 +131,65 @@ type promote_all_result = {
   fwd_map     : forwarding_map;  // maps old minor addrs to new major addrs
 }
 
+/// Promote objects from `live_set[idx..]` using accumulated forwarding map.
+/// Continuation form: "what remains to do from the current state."
+val promote_all_aux (minor: minor_state) (major: heap)
+                    (fp: U64.t) (live_set: seq U64.t)
+                    (fwd: forwarding_map) (idx: nat)
+  : GTot promote_all_result
+
 /// Promote all objects listed in `live_set` (in order).
 /// Each promotion allocates in the major heap and records the forwarding.
-val promote_all_spec (minor: minor_state) (major: heap)
+let promote_all_spec (minor: minor_state) (major: heap)
                      (fp: U64.t) (live_set: seq U64.t)
-  : GTot promote_all_result
+  : GTot promote_all_result =
+  promote_all_aux minor major fp live_set empty_forwarding 0
+
+/// Unfold: promote_all_aux when idx >= length
+val promote_all_aux_base (minor: minor_state) (major: heap)
+                         (fp: U64.t) (live_set: seq U64.t)
+                         (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx >= Seq.length live_set)
+          (ensures promote_all_aux minor major fp live_set fwd idx ==
+                   { major_final = major; fp_final = fp; fwd_map = fwd })
+
+/// Unfold: promote_all_aux when wz > 0 and allocation succeeds
+val promote_all_aux_step (minor: minor_state) (major: heap)
+                         (fp: U64.t) (live_set: seq U64.t)
+                         (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length live_set /\
+                    (let obj = Seq.index live_set idx in
+                     let wz = minor_wosize minor obj in
+                     wz > 0 /\
+                     (let res = promote_object minor major obj fp wz in
+                      res.new_addr <> 0UL)))
+          (ensures (let obj = Seq.index live_set idx in
+                    let wz = minor_wosize minor obj in
+                    let res = promote_object minor major obj fp wz in
+                    let fwd' = extend_forwarding fwd obj res.new_addr in
+                    promote_all_aux minor major fp live_set fwd idx ==
+                    promote_all_aux minor res.major_out res.fp_out live_set fwd' (idx + 1)))
+
+/// Unfold: promote_all_aux when wz = 0 (skip)
+val promote_all_aux_skip (minor: minor_state) (major: heap)
+                         (fp: U64.t) (live_set: seq U64.t)
+                         (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length live_set /\
+                    minor_wosize minor (Seq.index live_set idx) = 0)
+          (ensures promote_all_aux minor major fp live_set fwd idx ==
+                   promote_all_aux minor major fp live_set fwd (idx + 1))
+
+/// Unfold: promote_all_aux when allocation fails (OOM)
+val promote_all_aux_oom (minor: minor_state) (major: heap)
+                        (fp: U64.t) (live_set: seq U64.t)
+                        (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length live_set /\
+                    (let obj = Seq.index live_set idx in
+                     let wz = minor_wosize minor obj in
+                     wz > 0 /\
+                     (promote_object minor major obj fp wz).new_addr = 0UL))
+          (ensures promote_all_aux minor major fp live_set fwd idx ==
+                   { major_final = major; fp_final = fp; fwd_map = fwd })
 
 /// ---------------------------------------------------------------------------
 /// Pointer Update
@@ -421,15 +475,24 @@ val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major)
     (ensures well_formed_heap_part1 (update_major_pointers major fwd))
 
-/// Step lemma: unfold one iteration of update_all_objects_aux
+/// Step lemma: unfold one iteration of update_all_objects_aux (non-blue case)
 val update_all_objects_aux_step (major: heap) (objs: seq obj_addr)
                                 (fwd: forwarding_map) (idx: nat)
   : Lemma (requires idx < Seq.length objs /\ well_formed_heap_part1 major /\
-                    objs == objects zero_addr major)
+                    objs == objects zero_addr major /\
+                    is_blue (Seq.index objs idx) major = false)
           (ensures (let obj = Seq.index objs idx in
                     let wz = U64.v (wosize_of_object obj major) in
                     update_all_objects_aux major objs fwd idx ==
                     update_all_objects_aux (update_object_pointers major obj wz fwd 0) objs fwd (idx + 1)))
+
+/// Blue skip step: when the object at idx is blue, skip without modifying heap
+val update_all_objects_aux_skip_blue (major: heap) (objs: seq obj_addr)
+                                     (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length objs /\
+                    is_blue (Seq.index objs idx) major)
+          (ensures update_all_objects_aux major objs fwd idx ==
+                   update_all_objects_aux major objs fwd (idx + 1))
 
 /// Done lemma: identity when idx >= Seq.length objs
 val update_all_objects_aux_done (major: heap) (objs: seq obj_addr)
@@ -465,7 +528,8 @@ val update_all_objects_positional_step
                     heap_objects_dense major /\
                     U64.v pos + 8 < heap_size /\
                     Seq.mem (f_address pos) (objects 0UL major) /\
-                    Seq.length (objects pos major) > 0)
+                    Seq.length (objects pos major) > 0 /\
+                    is_blue (f_address pos) major = false)
           (ensures (let hdr = read_word major pos in
                     let wz = U64.v (getWosize hdr) in
                     let obj : obj_addr = f_address pos in
@@ -488,13 +552,41 @@ val update_all_objects_positional_step
                       Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major') /\
                       Seq.length (objects (U64.uint_to_t next_nat) major') > 0)))
 
+/// Blue positional step: when the object is blue, skip without modification
+val update_all_objects_positional_step_blue
+  (major: heap) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    U64.v pos + 8 < heap_size /\
+                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.length (objects pos major) > 0 /\
+                    is_blue (f_address pos) major)
+          (ensures (let hdr = read_word major pos in
+                    let wz = U64.v (getWosize hdr) in
+                    let obj : obj_addr = f_address pos in
+                    let next_nat = U64.v pos + (wz + 1) * 8 in
+                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    // Spec: skipping blue advances to the next object with same heap
+                    (next_nat < heap_size ==>
+                      update_all_objects_aux major (objects (U64.uint_to_t next_nat) major) fwd 0 ==
+                        update_all_objects_aux major (objects pos major) fwd 0) /\
+                    // Terminal: when next reaches heap_size, result is just major
+                    (next_nat >= heap_size ==>
+                      major == update_all_objects_aux major (objects pos major) fwd 0) /\
+                    // Density: next position is valid
+                    (next_nat + 8 < heap_size ==>
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major) /\
+                      Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
+
 /// Terminal step: when next_pos >= heap_size, processing gives the final result.
 val update_all_objects_terminal_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
                     U64.v pos + 8 < heap_size /\
                     Seq.mem (f_address pos) (objects 0UL major) /\
-                    Seq.length (objects pos major) > 0)
+                    Seq.length (objects pos major) > 0 /\
+                    is_blue (f_address pos) major = false)
           (ensures (let hdr = read_word major pos in
                     let wz = U64.v (getWosize hdr) in
                     let obj : obj_addr = f_address pos in
@@ -590,7 +682,8 @@ val update_major_pointers_field_effect
       Seq.mem obj (objects zero_addr major) /\
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
-      (U64.v obj + j * 8) % 8 == 0)
+      (U64.v obj + j * 8) % 8 == 0 /\
+      is_blue obj major = false)
     (ensures
       (let updated = update_major_pointers major fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
@@ -612,13 +705,29 @@ let pointer_closure_modulo_fwd (major: heap) (fwd: forwarding_map) : prop =
      is_pointer v /\ ~(is_minor_pointer v /\ fwd v <> 0UL) ==>
      Seq.mem (v <: obj_addr) (objects 0UL major))
 
+/// Blue fields closed: for blue (free-list) objects, all pointer fields
+/// target valid objects in the heap.  This is weaker than well_formed_heap_part2
+/// (which requires it for ALL objects).  After promotion, newly promoted objects
+/// may have minor pointers in fields (not yet rewritten), so full wfh_part2 fails.
+/// But blue objects (skipped by pointer update) must have valid pointer targets.
+[@@"opaque_to_smt"]
+let blue_fields_closed (major: heap) : prop =
+  forall (src: obj_addr) (j: nat).
+    Seq.mem src (objects 0UL major) /\ is_blue src major /\
+    j < U64.v (wosize_of_object src major) /\
+    U64.v src + j * 8 + 8 <= heap_size ==>
+    (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
+     is_pointer v ==> Seq.mem (v <: obj_addr) (objects 0UL major))
+
 /// update_major_pointers establishes well_formed_heap_part2 (pointer closure):
 /// If the intermediate heap has pointer_closure_modulo_fwd and fwd targets are valid,
+/// and blue objects' pointer fields target valid objects (blue_fields_closed),
 /// then after update the result satisfies part2.
 val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
                     pointer_closure_modulo_fwd major fwd /\
-                    fwd_all_targets_valid fwd major)
+                    fwd_all_targets_valid fwd major /\
+                    blue_fields_closed major)
     (ensures well_formed_heap_part2 (update_major_pointers major fwd))
 
 /// ---------------------------------------------------------------------------
@@ -671,6 +780,31 @@ val promote_all_read_other
                     U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     read_word res.major_final addr == read_word major addr))
+
+/// ---------------------------------------------------------------------------
+/// Blue fields closed is preserved through promote_all
+/// ---------------------------------------------------------------------------
+
+/// All free-chain objects are blue (standard allocator invariant).
+/// Equivalent to: non-blue objects are not on the free chain.
+[@@"opaque_to_smt"]
+let chain_objects_blue (major: heap) (fp: U64.t) : prop =
+  forall (obj: obj_addr).
+    Seq.mem obj (objects 0UL major) /\ ~(is_blue obj major) ==>
+    AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true
+
+/// After promote_all_spec, blue objects' pointer fields still target valid objects.
+/// Requires chain_objects_blue: the free chain only contains blue objects.
+/// This is needed because allocation modifies the predecessor's field 0 (chain link)
+/// and the new value (remainder or next_fp) must target a valid object.
+/// Since chain nodes are blue, bfc(major) ensures their fields target objects.
+val promote_all_preserves_blue_fields_closed
+  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
+          (ensures blue_fields_closed (promote_all_spec minor major fp live_set).major_final)
 
 /// ---------------------------------------------------------------------------
 /// All-Objects Minor Collection (matches linear-walk implementation)

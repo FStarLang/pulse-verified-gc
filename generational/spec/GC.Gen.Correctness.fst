@@ -139,9 +139,11 @@ let gen_gc_correct_full
   update_major_pointers_preserves_wfh_part1 prom_res.major_final prom_res.fwd_map;
   update_major_pointers_preserves_wfh_part4 prom_res.major_final prom_res.fwd_map;
   update_major_pointers_preserves_wfh_part3 prom_res.major_final prom_res.fwd_map;
-  // Establish part 2 (pointer closure) via the new lemma
+  // Establish part 2 (pointer closure) via blue_fields_closed
   promote_all_fwd_all_targets_valid minor major fp live_set;
   // post_promote_pointer_closure gives us pointer_closure_modulo_fwd on prom_res.major_final
+  // blue_fields_closed: blue objects' pointer fields target valid objects after promotion
+  promote_all_preserves_blue_fields_closed minor major fp live_set;
   update_major_pointers_preserves_wfh_part2 prom_res.major_final prom_res.fwd_map;
   // Combine all 4 parts
   assert (well_formed_heap_part1 res.mc_major);
