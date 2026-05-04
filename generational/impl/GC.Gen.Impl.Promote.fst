@@ -50,7 +50,7 @@ module PromoteSpec = GC.Gen.Promote
 module WBL = GC.Gen.WriteBodyLemmas
 
 inline_for_extraction
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
                     (src_obj: U64.t) (dst_obj: U64.t)
                     (wosize: U64.t)
@@ -112,7 +112,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 /// during a promotion loop, pointer closure (part2) is temporarily violated
 /// (minor pointers are written into the major heap body). The allocator only
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
-#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)

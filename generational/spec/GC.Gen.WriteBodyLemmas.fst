@@ -96,7 +96,7 @@ let rec chain_avoids_implies_not_in_fl_chain
 /// write_body_preserves_objects
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 1600 --fuel 4 --ifuel 2 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 2 --z3refresh"
 private let rec write_body_preserves_objects_aux
   (start: hp_addr) (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires
@@ -158,7 +158,7 @@ let write_body_preserves_objects
 /// write_body_preserves_fl_valid_aux
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let rec write_body_preserves_fl_valid_aux_impl
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
@@ -227,7 +227,7 @@ let write_body_preserves_fl_valid_aux
 /// write_body_preserves_not_in_fl_chain
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let rec write_body_preserves_not_in_fl_chain_impl
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
@@ -287,7 +287,7 @@ let write_body_preserves_not_in_fl_chain
 /// write_body_preserves_fl_chain_terminates
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let rec write_body_preserves_fl_chain_terminates_impl
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
@@ -355,7 +355,7 @@ let write_body_preserves_fl_chain_terminates
 /// write_body_preserves_chain_avoids_self
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries no"
 let write_body_preserves_chain_avoids_self
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
