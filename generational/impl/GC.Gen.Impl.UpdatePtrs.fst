@@ -26,7 +26,7 @@ open GC.Gen.PromoteUpdate
 /// ghost_fwd_of_represents proof
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 80 --split_queries no"
+#push-options "--z3rlimit 50 --split_queries no"
 let ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
   : Lemma (represents_fwd farr (ghost_fwd_of farr))
   = let fwd = ghost_fwd_of farr in
@@ -71,7 +71,7 @@ let rewrite_at_spec (rs: Seq.seq U64.t) (farr: Seq.seq U64.t) (iv: nat) : GTot (
 /// Rewrite one root at a given index (factored out for clean branch merging)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 inline_for_extraction
 fn rewrite_at_index (roots: array U64.t) (fwd_arr: array U64.t) (iv: SZ.t)
   requires pts_to roots 'rs **
@@ -110,7 +110,7 @@ fn rewrite_at_index (roots: array U64.t) (fwd_arr: array U64.t) (iv: SZ.t)
 /// Rewrite roots loop
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 inline_for_extraction
 fn rewrite_roots_impl
   (roots: array U64.t)
@@ -168,7 +168,7 @@ module U8 = FStar.UInt8
 
 /// Factored-out helper: handle one field in the pointer update loop.
 /// Reads field, checks if minor pointer + forwarded, conditionally writes.
-#push-options "--z3rlimit 150 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
                     (obj: U64.t) (wosize: U64.t) (iv: U64.t)
@@ -216,7 +216,7 @@ fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
 
 /// Update pointers in one object: iterate fields [0, wosize) and rewrite
 /// minor-heap pointers via the forwarding array.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 inline_for_extraction
 fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
                      (obj: U64.t) (wosize: U64.t)
