@@ -271,7 +271,7 @@ let rec rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
   if i = 0 then ()
   else rewrite_roots_index (Seq.slice roots 1 (Seq.length roots)) fwd (i - 1)
 
-#push-options "--z3rlimit 200"
+#push-options "--z3rlimit 50"
 let rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U64.t)
   : Lemma (requires Seq.length rs2 == Seq.length roots /\
                     (forall (j: nat). j < Seq.length roots ==>
@@ -526,7 +526,7 @@ let promote_object_preserves_objects_part1
   end
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec promote_all_aux_preserves_objects
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -590,7 +590,7 @@ let promote_all_preserves_objects
   promote_all_aux_preserves_objects minor major fp live_set empty_forwarding 0
 
 /// promote_all preserves well_formed_heap_part1
-#push-options "--z3rlimit 200 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec promote_all_aux_preserves_wfh_part1
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -681,7 +681,7 @@ private let copy_fields_preserves_wfh_part4
 #pop-options
 
 /// promote_all_aux preserves well_formed_heap_part4 (no infix objects).
-#push-options "--z3rlimit 200 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec promote_all_aux_preserves_wfh_part4
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
