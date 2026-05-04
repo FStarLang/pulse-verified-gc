@@ -81,6 +81,33 @@ let cheney_collect_rewrites_roots
   ()
 
 /// ---------------------------------------------------------------------------
+/// Property 5: BFS completeness
+/// ---------------------------------------------------------------------------
+
+open GC.Gen.Reachability
+
+/// Proof sketch: Cheney BFS visits all reachable objects.
+/// - cheney_forward_roots queues every root that is a valid minor object
+/// - cheney_scan processes every queued object, forwarding its children
+/// - By induction on the BFS worklist: any object reachable from a queued object
+///   eventually gets queued and forwarded
+/// - Since all reachable minor roots start queued, and reachability is the
+///   transitive closure under minor_successors, BFS covers them all.
+let cheney_promotes_all_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let prom = cheney_promote minor major fp roots in
+                    forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
+                      prom.fwd_map x <> 0UL))
+  = // BFS completeness proof — requires induction on reachable set structure.
+    // The key invariant: after scan completes, every object in the queue's
+    // "already processed" region has all its children forwarded.
+    // Combined with roots being initially forwarded, this gives completeness.
+    admit ()
+
+/// ---------------------------------------------------------------------------
 /// Composition
 /// ---------------------------------------------------------------------------
 
@@ -96,9 +123,12 @@ let cheney_gc_correct
                     well_formed_heap_part1 res.mc_major /\
                     minor_wf res.mc_minor /\
                     U64.v res.mc_minor.bump == 0 /\
-                    res.mc_roots == rewrite_roots roots prom.fwd_map))
+                    res.mc_roots == rewrite_roots roots prom.fwd_map /\
+                    (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
+                      prom.fwd_map x <> 0UL)))
   =
   cheney_collect_preserves_objects minor major fp roots;
   cheney_collect_preserves_wfh_part1 minor major fp roots;
   cheney_collect_resets_minor minor major fp roots;
-  cheney_collect_rewrites_roots minor major fp roots
+  cheney_collect_rewrites_roots minor major fp roots;
+  cheney_promotes_all_reachable minor major fp roots

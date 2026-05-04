@@ -339,7 +339,7 @@ fn minor_collect (gh: gen_heap_t)
     s2 == res.mc_major /\
     fp2 == res.mc_fp /\
     rs2 == res.mc_roots));
-  assume_ (pure (SpecFields.well_formed_heap_part1 s2));
+  // wfh_part1 is framed from update_all_objects' postcondition
 
   fold (is_gen_heap gh _ 0UL _ _)
 }
