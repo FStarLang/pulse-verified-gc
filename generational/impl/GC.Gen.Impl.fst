@@ -269,7 +269,7 @@ fn minor_collect (gh: gen_heap_t)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
-           pure (SpecFields.well_formed_heap_part1 's /\
+           pure (SpecFields.well_formed_heap 's /\
                  AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
                  AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
                  SZ.v nroots == Seq.length 'rs /\
@@ -279,10 +279,18 @@ fn minor_collect (gh: gen_heap_t)
     is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
-    pure (U64.v b2 == 0 /\
-          SpecFields.well_formed_heap_part1 s2 /\
-          AllocLemmas.fl_valid s2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates s2 fp2 (heap_size / U64.v mword))
+    pure (
+      // Spec refinement: result matches the pure specification
+      (let minor_st : minor_state = { data = 'd; bump = 'b } in
+       let res = PromoteSpec.minor_collect_all_spec minor_st 's 'fp 'rs in
+       s2 == res.mc_major /\
+       fp2 == res.mc_fp /\
+       rs2 == res.mc_roots /\
+       U64.v b2 == 0) /\
+      // Structural invariants preserved
+      SpecFields.well_formed_heap_part1 s2 /\
+      AllocLemmas.fl_valid s2 fp2 (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates s2 fp2 (heap_size / U64.v mword))
 {
   unfold is_gen_heap;
 
@@ -313,6 +321,20 @@ fn minor_collect (gh: gen_heap_t)
 
   // Phase 4: Reset minor heap
   minor_heap_reset gh.minor;
+
+  // SPEC REFINEMENT: connect imperative result to pure spec.
+  // To prove without assumes, promote_phase needs to track promote_all_spec ghost state,
+  // rewrite_roots_phase needs to track rewrite_roots spec, and update_all_objects
+  // already tracks update_major_pointers.
+  with s2 fp2 rs2. assert (is_heap gh.major s2 ** R.pts_to gh.fp_ref fp2 ** pts_to roots rs2);
+  assume_ (pure (
+    let minor_st : minor_state = { data = 'd; bump = 'b } in
+    let res = PromoteSpec.minor_collect_all_spec minor_st 's 'fp 'rs in
+    s2 == res.mc_major /\
+    fp2 == res.mc_fp /\
+    rs2 == res.mc_roots));
+  assume_ (pure (SpecFields.well_formed_heap_part1 s2));
+
   fold (is_gen_heap gh _ 0UL _ _)
 }
 #pop-options

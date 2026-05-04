@@ -105,7 +105,7 @@ common/impl/%.checked: common/impl/%
 
 # mark-and-sweep/spec — default flags, with specific overrides
 mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.fst.checked: mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.fst
-	$(FSTAR) --z3rlimit 200 $<
+	$(FSTAR) --z3rlimit 400 $<
 
 mark-and-sweep/spec/%.checked: mark-and-sweep/spec/%
 	$(FSTAR) $<
