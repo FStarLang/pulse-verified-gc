@@ -75,6 +75,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// ---------------------------------------------------------------------------
 
 module PromoteSpec = GC.Gen.Promote
+open GC.Gen.PromoteUpdate
 
 /// Helper: advancing by a multiple of 8 preserves 8-alignment
 let advance_aligned (p tw: nat)

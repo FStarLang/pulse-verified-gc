@@ -20,6 +20,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Reachability
 open GC.Gen.Remembered
 open GC.Gen.Promote
+open GC.Gen.PromoteUpdate
 open GC.Gen.Allocator
 
 module MajorCorrectness = GC.Spec.Correctness

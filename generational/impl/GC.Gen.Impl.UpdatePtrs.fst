@@ -20,6 +20,7 @@ open GC.Spec.Base
 open GC.Gen.Base
 open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
+open GC.Gen.PromoteUpdate
 
 /// ---------------------------------------------------------------------------
 /// ghost_fwd_of_represents proof
@@ -304,8 +305,8 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
           ms2 == PromoteSpec.update_major_pointers 'ms fwd)
 {
   // Unfold: update_major_pointers = update_all_objects_aux on objects 0UL
-  PromoteSpec.update_major_pointers_unfold 'ms fwd;
-  PromoteSpec.objects_initial_membership 'ms;
+  update_major_pointers_unfold 'ms fwd;
+  objects_initial_membership 'ms;
 
   let mut pos = 0UL;
   let mut done = false;
@@ -327,7 +328,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
             (b == false ==> (U64.v pos_i + 8 < heap_size /\
               Seq.mem (GC.Spec.Heap.f_address pos_i) (SpecFields.objects 0UL ms_i) /\
               Seq.length (SpecFields.objects pos_i ms_i) > 0 /\
-              PromoteSpec.update_all_objects_aux ms_i
+              GC.Gen.Promote.update_all_objects_aux ms_i
                 (SpecFields.objects pos_i ms_i) fwd 0 ==
                 PromoteSpec.update_major_pointers 'ms fwd)))
   {
@@ -346,7 +347,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     GC.Spec.Object.getWosize_bound hdr;
     let obj = U64.add p 8UL;
     // Get bounds from positional step (pure lemma on ms_cur)
-    PromoteSpec.update_all_objects_positional_step ms_cur fwd p;
+    update_all_objects_positional_step ms_cur fwd p;
     // Assert bounds from positional step (needed with --split_queries)
     assert (pure (U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\
                   U64.v obj + U64.v wosize * 8 <= heap_size));
@@ -365,7 +366,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     with ms_after. assert (is_heap major ms_after);
     // Call lemmas to establish facts for both branches
     GC.Spec.Heap.f_address_spec p;
-    PromoteSpec.update_all_objects_terminal_step ms_cur fwd p;
+    update_all_objects_terminal_step ms_cur fwd p;
     // Assert facts Z3 needs for loop invariant re-establishment
     assert (pure (
       ms_after == PromoteSpec.update_object_pointers ms_cur obj (U64.v wosize) fwd 0 /\
@@ -389,7 +390,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
       (U64.v next_pos + 8 < heap_size ==>
         (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_after) /\
          Seq.length (SpecFields.objects next_pos ms_after) > 0 /\
-         PromoteSpec.update_all_objects_aux ms_after
+         GC.Gen.Promote.update_all_objects_aux ms_after
            (SpecFields.objects next_pos ms_after) fwd 0 ==
            PromoteSpec.update_major_pointers 'ms fwd))
     ))
