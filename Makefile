@@ -120,7 +120,14 @@ mark-and-sweep/impl/GC.Impl.MarkBounded.fst.checked: mark-and-sweep/impl/GC.Impl
 mark-and-sweep/impl/%.checked: mark-and-sweep/impl/%
 	$(FSTAR) --split_queries always --z3refresh $<
 
-# generational/spec — default flags
+# generational/spec — default flags, with specific overrides
+# Promote.fst: --query_stats prevents Z3 context accumulation across queries
+generational/spec/GC.Gen.Promote.fst.checked: generational/spec/GC.Gen.Promote.fst
+	$(FSTAR) --query_stats --split_queries always $<
+
+generational/spec/GC.Gen.WriteBodyLemmas.fst.checked: generational/spec/GC.Gen.WriteBodyLemmas.fst
+	$(FSTAR) --query_stats --split_queries always $<
+
 generational/spec/%.checked: generational/spec/%
 	$(FSTAR) $<
 
