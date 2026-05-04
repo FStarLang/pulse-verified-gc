@@ -128,6 +128,12 @@ generational/spec/GC.Gen.Promote.fst.checked: generational/spec/GC.Gen.Promote.f
 generational/spec/GC.Gen.WriteBodyLemmas.fst.checked: generational/spec/GC.Gen.WriteBodyLemmas.fst
 	$(FSTAR) --query_stats --split_queries always $<
 
+generational/spec/GC.Gen.MinorHeap.fst.checked: generational/spec/GC.Gen.MinorHeap.fst
+	$(FSTAR) --split_queries always $<
+
+generational/spec/GC.Gen.AllocProps.fst.checked: generational/spec/GC.Gen.AllocProps.fst
+	$(FSTAR) --split_queries always $<
+
 generational/spec/%.checked: generational/spec/%
 	$(FSTAR) $<
 

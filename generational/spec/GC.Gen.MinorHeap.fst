@@ -460,6 +460,8 @@ let rec minor_objects_aux_reaches_bump
     FStar.Seq.Properties.mem_cons obj tail
   end else begin
     // pos < old_bump, and both are 8-aligned, so pos + 8 <= old_bump
+    // pos <= old_bump from precond, pos ≠ old_bump from else, both % 8 = 0
+    FStar.Math.Lemmas.modulo_lemma 1 8;
     assert (pos + 8 <= old_bump);
     let hdr = minor_read_word data (U64.uint_to_t pos) in
     let wz = U64.v (U64.shift_right hdr 10ul) in
@@ -540,10 +542,14 @@ let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
   minor_chain_valid_write_preserved ms.data old_bump ms.bump hdr;
   minor_read_write_same ms.data ms.bump hdr;
   make_header_wosize wosize tag;
+  next_pos_mod8 old_bump wosize;
+  assert (new_bump % 8 == 0);
   // Now: minor_read_word data' ms.bump == hdr
   // And: U64.v (shift_right hdr 10ul) == wosize > 0
   // And: old_bump + (wosize+1)*8 == new_bump
   // And: minor_chain_valid data' 0 old_bump == true
+  FStar.Math.Lemmas.lemma_mult_le_right 8 2 (wosize + 1);
+  assert (new_bump > old_bump);
   minor_chain_valid_extend data' old_bump new_bump hdr;
   // Now: minor_chain_valid data' 0 new_bump == true
   
@@ -553,10 +559,6 @@ let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
   // Seq.mem obj_addr (minor_objects res.ms_out)
   // The walk from 0 to new_bump reaches old_bump and produces (old_bump + 8)
   assert (new_bump <= minor_heap_size);
-  next_pos_mod8 old_bump wosize;
-  assert (new_bump % 8 == 0);
-  FStar.Math.Lemmas.lemma_mult_le_right 8 2 (wosize + 1);
-  assert (new_bump > old_bump);
   minor_objects_aux_reaches_bump data' 0 old_bump new_bump
 #pop-options
 
