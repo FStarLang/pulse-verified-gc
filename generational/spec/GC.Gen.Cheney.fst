@@ -617,7 +617,7 @@ let cheney_collect_preserves_wfh
 /// chain_objects_blue to arbitrary fuel so that it shrinks in lock-step with
 /// fl_valid / fl_chain_terminates.
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 
 private let rec update_preserves_fl_valid_aux
   (major: heap) (fwd: forwarding_map) (fp: U64.t) (fuel: nat)

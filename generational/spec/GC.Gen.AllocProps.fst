@@ -30,7 +30,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 ///
 /// Proof strategy: unfold alloc_spec into alloc_search and observe that
 /// obj_out is set to cur_fp which already passed all guard checks.
-#push-options "--z3rlimit 200 --fuel 4 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_valid
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
   (cur_fp: U64.t) (wz: nat) (fuel: nat)
@@ -83,7 +83,7 @@ let alloc_spec_obj_valid (g: heap) (fp: U64.t) (requested_wz: nat)
 ///
 /// Proof: obj_out = cur_fp which is in the free list. fl_valid ensures
 /// free-list nodes are in objects. alloc_spec_preserves_objects preserves them.
-#push-options "--z3rlimit 200 --fuel 4 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_in_objects_pre
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
   (cur_fp: U64.t) (wz: nat) (fuel: nat)
@@ -165,7 +165,7 @@ let alloc_spec_obj_in_objects (g: heap) (fp: U64.t) (requested_wz: nat)
 module SA = GC.Spec.Allocator
 
 /// Helper: after alloc_from_block, the header at obj has wosize >= wz
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1 --split_queries always"
 let alloc_from_block_wosize_lemma
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires (let hdr = read_word g (hd_address obj) in
@@ -240,7 +240,7 @@ let alloc_from_block_wosize_lemma
 /// has a write_word to prev_fp (if non-zero). This doesn't affect hd_address(obj),
 /// provided prev_fp and hd_address(obj) are separated (which holds in alloc_search
 /// because prev_fp is a different free-list node than cur_fp/obj).
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 private let write_prev_preserves_wosize
   (g_after_alloc: heap) (obj: obj_addr) (prev_fp: U64.t) (val_fp: U64.t)
   (wz: nat)
@@ -287,7 +287,7 @@ private let write_prev_preserves_wosize
 #pop-options
 
 /// Main recursive proof
-#push-options "--z3rlimit 200 --fuel 4 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1 --split_queries always"
 let rec alloc_search_obj_wosize
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
   (cur_fp: U64.t) (wz: nat) (fuel: nat)
@@ -362,7 +362,7 @@ let rec alloc_search_obj_wosize
   end
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 4"
+#push-options "--z3rlimit 50 --fuel 4"
 let alloc_spec_obj_wosize (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
                     AllocLemmas.fl_valid g fp (heap_size / U64.v mword))
@@ -382,7 +382,7 @@ let alloc_spec_obj_wosize (g: heap) (fp: U64.t) (requested_wz: nat)
 /// ---------------------------------------------------------------------------
 
 /// obj_out was in objects of the ORIGINAL heap (from fl_valid alone, no wfh needed)
-#push-options "--z3rlimit 200 --fuel 4 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_in_objects_pre_part1
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
   (cur_fp: U64.t) (wz: nat) (fuel: nat)
@@ -440,7 +440,7 @@ let alloc_spec_obj_in_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   AllocLemmas.alloc_spec_preserves_objects_part1 g fp requested_wz
 
 /// wosize of obj_out >= requested (no wfh — only fl_valid needed)
-#push-options "--z3rlimit 200 --fuel 4 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1 --split_queries always"
 private let rec alloc_search_obj_wosize_part1
   (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
   (cur_fp: U64.t) (wz: nat) (fuel: nat)
@@ -526,7 +526,7 @@ let alloc_spec_obj_wosize_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// chain_avoids_head_ne gives cur_fp ≠ excl = obj_out ≠ excl.
 /// At the advance step, chain_avoids_tail gives the invariant for next_fp.
 
-#push-options "--z3rlimit 100 --fuel 4 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
 let rec alloc_search_obj_ne_excl
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat) (excl: U64.t)
   : Lemma
@@ -590,7 +590,7 @@ let alloc_spec_obj_ne_excl (g: heap) (fp: U64.t) (requested_wz: nat) (excl: U64.
 /// The allocator returns obj_out = cur_fp only when block_wz >= wz.
 /// block_wz = wosize_of_object(cur_fp, g). So wosize_of_object(obj_out, g) >= wz.
 
-#push-options "--z3rlimit 100 --fuel 4 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
 private let rec alloc_search_obj_wosize_pre_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma
@@ -797,7 +797,7 @@ let write_prev_preserves_not_blue (g': heap) (obj: obj_addr) (prev_fp: U64.t) (n
 /// alloc_from_block preserves reads at addresses outside the modified range.
 /// The modified range is: hd_address(obj) (header) and possibly a remainder header/field.
 /// If addr is outside obj's block entirely, read_word is unchanged.
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_from_block_read_frame (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
                                 (addr: hp_addr)
   : Lemma (requires well_formed_heap_part1 g /\
