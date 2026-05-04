@@ -85,7 +85,8 @@ val cheney_gc_correct
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     let prom = cheney_promote minor major fp roots in
                     // 1. Object survival: pre-existing major objects are retained
@@ -93,10 +94,13 @@ val cheney_gc_correct
                       Seq.mem x (objects zero_addr res.mc_major)) /\
                     // 2. Heap well-formedness preserved
                     well_formed_heap_part1 res.mc_major /\
-                    // 3. Minor reset: ready for new allocations
+                    // 3. Allocator invariants preserved (enables further allocation)
+                    AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+                    // 4. Minor reset: ready for new allocations
                     minor_wf res.mc_minor /\
                     U64.v res.mc_minor.bump == 0 /\
-                    // 4. Root rewriting is correct
+                    // 5. Root rewriting is correct
                     res.mc_roots == rewrite_roots roots prom.fwd_map))
 
 /// ---------------------------------------------------------------------------

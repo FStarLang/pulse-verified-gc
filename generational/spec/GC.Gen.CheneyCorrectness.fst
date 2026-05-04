@@ -81,12 +81,15 @@ let cheney_gc_correct
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
           (ensures (let res = cheney_collect_spec minor major fp roots in
                     let prom = cheney_promote minor major fp roots in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
                       Seq.mem x (objects zero_addr res.mc_major)) /\
                     well_formed_heap_part1 res.mc_major /\
+                    AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword) /\
                     minor_wf res.mc_minor /\
                     U64.v res.mc_minor.bump == 0 /\
                     res.mc_roots == rewrite_roots roots prom.fwd_map))
@@ -94,7 +97,8 @@ let cheney_gc_correct
   cheney_collect_preserves_objects minor major fp roots;
   cheney_collect_preserves_wfh_part1 minor major fp roots;
   cheney_collect_resets_minor minor major fp roots;
-  cheney_collect_rewrites_roots minor major fp roots
+  cheney_collect_rewrites_roots minor major fp roots;
+  cheney_collect_preserves_fl_valid minor major fp roots
 
 /// ---------------------------------------------------------------------------
 /// Property 5: BFS completeness (conditional)
