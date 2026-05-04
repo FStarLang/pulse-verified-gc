@@ -132,7 +132,7 @@ generational/spec/GC.Gen.MinorHeap.fst.checked: generational/spec/GC.Gen.MinorHe
 	$(FSTAR) --split_queries always $<
 
 generational/spec/GC.Gen.AllocProps.fst.checked: generational/spec/GC.Gen.AllocProps.fst
-	$(FSTAR) --split_queries always $<
+	$(FSTAR) --query_stats $<
 
 generational/spec/%.checked: generational/spec/%
 	$(FSTAR) $<
