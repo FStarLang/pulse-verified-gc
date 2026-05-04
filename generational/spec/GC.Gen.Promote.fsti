@@ -29,6 +29,7 @@ open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
 open GC.Gen.Remembered
+open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
@@ -50,31 +51,6 @@ let extend_forwarding (fwd: forwarding_map) (minor_addr: U64.t) (major_addr: U64
 /// ---------------------------------------------------------------------------
 /// Promote a Single Object
 /// ---------------------------------------------------------------------------
-
-/// Copy `n` fields (words) from minor heap at `src_obj + (i+1)*8` to major heap at `dst + (i+1)*8`
-val copy_fields (minor: minor_state) (major: heap) 
-                (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
-  : GTot heap
-
-/// Base case: copy_fields with i >= n is identity
-val copy_fields_base (minor: minor_state) (major: heap) 
-                     (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
-  : Lemma (requires i >= n)
-          (ensures copy_fields minor major src_obj dst_obj i n == major)
-          [SMTPat (copy_fields minor major src_obj dst_obj i n)]
-
-/// Step lemma: one recursive unfolding of copy_fields
-val copy_fields_step (minor: minor_state) (major: heap) 
-                     (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
-  : Lemma (requires i < n /\
-                     U64.v dst_obj + i * 8 + 8 <= heap_size /\
-                     (U64.v dst_obj + i * 8) % 8 == 0)
-           (ensures copy_fields minor major src_obj dst_obj i n ==
-                    copy_fields minor
-                      (write_word major (U64.uint_to_t (U64.v dst_obj + i * 8))
-                                       (minor_read_field minor src_obj i))
-                      src_obj dst_obj (i + 1) n)
-           [SMTPat (copy_fields minor major src_obj dst_obj i n)]
 
 /// Result of promoting one object
 noeq
