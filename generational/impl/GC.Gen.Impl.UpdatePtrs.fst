@@ -116,16 +116,17 @@ fn rewrite_roots_impl
   (roots: array U64.t)
   (fwd_arr: array U64.t)
   (n: SZ.t)
+  (#fwd: erased PromoteSpec.forwarding_map)
   requires pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pure (SZ.v n == Seq.length 'rs /\
                  Seq.length 'farr == fwd_array_size /\
-                 represents_fwd 'farr 'fwd)
+                 represents_fwd 'farr fwd)
   ensures exists* rs2.
     pts_to roots rs2 **
     pts_to fwd_arr 'farr **
     pure (Seq.length rs2 == Seq.length 'rs /\
-          rs2 == PromoteSpec.rewrite_roots 'rs 'fwd)
+          rs2 == PromoteSpec.rewrite_roots 'rs fwd)
 {
   let mut i = 0sz;
   while (SZ.lt !i n)
@@ -137,15 +138,15 @@ fn rewrite_roots_impl
             SZ.v n == Seq.length 'rs /\
             Seq.length rs_i == Seq.length 'rs /\
             Seq.length 'farr == fwd_array_size /\
-            represents_fwd 'farr 'fwd /\
+            represents_fwd 'farr fwd /\
             (forall (j: nat). j < SZ.v iv ==>
-              Seq.index rs_i j == PromoteSpec.rewrite_root (Seq.index 'rs j) 'fwd) /\
+              Seq.index rs_i j == PromoteSpec.rewrite_root (Seq.index 'rs j) fwd) /\
             (forall (j: nat). j >= SZ.v iv /\ j < Seq.length 'rs ==>
               Seq.index rs_i j == Seq.index 'rs j))
   {
     let iv = !i;
     rewrite_at_index roots fwd_arr iv;
-    rewrite_root_arr_spec 'farr 'fwd (Seq.index 'rs (SZ.v iv));
+    rewrite_root_arr_spec 'farr fwd (Seq.index 'rs (SZ.v iv));
     i := SZ.add iv 1sz
   };
   // After loop: iv == n, so forall j < n. Seq.index rs_final j == rewrite_root ...
@@ -153,9 +154,9 @@ fn rewrite_roots_impl
   with rs_final. assert (pts_to roots rs_final);
   assert (pure (Seq.length rs_final == Seq.length 'rs));
   assert (pure (forall (j: nat). j < Seq.length 'rs ==>
-    Seq.index rs_final j == PromoteSpec.rewrite_root (Seq.index 'rs j) 'fwd));
-  PromoteSpec.rewrite_roots_pointwise 'rs 'fwd rs_final;
-  PromoteSpec.rewrite_roots_length 'rs 'fwd
+    Seq.index rs_final j == PromoteSpec.rewrite_root (Seq.index 'rs j) fwd));
+  PromoteSpec.rewrite_roots_pointwise 'rs fwd rs_final;
+  PromoteSpec.rewrite_roots_length 'rs fwd
 }
 #pop-options
 

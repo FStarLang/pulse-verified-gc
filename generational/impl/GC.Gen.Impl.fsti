@@ -27,6 +27,7 @@ module SpecFields = GC.Spec.Fields
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module PromoteSpec = GC.Gen.Promote
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -87,6 +88,8 @@ fn minor_collect (gh: gen_heap_t)
            pure (SpecFields.well_formed_heap 's /\
                  AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
                  AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
+                 PromoteSpec.heap_objects_dense 's /\
+                 PromoteSpec.chain_objects_blue 's 'fp /\
                  SZ.v nroots == Seq.length 'rs /\
                  Seq.length 'farr == UpdatePtrs.fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))

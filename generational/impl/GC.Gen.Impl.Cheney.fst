@@ -41,6 +41,21 @@ let queue_size_sz : n:SZ.t{SZ.v n == queue_size} =
   SZ.fits_u64_implies_fits fwd_array_size;
   SZ.uint_to_t fwd_array_size
 
+/// Helper: proves addr + wosize*8 < pow2 64 when both < minor_heap_size
+let minor_arith_no_overflow (addr wosize: nat)
+  : Lemma (requires addr < minor_heap_size /\ wosize < minor_heap_size)
+          (ensures wosize * 8 < pow2 64 /\ addr + wosize * 8 < pow2 64)
+  = FStar.Math.Lemmas.lemma_mult_le_right 8 wosize minor_heap_size;
+    FStar.Math.Lemmas.lemma_mult_le_right 8 minor_heap_size (pow2 57);
+    assert_norm (pow2 57 * 8 == pow2 60);
+    assert_norm (pow2 57 + pow2 60 < pow2 64)
+
+/// Helper: well_formed_heap implies well_formed_heap_part1
+let wfh_implies_part1 (g: heap)
+  : Lemma (requires SF.well_formed_heap g)
+          (ensures SF.well_formed_heap_part1 g)
+  = reveal_opaque (`%SF.well_formed_heap) (SF.well_formed_heap g)
+
 /// ---------------------------------------------------------------------------
 /// forward_if_minor: forward a single potential minor pointer
 /// ---------------------------------------------------------------------------
@@ -110,8 +125,8 @@ fn forward_if_minor
         // wosize impossibly large — skip
         ()
       } else {
-      // Now: wosize < minor_heap_size < pow2 57, so wosize*8 < pow2 60 < pow2 64
-      // And: addr < minor_heap_size < pow2 57, so addr + wosize*8 < pow2 61 < pow2 64
+      // Prove no overflow for wosize*8 and addr + wosize*8
+      minor_arith_no_overflow (U64.v addr) (U64.v wosize);
       // Runtime bounds check: addr + wosize*8 must fit in minor heap
       if U64.gt (U64.add addr (U64.mul wosize 8UL)) minor_heap_size_u64 {
         // Malformed object — skip
@@ -180,7 +195,7 @@ fn forward_roots
           Seq.length farr2 == fwd_array_size /\
           Seq.length q2 == queue_size /\
           SZ.v bk2 <= queue_size /\
-          Seq.length rs2 == Seq.length 'rs)
+          rs2 == 'rs)
 {
   let mut i = 0sz;
   while (SZ.lt !i nroots)
@@ -202,7 +217,7 @@ fn forward_roots
             Seq.length q_i == queue_size /\
             SZ.v bk_i <= queue_size /\
             SZ.v nroots == Seq.length 'rs /\
-            Seq.length rs_i == Seq.length 'rs)
+            rs_i == 'rs)
   {
     let iv = !i;
     let r = roots.(iv);
@@ -290,6 +305,8 @@ fn scan_loop
         // wosize impossibly large — skip
         scan := SZ.add s 1sz
       } else {
+      // Prove no overflow for wosize*8 and obj + wosize*8
+      minor_arith_no_overflow (U64.v obj) (U64.v wosize);
       // Runtime bounds check: obj + wosize*8 must fit in minor heap
       if U64.gt (U64.add obj (U64.mul wosize 8UL)) minor_heap_size_u64 {
         // Malformed — skip this queue entry
@@ -354,9 +371,11 @@ fn cheney_promote_phase
            R.pts_to fp_ref 'fp **
            pts_to fwd_arr 'farr **
            pts_to roots 'rs **
-           pure (SF.well_formed_heap_part1 'ms /\
+           pure (SF.well_formed_heap 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
                  AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 PromoteSpec.heap_objects_dense 'ms /\
+                 PromoteSpec.chain_objects_blue 'ms 'fp /\
                  Seq.length 'farr == fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  SZ.v nroots == Seq.length 'rs)
@@ -366,21 +385,47 @@ fn cheney_promote_phase
     R.pts_to fp_ref fp2 **
     pts_to fwd_arr farr2 **
     pts_to roots rs2 **
-    pure (md2 == 'md /\ mb2 == 'mb /\
+    pure (let minor_st : minor_state = { data = 'md; bump = 'mb } in
+          let prom = CheneySpec.cheney_promote minor_st 'ms 'fp 'rs in
+          md2 == 'md /\ mb2 == 'mb /\
+          ms2 == prom.major_final /\
+          fp2 == prom.fp_final /\
+          represents_fwd farr2 prom.fwd_map /\
           SF.well_formed_heap_part1 ms2 /\
           AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
           AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          PromoteSpec.heap_objects_dense ms2 /\
+          PromoteSpec.chain_objects_blue ms2 fp2 /\
+          Seq.length (SF.objects 0UL ms2) > 0 /\
           Seq.length farr2 == fwd_array_size /\
-          Seq.length rs2 == Seq.length 'rs)
+          rs2 == 'rs)
 {
   // Allocate BFS queue on the stack (256 entries)
   let mut queue = [| 0UL; queue_size_sz |];
   let mut back = 0sz;
 
+  // Help SMT: well_formed_heap implies well_formed_heap_part1
+  wfh_implies_part1 'ms;
+  assert (pure (SF.well_formed_heap_part1 'ms));
+
   // Phase 1: Forward all roots
   forward_roots minor major fp_ref fwd_arr queue back roots nroots;
 
   // Phase 2: BFS scan loop
-  scan_loop minor major fp_ref fwd_arr queue back
+  scan_loop minor major fp_ref fwd_arr queue back;
+
+  // Ghost: establish spec equivalence and derived properties
+  with ms2 fp2 farr2. assert (
+    is_heap major ms2 ** R.pts_to fp_ref fp2 ** pts_to fwd_arr farr2);
+  // The BFS loops implement cheney_promote — admitted pending loop invariant proofs
+  assume_ (pure (
+    let minor_st : minor_state = { data = 'md; bump = 'mb } in
+    let prom = CheneySpec.cheney_promote minor_st 'ms 'fp 'rs in
+    ms2 == prom.major_final /\
+    fp2 == prom.fp_final /\
+    represents_fwd farr2 prom.fwd_map /\
+    PromoteSpec.heap_objects_dense ms2 /\
+    PromoteSpec.chain_objects_blue ms2 fp2 /\
+    Seq.length (SF.objects 0UL ms2) > 0))
 }
 #pop-options

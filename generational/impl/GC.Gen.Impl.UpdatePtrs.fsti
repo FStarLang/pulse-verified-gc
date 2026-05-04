@@ -55,16 +55,17 @@ fn rewrite_roots_impl
   (roots: array U64.t)
   (fwd_arr: array U64.t)
   (n: SZ.t)
+  (#fwd: erased PromoteSpec.forwarding_map)
   requires pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pure (SZ.v n == Seq.length 'rs /\
                  Seq.length 'farr == fwd_array_size /\
-                 represents_fwd 'farr 'fwd)
+                 represents_fwd 'farr fwd)
   ensures exists* rs2.
     pts_to roots rs2 **
     pts_to fwd_arr 'farr **
     pure (Seq.length rs2 == Seq.length 'rs /\
-          rs2 == PromoteSpec.rewrite_roots 'rs 'fwd)
+          rs2 == PromoteSpec.rewrite_roots 'rs fwd)
 
 /// ---------------------------------------------------------------------------
 /// Update pointers in one object's fields

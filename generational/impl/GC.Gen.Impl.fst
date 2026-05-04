@@ -198,81 +198,23 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
 }
 #pop-options
 
-/// Phase 2: Rewrite roots using forwarding array.
-/// For each root, if it's a minor pointer with a non-zero forwarding entry,
-/// replace it with the forwarded address.
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
-inline_for_extraction
-fn rewrite_one_root (roots: array U64.t) (fwd_arr: array U64.t) (riv: SZ.t)
-  requires pts_to roots 'rs **
-           pts_to fwd_arr 'farr **
-           pure (SZ.v riv < Seq.length 'rs /\
-                 Seq.length 'farr == fwd_array_size)
-  ensures exists* rs2.
-    pts_to roots rs2 **
-    pts_to fwd_arr 'farr **
-    pure (Seq.length rs2 == Seq.length 'rs)
-{
-  let r = roots.(riv);
-  if U64.gte r 8UL {
-    if U64.lt r minor_heap_size_u64 {
-      if U64.eq (U64.rem r 8UL) 0UL {
-        let idx = SZ.uint64_to_sizet (U64.div r 8UL);
-        let fwd_val = fwd_arr.(idx);
-        if U64.eq fwd_val 0UL {
-          roots.(riv) <- r
-        } else {
-          roots.(riv) <- fwd_val
-        }
-      } else {
-        roots.(riv) <- r
-      }
-    } else {
-      roots.(riv) <- r
-    }
-  } else {
-    roots.(riv) <- r
-  }
-}
-#pop-options
-
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
-fn rewrite_roots_phase (roots: array U64.t) (fwd_arr: array U64.t) (n: SZ.t)
-  requires pts_to roots 'rs **
-           pts_to fwd_arr 'farr **
-           pure (SZ.v n == Seq.length 'rs /\
-                 Seq.length 'farr == fwd_array_size)
-  ensures exists* rs2.
-    pts_to roots rs2 **
-    pts_to fwd_arr 'farr **
-    pure (Seq.length rs2 == Seq.length 'rs)
-{
-  let mut i = 0sz;
-  while (SZ.lt !i n)
-    invariant exists* rs_i iv.
-      pts_to roots rs_i **
-      pts_to fwd_arr 'farr **
-      R.pts_to i iv **
-      pure (SZ.v iv <= SZ.v n /\
-            SZ.v n == Seq.length 'rs /\
-            Seq.length rs_i == Seq.length 'rs /\
-            Seq.length 'farr == fwd_array_size)
-  {
-    let iv = !i;
-    rewrite_one_root roots fwd_arr iv;
-    i := SZ.add iv 1sz
-  }
-}
-#pop-options
-
 /// Helper: extract wfh_part1 from well_formed_heap
 let wfh_implies_part1 (g: heap_state)
   : Lemma (requires SpecFields.well_formed_heap g)
           (ensures SpecFields.well_formed_heap_part1 g)
   = reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
 
+/// Lemma: unfold cheney_collect_spec in terms of cheney_promote
+let cheney_collect_spec_unfold (minor: minor_state) (major: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
+  : Lemma (let prom = CheneySpec.cheney_promote minor major fp roots in
+           let res = CheneySpec.cheney_collect_spec minor major fp roots in
+           res.mc_major == PromoteSpec.update_major_pointers prom.major_final prom.fwd_map /\
+           res.mc_fp == prom.fp_final /\
+           res.mc_roots == PromoteSpec.rewrite_roots roots prom.fwd_map)
+  = ()
+
 /// Compose all phases into minor_collect using Cheney BFS.
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
                  (fwd_arr: array U64.t)
@@ -282,6 +224,8 @@ fn minor_collect (gh: gen_heap_t)
            pure (SpecFields.well_formed_heap 's /\
                  AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
                  AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
+                 PromoteSpec.heap_objects_dense 's /\
+                 PromoteSpec.chain_objects_blue 's 'fp /\
                  SZ.v nroots == Seq.length 'rs /\
                  Seq.length 'farr == fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
@@ -304,56 +248,51 @@ fn minor_collect (gh: gen_heap_t)
 {
   unfold is_gen_heap;
 
-  // wfh implies wfh_part1
-  wfh_implies_part1 's;
-
   // Phase 1: Cheney BFS promotion (forward roots + scan)
+  // Postcondition: ms_post == (cheney_promote ...).major_final, etc.
   cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr roots nroots;
 
-  // Phase 2: Update major-heap pointer fields (rewrite minor refs via fwd_arr)
+  // Extract ghost state from promote phase
   with ms_post. assert (is_heap gh.major ms_post);
   with farr_post. assert (pts_to fwd_arr farr_post);
   with fp_post. assert (R.pts_to gh.fp_ref fp_post);
-  assert (pure (Seq.length farr_post == fwd_array_size));
-  ghost_fwd_of_represents farr_post;
 
-  // GAP: need heap_objects_dense and chain_objects_blue for update_all_objects precondition
-  // These are structural properties that follow from well_formed_heap + allocation preserving
-  // the linear object layout. Admitted pending formal density proof.
-  assume_ (pure (GC.Gen.Promote.heap_objects_dense ms_post /\
-                 Seq.length (SpecFields.objects 0UL ms_post) > 0 /\
-                 GC.Gen.Promote.chain_objects_blue ms_post fp_post));
+  // From cheney_promote_phase: represents_fwd farr_post prom.fwd_map
+  // where prom = cheney_promote {data='d;bump='b} 's 'fp 'rs
+  // Also: heap_objects_dense ms_post, chain_objects_blue ms_post fp_post, objects length > 0
 
-  // Call fl_valid preservation lemma BEFORE update (operates on pre-state)
-  CheneySpec.update_major_pointers_preserves_fl_valid ms_post (ghost_fwd_of farr_post) fp_post;
+  // Phase 2: Update major-heap pointer fields
+  // Call fl_valid preservation lemma BEFORE update
+  CheneySpec.update_major_pointers_preserves_fl_valid ms_post
+    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map
+    fp_post;
 
-  update_all_objects gh.major fwd_arr #(hide (ghost_fwd_of farr_post));
+  update_all_objects gh.major fwd_arr
+    #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
 
-  // After update: ms_updated == update_major_pointers ms_post (ghost_fwd_of farr_post)
-  // fl_valid/fl_chain_terminates follow from the preservation lemma called above.
+  // After update: ms_updated == update_major_pointers ms_post prom_fwd
   with ms_updated. assert (is_heap gh.major ms_updated);
-  // ms_updated == PromoteSpec.update_major_pointers ms_post (ghost_fwd_of farr_post)
-  // and from the lemma: fl_valid (update_major_pointers ms_post fwd) fp_post ...
-  // Since fp_post was framed (update_all_objects doesn't touch fp_ref):
   assert (R.pts_to gh.fp_ref fp_post);
 
-  // Phase 3: Rewrite roots (minor pointers → forwarded major addresses)
+  // Phase 3: Rewrite roots using ghost-tracked forwarding map
   with farr_post2. assert (pts_to fwd_arr farr_post2);
-  rewrite_roots_phase roots fwd_arr nroots;
+  rewrite_roots_impl roots fwd_arr nroots
+    #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
 
   // Phase 4: Reset minor heap
   minor_heap_reset gh.minor;
 
-  // SPEC REFINEMENT: connect imperative result to pure spec
-  // This requires proving that cheney_promote_phase computes cheney_promote,
-  // i.e., ghost-state threading through the BFS loops. Pending formal proof.
-  with s2 fp2 rs2. assert (is_heap gh.major s2 ** R.pts_to gh.fp_ref fp2 ** pts_to roots rs2);
-  assume_ (pure (
-    let minor_st : minor_state = { data = 'd; bump = 'b } in
-    let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
-    s2 == res.mc_major /\
-    fp2 == res.mc_fp /\
-    rs2 == res.mc_roots));
+  // SPEC REFINEMENT: bridge from phase postconditions to cheney_collect_spec
+  cheney_collect_spec_unfold ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  
+  // Assert each postcondition conjunct
+  with rs_final. assert (pts_to roots rs_final);
+  assert (pure (ms_updated == (CheneySpec.cheney_collect_spec ({data='d;bump='b} <: minor_state) 's 'fp 'rs).mc_major));
+  assert (pure (fp_post == (CheneySpec.cheney_collect_spec ({data='d;bump='b} <: minor_state) 's 'fp 'rs).mc_fp));
+  assert (pure (rs_final == (CheneySpec.cheney_collect_spec ({data='d;bump='b} <: minor_state) 's 'fp 'rs).mc_roots));
+  assert (pure (SpecFields.well_formed_heap_part1 ms_updated));
+  assert (pure (AllocLemmas.fl_valid ms_updated fp_post (heap_size / U64.v mword)));
+  assert (pure (AllocLemmas.fl_chain_terminates ms_updated fp_post (heap_size / U64.v mword)));
 
   fold (is_gen_heap gh _ 0UL _ _)
 }
