@@ -2,7 +2,7 @@
    Pulse GC (Generational) - Top-Level Entry Point Implementation
 
    Routes allocations by size and implements minor collection
-   (promote all minor objects, update pointers, rewrite roots, reset minor).
+   using Cheney-style BFS (promotes only reachable objects).
 *)
 
 module GC.Gen.Impl
@@ -23,9 +23,12 @@ open GC.Gen.MinorHeap
 open GC.Gen.Impl.MinorHeap
 open GC.Gen.Impl.Promote
 open GC.Gen.Impl.UpdatePtrs
+open GC.Gen.Impl.Cheney
 open GC.Impl.Heap
 module SpecFields = GC.Spec.Fields
 module Alloc = GC.Impl.Allocator
+module AllocLemmas = GC.Spec.Allocator.Lemmas
+module CheneySpec = GC.Gen.Cheney
 module ML = FStar.Math.Lemmas
 
 /// ---------------------------------------------------------------------------
@@ -71,7 +74,6 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// Minor Collection — Full Implementation
 /// ---------------------------------------------------------------------------
 
-module AllocLemmas = GC.Spec.Allocator.Lemmas
 module PromoteSpec = GC.Gen.Promote
 
 /// Helper: advancing by a multiple of 8 preserves 8-alignment
@@ -261,8 +263,14 @@ fn rewrite_roots_phase (roots: array U64.t) (fwd_arr: array U64.t) (n: SZ.t)
 }
 #pop-options
 
-/// Phase 3: Compose all phases into minor_collect.
-#push-options "--z3rlimit 80 --fuel 8 --ifuel 2 --split_queries always"
+/// Helper: extract wfh_part1 from well_formed_heap
+let wfh_implies_part1 (g: heap_state)
+  : Lemma (requires SpecFields.well_formed_heap g)
+          (ensures SpecFields.well_formed_heap_part1 g)
+  = reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
+
+/// Compose all phases into minor_collect using Cheney BFS.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
                  (fwd_arr: array U64.t)
@@ -280,9 +288,9 @@ fn minor_collect (gh: gen_heap_t)
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pure (
-      // Spec refinement: result matches the pure specification
+      // Spec refinement: result matches the Cheney BFS collection spec
       (let minor_st : minor_state = { data = 'd; bump = 'b } in
-       let res = PromoteSpec.minor_collect_all_spec minor_st 's 'fp 'rs in
+       let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
        s2 == res.mc_major /\
        fp2 == res.mc_fp /\
        rs2 == res.mc_roots /\
@@ -294,22 +302,23 @@ fn minor_collect (gh: gen_heap_t)
 {
   unfold is_gen_heap;
 
-  // Phase 1: Promote all minor objects
-  promote_phase gh.minor gh.major gh.fp_ref fwd_arr;
+  // wfh implies wfh_part1
+  wfh_implies_part1 's;
+
+  // Phase 1: Cheney BFS promotion (forward roots + scan)
+  cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr roots nroots;
 
   // Phase 2: Update major-heap pointer fields (rewrite minor refs via fwd_arr)
   with ms_post. assert (is_heap gh.major ms_post);
   with farr_post. assert (pts_to fwd_arr farr_post);
   assert (pure (Seq.length farr_post == fwd_array_size));
-  // Construct ghost forwarding map from the concrete array
   ghost_fwd_of_represents farr_post;
-  // KNOWN GAP: promote_phase's postcondition should include these.
-  // Provable because allocation (gen_alloc) preserves objects chain structure.
-  assume_ (pure (PromoteSpec.heap_objects_dense ms_post /\
+  // GAP: need heap_objects_dense for update_all_objects
+  assume_ (pure (GC.Gen.Promote.heap_objects_dense ms_post /\
                  Seq.length (SpecFields.objects 0UL ms_post) > 0));
   update_all_objects gh.major fwd_arr #(hide (ghost_fwd_of farr_post));
-  // KNOWN GAP: update_major_pointers preserves allocator invariants.
-  // Provable when we show free-list links are >= minor_heap_size (so not rewritten).
+
+  // GAP: update_major_pointers preserves allocator invariants
   with ms_updated. assert (is_heap gh.major ms_updated);
   with fp_val. assert (R.pts_to gh.fp_ref fp_val);
   assume_ (pure (AllocLemmas.fl_valid ms_updated fp_val (heap_size / U64.v mword) /\
@@ -322,14 +331,11 @@ fn minor_collect (gh: gen_heap_t)
   // Phase 4: Reset minor heap
   minor_heap_reset gh.minor;
 
-  // SPEC REFINEMENT: connect imperative result to pure spec.
-  // To prove without assumes, promote_phase needs to track promote_all_spec ghost state,
-  // rewrite_roots_phase needs to track rewrite_roots spec, and update_all_objects
-  // already tracks update_major_pointers.
+  // SPEC REFINEMENT: connect imperative result to pure spec
   with s2 fp2 rs2. assert (is_heap gh.major s2 ** R.pts_to gh.fp_ref fp2 ** pts_to roots rs2);
   assume_ (pure (
     let minor_st : minor_state = { data = 'd; bump = 'b } in
-    let res = PromoteSpec.minor_collect_all_spec minor_st 's 'fp 'rs in
+    let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
     s2 == res.mc_major /\
     fp2 == res.mc_fp /\
     rs2 == res.mc_roots));

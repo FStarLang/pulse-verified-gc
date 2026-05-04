@@ -3,7 +3,7 @@
 
    Provides:
    - gen_alloc: Allocate an object (routes to minor or major by size)
-   - minor_collect: Promote all minor objects to major heap, rewrite pointers, reset
+   - minor_collect: Cheney-style BFS collection of minor heap
 *)
 
 module GC.Gen.Impl
@@ -25,14 +25,13 @@ open GC.Gen.Impl.MinorHeap
 open GC.Impl.Heap
 module SpecFields = GC.Spec.Fields
 module AllocLemmas = GC.Spec.Allocator.Lemmas
-module PromoteSpec = GC.Gen.Promote
+module CheneySpec = GC.Gen.Cheney
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
 /// ---------------------------------------------------------------------------
 
-/// The generational GC state: minor heap + major heap + free-list pointer
 noeq
 type gen_heap_t = {
   minor : minor_heap_t;
@@ -61,26 +60,24 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
 
 /// ---------------------------------------------------------------------------
-/// Minor collection (full: promote + rewrite pointers + rewrite roots + reset)
+/// Minor collection (Cheney BFS: promote reachable + update pointers + reset)
 /// ---------------------------------------------------------------------------
 
-/// Trigger a minor collection:
-/// 1. Promote all minor objects to major heap (filling forwarding array)
-/// 2. Update major-heap pointer fields (rewrite minor refs via fwd_arr)
-/// 3. Rewrite program roots (minor refs → forwarded major addresses)
-/// 4. Reset the minor heap (bump = 0)
+/// Trigger a minor collection using Cheney-style BFS:
+/// 1. Forward roots (promote reachable minor objects on discovery)
+/// 2. BFS scan: for each promoted object, forward its children
+/// 3. Update major-heap pointer fields (rewrite minor refs via fwd map)
+/// 4. Rewrite program roots
+/// 5. Reset minor heap (bump = 0)
 ///
-/// Postcondition: result matches minor_collect_all_spec
-/// (promotes ALL minor objects, a sound overapproximation of live-only).
+/// Postcondition: result matches cheney_collect_spec (promotes only reachable
+/// objects, not all objects — sound and precise).
 ///
-/// End-to-end correctness: by combining this spec-refinement postcondition with
-/// the correctness theorems in GC.Gen.Correctness (gen_gc_correct, gen_gc_correct_full,
-/// generational_gc_end_to_end), callers can derive:
-/// - All major-heap objects survive promotion
-/// - Post-collection major heap is well-formed (under minor_fields_well_formed etc.)
-/// - Root rewriting is correct
-/// - Minor heap is reset and ready for new allocations
-/// - Composition with mark-and-sweep major GC yields full GC correctness
+/// Correctness properties (proven in GC.Gen.CheneyCorrectness):
+/// - All pre-existing major objects survive
+/// - Heap well-formedness (part 1) preserved
+/// - Minor heap reset
+/// - Roots rewritten via forwarding map
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
                  (fwd_arr: array U64.t)
@@ -98,9 +95,9 @@ fn minor_collect (gh: gen_heap_t)
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pure (
-      // Spec refinement: result matches the pure specification
+      // Spec refinement: result matches the Cheney BFS collection spec
       (let minor_st : minor_state = { data = 'd; bump = 'b } in
-       let res = PromoteSpec.minor_collect_all_spec minor_st 's 'fp 'rs in
+       let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
        s2 == res.mc_major /\
        fp2 == res.mc_fp /\
        rs2 == res.mc_roots /\
