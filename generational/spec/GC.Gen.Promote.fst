@@ -2558,7 +2558,7 @@ private let promote_object_preserves_one_field
 /// Helper: explicitly eliminate the `fields_match_minor` quantifier for a given k and j.
 /// Takes field_addr as a pre-computed hp_addr to avoid subtyping issues with --split_queries.
 /// This helper does NOT use --split_queries, so Z3 can derive dst_fields_valid from scalar bounds.
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
 private let fields_match_minor_elim
   (minor: minor_state) (major: heap) (fwd: forwarding_map)
   (live_set: seq U64.t) (idx: nat) (k: nat) (j: nat)
