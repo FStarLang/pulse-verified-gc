@@ -104,26 +104,24 @@ val cheney_gc_correct
                     res.mc_roots == rewrite_roots roots prom.fwd_map))
 
 /// ---------------------------------------------------------------------------
-/// Property 5: BFS completeness (conditional on sufficient space)
+/// Property 6: BFS completeness (conditional on sufficient space)
 /// ---------------------------------------------------------------------------
 
 open GC.Gen.Reachability
 
 /// BFS completeness: all reachable minor objects are forwarded.
 ///
-/// This property is CONDITIONAL on sufficient major-heap space. The Cheney
-/// algorithm's forward-on-discovery invariant guarantees that:
-/// 1. All roots are forwarded (barring OOM)
-/// 2. All children of forwarded objects are forwarded (scan completeness)
-/// By induction on path length, all reachable objects are forwarded.
+/// NOTE: This is currently stated as a post-hoc observation (the precondition
+/// asserts the forwarding map already covers all reachable objects). A stronger
+/// theorem would prove this from a SPACE precondition:
+///   "free-list capacity >= total size of all reachable minor objects"
+/// implies the BFS never encounters OOM, which by forward-on-discovery
+/// closure ensures all reachable objects are forwarded.
 ///
-/// The "sufficient space" condition means: every allocation during the BFS
-/// succeeds (promote_object never returns 0UL for a reachable object).
-/// We express this as a post-hoc observation: in the final forwarding map,
-/// all reachable objects have non-zero entries.
-///
-/// In practice, this holds when the major heap's free-list capacity exceeds
-/// the total size of all reachable minor objects.
+/// The BFS closure proof (forward-on-discovery implies reachability coverage)
+/// requires showing that cheney_scan processes every queue entry and that
+/// forward_fields of each parent adds all children to the queue.
+/// This is left as future work — Property 6 is the placeholder statement.
 val cheney_promotes_all_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
