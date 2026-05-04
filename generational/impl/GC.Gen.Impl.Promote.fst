@@ -47,6 +47,7 @@ fn read_minor_wosize (minor: minor_heap_t) (obj: U64.t)
 /// Postcondition: the output heap equals the spec's copy_fields result.
 /// This spec refinement enables callers to apply spec-level preservation lemmas.
 module PromoteSpec = GC.Gen.Promote
+module WBL = GC.Gen.WriteBodyLemmas
 
 inline_for_extraction
 #push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
@@ -64,7 +65,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     pure (md2 == 'md /\ mb2 == 'mb /\
-          ms2 == PromoteSpec.copy_fields {data='md; bump='mb} 'ms src_obj dst_obj 0 (U64.v wosize))
+          ms2 == WBL.copy_fields {data='md; bump='mb} 'ms src_obj dst_obj 0 (U64.v wosize))
 {
   let mut i = 0UL;
   while (U64.lt !i wosize)
@@ -81,8 +82,8 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
             md_i == 'md /\ mb_i == 'mb /\
             // Spec refinement: remaining copy_fields from current state
             // equals full copy_fields from initial state
-            PromoteSpec.copy_fields {data='md; bump='mb} ms_i src_obj dst_obj (U64.v iv) (U64.v wosize) ==
-            PromoteSpec.copy_fields {data='md; bump='mb} 'ms src_obj dst_obj 0 (U64.v wosize))
+            WBL.copy_fields {data='md; bump='mb} ms_i src_obj dst_obj (U64.v iv) (U64.v wosize) ==
+            WBL.copy_fields {data='md; bump='mb} 'ms src_obj dst_obj 0 (U64.v wosize))
   {
     let iv = !i;
     // Source: minor_obj + iv * 8
