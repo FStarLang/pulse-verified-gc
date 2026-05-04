@@ -249,7 +249,7 @@ let rec update_object_pointers_preserves_addr_above
         update_object_pointers_preserves_addr_above major obj wosize fwd (i + 1) addr
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec update_all_objects_aux_preserves_objects
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
@@ -311,7 +311,7 @@ let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
 
 /// update_all_objects_aux preserves well_formed_heap_part1 (inductive).
 /// Each step: update_object_pointers preserves all headers → preserves wfh_part1.
-#push-options "--z3rlimit 80 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec update_all_objects_aux_preserves_wfh_part1
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
@@ -436,7 +436,7 @@ private let rec objects_eq_when_reads_agree (g1 g2: heap) (start: hp_addr)
 /// Objects from start are preserved when start >= obj + wz*8.
 /// Since all field writes are at addresses < obj + wz*8 <= start,
 /// all reads from start onward are unchanged.
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
 private let update_object_pointers_preserves_objects_above
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
   (start: hp_addr)
@@ -469,7 +469,7 @@ private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
 #pop-options
 
 /// Helper: density is preserved through update_object_pointers
-#push-options "--z3rlimit 300 --fuel 0 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --fuel 0 --split_queries always --z3refresh"
 private let update_object_pointers_preserves_density
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -562,7 +562,7 @@ private let rec update_all_objects_aux_shift
 #pop-options
 
 /// Master positional step lemma
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always --z3refresh"
 let update_all_objects_positional_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -680,7 +680,7 @@ let update_all_objects_positional_step
 
 /// Blue skip step: when the current object is blue (free-list cell),
 /// skip it without modifying the heap. The spec connection advances past it.
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
 let update_all_objects_positional_step_blue
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -732,7 +732,7 @@ let update_all_objects_positional_step_blue
 #pop-options
 
 /// Terminal step
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
 let update_all_objects_terminal_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -793,7 +793,7 @@ let objects_initial_membership (g: heap)
 /// ---------------------------------------------------------------------------
 
 /// Inductive: update_all_objects_aux preserves the header word of any object.
-#push-options "--z3rlimit 80 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec update_all_objects_aux_preserves_header
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat) (h: obj_addr)
   : Lemma (requires
@@ -859,7 +859,7 @@ let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (
 
 /// update_major_pointers preserves all fields of blue objects (since they are skipped).
 /// For non-blue objects that are processed: their body writes are separated from blue's fields.
-#push-options "--z3rlimit 400 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 private let rec update_all_objects_aux_preserves_blue_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   (h: obj_addr) (j: nat)
@@ -1051,7 +1051,7 @@ let fwd_all_implies_positional (fwd: forwarding_map) (live_set: seq U64.t) (idx:
 
 /// The core induction: promote_all_aux puts every forwarded address into objects of the final heap.
 /// Uses the simpler fwd_all_targets_valid invariant.
-#push-options "--z3rlimit 200 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec promote_all_aux_adds_promoted
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -1300,7 +1300,7 @@ private let rec seq_index_of (#a:eqtype) (s: seq a) (x: a{Seq.mem x s})
 
 /// Helper: adjacent elements in objects list are strictly ordered.
 /// Proof by structural induction on the objects list construction.
-#push-options "--z3rlimit 60 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
 private let rec objects_monotone_adjacent (g: heap) (start: hp_addr) (i: nat)
   : Lemma
     (requires i + 1 < Seq.length (objects start g))
@@ -1405,7 +1405,7 @@ private let objects_above_after (g: heap) (obj: obj_addr) (pos: nat)
 
 /// update_all_objects_aux processing objects AFTER obj doesn't change obj's field j.
 /// Those objects are at higher addresses, so their body regions don't overlap obj's fields.
-#push-options "--z3rlimit 80 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec update_all_objects_aux_after_preserves_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat)
@@ -1477,7 +1477,7 @@ let rec update_all_objects_aux_after_preserves_field
 #pop-options
 
 /// Main induction: update_all_objects_aux computes the expected field effect.
-#push-options "--z3rlimit 300 --fuel 1 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --fuel 1 --split_queries always --z3refresh"
 let rec update_all_objects_aux_field_effect
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)
@@ -1671,7 +1671,7 @@ let update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map
 /// `other` is untouched because:
 /// 1. alloc_spec only modifies headers/links of free-list blocks (alloc_spec_read_other)
 /// 2. copy_fields writes to the newly allocated body, which is different from other's body
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
 private let promote_object_read_other
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0}) (other: obj_addr) (addr: hp_addr)
@@ -1729,7 +1729,7 @@ private let promote_object_read_other
 
 /// Helper: promote_object preserves chain_avoids for an excluded object
 /// that was already not in the chain.
-#push-options "--z3rlimit 160 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let promote_object_preserves_chain_avoids
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0}) (excl: U64.t)
@@ -1815,7 +1815,7 @@ private let promote_object_preserves_chain_avoids
 #pop-options
 
 /// Top-level helper: promote_object preserves a single field read for a previously promoted object.
-#push-options "--z3rlimit 160 --fuel 1 --ifuel 0 --split_queries no"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries no"
 private let promote_object_preserves_one_field
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wz: nat{wz > 0})
@@ -1851,7 +1851,7 @@ private let promote_object_preserves_one_field
 /// Helper: explicitly eliminate the `fields_match_minor` quantifier for a given k and j.
 /// Takes field_addr as a pre-computed hp_addr to avoid subtyping issues with --split_queries.
 /// This helper does NOT use --split_queries, so Z3 can derive dst_fields_valid from scalar bounds.
-#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let fields_match_minor_elim
   (minor: minor_state) (major: heap) (fwd: forwarding_map)
   (live_set: seq U64.t) (idx: nat) (k: nat) (j: nat)
@@ -1880,7 +1880,7 @@ private let fields_match_minor_elim
 #pop-options
 
 /// Extracted as a non-recursive top-level lemma for deterministic verification.
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1 --z3refresh --split_queries always"
 private let promote_step_preserves_invariant
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -2010,7 +2010,7 @@ private let promote_step_preserves_invariant
 ///   - fl_chain_terminates major fp fuel
 ///   - For all k < idx: if fwd(live_set[k]) ≠ 0, then fields match minor
 ///     AND chain_avoids holds for fwd(live_set[k]) in current state
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let rec promote_all_aux_preserves_fields
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -2064,7 +2064,7 @@ let promote_all_preserves_fields
 
 /// Inductive: promote_all_aux preserves reads in the body of an object
 /// that avoids the free chain.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let rec promote_all_aux_read_other
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -2141,7 +2141,7 @@ let promote_all_read_other
 
 /// Base case: well_formed_heap_part2 implies blue_fields_closed
 /// (blue_fields_closed is a weakening of part2 — restricted to blue objects)
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
 private let wfh_part2_implies_blue_fields_closed (g: heap)
   : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g)
           (ensures blue_fields_closed g)
@@ -2203,7 +2203,7 @@ private let wfh_part2_implies_blue_fields_closed (g: heap)
 ///   - Field 0 = next_fp (original next in chain). If is_pointer: in objects by fl_valid.
 ///   - Fields j > 0: addresses were in body of original dst_obj block (which was blue).
 ///     By bfc(major) for original block: pointer targets in objects(major) <= objects(new_major).
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
 private let rec alloc_search_preserves_bfc
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma
@@ -2526,7 +2526,7 @@ private let rec alloc_search_preserves_bfc
   end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
 private let alloc_spec_preserves_blue_fields_closed
   (major: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires
@@ -2555,7 +2555,7 @@ private let alloc_spec_preserves_blue_fields_closed
 /// 1. alloc_spec_preserves_blue_fields_closed -> bfc(new_major)
 /// 2. alloc_spec_obj_not_blue_part1 -> dst_obj is not blue in new_major
 /// 3. copy_fields only writes to [dst_obj, dst_obj+wosize*8), preserving blue object fields
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
 private let promote_object_preserves_bfc
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -2641,7 +2641,7 @@ private let promote_object_preserves_bfc
 
 /// Helper: promote_object preserves chain_objects_blue.
 /// After alloc_spec + copy_fields, non-blue objects still avoid the chain.
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 0 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
 let promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -2765,7 +2765,7 @@ let promote_object_preserves_chain_objects_blue
 #pop-options
 
 /// Inductive proof: promote_all_aux preserves blue_fields_closed.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let rec promote_all_aux_preserves_bfc
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -2823,7 +2823,7 @@ private let rec promote_all_aux_preserves_bfc
 #pop-options
 
 /// After promote_all, blue objects' pointer fields target valid objects.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
 let promote_all_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
