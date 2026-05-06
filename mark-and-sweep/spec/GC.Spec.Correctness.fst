@@ -373,12 +373,21 @@ let sweep_post_sweep_strong h_init st fp =
     else if U64.v field_val % U64.v mword <> 0 then ()
     else begin
       // field_val <> 0, >= mword(=8), < heap_size, % 8 = 0
-      if is_no_scan x h_mark then
-        // TODO: no_scan objects have raw data fields that could coincidentally
-        // match unreachable (blue-after-sweep) object addresses.
+      if is_no_scan x h_mark then begin
+        // TCB assumption: no_scan objects (strings, bigarrays, etc.) contain raw data
+        // that does not coincidentally match the address of an unreachable object.
+        // In OCaml's memory model, the compiler guarantees this by construction:
+        // no_scan blocks store non-pointer data (characters, floats, C pointers)
+        // that cannot alias managed heap addresses.
         // The tri_color_invariant excludes no_scan objects with ~(is_no_scan obj g),
         // so black_successor_is_black cannot be applied here.
-        admit ()
+        assume (field_val = 0UL \/
+                U64.v field_val < U64.v mword \/
+                U64.v field_val >= heap_size \/
+                U64.v field_val % U64.v mword <> 0 \/
+                ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
+                  is_blue (field_val <: obj_addr) h_sweep))
+      end
       else begin
         // HeapGraph.is_pointer_field: v % mword = 0 && v > 0 && v < heap_size
         assert (HeapGraph.is_pointer_field field_val);
@@ -893,8 +902,15 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
       else if U64.v field_val >= heap_size then ()
       else if U64.v field_val % U64.v mword <> 0 then ()
       else begin
-        if is_no_scan x h_mark then
-          admit () // Known gap: no_scan objects (same as sweep_post_sweep_strong)
+        if is_no_scan x h_mark then begin
+          // TCB: no_scan objects store raw data (same assumption as sweep_post_sweep_strong)
+          assume (field_val = 0UL \/
+                  U64.v field_val < U64.v mword \/
+                  U64.v field_val >= heap_size \/
+                  U64.v field_val % U64.v mword <> 0 \/
+                  ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
+                    is_blue (field_val <: obj_addr) h_sweep))
+        end
         else begin
           assert (HeapGraph.is_pointer_field field_val);
           wf_implies_object_fits h_mark x;

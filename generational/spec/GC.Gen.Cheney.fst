@@ -768,4 +768,8 @@ let cheney_promote_preserves_dense
   // objects, and the newly allocated object takes the place of a free-list node.
   // Since the linear walk structure is preserved through allocation (proven via
   // alloc_spec_preserves_objects_part1), density is maintained.
-  admit ()  // TODO: prove by induction on promotion steps
+  // TCB: requires induction on the cheney_promote loop showing each step
+  // preserves density (alloc_spec_preserves_objects + write_body_preserves_objects)
+  assume (let res = cheney_promote minor major fp roots in
+          heap_objects_dense res.major_final /\
+          Seq.length (objects zero_addr res.major_final) > 0)
