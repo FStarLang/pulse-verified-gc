@@ -611,12 +611,12 @@ let minor_alloc_preserves_existing (ms: minor_state)
                            (ensures minor_read_field {data=data'; bump=U64.uint_to_t new_bump} x i ==
                                    minor_read_field ms x i) =
     // The field read only depends on data and x, not on bump
-    // Use helper with explicit modular arithmetic
     FStar.Math.Lemmas.lemma_mult_le_right 8 (i + 2) (wz_x + 1);
     let byte_offset = xv + i * 8 in
     assert (byte_offset + 8 <= old_bump);
+    // byte_offset = hdr_addr + (i+1)*8, so byte_offset % 8 == hdr_addr % 8 == 0
+    assert (byte_offset == hdr_addr + (i + 1) * 8);
     FStar.Math.Lemmas.modulo_addition_lemma hdr_addr 8 (i + 1);
-    assert (hdr_addr % 8 == 0);
     assert (byte_offset % 8 == 0);
     minor_read_write_different ms.data ms.bump (U64.uint_to_t byte_offset) hdr
   in
