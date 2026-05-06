@@ -1,0 +1,43 @@
+/// Opaque chain_all_inv predicate for promote_all induction
+module GC.Gen.PromoteUpdate.PromoteFields.ChainInv
+
+open FStar.Seq
+module U64 = FStar.UInt64
+
+open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
+open GC.Spec.Fields
+open GC.Gen.Base
+open GC.Gen.MinorHeap
+open GC.Gen.Promote
+
+module AllocLemmas = GC.Spec.Allocator.Lemmas
+
+[@@"opaque_to_smt"]
+val chain_all_inv (minor: minor_state) (major: heap) (fp: U64.t)
+                  (live_set: seq U64.t) (fwd: forwarding_map) (n: nat) : prop
+
+val chain_all_inv_intro (minor: minor_state) (major: heap) (fp: U64.t)
+                        (live_set: seq U64.t) (fwd: forwarding_map) (n: nat)
+  : Lemma (requires
+      forall (k:nat). k < n /\ k < Seq.length live_set ==>
+        (let obj = Seq.index live_set k in
+         let wz_k = minor_wosize minor obj in
+         fwd obj <> 0UL /\ wz_k > 0 /\ is_val_addr (fwd obj) ==>
+         (Seq.mem ((fwd obj) <: obj_addr) (objects zero_addr major) /\
+          U64.v (wosize_of_object ((fwd obj) <: obj_addr) major) >= wz_k /\
+          AllocLemmas.chain_avoids major fp (fwd obj) (heap_size / U64.v mword) = true)))
+    (ensures chain_all_inv minor major fp live_set fwd n)
+
+val chain_all_inv_elim (minor: minor_state) (major: heap) (fp: U64.t)
+                       (live_set: seq U64.t) (fwd: forwarding_map) (n: nat)
+  : Lemma (requires chain_all_inv minor major fp live_set fwd n)
+    (ensures
+      forall (k:nat). k < n /\ k < Seq.length live_set ==>
+        (let obj = Seq.index live_set k in
+         let wz_k = minor_wosize minor obj in
+         fwd obj <> 0UL /\ wz_k > 0 /\ is_val_addr (fwd obj) ==>
+         (Seq.mem ((fwd obj) <: obj_addr) (objects zero_addr major) /\
+          U64.v (wosize_of_object ((fwd obj) <: obj_addr) major) >= wz_k /\
+          AllocLemmas.chain_avoids major fp (fwd obj) (heap_size / U64.v mword) = true)))

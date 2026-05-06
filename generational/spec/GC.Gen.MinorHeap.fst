@@ -164,7 +164,7 @@ let make_header_wosize (wosize: nat{wosize > 0 /\ wosize < pow2 54})
 /// ---------------------------------------------------------------------------
 
 /// If data1 and data2 agree below bump, chain_valid transfers
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_chain_valid_read_eq
   (data1 data2: minor_heap)
   (pos: nat{pos % 8 == 0})
@@ -208,7 +208,7 @@ let minor_pow2_bound : squash (pow2 57 < pow2 64 /\ minor_heap_size < pow2 64) =
   assert_norm (pow2 57 < pow2 64)
 
 /// Helper: unfold one level of minor_chain_valid to extract consequences
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_chain_valid_unfold
   (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
   : Lemma (requires pos + 8 <= bump /\ minor_chain_valid data pos bump == true)
@@ -225,7 +225,7 @@ let minor_chain_valid_unfold
 /// Extend chain_valid: if chain_valid from pos to old_bump,
 /// and at old_bump there's a valid header pointing to new_bump,
 /// then chain_valid from pos to new_bump.
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_chain_valid_extend_aux
   (data: minor_heap)
   (pos: nat{pos % 8 == 0})
@@ -277,7 +277,7 @@ let minor_chain_valid_extend
 /// ---------------------------------------------------------------------------
 
 /// Every element in the walk is a valid object address
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_objects_aux_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) 
                                  (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
                                  (x: U64.t)
@@ -372,7 +372,7 @@ let minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)
   end
 
 /// Walk produces same results when data agrees below bump
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_objects_aux_data_eq
   (data1 data2: minor_heap)
   (pos: nat{pos % 8 == 0})
@@ -399,7 +399,7 @@ let rec minor_objects_aux_data_eq
 
 /// If chain_valid from pos to both old_bump and new_bump (>=old_bump),
 /// everything in the walk with old_bump is also in the walk with new_bump
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_objects_aux_subset
   (data: minor_heap)
   (pos: nat{pos % 8 == 0})
@@ -432,7 +432,7 @@ let rec minor_objects_aux_subset
 #pop-options
 
 /// Walk from pos reaches old_bump and produces (old_bump + 8)
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_objects_aux_reaches_bump
   (data: minor_heap)
   (pos: nat{pos % 8 == 0})
@@ -481,7 +481,7 @@ let rec minor_objects_aux_reaches_bump
 #pop-options
 
 /// For objects in the walk with chain_valid, their next_pos <= bump
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 200 --split_queries always"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 200 --split_queries always --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_objects_aux_next_bound
   (data: minor_heap)
   (pos: nat{pos % 8 == 0})
@@ -521,7 +521,7 @@ let rec minor_objects_aux_next_bound
 /// Main proofs
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 150"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 150 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256})
   : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
@@ -562,7 +562,7 @@ let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
   minor_objects_aux_reaches_bump data' 0 old_bump new_bump
 #pop-options
 
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 150"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 150 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_alloc_preserves_existing (ms: minor_state) 
                                     (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                                     (tag: nat{tag < 256})
@@ -592,38 +592,31 @@ let minor_alloc_preserves_existing (ms: minor_state)
   minor_chain_valid_extend data' old_bump new_bump hdr;
   
   // Part 1: Seq.mem x (minor_objects res.ms_out)
-  // data' agrees with ms.data below old_bump
   minor_objects_aux_data_eq ms.data data' 0 old_bump;
-  // x is in walk from 0 to old_bump in data'
-  // Everything in walk to old_bump is also in walk to new_bump (subset)
   minor_objects_aux_subset data' 0 old_bump new_bump x;
   
   // Part 2: minor_wosize preservation
   minor_objects_valid ms x;
   let xv = U64.v x in
   let hdr_addr = xv - 8 in
-  // Show hdr is below old_bump
   minor_objects_aux_next_bound ms.data 0 old_bump x;
-  // From next_bound: wz > 0 and hdr_addr + (wz+1)*8 <= old_bump
-  // So hdr_addr + 16 <= old_bump, meaning hdr_addr <= old_bump - 16 < old_bump
   assert (hdr_addr + 8 <= minor_heap_size);
   assert (hdr_addr < old_bump);
-  // Write is at old_bump, header is at hdr_addr < old_bump, so they don't overlap
   minor_read_write_different ms.data ms.bump (U64.uint_to_t hdr_addr) hdr;
-  // minor_read_word data' (uint_to_t hdr_addr) == minor_read_word ms.data (uint_to_t hdr_addr)
   
-  // Part 3: field preservation
+  // Part 3: field preservation — delegate to extracted helper
   let hdr_x = minor_read_word ms.data (U64.uint_to_t hdr_addr) in
   let wz_x = U64.v (U64.shift_right hdr_x 10ul) in
-  // From next_bound: hdr_addr + (wz_x + 1) * 8 <= old_bump
-  let aux (i:nat) : Lemma (requires i < wz_x) 
-                           (ensures minor_read_field {data=data'; bump=U64.uint_to_t new_bump} x i == 
+  let aux (i:nat) : Lemma (requires i < wz_x)
+                           (ensures minor_read_field {data=data'; bump=U64.uint_to_t new_bump} x i ==
                                    minor_read_field ms x i) =
-    let byte_offset = xv + i * 8 in
-    // byte_offset + 8 = hdr_addr + (i+2)*8 <= hdr_addr + (wz_x+1)*8 <= old_bump
+    // The field read only depends on data and x, not on bump
+    // Use helper with explicit modular arithmetic
     FStar.Math.Lemmas.lemma_mult_le_right 8 (i + 2) (wz_x + 1);
+    let byte_offset = xv + i * 8 in
     assert (byte_offset + 8 <= old_bump);
     FStar.Math.Lemmas.modulo_addition_lemma hdr_addr 8 (i + 1);
+    assert (hdr_addr % 8 == 0);
     assert (byte_offset % 8 == 0);
     minor_read_write_different ms.data ms.bump (U64.uint_to_t byte_offset) hdr
   in

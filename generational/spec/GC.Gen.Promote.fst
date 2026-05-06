@@ -736,3 +736,232 @@ let promote_all_preserves_wfh_part4
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   promote_all_aux_preserves_wfh_part4 minor major fp live_set empty_forwarding 0
 
+
+/// ---------------------------------------------------------------------------
+/// fields_match_minor intro/elim lemmas (predicate is opaque_to_smt, recursive)
+/// ---------------------------------------------------------------------------
+
+let fields_match_minor_empty
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t)
+  : Lemma (fields_match_minor minor major fwd live_set 0)
+  = reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set 0)
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+let fields_match_minor_extend
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      fields_match_minor minor major fwd live_set idx /\
+      idx < Seq.length live_set /\
+      (let obj = Seq.index live_set idx in
+       let wz = minor_wosize minor obj in
+       fwd obj = 0UL \/ wz = 0 \/
+       (fwd obj <> 0UL /\ wz > 0 /\
+        (dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0 ==>
+         (forall (j:nat). j < wz ==>
+           read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+           minor_read_field minor obj j)))))
+    (ensures fields_match_minor minor major fwd live_set (idx + 1))
+  = // Unfold one step: fields_match_minor ... (idx+1) = fields_match_minor ... idx /\ body(idx)
+    reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set (idx + 1))
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+let rec fields_match_minor_elim_helper
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat) (k: nat)
+  : Lemma (requires fields_match_minor minor major fwd live_set idx /\
+                    k < idx /\ k < Seq.length live_set)
+          (ensures (let obj = Seq.index live_set k in
+                    let wz = minor_wosize minor obj in
+                    fwd obj <> 0UL /\ wz > 0 ==>
+                    (dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0 ==>
+                     (forall (j:nat). j < wz ==>
+                       read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+                       minor_read_field minor obj j))))
+          (decreases (idx - k))
+  = // Unfold one step: fields_match_minor ... idx = fields_match_minor ... (idx-1) /\ body(idx-1)
+    reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set idx);
+    if k = idx - 1 then ()
+    else fields_match_minor_elim_helper minor major fwd live_set (idx - 1) k
+#pop-options
+
+/// Helper: derive dst_fields_valid from scalar upper bound + alignment
+#push-options "--z3rlimit 20"
+private let dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
+  : Lemma (requires U64.v addr % 8 == 0 /\ U64.v addr + (wz - 1) * 8 + 8 <= heap_size)
+          (ensures dst_fields_valid addr wz)
+  = let aux (j': nat)
+      : Lemma (requires j' < wz)
+              (ensures U64.v addr + j' * 8 + 8 <= heap_size /\ (U64.v addr + j' * 8) % 8 == 0)
+    = assert (j' <= wz - 1);
+      FStar.Math.Lemmas.lemma_mult_le_right 8 j' (wz - 1)
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 20"
+let fields_match_minor_elim_lemma
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat) (k: nat) (j: nat) (field_addr: hp_addr)
+  : Lemma (requires
+      fields_match_minor minor major fwd live_set idx /\
+      k < idx /\ k < Seq.length live_set /\
+      (let obj = Seq.index live_set k in
+       let wz = minor_wosize minor obj in
+       fwd obj <> 0UL /\ wz > 0 /\ j < wz /\
+       U64.v (fwd obj) % 8 == 0 /\
+       U64.v (fwd obj) + (wz - 1) * 8 + 8 <= heap_size /\
+       field_addr == U64.uint_to_t (U64.v (fwd obj) + j * 8)))
+    (ensures (let obj = Seq.index live_set k in
+              read_word major field_addr == minor_read_field minor obj j))
+  = let obj = Seq.index live_set k in
+    let wz = minor_wosize minor obj in
+    fields_match_minor_elim_helper minor major fwd live_set idx k;
+    dst_fields_valid_from_bounds (fwd obj) wz
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let rec fields_match_minor_weaken
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx idx': nat)
+  : Lemma (requires fields_match_minor minor major fwd live_set idx /\ idx' <= idx)
+          (ensures fields_match_minor minor major fwd live_set idx')
+          (decreases (idx - idx'))
+  = if idx = idx' then ()
+    else begin
+      reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set idx);
+      fields_match_minor_weaken minor major fwd live_set (idx - 1) idx'
+    end
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let rec fields_match_minor_intro
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      (forall (k:nat). k < idx /\ k < Seq.length live_set ==>
+        (let obj = Seq.index live_set k in
+         let wz = minor_wosize minor obj in
+         fwd obj <> 0UL /\ wz > 0 ==>
+         (let new_addr = fwd obj in
+          dst_fields_valid new_addr wz /\
+          U64.v new_addr % 8 == 0 ==>
+          (forall (j:nat). j < wz ==>
+            read_word major (U64.uint_to_t (U64.v new_addr + j * 8)) ==
+            minor_read_field minor obj j)))))
+    (ensures fields_match_minor minor major fwd live_set idx)
+    (decreases idx)
+  = reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set idx);
+    if idx = 0 then ()
+    else fields_match_minor_intro minor major fwd live_set (idx - 1)
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let rec fields_match_minor_intro_flat
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      (forall (k:nat) (j:nat).
+        (k < idx /\ k < Seq.length live_set /\
+         (let obj = Seq.index live_set k in
+          let wz = minor_wosize minor obj in
+          fwd obj <> 0UL /\ wz > 0 /\ j < wz /\
+          dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0)) ==>
+        (let obj = Seq.index live_set k in
+         read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+         minor_read_field minor obj j)))
+    (ensures fields_match_minor minor major fwd live_set idx)
+    (decreases idx)
+  = reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set idx);
+    if idx = 0 then ()
+    else fields_match_minor_intro_flat minor major fwd live_set (idx - 1)
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let rec fields_match_minor_frame
+  (minor: minor_state) (major major': heap) (fwd fwd': forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      fields_match_minor minor major fwd live_set idx /\
+      (forall (k:nat). k < idx /\ k < Seq.length live_set ==>
+        (let obj = Seq.index live_set k in
+         fwd' obj == fwd obj /\
+         (let wz = minor_wosize minor obj in
+          fwd obj <> 0UL /\ wz > 0 ==>
+          (let addr = fwd obj in
+           dst_fields_valid addr wz /\ U64.v addr % 8 == 0 ==>
+           (forall (j:nat). j < wz ==>
+             read_word major' (U64.uint_to_t (U64.v addr + j * 8)) ==
+             read_word major (U64.uint_to_t (U64.v addr + j * 8))))))))
+    (ensures fields_match_minor minor major' fwd' live_set idx)
+    (decreases idx)
+  = reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set idx);
+    reveal_opaque (`%fields_match_minor) (fields_match_minor minor major' fwd' live_set idx);
+    if idx = 0 then ()
+    else fields_match_minor_frame minor major major' fwd fwd' live_set (idx - 1)
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+let rec fields_match_minor_intro_by_proof
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  (proof: (k:nat -> j:nat -> Lemma
+    (requires k < idx /\ k < Seq.length live_set /\
+      (let obj = Seq.index live_set k in
+       let wz = minor_wosize minor obj in
+       fwd obj <> 0UL /\ wz > 0 /\ j < wz /\
+       dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0))
+    (ensures (let obj = Seq.index live_set k in
+       read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+       minor_read_field minor obj j))))
+  : Lemma (ensures fields_match_minor minor major fwd live_set idx)
+          (decreases idx)
+  = if idx = 0 then fields_match_minor_empty minor major fwd live_set
+    else begin
+      fields_match_minor_intro_by_proof minor major fwd live_set (idx - 1)
+        (fun k j -> proof k j);
+      if idx - 1 < Seq.length live_set then begin
+        let k = idx - 1 in
+        let obj = Seq.index live_set k in
+        let wz = minor_wosize minor obj in
+        let new_addr = fwd obj in
+        // Use fields_match_minor_extend to go from (idx-1) to idx.
+        // Its requires needs a disjunction about the object at k=idx-1.
+        // We establish the third disjunct using impl_intro_gen for the
+        // inner implication where forall j's well-formedness depends on
+        // dst_fields_valid.
+        if fwd obj = 0UL || wz = 0 then
+          fields_match_minor_extend minor major fwd live_set k
+        else begin
+          // fwd obj <> 0UL /\ wz > 0
+          // Need: dst_fields_valid new_addr wz /\ align ==> forall j. ...
+          // Use impl_intro_gen: q's well-formedness depends on p
+          Classical.impl_intro_gen
+            #(dst_fields_valid new_addr wz /\ U64.v new_addr % 8 == 0)
+            #(fun (_: squash (dst_fields_valid new_addr wz /\ U64.v new_addr % 8 == 0)) ->
+                forall (j:nat). j < wz ==>
+                  read_word major (U64.uint_to_t (U64.v new_addr + j * 8)) ==
+                  minor_read_field minor obj j)
+            (fun (_: squash (dst_fields_valid new_addr wz /\ U64.v new_addr % 8 == 0)) ->
+              // Can't use (move_requires step) where step has (requires j < wz),
+              // because move_requires extracts #q as a standalone nat -> Type,
+              // which fails well-formedness for U64.uint_to_t without bounds.
+              // Solution: put j < wz as ==> in ensures (well-formed because
+              // U64.uint_to_t is checked under the ==> antecedent j < wz).
+              let step (j:nat) : Lemma
+                (ensures (j < wz ==>
+                  read_word major (U64.uint_to_t (U64.v new_addr + j * 8)) ==
+                  minor_read_field minor obj j))
+                = if j < wz then proof k j else ()
+              in
+              Classical.forall_intro step);
+          fields_match_minor_extend minor major fwd live_set k
+        end
+      end else
+        // idx - 1 >= Seq.length live_set, so the implication in
+        // fields_match_minor's definition is vacuously true.
+        reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set idx)
+    end
+#pop-options

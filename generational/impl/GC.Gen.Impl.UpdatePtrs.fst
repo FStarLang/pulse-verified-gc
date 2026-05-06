@@ -315,7 +315,7 @@ let color_not2_implies_not_blue (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size
 #pop-options
 
 /// Update all major-heap objects' pointer fields by walking the heap linearly.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1 --using_facts_from '* -GC.Gen.Promote.fields_match_minor_empty -GC.Gen.Promote.fields_match_minor_extend -GC.Gen.Promote.fields_match_minor_elim_lemma -GC.Gen.Promote.fields_match_minor_weaken -GC.Gen.Promote.fields_match_minor_intro -GC.Gen.Promote.fields_match_minor_intro_flat -GC.Gen.Promote.fields_match_minor_frame -GC.Gen.Promote.fields_match_minor_intro_by_proof -FStar.UInt.to_vec -FStar.BitVector'"
 fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
                       (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **

@@ -570,18 +570,143 @@ let blue_fields_closed (major: heap) : prop =
 
 /// Predicate: all promoted objects in the major heap have field data matching
 /// the original minor-heap values (pre-pointer-update).
-let fields_match_minor (minor: minor_state) (major: heap) (fwd: forwarding_map)
-                       (live_set: seq U64.t) (idx: nat) : prop =
-  forall (k:nat). k < idx /\ k < Seq.length live_set ==>
-    (let obj = Seq.index live_set k in
-     let wz = minor_wosize minor obj in
-     fwd obj <> 0UL /\ wz > 0 ==>
-     (let new_addr = fwd obj in
-      dst_fields_valid new_addr wz /\
-      U64.v new_addr % 8 == 0 ==>
-      (forall (j:nat). j < wz ==>
-        read_word major (U64.uint_to_t (U64.v new_addr + j * 8)) ==
-        minor_read_field minor obj j)))
+/// Defined recursively so reveal_opaque unfolds only one step at a time.
+[@@"opaque_to_smt"]
+let rec fields_match_minor (minor: minor_state) (major: heap) (fwd: forwarding_map)
+                           (live_set: seq U64.t) (idx: nat) : Tot prop (decreases idx) =
+  if idx = 0 then True
+  else
+    fields_match_minor minor major fwd live_set (idx - 1) /\
+    (idx - 1 < Seq.length live_set ==>
+      (let obj = Seq.index live_set (idx - 1) in
+       let wz = minor_wosize minor obj in
+       fwd obj <> 0UL /\ wz > 0 ==>
+       (let new_addr = fwd obj in
+        dst_fields_valid new_addr wz /\
+        U64.v new_addr % 8 == 0 ==>
+        (forall (j:nat). j < wz ==>
+          read_word major (U64.uint_to_t (U64.v new_addr + j * 8)) ==
+          minor_read_field minor obj j))))
+
+/// Introduce fields_match_minor at idx=0 (trivially true).
+val fields_match_minor_empty
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t)
+  : Lemma (fields_match_minor minor major fwd live_set 0)
+
+/// Extend fields_match_minor from idx to idx+1 given:
+/// - the predicate holds up to idx
+/// - the new field at idx is correct (or fwd obj = 0 / wz = 0)
+val fields_match_minor_extend
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      fields_match_minor minor major fwd live_set idx /\
+      idx < Seq.length live_set /\
+      (let obj = Seq.index live_set idx in
+       let wz = minor_wosize minor obj in
+       fwd obj = 0UL \/ wz = 0 \/
+       (fwd obj <> 0UL /\ wz > 0 /\
+        (dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0 ==>
+         (forall (j:nat). j < wz ==>
+           read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+           minor_read_field minor obj j)))))
+    (ensures fields_match_minor minor major fwd live_set (idx + 1))
+
+/// Eliminate fields_match_minor: extract the field match for a given k and j.
+val fields_match_minor_elim_lemma
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat) (k: nat) (j: nat) (field_addr: hp_addr)
+  : Lemma (requires
+      fields_match_minor minor major fwd live_set idx /\
+      k < idx /\ k < Seq.length live_set /\
+      (let obj = Seq.index live_set k in
+       let wz = minor_wosize minor obj in
+       fwd obj <> 0UL /\ wz > 0 /\ j < wz /\
+       U64.v (fwd obj) % 8 == 0 /\
+       U64.v (fwd obj) + (wz - 1) * 8 + 8 <= heap_size /\
+       field_addr == U64.uint_to_t (U64.v (fwd obj) + j * 8)))
+    (ensures (let obj = Seq.index live_set k in
+              read_word major field_addr == minor_read_field minor obj j))
+
+/// Weaken: if fields_match_minor holds for idx, it holds for any idx' <= idx.
+val fields_match_minor_weaken
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx idx': nat)
+  : Lemma (requires fields_match_minor minor major fwd live_set idx /\ idx' <= idx)
+          (ensures fields_match_minor minor major fwd live_set idx')
+
+/// Introduce fields_match_minor from a pointwise proof for each k.
+/// This is the inverse of the forall definition — takes individual k-level proofs
+/// and assembles them into the recursive predicate.
+val fields_match_minor_intro
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      (forall (k:nat). k < idx /\ k < Seq.length live_set ==>
+        (let obj = Seq.index live_set k in
+         let wz = minor_wosize minor obj in
+         fwd obj <> 0UL /\ wz > 0 ==>
+         (let new_addr = fwd obj in
+          dst_fields_valid new_addr wz /\
+          U64.v new_addr % 8 == 0 ==>
+          (forall (j:nat). j < wz ==>
+            read_word major (U64.uint_to_t (U64.v new_addr + j * 8)) ==
+            minor_read_field minor obj j)))))
+    (ensures fields_match_minor minor major fwd live_set idx)
+
+/// Flat intro: introduce fields_match_minor from a single flat forall over (k, j).
+/// Avoids nested closures in callers — only needs forall k j. precond ==> read == minor_read.
+val fields_match_minor_intro_flat
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      (forall (k:nat) (j:nat).
+        (k < idx /\ k < Seq.length live_set /\
+         (let obj = Seq.index live_set k in
+          let wz = minor_wosize minor obj in
+          fwd obj <> 0UL /\ wz > 0 /\ j < wz /\
+          dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0)) ==>
+        (let obj = Seq.index live_set k in
+         read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+         minor_read_field minor obj j)))
+    (ensures fields_match_minor minor major fwd live_set idx)
+
+/// Frame lemma: if fields_match_minor holds and all relevant field reads are
+/// preserved from major to major', then fields_match_minor holds on major'.
+/// Requires fwd' to agree with fwd on all relevant entries.
+val fields_match_minor_frame
+  (minor: minor_state) (major major': heap) (fwd fwd': forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  : Lemma (requires
+      fields_match_minor minor major fwd live_set idx /\
+      (forall (k:nat). k < idx /\ k < Seq.length live_set ==>
+        (let obj = Seq.index live_set k in
+         fwd' obj == fwd obj /\
+         (let wz = minor_wosize minor obj in
+          fwd obj <> 0UL /\ wz > 0 ==>
+          (let addr = fwd obj in
+           dst_fields_valid addr wz /\ U64.v addr % 8 == 0 ==>
+           (forall (j:nat). j < wz ==>
+             read_word major' (U64.uint_to_t (U64.v addr + j * 8)) ==
+             read_word major (U64.uint_to_t (U64.v addr + j * 8))))))))
+    (ensures fields_match_minor minor major' fwd' live_set idx)
+
+/// Higher-order intro: introduce fields_match_minor by calling a proof function
+/// at each (k, j). Avoids E-matching issues with universals in _intro_flat.
+val fields_match_minor_intro_by_proof
+  (minor: minor_state) (major: heap) (fwd: forwarding_map)
+  (live_set: seq U64.t) (idx: nat)
+  (proof: (k:nat -> j:nat -> Lemma
+    (requires k < idx /\ k < Seq.length live_set /\
+      (let obj = Seq.index live_set k in
+       let wz = minor_wosize minor obj in
+       fwd obj <> 0UL /\ wz > 0 /\ j < wz /\
+       dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0))
+    (ensures (let obj = Seq.index live_set k in
+       read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+       minor_read_field minor obj j))))
+  : Lemma (ensures fields_match_minor minor major fwd live_set idx)
 
 /// All free-chain objects are blue (standard allocator invariant).
 [@@"opaque_to_smt"]

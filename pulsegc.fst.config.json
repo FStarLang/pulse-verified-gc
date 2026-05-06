@@ -11,6 +11,8 @@
     "common/lib",
     "common/impl",
     "mark-and-sweep/spec",
-    "mark-and-sweep/impl"
+    "mark-and-sweep/impl",
+    "generational/spec",
+    "generational/impl"
   ]
 }

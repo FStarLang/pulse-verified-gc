@@ -243,13 +243,19 @@ val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map
                     blue_fields_closed major)
     (ensures well_formed_heap_part2 (update_major_pointers major fwd))
 
+/// Distinctness: no two positions in live_set share the same address.
+let distinct_live_set (live_set: seq U64.t) : prop =
+  forall (i j: nat). i < Seq.length live_set /\ j < Seq.length live_set /\ i <> j ==>
+    Seq.index live_set i <> Seq.index live_set j
+
 /// After promote_all_spec, all promoted objects' fields match the minor heap values.
 /// This is the pre-pointer-update field correspondence.
 val promote_all_preserves_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    distinct_live_set live_set)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fields_match_minor minor res.major_final res.fwd_map
                                        live_set (Seq.length live_set)))
