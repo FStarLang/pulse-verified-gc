@@ -151,6 +151,7 @@ val alloc_split_facts :
                   rem_hd_nat < heap_size /\
                   rem_obj_nat < heap_size /\
                   next_hd_nat <= heap_size /\
+                  next_hd_nat % 8 == 0 /\
                   rem_hd_nat % 8 == 0 /\
                   rem_obj_nat % 8 == 0 /\
                   rem_hd_nat < pow2 64 /\

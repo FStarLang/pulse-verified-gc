@@ -783,6 +783,7 @@ let alloc_split_facts
                     rem_hd_nat < heap_size /\
                     rem_obj_nat < heap_size /\
                     next_hd_nat <= heap_size /\
+                    next_hd_nat % 8 == 0 /\
                     rem_hd_nat % 8 == 0 /\
                     rem_obj_nat % 8 == 0 /\
                     rem_hd_nat < pow2 64 /\
@@ -827,6 +828,8 @@ let alloc_split_facts
     let rem_obj_nat = rem_hd_nat + 8 in
     let next_hd_nat = U64.v hd + (block_wz + 1) * 8 in
     let rem_wz = block_wz - wz - 1 in
+    // Alignment: hd is word-aligned, (block_wz+1)*8 is multiple of 8
+    assert (next_hd_nat % 8 == 0);
     // Wosize bounds: block_wz < pow2 54, wz < block_wz, rem_wz < block_wz
     assert (wz < pow2 54);
     assert (rem_wz < pow2 54);
