@@ -1210,8 +1210,7 @@ private let rec write_word_preserves_objects_past (start: hp_addr) (g: heap) (ad
 /// Phase tracking: before obj's header, at it, or past it
 #push-options "--z3rlimit 1600 --fuel 4 --ifuel 2"
 private val write_word_preserves_objects_aux : (start: hp_addr) -> (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
-  Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects start g) /\
+  Lemma (requires Seq.mem obj (objects start g) /\
                   U64.v addr >= U64.v obj /\
                   U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                   U64.v addr % 8 = 0)
@@ -1299,6 +1298,19 @@ val write_word_preserves_objects_from : (start: hp_addr) -> (g: heap) -> (obj: o
 
 let write_word_preserves_objects_from start g obj addr v =
   write_word_preserves_objects_aux start g obj addr v
+
+/// Field write preserves objects — variant requiring only well_formed_heap_part1.
+/// Same proof as write_word_preserves_objects but with weaker precondition.
+val write_word_preserves_objects_part1 : (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  U64.v addr >= U64.v obj /\
+                  U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
+                  U64.v addr % 8 = 0)
+        (ensures objects 0UL (write_word g addr v) == objects 0UL g)
+
+let write_word_preserves_objects_part1 g obj addr v =
+  write_word_preserves_objects_aux 0UL g obj addr v
 
 /// Write to address before start preserves objects from that start
 val write_word_preserves_objects_before : (start: hp_addr) -> (g: heap) -> (addr: hp_addr) -> (v: U64.t) ->

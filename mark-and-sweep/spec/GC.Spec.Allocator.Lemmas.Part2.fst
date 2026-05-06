@@ -622,6 +622,120 @@ private let alloc_exact_fl_transfer_pre_part1
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// P2h2: fl_valid_field_write_part1 — like fl_valid_field_write but only needs
+///       well_formed_heap_part1 (not full well_formed_heap)
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let rec fl_valid_field_write_part1
+  (g: heap) (p: obj_addr) (v: U64.t) (fp: U64.t) (fuel tail_fuel: nat)
+  : Lemma
+    (requires fl_valid g fp fuel /\
+              well_formed_heap_part1 g /\
+              Seq.mem p (objects 0UL g) /\
+              U64.v (wosize_of_object p g) >= 1 /\
+              v <> p /\
+              fl_valid (write_word g (p <: hp_addr) v) v tail_fuel /\
+              tail_fuel >= fuel)
+    (ensures fl_valid (write_word g (p <: hp_addr) v) fp fuel)
+    (decreases fuel)
+  = let g' = write_word g (p <: hp_addr) v in
+    if fuel = 0 then ()
+    else if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else begin
+      let obj_fp : obj_addr = fp in
+      let hd_fp = hd_address obj_fp in
+      // objects preserved by field write
+      wfh_part1_obj_bound g p;
+      wosize_of_object_bound p g;
+      write_word_preserves_objects_part1 g p (p <: hp_addr) v;
+      assert (objects 0UL g' == objects 0UL g);
+      assert (Seq.mem fp (objects 0UL g'));
+      // wosize preserved: hd_fp ≠ p (the write position)
+      hd_address_spec obj_fp;
+      if U64.v fp <> U64.v p then begin
+        if U64.v fp > U64.v p then
+          objects_separated 0UL g p obj_fp
+        else
+          objects_separated 0UL g obj_fp p
+      end;
+      read_write_different g (p <: hp_addr) (hd_fp <: hp_addr) v;
+      wosize_of_object_spec obj_fp g;
+      wosize_of_object_spec obj_fp g';
+      assert (U64.v (wosize_of_object obj_fp g') >= 1);
+      if U64.v hd_fp + 16 <= heap_size then begin
+        if fp = p then begin
+          read_write_same g (p <: hp_addr) v;
+          fl_valid_weaken g' v tail_fuel (fuel - 1)
+        end else begin
+          read_write_different g (p <: hp_addr) (obj_fp <: hp_addr) v;
+          fl_valid_field_write_part1 g p v (read_word g obj_fp) (fuel - 1) tail_fuel
+        end
+      end
+      else ()
+    end
+#pop-options
+
+/// fl_valid_field_write_tail_part1: establishes fl_valid g' v fuel
+/// where g' = write_word g p v, using only well_formed_heap_part1.
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let rec fl_valid_field_write_tail_part1
+  (g: heap) (p: obj_addr) (v: U64.t) (fuel: nat)
+  : Lemma
+    (requires well_formed_heap_part1 g /\
+              Seq.mem p (objects 0UL g) /\
+              U64.v (wosize_of_object p g) >= 1 /\
+              v <> p /\
+              fl_valid g v fuel)
+    (ensures fl_valid (write_word g (p <: hp_addr) v) v fuel)
+    (decreases fuel)
+  = let g' = write_word g (p <: hp_addr) v in
+    if fuel = 0 then ()
+    else if v = 0UL then ()
+    else if U64.v v < U64.v mword then ()
+    else if U64.v v >= heap_size then ()
+    else if U64.v v % U64.v mword <> 0 then ()
+    else begin
+      let obj_v : obj_addr = v in
+      let hd_v = hd_address obj_v in
+      // objects preserved
+      wfh_part1_obj_bound g p;
+      wosize_of_object_bound p g;
+      write_word_preserves_objects_part1 g p (p <: hp_addr) v;
+      assert (objects 0UL g' == objects 0UL g);
+      // wosize preserved at v: hd_v ≠ p
+      hd_address_spec obj_v;
+      if U64.v v <> U64.v p then begin
+        if U64.v v > U64.v p then
+          objects_separated 0UL g p obj_v
+        else
+          objects_separated 0UL g obj_v p
+      end;
+      read_write_different g (p <: hp_addr) (hd_v <: hp_addr) v;
+      wosize_of_object_spec obj_v g;
+      wosize_of_object_spec obj_v g';
+      if U64.v hd_v + 16 <= heap_size then begin
+        // v ≠ p, so link at v unchanged
+        read_write_different g (p <: hp_addr) (obj_v <: hp_addr) v;
+        let link = read_word g obj_v in
+        assert (read_word g' obj_v == link);
+        assert (link <> v);
+        // IH: fl_valid g' v (fuel-1)
+        fl_valid_weaken g v fuel (fuel - 1);
+        fl_valid_field_write_tail_part1 g p v (fuel - 1);
+        // fl_valid g' link (fuel-1) via fl_valid_field_write_part1
+        fl_valid_field_write_part1 g p v link (fuel - 1) (fuel - 1)
+      end
+      else ()
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// P2i: alloc_search_preserves_fl_valid_part1 — recursive proof that alloc_search
 ///      preserves fl_valid under well_formed_heap_part1 only
 /// ---------------------------------------------------------------------------
@@ -926,10 +1040,9 @@ private let rec alloc_search_preserves_fl_valid_part1
                assert (U64.v new_fp < U64.v prev_fp)
              end);
             assert (new_fp <> prev_fp);
-            // TCB: fl_valid_field_write_tail/fl_valid_field_write require well_formed_heap
-            // but we only have well_formed_heap_part1. Needs _part1 variants.
-            assume (fl_valid (write_word g' (prev_obj <: hp_addr) new_fp) new_fp big_fuel);
-            assume (fl_valid (write_word g' (prev_obj <: hp_addr) new_fp) head_fp big_fuel)
+            // Use _part1 variants of fl_valid_field_write
+            fl_valid_field_write_tail_part1 g' prev_obj new_fp big_fuel;
+            fl_valid_field_write_part1 g' prev_obj new_fp head_fp big_fuel big_fuel
 
 
 
@@ -970,10 +1083,9 @@ private let rec alloc_search_preserves_fl_valid_part1
               assert false
             end else ());
             assert (new_fp <> prev_fp);
-            // TCB: fl_valid_field_write_tail/fl_valid_field_write require well_formed_heap
-            // but we only have well_formed_heap_part1. Needs _part1 variants.
-            assume (fl_valid (write_word g' (prev_obj <: hp_addr) new_fp) new_fp big_fuel);
-            assume (fl_valid (write_word g' (prev_obj <: hp_addr) new_fp) head_fp big_fuel)
+            // Use _part1 variants of fl_valid_field_write
+            fl_valid_field_write_tail_part1 g' prev_obj new_fp big_fuel;
+            fl_valid_field_write_part1 g' prev_obj new_fp head_fp big_fuel big_fuel
           end
         end
         else ()
