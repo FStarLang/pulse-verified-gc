@@ -107,6 +107,12 @@ common/impl/%.checked: common/impl/%
 mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.fst.checked: mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.fst
 	$(FSTAR) --z3rlimit 400 $<
 
+mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Split.fst.checked: mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Split.fst
+	$(FSTAR) --z3rlimit 400 $<
+
+mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Part1.fst.checked: mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Part1.fst
+	$(FSTAR) --z3rlimit 400 $<
+
 mark-and-sweep/spec/%.checked: mark-and-sweep/spec/%
 	$(FSTAR) $<
 
