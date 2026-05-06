@@ -11,7 +11,7 @@ open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.Allocator
-open GC.Spec.Allocator.Lemmas
+open GC.Spec.Allocator.Lemmas.Header
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
@@ -318,7 +318,7 @@ private let rec split_old_mem_in_new_part1
 
 #restart-solver
 #push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
-private let alloc_split_facts_part1
+let alloc_split_facts_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects 0UL g) /\
@@ -360,8 +360,9 @@ private let alloc_split_facts_part1
                      getWosize (read_word g3 hd) == U64.uint_to_t wz /\
                      getWosize (read_word g3 rem_hd) == U64.uint_to_t rem_wz /\
                      (next_hd_nat < heap_size ==>
-                       objects (U64.uint_to_t next_hd_nat <: hp_addr) g3 ==
-                       objects (U64.uint_to_t next_hd_nat <: hp_addr) g))))
+                       (let next_hd_hp : hp_addr = U64.uint_to_t next_hd_nat in
+                        objects next_hd_hp g3 ==
+                        objects next_hd_hp g)))))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
@@ -400,7 +401,7 @@ private let alloc_split_facts_part1
 
 #restart-solver
 #push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
-private let alloc_split_g3_agrees_part1
+let alloc_split_g3_agrees_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (p: hp_addr)
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects 0UL g) /\
@@ -444,7 +445,7 @@ private let alloc_split_g3_agrees_part1
 
 #restart-solver
 #push-options "--split_queries always --z3rlimit 50 --fuel 0 --ifuel 0"
-private let alloc_split_old_in_new_part1
+let alloc_split_old_in_new_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects 0UL g) /\
@@ -485,7 +486,7 @@ private let alloc_split_old_in_new_part1
 
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
-private let alloc_from_block_objects_facts_part1
+let alloc_from_block_objects_facts_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects 0UL g) /\
@@ -519,7 +520,7 @@ private let alloc_from_block_objects_facts_part1
 
 #restart-solver
 #push-options "--z3rlimit 40 --fuel 2 --ifuel 0"
-private let rec write_body_preserves_objects_local
+let rec write_body_preserves_objects_local
   (start: hp_addr) (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires
       Seq.mem obj (objects start g) /\
@@ -566,116 +567,6 @@ private let rec write_body_preserves_objects_local
     end
   end
 #pop-options
-
-/// ---------------------------------------------------------------------------
-/// P1f: alloc_search_preserves_objects_part1
-/// ---------------------------------------------------------------------------
-
-#restart-solver
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
-private let rec alloc_search_preserves_objects_part1
-  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g cur_fp fuel /\
-                    fl_chain_terminates g cur_fp fuel /\
-                    (prev_fp <> 0UL ==>
-                      (prev_fp <> cur_fp /\
-                       U64.v prev_fp >= U64.v mword /\
-                       U64.v prev_fp < heap_size /\
-                       U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
-                       U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
-                    (forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
-                      Seq.mem x (objects 0UL r.heap_out))))
-          (decreases fuel)
-  = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
-    else if U64.v cur_fp >= heap_size then ()
-    else if U64.v cur_fp % U64.v mword <> 0 then ()
-    else begin
-      let obj : obj_addr = cur_fp in
-      let hd = hd_address obj in
-      let hdr = read_word g hd in
-      let block_wz = U64.v (getWosize hdr) in
-      hd_address_spec obj;
-      hd_address_bounds obj;
-      fl_valid_gives_mem g cur_fp fuel;
-      fl_valid_gives_wosize g cur_fp fuel;
-      assert (Seq.mem obj (objects 0UL g));
-      let next_fp =
-        if U64.v hd + 16 <= heap_size then read_word g obj
-        else 0UL
-      in
-      if block_wz >= wz then begin
-        // Found a suitable block
-        alloc_from_block_objects_facts_part1 g obj wz next_fp;
-        let (g', new_fp) = alloc_from_block g obj wz next_fp in
-        if prev_fp = 0UL then ()
-        else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
-                U64.v prev_fp % U64.v mword = 0 then begin
-          let prev : obj_addr = prev_fp in
-          assert (Seq.mem prev (objects 0UL g'));
-          wosize_of_object_spec prev g;
-          wosize_of_object_bound prev g;
-          hd_address_spec prev;
-          if block_wz - wz >= 2 then begin
-            let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
-            if U64.v prev < U64.v obj then begin
-              objects_separated 0UL g prev obj;
-              assert (U64.v (hd_address prev) < U64.v hd);
-              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
-            end else begin
-              wosize_of_object_spec obj g;
-              objects_separated 0UL g obj prev;
-              assert (U64.v (hd_address prev) > U64.v hd + block_wz * 8);
-              assert (U64.v (hd_address prev) <> U64.v hd);
-              assert (U64.v (hd_address prev) <> rem_hd_nat);
-              assert (U64.v (hd_address prev) <> rem_hd_nat + 8);
-              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
-            end
-          end else begin
-            assert (prev <> obj);
-            if U64.v prev < U64.v obj then
-              objects_separated 0UL g prev obj
-            else
-              objects_separated 0UL g obj prev;
-            let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
-            alloc_from_block_exact g obj wz next_fp;
-            read_write_different g hd (hd_address prev) alloc_hdr
-          end;
-          wosize_of_object_spec prev g';
-          assert (wosize_of_object prev g' == wosize_of_object prev g);
-          assert (U64.v (wosize_of_object prev g') >= 1);
-          write_body_preserves_objects_local 0UL g' prev (prev <: hp_addr) new_fp
-        end
-        else ()
-      end
-      else begin
-        fl_valid_elim g cur_fp fuel;
-        assert (cur_fp <> next_fp);
-        if U64.v hd + 16 <= heap_size then
-          fl_chain_terminates_elim g cur_fp fuel
-        else ();
-        alloc_search_preserves_objects_part1 g head_fp cur_fp next_fp wz (fuel - 1)
-      end
-    end
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// P1g: Top-level alloc_spec_preserves_objects_part1
-/// ---------------------------------------------------------------------------
-
-let alloc_spec_preserves_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp (heap_size / U64.v mword) /\
-                    fl_chain_terminates g fp (heap_size / U64.v mword))
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    (forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
-                      Seq.mem x (objects 0UL r.heap_out))))
-  = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_objects_part1 g fp 0UL fp wz (heap_size / U64.v mword)
 
 /// ---------------------------------------------------------------------------
 /// alloc_from_block_preserves_objects_part1
