@@ -3441,6 +3441,59 @@ let rec mark_aux_preserves_wosize g st fuel x =
 let mark_preserves_wosize g st x =
   mark_aux_preserves_wosize g st (heap_size / U64.v mword) x
 
+/// mark_aux preserves is_no_scan (inductive, mirrors mark_aux_preserves_wosize)
+val mark_aux_preserves_is_no_scan : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  (fuel: nat) -> (x: obj_addr) ->
+  Lemma (requires Seq.mem x (objects 0UL g))
+        (ensures is_no_scan x (mark_aux g st fuel) == is_no_scan x g)
+        (decreases fuel)
+
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+let rec mark_aux_preserves_is_no_scan g st fuel x =
+  if Seq.length st = 0 then ()
+  else if fuel = 0 then ()
+  else begin
+    let (g', st') = mark_step g st in
+    mark_step_preserves_wf g st;
+    mark_step_preserves_stack_props g st;
+    let obj = Seq.head st in
+    stack_head_is_gray g st;
+    wosize_of_object_bound obj g;
+    makeBlack_eq obj g;
+    let g1 = makeBlack obj g in
+    color_change_preserves_objects g obj Header.Black;
+    (if obj = x then color_preserves_is_no_scan x g Header.Black
+     else color_change_preserves_other_is_no_scan obj x g Header.Black);
+    let ws = wosize_of_object obj g in
+    if is_no_scan obj g then begin
+      mark_aux_preserves_is_no_scan g' st' (fuel - 1) x
+    end else begin
+      color_change_preserves_wf g obj Header.Black;
+      color_change_preserves_objects_mem g obj Header.Black obj;
+      color_change_preserves_objects_mem g obj Header.Black x;
+      set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+      wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      wf_implies_object_fits g obj;
+      color_preserves_object_fits obj obj g Header.Black;
+      push_children_preserves_objects g1 (Seq.tail st) obj 1UL ws;
+      push_children_preserves_is_no_scan g1 (Seq.tail st) obj 1UL ws x;
+      mark_aux_preserves_is_no_scan g' st' (fuel - 1) x
+    end
+  end
+#pop-options
+
+/// mark preserves is_no_scan (top-level)
+let mark_preserves_is_no_scan g st x =
+  mark_aux_preserves_is_no_scan g st (heap_size / U64.v mword) x
+
+/// mark doesn't create new blue objects (top-level wrapper for mark_aux_no_new_blue)
+let mark_no_new_blue g st x =
+  mark_aux_no_new_blue g st (heap_size / U64.v mword) x
+
+/// mark preserves blue objects (top-level wrapper for mark_aux_preserves_blue)
+let mark_preserves_blue g st x =
+  mark_aux_preserves_blue g st (heap_size / U64.v mword) x
+
 /// mark preserves exists_field_pointing_to_unchecked (field data unchanged)
 val mark_preserves_efptu : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   (src: obj_addr) -> (wz: U64.t{U64.v wz < pow2 54}) -> (dst: obj_addr) ->

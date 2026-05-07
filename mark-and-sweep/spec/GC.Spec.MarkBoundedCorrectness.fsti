@@ -33,6 +33,10 @@ let mark_color_inv (h_init h_cur: heap) : prop =
   create_graph h_cur == create_graph h_init /\
   (forall (x: obj_addr). Seq.mem x (objects 0UL h_init) ==>
     wosize_of_object x h_cur == wosize_of_object x h_init) /\
+  (forall (x: obj_addr). Seq.mem x (objects 0UL h_init) ==>
+    is_no_scan x h_cur == is_no_scan x h_init) /\
+  (forall (x: obj_addr). Seq.mem x (objects 0UL h_init) ==>
+    is_blue x h_cur == is_blue x h_init) /\
   (forall (x: obj_addr) (i: U64.t). Seq.mem x (objects 0UL h_init) /\
     U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x h_init) ==>
     HeapGraph.get_field h_cur x i == HeapGraph.get_field h_init x i)
@@ -203,6 +207,7 @@ val mark_bounded_satisfies_mark_post
       GC.Spec.Sweep.fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
+      no_scan_invariant h_init /\
       fuel >= count_non_black h_init /\
       (forall (x: obj_addr). Seq.mem x (objects 0UL h_init) /\
         (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
@@ -278,5 +283,6 @@ val mark_post_from_bounded_mark
       root_props h_init roots /\
       GC.Spec.Sweep.fp_in_heap fp h_init /\
       no_black_objects h_init /\
-      no_pointer_to_blue h_init)
+      no_pointer_to_blue h_init /\
+      no_scan_invariant h_init)
     (ensures Correctness.mark_post h_init h_mark roots fp)

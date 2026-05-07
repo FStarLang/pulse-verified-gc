@@ -672,6 +672,82 @@ let well_formed_heap (g: heap) : prop =
   well_formed_heap_part3 g /\
   well_formed_heap_part4 g
 
+/// ---------------------------------------------------------------------------
+/// No-Scan Invariant
+/// ---------------------------------------------------------------------------
+///
+/// Formalizes the OCaml memory model guarantee that no_scan objects (strings,
+/// bigarrays, custom blocks with tag >= no_scan_tag) contain raw data whose
+/// byte patterns do not form valid managed heap pointers.
+///
+/// This property is required as a precondition to GC correctness: without it,
+/// the tri_color_invariant cannot guarantee that unmarked successors of no_scan
+/// objects are unreachable (since the GC does not trace no_scan fields).
+///
+/// The invariant is restricted to non-blue objects because blue (free-list)
+/// objects have their first field repurposed as the free-list pointer.
+///
+/// Preservation:
+///   - mark: only changes colors (headers), not fields → trivially preserved
+///   - sweep: freed objects become blue → excluded from quantifier
+///   - alloc: newly allocated objects have tag=0 < no_scan_tag → not no_scan;
+///            existing no_scan object fields are untouched
+
+[@@"opaque_to_smt"]
+let no_scan_invariant (g: heap) : prop =
+  (forall (src: obj_addr) (idx: nat).
+    Seq.mem src (objects 0UL g) /\
+    is_no_scan src g /\
+    ~(is_blue src g) /\
+    idx < U64.v (wosize_of_object src g) /\
+    U64.v src + idx * 8 < heap_size ==>
+    (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
+     ~(is_pointer_field (read_word g field_addr))))
+
+/// Extract: instantiate no_scan_invariant for a specific object and field index
+let no_scan_invariant_elim (g: heap) (src: obj_addr) (idx: nat) : Lemma
+  (requires no_scan_invariant g /\
+            Seq.mem src (objects 0UL g) /\
+            is_no_scan src g /\
+            ~(is_blue src g) /\
+            idx < U64.v (wosize_of_object src g) /\
+            U64.v src + idx * 8 < heap_size)
+  (ensures (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
+            ~(is_pointer_field (read_word g field_addr))))
+  = reveal_opaque (`%no_scan_invariant) no_scan_invariant
+
+/// Introduce: establish no_scan_invariant from universal quantification
+let no_scan_invariant_intro (g: heap) : Lemma
+  (requires (forall (src: obj_addr) (idx: nat).
+    Seq.mem src (objects 0UL g) /\
+    is_no_scan src g /\
+    ~(is_blue src g) /\
+    idx < U64.v (wosize_of_object src g) /\
+    U64.v src + idx * 8 < heap_size ==>
+    (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
+     ~(is_pointer_field (read_word g field_addr)))))
+  (ensures no_scan_invariant g)
+  = reveal_opaque (`%no_scan_invariant) no_scan_invariant
+
+/// Vacuous introduction: if no object is no_scan, the invariant holds trivially
+let no_scan_invariant_intro_vacuous (g: heap) : Lemma
+  (requires (forall (src: obj_addr). Seq.mem src (objects 0UL g) ==> ~(is_no_scan src g)))
+  (ensures no_scan_invariant g)
+  = reveal_opaque (`%no_scan_invariant) no_scan_invariant
+
+/// Singleton introduction: if objects == [obj] and obj is not no_scan
+let no_scan_invariant_intro_singleton (g: heap) (obj: obj_addr) : Lemma
+  (requires objects 0UL g == Seq.cons obj Seq.empty /\ ~(is_no_scan obj g))
+  (ensures no_scan_invariant g)
+  = reveal_opaque (`%no_scan_invariant) no_scan_invariant
+
+/// Pair introduction: if objects == [obj1; obj2] and neither is no_scan
+let no_scan_invariant_intro_pair (g: heap) (obj1 obj2: obj_addr) : Lemma
+  (requires objects 0UL g == Seq.cons obj1 (Seq.cons obj2 Seq.empty) /\
+            ~(is_no_scan obj1 g) /\ ~(is_no_scan obj2 g))
+  (ensures no_scan_invariant g)
+  = reveal_opaque (`%no_scan_invariant) no_scan_invariant
+
 /// Extract part 1 of well_formed_heap: object size bounds
 let wf_object_size_bound (g: heap) (h: obj_addr) : Lemma
   (requires well_formed_heap g /\ Seq.mem h (objects 0UL g))

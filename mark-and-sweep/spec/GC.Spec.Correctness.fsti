@@ -247,7 +247,8 @@ val sweep_post_sweep_strong :
       stack_props h_init st /\
       fp_in_heap fp h_init /\
       no_black_objects h_init /\
-      no_pointer_to_blue h_init)
+      no_pointer_to_blue h_init /\
+      no_scan_invariant h_init)
     (ensures GC.Spec.Coalesce.post_sweep_strong (fst (sweep (mark h_init st) fp)))
 
 /// ---------------------------------------------------------------------------
@@ -304,6 +305,7 @@ val full_gc_correctness_through_coalesce :
       fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
+      no_scan_invariant h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
       (let graph = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -340,6 +342,7 @@ val mark_post_intro :
       fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
+      no_scan_invariant h_mark /\
       (let g_init = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in
        graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
@@ -377,6 +380,9 @@ val mark_post_elim_objects_gt0 : h_init:heap -> h_mark:heap -> roots:seq obj_add
 val mark_post_elim_fp : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
   Lemma (requires mark_post h_init h_mark roots fp)
         (ensures fp_in_heap fp h_mark)
+val mark_post_elim_no_scan : h_init:heap -> h_mark:heap -> roots:seq obj_addr -> fp:U64.t ->
+  Lemma (requires mark_post h_init h_mark roots fp)
+        (ensures no_scan_invariant h_mark)
 
 /// `mark h_init st` satisfies mark_post under the standard GC preconditions
 val mark_satisfies_mark_post :
@@ -388,6 +394,7 @@ val mark_satisfies_mark_post :
       fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
+      no_scan_invariant h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
       (let graph = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in

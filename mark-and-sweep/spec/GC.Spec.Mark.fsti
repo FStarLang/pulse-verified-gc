@@ -526,6 +526,21 @@ val mark_preserves_wosize : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{s
   Lemma (requires Seq.mem x (objects 0UL g))
         (ensures wosize_of_object x (mark g st) == wosize_of_object x g)
 
+val mark_preserves_is_no_scan : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  (x: obj_addr) ->
+  Lemma (requires Seq.mem x (objects 0UL g))
+        (ensures is_no_scan x (mark g st) == is_no_scan x g)
+
+val mark_no_new_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  (x: obj_addr) ->
+  Lemma (requires Seq.mem x (objects 0UL g) /\ ~(is_blue x g))
+        (ensures ~(is_blue x (mark g st)))
+
+val mark_preserves_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
+  (x: obj_addr) ->
+  Lemma (requires Seq.mem x (objects 0UL g) /\ is_blue x g)
+        (ensures is_blue x (mark g st))
+
 val mark_preserves_no_pointer_to_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   Lemma (requires no_pointer_to_blue g)
         (ensures no_pointer_to_blue (mark g st))

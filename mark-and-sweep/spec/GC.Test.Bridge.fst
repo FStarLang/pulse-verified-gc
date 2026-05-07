@@ -2576,6 +2576,98 @@ let init_alloc_no_black (g: heap) (wz: nat)
 /// Master lemma: init + alloc enables collect
 /// =========================================================================
 
+/// Helper: no_scan_invariant after init + alloc (factored for clean SMT query)
+/// After init+alloc, all objects have tag=0 (< no_scan_tag=251), so is_no_scan is false everywhere.
+/// We prove this by case-splitting (exact vs split) and showing all objects have tag=0.
+/// Helper: no_scan_invariant after init + alloc (exact case)
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+private let init_alloc_no_scan_exact (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' < 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    no_scan_invariant g'))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    init_objects_eq g;
+    init_alloc_exact_objects g wz;
+    // Bridge: connect tag_of_object to the allocated header
+    hd_address_spec (mword <: obj_addr);
+    init_wosize_lemma g;
+    alloc_from_block_exact g0 mword wz' 0UL;
+    let bwz = heap_size / U64.v mword - 1 in
+    let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
+    read_write_same g0 zero_addr ahdr;
+    // Now: read_word g' (hd_address mword) == ahdr == make_header bwz white_bits 0UL
+    make_header_getTag (U64.uint_to_t bwz) white_bits 0UL;
+    tag_of_object_spec (mword <: obj_addr) g';
+    no_scan_tag_val ();
+    is_no_scan_spec (mword <: obj_addr) g';
+    no_scan_invariant_intro_singleton g' (mword <: obj_addr)
+#pop-options
+
+/// Helper: no_scan_invariant after init + alloc (split case)
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+private let init_alloc_no_scan_split (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy /\
+                    (let wz' = if wz = 0 then 1 else wz in
+                     let bwz = heap_size / U64.v mword - 1 in
+                     wz' <= bwz /\ bwz - wz' >= 2))
+          (ensures (let (g0, _) = init_heap_spec g in
+                    let wz' = if wz = 0 then 1 else wz in
+                    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+                    no_scan_invariant g'))
+  = let (g0, _) = init_heap_spec g in
+    let wz' = if wz = 0 then 1 else wz in
+    let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
+    let bwz = heap_size / U64.v mword - 1 in
+    let ron = (2 + wz') * 8 in
+    let rem_obj : obj_addr = U64.uint_to_t ron in
+    init_alloc_split_objects g wz;
+    // Bridge: establish header values via alloc_split_normal_read_hd/rem_hd
+    hd_address_spec (mword <: obj_addr);
+    init_wosize_lemma g;
+    wz_bounds ();
+    alloc_split_normal_read_hd g0 mword wz' 0UL;
+    alloc_split_normal_read_rem_hd g0 mword wz' 0UL;
+    // Now: read_word g' (hd_address mword) == make_header wz' white_bits 0UL
+    //      read_word g' (hd_address rem_obj) == make_header (bwz-wz'-1) blue_bits 0UL
+    make_header_getTag (U64.uint_to_t wz') white_bits 0UL;
+    tag_of_object_spec (mword <: obj_addr) g';
+    no_scan_tag_val ();
+    is_no_scan_spec (mword <: obj_addr) g';
+    hd_address_spec rem_obj;
+    make_header_getTag (U64.uint_to_t (bwz - wz' - 1)) blue_bits 0UL;
+    tag_of_object_spec rem_obj g';
+    is_no_scan_spec rem_obj g';
+    no_scan_invariant_intro_pair g' (mword <: obj_addr) rem_obj
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+let init_alloc_no_scan_invariant (g: heap) (wz: nat)
+  : Lemma (requires g == Seq.create heap_size 0uy)
+          (ensures no_scan_invariant (alloc_spec (fst (init_heap_spec g)) (snd (init_heap_spec g)) wz).heap_out)
+  = let wz' = if wz = 0 then 1 else wz in
+    let bwz = heap_size / U64.v mword - 1 in
+    wz_bounds ();
+    if wz' > bwz then begin
+      // OOM case: heap unchanged, use init_all_blue
+      init_alloc_oom g wz;
+      let (g0, _) = init_heap_spec g in
+      init_all_blue g;
+      no_scan_invariant_intro g0
+    end else begin
+      init_alloc_spec_unfold g wz;
+      if bwz - wz' < 2
+      then init_alloc_no_scan_exact g wz
+      else init_alloc_no_scan_split g wz
+    end
+#pop-options
+
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 let init_alloc_enables_collect (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy)
@@ -2588,6 +2680,7 @@ let init_alloc_enables_collect (g: heap) (wz: nat)
                     fp_in_heap r.fp_out r.heap_out /\
                     no_black_objects r.heap_out /\
                     no_pointer_to_blue r.heap_out /\
+                    no_scan_invariant r.heap_out /\
                     graph_wf (create_graph r.heap_out) /\
                     is_vertex_set (coerce_to_vertex_list st) /\
                     subset_vertices (coerce_to_vertex_list st) (create_graph r.heap_out).vertices))
@@ -2596,5 +2689,6 @@ let init_alloc_enables_collect (g: heap) (wz: nat)
     init_alloc_fp_in_heap g wz;
     init_alloc_no_black g wz;
     init_alloc_no_pointer_to_blue g wz;
-    init_alloc_graph_wf g wz
+    init_alloc_graph_wf g wz;
+    init_alloc_no_scan_invariant g wz
 #pop-options

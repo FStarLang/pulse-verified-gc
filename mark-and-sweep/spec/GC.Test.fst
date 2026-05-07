@@ -413,6 +413,7 @@ let init_enables_bounded_collect (g: heap) (cap: nat)
                     root_props g' st /\
                     no_black_objects g' /\
                     no_pointer_to_blue g' /\
+                    no_scan_invariant g' /\
                     graph_wf (create_graph g') /\
                     heap_objects_dense g' /\
                     fp_in_heap fp g' /\
@@ -439,5 +440,8 @@ let init_enables_bounded_collect (g: heap) (cap: nat)
     = init_no_black g; init_no_gray g;
       is_gray_iff x g'; is_black_iff x g'
     in
-    Classical.forall_intro (Classical.move_requires aux)
+    Classical.forall_intro (Classical.move_requires aux);
+    // no_scan_invariant: vacuously true because all objects after init are blue
+    init_all_blue g;
+    no_scan_invariant_intro g'
 #pop-options

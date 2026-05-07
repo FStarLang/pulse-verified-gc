@@ -50,6 +50,7 @@ let gc_precondition (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr)
   SpecSweep.fp_in_heap fp s /\
   SpecMark.no_black_objects s /\
   SpecMark.no_pointer_to_blue s /\
+  SpecFields.no_scan_invariant s /\
   (forall (x: GC.Spec.Base.obj_addr). Seq.mem x (SpecFields.objects GC.Spec.Base.zero_addr s) /\
     (GC.Spec.Object.is_gray x s \/ GC.Spec.Object.is_black x s) ==> Seq.mem x st) /\
   (let graph = SpecHeapModel.create_graph s in

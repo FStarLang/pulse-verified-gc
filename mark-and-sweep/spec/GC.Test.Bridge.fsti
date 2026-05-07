@@ -185,6 +185,7 @@ val init_alloc_enables_collect (g: heap) (wz: nat)
                     fp_in_heap r.fp_out r.heap_out /\
                     no_black_objects r.heap_out /\
                     no_pointer_to_blue r.heap_out /\
+                    no_scan_invariant r.heap_out /\
                     graph_wf (create_graph r.heap_out) /\
                     is_vertex_set (coerce_to_vertex_list st) /\
                     subset_vertices (coerce_to_vertex_list st) (create_graph r.heap_out).vertices))

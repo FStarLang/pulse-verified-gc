@@ -299,6 +299,91 @@ let no_black_implies_tri_color (g: heap) : Lemma
   (ensures tri_color_invariant g)
 = ()
 
+/// Helper 1: mark preserves read_word at field addresses (top-level for own query)
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let mark_preserves_field_read
+  (h_init: heap{well_formed_heap h_init})
+  (st: seq obj_addr{stack_props h_init st})
+  (src: obj_addr)
+  (idx: nat)
+  : Lemma
+    (requires Seq.mem src (objects 0UL h_init) /\
+              idx < U64.v (wosize_of_object src h_init) /\
+              U64.v src + idx * 8 < heap_size)
+    (ensures read_word (mark h_init st) (U64.uint_to_t (U64.v src + idx * 8)) ==
+             read_word h_init (U64.uint_to_t (U64.v src + idx * 8)))
+  = let h_mark = mark h_init st in
+    wf_implies_object_fits h_init src;
+    HeapGraph.object_fits_to_bound src h_init;
+    wosize_of_object_bound src h_init;
+    let i : (j:U64.t{U64.v j >= 1}) = U64.uint_to_t (idx + 1) in
+    mark_preserves_get_field h_init st src i;
+    HeapGraph.get_field_addr_eq h_init src i;
+    HeapGraph.get_field_addr_eq h_mark src i
+#pop-options
+
+/// Helper 2: universal field read preservation for one object (top-level for own query)
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let mark_preserves_field_read_forall
+  (h_init: heap{well_formed_heap h_init})
+  (st: seq obj_addr{stack_props h_init st})
+  (src: obj_addr{Seq.mem src (objects 0UL h_init)})
+  : Lemma
+    (ensures (forall (idx:nat).
+      idx < U64.v (wosize_of_object src h_init) /\
+      U64.v src + idx * 8 < heap_size ==>
+      read_word (mark h_init st) (U64.uint_to_t (U64.v src + idx * 8)) ==
+      read_word h_init (U64.uint_to_t (U64.v src + idx * 8))))
+  = let h_mark = mark h_init st in
+    wf_implies_object_fits h_init src;
+    HeapGraph.object_fits_to_bound src h_init;
+    wosize_of_object_bound src h_init;
+    // Need to show: for all idx in range, read_word is preserved
+    // mark_preserves_field_read proves this per-idx; we use classical intro
+    let f (idx: nat) : Lemma
+      (idx < U64.v (wosize_of_object src h_init) /\
+       U64.v src + idx * 8 < heap_size ==>
+       read_word h_mark (U64.uint_to_t (U64.v src + idx * 8)) ==
+       read_word h_init (U64.uint_to_t (U64.v src + idx * 8)))
+    = if idx < U64.v (wosize_of_object src h_init) &&
+         U64.v src + idx * 8 < heap_size
+      then mark_preserves_field_read h_init st src idx
+    in
+    FStar.Classical.forall_intro f
+#pop-options
+
+/// mark preserves no_scan_invariant
+#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
+let mark_preserves_no_scan_invariant
+  (h_init: heap{well_formed_heap h_init /\ no_scan_invariant h_init})
+  (st: seq obj_addr{stack_props h_init st})
+  : Lemma (no_scan_invariant (mark h_init st))
+  = let h_mark = mark h_init st in
+    mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+    // Establish universal preservation facts individually
+    let aux1 (src: obj_addr) : Lemma
+      (requires Seq.mem src (objects 0UL h_init))
+      (ensures is_no_scan src h_mark == is_no_scan src h_init /\
+               wosize_of_object src h_mark == wosize_of_object src h_init /\
+               (~(is_blue src h_init) ==> ~(is_blue src h_mark)) /\
+               (is_blue src h_init ==> is_blue src h_mark) /\
+               (forall (idx:nat).
+                 idx < U64.v (wosize_of_object src h_init) /\
+                 U64.v src + idx * 8 < heap_size ==>
+                 read_word h_mark (U64.uint_to_t (U64.v src + idx * 8)) ==
+                 read_word h_init (U64.uint_to_t (U64.v src + idx * 8))))
+    = mark_preserves_is_no_scan h_init st src;
+      mark_preserves_wosize h_init st src;
+      (if not (is_blue src h_init) then mark_no_new_blue h_init st src
+       else mark_preserves_blue h_init st src);
+      mark_preserves_field_read_forall h_init st src
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux1);
+    // Reveal and conclude
+    reveal_opaque (`%no_scan_invariant) (no_scan_invariant h_init);
+    no_scan_invariant_intro h_mark
+#pop-options
+
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_post_sweep_strong h_init st fp =
   let h_mark = mark h_init st in
@@ -308,6 +393,7 @@ let sweep_post_sweep_strong h_init st fp =
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
   mark_preserves_no_pointer_to_blue h_init st;
+  mark_preserves_no_scan_invariant h_init st;
   mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
   assert (objects 0UL h_mark == objects 0UL h_init);
   assert (fp_in_heap fp h_mark);
@@ -374,19 +460,20 @@ let sweep_post_sweep_strong h_init st fp =
     else begin
       // field_val <> 0, >= mword(=8), < heap_size, % 8 = 0
       if is_no_scan x h_mark then begin
-        // TCB assumption: no_scan objects (strings, bigarrays, etc.) contain raw data
-        // that does not coincidentally match the address of an unreachable object.
-        // In OCaml's memory model, the compiler guarantees this by construction:
-        // no_scan blocks store non-pointer data (characters, floats, C pointers)
-        // that cannot alias managed heap addresses.
-        // The tri_color_invariant excludes no_scan objects with ~(is_no_scan obj g),
-        // so black_successor_is_black cannot be applied here.
-        assume (field_val = 0UL \/
-                U64.v field_val < U64.v mword \/
-                U64.v field_val >= heap_size \/
-                U64.v field_val % U64.v mword <> 0 \/
-                ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
-                  is_blue (field_val <: obj_addr) h_sweep))
+        // Contradiction: no_scan_invariant says fields of no_scan non-blue objects
+        // are not pointer fields, but we've established is_pointer_field field_val
+        assert (HeapGraph.is_pointer_field field_val);
+        wf_implies_object_fits h_mark x;
+        HeapGraph.object_fits_to_bound x h_mark;
+        wosize_of_object_bound x h_mark;
+        let idx = U64.v iu - 1 in
+        assert (idx < U64.v (wosize_of_object x h_mark));
+        HeapGraph.get_field_addr_eq h_mark x iu;
+        // field_val == read_word h_mark (x + idx*8)
+        colors_exclusive x h_mark;
+        assert (~(is_blue x h_mark));
+        no_scan_invariant_elim h_mark x idx
+        // ~(is_pointer_field field_val) ∧ is_pointer_field field_val → contradiction
       end
       else begin
         // HeapGraph.is_pointer_field: v % mword = 0 && v > 0 && v < heap_size
@@ -629,6 +716,7 @@ let full_gc_correctness_through_coalesce
       fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
+      no_scan_invariant h_init /\
       (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
       (let graph = create_graph h_init in
        let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -775,6 +863,7 @@ let mark_post (h_init h_mark: heap) (roots: seq obj_addr) (fp: U64.t) : prop =
   fp_in_heap fp h_init /\
   no_black_objects h_init /\
   no_pointer_to_blue h_init /\
+  no_scan_invariant h_mark /\
   (let g_init = create_graph h_init in
    let roots' = HeapGraph.coerce_to_vertex_list roots in
    graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices ==>
@@ -801,6 +890,7 @@ let mark_post_elim_fp h_init h_mark roots fp =
   assert (fp_in_heap fp h_init);
   // fp_in_heap depends on objects; since objects are the same, fp_in_heap transfers
   ()
+let mark_post_elim_no_scan h_init h_mark roots fp = ()
 
 /// `mark h_init st` satisfies mark_post
 #push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
@@ -842,6 +932,8 @@ let mark_satisfies_mark_post h_init st roots fp =
     else ()
   in
   FStar.Classical.forall_intro_2 aux_field;
+  // no_scan_invariant preservation through mark
+  mark_preserves_no_scan_invariant h_init st;
   mark_post_intro h_init h_mark roots fp
 #pop-options
 
@@ -903,13 +995,18 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
       else if U64.v field_val % U64.v mword <> 0 then ()
       else begin
         if is_no_scan x h_mark then begin
-          // TCB: no_scan objects store raw data (same assumption as sweep_post_sweep_strong)
-          assume (field_val = 0UL \/
-                  U64.v field_val < U64.v mword \/
-                  U64.v field_val >= heap_size \/
-                  U64.v field_val % U64.v mword <> 0 \/
-                  ~(Seq.mem (field_val <: obj_addr) (objects 0UL h_sweep) /\
-                    is_blue (field_val <: obj_addr) h_sweep))
+          // Contradiction via no_scan_invariant (same as sweep_post_sweep_strong)
+          assert (HeapGraph.is_pointer_field field_val);
+          wf_implies_object_fits h_mark x;
+          HeapGraph.object_fits_to_bound x h_mark;
+          wosize_of_object_bound x h_mark;
+          let idx = U64.v iu - 1 in
+          assert (idx < U64.v (wosize_of_object x h_mark));
+          HeapGraph.get_field_addr_eq h_mark x iu;
+          colors_exclusive x h_mark;
+          assert (~(is_blue x h_mark));
+          mark_post_elim_no_scan h_init h_mark roots fp;
+          no_scan_invariant_elim h_mark x idx
         end
         else begin
           assert (HeapGraph.is_pointer_field field_val);

@@ -89,6 +89,35 @@ let mark_step_bounded_preserves_wosize
       push_children_preserves_wosize g1 (Seq.tail st) obj 1UL ws x
     end
 
+/// mark_step_bounded preserves is_no_scan
+let mark_step_bounded_preserves_is_no_scan
+  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
+                   Seq.mem x (objects 0UL g))
+          (ensures is_no_scan x (fst (mark_step_bounded g st cap)) ==
+                   is_no_scan x g)
+  = mark_step_bounded_heap_eq g st st cap;
+    let obj = Seq.head st in
+    bounded_stack_head_is_gray g st;
+    makeBlack_eq obj g;
+    let g1 = makeBlack obj g in
+    (if obj = x then color_preserves_is_no_scan x g Header.Black
+     else color_change_preserves_other_is_no_scan obj x g Header.Black);
+    let ws = wosize_of_object obj g in
+    if is_no_scan obj g then ()
+    else begin
+      color_change_preserves_wf g obj Header.Black;
+      color_change_preserves_objects g obj Header.Black;
+      color_change_preserves_objects_mem g obj Header.Black obj;
+      color_change_preserves_objects_mem g obj Header.Black x;
+      set_object_color_preserves_getWosize_at_hd obj g Header.Black;
+      wosize_of_object_spec obj g; wosize_of_object_spec obj g1;
+      wf_implies_object_fits g obj;
+      wosize_of_object_bound obj g;
+      color_preserves_object_fits obj obj g Header.Black;
+      push_children_preserves_is_no_scan g1 (Seq.tail st) obj 1UL ws x
+    end
+
 /// mark_step_bounded preserves get_field
 let mark_step_bounded_preserves_get_field
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
@@ -387,6 +416,18 @@ let mark_step_bounded_preserves_color_inv
       (ensures wosize_of_object x g' == wosize_of_object x h_init)
     = mark_step_bounded_preserves_wosize g st cap x
     in FStar.Classical.forall_intro (FStar.Classical.move_requires aux_ws);
+    let aux_ns (x: obj_addr) : Lemma
+      (requires Seq.mem x (objects 0UL h_init))
+      (ensures is_no_scan x g' == is_no_scan x h_init)
+    = mark_step_bounded_preserves_is_no_scan g st cap x
+    in FStar.Classical.forall_intro (FStar.Classical.move_requires aux_ns);
+    let aux_bl (x: obj_addr) : Lemma
+      (requires Seq.mem x (objects 0UL h_init))
+      (ensures is_blue x g' == is_blue x h_init)
+    = if is_blue x g
+      then (assert (is_blue x h_init); mark_step_bounded_preserves_blue g st cap x)
+      else (assert (~(is_blue x h_init)); mark_step_bounded_no_new_blue g st cap x)
+    in FStar.Classical.forall_intro (FStar.Classical.move_requires aux_bl);
     let aux_gf (x: obj_addr) (i: U64.t) : Lemma
       (Seq.mem x (objects 0UL h_init) /\ U64.v i >= 1 /\
        U64.v i <= U64.v (wosize_of_object x h_init) ==>
@@ -405,7 +446,7 @@ let mark_step_bounded_preserves_color_inv
 /// Part 6: mark_inner_loop preserves mark_color_inv
 /// =========================================================================
 
-#push-options "--z3rlimit 10"
+#push-options "--z3rlimit 20"
 let rec mark_inner_loop_preserves_color_inv
   (h_init: heap) (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires mark_color_inv h_init g /\ bounded_stack_props g st)
@@ -1166,6 +1207,67 @@ let mark_color_inv_init (h_init: heap)
           (ensures mark_color_inv h_init h_init)
   = assert (tri_color_invariant h_init)
 
+/// Helper: mark_color_inv preserves no_scan_invariant.
+/// Factored as top-level to get its own SMT query (avoids "incomplete quantifiers").
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let mark_color_inv_preserves_no_scan_aux (h_init h_mark: heap) (src: obj_addr) (idx: nat)
+  : Lemma
+    (requires
+      mark_color_inv h_init h_mark /\
+      no_scan_invariant h_init /\
+      Seq.mem src (objects 0UL h_mark) /\
+      is_no_scan src h_mark /\
+      ~(is_blue src h_mark) /\
+      idx < U64.v (wosize_of_object src h_mark) /\
+      U64.v src + idx * 8 < heap_size)
+    (ensures
+      (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
+       ~(HeapGraph.is_pointer_field (read_word h_mark field_addr))))
+  = // mark_color_inv gives: objects, wosize, is_no_scan, is_blue, get_field all preserved
+    assert (Seq.mem src (objects 0UL h_init));
+    assert (is_no_scan src h_init == is_no_scan src h_mark);
+    assert (is_blue src h_init == is_blue src h_mark);
+    // Establish bounds for get_field_addr_eq
+    wf_implies_object_fits h_mark src;
+    HeapGraph.object_fits_to_bound src h_mark;
+    wosize_of_object_bound src h_mark;
+    let i : (j:U64.t{U64.v j >= 1}) = U64.uint_to_t (idx + 1) in
+    // Bridge: get_field == read_word at field address
+    HeapGraph.get_field_addr_eq h_mark src i;
+    HeapGraph.get_field_addr_eq h_init src i;
+    // mark_color_inv: get_field preserved
+    assert (HeapGraph.get_field h_mark src i == HeapGraph.get_field h_init src i);
+    // Therefore read_word h_mark addr == read_word h_init addr
+    let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
+    assert (read_word h_mark field_addr == read_word h_init field_addr);
+    // Use elimination lemma on h_init (blue preserved → ~blue h_init)
+    no_scan_invariant_elim h_init src idx
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+let mark_color_inv_preserves_no_scan (h_init h_mark: heap)
+  : Lemma
+    (requires mark_color_inv h_init h_mark /\ no_scan_invariant h_init)
+    (ensures no_scan_invariant h_mark)
+  = reveal_opaque (`%no_scan_invariant) (no_scan_invariant h_mark);
+    let f (src: obj_addr) (idx: nat) : Lemma
+      (Seq.mem src (objects 0UL h_mark) /\
+       is_no_scan src h_mark /\
+       ~(is_blue src h_mark) /\
+       idx < U64.v (wosize_of_object src h_mark) /\
+       U64.v src + idx * 8 < heap_size ==>
+       (let field_addr : hp_addr = U64.uint_to_t (U64.v src + idx * 8) in
+        ~(HeapGraph.is_pointer_field (read_word h_mark field_addr))))
+    = if Seq.mem src (objects 0UL h_mark) &&
+         is_no_scan src h_mark &&
+         not (is_blue src h_mark) &&
+         idx < U64.v (wosize_of_object src h_mark) &&
+         U64.v src + idx * 8 < heap_size
+      then mark_color_inv_preserves_no_scan_aux h_init h_mark src idx
+    in
+    FStar.Classical.forall_intro_2 f
+#pop-options
+
 /// Main theorem: mark_bounded satisfies mark_post
 ///
 /// Requires one additional precondition vs mark_satisfies_mark_post:
@@ -1184,6 +1286,7 @@ let mark_bounded_satisfies_mark_post
       GC.Spec.Sweep.fp_in_heap fp h_init /\
       no_black_objects h_init /\
       no_pointer_to_blue h_init /\
+      no_scan_invariant h_init /\
       fuel >= count_non_black h_init /\
       (forall (x: obj_addr). Seq.mem x (objects 0UL h_init) /\
         (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
@@ -1199,13 +1302,11 @@ let mark_bounded_satisfies_mark_post
     noGreyObjects_from_no_gray h_mark;
     mark_bounded_reachable_is_black h_init roots cap fuel;
     mark_bounded_black_is_reachable h_init roots cap fuel;
+    // Prove no_scan_invariant h_mark via top-level helper
+    mark_color_inv_preserves_no_scan h_init h_mark;
     let graph = create_graph h_init in
     let roots' = HeapGraph.coerce_to_vertex_list roots in
     // Combine forward + backward into biconditional
-    // The forward direction is already in mark_bounded_reachable_is_black
-    // The backward direction is in mark_bounded_black_is_reachable
-    // Both are under the implication: graph_wf /\ is_vertex_set /\ subset_vertices ==> ...
-    // mark_post_intro needs the biconditional
     Correctness.mark_post_intro h_init h_mark roots fp
 #pop-options
 
@@ -1408,7 +1509,8 @@ let mark_post_from_bounded_mark
       root_props h_init roots /\
       GC.Spec.Sweep.fp_in_heap fp h_init /\
       no_black_objects h_init /\
-      no_pointer_to_blue h_init)
+      no_pointer_to_blue h_init /\
+      no_scan_invariant h_init)
     (ensures Correctness.mark_post h_init h_mark roots fp)
   = let graph = create_graph h_init in
     let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -1467,6 +1569,8 @@ let mark_post_from_bounded_mark
       assert (is_gray x h_mark \/ is_black x h_mark)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires prove_backward);
+    // no_scan_invariant h_mark from mark_color_inv field preservation
+    mark_color_inv_preserves_no_scan h_init h_mark;
     // Combine: mark_post_intro needs the biconditional under implication
     Correctness.mark_post_intro h_init h_mark roots fp
 #pop-options
