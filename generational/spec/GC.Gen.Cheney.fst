@@ -753,23 +753,136 @@ let cheney_collect_preserves_fl_valid
 /// Density: allocating into the heap (via promote_object) extends the objects list
 /// while maintaining the linear structure. Each new allocation appends an object
 /// at the end (after the previous last object), maintaining the "next" relationship.
+
+module Dense = GC.Gen.Cheney.Dense
+
+/// cheney_forward_one preserves density.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let cheney_forward_one_preserves_dense
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    heap_objects_dense cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures (let cs' = cheney_forward_one minor cs addr in
+                    heap_objects_dense cs'.cs_major))
+  =
+  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
+  then ()
+  else
+    let wz = minor_wosize minor addr in
+    if wz = 0 then ()
+    else
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      if res.new_addr = 0UL then ()
+      else
+        Dense.promote_object_preserves_dense minor cs.cs_major addr cs.cs_fp wz
+
+#pop-options
+
+/// cheney_forward_fields preserves density by induction.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_fields_preserves_dense
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    heap_objects_dense cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in
+                    heap_objects_dense cs'.cs_major))
+          (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then ()
+  else begin
+    let field_val = minor_read_field minor parent idx in
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_one_preserves_wfh_part1 minor cs field_val;
+    cheney_forward_one_preserves_dense minor cs field_val;
+    cheney_forward_fields_preserves_dense minor cs' parent (idx + 1) wosize
+  end
+
+#pop-options
+
+/// cheney_forward_roots preserves density by induction.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_roots_preserves_dense
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    heap_objects_dense cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures (let cs' = cheney_forward_roots minor cs roots idx in
+                    heap_objects_dense cs'.cs_major))
+          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then ()
+  else begin
+    let r = Seq.index roots idx in
+    let cs' = cheney_forward_one minor cs r in
+    cheney_forward_one_preserves_wfh_part1 minor cs r;
+    cheney_forward_one_preserves_dense minor cs r;
+    cheney_forward_roots_preserves_dense minor cs' roots (idx + 1)
+  end
+
+#pop-options
+
+/// cheney_scan preserves density by induction on fuel.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+
+private let rec cheney_scan_preserves_dense
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    heap_objects_dense cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures (let cs' = cheney_scan minor cs scan fuel in
+                    heap_objects_dense cs'.cs_major))
+          (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if scan >= Seq.length cs.cs_queue then ()
+  else begin
+    assert (fuel > 0);
+    let obj = Seq.index cs.cs_queue scan in
+    let wz = minor_wosize minor obj in
+    let cs' = cheney_forward_fields minor cs obj 0 wz in
+    cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
+    cheney_forward_fields_preserves_dense minor cs obj 0 wz;
+    let fuel' : nat = fuel - 1 in
+    cheney_scan_preserves_dense minor cs' (scan + 1) fuel'
+  end
+
+#pop-options
+
+/// Full cheney_promote preserves density + objects nonempty.
 let cheney_promote_preserves_dense
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     heap_objects_dense major /\
+                    Seq.length (objects zero_addr major) > 0 /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures (let res = cheney_promote minor major fp roots in
                     heap_objects_dense res.major_final /\
                     Seq.length (objects zero_addr res.major_final) > 0))
   =
-  // Promotion only adds objects via alloc + copy_fields.
-  // alloc_spec splits a free-list block: the objects list is unchanged for existing
-  // objects, and the newly allocated object takes the place of a free-list node.
-  // Since the linear walk structure is preserved through allocation (proven via
-  // alloc_spec_preserves_objects_part1), density is maintained.
-  // TCB: requires induction on the cheney_promote loop showing each step
-  // preserves density (alloc_spec_preserves_objects + write_body_preserves_objects)
-  assume (let res = cheney_promote minor major fp roots in
-          heap_objects_dense res.major_final /\
-          Seq.length (objects zero_addr res.major_final) > 0)
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  // Density preservation through forward_roots + scan
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  cheney_forward_roots_preserves_dense minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_scan_preserves_dense minor cs1 0 (cheney_fuel minor);
+  // Objects nonempty: cheney_promote_preserves_objects shows all originals survive
+  cheney_promote_preserves_objects minor major fp roots;
+  let res = cheney_promote minor major fp roots in
+  // There's at least one object in the original (given by precondition),
+  // and preservation gives it in the result.
+  let witness : obj_addr = Seq.head (objects zero_addr major) in
+  assert (Seq.mem witness (objects zero_addr major));
+  assert (Seq.mem witness (objects zero_addr res.major_final))

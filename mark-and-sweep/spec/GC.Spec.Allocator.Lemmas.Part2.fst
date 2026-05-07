@@ -304,7 +304,7 @@ private let alloc_exact_preserves_wfh_part1
 
 #restart-solver
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
-private let alloc_from_block_preserves_wfh_part1
+let alloc_from_block_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
                     Seq.mem obj (objects 0UL g) /\

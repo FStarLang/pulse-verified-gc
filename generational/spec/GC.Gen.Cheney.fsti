@@ -249,6 +249,7 @@ val cheney_promote_preserves_dense
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     heap_objects_dense major /\
+                    Seq.length (objects zero_addr major) > 0 /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures (let res = cheney_promote minor major fp roots in

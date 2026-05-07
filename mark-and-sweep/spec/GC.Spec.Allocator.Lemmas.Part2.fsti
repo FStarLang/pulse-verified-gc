@@ -15,6 +15,16 @@ open GC.Spec.Allocator.Lemmas.Core
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
+/// alloc_from_block preserves well_formed_heap_part1.
+val alloc_from_block_preserves_wfh_part1 :
+  (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
+  Lemma (requires well_formed_heap_part1 g /\
+                  Seq.mem obj (objects 0UL g) /\
+                  (let hdr = read_word g (hd_address obj) in
+                   U64.v (getWosize hdr) >= wz))
+        (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                  well_formed_heap_part1 g'))
+
 /// **Theorem**: alloc_spec preserves well_formed_heap_part1.
 val alloc_spec_preserves_wfh_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap_part1 g /\
