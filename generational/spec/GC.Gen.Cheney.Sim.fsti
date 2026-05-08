@@ -208,22 +208,6 @@ val cheney_scan_queue_bound
                     Seq.length cs'.cs_queue <= queue_size))
 
 /// ---------------------------------------------------------------------------
-/// Scan fuel sufficiency
-/// ---------------------------------------------------------------------------
-
-/// When the scan processes all queue entries, extra fuel doesn't change the result.
-val cheney_scan_fuel_sufficient
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel1 fuel2: nat)
-  : Lemma (requires fuel1 >= fuel2 /\
-                    fuel2 >= Seq.length cs.cs_queue - scan /\
-                    Seq.length cs.cs_queue <= Seq.length (minor_objects minor) /\
-                    Seq.length (minor_objects minor) <= queue_size /\
-                    (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures CheneySpec.cheney_scan minor cs scan fuel1 ==
-                   CheneySpec.cheney_scan minor cs scan fuel2)
-
-/// ---------------------------------------------------------------------------
 /// Bridge: minor_read ↔ minor_read_field
 /// ---------------------------------------------------------------------------
 
@@ -250,13 +234,27 @@ val cheney_bfs_inv_strict_room
           (ensures Seq.length cs.CheneySpec.cs_queue < queue_size)
 
 /// ---------------------------------------------------------------------------
-/// TCB assumption: minor heap guard checks identify minor objects
+/// TCB axiom: minor heap guard checks identify minor objects
 /// ---------------------------------------------------------------------------
 
 /// Under minor_wf, the implementation's runtime guards (range, alignment, wosize > 0,
 /// body within bounds) are sufficient to identify valid minor objects.
-/// This holds for OCaml-style heaps where field values cannot masquerade as valid
-/// object headers. It is the only TCB assumption for the Cheney simulation proof.
+///
+/// TCB ASSUMPTION (unprovable from spec):
+/// The chain walk (minor_objects_aux) enumerates objects at positions determined
+/// by following headers from position 0. An arbitrary aligned address with
+/// positive wosize at its header could fall inside another object's body (where
+/// field data accidentally has non-zero upper bits). No spec-level invariant
+/// rules this out — it depends on what the mutator stores in fields.
+///
+/// In practice, this holds for OCaml-style bump-allocated heaps because:
+///   1. Objects are contiguous from 0 to bump (no gaps)
+///   2. The mutator stores tagged values, not raw bit patterns that resemble
+///      headers with plausible wosize at non-boundary positions
+///   3. The bounds checks (addr + wosize*8 <= minor_heap_size) further constrain
+///      which positions can pass
+///
+/// This is the sole TCB assumption in the Cheney simulation proof.
 val minor_guards_sufficient (ms: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf ms /\
                     U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\

@@ -247,25 +247,6 @@ let cheney_scan_queue_bound
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Scan fuel sufficiency
-/// ---------------------------------------------------------------------------
-
-// TODO: This requires showing that cheney_scan with enough fuel to drain the
-// queue produces the same result as with any larger fuel. This is a more
-// complex inductive argument. For now, we defer this.
-let cheney_scan_fuel_sufficient
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel1 fuel2: nat)
-  : Lemma (requires fuel1 >= fuel2 /\
-                    fuel2 >= Seq.length cs.cs_queue - scan /\
-                    Seq.length cs.cs_queue <= Seq.length (minor_objects minor) /\
-                    Seq.length (minor_objects minor) <= queue_size /\
-                    (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures CheneySpec.cheney_scan minor cs scan fuel1 ==
-                   CheneySpec.cheney_scan minor cs scan fuel2)
-  = admit () // Complex inductive argument — will prove separately if needed
-
-/// ---------------------------------------------------------------------------
 /// Bridge: minor_read ↔ minor_read_field
 /// ---------------------------------------------------------------------------
 
@@ -306,6 +287,9 @@ let cheney_bfs_inv_strict_room
   SimOne.cheney_bfs_inv_strict_room minor cs addr
 #pop-options
 
+/// TCB axiom — see .fsti for detailed justification.
+/// Unprovable: body data at non-boundary positions could accidentally
+/// satisfy the wosize/bounds guards. Admitted as the sole TCB assumption.
 let minor_guards_sufficient (ms: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf ms /\
                     U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
