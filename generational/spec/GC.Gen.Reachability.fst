@@ -544,3 +544,89 @@ let minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
     (minor_reachable_fuel ms roots) x y
 
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Proof: induction principle (least fixed point)
+/// ---------------------------------------------------------------------------
+
+/// Helper: if a predicate holds for all visited and worklist members,
+/// and is closed under successors, then it holds for all BFS output.
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+
+let rec minor_reachable_aux_ind
+  (ms: minor_state)
+  (worklist: seq U64.t)
+  (visited: seq U64.t)
+  (fuel: nat)
+  (p: U64.t -> prop)
+  (x: U64.t)
+  : Lemma
+    (requires
+      Seq.mem x (minor_reachable_aux ms worklist visited fuel) /\
+      (forall v. Seq.mem v visited ==> p v) /\
+      (forall w. Seq.mem w worklist /\ Seq.mem w (minor_objects ms) ==> p w) /\
+      (forall a b. p a /\ Seq.mem b (minor_successors ms a) ==> p b))
+    (ensures p x)
+    (decreases fuel)
+  =
+  if fuel = 0 || Seq.length worklist = 0
+  then ()
+  else begin
+    let obj = Seq.index worklist 0 in
+    let rest = Seq.slice worklist 1 (Seq.length worklist) in
+    assert (forall (i:nat). i < Seq.length rest ==>
+              Seq.index rest i == Seq.index worklist (i + 1));
+    if Seq.mem obj visited || not (Seq.mem obj (minor_objects ms))
+    then begin
+      let aux_rest (w: U64.t)
+        : Lemma (requires Seq.mem w rest /\ Seq.mem w (minor_objects ms))
+                (ensures p w)
+        = let i = seq_mem_to_index w rest in
+          assert (Seq.index worklist (i + 1) == w);
+          Seq.lemma_index_is_nth worklist (i + 1);
+          Seq.lemma_count_slice worklist (i + 1);
+          assert (Seq.mem w worklist)
+      in
+      Classical.forall_intro (Classical.move_requires aux_rest);
+      minor_reachable_aux_ind ms rest visited (fuel - 1) p x
+    end
+    else begin
+      let succs = minor_successors ms obj in
+      let new_worklist = Seq.append rest succs in
+      let new_visited = Seq.cons obj visited in
+      Seq.lemma_index_is_nth worklist 0;
+      assert (Seq.mem obj worklist);
+      assert (p obj);
+      Seq.mem_cons obj visited;
+      let aux_rest (w: U64.t)
+        : Lemma (requires Seq.mem w rest /\ Seq.mem w (minor_objects ms))
+                (ensures p w)
+        = let i = seq_mem_to_index w rest in
+          assert (Seq.index worklist (i + 1) == w);
+          Seq.lemma_index_is_nth worklist (i + 1);
+          Seq.lemma_count_slice worklist (i + 1);
+          assert (Seq.mem w worklist)
+      in
+      Classical.forall_intro (Classical.move_requires aux_rest);
+      assert (forall s. Seq.mem s succs ==> p s);
+      Seq.lemma_mem_append rest succs;
+      let aux_nw (w: U64.t)
+        : Lemma (requires Seq.mem w new_worklist /\ Seq.mem w (minor_objects ms))
+                (ensures p w)
+        = ()
+      in
+      Classical.forall_intro (Classical.move_requires aux_nw);
+      minor_reachable_aux_ind ms new_worklist new_visited (fuel - 1) p x
+    end
+  end
+
+#pop-options
+
+let minor_reachable_ind (ms: minor_state) (roots: seq U64.t) (p: U64.t -> prop) (x: U64.t)
+  : Lemma (requires
+             Seq.mem x (minor_reachable ms roots) /\
+             (forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==> p r) /\
+             (forall a b. p a /\ Seq.mem b (minor_successors ms a) ==> p b))
+          (ensures p x)
+  =
+  minor_reachable_aux_ind ms roots Seq.empty (minor_reachable_fuel ms roots) p x

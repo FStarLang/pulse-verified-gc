@@ -101,31 +101,30 @@ let cheney_gc_correct
   cheney_collect_preserves_fl_valid minor major fp roots
 
 /// ---------------------------------------------------------------------------
-/// Property 5: BFS completeness (conditional)
+/// Property 6: BFS completeness (conditional)
 /// ---------------------------------------------------------------------------
 
 open GC.Gen.Reachability
+module BFS = GC.Gen.CheneyBFS
 
-/// BFS completeness: trivially follows from the precondition which directly
-/// states that all reachable objects with positive wosize are forwarded.
-/// The REAL proof obligation is showing that cheney_promote's BFS structure
-/// (forward-on-discovery) ensures this property holds when no OOM occurs.
-/// That is: forward_roots + scan_loop together produce a forwarding set
-/// that is closed under minor_successor, which by induction on path length
-/// implies all reachable objects are forwarded.
+/// BFS completeness: delegates to CheneyBFS.cheney_promotes_all_reachable
+/// which uses the reachability induction principle.
 let cheney_promotes_all_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-                    (let prom = cheney_promote minor major fp roots in
-                     forall (x: U64.t). Seq.mem x (minor_reachable minor roots) /\
-                                        minor_wosize minor x > 0 ==>
-                       prom.fwd_map x <> 0UL))
+  : Lemma (requires BFS.cheney_no_oom minor major fp roots)
           (ensures (let prom = cheney_promote minor major fp roots in
                     forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
                       prom.fwd_map x <> 0UL \/ minor_wosize minor x = 0))
-  = // Follows directly from the precondition: for reachable objects with wosize > 0,
-    // the precondition gives fwd_map x <> 0UL. For those with wosize = 0,
-    // the disjunction gives minor_wosize minor x = 0.
-    ()
+  =
+  BFS.cheney_promotes_all_reachable minor major fp roots;
+  // BFS ensures: reachable /\ wosize > 0 ==> fwd <> 0
+  // Goal: reachable ==> fwd <> 0 \/ wosize = 0
+  // These are equivalent: (wosize > 0 ==> fwd <> 0) ↔ (fwd <> 0 \/ wosize = 0)
+  // when wosize is nat (>= 0)
+  let prom = cheney_promote minor major fp roots in
+  let aux (x: U64.t)
+    : Lemma (requires Seq.mem x (minor_reachable minor roots))
+            (ensures prom.fwd_map x <> 0UL \/ minor_wosize minor x = 0)
+    = ()
+  in
+  Classical.forall_intro (Classical.move_requires aux)

@@ -59,8 +59,26 @@ val minor_reachable_roots (ms: minor_state) (roots: seq U64.t)
   : Lemma (ensures forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==>
                              Seq.mem r (minor_reachable ms roots))
 
+/// The number of successors is bounded by the object's wosize
+val minor_successors_length (ms: minor_state) (obj: U64.t)
+  : Lemma (ensures Seq.length (minor_successors ms obj) <= minor_wosize ms obj)
+
 /// The reachable set is closed under minor_successors
 val minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
   : Lemma (requires Seq.mem x (minor_reachable ms roots) /\
                     Seq.mem y (minor_successors ms x))
           (ensures Seq.mem y (minor_reachable ms roots))
+
+/// ---------------------------------------------------------------------------
+/// Induction principle (least fixed point characterization)
+/// ---------------------------------------------------------------------------
+
+/// Any predicate P that holds for all roots-in-minor_objects and is closed
+/// under successors holds for all reachable objects.
+/// This is the standard induction principle for reachability.
+val minor_reachable_ind (ms: minor_state) (roots: seq U64.t) (p: U64.t -> prop) (x: U64.t)
+  : Lemma (requires
+             Seq.mem x (minor_reachable ms roots) /\
+             (forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==> p r) /\
+             (forall a b. p a /\ Seq.mem b (minor_successors ms a) ==> p b))
+          (ensures p x)
