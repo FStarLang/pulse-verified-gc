@@ -108,3 +108,14 @@ val scan_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires cheney_bfs_inv minor cs)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_scan minor cs scan fuel))
+
+/// When the BFS invariant holds and addr is an unforwarded minor object,
+/// there is strict room in the queue: |queue| < |minor_objects|.
+/// This is because count_unforwarded >= 1 (addr contributes), so
+/// |queue| = |minor_objects| - count_unforwarded - ... <= |minor_objects| - 1.
+val cheney_bfs_inv_strict_room
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires cheney_bfs_inv minor cs /\
+                    Seq.mem addr (minor_objects minor) /\
+                    cs.CheneySpec.cs_fwd addr = 0UL)
+          (ensures Seq.length cs.CheneySpec.cs_queue < Seq.length (minor_objects minor))

@@ -73,6 +73,27 @@ val represents_fwd_update
                     represents_fwd (Seq.upd farr idx new_addr)
                                    (extend_forwarding fwd addr new_addr)))
 
+/// Reading the forwarding array at addr/8 gives cs_fwd addr
+val represents_fwd_read
+  (farr: seq U64.t) (fwd: forwarding_map) (addr: U64.t)
+  : Lemma (requires represents_fwd farr fwd /\
+                    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\
+                    U64.v addr % 8 == 0)
+          (ensures (let idx = U64.v addr / 8 in
+                    idx < fwd_array_size /\
+                    Seq.index farr idx == fwd addr))
+
+/// Queue array update at bk corresponds to spec queue append
+val queue_update_correspondence
+  (q: seq U64.t) (cs_queue: seq U64.t) (bk: nat) (addr: U64.t)
+  : Lemma (requires Seq.length q >= bk + 1 /\
+                    bk == Seq.length cs_queue /\
+                    (forall (j:nat). j < bk ==> Seq.index q j == Seq.index cs_queue j))
+          (ensures (let q2 = Seq.upd q bk addr in
+                    let cq2 = Seq.append cs_queue (Seq.create 1 addr) in
+                    Seq.length cq2 == bk + 1 /\
+                    (forall (j:nat). j < bk + 1 ==> Seq.index q2 j == Seq.index cq2 j)))
+
 /// ---------------------------------------------------------------------------
 /// Non-minor addresses: impl guards ↔ spec noop
 /// ---------------------------------------------------------------------------
@@ -87,6 +108,22 @@ val minor_object_passes_guards (minor: minor_state) (obj: U64.t)
   : Lemma (requires minor_wf minor /\ Seq.mem obj (minor_objects minor))
           (ensures minor_wosize minor obj < minor_heap_size /\
                    U64.v obj + minor_wosize minor obj * 8 <= minor_heap_size)
+
+/// Contrapositive: if wosize/bounds guards fail, addr is not a minor object
+val not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
+  : Lemma (requires minor_wf minor /\
+                    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
+                    (minor_wosize minor addr >= minor_heap_size \/
+                     U64.v addr + minor_wosize minor addr * 8 > minor_heap_size))
+          (ensures ~(Seq.mem addr (minor_objects minor)))
+
+/// When promote_object returns new_addr=0, heap and fp are unchanged
+val promote_object_zero_noop
+  (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: U64.t) (wz: nat)
+  : Lemma (requires wz > 0 /\
+                    (GC.Gen.Promote.promote_object minor_st ms addr fp wz).new_addr == 0UL)
+          (ensures (GC.Gen.Promote.promote_object minor_st ms addr fp wz).major_out == ms /\
+                   (GC.Gen.Promote.promote_object minor_st ms addr fp wz).fp_out == fp)
 
 /// ---------------------------------------------------------------------------
 /// Queue length bounds: bounded by |minor_objects| via BFS invariant
@@ -185,3 +222,44 @@ val cheney_scan_fuel_sufficient
                       Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
           (ensures CheneySpec.cheney_scan minor cs scan fuel1 ==
                    CheneySpec.cheney_scan minor cs scan fuel2)
+
+/// ---------------------------------------------------------------------------
+/// Bridge: minor_read ↔ minor_read_field
+/// ---------------------------------------------------------------------------
+
+/// The impl's minor_read at (obj + fi*8) equals the spec's minor_read_field.
+val minor_read_eq_field (ms: minor_state) (obj: U64.t) (fi: nat)
+  : Lemma (requires U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0 /\
+                    fi < minor_heap_size /\
+                    U64.v obj + fi * 8 + 8 <= minor_heap_size)
+          (ensures minor_read_word_t ms.data (U64.uint_to_t (U64.v obj + fi * 8)) ==
+                   minor_read_field ms obj fi)
+
+/// ---------------------------------------------------------------------------
+/// BFS invariant: strict room before enqueueing
+/// ---------------------------------------------------------------------------
+
+/// When the BFS invariant holds and we're about to forward a fresh (unforwarded)
+/// minor object, there is strict room in the queue (length < queue_size).
+val cheney_bfs_inv_strict_room
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
+                    Seq.mem addr (minor_objects minor) /\
+                    cs.CheneySpec.cs_fwd addr = 0UL /\
+                    Seq.length (minor_objects minor) <= queue_size)
+          (ensures Seq.length cs.CheneySpec.cs_queue < queue_size)
+
+/// ---------------------------------------------------------------------------
+/// TCB assumption: minor heap guard checks identify minor objects
+/// ---------------------------------------------------------------------------
+
+/// Under minor_wf, the implementation's runtime guards (range, alignment, wosize > 0,
+/// body within bounds) are sufficient to identify valid minor objects.
+/// This holds for OCaml-style heaps where field values cannot masquerade as valid
+/// object headers. It is the only TCB assumption for the Cheney simulation proof.
+val minor_guards_sufficient (ms: minor_state) (addr: U64.t)
+  : Lemma (requires minor_wf ms /\
+                    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
+                    minor_wosize ms addr > 0 /\
+                    U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size)
+          (ensures Seq.mem addr (minor_objects ms))

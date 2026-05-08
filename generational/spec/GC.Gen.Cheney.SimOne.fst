@@ -484,3 +484,38 @@ let scan_preserves_bfs_inv
   = scan_bfs_inv_aux minor cs scan fuel
 
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// BFS invariant: strict room when forwarding an unforwarded object
+/// ---------------------------------------------------------------------------
+
+/// Helper: if addr is in objs at index k with fwd(addr)=0, count_unforwarded from start <= k is >= 1
+private let rec count_unforwarded_positive
+  (objs: seq U64.t) (fwd: forwarding_map) (start: nat) (k: nat)
+  : Lemma (requires start <= k /\ k < Seq.length objs /\
+                    fwd (Seq.index objs k) = 0UL)
+          (ensures count_unforwarded objs fwd start >= 1)
+          (decreases k - start)
+  = if start >= Seq.length objs then ()
+    else if fwd (Seq.index objs start) = 0UL then ()
+    else count_unforwarded_positive objs fwd (start + 1) k
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+
+let cheney_bfs_inv_strict_room
+  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
+  : Lemma (requires cheney_bfs_inv minor cs /\
+                    Seq.mem addr (minor_objects minor) /\
+                    cs.CheneySpec.cs_fwd addr = 0UL)
+          (ensures Seq.length cs.CheneySpec.cs_queue < Seq.length (minor_objects minor))
+  =
+  let objs = minor_objects minor in
+  let fwd = cs.CheneySpec.cs_fwd in
+  // addr is in objs, find its index
+  let k = Seq.index_mem addr objs in
+  // count_unforwarded >= 1 because addr at index k has fwd = 0UL
+  count_unforwarded_positive objs fwd 0 k
+  // From invariant: |queue| + count_unforwarded <= |objs|
+  // count_unforwarded >= 1, so |queue| <= |objs| - 1, i.e., |queue| < |objs|
+
+#pop-options

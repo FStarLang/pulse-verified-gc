@@ -92,7 +92,9 @@ fn minor_collect (gh: gen_heap_t)
                  PromoteSpec.chain_objects_blue 's 'fp /\
                  SZ.v nroots == Seq.length 'rs /\
                  Seq.length 'farr == UpdatePtrs.fwd_array_size /\
-                 (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
+                 (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+                 minor_wf ({ data = 'd; bump = 'b }) /\
+                 Seq.length (SpecFields.objects 0UL 's) > 0)
   ensures exists* d2 b2 s2 fp2 rs2 farr2.
     is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **

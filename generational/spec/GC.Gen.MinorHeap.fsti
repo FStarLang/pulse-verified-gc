@@ -194,6 +194,14 @@ val minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)
   : Lemma (requires Seq.mem obj (minor_objects ms))
           (ensures (minor_wosize ms obj + 1) * 8 <= minor_heap_size)
 
+/// The body of a minor object fits within the heap:
+/// obj + wosize*8 <= minor_heap_size (and wosize > 0)
+val minor_objects_body_bound (ms: minor_state) (obj: U64.t)
+  : Lemma (requires minor_wf ms /\ Seq.mem obj (minor_objects ms))
+          (ensures minor_wosize ms obj > 0 /\
+                   U64.v obj + minor_wosize ms obj * 8 <= minor_heap_size /\
+                   minor_wosize ms obj < minor_heap_size)
+
 /// After allocation, the new object appears in minor_objects
 val minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256})
@@ -218,3 +226,11 @@ val minor_alloc_preserves_existing (ms: minor_state)
 
 /// Resetting the minor heap (after collection)
 val minor_reset (ms: minor_state) : Tot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0})
+
+/// The number of minor objects is bounded by minor_heap_size / 16.
+/// Each object uses at least 16 bytes (8 for header + 8 for body with wosize >= 1).
+/// Since queue_size = minor_heap_size / 8, we get |minor_objects| < queue_size.
+val minor_objects_count_bound (ms: minor_state)
+  : Lemma (requires minor_wf ms)
+          (ensures Seq.length (minor_objects ms) <= minor_heap_size / 16 /\
+                   Seq.length (minor_objects ms) < minor_heap_size / 8)

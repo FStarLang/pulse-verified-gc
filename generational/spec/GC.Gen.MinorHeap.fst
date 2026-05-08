@@ -517,6 +517,24 @@ let rec minor_objects_aux_next_bound
   end
 #pop-options
 
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 200 --split_queries always --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+let minor_objects_body_bound (ms: minor_state) (obj: U64.t)
+  : Lemma (requires minor_wf ms /\ Seq.mem obj (minor_objects ms))
+          (ensures minor_wosize ms obj > 0 /\
+                   U64.v obj + minor_wosize ms obj * 8 <= minor_heap_size /\
+                   minor_wosize ms obj < minor_heap_size)
+  =
+  minor_objects_aux_next_bound ms.data 0 (U64.v ms.bump) obj;
+  let xv = U64.v obj in
+  let hdr_pos = xv - 8 in
+  let hdr = minor_read_word ms.data (U64.uint_to_t hdr_pos) in
+  let wz = U64.v (U64.shift_right hdr 10ul) in
+  assert (wz > 0);
+  assert (hdr_pos + (wz + 1) * 8 <= U64.v ms.bump);
+  assert (xv + wz * 8 <= U64.v ms.bump);
+  assert (U64.v ms.bump <= minor_heap_size)
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Main proofs
 /// ---------------------------------------------------------------------------
@@ -629,3 +647,126 @@ let minor_alloc_preserves_existing (ms: minor_state)
 
 let minor_reset (ms: minor_state) : Tot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0}) =
   { data = ms.data; bump = 0UL }
+
+/// Each minor object consumes at least 16 bytes (8 header + 8 body with wosize >= 1),
+/// so |minor_objects| <= bump / 16 <= minor_heap_size / 16.
+#push-options "--fuel 4 --ifuel 0 --z3rlimit 40 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+
+/// Pure counting function matching minor_objects_aux structure
+private let rec minor_objects_aux_count
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : GTot nat (decreases (bump - pos))
+  =
+  if pos + 8 > bump then 0
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    if wz = 0 then 0
+    else
+      let next_pos = pos + (wz + 1) * 8 in
+      if next_pos > bump then 0
+      else 1 + minor_objects_aux_count data next_pos bump
+  end
+
+/// Count equals Seq.length
+private let rec minor_objects_aux_count_eq_length
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Lemma (ensures minor_objects_aux_count data pos bump == Seq.length (minor_objects_aux data pos bump))
+          (decreases (bump - pos))
+  =
+  if pos + 8 > bump then ()
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    if wz = 0 then ()
+    else
+      let next_pos = pos + (wz + 1) * 8 in
+      if next_pos > bump then ()
+      else begin
+        minor_objects_aux_count_eq_length data next_pos bump;
+        Seq.Base.lemma_len_append (Seq.create 1 (U64.uint_to_t (pos + 8))) (minor_objects_aux data next_pos bump)
+      end
+  end
+
+/// Count that uses chain_valid, simpler recursive structure
+private let rec minor_chain_count
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Pure nat (requires minor_chain_valid data pos bump == true)
+             (ensures fun _ -> True)
+             (decreases (bump - pos))
+  =
+  if pos + 8 > bump then 0
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    let next_pos = pos + (wz + 1) * 8 in
+    1 + minor_chain_count data next_pos bump
+  end
+
+/// Count bound — return refined type instead of Lemma to avoid WP encoding issues
+private let rec minor_chain_count_bounded
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Pure (n:nat{16 * n <= bump - pos})
+         (requires minor_chain_valid data pos bump == true /\ pos <= bump)
+         (ensures fun n -> n == minor_chain_count data pos bump)
+         (decreases (bump - pos))
+  =
+  if pos + 8 > bump then 0
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    let next_pos = pos + (wz + 1) * 8 in
+    next_pos_mod8 pos wz;
+    let tail_count = minor_chain_count_bounded data next_pos bump in
+    1 + tail_count
+  end
+
+/// Wrapper lemma
+private let minor_chain_count_bound
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Lemma (requires minor_chain_valid data pos bump == true /\ pos <= bump)
+          (ensures 16 * minor_chain_count data pos bump <= bump - pos)
+  = let _ = minor_chain_count_bounded data pos bump in ()
+
+/// Chain count equals objects_aux count
+private let rec minor_chain_count_eq
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Lemma (requires minor_chain_valid data pos bump == true)
+          (ensures minor_chain_count data pos bump == minor_objects_aux_count data pos bump)
+          (decreases (bump - pos))
+  =
+  if pos + 8 > bump then ()
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    let next_pos = pos + (wz + 1) * 8 in
+    next_pos_mod8 pos wz;
+    minor_chain_count_eq data next_pos bump
+  end
+
+/// Combine: bound on Seq.length
+private let minor_objects_aux_count_bound
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Lemma (requires minor_chain_valid data pos bump == true /\ pos <= bump)
+          (ensures 16 * Seq.length (minor_objects_aux data pos bump) <= bump - pos)
+  =
+  minor_chain_count_bound data pos bump;
+  minor_chain_count_eq data pos bump;
+  minor_objects_aux_count_eq_length data pos bump
+#pop-options
+
+let minor_objects_count_bound (ms: minor_state)
+  : Lemma (requires minor_wf ms)
+          (ensures Seq.length (minor_objects ms) <= minor_heap_size / 16 /\
+                   Seq.length (minor_objects ms) < minor_heap_size / 8)
+  =
+  minor_objects_aux_count_bound ms.data 0 (U64.v ms.bump);
+  // 16 * |minor_objects ms| <= bump - 0 = bump <= minor_heap_size
+  // So |minor_objects ms| <= minor_heap_size / 16
+  FStar.Math.Lemmas.lemma_div_le (16 * Seq.length (minor_objects ms)) minor_heap_size 16;
+  assert_norm (minor_heap_size / 16 < minor_heap_size / 8)

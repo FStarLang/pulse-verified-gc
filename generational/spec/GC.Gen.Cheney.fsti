@@ -62,6 +62,22 @@ val cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t
                     cs.cs_fwd addr <> 0UL)
           (ensures cheney_forward_one minor cs addr == cs)
 
+/// Unfold: when wosize is 0
+val cheney_forward_one_noop_wz0 (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires Seq.mem addr (minor_objects minor) /\
+                    cs.cs_fwd addr = 0UL /\
+                    minor_wosize minor addr = 0)
+          (ensures cheney_forward_one minor cs addr == cs)
+
+/// Unfold: when promotion fails (OOM)
+val cheney_forward_one_noop_oom (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires Seq.mem addr (minor_objects minor) /\
+                    cs.cs_fwd addr = 0UL /\
+                    minor_wosize minor addr > 0 /\
+                    (promote_object minor cs.cs_major addr cs.cs_fp
+                       (minor_wosize minor addr)).new_addr = 0UL)
+          (ensures cheney_forward_one minor cs addr == cs)
+
 /// Unfold: when addr is valid and successfully forwarded
 val cheney_forward_one_success (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
@@ -87,6 +103,21 @@ val cheney_forward_fields (minor: minor_state) (cs: cheney_state)
                           (parent: U64.t) (idx: nat) (wosize: nat)
   : GTot cheney_state
 
+/// Equation lemma: base case (idx >= wosize)
+val cheney_forward_fields_base
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma (requires idx >= wosize)
+          (ensures cheney_forward_fields minor cs parent idx wosize == cs)
+
+/// Equation lemma: recursive case (idx < wosize)
+val cheney_forward_fields_step
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma (requires idx < wosize)
+          (ensures cheney_forward_fields minor cs parent idx wosize ==
+                   (let field_val = minor_read_field minor parent idx in
+                    let cs' = cheney_forward_one minor cs field_val in
+                    cheney_forward_fields minor cs' parent (idx + 1) wosize))
+
 /// ---------------------------------------------------------------------------
 /// Forward roots: iterate a sequence of root addresses
 /// ---------------------------------------------------------------------------
@@ -95,6 +126,21 @@ val cheney_forward_fields (minor: minor_state) (cs: cheney_state)
 val cheney_forward_roots (minor: minor_state) (cs: cheney_state)
                          (roots: seq U64.t) (idx: nat)
   : GTot cheney_state
+
+/// Equation lemma: base case (idx >= length roots)
+val cheney_forward_roots_base
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires idx >= Seq.length roots)
+          (ensures cheney_forward_roots minor cs roots idx == cs)
+
+/// Equation lemma: recursive case (idx < length roots)
+val cheney_forward_roots_step
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires idx < Seq.length roots)
+          (ensures cheney_forward_roots minor cs roots idx ==
+                   (let r = Seq.index roots idx in
+                    let cs' = cheney_forward_one minor cs r in
+                    cheney_forward_roots minor cs' roots (idx + 1)))
 
 /// ---------------------------------------------------------------------------
 /// BFS scan loop
@@ -107,9 +153,29 @@ val cheney_scan (minor: minor_state) (cs: cheney_state)
                 (scan: nat) (fuel: nat)
   : GTot cheney_state
 
+/// Equation lemma: base case (fuel = 0 or scan >= queue length)
+val cheney_scan_base
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires fuel = 0 \/ scan >= Seq.length cs.cs_queue)
+          (ensures cheney_scan minor cs scan fuel == cs)
+
+/// Equation lemma: recursive case
+val cheney_scan_step
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires fuel > 0 /\ scan < Seq.length cs.cs_queue)
+          (ensures cheney_scan minor cs scan fuel ==
+                   (let obj = Seq.index cs.cs_queue scan in
+                    let wz = minor_wosize minor obj in
+                    let cs' = cheney_forward_fields minor cs obj 0 wz in
+                    cheney_scan minor cs' (scan + 1) (fuel - 1)))
+
 /// Fuel bound: sufficient to process all reachable minor objects.
 /// At most |minor_objects| unique objects can ever be enqueued.
 val cheney_fuel (minor: minor_state) : GTot nat
+
+/// Expose fuel value (needed for proving fuel > 0 when scan < bk < fuel)
+val cheney_fuel_eq (minor: minor_state)
+  : Lemma (cheney_fuel minor == Seq.length (minor_objects minor))
 
 /// ---------------------------------------------------------------------------
 /// Full Cheney promotion
@@ -186,6 +252,20 @@ val cheney_promote_preserves_wfh_part1
                     well_formed_heap_part1 res.major_final /\
                     AllocLemmas.fl_valid res.major_final res.fp_final (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates res.major_final res.fp_final (heap_size / U64.v mword)))
+
+/// --- chain_objects_blue preservation ---
+
+/// Cheney promote preserves chain_objects_blue.
+/// Promotion allocates from the free-list (blue objects), but the allocated
+/// blocks leave the chain — the remaining chain stays blue.
+val cheney_promote_preserves_cob
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
+          (ensures (let res = cheney_promote minor major fp roots in
+                    chain_objects_blue res.major_final res.fp_final))
 
 /// --- Object preservation ---
 

@@ -96,6 +96,22 @@ let cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t
           (ensures cheney_forward_one minor cs addr == cs)
   = ()
 
+let cheney_forward_one_noop_wz0 (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires Seq.mem addr (minor_objects minor) /\
+                    cs.cs_fwd addr = 0UL /\
+                    minor_wosize minor addr = 0)
+          (ensures cheney_forward_one minor cs addr == cs)
+  = ()
+
+let cheney_forward_one_noop_oom (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires Seq.mem addr (minor_objects minor) /\
+                    cs.cs_fwd addr = 0UL /\
+                    minor_wosize minor addr > 0 /\
+                    (promote_object minor cs.cs_major addr cs.cs_fp
+                       (minor_wosize minor addr)).new_addr = 0UL)
+          (ensures cheney_forward_one minor cs addr == cs)
+  = ()
+
 let cheney_forward_one_success (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
@@ -126,6 +142,21 @@ let rec cheney_forward_fields (minor: minor_state) (cs: cheney_state)
     let cs' = cheney_forward_one minor cs field_val in
     cheney_forward_fields minor cs' parent (idx + 1) wosize
 
+let cheney_forward_fields_base
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma (requires idx >= wosize)
+          (ensures cheney_forward_fields minor cs parent idx wosize == cs)
+  = ()
+
+let cheney_forward_fields_step
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma (requires idx < wosize)
+          (ensures cheney_forward_fields minor cs parent idx wosize ==
+                   (let field_val = minor_read_field minor parent idx in
+                    let cs' = cheney_forward_one minor cs field_val in
+                    cheney_forward_fields minor cs' parent (idx + 1) wosize))
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// cheney_forward_roots: forward all roots
 /// ---------------------------------------------------------------------------
@@ -140,6 +171,21 @@ let rec cheney_forward_roots (minor: minor_state) (cs: cheney_state)
     let r = Seq.index roots idx in
     let cs' = cheney_forward_one minor cs r in
     cheney_forward_roots minor cs' roots (idx + 1)
+
+let cheney_forward_roots_base
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires idx >= Seq.length roots)
+          (ensures cheney_forward_roots minor cs roots idx == cs)
+  = ()
+
+let cheney_forward_roots_step
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires idx < Seq.length roots)
+          (ensures cheney_forward_roots minor cs roots idx ==
+                   (let r = Seq.index roots idx in
+                    let cs' = cheney_forward_one minor cs r in
+                    cheney_forward_roots minor cs' roots (idx + 1)))
+  = ()
 
 /// ---------------------------------------------------------------------------
 /// cheney_scan: BFS scan loop
@@ -157,6 +203,22 @@ let rec cheney_scan (minor: minor_state) (cs: cheney_state)
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_scan minor cs' (scan + 1) (fuel - 1)
 
+let cheney_scan_base
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires fuel = 0 \/ scan >= Seq.length cs.cs_queue)
+          (ensures cheney_scan minor cs scan fuel == cs)
+  = ()
+
+let cheney_scan_step
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires fuel > 0 /\ scan < Seq.length cs.cs_queue)
+          (ensures cheney_scan minor cs scan fuel ==
+                   (let obj = Seq.index cs.cs_queue scan in
+                    let wz = minor_wosize minor obj in
+                    let cs' = cheney_forward_fields minor cs obj 0 wz in
+                    cheney_scan minor cs' (scan + 1) (fuel - 1)))
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// cheney_fuel: sufficient fuel for BFS completion
 /// ---------------------------------------------------------------------------
@@ -166,6 +228,10 @@ let rec cheney_scan (minor: minor_state) (cs: cheney_state)
 /// Each scan step advances scan by 1, so fuel = |minor_objects| suffices.
 let cheney_fuel (minor: minor_state) : GTot nat =
   Seq.length (minor_objects minor)
+
+let cheney_fuel_eq (minor: minor_state)
+  : Lemma (cheney_fuel minor == Seq.length (minor_objects minor))
+  = ()
 
 /// ---------------------------------------------------------------------------
 /// Correctness proofs — wfh_part1 preservation
@@ -410,7 +476,7 @@ private let rec cheney_scan_preserves_cob
 #pop-options
 
 /// Full cheney_promote preserves chain_objects_blue.
-private let cheney_promote_preserves_chain_objects_blue
+let cheney_promote_preserves_cob
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
@@ -741,7 +807,7 @@ let cheney_collect_preserves_fl_valid
   =
   // Promotion preserves fl_valid and chain_objects_blue
   cheney_promote_preserves_wfh_part1 minor major fp roots;
-  cheney_promote_preserves_chain_objects_blue minor major fp roots;
+  cheney_promote_preserves_cob minor major fp roots;
   let prom = cheney_promote minor major fp roots in
   // update_major_pointers preserves fl_valid
   update_major_pointers_preserves_fl_valid prom.major_final prom.fwd_map prom.fp_final
