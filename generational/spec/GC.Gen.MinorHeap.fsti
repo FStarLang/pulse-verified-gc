@@ -186,6 +186,30 @@ let minor_wosize (ms: minor_state) (obj: U64.t) : GTot nat =
   else 0
 
 /// ---------------------------------------------------------------------------
+/// Guard Completeness (trust assumption on the mutator)
+/// ---------------------------------------------------------------------------
+
+/// Guard completeness: runtime guards suffice to identify minor objects.
+///
+/// TRUST ASSUMPTION on the mutator:
+/// The allocator zeros newly allocated object bodies (so body positions have
+/// wosize = 0 and cannot masquerade as object starts). The mutator is trusted
+/// not to store values in body fields whose upper 54 bits happen to form a
+/// plausible wosize that, combined with alignment and bounds, would be
+/// mistaken for an object header. In practice OCaml tagged values (odd integers,
+/// aligned pointers) do not produce such confusion.
+///
+/// This predicate is expected at GC entry and preserved by the collector
+/// (which only reads the minor heap) and by minor_reset (bump → 0).
+[@@"opaque_to_smt"]
+let minor_guards_complete (ms: minor_state) : prop =
+  forall (addr: U64.t).
+    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
+    minor_wosize ms addr > 0 /\
+    U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size ==>
+    Seq.mem addr (minor_objects ms)
+
+/// ---------------------------------------------------------------------------
 /// Properties
 /// ---------------------------------------------------------------------------
 

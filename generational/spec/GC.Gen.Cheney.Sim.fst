@@ -287,13 +287,11 @@ let cheney_bfs_inv_strict_room
   SimOne.cheney_bfs_inv_strict_room minor cs addr
 #pop-options
 
-/// TCB axiom — see .fsti for detailed justification.
-/// Unprovable: body data at non-boundary positions could accidentally
-/// satisfy the wosize/bounds guards. Admitted as the sole TCB assumption.
+/// Trivial from minor_guards_complete: just instantiate the universal quantifier.
 let minor_guards_sufficient (ms: minor_state) (addr: U64.t)
-  : Lemma (requires minor_wf ms /\
+  : Lemma (requires minor_guards_complete ms /\
                     U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
                     minor_wosize ms addr > 0 /\
                     U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size)
           (ensures Seq.mem addr (minor_objects ms))
-  = admit ()
+  = reveal_opaque (`%minor_guards_complete) (minor_guards_complete ms)

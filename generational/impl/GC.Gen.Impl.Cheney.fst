@@ -113,6 +113,7 @@ fn forward_if_minor
                  Seq.length 'q == queue_size /\
                  SZ.v 'bk <= queue_size /\
                  minor_wf minor_st /\
+                  minor_guards_complete minor_st /\
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs_pre /\
                  SimOne.cheney_bfs_inv minor_st cs_pre)
@@ -271,6 +272,7 @@ fn forward_roots
                  SZ.v 'bk == 0 /\
                  SZ.v nroots == Seq.length 'rs /\
                  minor_wf minor_st /\
+                  minor_guards_complete minor_st /\
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs0 /\
                  SimOne.cheney_bfs_inv minor_st cs0)
@@ -321,6 +323,7 @@ fn forward_roots
             SZ.v nroots == Seq.length 'rs /\
             rs_i == 'rs /\
             minor_wf minor_st /\
+             minor_guards_complete minor_st /\
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_i /\
             SimOne.cheney_bfs_inv minor_st cs_i /\
             CheneySpec.cheney_forward_roots minor_st cs_i 'rs (SZ.v iv) ==
@@ -379,6 +382,7 @@ fn scan_loop
                  Seq.length 'q == queue_size /\
                  SZ.v 'bk <= queue_size /\
                  minor_wf minor_st /\
+                  minor_guards_complete minor_st /\
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs1 /\
                  SimOne.cheney_bfs_inv minor_st cs1)
@@ -427,6 +431,7 @@ fn scan_loop
             Seq.length farr_i == fwd_array_size /\
             Seq.length q_i == queue_size /\
             minor_wf minor_st /\
+             minor_guards_complete minor_st /\
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_s /\
             SimOne.cheney_bfs_inv minor_st cs_s /\
             SZ.v sv <= CheneySpec.cheney_fuel minor_st /\
@@ -509,6 +514,7 @@ fn scan_loop
                 U64.v obj + U64.v wosize * 8 <= minor_heap_size /\
                 SZ.v s < SZ.v bk_f /\
                 minor_wf minor_st /\
+                 minor_guards_complete minor_st /\
                 Sim.impl_matches_spec ms_f fp_f farr_f q_f (SZ.v bk_f) cs_f /\
                 SimOne.cheney_bfs_inv minor_st cs_f /\
                 CheneySpec.cheney_forward_fields minor_st cs_f obj (U64.v fi) (U64.v wosize) ==
@@ -585,6 +591,7 @@ fn cheney_promote_phase
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  SZ.v nroots == Seq.length 'rs /\
                  minor_wf minor_st /\
+                  minor_guards_complete minor_st /\
                  Seq.length (SF.objects 0UL 'ms) > 0)
   ensures exists* md2 mb2 ms2 fp2 farr2 rs2.
     is_minor minor md2 mb2 **

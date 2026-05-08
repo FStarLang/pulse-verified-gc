@@ -234,29 +234,15 @@ val cheney_bfs_inv_strict_room
           (ensures Seq.length cs.CheneySpec.cs_queue < queue_size)
 
 /// ---------------------------------------------------------------------------
-/// TCB axiom: minor heap guard checks identify minor objects
+/// Guard completeness: trivial from minor_guards_complete precondition
 /// ---------------------------------------------------------------------------
 
-/// Under minor_wf, the implementation's runtime guards (range, alignment, wosize > 0,
-/// body within bounds) are sufficient to identify valid minor objects.
-///
-/// TCB ASSUMPTION (unprovable from spec):
-/// The chain walk (minor_objects_aux) enumerates objects at positions determined
-/// by following headers from position 0. An arbitrary aligned address with
-/// positive wosize at its header could fall inside another object's body (where
-/// field data accidentally has non-zero upper bits). No spec-level invariant
-/// rules this out — it depends on what the mutator stores in fields.
-///
-/// In practice, this holds for OCaml-style bump-allocated heaps because:
-///   1. Objects are contiguous from 0 to bump (no gaps)
-///   2. The mutator stores tagged values, not raw bit patterns that resemble
-///      headers with plausible wosize at non-boundary positions
-///   3. The bounds checks (addr + wosize*8 <= minor_heap_size) further constrain
-///      which positions can pass
-///
-/// This is the sole TCB assumption in the Cheney simulation proof.
+/// Under minor_guards_complete, the implementation's runtime guards (range,
+/// alignment, wosize > 0, body within bounds) are sufficient to identify valid
+/// minor objects. This is the sole trust assumption on the mutator —
+/// see minor_guards_complete in GC.Gen.MinorHeap for documentation.
 val minor_guards_sufficient (ms: minor_state) (addr: U64.t)
-  : Lemma (requires minor_wf ms /\
+  : Lemma (requires minor_guards_complete ms /\
                     U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
                     minor_wosize ms addr > 0 /\
                     U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size)
