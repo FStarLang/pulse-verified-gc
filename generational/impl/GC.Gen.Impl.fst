@@ -25,11 +25,16 @@ open GC.Gen.Impl.Promote
 open GC.Gen.Impl.UpdatePtrs
 open GC.Gen.Impl.Cheney
 open GC.Impl.Heap
+open GC.Impl.Stack
 module SpecFields = GC.Spec.Fields
 module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
 module ML = FStar.Math.Lemmas
+module MajorGC = GC.Impl
+module SpecGCPost = GC.Spec.Correctness
+module Mark = GC.Spec.Mark
+module CheneyEnd2End = GC.Gen.CheneyEnd2End
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -298,5 +303,83 @@ fn minor_collect (gh: gen_heap_t)
   assert (pure (AllocLemmas.fl_chain_terminates ms_updated fp_post (heap_size / U64.v mword)));
 
   fold (is_gen_heap gh _ 0UL _ _)
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Full generational GC (minor collection + major collection)
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+fn gen_gc (gh: gen_heap_t)
+          (roots: array U64.t) (nroots: SZ.t)
+          (fwd_arr: array U64.t)
+          (st: gray_stack)
+  requires is_gen_heap gh 'd 'b 's 'fp **
+           pts_to roots 'rs **
+           pts_to fwd_arr 'farr **
+           is_gray_stack st 'st **
+           pure (
+             SpecFields.well_formed_heap 's /\
+             AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
+             PromoteSpec.heap_objects_dense 's /\
+             PromoteSpec.chain_objects_blue 's 'fp /\
+             SZ.v nroots == Seq.length 'rs /\
+             Seq.length 'farr == fwd_array_size /\
+             (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+             minor_wf ({ data = 'd; bump = 'b }) /\
+             minor_guards_complete ({ data = 'd; bump = 'b }) /\
+             Seq.length (SpecFields.objects 0UL 's) > 0 /\
+             Mark.no_black_objects 's /\
+             (let res = CheneySpec.cheney_collect_spec
+                          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
+              MajorGC.gc_precondition res.mc_major 'st res.mc_fp (stack_capacity st)))
+  returns final_fp: U64.t
+  ensures exists* d2 b2 s2 rs2 farr2 st2.
+    is_gen_heap gh d2 b2 s2 final_fp **
+    pts_to roots rs2 **
+    pts_to fwd_arr farr2 **
+    is_gray_stack st st2 **
+    pure (
+      let minor_st : minor_state = { data = 'd; bump = 'b } in
+      let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      SpecGCPost.gc_postcondition s2 /\
+      SpecGCPost.full_gc_correctness res.mc_major s2 'st /\
+      rs2 == res.mc_roots /\
+      U64.v b2 == 0)
+{
+  // Phase 1: Minor collection (Cheney BFS promotion)
+  minor_collect gh roots nroots fwd_arr;
+
+  with d2 b2 s_mid fp_mid rs_mid farr_mid. assert (
+    is_gen_heap gh d2 b2 s_mid fp_mid **
+    pts_to roots rs_mid **
+    pts_to fwd_arr farr_mid);
+
+  // Phase 2: Unfold gen heap to access major heap separately
+  unfold is_gen_heap;
+
+  // Read post-minor free-list pointer
+  let fp_val = R.op_Bang gh.fp_ref;
+
+  // Phase 3: Major collection (mark + sweep + coalesce)
+  // gc_precondition s_mid 'st fp_val (stack_capacity st) holds because:
+  //   s_mid == cheney_collect_spec(...).mc_major  (from minor_collect)
+  //   fp_val == fp_mid == cheney_collect_spec(...).mc_fp  (from minor_collect + ref read)
+  //   gc_precondition on post-minor heap is a precondition of gen_gc
+  let final_fp = MajorGC.collect gh.major st fp_val;
+
+  // Bind existentials from collect
+  with s_final st_final. assert (
+    is_heap gh.major s_final **
+    is_gray_stack st st_final);
+
+  // Phase 4: Update free-list pointer and re-fold gen heap
+  R.op_Colon_Equals gh.fp_ref final_fp;
+
+  fold (is_gen_heap gh d2 b2 s_final final_fp);
+
+  final_fp
 }
 #pop-options
