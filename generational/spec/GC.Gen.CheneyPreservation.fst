@@ -16,23 +16,23 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
+open GC.Gen.WriteBodyLemmas
 
 module Allocator = GC.Spec.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module AllocProps = GC.Gen.AllocProps
 module Mark = GC.Spec.Mark
 
 /// ---------------------------------------------------------------------------
 /// Core sub-lemma: promote_object preserves no_black_objects
 /// ---------------------------------------------------------------------------
 ///
-/// QUARANTINED ADMIT: The success branch requires showing that alloc_spec
-/// writes white_bits (color=0=White) for the newly allocated object, and
-/// copy_fields only writes body fields. This is morally obvious from
-/// alloc_spec's definition (it calls make_header with white_bits), but
-/// requires alloc_spec frame analysis under well_formed_heap_part1.
-/// The OOM branch is trivially proved (no state change).
+/// Proof: alloc_spec_preserves_no_black_part1 gives no_black for the
+/// post-alloc heap. copy_fields only writes body fields (within
+/// [dst, dst+wz*8)), preserving all headers. So colors are unchanged,
+/// and no_black carries through.
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0 --split_queries always"
 
 private let promote_object_preserves_no_black
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
@@ -48,12 +48,60 @@ private let promote_object_preserves_no_black
     promote_object_oom minor major obj fp wz
   else begin
     promote_object_success minor major obj fp wz;
-    // alloc_spec writes white_bits (color 0) for the allocated object.
-    // copy_fields writes body fields only, preserving all headers.
-    // For each object in the result: header is either unchanged (not black
-    // by precondition) or newly written (white/blue, never black).
-    // Detailed proof requires alloc_spec frame analysis.
-    admit () // Quarantined gap: alloc_spec_preserves_no_black_part1
+    let g_alloc = alloc_res.heap_out in
+
+    // Step 1: alloc preserves no_black
+    AllocLemmas.alloc_spec_preserves_no_black_part1 major fp wz;
+    assert (Mark.no_black_objects g_alloc);
+
+    // Step 2: dst is in objects of g_alloc with sufficient wosize
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+    let dst : obj_addr = alloc_res.obj_out in
+    assert (Seq.mem dst (objects 0UL g_alloc));
+    assert (U64.v (wosize_of_object dst g_alloc) >= wz);
+
+    // Step 3: copy_fields preserves objects list
+    copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
+    let result = copy_fields minor g_alloc obj dst 0 wz in
+    assert (objects 0UL result == objects 0UL g_alloc);
+
+    // Step 4: copy_fields preserves all headers via frame
+    // dst fits in heap (from part1 obj bound)
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    wfh_part1_obj_bound g_alloc dst;
+    assert (U64.v dst + U64.v (wosize_of_object dst g_alloc) * 8 <= Seq.length g_alloc);
+    // Establish dst_fields_valid dst wz
+    assert (dst_fields_valid dst wz);
+
+    // Step 5: for each object h, header is preserved → not black
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects 0UL result))
+      (ensures ~(is_black h result))
+    = assert (Seq.mem h (objects 0UL g_alloc));
+      hd_address_spec h;
+      hd_address_spec dst;
+      // Show hd_address h is outside [dst, dst + wz*8)
+      if h = dst then begin
+        // hd_address(dst) = dst - 8 < dst, so frame applies
+        assert (U64.v (hd_address h) + 8 <= U64.v dst);
+        copy_fields_frame minor g_alloc obj dst 0 wz (hd_address h);
+        color_of_header_eq h g_alloc result
+      end else if U64.v h < U64.v dst then begin
+        // h < dst → hd_address(h) = h - 8 < dst - 8 < dst
+        objects_separated 0UL g_alloc h dst;
+        assert (U64.v (hd_address h) + 8 <= U64.v dst);
+        copy_fields_frame minor g_alloc obj dst 0 wz (hd_address h);
+        color_of_header_eq h g_alloc result
+      end else begin
+        // h > dst → objects_separated gives h > dst + wosize*8 >= dst + wz*8
+        objects_separated 0UL g_alloc dst h;
+        wosize_of_object_spec dst g_alloc;
+        copy_fields_frame minor g_alloc obj dst 0 wz (hd_address h);
+        color_of_header_eq h g_alloc result
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
   end
 
 #pop-options
@@ -205,7 +253,8 @@ private let rec cheney_scan_preserves_no_black
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_no_black minor cs obj 0 wz;
-    let fuel' : nat = fuel - 1 in
+    assert (fuel > 0);
+    let fuel' = fuel - 1 in
     cheney_scan_preserves_no_black minor cs' (scan + 1) fuel'
   end
 

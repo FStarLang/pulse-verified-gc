@@ -203,3 +203,17 @@ val alloc_from_block_objects_backward_part1 :
                    Seq.mem h (objects 0UL g') /\
                    ~(Seq.mem h (objects 0UL g))))
         (ensures h == snd (alloc_from_block g obj wz next_fp))
+
+/// **Theorem**: alloc_spec preserves no_black_objects under well_formed_heap_part1.
+///
+/// Proof sketch: For each object h in the post-alloc heap:
+/// - If h is new (not in pre-alloc): alloc_spec_new_objects_blue_part1 → blue → not black
+/// - If h == obj_out (the allocated block): header is make_header wz white_bits → not black
+/// - If h is a pre-existing object != obj_out: header unchanged by alloc → not black
+val alloc_spec_preserves_no_black_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires GC.Spec.Mark.no_black_objects g /\
+                  well_formed_heap_part1 g /\
+                  fl_valid g fp (heap_size / U64.v mword) /\
+                  fl_chain_terminates g fp (heap_size / U64.v mword))
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  GC.Spec.Mark.no_black_objects r.heap_out))

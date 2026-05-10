@@ -3247,4 +3247,257 @@ let alloc_from_block_objects_backward_part1
 #pop-options
 
 
+/// ===========================================================================
+/// Section: alloc_spec preserves no_black_objects (part1 variant)
+/// ===========================================================================
+
+/// ---------------------------------------------------------------------------
+/// Helper: writing within a body field preserves no_black_objects.
+/// No well_formed_heap needed — just objects_separated + read_write_different.
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--split_queries always --z3rlimit 40 --fuel 0 --ifuel 0"
+private let field_write_preserves_no_black_part1
+  (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires GC.Spec.Mark.no_black_objects g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    U64.v addr >= U64.v obj /\
+                    U64.v addr < U64.v obj + U64.v (wosize_of_object obj g) * 8 /\
+                    U64.v addr % 8 = 0)
+          (ensures GC.Spec.Mark.no_black_objects (write_word g addr v))
+  = let g' = write_word g addr v in
+    write_body_preserves_objects_local 0UL g obj addr v;
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects 0UL g'))
+      (ensures ~(is_black h g'))
+    = assert (Seq.mem h (objects 0UL g));
+      hd_address_spec h;
+      hd_address_spec obj;
+      if U64.v h <= U64.v obj then begin
+        read_write_different g addr (hd_address h) v;
+        color_of_header_eq h g g'
+      end else begin
+        objects_separated 0UL g obj h;
+        read_write_different g addr (hd_address h) v;
+        color_of_header_eq h g g'
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// alloc_from_block preserves no_black_objects under well_formed_heap_part1.
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--split_queries always --z3rlimit 80 --fuel 0 --ifuel 0"
+private let alloc_from_block_preserves_no_black_part1
+  (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
+  : Lemma (requires GC.Spec.Mark.no_black_objects g /\
+                    well_formed_heap_part1 g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    (let hdr = read_word g (hd_address obj) in
+                     U64.v (getWosize hdr) >= wz /\ wz >= 1))
+          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
+                    GC.Spec.Mark.no_black_objects g'))
+  = let hdr = read_word g (hd_address obj) in
+    let block_wz = U64.v (getWosize hdr) in
+    let hd = hd_address obj in
+    let (g', rem_fp) = alloc_from_block g obj wz next_fp in
+    hd_address_spec obj;
+    getWosize_bound hdr;
+    wosize_of_object_spec obj g;
+    if block_wz - wz >= 2 then begin
+      // Split case
+      alloc_split_facts_part1 g obj wz next_fp;
+      let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+      let rem_obj_nat = rem_hd_nat + 8 in
+      let rem_wz = block_wz - wz - 1 in
+      let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+      let rem_obj_addr : obj_addr = U64.uint_to_t rem_obj_nat in
+      // Frame: reads before hd_address(obj) are preserved
+      let aux_before (p: hp_addr) : Lemma
+        (requires U64.v p < U64.v hd)
+        (ensures read_word g' p == read_word g p)
+      = alloc_split_g3_agrees_part1 g obj wz next_fp p
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
+      // Color facts for new/modified objects
+      make_header_getColor (U64.uint_to_t wz) white_bits 0UL;
+      getColor_raw (make_header (U64.uint_to_t wz) white_bits 0UL);
+      make_header_getColor (U64.uint_to_t rem_wz) blue_bits 0UL;
+      getColor_raw (make_header (U64.uint_to_t rem_wz) blue_bits 0UL);
+      let aux (h: obj_addr) : Lemma
+        (requires Seq.mem h (objects 0UL g'))
+        (ensures ~(is_black h g'))
+      = split_new_mem_in_old_or_rem_part1 0UL g g' obj wz block_wz h;
+        if U64.v h = rem_obj_nat then begin
+          // New remainder object: blue header → not black
+          hd_address_spec rem_obj_addr;
+          color_of_object_spec rem_obj_addr g';
+          is_black_iff rem_obj_addr g'
+        end else begin
+          assert (Seq.mem h (objects 0UL g));
+          if h = obj then begin
+            // Allocated block: white header → not black
+            color_of_object_spec obj g';
+            is_black_iff obj g'
+          end else begin
+            // Pre-existing other object: header unchanged → not black
+            hd_address_spec h;
+            if U64.v h < U64.v obj then begin
+              objects_separated 0UL g h obj;
+              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
+            end else begin
+              objects_separated 0UL g obj h;
+              assert (U64.v (hd_address h) > U64.v hd + block_wz * 8);
+              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
+            end;
+            color_of_header_eq h g g'
+          end
+        end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    end else begin
+      // Exact fit case
+      alloc_from_block_exact g obj wz next_fp;
+      let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+      getWosize_bound hdr;
+      make_header_getWosize (U64.uint_to_t block_wz) white_bits 0UL;
+      header_write_same_wosize_preserves_objects g obj alloc_hdr;
+      read_write_same g hd alloc_hdr;
+      make_header_getColor (U64.uint_to_t block_wz) white_bits 0UL;
+      getColor_raw alloc_hdr;
+      let aux (h: obj_addr) : Lemma
+        (requires Seq.mem h (objects 0UL g'))
+        (ensures ~(is_black h g'))
+      = assert (Seq.mem h (objects 0UL g));
+        if h = obj then begin
+          color_of_object_spec obj g';
+          is_black_iff obj g'
+        end else begin
+          hd_address_spec h;
+          if U64.v h < U64.v obj then
+            objects_separated 0UL g h obj
+          else
+            objects_separated 0UL g obj h;
+          read_write_different g hd (hd_address h) alloc_hdr;
+          color_of_header_eq h g g'
+        end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// alloc_search preserves no_black_objects (part1 variant)
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+private let rec alloc_search_preserves_no_black_part1
+  (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
+  : Lemma (requires GC.Spec.Mark.no_black_objects g /\
+                    well_formed_heap_part1 g /\
+                    wz >= 1 /\
+                    fl_valid g cur_fp fuel /\
+                    fl_chain_terminates g cur_fp fuel /\
+                    (prev_fp <> 0UL ==>
+                      (prev_fp <> cur_fp /\
+                       U64.v prev_fp >= U64.v mword /\
+                       U64.v prev_fp < heap_size /\
+                       U64.v prev_fp % U64.v mword = 0 /\
+                       Seq.mem prev_fp (objects 0UL g) /\
+                       U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
+          (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
+                    GC.Spec.Mark.no_black_objects r.heap_out))
+          (decreases fuel)
+  = if fuel = 0 then ()
+    else if cur_fp = 0UL then ()
+    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp >= heap_size then ()
+    else if U64.v cur_fp % U64.v mword <> 0 then ()
+    else begin
+      let obj : obj_addr = cur_fp in
+      let hd = hd_address obj in
+      let hdr = read_word g hd in
+      let block_wz = U64.v (getWosize hdr) in
+      hd_address_spec obj;
+      hd_address_bounds obj;
+      fl_valid_gives_mem g cur_fp fuel;
+      fl_valid_gives_wosize g cur_fp fuel;
+      wosize_of_object_spec obj g;
+      assert (Seq.mem obj (objects 0UL g));
+      let next_fp =
+        if U64.v hd + 16 <= heap_size then read_word g obj
+        else 0UL
+      in
+      if block_wz >= wz then begin
+        alloc_from_block_preserves_no_black_part1 g obj wz next_fp;
+        let (g', new_fp) = alloc_from_block g obj wz next_fp in
+        if prev_fp = 0UL then ()
+        else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
+                U64.v prev_fp % U64.v mword = 0 then begin
+          let prev : obj_addr = prev_fp in
+          alloc_from_block_objects_facts_part1 g obj wz next_fp;
+          assert (Seq.mem prev (objects 0UL g'));
+          alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
+          hd_address_spec prev;
+          wosize_of_object_spec prev g;
+          wosize_of_object_bound prev g;
+          wfh_part1_obj_bound g prev;
+          if block_wz - wz >= 2 then begin
+            let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+            let rem_obj_nat = rem_hd_nat + 8 in
+            if U64.v prev < U64.v obj then begin
+              objects_separated 0UL g prev obj;
+              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
+            end else begin
+              objects_separated 0UL g obj prev;
+              assert (U64.v prev > U64.v obj + block_wz * 8);
+              assert (U64.v (hd_address prev) > U64.v obj + block_wz * 8 - 8);
+              assert (U64.v (hd_address prev) <> U64.v hd);
+              assert (U64.v (hd_address prev) <> rem_hd_nat);
+              assert (U64.v (hd_address prev) <> rem_obj_nat);
+              alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
+            end
+          end else begin
+            if U64.v prev < U64.v obj then
+              objects_separated 0UL g prev obj
+            else
+              objects_separated 0UL g obj prev;
+            let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
+            alloc_from_block_exact g obj wz next_fp;
+            read_write_different g hd (hd_address prev) alloc_hdr
+          end;
+          wosize_of_object_spec prev g';
+          assert (wosize_of_object prev g' == wosize_of_object prev g);
+          field_write_preserves_no_black_part1 g' prev (prev <: hp_addr) new_fp
+        end
+        else ()
+      end
+      else begin
+        fl_valid_elim g cur_fp fuel;
+        (if U64.v hd + 16 <= heap_size then
+          fl_chain_terminates_elim g cur_fp fuel);
+        alloc_search_preserves_no_black_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Top-level: alloc_spec preserves no_black_objects (part1 variant)
+/// ---------------------------------------------------------------------------
+
+let alloc_spec_preserves_no_black_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
+  : Lemma (requires GC.Spec.Mark.no_black_objects g /\
+                    well_formed_heap_part1 g /\
+                    fl_valid g fp (heap_size / U64.v mword) /\
+                    fl_chain_terminates g fp (heap_size / U64.v mword))
+          (ensures (let r = alloc_spec g fp requested_wz in
+                    GC.Spec.Mark.no_black_objects r.heap_out))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_preserves_no_black_part1 g fp 0UL fp wz (heap_size / U64.v mword)
+
 #pop-options // Module-level z3rlimit 20

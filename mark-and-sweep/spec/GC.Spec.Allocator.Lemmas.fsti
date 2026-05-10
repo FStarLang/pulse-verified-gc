@@ -14,6 +14,7 @@ open GC.Spec.Allocator
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module Header = GC.Lib.Header
+module Mark = GC.Spec.Mark
 /// getWosize of make_header returns the original wosize
 val make_header_getWosize : (wz: U64.t{U64.v wz < pow2 54}) ->
                             (c: U64.t{U64.v c < 4}) ->
@@ -518,3 +519,12 @@ val alloc_from_block_objects_backward_part1 :
                    Seq.mem h (objects 0UL g') /\
                    ~(Seq.mem h (objects 0UL g))))
         (ensures h == snd (alloc_from_block g obj wz next_fp))
+
+/// **Theorem**: alloc_spec preserves no_black_objects under well_formed_heap_part1.
+val alloc_spec_preserves_no_black_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
+  Lemma (requires Mark.no_black_objects g /\
+                  well_formed_heap_part1 g /\
+                  fl_valid g fp (heap_size / U64.v mword) /\
+                  fl_chain_terminates g fp (heap_size / U64.v mword))
+        (ensures (let r = alloc_spec g fp requested_wz in
+                  Mark.no_black_objects r.heap_out))
