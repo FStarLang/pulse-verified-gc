@@ -94,17 +94,20 @@ promotion never creates black objects. The proof uses `alloc_spec_preserves_no_b
 (allocation under `well_formed_heap_part1` preserves no-black) combined with
 `copy_fields_frame` (field copying preserves headers, thus colors). ✅
 
-### 3.3 Impl→Spec Connection (⚠️ Indirect for generational)
+### 3.3 Impl→Spec Connection (✅ Strong)
 
-`GC.Gen.Impl.fsti`'s `minor_collect` postcondition states:
-```
-s2 == res.mc_major /\ fp2 == res.mc_fp /\ rs2 == res.mc_roots /\ U64.v b2 == 0
-```
-where `res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs`.
+`GC.Gen.Impl.fsti`'s `minor_collect` postcondition directly states:
+- **Spec refinement**: `s2 == cheney_collect_spec(...).mc_major`
+- **Object survival**: all pre-existing major objects survive
+- **Root rewriting**: `rs2 == rewrite_roots 'rs prom.fwd_map`
+- **Structural invariants**: `well_formed_heap_part1`, `fl_valid`, `fl_chain_terminates`
 
-This connects the impl to `cheney_collect_spec`, but does **not directly** state `cheney_gc_correct` in the postcondition. A caller must separately invoke `cheney_gc_correct` to derive correctness properties.
+`gen_gc` postcondition directly states:
+- **Major GC correctness**: `gc_postcondition s2 /\ full_gc_correctness res.mc_major s2 'st`
+- **Minor collection properties**: object survival, root rewriting, minor reset
+- **Post-minor heap properties**: `well_formed_heap_part1`, `fl_valid`, `fl_chain_terminates`
 
-**Recommendation**: Add a wrapper lemma that derives correctness from the spec refinement, or enrich the postcondition.
+**Clean, self-documenting interfaces.** ✅
 
 ### 3.4 Remembered Set & Write Barrier: Trust Boundary Analysis
 
@@ -198,24 +201,26 @@ Files > 1500 lines:
 
 Strong:
 - `GC.Impl.fsti` directly states `full_gc_correctness` in postcondition ✅
+- `GC.Gen.Impl.fsti` `minor_collect` directly states object survival, root rewriting, spec refinement ✅
+- `GC.Gen.Impl.fsti` `gen_gc` directly states major GC correctness + post-minor properties ✅
 - `GC.Gen.CheneyCorrectness.fsti` has clear, individually-named properties ✅
 - `GC.Gen.Promote.fsti` exports equation lemmas for client reasoning ✅
 - Key predicates are `opaque_to_smt` with reveal lemmas ✅
 - `GC.Gen.CheneyBFS.fsti` has clean, non-circular BFS completeness ✅
 
 Weak:
-- `GC.Gen.Impl.fsti` postcondition connects to `cheney_collect_spec` but not to `cheney_gc_correct` ⚠️
+- None — all interfaces now directly state their correctness properties ✅
 
 ## 5. Roadmap to Drop-In OCaml 4 Replacement
 
-### Phase 1: Full Generational GC Entry Point (Current Priority)
+### Phase 1: Full Generational GC Entry Point (✅ Complete)
 
-1. **Build `gen_gc` Pulse function** — calls `minor_collect` then `collect`
-   - Postcondition: references `generational_gc_end_to_end`
-   - This is the top-level verified function with the end-to-end theorem
-
-2. **Enrich `minor_collect` postcondition** — derive correctness properties
-   directly, not just spec refinement
+1. **`gen_gc` Pulse function** — calls `minor_collect` then `collect` ✅
+   - Postcondition: `gc_postcondition`, `full_gc_correctness`, minor properties
+2. **Enriched `minor_collect` postcondition** — directly states object survival,
+   root rewriting, spec refinement, and structural invariants ✅
+3. **Enriched `gen_gc` postcondition** — directly states major GC correctness
+   plus post-minor heap properties (wfh_part1, fl_valid, fl_chain_terminates) ✅
 
 ### Phase 2: Engineering (Significant Effort)
 
@@ -234,11 +239,11 @@ Weak:
 | Dimension | Grade | Notes |
 |-----------|-------|-------|
 | **Spec correctness** | A | 5-pillar mark-and-sweep + 6-property Cheney BFS (non-tautological). |
-| **Impl-spec connection** | B+ | Mark-and-sweep: excellent. Generational: good but indirect. |
+| **Impl-spec connection** | A | Both mark-and-sweep and generational: excellent. |
 | **Trust boundary** | A | Zero admits. Clean, documented trust assumptions. |
 | **Proof stability** | B- | Several high-rlimit spots. Some z3refresh needed. |
 | **Modularity** | A- | Clean layers. CheneyBFS cleanly separated. Some large files. |
-| **Feature completeness** | B- | Core GC verified. Missing: full gen-GC entry point, C API. |
+| **Feature completeness** | B | Core GC verified with full entry points. Missing: C API, remembered set impl. |
 | **Drop-in readiness** | C+ | Algorithms verified. Engineering work remains for OCaml integration. |
 
 ### Bottom Line

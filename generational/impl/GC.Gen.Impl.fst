@@ -35,6 +35,7 @@ module MajorGC = GC.Impl
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module CheneyEnd2End = GC.Gen.CheneyEnd2End
+module CheneyCorr = GC.Gen.CheneyCorrectness
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -242,14 +243,16 @@ fn minor_collect (gh: gen_heap_t)
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pure (
-      // Spec refinement: result matches the Cheney BFS collection spec
-      (let minor_st : minor_state = { data = 'd; bump = 'b } in
-       let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
-       s2 == res.mc_major /\
-       fp2 == res.mc_fp /\
-       rs2 == res.mc_roots /\
-       U64.v b2 == 0) /\
-      // Structural invariants preserved
+      let minor_st : minor_state = { data = 'd; bump = 'b } in
+      let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
+      s2 == res.mc_major /\
+      fp2 == res.mc_fp /\
+      rs2 == res.mc_roots /\
+      U64.v b2 == 0 /\
+      (forall (x: obj_addr). Seq.mem x (SpecFields.objects 0UL 's) ==>
+        Seq.mem x (SpecFields.objects 0UL s2)) /\
+      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
       SpecFields.well_formed_heap_part1 s2 /\
       AllocLemmas.fl_valid s2 fp2 (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates s2 fp2 (heap_size / U64.v mword))
@@ -292,6 +295,9 @@ fn minor_collect (gh: gen_heap_t)
 
   // SPEC REFINEMENT: bridge from phase postconditions to cheney_collect_spec
   cheney_collect_spec_unfold ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+
+  // Derive Cheney correctness properties (object survival + root rewriting)
+  CheneyCorr.cheney_gc_correct ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   
   // Assert each postcondition conjunct
   with rs_final. assert (pts_to roots rs_final);
@@ -344,10 +350,17 @@ fn gen_gc (gh: gen_heap_t)
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
       SpecGCPost.gc_postcondition s2 /\
       SpecGCPost.full_gc_correctness res.mc_major s2 'st /\
       rs2 == res.mc_roots /\
-      U64.v b2 == 0)
+      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+      U64.v b2 == 0 /\
+      (forall (x: obj_addr). Seq.mem x (SpecFields.objects 0UL 's) ==>
+        Seq.mem x (SpecFields.objects 0UL res.mc_major)) /\
+      SpecFields.well_formed_heap_part1 res.mc_major /\
+      AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword))
 {
   // Phase 1: Minor collection (Cheney BFS promotion)
   minor_collect gh roots nroots fwd_arr;
