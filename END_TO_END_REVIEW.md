@@ -8,13 +8,14 @@
 
 | Metric | Value |
 |--------|-------|
-| Total F\*/Pulse files | 148 |
-| Total lines of code | ~68K (specs & proofs ~61K, impl ~7K) |
+| Total F\*/Pulse files | 152 |
+| Verified modules | 304 |
+| Total lines of code | ~69K (specs & proofs ~62K, impl ~7K) |
 | `common/` | 17 files, 1.1K lines — shared heap model, object layout, graph theory, DFS |
 | `mark-and-sweep/` | 65 files, 6.4K lines — major GC (mark, sweep, coalesce, allocator) |
-| `generational/` | 66 files, 4.5K lines — minor GC (Cheney BFS, promotion, remembered set) |
-| Admits/assumes | **0** across entire codebase |
-| Build system | Single top-level Makefile, `make -j`, `--report_assumes warn` |
+| `generational/` | 70 files, 4.8K lines — minor GC (Cheney BFS, promotion, remembered set) |
+| Admits/assumes | **0** across entire codebase (2 platform TCB `assume val platform_fits_u64`) |
+| Build system | Single top-level Makefile, `make -j4`, `--report_assumes warn` |
 | Extraction | KaRaMeL to C for both mark-and-sweep and generational |
 
 ## 2. Feature Completeness vs OCaml 4 GC
@@ -88,6 +89,11 @@ Property 6 uses a **non-tautological proof** via `GC.Gen.CheneyBFS`:
 - Proved via `minor_reachable_ind` (reachability induction principle)
 - Forward map monotonicity through all BFS operations
 
+**no_black_objects preservation** (`GC.Gen.CheneyPreservation`): fully proved that
+promotion never creates black objects. The proof uses `alloc_spec_preserves_no_black_part1`
+(allocation under `well_formed_heap_part1` preserves no-black) combined with
+`copy_fields_frame` (field copying preserves headers, thus colors). ✅
+
 ### 3.3 Impl→Spec Connection (⚠️ Indirect for generational)
 
 `GC.Gen.Impl.fsti`'s `minor_collect` postcondition states:
@@ -147,9 +153,13 @@ This is already implicitly achieved: `cheney_collect_spec` receives all roots ex
 | `minor_guards_complete` | `GC.Gen.MinorHeap.fsti` | No fake headers in minor heap bodies. Mutator responsibility. |
 | `no_scan_invariant` | `GC.Spec.Fields.fst` | No-scan objects contain no valid heap pointers. OCaml runtime guarantee. |
 | `bounded_mark_inv` | `GC.Spec.MarkBoundedInv` | Stack capacity sufficient for DFS. Standard graph-theory bound. |
+| `platform_fits_u64` | `GC.Impl.Heap`, `GC.Gen.Impl.MinorHeap` | 64-bit platform assumption (`SizeT.fits_u64`). Standard for Pulse extraction. |
 | Root completeness | Caller of `minor_collect` | Caller must include remembered-set roots. Mutator responsibility. |
 
-All `admit()`/`assume_` calls have been eliminated. The trust boundary is clean.
+All `admit()`/`assume_` calls have been eliminated. The only `assume val` declarations
+are `platform_fits_u64` (in `GC.Impl.Heap` and `GC.Gen.Impl.MinorHeap`), which assert
+that `SizeT.fits_u64` holds — a standard platform assumption for 64-bit targets.
+The trust boundary is clean.
 
 ## 4. Code & Proof Quality
 
@@ -171,7 +181,7 @@ Files > 1500 lines:
 |------|-------|-------|
 | `GC.Spec.Mark.fst` | 3932 | Largest file. Many helper lemmas. |
 | `GC.Spec.Coalesce.fst` | 3482 | Complex coalescing invariant proofs. |
-| `GC.Spec.Allocator.Lemmas.Part2.fst` | 3250 | Recently split from 8000-line parent. |
+| `GC.Spec.Allocator.Lemmas.Part2.fst` | 3503 | Recently split from 8000-line parent. Includes `alloc_spec_preserves_no_black_part1`. |
 | `GC.Spec.Allocator.Lemmas.Core.fst` | 3093 | Core allocator lemmas. |
 | `GC.Test.Bridge.fst` | 2693 | Test infrastructure. |
 | `GC.Spec.Fields.fst` | 1896 | Well-formed heap + objects traversal. |
