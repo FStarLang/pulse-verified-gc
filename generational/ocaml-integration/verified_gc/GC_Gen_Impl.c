@@ -258,6 +258,12 @@ static void update_all_objects(heap_t major, uint64_t *fwd_arr)
       uint64_t total_words = wosize + 1ULL;
       uint64_t total_bytes = total_words * 8ULL;
       uint64_t next_pos = p + total_bytes;
+      /* PATCH: skip no-scan objects (tag >= 251).
+       * Their "fields" are raw data (string bytes, bigint data, etc.),
+       * not pointers. Scanning them corrupts data (e.g., bytecode). */
+      uint64_t tag_val = hdr & 0xFFULL;
+      if (tag_val < 251ULL)
+      {
       uint64_t i = 0ULL;
       uint64_t __anf0 = i;
       bool cond = __anf0 < wosize;
@@ -278,6 +284,7 @@ static void update_all_objects(heap_t major, uint64_t *fwd_arr)
         i = iv + 1ULL;
         uint64_t __anf0 = i;
         cond = __anf0 < wosize;
+      }
       }
       pos = next_pos;
       done = next_pos + 8ULL >= GC_Spec_Base_heap_size_u64;
@@ -849,6 +856,67 @@ uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
 void minor_collect(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr)
 {
   cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, roots, nroots);
+  /* Tag patching: allocate_part1 hardcodes tag=0 in promoted headers.
+   * Fix tags BEFORE update_all_objects so no-scan objects (tag>=251)
+   * are correctly skipped and their raw data isn't corrupted. */
+  {
+    size_t i;
+    uint8_t *minor_data = gh.minor.data;
+    for (i = 1; i < (size_t)fwd_array_size; i++) {
+      if (fwd_arr[i] != 0) {
+        uint8_t orig_tag = minor_data[i * 8 - 8];
+        uint64_t major_obj = fwd_arr[i];
+        uint8_t *major_hdr = (uint8_t *)(uintptr_t)(major_obj - 8);
+        major_hdr[0] = orig_tag;
+      }
+    }
+  }
+  /* Infix closure synthetic forwarding: for each Infix_tag (249) header in the
+   * minor heap, set up a forwarding entry that maps the infix object offset to
+   * the correct location WITHIN the promoted parent closure.
+   *
+   * Without this, update_all_objects can't rewrite infix pointers: Cheney may
+   * have promoted the infix as a standalone fragment, but the correct target is
+   * parent_promoted_addr + infix_byte_distance_from_parent. */
+  {
+    uint8_t *minor_data = gh.minor.data;
+    uint64_t bump = *gh.minor.bump_ref;
+    /* bump was already reset by cheney, read original from fwd_arr coverage */
+    uint64_t pos = 0;
+    /* Walk minor heap looking for closure blocks with embedded infix headers */
+    while (pos + 8 <= minor_heap_size_u64) {
+      uint64_t hdr = *(uint64_t *)(minor_data + pos);
+      uint64_t wz = hdr >> 10;
+      uint64_t tag_val = hdr & 0xFF;
+      if (wz == 0) break;
+      uint64_t obj_off = pos + 8;
+      if (obj_off + wz * 8 > minor_heap_size_u64) break;
+      if (tag_val == 247) { /* Closure_tag */
+        uint64_t parent_obj = obj_off;
+        uint64_t parent_fwd = fwd_arr[parent_obj / 8];
+        if (parent_fwd != 0) {
+          /* Parent was promoted. Check for embedded infix headers. */
+          uint64_t j;
+          for (j = 0; j < wz; j++) {
+            uint64_t field_off = obj_off + j * 8;
+            if (field_off + 8 <= minor_heap_size_u64) {
+              uint64_t fhdr = *(uint64_t *)(minor_data + field_off);
+              uint64_t ftag = fhdr & 0xFF;
+              if (ftag == 249) { /* Infix_tag embedded here */
+                uint64_t infix_obj = field_off + 8;
+                uint64_t byte_dist = infix_obj - parent_obj;
+                /* Set synthetic forwarding: infix → parent_promoted + byte_dist */
+                size_t infix_idx = (size_t)(infix_obj / 8);
+                if (infix_idx < (size_t)fwd_array_size)
+                  fwd_arr[infix_idx] = parent_fwd + byte_dist;
+              }
+            }
+          }
+        }
+      }
+      pos += (wz + 1) * 8;
+    }
+  }
   update_all_objects(gh.major, fwd_arr);
   rewrite_roots_impl(roots, fwd_arr, nroots);
   minor_heap_reset(gh.minor);

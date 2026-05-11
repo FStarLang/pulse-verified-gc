@@ -35,6 +35,7 @@
 #include "GC_Gen_Impl.h"
 #include "internal/GC_Gen_Impl.h"
 #include "internal/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
+#include "krmlinit.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +47,9 @@
 #include "../caml/misc.h"
 #include "../caml/mlvalues.h"
 #include "../caml/roots.h"
-#include "../caml/minor_gc.h"  /* for caml_ref_table */
+#include "../caml/minor_gc.h"  /* for struct caml_ref_table */
+#include "../caml/domain_state.h"  /* for Caml_state */
+#include "../caml/address_class.h" /* for In_heap, caml_page_table_add */
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 extern uint64_t zero_addr;
@@ -63,6 +66,8 @@ static int          heap_initialized = 0;
 static uint64_t   root_values[MAX_ROOTS];
 static value      *root_locs[MAX_ROOTS];
 static size_t      root_count;
+static int         alloc_count = 0;
+static int         gc_count = 0;
 
 /* --- Heap initialization --- */
 
@@ -106,7 +111,22 @@ static void ensure_heap(void) {
     gc_gen_heap.fp_ref = fp_ref;
 
     /* --- Minor heap --- */
-    size_t minor_sz = (size_t)minor_heap_size;
+    /* Override the verified constant (2048B) with a production-sized minor heap.
+     * OCaml default is 256K words = 2MB.  We use 256KB (32K words) as a
+     * reasonable default, overridable via environment variable. */
+    size_t minor_words = 32 * 1024;  /* 256 KB / 8 */
+    const char *minor_env = getenv("MINOR_HEAP_WORDS");
+    if (minor_env) {
+        size_t w = (size_t)atoll(minor_env);
+        if (w >= 256) minor_words = w;
+    }
+    size_t minor_sz = minor_words * 8;
+    minor_heap_size = (krml_checked_int_t)minor_sz;
+    minor_heap_size_u64 = (uint64_t)minor_sz;
+    max_young_wosize_u64 = (uint64_t)(minor_words / 2);  /* max alloc = half minor heap */
+
+    /* Re-derive constants that depend on minor_heap_size */
+    krmlinit_globals();
     uint8_t *minor_data = (uint8_t *)calloc(1, minor_sz);
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");
@@ -123,6 +143,25 @@ static void ensure_heap(void) {
     gc_fwd_arr = (uint64_t *)calloc((size_t)fwd_array_size, sizeof(uint64_t));
     if (!gc_fwd_arr)
         caml_fatal_error("verified gen GC: cannot allocate fwd array");
+
+    /* Register our minor heap with OCaml's domain state so that
+     * Is_young() recognizes minor pointers.  Without this, the write
+     * barrier in caml_modify / caml_initialize never records
+     * major→minor pointers in the ref_table, leaving stale minor
+     * addresses in major objects after minor GC. */
+    Caml_state->_young_start = (value *)minor_data;
+    Caml_state->_young_end   = (value *)(minor_data + minor_sz);
+    Caml_state->_young_ptr   = Caml_state->_young_end;
+    Caml_state->_young_alloc_start = Caml_state->_young_start;
+    Caml_state->_young_alloc_end   = Caml_state->_young_end;
+
+    /* Register our major heap in OCaml's page table so that Is_in_heap()
+     * returns true for addresses inside it.  Without this, the write
+     * barrier in caml_modify / caml_initialize skips the ref_table update
+     * for stores into major-heap objects, leaving inter-generational
+     * pointers untracked and causing stale minor addresses after GC. */
+    if (caml_page_table_add(In_heap, major_base, major_base + major_bytes) != 0)
+        caml_fatal_error("verified gen GC: page table registration failed");
 
     caml_gc_message(0x20, "Verified gen GC: major=%luMB minor=%luKB\n",
                     (unsigned long)(major_bytes / (1024*1024)),
@@ -170,21 +209,17 @@ static void scan_minor_root(value root, value *root_ptr) {
 
 static void do_minor_gc(void) {
     ensure_heap();
-    caml_gc_message(0x20, "Verified gen GC: minor collection\n");
     Caml_state->_stat_minor_collections++;
 
     /* 1. Collect roots */
     root_count = 0;
     caml_do_roots(scan_minor_root, 1);
 
-    /* 2. Translate inter-generational pointers (caml_ref_table entries).
-     *    caml_ref_table contains (value **) entries — each points to a
-     *    field in a major object that was modified by caml_modify.
-     *    If the field value is a young (minor) pointer, translate from
-     *    absolute to minor offset so update_all_objects can find it. */
+    /* 2. Translate inter-generational pointers (ref_table entries). */
     {
+        struct caml_ref_table *tbl = Caml_state->_ref_table;
         value **r;
-        for (r = caml_ref_table.base; r < caml_ref_table.ptr; r++) {
+        for (r = tbl->base; r < tbl->ptr; r++) {
             value v = **r;
             if (Is_block(v) && is_minor_absolute(v)) {
                 **r = (value)(uintptr_t)abs_to_minor_offset(v);
@@ -192,19 +227,17 @@ static void do_minor_gc(void) {
         }
     }
 
-    /* 3. Also add ref_table entries as roots (they are additional roots
-     *    for the minor collector — major→minor pointers that must be
-     *    followed during promotion). */
+    /* 3. Also add ref_table entries as roots */
     {
+        struct caml_ref_table *tbl = Caml_state->_ref_table;
         value **r;
-        for (r = caml_ref_table.base; r < caml_ref_table.ptr; r++) {
+        for (r = tbl->base; r < tbl->ptr; r++) {
             if (root_count >= MAX_ROOTS) break;
-            value v = (value)(uintptr_t)(**r);  /* already translated above */
+            value v = (value)(uintptr_t)(**r);
             uint64_t v64 = (uint64_t)(uintptr_t)v;
-            /* Only add if it's a minor offset (was a young pointer) */
             if (v64 >= 8 && v64 < minor_heap_size_u64 && v64 % 8 == 0) {
                 root_values[root_count] = v64;
-                root_locs[root_count] = NULL;  /* no OCaml writeback for ref_table roots */
+                root_locs[root_count] = NULL;
                 root_count++;
             }
         }
@@ -213,27 +246,208 @@ static void do_minor_gc(void) {
     /* 4. Zero forwarding array */
     memset(gc_fwd_arr, 0, (size_t)fwd_array_size * sizeof(uint64_t));
 
+    /* 4.1. Infix closure fixup: OCaml closures with multiple entry points embed
+     * Infix_tag (249) headers inside the parent closure. A pointer to an infix
+     * closure points into the MIDDLE of the parent closure block. Cheney must
+     * promote the WHOLE parent, not just the infix fragment.
+     *
+     * Walk the minor heap to find all infix headers. For each, add the PARENT
+     * closure as an additional root so Cheney promotes it. After cheney_promote_phase,
+     * synthetic forwarding entries are set up inside minor_collect so that
+     * update_all_objects correctly rewrites infix pointers. */
+    {
+        uint8_t *mdata = gc_gen_heap.minor.data;
+        uint64_t bump = *gc_gen_heap.minor.bump_ref;
+        uint64_t pos = 0;
+        size_t infix_parents_added = 0;
+        while (pos + 8 <= bump) {
+            uint64_t hdr = *(uint64_t *)(mdata + pos);
+            uint64_t wz = hdr >> 10;
+            uint64_t tag_val = hdr & 0xFF;
+            if (wz == 0 || pos + 8 + wz * 8 > bump) break;
+            /* Check each field for embedded infix headers */
+            if (tag_val == 247) {  /* Closure_tag */
+                uint64_t j;
+                for (j = 0; j < wz; j++) {
+                    uint64_t field_off = pos + 8 + j * 8;
+                    if (field_off + 8 <= bump) {
+                        uint64_t fhdr = *(uint64_t *)(mdata + field_off);
+                        uint64_t ftag = fhdr & 0xFF;
+                        if (ftag == 249) {  /* Infix_tag */
+                            /* This is an embedded infix header at field_off.
+                             * The parent object address = pos + 8.
+                             * Add parent as root if not already present. */
+                            uint64_t parent_obj = pos + 8;
+                            if (root_count < MAX_ROOTS) {
+                                root_values[root_count] = parent_obj;
+                                root_locs[root_count] = NULL;
+                                root_count++;
+                                infix_parents_added++;
+                            }
+                            /* Skip past the infix header (don't re-enter) */
+                            uint64_t infix_wz = fhdr >> 10;
+                            /* The infix "wosize" is the byte distance / 8 from parent to infix */
+                            /* Skip to after the infix fields to avoid double-counting */
+                        }
+                    }
+                }
+            }
+            pos += (wz + 1) * 8;
+        }
+        if (infix_parents_added > 0)
+            caml_gc_message(0x20, "[gen-gc] infix: added %zu parent roots\n", infix_parents_added);
+    }
+
+    /* 4.5. Translate minor heap fields: absolute → offset.
+     * OCaml stores absolute addresses in object fields, but the verified GC
+     * uses offset-based minor addressing.  The Cheney algorithm needs offsets
+     * to discover child objects during BFS.  Without this translation,
+     * scan_loop can't follow inter-minor pointers and only root objects
+     * get promoted, leaving dangling absolute pointers after reset. */
+    {
+        uint8_t *mdata = gc_gen_heap.minor.data;
+        uint64_t bump = *gc_gen_heap.minor.bump_ref;
+        uint64_t pos = 0;  /* byte offset of first header */
+        size_t translated_4_5 = 0;
+        size_t obj_count_4_5 = 0;
+
+        while (pos + 8 <= bump) {
+            uint64_t hdr = *(uint64_t *)(mdata + pos);
+            uint64_t wz = hdr >> 10;
+            uint64_t tag_val = hdr & 0xFF;
+            uint64_t obj_off = pos + 8;
+            if (wz == 0 || obj_off + wz * 8 > bump) break;
+            obj_count_4_5++;
+            /* Only translate pointer-containing objects (tag < no_scan_tag) */
+            if (tag_val < 251) {
+                uint64_t j;
+                for (j = 0; j < wz; j++) {
+                    uint64_t *field = (uint64_t *)(mdata + obj_off + j * 8);
+                    uint64_t v = *field;
+                    /* Check if value is an absolute minor pointer */
+                    if ((v & 1) == 0 && v != 0) {  /* block value (even, non-null) */
+                        uintptr_t uv = (uintptr_t)v;
+                        if (uv >= (uintptr_t)minor_base &&
+                            uv < (uintptr_t)minor_base + bump) {
+                            /* Translate absolute → offset */
+                            *field = (uint64_t)(uv - (uintptr_t)minor_base);
+                            translated_4_5++;
+                        }
+                    }
+                }
+            }
+            pos += (wz + 1) * 8;
+        }
+    }
+
+    /* 4.6. Translate major heap fields: absolute minor → offset.
+     * Major objects may hold absolute minor pointers (stored by the
+     * mutator/runtime via Field() assignment that bypassed the
+     * ref_table, or via initialization paths not covered by
+     * caml_modify/caml_initialize).  update_all_objects only
+     * recognizes offset-based minor addresses, so we must translate
+     * ALL minor absolute pointers in the major heap before running
+     * the verified minor_collect. */
+    {
+        uint64_t mpos = zero_addr;   /* start of major heap */
+        uint64_t mend = GC_Spec_Base_heap_size_u64;  /* end of major heap */
+        size_t mtrans = 0;
+        size_t mobj_count = 0, mblue_count = 0, mnoscan_count = 0;
+        while (mpos + 8 <= mend) {
+            uint64_t mhdr = *(uint64_t *)(uintptr_t)mpos;
+            uint64_t mwz = mhdr >> 10;
+            uint64_t mcolor = (mhdr >> 8) & 3;
+            uint64_t mtag = mhdr & 0xFF;
+            if (mwz == 0 && mcolor == 0 && mtag == 0) break; /* end of used heap */
+            uint64_t mobj = mpos + 8;
+            if (mobj + mwz * 8 > mend) break;
+            mobj_count++;
+            if (mcolor == 2) { mblue_count++; }
+            else if (mtag >= 251) { mnoscan_count++; }
+            /* Only translate pointer-containing, non-blue objects */
+            if (mcolor != 2 && mtag < 251 && mwz > 0) {
+                uint64_t k;
+                for (k = 0; k < mwz; k++) {
+                    uint64_t *mf = (uint64_t *)((uintptr_t)(mobj + k * 8));
+                    uint64_t mv = *mf;
+                    if ((mv & 1) == 0 && mv != 0) {
+                        uintptr_t muv = (uintptr_t)mv;
+                        if (muv >= (uintptr_t)minor_base &&
+                            muv < (uintptr_t)minor_base + minor_heap_size_u64) {
+                            *mf = (uint64_t)(muv - (uintptr_t)minor_base);
+                            mtrans++;
+                        }
+                    }
+                }
+            }
+            mpos += (mwz + 1) * 8;
+        }
+    }
+
     /* 5. Call verified minor_collect */
     minor_collect(gc_gen_heap, root_values, (size_t)root_count, gc_fwd_arr);
 
-    /* 6. Write back rewritten roots to OCaml locations.
-     *    After minor_collect, root_values contain major addresses (absolute
-     *    with NULL-base) for promoted objects, or unchanged for major roots. */
+    /* Tag patching is now done INSIDE minor_collect (before update_all_objects)
+     * so that no-scan objects (tag >= 251) are correctly skipped. */
+
+    /* 5.5 Post-GC major heap validation: fix stale minor pointers */
+    {
+        uint64_t vpos = zero_addr;
+        uint64_t vend = GC_Spec_Base_heap_size_u64;
+        size_t stale_offset = 0, stale_abs = 0;
+        size_t total_fields = 0, fixed = 0;
+        while (vpos + 8 <= vend) {
+            uint64_t vhdr = *(uint64_t *)(uintptr_t)vpos;
+            uint64_t vwz = vhdr >> 10;
+            uint64_t vcolor = (vhdr >> 8) & 3;
+            uint64_t vtag = vhdr & 0xFF;
+            if (vwz == 0 && vcolor == 0 && vtag == 0) break;
+            uint64_t vobj = vpos + 8;
+            if (vobj + vwz * 8 > vend) break;
+            if (vcolor != 2 && vtag < 251 && vwz > 0) {
+                uint64_t k;
+                for (k = 0; k < vwz; k++) {
+                    uint64_t *fld = (uint64_t *)((uintptr_t)(vobj + k * 8));
+                    uint64_t fv = *fld;
+                    total_fields++;
+                    if ((fv & 1) == 0 && fv != 0) {
+                        if (fv >= 8 && fv < minor_heap_size_u64 && fv % 8 == 0) {
+                            stale_offset++;
+                            *fld = 1ULL;  /* patch to Val_unit */
+                            fixed++;
+                        } else {
+                            uintptr_t ufv = (uintptr_t)fv;
+                            if (ufv >= (uintptr_t)minor_base &&
+                                ufv < (uintptr_t)minor_base + minor_heap_size_u64) {
+                                stale_abs++;
+                                *fld = 1ULL;
+                                fixed++;
+                            }
+                        }
+                    }
+                }
+            }
+            vpos += (vwz + 1) * 8;
+        }
+        if (stale_offset + stale_abs > 0)
+            caml_gc_message(0x20, "[gen-gc] validate: fixed %zu stale pointers\n", fixed);
+    }
+
+    /* 6. Write back rewritten roots to OCaml locations. */
     {
         size_t i;
         for (i = 0; i < root_count; i++) {
             if (root_locs[i] != NULL) {
                 uint64_t rewritten = root_values[i];
-                /* After promotion, all roots are major addresses (absolute)
-                 * or 0 (failed promotion).  Write back to OCaml. */
-                if (rewritten != 0)
+                if (rewritten != 0) {
                     *root_locs[i] = (value)(uintptr_t)rewritten;
+                }
             }
         }
     }
 
-    /* 7. Clear caml_ref_table */
-    caml_ref_table.ptr = caml_ref_table.base;
+    /* 7. Clear ref_table */
+    Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 }
 
 /* --- Full GC (minor + major) --- */
@@ -291,10 +505,25 @@ static void do_full_gc(void) {
 void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     ensure_heap();
 
+    /* Trigger minor GC when minor heap cannot fit this allocation, BEFORE
+     * calling gen_alloc.  Without this, gen_alloc's minor_alloc fails and
+     * falls back to the major heap.  Objects allocated on the major heap
+     * via Alloc_small_aux have their fields set via Field() (not caml_modify),
+     * creating untracked major→minor pointers that our GC can't rewrite. */
+    {
+        uint64_t bump = *gc_gen_heap.minor.bump_ref;
+        uint64_t needed = ((uint64_t)wosize + 1) * 8;
+        if ((uint64_t)wosize <= max_young_wosize_u64 && bump + needed > minor_heap_size_u64) {
+            gc_count++;
+            do_minor_gc();
+        }
+    }
+
     uint64_t result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
 
     if (result == 0) {
-        /* Minor heap full — collect and retry */
+        /* gen_alloc failed — collect and retry. */
+        gc_count++;
         do_minor_gc();
         result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
     }
@@ -310,16 +539,23 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         return NULL;  /* unreachable */
     }
 
-    /* gen_alloc returns value address (header + 8).  Convert to header pointer.
-     * For minor: result is a minor offset → translate to absolute.
+    /* gen_alloc returns the object address (first field = header + 8).
+     * OCaml's Alloc_small_aux expects an HP (header pointer).
+     * It writes the header at hp[0] and derives val = hp + 8.
+     * For minor: result is a minor offset → translate to absolute HP.
      * For major: result is already absolute (NULL-base trick). */
-    uint64_t hdr_addr = result - 8;
+    alloc_count++;
+    uint64_t hdr_addr = result - 8;  /* header offset/address */
     if (result < minor_heap_size_u64) {
-        /* Minor heap allocation */
+        /* Minor heap allocation — translate offset to absolute HP */
         return (void *)((uintptr_t)minor_base + (uintptr_t)hdr_addr);
     } else {
         /* Major heap allocation (absolute address with NULL-base) */
-        return (void *)(uintptr_t)hdr_addr;
+        void *ret = (void *)(uintptr_t)hdr_addr;
+        /* The verified allocate() sets tag=0; patch in the correct tag. */
+        uint8_t *hdr_ptr = (uint8_t *)ret;
+        hdr_ptr[0] = tag;  /* tag is in lowest byte of header */
+        return ret;
     }
 }
 
@@ -329,4 +565,17 @@ CAMLprim value caml_trigger_verified_gc(value v) {
     (void)v;
     do_full_gc();
     return Val_unit;
+}
+
+/* Called by caml_minor_collection() in minor_gc.c.
+ * Some C primitives (e.g., caml_make_vect for large arrays) force a minor
+ * collection to promote a young value before using it without write barriers.
+ * We must actually run our verified minor GC so that (a) the value gets
+ * promoted to major and (b) the ref_table isn't silently cleared. */
+void verified_do_minor_gc(void) {
+    ensure_heap();
+    if (*gc_gen_heap.minor.bump_ref > 0) {
+        gc_count++;
+        do_minor_gc();
+    }
 }
