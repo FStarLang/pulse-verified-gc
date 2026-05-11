@@ -360,7 +360,332 @@ minor_heap_size_sz = (size_t)minor_heap_size;
 
 ---
 
+# Part 2: Bridge Code (`alloc_gen.c`)
+
+`alloc_gen.c` (528 lines) is entirely hand-written C that bridges the OCaml 4.14
+runtime with the verified GC.  None of it is extracted from verified code.  Every
+line is in the TCB.  This section catalogues each functional block, classifies
+what it does, and gives a plan to either verify it or shrink it to a thin,
+obviously-correct shim.
+
+---
+
+## BRIDGE 1 — Heap initialisation (`ensure_heap`, lines 74–169)
+
+**What it does** (96 lines):
+- Allocates major heap via `calloc`, reads `MIN_EXPANSION_WORDSIZE` env var
+- Sets `zero_addr` and `heap_size_u64` for the NULL-base trick
+- Initialises major free list (writes one big blue header)
+- Allocates `fp_ref`
+- Allocates minor heap via `calloc`, reads `MINOR_HEAP_WORDS` env var
+- Overrides `minor_heap_size`, `minor_heap_size_u64`, `max_young_wosize_u64`
+- Calls `krmlinit_globals()` to re-derive constants
+- Allocates forwarding array
+- Registers minor heap with `Caml_state->_young_*`
+- Registers major heap in OCaml's page table (`caml_page_table_add`)
+
+**Why unverified**: The verified code uses a compile-time heap model.
+Initialisation is inherently platform-specific (mmap, env vars, page tables).
+
+**Plan to eliminate/shrink**:
+1. **Verified init function**: Add an `init_gc_gen` Pulse function that takes
+   pre-allocated buffers (major data, minor data, fwd array) and sizes as
+   parameters, constructs the `gen_heap_t`, writes the initial blue block,
+   and returns a well-formed heap.  This verifies the free-list setup and
+   constant derivation.
+2. **Thin C shim**: The bridge reduces to: `calloc` the buffers, call
+   `init_gc_gen(buffers, sizes)`, then register with OCaml's page table
+   and domain state (irreducibly OCaml-specific, ~20 lines).
+3. **Eliminates**: manual blue-header construction (bug-prone), manual
+   constant overrides (`krmlinit_globals`), `fp_ref` setup.
+4. **Performance note**: None — init runs once.
+
+---
+
+## BRIDGE 2 — Address translation helpers (lines 172–184)
+
+**What it does** (12 lines):
+```c
+is_minor_absolute(v)       // is v in [minor_base, minor_base + size)?
+abs_to_minor_offset(v)     // v - minor_base
+minor_offset_to_abs(off)   // minor_base + off
+```
+
+**Why unverified**: The verified code uses 0-based minor offsets.  OCaml uses
+absolute addresses.  The bridge translates between the two address spaces.
+
+**Plan to eliminate**:
+1. **Verified minor heap with absolute addressing**: Change `minor_state` to
+   use an absolute base address (like the NULL-base trick for major).  Then
+   minor offsets are already absolute and no translation is needed.
+2. **Or**: Thread `minor_base` as a parameter into the verified code, add
+   `inline_for_extraction` wrappers that do the translation.
+3. **Performance note**: These are hot-path inlines.  Eliminating translation
+   entirely (option 1) saves cycles on every allocation and root scan.
+
+---
+
+## BRIDGE 3 — Root scanning (`scan_minor_root`, lines 188–206)
+
+**What it does** (18 lines):
+- Callback passed to `caml_do_roots` — OCaml's root enumerator
+- Filters: only block values with wosize > 0
+- Translates minor absolute → offset, passes major through unchanged
+- Collects into parallel arrays `root_values[]` / `root_locs[]`
+
+**Why unverified**: The verified `minor_collect` takes a flat `uint64_t`
+array of root values.  The bridge must interface with OCaml's callback-based
+root scanning API and do address translation.
+
+**Plan to eliminate/shrink**:
+1. The filtering logic (`Is_block`, `Wosize_val > 0`) is safety-relevant.
+   A verified `translate_root` function can encapsulate the address
+   translation + bounds checking.
+2. The callback shape (`caml_do_roots`) is OCaml-specific and stays in C.
+3. With BRIDGE 2 eliminated (absolute minor addressing), the translation
+   in this callback disappears — it just stores `(uint64_t)(uintptr_t)root`.
+4. **`MAX_ROOTS` (256K) static array**: Replace with a dynamically-sized
+   `Vec` allocated in the verified code.  The fixed bound is a latent bug
+   (silently drops roots if exceeded).
+5. **Performance note**: Root scanning is O(roots) per GC — moderate.
+
+---
+
+## BRIDGE 4 — Ref_table translation (step 2, lines 218–228)
+
+**What it does** (10 lines):
+- Iterates `caml_ref_table` (inter-generational pointer records)
+- For each entry whose value is a minor absolute address, rewrites the
+  stored value in-place from absolute to minor offset
+
+**Why unverified**: Same address-space mismatch as BRIDGE 2.
+
+**Plan to eliminate**: With absolute minor addressing (BRIDGE 2 plan),
+this step disappears entirely — ref_table values are already in the
+right address space.
+
+**Performance note**: O(ref_table_size) per minor GC.
+
+---
+
+## BRIDGE 5 — Ref_table as additional roots (step 3, lines 230–244)
+
+**What it does** (14 lines):
+- Adds ref_table values as extra Cheney roots so that objects pointed to
+  by inter-generational pointers get promoted
+
+**Why unverified**: The verified `minor_collect` takes a single root array.
+This logic adds ref_table entries to that array.
+
+**Plan to eliminate**:
+1. Add a second parameter to `minor_collect`: `ref_table_roots` (or merge
+   them into the main roots array inside the verified code).
+2. Or: have the verified entry point accept two arrays (stack roots +
+   ref_table roots) and merge them internally.
+3. **Performance note**: O(ref_table_size), minor.
+
+---
+
+## BRIDGE 6 — Infix parent root injection (step 4.1, lines 249–299)
+
+**What it does** (50 lines):
+- Walks minor heap looking for `Closure_tag (247)` objects
+- For each, scans fields for embedded `Infix_tag (249)` headers
+- Adds the parent closure as an additional Cheney root
+
+**Why unverified**: The verified code has `well_formed_heap_part4` which
+assumes no infix objects.  This is a workaround for that gap.
+
+**Plan to eliminate**: Same as PATCH 11 — handle infix objects in the
+verified Cheney phase.  Once the verified code promotes parent closures
+when it encounters infix pointers, this entire block disappears.
+
+**Performance note**: O(minor_heap_used), walks every minor object.
+This is a **significant overhead** — adds a full minor heap scan per
+collection even though infix closures are rare.
+
+---
+
+## BRIDGE 7 — Minor field translation abs→offset (step 4.5, lines 301–341)
+
+**What it does** (40 lines):
+- Walks every minor heap object
+- For pointer-containing objects (tag < 251), rewrites each field from
+  absolute minor address to minor offset
+- Skips no-scan objects
+
+**Why unverified**: The verified Cheney BFS works with 0-based minor offsets.
+OCaml writes absolute addresses into object fields.  Without translation,
+Cheney can't follow inter-minor pointers.
+
+**Plan to eliminate**: With absolute minor addressing (BRIDGE 2 plan),
+this **entire 40-line scan disappears**.  This is the single biggest
+performance win from eliminating the bridge, as it is O(minor_heap_used)
+and scans every field of every minor object.
+
+**Performance note**: **Hot path**.  O(minor_heap_used × avg_fields).
+This is likely a **major source of the remaining overhead** vs stock OCaml.
+
+---
+
+## BRIDGE 8 — Scan base setup (step 4.6, lines 343–353)
+
+**What it does** (10 lines):
+- Reads `fp_pre = *gc_gen_heap.fp_ref`
+- Sets `update_scan_base = fp_pre - 8` (header address)
+
+**Why unverified**: Corresponds to PATCHES 3/4 above.
+
+**Plan to eliminate**: Same as PATCHES 3/4 — parameterise
+`update_all_objects`.
+
+---
+
+## BRIDGE 9 — Ref_table fwd_arr rewriting (step 5.5, lines 361–378)
+
+**What it does** (17 lines):
+- After `minor_collect`, iterates ref_table entries
+- For each entry still holding a minor offset, looks up `fwd_arr` and
+  rewrites to the forwarded major address
+
+**Why unverified**: Complements the scan-range optimisation (PATCHES 3/4).
+Pre-existing major objects that point to minor objects via ref_table need
+their pointers rewritten, but `update_all_objects` only scans newly-promoted
+objects.
+
+**Plan to eliminate**:
+1. If `update_all_objects` is parameterised to accept the ref_table as input,
+   it can rewrite ref_table-tracked fields as part of its verified scan.
+2. Or: add a second verified function `rewrite_ref_table_entries(fwd_arr,
+   ref_table)` that does this lookup loop with a spec proving it rewrites
+   all forwarded pointers.
+3. **Performance note**: O(ref_table_size), efficient.
+
+---
+
+## BRIDGE 10 — Root writeback (step 6, lines 383–394)
+
+**What it does** (11 lines):
+- After minor_collect rewrites `root_values[]`, writes the rewritten
+  addresses back to OCaml's root locations (`root_locs[]`)
+
+**Why unverified**: The verified `minor_collect` rewrites a flat array of
+root values in-place (proven to produce valid major addresses).  The bridge
+must scatter these back to OCaml's actual root locations (stack slots,
+global roots, etc.).
+
+**Plan to eliminate**:
+1. This is inherently a bridge concern — the verified code doesn't know
+   about OCaml's root storage layout.
+2. It can be shrunk to a trivial memcpy-equivalent if the verified code
+   returns a new root array.  The loop is simple enough to audit.
+3. **Performance note**: O(roots), minor.
+
+---
+
+## BRIDGE 11 — Full GC (`do_full_gc`, lines 402–448)
+
+**What it does** (46 lines):
+- Calls `do_minor_gc()` first
+- Allocates gray stack via `calloc`
+- Scans roots again via `caml_do_roots`
+- Calls `darken_if_white_bounded` on each major root
+- Calls verified `collect(heap, stack, fp)` — mark-and-sweep
+- Frees gray stack
+
+**Why unverified**: The root darkening loop and gray stack allocation are
+bridge concerns.  The core `collect()` call is verified.
+
+**Plan to eliminate/shrink**:
+1. Add a verified `full_collect` entry point that takes the heap, a root
+   array, and performs: allocate gray stack, darken roots, mark, sweep.
+   This moves root darkening into verified code.
+2. The bridge reduces to: call `caml_do_roots`, collect root values into
+   an array, call `full_collect(heap, roots)`.
+3. Gray stack allocation can be verified (Pulse `Vec` or similar).
+4. **Performance note**: O(heap) for mark-and-sweep — the `collect()` call
+   dominates; bridge overhead is negligible here.
+
+---
+
+## BRIDGE 12 — Allocation entry point (`verified_allocate`, lines 452–508)
+
+**What it does** (56 lines):
+- Checks if minor heap needs GC before allocating
+- Calls verified `gen_alloc(heap, wosize, tag)`
+- On failure: minor GC → retry → full GC → retry → fatal error
+- Translates return value: minor offset → absolute HP, major → absolute HP
+- Patches tag byte into major allocations (gen_alloc hardcodes tag=0)
+- Tracks `major_alloc_hwm`
+
+**Why unverified**: Allocation policy (when to trigger GC) and address
+translation are bridge concerns.  Tag patching is a workaround for PATCH 10.
+
+**Plan to eliminate/shrink**:
+1. **Tag patching** disappears with PATCH 10 (fix `allocate_part1`).
+2. **HWM tracking** disappears with PATCHES 3/4 (verified HWM).
+3. **Address translation** disappears with absolute minor addressing
+   (BRIDGE 2 plan).
+4. **GC triggering policy**: Add a verified `gen_alloc_or_collect` that
+   checks minor capacity, triggers minor GC if needed, then allocates.
+   The retry-on-failure logic can also be verified.
+5. **Remaining bridge**: Return the raw address to OCaml (~5 lines).
+
+**Performance note**: **Hot path** — called on every OCaml allocation.
+The pre-allocation minor-heap-capacity check (lines 460–466) adds a
+branch + memory read on every alloc.  Integrating this into verified
+`gen_alloc` eliminates one function-call boundary.
+
+---
+
+## BRIDGE 13 — `compat.c` (11 lines)
+
+**What it does**: Provides `FStar_UInt64_ne` — a missing krmllib primitive.
+
+**Plan to eliminate**: Add `FStar.UInt64.ne` to the extraction bundle or
+use `<>` which KaRaMeL translates to `!=` directly.  Trivial fix.
+
+---
+
+## BRIDGE 14 — `verified_do_minor_gc` (lines 523–528)
+
+**What it does** (5 lines):
+- Called by OCaml's `caml_minor_collection()` when C primitives force a
+  minor collection (e.g., `caml_make_vect` for large arrays)
+- Guards: only runs if minor bump > 0
+
+**Why unverified**: Thin wrapper, obviously correct.
+
+**Plan**: Keep as-is — it's 5 lines and inherently OCaml-specific.
+
+---
+
+# Part 3: Performance Impact of Bridge Code
+
+The bridge adds **three O(minor_heap_used) scans** per minor collection
+that stock OCaml does not have:
+
+| Scan | Lines | Cost | Eliminable? |
+|------|-------|------|-------------|
+| BRIDGE 6: infix parent scan | 249–299 | O(minor_used) | Yes (PATCH 11) |
+| BRIDGE 7: field abs→offset | 301–341 | O(minor_used × fields) | Yes (abs minor addr) |
+| BRIDGE 4: ref_table translation | 218–228 | O(ref_table) | Yes (abs minor addr) |
+
+**BRIDGE 7 is almost certainly the dominant overhead source.**  It touches
+every field of every minor object, with pointer arithmetic and conditional
+branches per field.  Stock OCaml's Cheney works directly on absolute
+addresses with no translation.
+
+Eliminating the address-space mismatch (making minor use absolute addresses
+like major does with the NULL-base trick) would remove BRIDGES 2, 4, and 7
+entirely, and simplify BRIDGES 3, 5, and 12.  This is the single highest-
+leverage change for closing the performance gap with stock OCaml.
+
+---
+
 ## Summary: Priority Order
+
+### Extraction Patches (Part 1)
 
 | # | Patch | Severity | Effort |
 |---|-------|----------|--------|
@@ -373,8 +698,25 @@ minor_heap_size_sz = (size_t)minor_heap_size;
 | 7  | darken non-static | **Low** — bundle config fix | Trivial |
 | 13 | krmlinit elimination | **Low** — link convenience | Low |
 
+### Bridge Code (Part 2)
+
+| # | Bridge | Severity | Effort | Eliminable? |
+|---|--------|----------|--------|-------------|
+| B7  | Minor field abs→offset | **Critical** — perf bottleneck | Medium | Yes (abs minor) |
+| B6  | Infix parent injection | **Critical** — correctness | High | Yes (verify infix) |
+| B12 | Allocation entry point | **High** — hot path | Medium | Mostly (verify alloc) |
+| B1  | Heap init | **High** — complex TCB | Medium | Mostly (verified init) |
+| B2,4,5 | Address translation | **High** — systemic | Medium | Yes (abs minor) |
+| B9  | Ref_table fwd rewriting | **Medium** — correctness | Low | Yes (verify) |
+| B11 | Full GC wrapper | **Medium** — unverified roots | Medium | Mostly (verify darkening) |
+| B3,10 | Root scan/writeback | **Low** — inherently OCaml | Low | Shrink only |
+| B8  | Scan base setup | **Low** — tied to PATCH 3/4 | Low | Yes (with PATCH 3/4) |
+| B13 | compat.c stub | **Trivial** | Trivial | Yes |
+| B14 | verified_do_minor_gc | **Trivial** | None | Keep as-is |
+
 ### Implementation order
 
+**Phase A — Extraction patches (eliminate hand-patched C)**:
 1. **Tag preservation** (PATCH 10) — fix `allocate_part1` to thread the tag
 2. **No-scan skip** (PATCH 5) — add tag check in `update_all_objects`
 3. **Infix forwarding** (PATCH 11) — handle in Cheney or post-promotion pass
@@ -383,3 +725,17 @@ minor_heap_size_sz = (size_t)minor_heap_size;
 6. **Scan range** (PATCHES 3,4,12) — parameterise update_all_objects
 7. **darken visibility** (PATCH 7) — add to API bundle
 8. **krmlinit** (PATCH 13) — inline_for_extraction on derived constants
+
+**Phase B — Bridge elimination (shrink alloc_gen.c)**:
+1. **Absolute minor addressing** (B2,4,7) — highest leverage: eliminates three
+   O(minor_heap_used) scans.  Changes minor_state to use absolute base, removes
+   all abs↔offset translation.  Touches verified spec + impl.
+2. **Verified init** (B1) — add Pulse `init_gc_gen`, shrink C init to calloc + register
+3. **Infix in Cheney** (B6) — same as PATCH 11, removes parent-injection scan
+4. **Verified alloc-or-collect** (B12) — move retry loop + capacity check into
+   verified code, eliminate tag patching (from Phase A step 1)
+5. **Ref_table integration** (B5,9) — pass ref_table entries as additional roots
+   inside verified minor_collect, eliminate manual rewriting
+6. **Verified root darkening** (B11) — move darkening loop into verified full_collect
+7. **compat.c** (B13) — fix extraction to emit `!=` directly
+8. **Root scan/writeback** (B3,10) — keep thin C shim, add dynamic sizing
