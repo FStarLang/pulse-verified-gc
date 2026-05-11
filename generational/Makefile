@@ -81,144 +81,42 @@ verify: $(addsuffix .checked,$(ALL_SRC))
 
 # === Extraction (.krml → C) =================================================
 #
-# Extracts both generational impl + mark-and-sweep impl + common impl
-# into a single C file via KaRaMeL bundling.
+# Extracts generational impl + mark-and-sweep impl + common impl into a
+# single C file via KaRaMeL bundling.
 #
 # Prerequisites: M&S and common .checked files must already exist
 # (run `make -C ../mark-and-sweep verify` first if needed).
 
+# --- Modules to extract -----------------------------------------------------
+
+ALL_KRML_MODS = \
+  GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
+  GC.Gen.Impl.Promote GC.Gen.Impl.UpdatePtrs \
+  GC.Gen.Base \
+  GC.Impl GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark \
+  GC.Impl.MarkBounded GC.Impl.Sweep GC.Impl.Coalesce \
+  GC.Impl.FusedSweepCoalesce GC.Impl.Allocator \
+  GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+  GC.Spec.Base GC.Spec.Heap GC.Spec.Object \
+  GC.Lib.Header GC.Lib.Address
+
+ALL_KRML = $(foreach m,$(ALL_KRML_MODS),$(OUTPUT_DIR)/$(subst .,_,$(m)).krml) \
+           $(OUTPUT_DIR)/FStar_Pervasives_Native.krml
+
 # --- .krml extraction rules -------------------------------------------------
+#
+# Pattern rule: _output/GC_Gen_Impl.krml from GC.Gen.Impl.fst
+# fstar.exe finds the source via --include paths; prerequisite is verify.
 
-# Generational impl modules
-$(OUTPUT_DIR)/GC_Gen_Impl.krml: impl/GC.Gen.Impl.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --z3rlimit 160 --split_queries always \
-	  --codegen krml --extract_module GC.Gen.Impl impl/GC.Gen.Impl.fst
+$(OUTPUT_DIR)/%.krml: verify | $(OUTPUT_DIR)
+	$(FSTAR) --odir $(OUTPUT_DIR) --codegen krml \
+	  --extract_module $(subst _,.,$*) $(subst _,.,$*).fst
 
-$(OUTPUT_DIR)/GC_Gen_Impl_MinorHeap.krml: impl/GC.Gen.Impl.MinorHeap.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --z3rlimit 160 --split_queries always \
-	  --codegen krml --extract_module GC.Gen.Impl.MinorHeap impl/GC.Gen.Impl.MinorHeap.fst
-
-$(OUTPUT_DIR)/GC_Gen_Impl_Cheney.krml: impl/GC.Gen.Impl.Cheney.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --z3rlimit 160 --split_queries always \
-	  --codegen krml --extract_module GC.Gen.Impl.Cheney impl/GC.Gen.Impl.Cheney.fst
-
-$(OUTPUT_DIR)/GC_Gen_Impl_Promote.krml: impl/GC.Gen.Impl.Promote.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --z3rlimit 160 --split_queries always \
-	  --codegen krml --extract_module GC.Gen.Impl.Promote impl/GC.Gen.Impl.Promote.fst
-
-$(OUTPUT_DIR)/GC_Gen_Impl_UpdatePtrs.krml: impl/GC.Gen.Impl.UpdatePtrs.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) --z3rlimit 160 --split_queries always \
-	  --codegen krml --extract_module GC.Gen.Impl.UpdatePtrs impl/GC.Gen.Impl.UpdatePtrs.fst
-
-# Generational spec (constants: minor_heap_size_u64, max_young_wosize_u64)
-$(OUTPUT_DIR)/GC_Gen_Base.krml: spec/GC.Gen.Base.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Gen.Base spec/GC.Gen.Base.fst
-
-# Mark-and-sweep impl modules
-$(OUTPUT_DIR)/GC_Impl.krml: $(M)/impl/GC.Impl.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl $(M)/impl/GC.Impl.fst
-
-$(OUTPUT_DIR)/GC_Impl_Fields.krml: $(M)/impl/GC.Impl.Fields.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Fields $(M)/impl/GC.Impl.Fields.fst
-
-$(OUTPUT_DIR)/GC_Impl_Closure.krml: $(M)/impl/GC.Impl.Closure.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Closure $(M)/impl/GC.Impl.Closure.fst
-
-$(OUTPUT_DIR)/GC_Impl_Mark.krml: $(M)/impl/GC.Impl.Mark.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Mark $(M)/impl/GC.Impl.Mark.fst
-
-$(OUTPUT_DIR)/GC_Impl_MarkBounded.krml: $(M)/impl/GC.Impl.MarkBounded.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.MarkBounded $(M)/impl/GC.Impl.MarkBounded.fst
-
-$(OUTPUT_DIR)/GC_Impl_Sweep.krml: $(M)/impl/GC.Impl.Sweep.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Sweep $(M)/impl/GC.Impl.Sweep.fst
-
-$(OUTPUT_DIR)/GC_Impl_Coalesce.krml: $(M)/impl/GC.Impl.Coalesce.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Coalesce $(M)/impl/GC.Impl.Coalesce.fst
-
-$(OUTPUT_DIR)/GC_Impl_FusedSweepCoalesce.krml: $(M)/impl/GC.Impl.FusedSweepCoalesce.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.FusedSweepCoalesce $(M)/impl/GC.Impl.FusedSweepCoalesce.fst
-
-$(OUTPUT_DIR)/GC_Impl_Allocator.krml: $(M)/impl/GC.Impl.Allocator.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Allocator $(M)/impl/GC.Impl.Allocator.fst
-
-# Common impl modules
-$(OUTPUT_DIR)/GC_Impl_Heap.krml: $(C)/impl/GC.Impl.Heap.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Heap $(C)/impl/GC.Impl.Heap.fst
-
-$(OUTPUT_DIR)/GC_Impl_Object.krml: $(C)/impl/GC.Impl.Object.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Object $(C)/impl/GC.Impl.Object.fst
-
-$(OUTPUT_DIR)/GC_Impl_Stack.krml: $(C)/impl/GC.Impl.Stack.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Impl.Stack $(C)/impl/GC.Impl.Stack.fst
-
-# Spec / common type modules (constants + types needed by krml)
-$(OUTPUT_DIR)/GC_Spec_Base.krml: $(C)/spec/GC.Spec.Base.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Spec.Base $(C)/spec/GC.Spec.Base.fst
-
-$(OUTPUT_DIR)/GC_Spec_Heap.krml: $(C)/spec/GC.Spec.Heap.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Spec.Heap $(C)/spec/GC.Spec.Heap.fst
-
-$(OUTPUT_DIR)/GC_Spec_Object.krml: $(C)/spec/GC.Spec.Object.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Spec.Object $(C)/spec/GC.Spec.Object.fst
-
-$(OUTPUT_DIR)/GC_Lib_Header.krml: $(C)/lib/GC.Lib.Header.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Lib.Header $(C)/lib/GC.Lib.Header.fst
-
-$(OUTPUT_DIR)/GC_Lib_Address.krml: $(C)/lib/GC.Lib.Address.fst.checked | $(OUTPUT_DIR)
-	$(FSTAR) --odir $(OUTPUT_DIR) \
-	  --codegen krml --extract_module GC.Lib.Address $(C)/lib/GC.Lib.Address.fst
-
-# FStar.Pervasives.Native (tuple types used by allocate)
+# FStar.Pervasives.Native (tuple types used by allocate) — special case
 $(OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 	$(FSTAR_EXE) --cache_checked_modules --warn_error -321 \
 	  --codegen krml --extract_module FStar.Pervasives.Native \
 	  --odir $(OUTPUT_DIR) $(FSTAR_LIB)/ulib/FStar.Pervasives.Native.fst
-
-# --- All .krml files --------------------------------------------------------
-
-ALL_KRML = \
-  $(OUTPUT_DIR)/GC_Gen_Impl.krml \
-  $(OUTPUT_DIR)/GC_Gen_Impl_MinorHeap.krml \
-  $(OUTPUT_DIR)/GC_Gen_Impl_Cheney.krml \
-  $(OUTPUT_DIR)/GC_Gen_Impl_Promote.krml \
-  $(OUTPUT_DIR)/GC_Gen_Impl_UpdatePtrs.krml \
-  $(OUTPUT_DIR)/GC_Gen_Base.krml \
-  $(OUTPUT_DIR)/GC_Impl.krml \
-  $(OUTPUT_DIR)/GC_Impl_Fields.krml \
-  $(OUTPUT_DIR)/GC_Impl_Closure.krml \
-  $(OUTPUT_DIR)/GC_Impl_Mark.krml \
-  $(OUTPUT_DIR)/GC_Impl_MarkBounded.krml \
-  $(OUTPUT_DIR)/GC_Impl_Sweep.krml \
-  $(OUTPUT_DIR)/GC_Impl_Coalesce.krml \
-  $(OUTPUT_DIR)/GC_Impl_FusedSweepCoalesce.krml \
-  $(OUTPUT_DIR)/GC_Impl_Allocator.krml \
-  $(OUTPUT_DIR)/GC_Impl_Heap.krml \
-  $(OUTPUT_DIR)/GC_Impl_Object.krml \
-  $(OUTPUT_DIR)/GC_Impl_Stack.krml \
-  $(OUTPUT_DIR)/GC_Spec_Base.krml \
-  $(OUTPUT_DIR)/GC_Spec_Heap.krml \
-  $(OUTPUT_DIR)/GC_Spec_Object.krml \
-  $(OUTPUT_DIR)/GC_Lib_Header.krml \
-  $(OUTPUT_DIR)/GC_Lib_Address.krml \
-  $(OUTPUT_DIR)/FStar_Pervasives_Native.krml
 
 # --- KaRaMeL bundling (.krml → C) ------------------------------------------
 #
@@ -236,13 +134,7 @@ KRML_FLAGS = \
   -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Impl+GC.Impl.Allocator=GC.Gen.Impl.*,GC.Impl.*[rename=GC_Gen_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Gen.Base,GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
-  $(patsubst %,-no-prefix %, \
-    GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
-    GC.Gen.Impl.Promote GC.Gen.Impl.UpdatePtrs GC.Gen.Base \
-    GC.Impl GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
-    GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object \
-    GC.Impl.Stack GC.Impl.Allocator \
-    GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce) \
+  $(foreach m,$(ALL_KRML_MODS),-no-prefix $(m)) \
   -warn-error -2-9-15
 
 $(EXTRACT_DIR):
