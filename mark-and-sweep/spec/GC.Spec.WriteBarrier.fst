@@ -156,3 +156,31 @@ let modify_spec_records
         snd (modify_spec g rt holder idx new_val true) ==
         add_ref rt ({ holder = holder; field_idx = idx }))
   = ()
+
+/// ---------------------------------------------------------------------------
+/// Bridge: constituent post conditions ⇒ `modify_spec` equality
+/// ---------------------------------------------------------------------------
+///
+/// The Pulse `gen_modify` postcondition asserts constituent facts
+/// (`g_out == SpecHeap.write_word g (field_addr_of holder idx) new_val`
+/// and a conditional on `rt_out`) instead of the full
+/// `(g_out, rt_out) == modify_spec ...` equality, because SMT
+/// couldn't discharge the latter in reasonable time. Stage 3's
+/// `minor_collect` will want to reason in terms of `modify_spec`;
+/// this lemma is the one-step bridge.
+
+let modify_spec_decompose
+  (g: heap) (rt: ref_table) (holder: obj_addr)
+  (idx: U64.t{U64.v idx < pow2 61 /\ field_addr_valid holder idx})
+  (new_val: U64.t) (target_is_minor: bool)
+  (g_out: heap) (rt_out: ref_table)
+  : Lemma
+      (requires
+        g_out == write_word g (field_addr_of holder idx) new_val /\
+        (let holder_tag = getTag (read_word g (hd_address holder)) in
+         if should_record target_is_minor holder_tag
+         then rt_out == add_ref rt ({ holder = holder; field_idx = idx })
+         else rt_out == rt))
+      (ensures
+        (g_out, rt_out) == modify_spec g rt holder idx new_val target_is_minor)
+  = ()
