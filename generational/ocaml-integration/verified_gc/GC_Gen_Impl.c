@@ -12,6 +12,18 @@
 /* PATCH for OCaml integration: non-static, set by bridge */
 uint64_t zero_addr = 0ULL;
 
+/* High-water mark for major heap allocation.  Set by the bridge to the
+ * highest allocated byte address so that update_all_objects only scans
+ * the used portion of the heap instead of the full heap_size. */
+uint64_t major_alloc_hwm = 0ULL;
+
+/* If > 0, update_all_objects starts scanning from this address instead
+ * of zero_addr.  The bridge sets this to the pre-promotion HWM so that
+ * only newly-promoted objects are scanned (their fields contain copied
+ * minor offsets that need rewriting via fwd_arr).  Pre-existing major
+ * objects are handled separately via ref_table iteration in the bridge. */
+uint64_t update_scan_base = 0ULL;
+
 static uint8_t uint64_to_uint8(uint64_t x)
 {
   return (uint8_t)x;
@@ -233,9 +245,9 @@ static void rewrite_roots_impl(uint64_t *roots, uint64_t *fwd_arr, size_t n)
 
 static void update_all_objects(heap_t major, uint64_t *fwd_arr)
 {
-  /* PATCH for OCaml integration: start at zero_addr for NULL-base trick */
-  uint64_t pos = zero_addr;
-  bool done = false;
+  uint64_t pos = (update_scan_base > 0ULL) ? update_scan_base : zero_addr;
+  uint64_t scan_limit = major_alloc_hwm > 0ULL ? major_alloc_hwm : GC_Spec_Base_heap_size_u64;
+  bool done = (pos + 8ULL >= scan_limit);
   bool __anf00 = done;
   bool cond = !__anf00;
   while (cond)
@@ -251,7 +263,7 @@ static void update_all_objects(heap_t major, uint64_t *fwd_arr)
       uint64_t total_bytes = total_words * 8ULL;
       uint64_t next_pos = p + total_bytes;
       pos = next_pos;
-      done = next_pos + 8ULL >= GC_Spec_Base_heap_size_u64;
+      done = next_pos + 8ULL >= scan_limit;
     }
     else
     {
@@ -287,7 +299,7 @@ static void update_all_objects(heap_t major, uint64_t *fwd_arr)
       }
       }
       pos = next_pos;
-      done = next_pos + 8ULL >= GC_Spec_Base_heap_size_u64;
+      done = next_pos + 8ULL >= scan_limit;
     }
     bool __anf0 = done;
     cond = !__anf0;
@@ -916,6 +928,13 @@ void minor_collect(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
       }
       pos += (wz + 1) * 8;
     }
+  }
+  /* Update HWM BEFORE update_all_objects so newly promoted objects are scanned.
+   * cheney_promote_phase advanced fp_ref past all promoted objects. */
+  {
+    uint64_t fp_now = *gh.fp_ref;
+    if (fp_now > major_alloc_hwm)
+      major_alloc_hwm = fp_now;
   }
   update_all_objects(gh.major, fwd_arr);
   rewrite_roots_impl(roots, fwd_arr, nroots);

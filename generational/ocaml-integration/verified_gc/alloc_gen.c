@@ -53,6 +53,8 @@
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 extern uint64_t zero_addr;
+extern uint64_t major_alloc_hwm;
+extern uint64_t update_scan_base;
 extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
 /* --- Globals --- */
@@ -66,8 +68,6 @@ static int          heap_initialized = 0;
 static uint64_t   root_values[MAX_ROOTS];
 static value      *root_locs[MAX_ROOTS];
 static size_t      root_count;
-static int         alloc_count = 0;
-static int         gc_count = 0;
 
 /* --- Heap initialization --- */
 
@@ -340,98 +340,45 @@ static void do_minor_gc(void) {
         }
     }
 
-    /* 4.6. Translate major heap fields: absolute minor → offset.
-     * Major objects may hold absolute minor pointers (stored by the
-     * mutator/runtime via Field() assignment that bypassed the
-     * ref_table, or via initialization paths not covered by
-     * caml_modify/caml_initialize).  update_all_objects only
-     * recognizes offset-based minor addresses, so we must translate
-     * ALL minor absolute pointers in the major heap before running
-     * the verified minor_collect. */
+    /* 4.6. Set up update_all_objects to only scan newly-promoted objects.
+     * Pre-existing major objects' inter-generational pointers are handled
+     * via ref_table iteration after minor_collect (step 5.5 below).
+     *
+     * IMPORTANT: fp is an OBJECT address (header + 8). The scan needs the
+     * HEADER address (fp - 8) because update_all_objects reads headers at
+     * each scan position. */
     {
-        uint64_t mpos = zero_addr;   /* start of major heap */
-        uint64_t mend = GC_Spec_Base_heap_size_u64;  /* end of major heap */
-        size_t mtrans = 0;
-        size_t mobj_count = 0, mblue_count = 0, mnoscan_count = 0;
-        while (mpos + 8 <= mend) {
-            uint64_t mhdr = *(uint64_t *)(uintptr_t)mpos;
-            uint64_t mwz = mhdr >> 10;
-            uint64_t mcolor = (mhdr >> 8) & 3;
-            uint64_t mtag = mhdr & 0xFF;
-            if (mwz == 0 && mcolor == 0 && mtag == 0) break; /* end of used heap */
-            uint64_t mobj = mpos + 8;
-            if (mobj + mwz * 8 > mend) break;
-            mobj_count++;
-            if (mcolor == 2) { mblue_count++; }
-            else if (mtag >= 251) { mnoscan_count++; }
-            /* Only translate pointer-containing, non-blue objects */
-            if (mcolor != 2 && mtag < 251 && mwz > 0) {
-                uint64_t k;
-                for (k = 0; k < mwz; k++) {
-                    uint64_t *mf = (uint64_t *)((uintptr_t)(mobj + k * 8));
-                    uint64_t mv = *mf;
-                    if ((mv & 1) == 0 && mv != 0) {
-                        uintptr_t muv = (uintptr_t)mv;
-                        if (muv >= (uintptr_t)minor_base &&
-                            muv < (uintptr_t)minor_base + minor_heap_size_u64) {
-                            *mf = (uint64_t)(muv - (uintptr_t)minor_base);
-                            mtrans++;
-                        }
-                    }
-                }
-            }
-            mpos += (mwz + 1) * 8;
-        }
+        uint64_t fp_pre = *gc_gen_heap.fp_ref;
+        update_scan_base = (fp_pre >= 8) ? (fp_pre - 8) : 0ULL;
     }
 
-    /* 5. Call verified minor_collect */
+    /* 5. Call verified minor_collect.
+     * Inside, cheney_promote_phase promotes objects (advancing fp),
+     * then HWM is updated, then update_all_objects scans only [old_hwm..new_hwm). */
     minor_collect(gc_gen_heap, root_values, (size_t)root_count, gc_fwd_arr);
+    update_scan_base = 0ULL;  /* reset for next time */
 
-    /* Tag patching is now done INSIDE minor_collect (before update_all_objects)
-     * so that no-scan objects (tag >= 251) are correctly skipped. */
-
-    /* 5.5 Post-GC major heap validation: fix stale minor pointers */
+    /* 5.5. Ref_table-based pointer rewriting: iterate the ref_table entries
+     * and apply fwd_arr to each one.  This replaces the full major-heap scan
+     * that update_all_objects used to do for pre-existing major objects. */
     {
-        uint64_t vpos = zero_addr;
-        uint64_t vend = GC_Spec_Base_heap_size_u64;
-        size_t stale_offset = 0, stale_abs = 0;
-        size_t total_fields = 0, fixed = 0;
-        while (vpos + 8 <= vend) {
-            uint64_t vhdr = *(uint64_t *)(uintptr_t)vpos;
-            uint64_t vwz = vhdr >> 10;
-            uint64_t vcolor = (vhdr >> 8) & 3;
-            uint64_t vtag = vhdr & 0xFF;
-            if (vwz == 0 && vcolor == 0 && vtag == 0) break;
-            uint64_t vobj = vpos + 8;
-            if (vobj + vwz * 8 > vend) break;
-            if (vcolor != 2 && vtag < 251 && vwz > 0) {
-                uint64_t k;
-                for (k = 0; k < vwz; k++) {
-                    uint64_t *fld = (uint64_t *)((uintptr_t)(vobj + k * 8));
-                    uint64_t fv = *fld;
-                    total_fields++;
-                    if ((fv & 1) == 0 && fv != 0) {
-                        if (fv >= 8 && fv < minor_heap_size_u64 && fv % 8 == 0) {
-                            stale_offset++;
-                            *fld = 1ULL;  /* patch to Val_unit */
-                            fixed++;
-                        } else {
-                            uintptr_t ufv = (uintptr_t)fv;
-                            if (ufv >= (uintptr_t)minor_base &&
-                                ufv < (uintptr_t)minor_base + minor_heap_size_u64) {
-                                stale_abs++;
-                                *fld = 1ULL;
-                                fixed++;
-                            }
-                        }
-                    }
+        struct caml_ref_table *tbl = Caml_state->_ref_table;
+        value **r;
+        for (r = tbl->base; r < tbl->ptr; r++) {
+            uint64_t fv = (uint64_t)(uintptr_t)(**r);
+            if (fv >= 8 && fv < minor_heap_size_u64 && fv % 8 == 0) {
+                size_t idx = (size_t)(fv / 8);
+                if (idx < (size_t)fwd_array_size) {
+                    uint64_t fwd_val = gc_fwd_arr[idx];
+                    if (fwd_val != 0)
+                        **r = (value)(uintptr_t)fwd_val;
                 }
             }
-            vpos += (vwz + 1) * 8;
         }
-        if (stale_offset + stale_abs > 0)
-            caml_gc_message(0x20, "[gen-gc] validate: fixed %zu stale pointers\n", fixed);
     }
+
+    /* Tag patching is done INSIDE minor_collect (before update_all_objects)
+     * so that no-scan objects (tag >= 251) are correctly skipped. */
 
     /* 6. Write back rewritten roots to OCaml locations. */
     {
@@ -514,7 +461,6 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         uint64_t bump = *gc_gen_heap.minor.bump_ref;
         uint64_t needed = ((uint64_t)wosize + 1) * 8;
         if ((uint64_t)wosize <= max_young_wosize_u64 && bump + needed > minor_heap_size_u64) {
-            gc_count++;
             do_minor_gc();
         }
     }
@@ -523,7 +469,6 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
 
     if (result == 0) {
         /* gen_alloc failed — collect and retry. */
-        gc_count++;
         do_minor_gc();
         result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
     }
@@ -544,7 +489,6 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
      * It writes the header at hp[0] and derives val = hp + 8.
      * For minor: result is a minor offset → translate to absolute HP.
      * For major: result is already absolute (NULL-base trick). */
-    alloc_count++;
     uint64_t hdr_addr = result - 8;  /* header offset/address */
     if (result < minor_heap_size_u64) {
         /* Minor heap allocation — translate offset to absolute HP */
@@ -555,6 +499,10 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         /* The verified allocate() sets tag=0; patch in the correct tag. */
         uint8_t *hdr_ptr = (uint8_t *)ret;
         hdr_ptr[0] = tag;  /* tag is in lowest byte of header */
+        /* Track high-water mark so update_all_objects only scans used portion */
+        uint64_t obj_end = result + (uint64_t)wosize * 8;
+        if (obj_end > major_alloc_hwm)
+            major_alloc_hwm = obj_end;
         return ret;
     }
 }
@@ -575,7 +523,6 @@ CAMLprim value caml_trigger_verified_gc(value v) {
 void verified_do_minor_gc(void) {
     ensure_heap();
     if (*gc_gen_heap.minor.bump_ref > 0) {
-        gc_count++;
         do_minor_gc();
     }
 }
