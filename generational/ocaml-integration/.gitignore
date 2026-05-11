@@ -1,0 +1,9 @@
+ocaml-4.14-unchanged/
+ocaml-4.14-verified-gen/
+tests/*.byte
+tests/*.cmi
+tests/*.cmo
+tests/*.o
+tests/results/
+verified_gc/*.o
+verified_gc/*.a
