@@ -236,7 +236,15 @@ fn clear_rem_set (rs: rem_set)
   fold (is_rem_set rs empty_ref_table)
 }
 
-// get_holder / get_field_idx accessors will be added in Stage 3 alongside
-// the minor-collect drain loop that consumes them. They need a refinement
-// propagation from `pure (SZ.v i < Seq.length 'rt)` into the ensures of
-// `get_ref`, which is easier to handle in tandem with the worklist code.
+// get_holder / get_field_idx accessors deferred to Stage 3. Two attempts
+// (Pulse `(get_ref 'rt (SZ.v i)).holder` in the ensures, and
+// `Seq.index 'rt (SZ.v i)` in the ensures) both failed with the same
+// "Ill-typed term ... Expected slprop" error: F* couldn't propagate the
+// pure precondition `SZ.v i < Seq.length 'rt` into the ensures clause to
+// discharge the Seq.index refinement. A "Seq.length hs >= Seq.length 'rt"
+// existential variant also failed because the discharge would need to
+// use a fact established inside the same `exists*`. The fix likely
+// involves a Pulse-level lemma that introduces the typing fact, or a
+// rewrite of `is_rem_set` to expose `cap` as a top-level fact rather
+// than an exists*-quantified one. Either way, easier to handle in
+// tandem with the Stage-3 mop-up worklist code that uses these.
