@@ -4,7 +4,7 @@
 # Usage:
 #   ./setup.sh                        Install pinned F* nightly (default, fast)
 #   ./setup.sh --nightly              Install latest nightly binary
-#   ./setup.sh --nightly 2026-04-28   Install a specific nightly date
+#   ./setup.sh --nightly 2026-05-10   Install a specific nightly date
 #   ./setup.sh --release              Install latest stable release
 #   ./setup.sh --source               Clone & build F* from master (slow, 15-30 min)
 #   ./setup.sh --update               Pull latest source and rebuild
@@ -16,7 +16,7 @@
 
 # ── Pinned nightly version ──────────────────────────────────────────────
 # Update this to track a known-good nightly build.
-FSTAR_NIGHTLY_VERSION="2026-04-28"
+FSTAR_NIGHTLY_VERSION="2026-05-10"
 
 set -euo pipefail
 
