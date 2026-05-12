@@ -56,7 +56,7 @@ infix parent relationship in the formal heap model.
 | B2,4,5 | Address translation | — Keep as-is | Minor 0-based → absolute offsets |
 | B3,10 | Root scan/writeback | — Keep as-is | OCaml stack layout, inherently specific |
 | B6  | Infix parent injection | ✅ **DONE** | Phased calls expose promote/update/rewrite |
-| B7  | Minor field abs→offset | 🔄 **In progress** | Verified `translate_minor_fields` in Pulse |
+| B7  | Minor field abs→offset | ✅ **DONE** | Verified `translate_minor_fields` replaces 35-line C loop |
 | B8  | Scan base setup | — Tied to PATCHES 3,4 | Sets `update_scan_base` |
 | B9  | Ref_table fwd rewriting | ✅ **DONE** | Verified `rewrite_heap_slots` replaces manual loop |
 | B11 | Full GC wrapper | — Keep as-is | 46 lines, orchestrates major GC |
@@ -791,7 +791,7 @@ leverage change for closing the performance gap with stock OCaml.
 | # | Bridge | Severity | Effort | Status |
 |---|--------|----------|--------|--------|
 | B13 | compat.c stub | **Trivial** | Trivial | ✅ DONE — empty |
-| B7  | Minor field abs→offset | **Critical** — perf bottleneck | Medium | — Keep as-is |
+| B7  | Minor field abs→offset | **Critical** — perf bottleneck | Medium | ✅ **DONE** |
 | B6  | Infix parent injection | **Critical** — correctness | High | — Blocked on PATCH 9 |
 | B12 | Allocation entry point | **High** — hot path | Medium | — Keep as-is |
 | B1  | Heap init | **High** — complex TCB | Medium | — Keep as-is |
@@ -807,7 +807,7 @@ leverage change for closing the performance gap with stock OCaml.
 | Category | Done | Irreducible/Deferred | Total |
 |----------|------|---------------------|-------|
 | Extraction patches | 11 | 3 | 14 |
-| Bridge code items | 4 | 7 | 11 |
+| Bridge code items | 5 | 6 | 11 |
 | Extraction diff lines | — | 14 | — |
 
 ### Future work (remaining items, in priority order)
