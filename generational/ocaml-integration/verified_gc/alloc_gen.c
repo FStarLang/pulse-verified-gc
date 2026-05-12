@@ -433,22 +433,27 @@ static void do_minor_gc(void) {
     /* 5e. Reset minor heap */
     minor_heap_reset(gc_gen_heap.minor);
 
-    /* 5.5. Ref_table-based pointer rewriting: iterate the ref_table entries
-     * and apply fwd_arr to each one.  This replaces the full major-heap scan
-     * that update_all_objects used to do for pre-existing major objects. */
+    /* 5.5. Ref_table-based pointer rewriting using verified rewrite_heap_slots.
+     * Extract field byte-addresses from ref_table entries, then call the
+     * verified function to apply forwarding.  This replaces the full major-heap
+     * scan that update_all_objects used to do for pre-existing major objects. */
     {
         struct caml_ref_table *tbl = Caml_state->_ref_table;
-        value **r;
-        for (r = tbl->base; r < tbl->ptr; r++) {
-            uint64_t fv = (uint64_t)(uintptr_t)(**r);
-            if (fv >= 8 && fv < minor_heap_size_u64 && fv % 8 == 0) {
-                size_t idx = (size_t)(fv / 8);
-                if (idx < (size_t)queue_size_sz) {
-                    uint64_t fwd_val = gc_fwd_arr[idx];
-                    if (fwd_val != 0)
-                        **r = (value)(uintptr_t)fwd_val;
-                }
+        size_t n_slots = (size_t)(tbl->ptr - tbl->base);
+        if (n_slots > 0) {
+            uint64_t *slot_addrs = (uint64_t *)malloc(n_slots * sizeof(uint64_t));
+            if (!slot_addrs)
+                caml_fatal_error("verified gen GC: cannot allocate slot_addrs");
+            size_t k = 0;
+            value **r;
+            for (r = tbl->base; r < tbl->ptr; r++) {
+                uint64_t addr = (uint64_t)(uintptr_t)(*r);
+                if (addr < heap_size_u64 && addr % 8 == 0)
+                    slot_addrs[k++] = addr;
             }
+            if (k > 0)
+                rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, slot_addrs, k);
+            free(slot_addrs);
         }
     }
 

@@ -494,3 +494,78 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
   }
 }
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Rewrite heap slots (ref_table entries)
+/// ---------------------------------------------------------------------------
+
+/// Factored-out helper: handle one heap slot.
+/// Reads from heap at the given address, checks if it's a forwarded minor
+/// pointer, and rewrites if so.
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+inline_for_extraction
+fn rewrite_one_heap_slot
+  (major: heap_t)
+  (fwd_arr: array U64.t)
+  (slot_addr: U64.t)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (U64.v slot_addr < heap_size /\
+                 U64.v slot_addr % 8 == 0 /\
+                 Seq.length 'farr == fwd_array_size)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr
+{
+  let field_val = read_word major slot_addr;
+  if U64.gte field_val 8UL {
+    if U64.lt field_val minor_heap_size_u64 {
+      if U64.eq (U64.rem field_val 8UL) 0UL {
+        let idx = SZ.uint64_to_sizet (U64.div field_val 8UL);
+        let fwd_val = fwd_arr.(idx);
+        if not (U64.eq fwd_val 0UL) {
+          write_word major slot_addr fwd_val
+        }
+      }
+    }
+  }
+}
+#pop-options
+
+/// Rewrite heap slots loop
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+fn rewrite_heap_slots
+  (major: heap_t)
+  (fwd_arr: array U64.t)
+  (slots: array U64.t)
+  (n: SZ.t)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pts_to slots 'sl **
+           pure (SZ.v n <= Seq.length 'sl /\
+                 Seq.length 'farr == fwd_array_size /\
+                 valid_slot_addrs 'sl (SZ.v n))
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pts_to slots 'sl
+{
+  let mut i = 0sz;
+  while (SZ.lt !i n)
+    invariant exists* ms_i iv.
+      is_heap major ms_i **
+      pts_to fwd_arr 'farr **
+      pts_to slots 'sl **
+      R.pts_to i iv **
+      pure (SZ.v iv <= SZ.v n /\
+            SZ.v n <= Seq.length 'sl /\
+            Seq.length 'farr == fwd_array_size /\
+            valid_slot_addrs 'sl (SZ.v n))
+  {
+    let iv = !i;
+    let slot_addr = slots.(iv);
+    rewrite_one_heap_slot major fwd_arr slot_addr;
+    i := SZ.add iv 1sz
+  }
+}
+#pop-options

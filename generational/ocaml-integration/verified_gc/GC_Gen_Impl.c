@@ -898,6 +898,31 @@ void update_all_objects(heap_t major, uint64_t *fwd_arr)
   }
 }
 
+void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t n)
+{
+  size_t i = (size_t)0U;
+  size_t __anf0 = i;
+  bool cond = __anf0 < n;
+  while (cond)
+  {
+    size_t iv = i;
+    uint64_t slot_addr = slots[iv];
+    uint64_t field_val = read_word(major, slot_addr);
+    if (field_val >= 8ULL)
+      if (field_val < minor_heap_size_u64)
+        if (field_val % 8ULL == 0ULL)
+        {
+          size_t idx = (size_t)(field_val / 8ULL);
+          uint64_t fwd_val = fwd_arr[idx];
+          if (!(fwd_val == 0ULL))
+            write_word(major, slot_addr, fwd_val);
+        }
+    i = iv + (size_t)1U;
+    size_t __anf0 = i;
+    cond = __anf0 < n;
+  }
+}
+
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);

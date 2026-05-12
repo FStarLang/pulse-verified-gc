@@ -111,3 +111,34 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     pts_to fwd_arr 'farr **
     pure (GC.Spec.Fields.well_formed_heap_part1 ms2 /\
           ms2 == PromoteSpec.update_major_pointers 'ms fwd)
+
+/// ---------------------------------------------------------------------------
+/// Rewrite heap slots (ref_table entries)
+/// ---------------------------------------------------------------------------
+
+/// Predicate: all slot addresses are valid heap field addresses
+let valid_slot_addrs (slots: Seq.seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (i: nat). i < n ==>
+    (let addr = U64.v (Seq.index slots i) in
+     addr < heap_size /\ addr % 8 == 0))
+
+/// Rewrite specific heap slots: for each slot[i], read the value from the
+/// major heap, and if it's a forwarded minor pointer, replace it.
+/// Used to apply forwarding to ref_table entries without scanning the
+/// entire major heap.
+fn rewrite_heap_slots
+  (major: heap_t)
+  (fwd_arr: array U64.t)
+  (slots: array U64.t)
+  (n: SZ.t)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pts_to slots 'sl **
+           pure (SZ.v n <= Seq.length 'sl /\
+                 Seq.length 'farr == fwd_array_size /\
+                 valid_slot_addrs 'sl (SZ.v n))
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pts_to slots 'sl

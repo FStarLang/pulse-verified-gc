@@ -112,11 +112,15 @@ cheney_promote_phase(
 
 typedef void *represents_fwd;
 
+typedef void *valid_slot_addrs;
+
 void rewrite_roots_impl(uint64_t *roots, uint64_t *fwd_arr, size_t n);
 
 void update_one_object(heap_t major, uint64_t *fwd_arr, uint64_t obj, uint64_t wosize);
 
 void update_all_objects(heap_t major, uint64_t *fwd_arr);
+
+void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t n);
 
 typedef void *gc_precondition;
 
