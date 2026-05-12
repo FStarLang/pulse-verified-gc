@@ -232,10 +232,11 @@ static void do_minor_gc(void) {
         struct caml_ref_table *tbl = Caml_state->_ref_table;
         value **r;
         for (r = tbl->base; r < tbl->ptr; r++) {
-            if (root_count >= MAX_ROOTS) break;
             value v = (value)(uintptr_t)(**r);
             uint64_t v64 = (uint64_t)(uintptr_t)v;
             if (v64 >= 8 && v64 < minor_heap_size_u64 && v64 % 8 == 0) {
+                if (root_count >= MAX_ROOTS)
+                    caml_fatal_error("verified gen GC: root overflow (ref_table)");
                 root_values[root_count] = v64;
                 root_locs[root_count] = NULL;
                 root_count++;
@@ -283,6 +284,8 @@ static void do_minor_gc(void) {
                                 root_locs[root_count] = NULL;
                                 root_count++;
                                 infix_parents_added++;
+                            } else {
+                                caml_fatal_error("verified gen GC: root overflow (infix parent)");
                             }
                             /* Skip past the infix header (don't re-enter) */
                             uint64_t infix_wz = fhdr >> 10;
@@ -352,11 +355,83 @@ static void do_minor_gc(void) {
         update_scan_base = (fp_pre >= 8) ? (fp_pre - 8) : 0ULL;
     }
 
-    /* 5. Call verified minor_collect.
-     * Inside, cheney_promote_phase promotes objects (advancing fp),
-     * then HWM is updated, then update_all_objects scans only [old_hwm..new_hwm). */
-    minor_collect(gc_gen_heap, root_values, (size_t)root_count, gc_fwd_arr);
+    /* 5. Phased minor collection (replaces single minor_collect call).
+     * Split into individual phases so we can insert infix forwarding
+     * between promote and update. */
+
+    /* 5a. Cheney BFS: promote reachable minor objects to major heap */
+    cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
+                         gc_gen_heap.fp_ref, gc_fwd_arr,
+                         root_values, (size_t)root_count);
+
+    /* 5b. Infix forwarding fixup: after promotion, fwd_arr has entries for
+     * parent closures but NOT for embedded infix sub-objects. Walk minor
+     * heap, find closures (tag=247) with infix headers (tag=249), and
+     * synthesize forwarding entries for infix VALUE addresses.
+     *
+     * OCaml infix layout:
+     *   parent header at offset P, parent value at P+8
+     *   ... fields ...
+     *   infix header at offset I (within parent's fields), infix value at I+8
+     *   Infix_offset = infix "wosize" * 8 = byte distance from parent value to infix value
+     *
+     * After Cheney promotes parent:
+     *   fwd_arr[(P+8)/8] = new_parent_addr (major heap VALUE address)
+     * We synthesize:
+     *   fwd_arr[(I+8)/8] = fwd_arr[(P+8)/8] + (I+8 - (P+8))
+     */
+    {
+        uint8_t *mdata = gc_gen_heap.minor.data;
+        uint64_t bump = *gc_gen_heap.minor.bump_ref;
+        uint64_t pos = 0;
+        size_t infix_fwd_count = 0;
+        while (pos + 8 <= bump) {
+            uint64_t hdr = *(uint64_t *)(mdata + pos);
+            uint64_t wz = hdr >> 10;
+            uint64_t tag_val = hdr & 0xFF;
+            if (wz == 0 || pos + 8 + wz * 8 > bump) break;
+            if (tag_val == 247) {  /* Closure_tag */
+                uint64_t parent_val_off = pos + 8;
+                size_t parent_idx = (size_t)(parent_val_off / 8);
+                uint64_t parent_fwd = (parent_idx < (size_t)queue_size_sz)
+                                      ? gc_fwd_arr[parent_idx] : 0;
+                if (parent_fwd != 0) {
+                    /* Parent was promoted. Check fields for infix headers. */
+                    uint64_t j;
+                    for (j = 0; j < wz; j++) {
+                        uint64_t field_off = pos + 8 + j * 8;
+                        if (field_off + 8 <= bump) {
+                            uint64_t fhdr = *(uint64_t *)(mdata + field_off);
+                            uint64_t ftag = fhdr & 0xFF;
+                            if (ftag == 249) {  /* Infix_tag */
+                                uint64_t infix_val_off = field_off + 8;
+                                uint64_t delta = infix_val_off - parent_val_off;
+                                size_t infix_idx = (size_t)(infix_val_off / 8);
+                                if (infix_idx < (size_t)queue_size_sz) {
+                                    gc_fwd_arr[infix_idx] = parent_fwd + delta;
+                                    infix_fwd_count++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            pos += (wz + 1) * 8;
+        }
+        if (infix_fwd_count > 0)
+            caml_gc_message(0x20, "[gen-gc] infix: %zu forwarding entries\n",
+                            infix_fwd_count);
+    }
+
+    /* 5c. Rewrite major heap fields: replace minor pointers with forwarded addresses */
+    update_all_objects(gc_gen_heap.major, gc_fwd_arr);
     update_scan_base = 0ULL;  /* reset for next time */
+
+    /* 5d. Rewrite root array */
+    rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
+
+    /* 5e. Reset minor heap */
+    minor_heap_reset(gc_gen_heap.minor);
 
     /* 5.5. Ref_table-based pointer rewriting: iterate the ref_table entries
      * and apply fwd_arr to each one.  This replaces the full major-heap scan

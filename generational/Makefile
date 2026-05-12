@@ -131,7 +131,7 @@ $(OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Impl+GC.Impl.Allocator+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*[rename=GC_Gen_Impl]' \
+  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Impl.Cheney+GC.Gen.Impl.UpdatePtrs+GC.Impl+GC.Impl.Allocator+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*[rename=GC_Gen_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Gen.Base,GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(foreach m,$(ALL_KRML_MODS),-no-prefix $(m)) \
