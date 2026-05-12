@@ -12,6 +12,7 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Lib.Header
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
@@ -31,7 +32,353 @@ private let copy_fields_preserves_fl_chain_terminates = WriteBody.copy_fields_pr
 private let copy_fields_preserves_wfh_part1 = WriteBody.copy_fields_preserves_wfh_part1
 private let chain_avoids_implies_not_in_fl_chain = WriteBody.chain_avoids_implies_not_in_fl_chain
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+
+/// Helper: construct field address as hp_addr
+private let field_addr_of (src: obj_addr) (j: nat{U64.v src + j * 8 + 8 <= heap_size})
+  : hp_addr
+  = U64.uint_to_t (U64.v src + j * 8)
+
+#pop-options
+
+/// Helper: prove header of src is disjoint from header of dst_obj
+/// when both are distinct members of objects
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+private let headers_disjoint_from_separation
+  (g: heap) (src dst_obj: obj_addr)
+  : Lemma
+    (requires
+      Seq.mem src (objects 0UL g) /\
+      Seq.mem dst_obj (objects 0UL g) /\
+      src <> dst_obj)
+    (ensures
+      (U64.v (hd_address src) + U64.v mword <= U64.v (hd_address dst_obj) \/
+       U64.v (hd_address dst_obj) + U64.v mword <= U64.v (hd_address src)))
+  = hd_address_spec src;
+    hd_address_spec dst_obj;
+    if U64.v src < U64.v dst_obj then
+      objects_separated 0UL g src dst_obj
+    else
+      objects_separated 0UL g dst_obj src
+#pop-options
+
+/// Helper: prove copy_fields_preserves_other precondition for the obj address
+/// when ao and dst_obj are distinct objects. Minimal context for Z3.
+/// Also calls copy_fields_preserves_other directly (Z3 proves the forall + call in clean context).
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+private let copy_fields_other_obj_precond
+  (minor: minor_state) (g: heap) (src_obj: U64.t)
+  (ao dst_obj: obj_addr) (wosize: nat{wosize > 0})
+  : Lemma
+    (requires
+      Seq.mem ao (objects 0UL g) /\
+      Seq.mem dst_obj (objects 0UL g) /\
+      ao <> dst_obj /\
+      U64.v (wosize_of_object dst_obj g) >= wosize)
+    (ensures
+      read_word (copy_fields minor g src_obj dst_obj 0 wosize) (ao <: hp_addr) ==
+      read_word g (ao <: hp_addr))
+  = hd_address_spec ao;
+    hd_address_spec dst_obj;
+    objects_member_size_bound 0UL g dst_obj;
+    wosize_of_object_spec dst_obj g;
+    if U64.v ao < U64.v dst_obj then
+      objects_separated 0UL g ao dst_obj
+    else
+      objects_separated 0UL g dst_obj ao;
+    copy_fields_preserves_other minor g src_obj dst_obj 0 wosize (ao <: hp_addr)
+#pop-options
+
+/// Helper: read at any object address of a non-dst object is preserved through
+/// copy_fields + set_promoted_tag (combines precondition helper + frame lemmas)
+/// Requires ao's wosize >= 1 to ensure ao doesn't overlap with hd_address(dst_obj)
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+private let read_word_preserved_at_obj
+  (minor: minor_state) (g: heap) (src_obj: U64.t)
+  (ao dst_obj: obj_addr) (wosize: nat{wosize > 0}) (tag: nat{tag < 256})
+  : Lemma
+    (requires
+      Seq.mem ao (objects 0UL g) /\
+      Seq.mem dst_obj (objects 0UL g) /\
+      ao <> dst_obj /\
+      U64.v (wosize_of_object dst_obj g) >= wosize /\
+      U64.v (wosize_of_object ao g) >= 1)
+    (ensures (
+      let copied = copy_fields minor g src_obj dst_obj 0 wosize in
+      read_word (set_promoted_tag copied dst_obj tag) ao ==
+      read_word g ao))
+  = copy_fields_other_obj_precond minor g src_obj ao dst_obj wosize;
+    hd_address_spec ao;
+    hd_address_spec dst_obj;
+    objects_member_size_bound 0UL g dst_obj;
+    objects_member_size_bound 0UL g ao;
+    wosize_of_object_spec dst_obj g;
+    wosize_of_object_spec ao g;
+    // hd disjointness: ao + 16 <= dst_obj (when ao < dst) or dst_obj <= ao
+    if U64.v ao < U64.v dst_obj then
+      objects_separated 0UL g ao dst_obj
+    else ();
+    set_promoted_tag_read_frame (copy_fields minor g src_obj dst_obj 0 wosize) dst_obj tag (ao <: hp_addr)
+#pop-options
+
+/// Helper: prove copy_fields_preserves_other precondition for hd_address src
+/// when src and dst_obj are distinct objects
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+private let copy_fields_other_hdr_precond
+  (g: heap) (src dst_obj: obj_addr) (wosize: nat{wosize > 0})
+  : Lemma
+    (requires
+      Seq.mem src (objects 0UL g) /\
+      Seq.mem dst_obj (objects 0UL g) /\
+      src <> dst_obj /\
+      U64.v (wosize_of_object dst_obj g) >= wosize)
+    (ensures
+      U64.v dst_obj + (wosize - 1) * 8 + 8 <= heap_size /\
+      (forall (k:nat). 0 <= k /\ k < wosize ==>
+        (U64.v (hd_address src) + 8 <= U64.v dst_obj + k * 8 \/
+         U64.v dst_obj + k * 8 + 8 <= U64.v (hd_address src))))
+  = hd_address_spec src;
+    hd_address_spec dst_obj;
+    objects_member_size_bound 0UL g dst_obj;
+    wosize_of_object_spec dst_obj g;
+    if U64.v src < U64.v dst_obj then
+      objects_separated 0UL g src dst_obj
+    else
+      objects_separated 0UL g dst_obj src
+#pop-options
+
+/// Helper: read at any address of a non-dst object is preserved through
+/// copy_fields + set_promoted_tag (combines objects_separated + frame lemmas)
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+private let promote_read_non_dst
+  (minor: minor_state) (new_major: heap) (obj: U64.t)
+  (dst_obj: obj_addr) (wosize: nat{wosize > 0})
+  (tag: nat{tag < 256})
+  (a: hp_addr)
+  : Lemma
+    (requires
+      Seq.mem dst_obj (objects zero_addr new_major) /\
+      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
+      // a is disjoint from dst_obj's header
+      (U64.v a + U64.v mword <= U64.v (hd_address dst_obj) \/
+       U64.v (hd_address dst_obj) + U64.v mword <= U64.v a) /\
+      // copy_fields_preserves_other precondition
+      (forall (k:nat). 0 <= k /\ k < wosize ==>
+        (U64.v a + 8 <= U64.v dst_obj + k * 8 \/ U64.v dst_obj + k * 8 + 8 <= U64.v a)))
+    (ensures
+      (let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+       read_word (set_promoted_tag copied dst_obj tag) a == read_word new_major a))
+  = // Derive field bounds from membership
+    objects_member_size_bound zero_addr new_major dst_obj;
+    wosize_of_object_spec dst_obj new_major;
+    hd_address_spec dst_obj;
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    copy_fields_preserves_other minor new_major obj dst_obj 0 wosize a;
+    set_promoted_tag_read_frame copied dst_obj tag a
+#pop-options
+
+/// Helper: derive copy_fields_preserves_other precondition from objects_separated
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+private let bfc_field_disjoint
+  (new_major: heap) (src dst_obj: obj_addr) (j: nat) (wosize: nat{wosize > 0})
+  : Lemma
+    (requires
+      Seq.mem src (objects zero_addr new_major) /\
+      Seq.mem dst_obj (objects zero_addr new_major) /\
+      src <> dst_obj /\
+      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
+      j < U64.v (wosize_of_object src new_major) /\
+      U64.v src + j * 8 + 8 <= heap_size)
+    (ensures
+      (let field_addr = field_addr_of src j in
+       // field disjoint from [dst_obj, dst_obj + wosize*8)
+       (forall (k:nat). 0 <= k /\ k < wosize ==>
+         (U64.v field_addr + 8 <= U64.v dst_obj + k * 8 \/
+          U64.v dst_obj + k * 8 + 8 <= U64.v field_addr)) /\
+       // field disjoint from hd_address dst_obj
+       (U64.v field_addr + U64.v mword <= U64.v (hd_address dst_obj) \/
+        U64.v (hd_address dst_obj) + U64.v mword <= U64.v field_addr)))
+  = let field_addr = field_addr_of src j in
+    hd_address_spec src;
+    hd_address_spec dst_obj;
+    if U64.v src < U64.v dst_obj then begin
+      objects_separated 0UL new_major src dst_obj;
+      // src + wosize_as_wosize(src)*8 < dst_obj
+      // Since j < wosize(src): field = src + j*8 < src + wosize(src)*8 <= dst_obj - 8
+      // So field + 8 <= dst_obj <= dst_obj + k*8 for all k >= 0
+      // Also field < dst_obj - 8 = hd(dst_obj), so field + 8 <= hd(dst_obj)
+      ()
+    end else begin
+      objects_separated 0UL new_major dst_obj src;
+      wosize_of_object_spec dst_obj new_major;
+      // src > dst_obj + wosize_as_wosize(dst_obj)*8 >= dst_obj + wosize*8
+      // field = src + j*8 >= src > dst_obj + wosize*8 > dst_obj + k*8 for k < wosize
+      // So dst_obj + k*8 + 8 <= field
+      // Also src > dst_obj + 8 > hd(dst_obj) + 8, so hd(dst_obj) + 8 <= field
+      ()
+    end
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+/// Helper: prove a single field of a blue src ≠ dst_obj in res.major_out
+/// still points to a valid object.
+private let bfc_one_field
+  (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  (dst_obj src: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      new_major == (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out /\
+      dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      blue_fields_closed new_major /\
+      Seq.mem src (objects zero_addr new_major) /\
+      Seq.mem dst_obj (objects zero_addr new_major) /\
+      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
+      src <> dst_obj /\
+      is_blue src new_major /\
+      j < U64.v (wosize_of_object src new_major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      minor_tag minor obj < 256)
+    (ensures
+      (let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+       let tag = minor_tag minor obj in
+       let g' = set_promoted_tag copied dst_obj tag in
+       let field_addr = field_addr_of src j in
+       let v = read_word g' field_addr in
+       is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g')))
+  = let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let tag = minor_tag minor obj in
+    let g' = set_promoted_tag copied dst_obj tag in
+    let field_addr = field_addr_of src j in
+    let v = read_word g' field_addr in
+    if not (is_pointer v) then ()
+    else begin
+      // field_addr preserved through copy_fields + set_promoted_tag
+      bfc_field_disjoint new_major src dst_obj j wosize;
+      promote_read_non_dst minor new_major obj dst_obj wosize tag field_addr;
+      // objects preserved
+      copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
+      set_promoted_tag_preserves_objects copied dst_obj tag;
+      // blue_fields_closed new_major → v ∈ objects(new_major)
+      blue_fields_closed_inst new_major src j
+    end
+
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+/// Standalone helper: a single field of a blue src ≠ dst_obj still points to a
+/// valid object after the full promote (alloc + copy + set_promoted_tag).
+private let bfc_single_field_proof
+  (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  (dst_obj: obj_addr) (copied: heap)
+  (tag: nat{tag < 256})
+  (src: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      new_major == (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out /\
+      dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
+      copied == copy_fields minor new_major obj dst_obj 0 wosize /\
+      tag == minor_tag minor obj /\
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      blue_fields_closed new_major /\
+      Seq.mem dst_obj (objects zero_addr new_major) /\
+      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
+      objects zero_addr (set_promoted_tag copied dst_obj tag) == objects zero_addr new_major /\
+      ~(is_blue dst_obj (set_promoted_tag copied dst_obj tag)) /\
+      Seq.mem src (objects zero_addr new_major) /\
+      is_blue src (set_promoted_tag copied dst_obj tag) /\
+      j < U64.v (wosize_of_object src (set_promoted_tag copied dst_obj tag)) /\
+      U64.v src + j * 8 + 8 <= heap_size)
+    (ensures
+      (let g' = set_promoted_tag copied dst_obj tag in
+       let field_addr = field_addr_of src j in
+       let v = read_word g' field_addr in
+       is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g')))
+  = let g' = set_promoted_tag copied dst_obj tag in
+    // src ≠ dst_obj (since src is blue but dst_obj is not)
+    assert (src <> dst_obj);
+    // Header disjointness from separation
+    headers_disjoint_from_separation new_major src dst_obj;
+    // Header of src is preserved through set_promoted_tag
+    set_promoted_tag_read_frame copied dst_obj tag (hd_address src);
+    // Header of src is preserved through copy_fields
+    copy_fields_other_hdr_precond new_major src dst_obj wosize;
+    copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
+    // Therefore wosize and color of src are same in new_major and g'
+    wosize_of_object_spec src new_major;
+    wosize_of_object_spec src g';
+    color_of_header_eq src g' new_major;
+    // Delegate to bfc_one_field
+    bfc_one_field minor major new_major obj fp wosize dst_obj src j
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+/// Pattern: inner bfc_proof has conclusion as implication (no requires).
+private let promote_object_preserves_bfc_close
+  (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  (dst_obj: obj_addr) (copied: heap)
+  (tag: nat{tag < 256})
+  (g': heap)
+  : Lemma (requires
+      new_major == (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out /\
+      dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
+      copied == copy_fields minor new_major obj dst_obj 0 wosize /\
+      tag == minor_tag minor obj /\
+      g' == set_promoted_tag copied dst_obj tag /\
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      blue_fields_closed new_major /\
+      Seq.mem dst_obj (objects zero_addr new_major) /\
+      U64.v (wosize_of_object dst_obj new_major) >= wosize /\
+      objects zero_addr g' == objects zero_addr new_major /\
+      ~(is_blue dst_obj g'))
+    (ensures blue_fields_closed g')
+  = let bfc_proof (src: obj_addr) (j: nat)
+      : Lemma (Seq.mem src (objects zero_addr g') /\ is_blue src g' /\
+               j < U64.v (wosize_of_object src g') /\
+               U64.v src + j * 8 + 8 <= heap_size ==>
+               (let field_addr = field_addr_of src j in
+                let v = read_word g' field_addr in
+                is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr g')))
+      = if not (Seq.mem src (objects zero_addr g') && is_blue src g' &&
+                j < U64.v (wosize_of_object src g') &&
+                U64.v src + j * 8 + 8 <= heap_size)
+        then ()
+        else begin
+          // src is blue, dst_obj is not → src ≠ dst_obj
+          assert (src <> dst_obj);
+          assert (Seq.mem src (objects zero_addr new_major));
+          // Header disjointness
+          headers_disjoint_from_separation new_major src dst_obj;
+          // Header of src preserved
+          set_promoted_tag_read_frame copied dst_obj tag (hd_address src);
+          copy_fields_other_hdr_precond new_major src dst_obj wosize;
+          copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
+          // Derive wosize and color in new_major
+          wosize_of_object_spec src new_major;
+          wosize_of_object_spec src g';
+          color_of_header_eq src g' new_major;
+          // Field also preserved
+          bfc_field_disjoint new_major src dst_obj j wosize;
+          promote_read_non_dst minor new_major obj dst_obj wosize tag (field_addr_of src j);
+          // Instantiate bfc from new_major
+          blue_fields_closed_inst new_major src j
+        end
+    in
+    reveal_opaque (`%blue_fields_closed) blue_fields_closed;
+    FStar.Classical.forall_intro_2 bfc_proof
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let promote_object_preserves_bfc
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -44,80 +391,197 @@ private let promote_object_preserves_bfc
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures
       blue_fields_closed (promote_object minor major obj fp wosize).major_out)
-  = let fuel = heap_size / U64.v mword in
-    let res = promote_object minor major obj fp wosize in
+  = let res = promote_object minor major obj fp wosize in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     let new_major = alloc_res.heap_out in
     let dst : U64.t = alloc_res.obj_out in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
     let dst_obj : obj_addr = dst in
-    // Step 1: alloc preserves bfc and dst_obj is not blue
+    promote_object_success minor major obj fp wosize;
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    assert (res.major_out == set_promoted_tag copied dst_obj tag);
+    // alloc preserves bfc
     alloc_spec_preserves_blue_fields_closed major fp wosize;
-    GC.Gen.AllocProps.alloc_spec_obj_not_blue_part1 major fp wosize;
     // Key properties of alloc
-    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wosize;
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
-    // copy_fields preserves objects and wfh_part1
+    // objects preserved
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
-    copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
-    // Step 2: copy_fields preserves bfc
-    let bfc_proof (src: obj_addr) (j: nat)
-      : Lemma (Seq.mem src (objects zero_addr res.major_out) /\ is_blue src res.major_out /\
-               j < U64.v (wosize_of_object src res.major_out) /\
-               U64.v src + j * 8 + 8 <= heap_size ==>
-               (let v = read_word res.major_out (U64.uint_to_t (U64.v src + j * 8)) in
-                is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr res.major_out)))
-      = if not (Seq.mem src (objects zero_addr res.major_out) && is_blue src res.major_out &&
-                j < U64.v (wosize_of_object src res.major_out) &&
-                U64.v src + j * 8 + 8 <= heap_size)
-        then ()
-        else begin
-          let field_addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
-          let v = read_word res.major_out field_addr in
-          if not (is_pointer v) then ()
-          else begin
-            hd_address_spec src;
-            hd_address_spec dst_obj;
-            assert (Seq.mem src (objects zero_addr new_major));
-            // Step A: Show src != dst_obj via color contradiction.
-            // hd(dst_obj) = dst_obj - 8 < dst_obj = first write position, so header preserved.
-            copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
-            GC.Spec.Object.color_of_header_eq dst_obj res.major_out new_major;
-            GC.Spec.Object.is_blue_iff dst_obj new_major;
-            GC.Spec.Object.is_blue_iff dst_obj res.major_out;
-            assert (src <> dst_obj);
-            // Step B: Prove header of src is preserved by copy_fields.
-            // hd(src) = src - 8. For src < dst_obj: src - 8 < dst_obj (below write range).
-            // For src > dst_obj: by objects_separated, src > dst_obj + wosize*8,
-            // so src - 8 >= dst_obj + wosize*8 (above write range).
-            if U64.v src < U64.v dst_obj then
-              objects_separated 0UL new_major src dst_obj
-            else
-              objects_separated 0UL new_major dst_obj src;
-            copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
-            // Step C: From header preservation, derive wosize and color equality.
-            GC.Spec.Object.color_of_header_eq src res.major_out new_major;
-            wosize_of_object_spec src new_major;
-            wosize_of_object_spec src res.major_out;
-            assert (is_blue src new_major);
-            assert (j < U64.v (wosize_of_object src new_major));
-            // Step D: Now prove field_addr is also preserved by copy_fields.
-            // field_addr = src + j*8. For src < dst_obj: field_addr < src + wosize(src)*8 < dst_obj.
-            // For src > dst_obj: field_addr >= src > dst_obj + wosize*8.
-            copy_fields_preserves_other minor new_major obj dst_obj 0 wosize field_addr;
-            assert (read_word res.major_out field_addr == read_word new_major field_addr);
-            // Step E: Instantiate bfc of new_major to conclude.
-            blue_fields_closed_inst new_major src j
-          end
-        end
+    set_promoted_tag_preserves_objects copied dst_obj tag;
+    // dst_obj not blue in res.major_out (it's White)
+    set_promoted_tag_unfold copied dst_obj tag;
+    let copied_hdr = read_word copied (hd_address dst_obj) in
+    getWosize_bound copied_hdr;
+    let new_hdr = makeHeader (getWosize copied_hdr) White (U64.uint_to_t tag) in
+    read_write_same copied (hd_address dst_obj) new_hdr;
+    makeHeader_getColor (getWosize copied_hdr) White (U64.uint_to_t tag);
+    color_of_object_spec dst_obj res.major_out;
+    GC.Spec.Object.is_blue_iff dst_obj res.major_out;
+    // Close the quantifier via the dedicated helper
+    promote_object_preserves_bfc_close minor major new_major obj fp wosize dst_obj copied tag res.major_out
+#pop-options
+/// Helper: transfer chain_avoids from new_major to res.major_out via read preservation.
+/// Separated to keep the Z3 context small.
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+private let chain_blue_transfer_step
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  (excl: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL /\
+      excl <> (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
+      // chain_avoids on new_major is known
+      AllocLemmas.chain_avoids
+        (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out
+        (GC.Spec.Allocator.alloc_spec major fp wosize).fp_out
+        excl (heap_size / U64.v mword) = true /\
+      AllocLemmas.chain_avoids
+        (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out
+        (GC.Spec.Allocator.alloc_spec major fp wosize).fp_out
+        (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out
+        (heap_size / U64.v mword) = true /\
+      AllocLemmas.fl_valid
+        (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out
+        (GC.Spec.Allocator.alloc_spec major fp wosize).fp_out
+        (heap_size / U64.v mword))
+    (ensures
+      AllocLemmas.chain_avoids
+        (promote_object minor major obj fp wosize).major_out
+        (promote_object minor major obj fp wosize).fp_out
+        excl (heap_size / U64.v mword) = true)
+  = let fuel = heap_size / U64.v mword in
+    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+    let new_major = alloc_res.heap_out in
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
+    let dst_obj : obj_addr = alloc_res.obj_out in
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    let final = set_promoted_tag copied dst_obj tag in
+    promote_object_success minor major obj fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
+    let read_pres (ao: obj_addr)
+      : Lemma (requires Seq.mem ao (objects zero_addr new_major) /\
+                        (ao <: U64.t) <> (excl <: U64.t) /\
+                        (ao <: U64.t) <> (dst_obj <: U64.t))
+              (ensures U64.v (wosize_of_object ao new_major) >= 1 /\
+                       U64.v (hd_address ao) + 16 <= heap_size ==>
+                       read_word final ao == read_word new_major ao)
+      = if U64.v (wosize_of_object ao new_major) >= 1 &&
+           U64.v (hd_address ao) + 16 <= heap_size then
+          read_word_preserved_at_obj minor new_major obj ao dst_obj wosize tag
     in
-    reveal_opaque (`%blue_fields_closed) blue_fields_closed;
-    FStar.Classical.forall_intro_2 bfc_proof
+    FStar.Classical.forall_intro (FStar.Classical.move_requires read_pres);
+    AllocLemmas.chain_avoids_transfer_excl2 new_major final alloc_res.fp_out excl dst_obj fuel
 #pop-options
 
-/// Helper: promote_object preserves chain_objects_blue.
+/// After alloc_spec + copy_fields + set_promoted_tag, non-blue objects that are not
+/// the destination still avoid the free-list chain. Extracted as a standalone helper
+/// to give Z3 a clean context (no inherited let-bindings from the outer proof).
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+private let chain_blue_proof_for_excl
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  (excl: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      (promote_object minor major obj fp wosize).new_addr <> 0UL /\
+      // excl-specific
+      Seq.mem excl (objects zero_addr (promote_object minor major obj fp wosize).major_out) /\
+      is_blue excl (promote_object minor major obj fp wosize).major_out = false /\
+      excl <> (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out)
+    (ensures
+      AllocLemmas.chain_avoids
+        (promote_object minor major obj fp wosize).major_out
+        (promote_object minor major obj fp wosize).fp_out
+        excl (heap_size / U64.v mword) = true)
+  = let fuel = heap_size / U64.v mword in
+    let res = promote_object minor major obj fp wosize in
+    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+    let new_major = alloc_res.heap_out in
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
+    let dst_obj : obj_addr = alloc_res.obj_out in
+    promote_object_success minor major obj fp wosize;
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    // Key alloc properties
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
+    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wosize;
+    assert (dst_obj <> 0UL);  // from promote_object definition + new_addr <> 0UL
+    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
+    assert (Seq.mem dst_obj (objects zero_addr new_major));
+    assert (U64.v (wosize_of_object dst_obj new_major) >= wosize);
+    copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
+    set_promoted_tag_preserves_objects copied dst_obj tag;
+    // 1. excl ∈ objects(new_major)
+    assert (Seq.mem excl (objects zero_addr new_major));
+    // Bridge: header of excl preserved through set_promoted_tag
+    headers_disjoint_from_separation new_major excl dst_obj;
+    set_promoted_tag_read_frame copied dst_obj tag (hd_address excl);
+    // 2. excl must be in objects(major) (new objects are blue → contradiction)
+    AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wosize;
+    if not (Seq.mem excl (objects zero_addr major)) then begin
+      assert (is_blue excl new_major = true);
+      copy_fields_other_hdr_precond new_major excl dst_obj wosize;
+      copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address excl);
+      color_of_header_eq excl res.major_out new_major;
+      assert False
+    end;
+    assert (Seq.mem excl (objects zero_addr major));
+    // 3. dst_obj ∈ objects(major)
+    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp 0UL fp
+      (if wosize = 0 then 1 else wosize) fuel;
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_pre_part1 major fp wosize;
+    // 4. Header of excl preserved → derive non-blue in major
+    copy_fields_other_hdr_precond major excl dst_obj wosize;
+    copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address excl);
+    color_of_header_eq excl res.major_out new_major;
+    GC.Gen.AllocProps.alloc_spec_read_header_other_part1 major fp wosize excl;
+    color_of_header_eq excl new_major major;
+    assert (is_blue excl major = false);
+    // 5. chain_objects_blue → chain_avoids(major, fp, excl, fuel)
+    reveal_opaque (`%chain_objects_blue) chain_objects_blue;
+    // 6. alloc_spec preserves chain_avoids for excl
+    AllocLemmas.alloc_spec_preserves_chain_avoids_other major fp wosize excl;
+    // 7. Transfer through copy_fields + set_promoted_tag (delegated to helper)
+    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
+    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
+    chain_blue_transfer_step minor major obj fp wosize excl
+#pop-options
+
+/// set_promoted_tag preserves read_word at object addresses ≠ dst_obj.
+/// Used to transfer chain_avoids through set_promoted_tag.
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --split_queries always"
+private let set_tag_preserves_read_at_obj
+  (major: heap) (dst_obj: obj_addr) (tag: nat{tag < 256})
+  (a: obj_addr)
+  : Lemma (requires Seq.mem a (objects zero_addr major) /\
+                    Seq.mem dst_obj (objects zero_addr major) /\
+                    U64.v (wosize_of_object a major) >= 1 /\
+                    U64.v (hd_address a) + 16 <= heap_size /\
+                    (a <: U64.t) <> (dst_obj <: U64.t))
+          (ensures read_word (set_promoted_tag major dst_obj tag) a ==
+                   read_word major a)
+  = hd_address_spec a;
+    hd_address_spec dst_obj;
+    if U64.v a < U64.v dst_obj then
+      objects_separated zero_addr major a dst_obj
+    else ();
+    set_promoted_tag_read_frame major dst_obj tag (a <: hp_addr)
+#pop-options
+
 /// After alloc_spec + copy_fields, non-blue objects still avoid the chain.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
 let promote_object_preserves_chain_objects_blue
@@ -138,10 +602,10 @@ let promote_object_preserves_chain_objects_blue
     let new_major = alloc_res.heap_out in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
     let dst_obj : obj_addr = alloc_res.obj_out in
-    // Unfold promote_object to connect res with alloc_res + copy_fields
     promote_object_success minor major obj fp wosize;
-    assert (res.fp_out == alloc_res.fp_out);
-    assert (res.major_out == copy_fields minor new_major obj dst_obj 0 wosize);
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
     // Key properties of alloc
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
     AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
@@ -150,93 +614,47 @@ let promote_object_preserves_chain_objects_blue
     AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
-    AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wosize;
-    // copy_fields preserves objects (equality!) and wfh_part1
+    // copy_fields preserves objects
     copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
-    assert (objects zero_addr res.major_out == objects zero_addr new_major);
-    copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
-    // dst_obj: chain_avoids preserved through copy_fields
+    set_promoted_tag_preserves_objects copied dst_obj tag;
+    // Establish not_in_fl_chain from chain_avoids
+    chain_avoids_implies_not_in_fl_chain new_major alloc_res.fp_out dst_obj fuel;
+    // fl_valid and fl_chain_terminates preserved through copy_fields
+    copy_fields_preserves_fl_valid_aux minor new_major obj dst_obj 0 wosize alloc_res.fp_out fuel;
+    copy_fields_preserves_fl_chain_terminates minor new_major obj dst_obj 0 wosize alloc_res.fp_out fuel;
+    // dst_obj: chain_avoids preserved through copy_fields + set_promoted_tag
     copy_fields_preserves_chain_avoids_self minor new_major obj dst_obj 0 wosize alloc_res.fp_out fuel;
-    // For non-blue obj' ≠ dst_obj: transfer chain_avoids through copy_fields
-    let proof_for_obj (excl: obj_addr)
-      : Lemma (requires Seq.mem excl (objects zero_addr res.major_out) /\
-                        is_blue excl res.major_out = false /\
-                        excl <> dst_obj)
-              (ensures AllocLemmas.chain_avoids res.major_out res.fp_out excl fuel = true)
-      = // 1. excl ∈ objects(new_major) (from objects equality)
-        assert (Seq.mem excl (objects zero_addr new_major));
-        // 2. Prove excl ∈ objects(major) (new objects from alloc are blue → contradiction)
-        AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wosize;
-        if not (Seq.mem excl (objects zero_addr major)) then begin
-          assert (is_blue excl new_major = true);
-          // color preserved through copy_fields (excl ≠ dst_obj)
-          hd_address_spec excl;
-          hd_address_spec dst_obj;
-          if U64.v excl < U64.v dst_obj then
-            objects_separated 0UL new_major excl dst_obj
-          else
-            objects_separated 0UL new_major dst_obj excl;
-          copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address excl);
-          color_of_header_eq excl res.major_out new_major;
-          assert (is_blue excl res.major_out = true);
-          assert False
-        end;
-        assert (Seq.mem excl (objects zero_addr major));
-        // 3. dst_obj ∈ objects(major) and excl ≠ dst_obj → objects_separated on major
-        GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp 0UL fp
-          (if wosize = 0 then 1 else wosize) fuel;
-        assert (Seq.mem dst_obj (objects zero_addr major));
-        GC.Gen.AllocProps.alloc_spec_obj_wosize_pre_part1 major fp wosize;
-        assert (U64.v (wosize_of_object dst_obj major) >= wosize);
-        // 4. Header of excl preserved through copy_fields (excl ≠ dst_obj)
-        hd_address_spec excl;
-        hd_address_spec dst_obj;
-        if U64.v excl < U64.v dst_obj then
-          objects_separated 0UL major excl dst_obj
-        else
-          objects_separated 0UL major dst_obj excl;
-        copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address excl);
-        color_of_header_eq excl res.major_out new_major;
-        // 5. Header preserved through alloc → excl non-blue in major
-        GC.Gen.AllocProps.alloc_spec_read_header_other_part1 major fp wosize excl;
-        color_of_header_eq excl new_major major;
-        assert (is_blue excl major = false);
-        // 6. chain_objects_blue → chain_avoids(major, fp, excl, fuel)
-        reveal_opaque (`%chain_objects_blue) chain_objects_blue;
-        assert (AllocLemmas.chain_avoids major fp excl fuel = true);
-        // 7. alloc_spec preserves chain_avoids for excl
-        AllocLemmas.alloc_spec_preserves_chain_avoids_other major fp wosize excl;
-        // 8. Transfer through copy_fields via chain_avoids_transfer_excl2
-        AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
-        let read_pres (ao: obj_addr)
-          : Lemma (requires Seq.mem ao (objects zero_addr new_major) /\
-                            (ao <: U64.t) <> (excl <: U64.t) /\
-                            (ao <: U64.t) <> (dst_obj <: U64.t))
-                  (ensures U64.v (wosize_of_object ao new_major) >= 1 /\
-                           U64.v (hd_address ao) + 16 <= heap_size ==>
-                           read_word res.major_out ao == read_word new_major ao)
-          = if U64.v (wosize_of_object ao new_major) >= 1 &&
-               U64.v (hd_address ao) + 16 <= heap_size then begin
-              hd_address_spec ao;
-              if U64.v ao < U64.v dst_obj then
-                objects_separated 0UL new_major ao dst_obj
-              else
-                objects_separated 0UL new_major dst_obj ao;
-              copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (ao <: hp_addr)
-            end
-        in
-        FStar.Classical.forall_intro (FStar.Classical.move_requires read_pres);
-        AllocLemmas.chain_avoids_transfer_excl2 new_major res.major_out alloc_res.fp_out excl dst_obj fuel;
-        assert (AllocLemmas.chain_avoids res.major_out alloc_res.fp_out excl fuel = true);
-        promote_object_success minor major obj fp wosize
-    in
-    // Combine: for ALL non-blue obj' in objects(res.major_out), chain_avoids holds
+    // Establish explicit preconditions for set_promoted_tag_preserves_alloc_invariants
+    copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
+    assert (well_formed_heap_part1 copied);
+    assert (Seq.mem dst_obj (objects zero_addr copied));
+    assert (AllocLemmas.fl_valid copied alloc_res.fp_out fuel);
+    assert (AllocLemmas.fl_chain_terminates copied alloc_res.fp_out fuel);
+    assert (AllocLemmas.chain_avoids copied alloc_res.fp_out dst_obj fuel = true);
+    set_promoted_tag_preserves_alloc_invariants copied dst_obj tag alloc_res.fp_out;
+    // Prove chain_avoids for dst_obj preserved through set_promoted_tag
+    // using chain_avoids_transfer with the top-level set_tag_preserves_read_at_obj
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires (set_tag_preserves_read_at_obj copied dst_obj tag));
+    AllocLemmas.chain_avoids_transfer copied (set_promoted_tag copied dst_obj tag)
+      alloc_res.fp_out dst_obj fuel;
+    // For non-blue obj' ≠ dst_obj: delegate to top-level helper
     let full_proof (excl: obj_addr)
       : Lemma (requires Seq.mem excl (objects zero_addr res.major_out) /\
                         is_blue excl res.major_out = false)
               (ensures AllocLemmas.chain_avoids res.major_out res.fp_out excl fuel = true)
-      = if excl = dst_obj then ()  // from copy_fields_preserves_chain_avoids_self
-        else proof_for_obj excl
+      = if excl = dst_obj then ()
+        else begin
+          // Establish chain_blue_proof_for_excl preconditions explicitly
+          assert (well_formed_heap_part1 major);
+          assert (AllocLemmas.fl_valid major fp fuel);
+          assert (AllocLemmas.fl_chain_terminates major fp fuel);
+          assert (chain_objects_blue major fp);
+          assert (res.new_addr <> 0UL);
+          assert (excl <> dst_obj);
+          assert (dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out);
+          chain_blue_proof_for_excl minor major obj fp wosize excl
+        end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires full_proof);
     reveal_opaque (`%chain_objects_blue) chain_objects_blue
@@ -276,21 +694,9 @@ private let rec promote_all_aux_preserves_bfc
           // promote_object preserves bfc
           promote_object_preserves_bfc minor major obj fp wz;
           assert (blue_fields_closed res.major_out);
-          // Establish invariants for recursion
-          let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
-          GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
-          let dst_obj : obj_addr = alloc_res.obj_out in
-          AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
-          GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-          GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
-          copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+          // promote_object preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates)
+          promote_object_preserves_alloc_invariants minor major obj fp wz;
           assert (well_formed_heap_part1 res.major_out);
-          AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
-          AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wz;
-          chain_avoids_implies_not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel;
-          AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wz;
-          copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
-          copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
           // Recurse (chain_objects_blue preservation is a separate concern)
           promote_object_preserves_chain_objects_blue minor major obj fp wz;
           let fwd' = extend_forwarding fwd obj res.new_addr in

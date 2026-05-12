@@ -17,6 +17,7 @@ open GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
 open GC.Gen.WriteBodyLemmas
+open GC.Lib.Header
 
 module Allocator = GC.Spec.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -32,7 +33,84 @@ module Mark = GC.Spec.Mark
 /// [dst, dst+wz*8)), preserving all headers. So colors are unchanged,
 /// and no_black carries through.
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0 --split_queries always"
+/// Helper: set_promoted_tag preserves no_black_objects.
+/// The written header has color White, and all other headers are preserved.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+private let set_promoted_tag_preserves_no_black
+  (g: heap) (dst: obj_addr) (tag: nat{tag < 256})
+  : Lemma (requires Mark.no_black_objects g /\
+                    Seq.mem dst (objects 0UL g))
+          (ensures Mark.no_black_objects (set_promoted_tag g dst tag))
+  = let g' = set_promoted_tag g dst tag in
+    set_promoted_tag_preserves_objects g dst tag;
+    set_promoted_tag_unfold g dst tag;
+    let hdr = read_word g (hd_address dst) in
+    getWosize_bound hdr;
+    let new_hdr = makeHeader (getWosize hdr) White (U64.uint_to_t tag) in
+    hd_address_spec dst;
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects 0UL g'))
+      (ensures ~(is_black h g'))
+    = hd_address_spec h;
+      if h = dst then begin
+        read_write_same g (hd_address dst) new_hdr;
+        makeHeader_getColor (getWosize hdr) White (U64.uint_to_t tag);
+        color_of_object_spec dst g';
+        is_black_iff dst g'
+      end else begin
+        hd_address_injective h dst;
+        set_promoted_tag_read_frame g dst tag (hd_address h);
+        color_of_header_eq h g g';
+        is_black_iff h g;
+        is_black_iff h g'
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// Helper: copy_fields preserves no_black_objects when dst_fields_valid
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
+private let copy_fields_preserves_no_black
+  (minor: minor_state) (g: heap) (obj: U64.t) (dst: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires Mark.no_black_objects g /\
+                    Seq.mem dst (objects 0UL g) /\
+                    well_formed_heap_part1 g /\
+                    U64.v (wosize_of_object dst g) >= wz /\
+                    dst_fields_valid dst wz)
+          (ensures Mark.no_black_objects (copy_fields minor g obj dst 0 wz))
+  = copy_fields_preserves_objects_aux minor g obj dst 0 wz;
+    let result = copy_fields minor g obj dst 0 wz in
+    assert (objects 0UL result == objects 0UL g);
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects 0UL result))
+      (ensures ~(is_black h result))
+    = assert (Seq.mem h (objects 0UL g));
+      hd_address_spec h;
+      hd_address_spec dst;
+      if h = dst then begin
+        copy_fields_frame minor g obj dst 0 wz (hd_address h);
+        color_of_header_eq h g result;
+        is_black_iff h g;
+        is_black_iff h result
+      end else if U64.v h < U64.v dst then begin
+        objects_separated 0UL g h dst;
+        copy_fields_frame minor g obj dst 0 wz (hd_address h);
+        color_of_header_eq h g result;
+        is_black_iff h g;
+        is_black_iff h result
+      end else begin
+        objects_separated 0UL g dst h;
+        wosize_of_object_spec dst g;
+        copy_fields_frame minor g obj dst 0 wz (hd_address h);
+        color_of_header_eq h g result;
+        is_black_iff h g;
+        is_black_iff h result
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
 
 private let promote_object_preserves_no_black
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
@@ -61,47 +139,19 @@ private let promote_object_preserves_no_black
     assert (Seq.mem dst (objects 0UL g_alloc));
     assert (U64.v (wosize_of_object dst g_alloc) >= wz);
 
-    // Step 3: copy_fields preserves objects list
-    copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
-    let result = copy_fields minor g_alloc obj dst 0 wz in
-    assert (objects 0UL result == objects 0UL g_alloc);
-
-    // Step 4: copy_fields preserves all headers via frame
-    // dst fits in heap (from part1 obj bound)
+    // Step 3: copy_fields preserves no_black (delegated)
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
     wfh_part1_obj_bound g_alloc dst;
-    assert (U64.v dst + U64.v (wosize_of_object dst g_alloc) * 8 <= Seq.length g_alloc);
-    // Establish dst_fields_valid dst wz
-    assert (dst_fields_valid dst wz);
+    dst_fields_valid_from_bounds dst wz;
+    copy_fields_preserves_no_black minor g_alloc obj dst wz;
+    let result = copy_fields minor g_alloc obj dst 0 wz in
 
-    // Step 5: for each object h, header is preserved → not black
-    let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL result))
-      (ensures ~(is_black h result))
-    = assert (Seq.mem h (objects 0UL g_alloc));
-      hd_address_spec h;
-      hd_address_spec dst;
-      // Show hd_address h is outside [dst, dst + wz*8)
-      if h = dst then begin
-        // hd_address(dst) = dst - 8 < dst, so frame applies
-        assert (U64.v (hd_address h) + 8 <= U64.v dst);
-        copy_fields_frame minor g_alloc obj dst 0 wz (hd_address h);
-        color_of_header_eq h g_alloc result
-      end else if U64.v h < U64.v dst then begin
-        // h < dst → hd_address(h) = h - 8 < dst - 8 < dst
-        objects_separated 0UL g_alloc h dst;
-        assert (U64.v (hd_address h) + 8 <= U64.v dst);
-        copy_fields_frame minor g_alloc obj dst 0 wz (hd_address h);
-        color_of_header_eq h g_alloc result
-      end else begin
-        // h > dst → objects_separated gives h > dst + wosize*8 >= dst + wz*8
-        objects_separated 0UL g_alloc dst h;
-        wosize_of_object_spec dst g_alloc;
-        copy_fields_frame minor g_alloc obj dst 0 wz (hd_address h);
-        color_of_header_eq h g_alloc result
-      end
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    // Step 4: set_promoted_tag preserves no_black (factored lemma)
+    copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
+    assert (Seq.mem dst (objects 0UL result));
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    set_promoted_tag_preserves_no_black result dst tag
   end
 
 #pop-options

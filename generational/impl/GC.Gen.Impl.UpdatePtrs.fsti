@@ -26,6 +26,8 @@ module PromoteSpec = GC.Gen.Promote
 /// ---------------------------------------------------------------------------
 
 /// Number of entries in the forwarding array = minor_heap_size / 8
+/// Spec-only: used in ghost assertions for array lengths. Not extracted.
+noextract
 let fwd_array_size : n:pos{n == minor_heap_size / 8} = minor_heap_size / 8
 
 /// Connects a concrete array to the abstract forwarding_map

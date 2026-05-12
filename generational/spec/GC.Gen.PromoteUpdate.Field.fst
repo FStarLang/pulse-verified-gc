@@ -24,6 +24,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 open GC.Gen.PromoteUpdate.Obj
 open GC.Gen.PromoteUpdate.Aux
 open GC.Gen.PromoteUpdate.Header
+open GC.Gen.PromoteUpdate.NoScanField
 
 /// ---------------------------------------------------------------------------
 /// update_all_objects_aux field effect
@@ -174,6 +175,9 @@ let rec update_all_objects_aux_after_preserves_field
     if is_blue other major then
       // Blue skip: heap unchanged, field trivially preserved
       update_all_objects_aux_after_preserves_field major objs fwd (idx + 1) obj j
+    else if is_no_scan other major then
+      // No-scan skip: heap unchanged, field trivially preserved
+      update_all_objects_aux_after_preserves_field major objs fwd (idx + 1) obj j
     else begin
       let wz_other = U64.v (wosize_of_object other major) in
       hd_address_spec other;
@@ -235,6 +239,7 @@ let rec update_all_objects_aux_field_effect
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
       is_blue obj major = false /\
+      is_no_scan obj major = false /\
       (forall (k:nat). k >= idx /\ k < pos ==>
         U64.v (Seq.index objs k) < U64.v obj))
     (ensures
@@ -289,6 +294,9 @@ let rec update_all_objects_aux_field_effect
     if is_blue other major then
       // Blue skip: heap unchanged, recurse
       update_all_objects_aux_field_effect major objs fwd (idx + 1) obj j pos
+    else if is_no_scan other major then
+      // No-scan skip: heap unchanged, recurse
+      update_all_objects_aux_field_effect major objs fwd (idx + 1) obj j pos
     else begin
       let wz_other = U64.v (wosize_of_object other major) in
       hd_address_spec other;
@@ -333,6 +341,11 @@ let rec update_all_objects_aux_field_effect
       color_of_object_spec obj major';
       is_blue_iff obj major;
       is_blue_iff obj major';
+      // Also chain: header preserved → tag preserved → is_no_scan preserved
+      is_no_scan_spec obj major;
+      is_no_scan_spec obj major';
+      tag_of_object_spec obj major;
+      tag_of_object_spec obj major';
       wosize_of_object_spec obj major;
       wosize_of_object_spec obj major';
       update_all_objects_aux_field_effect major' objs fwd (idx + 1) obj j pos
@@ -350,7 +363,8 @@ let update_major_pointers_field_effect
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false)
+      is_blue obj major = false /\
+      is_no_scan obj major = false)
     (ensures
       (let updated = update_major_pointers major fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
@@ -370,7 +384,8 @@ let update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major /\
                     pointer_closure_modulo_fwd major fwd /\
                     fwd_all_targets_valid fwd major /\
-                    blue_fields_closed major)
+                    blue_fields_closed major /\
+                    no_scan_invariant major)
     (ensures well_formed_heap_part2 (update_major_pointers major fwd)) =
   let mc = update_major_pointers major fwd in
   update_major_pointers_preserves_objects major fwd;
@@ -386,6 +401,10 @@ let update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map
       if is_blue src major then begin
         update_major_pointers_preserves_blue_field major fwd src j;
         blue_fields_closed_inst major src j
+      end else if is_no_scan src major then begin
+        // No-scan: field is preserved, and no_scan_invariant ensures it's not a pointer
+        update_major_pointers_preserves_no_scan_field major fwd src j;
+        no_scan_invariant_elim major src j
       end else begin
         update_major_pointers_field_effect major fwd src j;
         ()

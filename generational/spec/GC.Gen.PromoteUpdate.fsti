@@ -34,12 +34,13 @@ val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major)
     (ensures well_formed_heap_part1 (update_major_pointers major fwd))
 
-/// Step lemma: unfold one iteration of update_all_objects_aux (non-blue case)
+/// Step lemma: unfold one iteration of update_all_objects_aux (non-blue, non-no-scan case)
 val update_all_objects_aux_step (major: heap) (objs: seq obj_addr)
                                 (fwd: forwarding_map) (idx: nat)
   : Lemma (requires idx < Seq.length objs /\ well_formed_heap_part1 major /\
                     objs == objects zero_addr major /\
-                    is_blue (Seq.index objs idx) major = false)
+                    is_blue (Seq.index objs idx) major = false /\
+                    is_no_scan (Seq.index objs idx) major = false)
           (ensures (let obj = Seq.index objs idx in
                     let wz = U64.v (wosize_of_object obj major) in
                     update_all_objects_aux major objs fwd idx ==
@@ -50,6 +51,15 @@ val update_all_objects_aux_skip_blue (major: heap) (objs: seq obj_addr)
                                      (fwd: forwarding_map) (idx: nat)
   : Lemma (requires idx < Seq.length objs /\
                     is_blue (Seq.index objs idx) major)
+          (ensures update_all_objects_aux major objs fwd idx ==
+                   update_all_objects_aux major objs fwd (idx + 1))
+
+/// No-scan skip step: when the object at idx is no-scan, skip without modifying heap
+val update_all_objects_aux_skip_no_scan (major: heap) (objs: seq obj_addr)
+                                        (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length objs /\
+                    is_blue (Seq.index objs idx) major = false /\
+                    is_no_scan (Seq.index objs idx) major)
           (ensures update_all_objects_aux major objs fwd idx ==
                    update_all_objects_aux major objs fwd (idx + 1))
 
@@ -72,7 +82,8 @@ val update_all_objects_positional_step
                     U64.v pos + 8 < heap_size /\
                     Seq.mem (f_address pos) (objects 0UL major) /\
                     Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major = false)
+                    is_blue (f_address pos) major = false /\
+                    is_no_scan (f_address pos) major = false)
           (ensures (let hdr = read_word major pos in
                     let wz = U64.v (getWosize hdr) in
                     let obj : obj_addr = f_address pos in
@@ -122,6 +133,31 @@ val update_all_objects_positional_step_blue
                       Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major) /\
                       Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
 
+/// No-scan positional step: when the object has tag >= no_scan_tag, skip it
+val update_all_objects_positional_step_no_scan
+  (major: heap) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    U64.v pos + 8 < heap_size /\
+                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.length (objects pos major) > 0 /\
+                    is_blue (f_address pos) major = false /\
+                    is_no_scan (f_address pos) major)
+          (ensures (let hdr = read_word major pos in
+                    let wz = U64.v (getWosize hdr) in
+                    let obj : obj_addr = f_address pos in
+                    let next_nat = U64.v pos + (wz + 1) * 8 in
+                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    (next_nat < heap_size ==>
+                      update_all_objects_aux major (objects (U64.uint_to_t next_nat) major) fwd 0 ==
+                        update_all_objects_aux major (objects pos major) fwd 0) /\
+                    (next_nat >= heap_size ==>
+                      major == update_all_objects_aux major (objects pos major) fwd 0) /\
+                    (next_nat + 8 < heap_size ==>
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major) /\
+                      Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
+
 /// Terminal step: when next_pos >= heap_size, processing gives the final result.
 val update_all_objects_terminal_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
@@ -129,7 +165,8 @@ val update_all_objects_terminal_step
                     U64.v pos + 8 < heap_size /\
                     Seq.mem (f_address pos) (objects 0UL major) /\
                     Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major = false)
+                    is_blue (f_address pos) major = false /\
+                    is_no_scan (f_address pos) major = false)
           (ensures (let hdr = read_word major pos in
                     let wz = U64.v (getWosize hdr) in
                     let obj : obj_addr = f_address pos in
@@ -158,6 +195,20 @@ val update_major_pointers_preserves_blue_field
   : Lemma (requires well_formed_heap_part1 major /\
                     Seq.mem h (objects zero_addr major) /\
                     is_blue h major /\
+                    j < U64.v (wosize_of_object h major) /\
+                    U64.v h + j * 8 + 8 <= heap_size /\
+                    (U64.v h + j * 8) % 8 == 0)
+    (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
+              read_word (update_major_pointers major fwd) field_addr ==
+              read_word major field_addr))
+
+/// update_major_pointers preserves all fields of no-scan objects
+val update_major_pointers_preserves_no_scan_field
+  (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    Seq.mem h (objects zero_addr major) /\
+                    is_no_scan h major /\
+                    ~(is_blue h major) /\
                     j < U64.v (wosize_of_object h major) /\
                     U64.v h + j * 8 + 8 <= heap_size /\
                     (U64.v h + j * 8) % 8 == 0)
@@ -223,7 +274,8 @@ val update_major_pointers_field_effect
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false)
+      is_blue obj major = false /\
+      is_no_scan obj major = false)
     (ensures
       (let updated = update_major_pointers major fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
@@ -235,12 +287,14 @@ val update_major_pointers_field_effect
 /// update_major_pointers establishes well_formed_heap_part2 (pointer closure):
 /// If the intermediate heap has pointer_closure_modulo_fwd and fwd targets are valid,
 /// and blue objects' pointer fields target valid objects (blue_fields_closed),
+/// and no-scan objects' fields don't look like pointers (no_scan_invariant),
 /// then after update the result satisfies part2.
 val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
                     pointer_closure_modulo_fwd major fwd /\
                     fwd_all_targets_valid fwd major /\
-                    blue_fields_closed major)
+                    blue_fields_closed major /\
+                    no_scan_invariant major)
     (ensures well_formed_heap_part2 (update_major_pointers major fwd))
 
 /// Distinctness: no two positions in live_set share the same address.

@@ -185,6 +185,20 @@ let minor_wosize (ms: minor_state) (obj: U64.t) : GTot nat =
     else 0
   else 0
 
+/// Read the tag of a minor heap object (from its header, bits 0-7)
+let minor_tag (ms: minor_state) (obj: U64.t) : GTot nat =
+  if U64.v obj >= 8 && U64.v obj < minor_heap_size then
+    let hdr_addr = U64.v obj - 8 in
+    if hdr_addr + 8 <= minor_heap_size && hdr_addr % 8 = 0 then
+      let hdr = minor_read_word ms.data (U64.uint_to_t hdr_addr) in
+      U64.v (U64.logand hdr 0xFFUL)
+    else 0
+  else 0
+
+/// The tag value is always < 256
+val minor_tag_bound (ms: minor_state) (obj: U64.t)
+  : Lemma (minor_tag ms obj < 256)
+
 /// ---------------------------------------------------------------------------
 /// Guard Completeness (trust assumption on the mutator)
 /// ---------------------------------------------------------------------------

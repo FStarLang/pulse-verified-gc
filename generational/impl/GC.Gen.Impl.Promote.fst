@@ -25,6 +25,10 @@ module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module AllocProps = GC.Gen.AllocProps
 module SF = GC.Spec.Fields
+module Obj = GC.Impl.Object
+module SpecObj = GC.Spec.Object
+module Header = GC.Lib.Header
+module SpecHeap = GC.Spec.Heap
 
 /// Read the wosize from a minor object's header (header is at obj - 8)
 inline_for_extraction
@@ -112,7 +116,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 /// during a promotion loop, pointer closure (part2) is temporarily violated
 /// (minor pointers are written into the major heap body). The allocator only
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0 --split_queries always"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)
@@ -181,16 +185,38 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
         (new_obj <: obj_addr);
       assert (pure (U64.v new_obj + U64.v wosize * 8 <= heap_size));
       AllocLemmas.alloc_spec_obj_not_in_chain_part1 'ms fp (U64.v wosize);
-      // Invoke composite lemma: copy_fields preserves allocator invariants
-      PromoteSpec.copy_fields_preserves_alloc_invariants
-        {data='md; bump='mb}
-        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
-        obj (new_obj <: obj_addr) (U64.v wosize) new_fp;
       // Copy all fields (0..wosize-1) from minor to major
       copy_fields_loop minor major obj new_obj wosize;
-      // After copy_fields_loop: ms2 == copy_fields minor (alloc_spec ...).heap_out obj new_obj 0 wosize
-      // Unfold promote_object for the success case to match
+      // Bind the existential witnesses from copy_fields_loop
+      with md_c mb_c ms_c. _;
+      // --- Retag: copy the tag from minor header to the promoted major header ---
+      // Read minor header to extract the original tag
+      let minor_hdr = minor_read minor (U64.sub obj 8UL);
+      let tag = Obj.getTag minor_hdr;
+      // Connect impl tag to spec minor_tag and establish bound
+      minor_tag_bound {data='md; bump='mb} obj;
+      assert (pure (U64.v tag == minor_tag {data='md; bump='mb} obj));
+      assert (pure (minor_tag {data='md; bump='mb} obj < 256));
+      // Read promoted major header and rebuild with correct tag
+      let major_hdr_addr = U64.sub new_obj 8UL;
+      SpecHeap.hd_address_spec (new_obj <: obj_addr);
+      // hd_address is opaque, connect via U64 value equality
+      assert (pure (U64.v major_hdr_addr == U64.v (SpecHeap.hd_address (new_obj <: obj_addr))));
+      assert (pure (major_hdr_addr == SpecHeap.hd_address (new_obj <: obj_addr)));
+      let major_hdr = read_word major major_hdr_addr;
+      let wz_read = SpecObj.getWosize major_hdr;
+      let new_hdr = SpecObj.makeHeader wz_read Header.White tag;
+      // Unfold set_promoted_tag so SMT sees it equals our write_word
+      PromoteSpec.set_promoted_tag_unfold ms_c (new_obj <: obj_addr) (minor_tag {data='md; bump='mb} obj);
+      // Assert the key equality: our write matches set_promoted_tag
+      assert (pure (
+        SpecHeap.write_word ms_c major_hdr_addr new_hdr ==
+        PromoteSpec.set_promoted_tag ms_c (new_obj <: U64.t) (minor_tag {data='md; bump='mb} obj)));
+      write_word major major_hdr_addr new_hdr;
+      // Ghost: prove spec refinement + allocator invariant preservation
       PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
+      PromoteSpec.promote_object_preserves_alloc_invariants
+        {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);
       new_obj
     }
   }

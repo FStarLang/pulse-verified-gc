@@ -312,6 +312,19 @@ let color_not2_implies_not_blue (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size
     GC.Spec.Object.is_blue_iff (GC.Spec.Heap.f_address p) g;
     GC.Spec.Object.getColor_raw hdr;
     GC.Lib.Header.get_color_bound (U64.v hdr)
+
+/// Bridge: runtime tag comparison matches spec is_no_scan
+let is_no_scan_eq (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
+  : Lemma (requires hdr == GC.Spec.Heap.read_word g p /\
+                    Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects 0UL g))
+          (ensures U64.gte (GC.Impl.Object.getTag hdr) GC.Impl.Object.no_scan_tag ==
+                   GC.Spec.Object.is_no_scan (GC.Spec.Heap.f_address p) g)
+  = assert_norm (U64.v GC.Spec.Base.mword = 8);
+    GC.Spec.Heap.hd_f_roundtrip p;
+    GC.Impl.Object.getTag_eq hdr;
+    GC.Spec.Object.tag_of_object_spec (GC.Spec.Heap.f_address p) g;
+    GC.Spec.Object.is_no_scan_spec (GC.Spec.Heap.f_address p) g;
+    GC.Spec.Object.no_scan_tag_val ()
 #pop-options
 
 /// Update all major-heap objects' pointer fields by walking the heap linearly.
@@ -406,47 +419,77 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
              PromoteSpec.update_major_pointers 'ms fwd))
       ))
     } else {
-      // Non-blue: process object fields
+      // Non-blue: check if no-scan (tag >= no_scan_tag)
       color_not2_implies_not_blue hdr p ms_cur;
-      update_all_objects_positional_step ms_cur fwd p;
-      GC.Spec.Heap.f_address_spec p;
-      // Compute next position
-      total_words_no_overflow (U64.v wosize);
-      let total_words = U64.add wosize 1UL;
-      let total_bytes = U64.mul total_words 8UL;
-      pos_advance_no_overflow (U64.v p) (U64.v wosize);
-      let next_pos = U64.add p total_bytes;
-      assert (pure (U64.v next_pos <= heap_size));
-      next_pos_no_overflow (U64.v next_pos);
-      // Process the object fields
-      update_one_object major fwd_arr obj wosize #fwd;
-      // After update_one_object: bind new heap state
-      with ms_after. assert (is_heap major ms_after);
-      // Call lemmas to establish facts for both branches
-      GC.Spec.Heap.f_address_spec p;
-      update_all_objects_terminal_step ms_cur fwd p;
-      // Assert facts Z3 needs for loop invariant re-establishment
-      assert (pure (
-        ms_after == PromoteSpec.update_object_pointers ms_cur obj (U64.v wosize) fwd 0 /\
-        obj == GC.Spec.Heap.f_address p /\
-        SpecFields.well_formed_heap_part1 ms_after /\
-        PromoteSpec.heap_objects_dense ms_after /\
-        Seq.length 'farr == fwd_array_size /\
-        represents_fwd 'farr fwd
-      ));
-      pos := next_pos;
-      done := U64.gte (U64.add next_pos 8UL) heap_size_u64;
-      assert (pure (U64.v next_pos % 8 == 0));
-      assert (pure (
-        (U64.v next_pos + 8 >= heap_size ==>
-          ms_after == PromoteSpec.update_major_pointers 'ms fwd) /\
-        (U64.v next_pos + 8 < heap_size ==>
-          (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_after) /\
-           Seq.length (SpecFields.objects next_pos ms_after) > 0 /\
-           GC.Gen.Promote.update_all_objects_aux ms_after
-             (SpecFields.objects next_pos ms_after) fwd 0 ==
-             PromoteSpec.update_major_pointers 'ms fwd))
-      ))
+      let tag = GC.Impl.Object.getTag hdr;
+      is_no_scan_eq hdr p ms_cur;
+      if U64.gte tag GC.Impl.Object.no_scan_tag {
+        // No-scan object: skip field processing (fields are raw data, not pointers)
+        update_all_objects_positional_step_no_scan ms_cur fwd p;
+        GC.Spec.Heap.f_address_spec p;
+        // Compute next position
+        total_words_no_overflow (U64.v wosize);
+        let total_words = U64.add wosize 1UL;
+        let total_bytes = U64.mul total_words 8UL;
+        pos_advance_no_overflow (U64.v p) (U64.v wosize);
+        let next_pos = U64.add p total_bytes;
+        assert (pure (U64.v next_pos <= heap_size));
+        next_pos_no_overflow (U64.v next_pos);
+        pos := next_pos;
+        done := U64.gte (U64.add next_pos 8UL) heap_size_u64;
+        assert (pure (U64.v next_pos % 8 == 0));
+        assert (pure (
+          (U64.v next_pos + 8 >= heap_size ==>
+            ms_cur == PromoteSpec.update_major_pointers 'ms fwd) /\
+          (U64.v next_pos + 8 < heap_size ==>
+            (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_cur) /\
+             Seq.length (SpecFields.objects next_pos ms_cur) > 0 /\
+             GC.Gen.Promote.update_all_objects_aux ms_cur
+               (SpecFields.objects next_pos ms_cur) fwd 0 ==
+               PromoteSpec.update_major_pointers 'ms fwd))
+        ))
+      } else {
+        // Scannable non-blue object: process object fields
+        update_all_objects_positional_step ms_cur fwd p;
+        GC.Spec.Heap.f_address_spec p;
+        // Compute next position
+        total_words_no_overflow (U64.v wosize);
+        let total_words = U64.add wosize 1UL;
+        let total_bytes = U64.mul total_words 8UL;
+        pos_advance_no_overflow (U64.v p) (U64.v wosize);
+        let next_pos = U64.add p total_bytes;
+        assert (pure (U64.v next_pos <= heap_size));
+        next_pos_no_overflow (U64.v next_pos);
+        // Process the object fields
+        update_one_object major fwd_arr obj wosize #fwd;
+        // After update_one_object: bind new heap state
+        with ms_after. assert (is_heap major ms_after);
+        // Call lemmas to establish facts for both branches
+        GC.Spec.Heap.f_address_spec p;
+        update_all_objects_terminal_step ms_cur fwd p;
+        // Assert facts Z3 needs for loop invariant re-establishment
+        assert (pure (
+          ms_after == PromoteSpec.update_object_pointers ms_cur obj (U64.v wosize) fwd 0 /\
+          obj == GC.Spec.Heap.f_address p /\
+          SpecFields.well_formed_heap_part1 ms_after /\
+          PromoteSpec.heap_objects_dense ms_after /\
+          Seq.length 'farr == fwd_array_size /\
+          represents_fwd 'farr fwd
+        ));
+        pos := next_pos;
+        done := U64.gte (U64.add next_pos 8UL) heap_size_u64;
+        assert (pure (U64.v next_pos % 8 == 0));
+        assert (pure (
+          (U64.v next_pos + 8 >= heap_size ==>
+            ms_after == PromoteSpec.update_major_pointers 'ms fwd) /\
+          (U64.v next_pos + 8 < heap_size ==>
+            (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_after) /\
+             Seq.length (SpecFields.objects next_pos ms_after) > 0 /\
+             GC.Gen.Promote.update_all_objects_aux ms_after
+               (SpecFields.objects next_pos ms_after) fwd 0 ==
+               PromoteSpec.update_major_pointers 'ms fwd))
+        ))
+      }
     }
   }
 }

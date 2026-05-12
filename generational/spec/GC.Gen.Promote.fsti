@@ -25,6 +25,7 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Lib.Header
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
@@ -60,11 +61,25 @@ type promote_one_result = {
   new_addr  : U64.t;        // address of object in major heap (0 if failed)
 }
 
+/// Set the tag in a promoted object's header.
+/// Reads the current header, builds a new one with same wosize + white color + new tag.
+/// When obj is not a valid obj_addr or tag >= 256, returns the heap unchanged.
+let set_promoted_tag (major: heap) (obj: U64.t) (tag: nat) : GTot heap =
+  if tag >= 256 then major
+  else if U64.v obj >= U64.v mword && U64.v obj < heap_size && U64.v obj % U64.v mword = 0 then
+    let hd = hd_address (obj <: obj_addr) in
+    let hdr = read_word major hd in
+    let wz = getWosize hdr in
+    let new_hdr = makeHeader wz White (U64.uint_to_t tag) in
+    write_word major hd new_hdr
+  else major
+
 /// Promote a single object from minor heap to major heap.
 ///
 /// 1. Read wosize and tag from minor object header
 /// 2. Allocate in major heap via the major allocator
 /// 3. Copy field data from minor to major
+/// 4. Set the correct tag from the minor header
 ///
 /// If major allocation fails (OOM), returns new_addr = 0.
 let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
@@ -77,7 +92,10 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
   if new_addr = 0UL then
     { major_out = major; fp_out = fp; new_addr = 0UL }
   else
-    let final_major = copy_fields minor new_major obj new_addr 0 wosize in
+    let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    let final_major = set_promoted_tag copied_major new_addr tag in
     { major_out = final_major; fp_out = new_fp; new_addr = new_addr }
 
 /// Unfold: when alloc fails (OOM), promote_object returns original heap/fp unchanged.
@@ -87,15 +105,69 @@ val promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
           (ensures (let res = promote_object minor major obj fp wosize in
                     res.major_out == major /\ res.fp_out == fp /\ res.new_addr == 0UL))
 
-/// Unfold: when alloc succeeds, promote_object = alloc + copy_fields.
+/// Unfold: when alloc succeeds, promote_object = alloc + copy_fields + set_promoted_tag.
 val promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
                            (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL)
           (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
                     let res = promote_object minor major obj fp wosize in
-                    res.major_out == copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize /\
+                    let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
+                    let tag = minor_tag minor obj in
+                    res.major_out == set_promoted_tag copied alloc_res.obj_out tag /\
                     res.fp_out == alloc_res.fp_out /\
                     res.new_addr == alloc_res.obj_out))
+
+/// Unfold set_promoted_tag: when tag < 256 and obj is a valid obj_addr,
+/// set_promoted_tag is just a header write.
+val set_promoted_tag_unfold
+  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
+  : Lemma (set_promoted_tag major obj tag ==
+           write_word major (hd_address obj)
+             (makeHeader (getWosize (read_word major (hd_address obj)))
+                         White (U64.uint_to_t tag)))
+
+/// set_promoted_tag preserves the objects enumeration (same wosize → same objects list)
+val set_promoted_tag_preserves_objects
+  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
+  : Lemma (requires Seq.mem obj (objects zero_addr major))
+          (ensures objects zero_addr (set_promoted_tag major obj tag) ==
+                   objects zero_addr major)
+
+/// set_promoted_tag preserves reads at addresses disjoint from the header of obj
+val set_promoted_tag_read_frame
+  (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (addr: hp_addr)
+  : Lemma (requires (U64.v addr + U64.v mword <= U64.v (hd_address obj) \/
+                     U64.v (hd_address obj) + U64.v mword <= U64.v addr))
+          (ensures read_word (set_promoted_tag major obj tag) addr == read_word major addr)
+
+/// set_promoted_tag preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates)
+/// because it writes to a header position that is not in the free-list chain,
+/// and the new header has the same wosize as the old one.
+val set_promoted_tag_preserves_alloc_invariants
+  (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (fp: U64.t)
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             Seq.mem obj (objects zero_addr major) /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true)
+          (ensures (let g' = set_promoted_tag major obj tag in
+                    well_formed_heap_part1 g' /\
+                    AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword)))
+
+/// promote_object preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates).
+/// Combines alloc_spec, copy_fields, and set_promoted_tag preservation in one lemma.
+val promote_object_preserves_alloc_invariants
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures (let res = promote_object minor major obj fp wosize in
+                    well_formed_heap_part1 res.major_out /\
+                    AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates res.major_out res.fp_out (heap_size / U64.v mword)))
 
 /// ---------------------------------------------------------------------------
 /// Promote All Live Objects
@@ -263,6 +335,8 @@ let rec update_all_objects_aux (major: heap) (objs: seq obj_addr)
     let obj = Seq.index objs idx in
     if is_blue obj major then
       update_all_objects_aux major objs fwd (idx + 1)
+    else if is_no_scan obj major then
+      update_all_objects_aux major objs fwd (idx + 1)
     else
       let wz = U64.v (wosize_of_object obj major) in
       let major' = update_object_pointers major obj wz fwd 0 in
@@ -383,6 +457,11 @@ let dst_fields_valid (dst_obj: U64.t) (n: nat) : prop =
   (forall (j:nat). j < n ==>
     (U64.v dst_obj + j * 8 + 8 <= heap_size /\
      (U64.v dst_obj + j * 8) % 8 == 0))
+
+/// Derive dst_fields_valid from scalar upper bound + alignment
+val dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
+  : Lemma (requires U64.v addr % 8 == 0 /\ U64.v addr + (wz - 1) * 8 + 8 <= heap_size)
+          (ensures dst_fields_valid addr wz)
 
 /// copy_fields doesn't modify addresses outside the dst region
 val copy_fields_frame
@@ -505,11 +584,20 @@ val promote_all_preserves_wfh_part1
           (ensures well_formed_heap_part1 (promote_all_spec minor major fp live_set).major_final)
 
 /// promote_all_spec preserves well_formed_heap_part4 (no infix objects)
+/// Requires that no promoted object has infix_tag (249), since setting an
+/// infix tag on a major-heap object would violate the no-infix invariant.
+/// In practice, minor objects in the live set are independently allocated
+/// (not infix headers embedded within closures), so this always holds.
+let live_set_no_infix (minor: minor_state) (live_set: seq U64.t) : prop =
+  forall (i: nat). i < Seq.length live_set ==>
+    minor_tag minor (Seq.index live_set i) <> U64.v GC.Spec.Object.infix_tag
+
 val promote_all_preserves_wfh_part4
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    live_set_no_infix minor live_set)
           (ensures well_formed_heap_part4 (promote_all_spec minor major fp live_set).major_final)
 
 /// ---------------------------------------------------------------------------

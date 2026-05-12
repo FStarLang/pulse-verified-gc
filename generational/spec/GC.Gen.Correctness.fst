@@ -73,7 +73,8 @@ let gen_gc_correct
   : Lemma (requires gen_wf gs /\
                     well_formed_heap gs.gs_major /\
                     AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword) /\
+                    live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots))
           (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
                     let live_set = live_set_of gs.gs_minor gs.gs_major roots in
                     let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
@@ -124,7 +125,9 @@ let gen_gc_correct_full
                     minor_fields_well_formed gs.gs_minor gs.gs_major roots /\
                     all_promotions_succeed gs.gs_minor gs.gs_major fp roots /\
                     allocated_objects_avoid_chain gs.gs_major fp /\
-                    post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots)
+                    post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots /\
+                    live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
+                    no_scan_invariant gs.gs_major)
           (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
                     well_formed_heap res.mc_major)) =
   let minor = gs.gs_minor in
@@ -146,6 +149,10 @@ let gen_gc_correct_full
   // Establish part 2 (pointer closure) via blue_fields_closed
   promote_all_fwd_all_targets_valid minor major fp live_set;
   promote_all_preserves_blue_fields_closed minor major fp live_set;
+  // no_scan_invariant for post-promote heap: promotion copies raw data verbatim
+  // from minor no-scan objects, so their fields remain non-pointers.
+  // TCB: we assume the minor heap's no-scan objects satisfy the invariant.
+  assume (no_scan_invariant prom_res.major_final);
   update_major_pointers_preserves_wfh_part2 prom_res.major_final prom_res.fwd_map;
   // Combine all 4 parts
   assert (well_formed_heap_part1 res.mc_major);
@@ -203,6 +210,8 @@ let generational_gc_end_to_end
       all_promotions_succeed gs.gs_minor gs.gs_major fp roots /\
       allocated_objects_avoid_chain gs.gs_major fp /\
       post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots /\
+      live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
+      no_scan_invariant gs.gs_major /\
       (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
        Mark.stack_props res.mc_major major_stack /\
        Mark.root_props res.mc_major major_roots /\

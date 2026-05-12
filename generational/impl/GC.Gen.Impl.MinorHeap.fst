@@ -26,8 +26,7 @@ assume val platform_fits_u64 : squash SZ.fits_u64
 
 /// Minor heap size as SizeT
 let minor_heap_size_sz : (n:SZ.t{SZ.v n == minor_heap_size}) =
-  SZ.fits_u64_implies_fits minor_heap_size;
-  SZ.uint_to_t minor_heap_size
+  SZ.uint64_to_sizet minor_heap_size_u64
 
 /// Build the header word: (wosize << 10) | tag  (white color = 0)
 let make_header (wosize: U64.t) (tag: U64.t) : U64.t =

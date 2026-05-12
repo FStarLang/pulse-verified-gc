@@ -22,6 +22,52 @@ module SpecMarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecMarkBoundedCorr = GC.Spec.MarkBoundedCorrectness
 module SpecFields = GC.Spec.Fields
 module SweepInv = GC.Spec.SweepInv
+module SpecHeap = GC.Spec.Heap
+module SpecObject = GC.Spec.Object
+open GC.Spec.Base
+
+/// Spec function: what darken_if_white_bounded computes
+let darken_if_white_bounded_spec (g: heap_state) (st: Seq.seq obj_addr)
+    (h_addr: hp_addr) (cap: nat)
+  : GTot (heap_state & Seq.seq obj_addr)
+  = if U64.v h_addr + U64.v mword < heap_size then
+      let obj = SpecHeap.f_address h_addr in
+      if SpecObject.is_white obj g then
+        let g' = SpecObject.makeGray obj g in
+        if Seq.length st < cap then (g', Seq.cons obj st)
+        else (g', st)
+      else (g, st)
+    else (g, st)
+
+/// Spec function: what check_and_darken_bounded computes
+let check_and_darken_bounded_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  : GTot (heap_state & Seq.seq obj_addr)
+  = if U64.v v > 0 && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
+      darken_if_white_bounded_spec g st (U64.sub v mword) cap
+    else (g, st)
+
+/// Bounded mark loop: process gray objects with overflow handling.
+/// The outer loop alternates between draining the stack and rescanning
+/// the heap for remaining gray objects until none remain.
+///
+/// Postcondition: well_formed_heap preserved, no gray objects, objects preserved,
+/// mark_color_inv, gray_black_reachable, and gray_stays.
+/// Check if object at h_addr is white. If so, gray it and push to stack
+/// (if stack has capacity). Used by the bridge for root darkening.
+fn darken_if_white_bounded (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (U64.v h_addr + U64.v mword < heap_size /\
+                 Seq.length 'st <= cap /\
+                 stack_capacity st == cap)
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+    pure ((s2, st2) == darken_if_white_bounded_spec 's 'st h_addr cap)
+
+/// Check if value is a pointer; if so, darken its target with bounded push.
+fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+           pure (Seq.length 'st <= cap /\ stack_capacity st == cap)
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+    pure ((s2, st2) == check_and_darken_bounded_spec 's 'st v cap)
 
 /// Bounded mark loop: process gray objects with overflow handling.
 /// The outer loop alternates between draining the stack and rescanning

@@ -38,6 +38,9 @@ let update_all_objects_aux_step =
 let update_all_objects_aux_skip_blue =
   GC.Gen.PromoteUpdate.Aux.update_all_objects_aux_skip_blue
 
+let update_all_objects_aux_skip_no_scan =
+  GC.Gen.PromoteUpdate.Aux.update_all_objects_aux_skip_no_scan
+
 let update_all_objects_aux_done =
   GC.Gen.PromoteUpdate.Aux.update_all_objects_aux_done
 
@@ -52,6 +55,9 @@ let update_all_objects_positional_step =
 let update_all_objects_positional_step_blue =
   GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step_blue
 
+let update_all_objects_positional_step_no_scan =
+  GC.Gen.PromoteUpdate.Positional.update_all_objects_positional_step_no_scan
+
 let update_all_objects_terminal_step =
   GC.Gen.PromoteUpdate.Positional.update_all_objects_terminal_step
 
@@ -65,6 +71,9 @@ let update_major_pointers_preserves_header =
 
 let update_major_pointers_preserves_blue_field =
   GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_blue_field
+
+let update_major_pointers_preserves_no_scan_field =
+  GC.Gen.PromoteUpdate.NoScanField.update_major_pointers_preserves_no_scan_field
 
 let update_major_pointers_preserves_wfh_part4 =
   GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_wfh_part4

@@ -164,6 +164,8 @@ private let rec update_all_objects_aux_shift
     let obj = Seq.index tl k in
     if is_blue obj g then
       update_all_objects_aux_shift g hd tl fwd (k + 1)
+    else if is_no_scan obj g then
+      update_all_objects_aux_shift g hd tl fwd (k + 1)
     else begin
       let wz = U64.v (wosize_of_object obj g) in
       let g' = update_object_pointers g obj wz fwd 0 in
@@ -181,7 +183,8 @@ let update_all_objects_positional_step
                     U64.v pos + 8 < heap_size /\
                     Seq.mem (f_address pos) (objects zero_addr major) /\
                     Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major = false)
+                    is_blue (f_address pos) major = false /\
+                    is_no_scan (f_address pos) major = false)
           (ensures (let hdr = read_word major pos in
                     let wz = U64.v (getWosize hdr) in
                     let obj : obj_addr = f_address pos in
@@ -342,6 +345,57 @@ let update_all_objects_positional_step_blue
     end
 #pop-options
 
+/// No-scan skip step: when the current object has tag >= no_scan_tag,
+/// skip it without modifying the heap. Identical structure to the blue step.
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
+let update_all_objects_positional_step_no_scan
+  (major: heap) (fwd: forwarding_map) (pos: hp_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    U64.v pos + 8 < heap_size /\
+                    Seq.mem (f_address pos) (objects zero_addr major) /\
+                    Seq.length (objects pos major) > 0 /\
+                    is_blue (f_address pos) major = false /\
+                    is_no_scan (f_address pos) major)
+          (ensures (let hdr = read_word major pos in
+                    let wz = U64.v (getWosize hdr) in
+                    let obj : obj_addr = f_address pos in
+                    let next_nat = U64.v pos + (wz + 1) * 8 in
+                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
+                    U64.v obj + wz * 8 <= heap_size /\
+                    (next_nat < heap_size ==>
+                      update_all_objects_aux major (objects (U64.uint_to_t next_nat) major) fwd 0 ==
+                        update_all_objects_aux major (objects pos major) fwd 0) /\
+                    (next_nat >= heap_size ==>
+                      major == update_all_objects_aux major (objects pos major) fwd 0) /\
+                    (next_nat + 8 < heap_size ==>
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects zero_addr major) /\
+                      Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
+  = let obj : obj_addr = f_address pos in
+    objects_nonempty_head_fits pos major;
+    wfh_part1_obj_bound major obj;
+    f_address_spec pos;
+    let hdr = read_word major pos in
+    let wz = U64.v (getWosize hdr) in
+    let next_nat = U64.v pos + (wz + 1) * 8 in
+    wosize_of_object_spec obj major;
+    FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v pos) ((wz + 1) * 8) 8;
+    FStar.Math.Lemmas.lemma_mod_mul_distr_r (wz + 1) 8 8;
+    objects_nonempty_head pos major;
+    objects_nonempty_next pos major;
+    // No-scan skip: update_all_objects_aux skips no-scan objects, leaving heap unchanged.
+    // The objects list at pos is cons obj (objects next major).
+    // Since is_no_scan obj major, the spec function skips obj and recurses at idx+1.
+    if next_nat < heap_size then begin
+      let next_hp : hp_addr = U64.uint_to_t next_nat in
+      assert (objects pos major == Seq.cons obj (objects next_hp major));
+      update_all_objects_aux_shift major obj (objects next_hp major) fwd 0
+    end else begin
+      assert (Seq.length (objects pos major) == 1);
+      assert (Seq.index (objects pos major) 0 == obj)
+    end
+#pop-options
+
 /// Terminal step
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
 let update_all_objects_terminal_step
@@ -350,7 +404,8 @@ let update_all_objects_terminal_step
                     U64.v pos + 8 < heap_size /\
                     Seq.mem (f_address pos) (objects zero_addr major) /\
                     Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major = false)
+                    is_blue (f_address pos) major = false /\
+                    is_no_scan (f_address pos) major = false)
           (ensures (let hdr = read_word major pos in
                     let wz = U64.v (getWosize hdr) in
                     let obj : obj_addr = f_address pos in

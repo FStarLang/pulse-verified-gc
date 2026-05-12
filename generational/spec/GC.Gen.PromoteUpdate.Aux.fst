@@ -38,6 +38,9 @@ let rec update_all_objects_aux_preserves_objects
     if is_blue obj major then
       // Blue skip: heap unchanged, just recurse at idx+1
       update_all_objects_aux_preserves_objects major objs fwd (idx + 1)
+    else if is_no_scan obj major then
+      // No-scan skip: heap unchanged, just recurse at idx+1
+      update_all_objects_aux_preserves_objects major objs fwd (idx + 1)
     else begin
       let wz = U64.v (wosize_of_object obj major) in
       // From well_formed_heap_part1: field bounds for obj
@@ -100,6 +103,9 @@ let rec update_all_objects_aux_preserves_wfh_part1
     if is_blue obj major then
       // Blue skip: heap unchanged, just recurse
       update_all_objects_aux_preserves_wfh_part1 major objs fwd (idx + 1)
+    else if is_no_scan obj major then
+      // No-scan skip: heap unchanged, just recurse
+      update_all_objects_aux_preserves_wfh_part1 major objs fwd (idx + 1)
     else begin
       let wz = U64.v (wosize_of_object obj major) in
       hd_address_spec obj;
@@ -150,7 +156,8 @@ let update_all_objects_aux_step (major: heap) (objs: seq obj_addr)
                                 (fwd: forwarding_map) (idx: nat)
   : Lemma (requires idx < Seq.length objs /\ well_formed_heap_part1 major /\
                     objs == objects zero_addr major /\
-                    is_blue (Seq.index objs idx) major = false)
+                    is_blue (Seq.index objs idx) major = false /\
+                    is_no_scan (Seq.index objs idx) major = false)
           (ensures (let obj = Seq.index objs idx in
                     let wz = U64.v (wosize_of_object obj major) in
                     update_all_objects_aux major objs fwd idx ==
@@ -162,6 +169,16 @@ let update_all_objects_aux_skip_blue (major: heap) (objs: seq obj_addr)
                                      (fwd: forwarding_map) (idx: nat)
   : Lemma (requires idx < Seq.length objs /\
                     is_blue (Seq.index objs idx) major)
+          (ensures update_all_objects_aux major objs fwd idx ==
+                   update_all_objects_aux major objs fwd (idx + 1))
+  = ()
+
+/// No-scan skip step: when the object is no-scan, skip without modifying the heap
+let update_all_objects_aux_skip_no_scan (major: heap) (objs: seq obj_addr)
+                                        (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length objs /\
+                    is_blue (Seq.index objs idx) major = false /\
+                    is_no_scan (Seq.index objs idx) major)
           (ensures update_all_objects_aux major objs fwd idx ==
                    update_all_objects_aux major objs fwd (idx + 1))
   = ()

@@ -50,24 +50,8 @@ private let promote_step_frame_preconditions
        wosize_of_object other res.major_out == wosize_of_object other major))
   = let fuel = heap_size / U64.v mword in
     promote_object_read_other minor major obj fp wz other addr;
-    // wfh
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
-    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
-    // Establish dst_obj is valid obj_addr in alloc_res.heap_out
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
-    let dst_obj : obj_addr = alloc_res.obj_out in
-    // dst_obj not in residual chain
-    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wz;
-    WriteBody.chain_avoids_implies_not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel;
-    // wfh preservation through copy_fields
-    copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
-    // fl_valid
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
-    copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
-    // fl_chain_terminates
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wz;
-    copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+    // promote_object preserves all allocator invariants
+    promote_object_preserves_alloc_invariants minor major obj fp wz;
     // chain_avoids
     promote_object_preserves_chain_avoids minor major obj fp wz other;
     // objects membership

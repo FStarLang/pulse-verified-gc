@@ -42,28 +42,7 @@ private let promote_object_preserves_alloc_invs
                     well_formed_heap_part1 res.major_out /\
                     AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates res.major_out res.fp_out (heap_size / U64.v mword)))
-  =
-  let fuel = heap_size / U64.v mword in
-  let alloc_res = Allocator.alloc_spec major fp wz in
-  if alloc_res.obj_out = 0UL then
-    // OOM: promote_object returns original state unchanged
-    promote_object_oom minor major obj fp wz
-  else begin
-    // Establish obj_addr refinement for alloc_res.obj_out
-    AllocProps.alloc_spec_obj_valid major fp wz;
-    let dst_obj : obj_addr = alloc_res.obj_out in
-    // Alloc preserves invariants
-    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
-    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
-    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wz;
-    // Allocated object properties
-    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
-    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wz;
-    // copy_fields preserves invariants (dst avoids the free chain)
-    promote_object_success minor major obj fp wz;
-    copy_fields_preserves_alloc_invariants minor alloc_res.heap_out obj dst_obj wz alloc_res.fp_out
-  end
+  = promote_object_preserves_alloc_invariants minor major obj fp wz
 
 #pop-options
 
@@ -521,7 +500,11 @@ private let promote_object_preserves_objects_part1
     AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
     let dst_obj : obj_addr = alloc_res.obj_out in
     WriteBody.copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
-    promote_object_success minor major obj fp wz
+    promote_object_success minor major obj fp wz;
+    let copied = WriteBody.copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    set_promoted_tag_preserves_objects copied dst_obj tag
   end
 
 #pop-options

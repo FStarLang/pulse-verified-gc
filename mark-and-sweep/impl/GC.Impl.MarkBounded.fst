@@ -171,28 +171,8 @@ let makeBlack_preserves_objects (obj: obj_addr) (g: GC.Spec.Base.heap)
     SpecFields.color_change_preserves_objects g obj GC.Lib.Header.Black
 
 /// ---------------------------------------------------------------------------
-/// Bounded spec helpers
+/// Bounded spec helpers (definitions are in .fsti)
 /// ---------------------------------------------------------------------------
-
-/// Spec function: what darken_if_white_bounded computes
-let darken_if_white_bounded_spec (g: heap_state) (st: Seq.seq obj_addr)
-    (h_addr: hp_addr) (cap: nat)
-  : GTot (heap_state & Seq.seq obj_addr)
-  = if U64.v h_addr + U64.v mword < heap_size then
-      let obj = SpecHeap.f_address h_addr in
-      if SpecObject.is_white obj g then
-        let g' = SpecObject.makeGray obj g in
-        if Seq.length st < cap then (g', Seq.cons obj st)
-        else (g', st)
-      else (g, st)
-    else (g, st)
-
-/// Spec function: what check_and_darken_bounded computes
-let check_and_darken_bounded_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
-  : GTot (heap_state & Seq.seq obj_addr)
-  = if U64.v v > 0 && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
-      darken_if_white_bounded_spec g st (U64.sub v mword) cap
-    else (g, st)
 
 /// check_and_darken_bounded_spec preserves well_formed_heap
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 100 --split_queries no"

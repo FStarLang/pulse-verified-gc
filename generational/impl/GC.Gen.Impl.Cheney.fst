@@ -42,11 +42,13 @@ module SimOne = GC.Gen.Cheney.SimOne
 module GR = Pulse.Lib.GhostReference
 
 /// Max queue size = max minor objects = fwd_array_size
+/// Spec-only: used in ghost assertions. Not extracted.
+noextract
 let queue_size : pos = fwd_array_size
 
+/// Queue size as SizeT (uses uint64_to_sizet for clean C extraction)
 let queue_size_sz : n:SZ.t{SZ.v n == queue_size} =
-  SZ.fits_u64_implies_fits fwd_array_size;
-  SZ.uint_to_t fwd_array_size
+  SZ.uint64_to_sizet (U64.div minor_heap_size_u64 8UL)
 
 /// Helper: proves addr + wosize*8 < pow2 64 when both < minor_heap_size
 let minor_arith_no_overflow (addr wosize: nat)

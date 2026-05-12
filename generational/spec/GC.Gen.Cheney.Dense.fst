@@ -42,6 +42,20 @@ private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
           (ensures Seq.length (objects start g2) > 0)
   = ()
 
+/// If two heaps have the same length and the same wosize at start, and one has
+/// nonempty objects at start, so does the other.
+/// Nonemptiness depends on (1) start + 8 < length, and (2) next_start <= length,
+/// where next_start = start + (wosize+1)*8. Both conditions transfer when length
+/// and wosize match.
+#push-options "--fuel 1"
+private let objects_nonempty_from_wosize (g1 g2: heap) (start: hp_addr)
+  : Lemma (requires Seq.length g1 == Seq.length g2 /\
+                    getWosize (read_word g1 start) == getWosize (read_word g2 start) /\
+                    Seq.length (objects start g1) > 0)
+          (ensures Seq.length (objects start g2) > 0)
+  = ()
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Helper: explicit density instantiation at a given header
 /// ---------------------------------------------------------------------------
@@ -518,7 +532,24 @@ private let write_field_preserves_dense
 /// Helper: prev≠0 found case density proof (low fuel)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+
+/// Factored helper: in the split case, prev_fp stays in objects after alloc_from_block.
+/// Separated into its own function to keep the VC context small.
+private let alloc_split_prev_mem
+  (g: heap) (obj: obj_addr) (prev_fp: obj_addr) (wz: nat) (next_fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem prev_fp (objects 0UL g) /\
+                    (let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
+                     bwz >= wz /\ bwz - wz >= 2))
+          (ensures (let (g_alloc, _) = alloc_from_block g obj wz next_fp in
+                    Seq.mem prev_fp (objects 0UL g_alloc)))
+  = Part1.alloc_split_old_in_new_part1 g obj wz next_fp prev_fp
+
+#pop-options
+
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
 
 /// When alloc_search finds a block (bwz >= wz) and prev ≠ 0, the result is
 /// write_word (alloc_from_block g obj wz next) prev new_fp. Prove density.
@@ -543,7 +574,7 @@ private let alloc_search_found_prev_dense
     if bwz_obj - wz < 2 then
       AllocProps.alloc_from_block_exact_objects_eq_part1 g obj wz next_fp
     else
-      Part1.alloc_split_old_in_new_part1 g obj wz next_fp prev_fp;
+      alloc_split_prev_mem g obj prev_fp wz next_fp;
     assert (Seq.mem prev_fp (objects 0UL g_alloc));
     // prev ≠ obj, so hd_prev ≠ hd_obj
     hd_address_spec prev_fp;
@@ -683,6 +714,83 @@ let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// set_promoted_tag preserves density
+/// ---------------------------------------------------------------------------
+///
+/// set_promoted_tag writes one header word with the same wosize.
+/// Density depends only on wosize at each header position, so is preserved.
+
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+
+private let set_promoted_tag_preserves_dense
+  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    Seq.mem obj (objects zero_addr major))
+          (ensures heap_objects_dense (set_promoted_tag major obj tag))
+  = let g' = set_promoted_tag major obj tag in
+    set_promoted_tag_preserves_objects major obj tag;
+    assert (objects zero_addr g' == objects zero_addr major);
+    set_promoted_tag_unfold major obj tag;
+    let hd_obj = hd_address obj in
+    hd_address_spec obj;
+    let hdr = read_word major hd_obj in
+    let wz = getWosize hdr in
+    getWosize_bound hdr;
+    let new_hdr = makeHeader wz White (U64.uint_to_t tag) in
+    makeHeader_getWosize wz White (U64.uint_to_t tag);
+    // Key fact: g' has same length as major (write_word preserves length)
+    assert (Seq.length g' == Seq.length major);
+    // For every header position, wosize is unchanged, so density transfers
+    let aux (start: hp_addr)
+      : Lemma
+        (requires U64.v start + 8 < heap_size /\
+                 Seq.mem (f_address start) (objects 0UL g') /\
+                 Seq.length (objects start g') > 0)
+        (ensures (let wz' = getWosize (read_word g' start) in
+                  let next = U64.v start + ((U64.v wz' + 1) * 8) in
+                  next + 8 < heap_size ==>
+                  Seq.length (objects (U64.uint_to_t next) g') > 0 /\
+                  Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
+      = assert (Seq.mem (f_address start) (objects 0UL major));
+        // Show wosize at start is the same in both heaps
+        if start = hd_obj then begin
+          read_write_same major hd_obj new_hdr;
+          assert (getWosize (read_word g' start) == wz);
+          assert (getWosize (read_word g' start) == getWosize (read_word major start));
+          // objects at start has same structure → nonempty in major too
+          objects_nonempty_from_wosize g' major start
+        end else begin
+          read_write_different major hd_obj start new_hdr;
+          assert (read_word g' start == read_word major start);
+          objects_nonempty_from_header g' major start
+        end;
+        assert (Seq.length (objects start major) > 0);
+        // Now getWosize is the same, so next is the same in both heaps
+        let wz_major = getWosize (read_word major start) in
+        assert (getWosize (read_word g' start) == wz_major);
+        let next = U64.v start + ((U64.v wz_major + 1) * 8) in
+        if next + 8 < heap_size then begin
+          let next_hp : hp_addr = U64.uint_to_t next in
+          // From density of major: objects at next_hp is nonempty and in objects 0UL major
+          assert (Seq.mem (f_address next_hp) (objects 0UL major));
+          assert (Seq.length (objects next_hp major) > 0);
+          // Since objects 0UL g' == objects 0UL major, membership transfers
+          // For nonempty: transfer via header/wosize equality
+          if next_hp = hd_obj then begin
+            read_write_same major hd_obj new_hdr;
+            objects_nonempty_from_wosize major g' next_hp
+          end else begin
+            read_write_different major hd_obj next_hp new_hdr;
+            objects_nonempty_from_header major g' next_hp
+          end
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// promote_object preserves density
 /// ---------------------------------------------------------------------------
 
@@ -706,7 +814,16 @@ let promote_object_preserves_dense
       AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
       promote_object_success minor major obj fp wz;
       let dst_obj : obj_addr = alloc_res.obj_out in
-      copy_fields_preserves_dense minor alloc_res.heap_out obj dst_obj wz
+      // Step 1: copy_fields preserves density
+      copy_fields_preserves_dense minor alloc_res.heap_out obj dst_obj wz;
+      // Step 2: set_promoted_tag preserves density
+      let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+      let tag = minor_tag minor obj in
+      minor_tag_bound minor obj;
+      copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
+      copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+      assert (Seq.mem dst_obj (objects zero_addr copied));
+      set_promoted_tag_preserves_dense copied dst_obj tag
     end
 
 #pop-options

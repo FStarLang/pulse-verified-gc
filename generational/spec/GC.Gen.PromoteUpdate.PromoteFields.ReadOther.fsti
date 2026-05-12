@@ -15,6 +15,8 @@ open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
+#push-options "--z3rlimit 20"
+
 val promote_object_read_other
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0}) (other: obj_addr) (addr: hp_addr)

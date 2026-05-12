@@ -167,7 +167,8 @@ val gen_gc_correct
   : Lemma (requires gen_wf gs /\
                     well_formed_heap gs.gs_major /\
                     AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword) /\
+                    live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots))
           (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
                     let live_set = live_set_of gs.gs_minor gs.gs_major roots in
                     let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
@@ -242,7 +243,9 @@ val gen_gc_correct_full
                     minor_fields_well_formed gs.gs_minor gs.gs_major roots /\
                     all_promotions_succeed gs.gs_minor gs.gs_major fp roots /\
                     allocated_objects_avoid_chain gs.gs_major fp /\
-                    post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots)
+                    post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots /\
+                    live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
+                    no_scan_invariant gs.gs_major)
           (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
                     well_formed_heap res.mc_major))
 
@@ -318,6 +321,9 @@ val generational_gc_end_to_end
       all_promotions_succeed gs.gs_minor gs.gs_major fp roots /\
       allocated_objects_avoid_chain gs.gs_major fp /\
       post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots /\
+      // No infix objects in live set, no-scan invariant on major heap
+      live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
+      no_scan_invariant gs.gs_major /\
       // Major GC preconditions on the post-minor heap
       (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
        Mark.stack_props res.mc_major major_stack /\

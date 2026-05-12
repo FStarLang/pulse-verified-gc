@@ -29,6 +29,7 @@ private let copy_fields_preserves_fl_valid_aux = WriteBody.copy_fields_preserves
 private let copy_fields_preserves_fl_chain_terminates = WriteBody.copy_fields_preserves_fl_chain_terminates
 private let copy_fields_preserves_wfh_part1 = WriteBody.copy_fields_preserves_wfh_part1
 private let chain_avoids_implies_not_in_fl_chain = WriteBody.chain_avoids_implies_not_in_fl_chain
+private let copy_fields_preserves_chain_avoids_self = WriteBody.copy_fields_preserves_chain_avoids_self
 
 #push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec update_all_objects_aux_preserves_header
@@ -46,6 +47,9 @@ let rec update_all_objects_aux_preserves_header
     assert (Seq.mem obj objs);
     if is_blue obj major then
       // Blue skip: heap unchanged, recurse
+      update_all_objects_aux_preserves_header major objs fwd (idx + 1) h
+    else if is_no_scan obj major then
+      // No-scan skip: heap unchanged, recurse
       update_all_objects_aux_preserves_header major objs fwd (idx + 1) h
     else begin
       let wz = U64.v (wosize_of_object obj major) in
@@ -118,6 +122,9 @@ private let rec update_all_objects_aux_preserves_blue_field
     assert (Seq.mem obj objs);
     if is_blue obj major then
       // obj is blue: skipped, heap unchanged, recurse
+      update_all_objects_aux_preserves_blue_field major objs fwd (idx + 1) h j
+    else if is_no_scan obj major then
+      // obj is no-scan: skipped, heap unchanged, recurse
       update_all_objects_aux_preserves_blue_field major objs fwd (idx + 1) h j
     else begin
       let wz = U64.v (wosize_of_object obj major) in
@@ -253,8 +260,70 @@ let update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map
 /// Promoted objects land in the final major heap's objects list
 /// ---------------------------------------------------------------------------
 
+/// Recursive helper: set_promoted_tag preserves objects at every start position.
+/// Mirrors the structure of color_change_preserves_objects_aux (GC.Spec.Fields)
+/// but provides explicit read/write facts instead of relying on SMT patterns.
+///
+/// Key insight: set_promoted_tag writes makeHeader(wz, White, tag) to hd_address obj.
+/// Since makeHeader preserves getWosize (makeHeader_getWosize), and the objects
+/// enumeration only depends on getWosize at each header position, objects is preserved.
+#restart-solver
+#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
+private let rec set_promoted_tag_preserves_objects_aux
+  (start: hp_addr) (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
+  : Lemma (ensures objects start (set_promoted_tag major obj tag) == objects start major)
+          (decreases (Seq.length major - U64.v start))
+  = let hd = hd_address obj in
+    let hdr = read_word major hd in
+    let wz_hd = getWosize hdr in
+    let new_hdr = makeHeader wz_hd GC.Lib.Header.White (U64.uint_to_t tag) in
+    // set_promoted_tag with tag < 256 and obj: obj_addr reduces to write_word
+    let g' = write_word major hd new_hdr in
+    assert (set_promoted_tag major obj tag == g');
+    if U64.v start + 8 >= Seq.length major then ()
+    else begin
+      // Establish that read_word / getWosize at start is preserved in g'
+      if hd = start then begin
+        // Write is at this header position: getWosize preserved by makeHeader roundtrip
+        makeHeader_getWosize wz_hd GC.Lib.Header.White (U64.uint_to_t tag);
+        assert (getWosize (read_word g' start) == getWosize (read_word major start))
+      end else begin
+        // Write at a different 8-aligned position: read_word unchanged
+        // (two distinct hp_addrs are at least 8 bytes apart)
+        read_write_different major hd start new_hdr;
+        assert (read_word g' start == read_word major start)
+      end;
+      // Recurse on the next start position (same structure as objects)
+      let wz = getWosize (read_word major start) in
+      let next_start_nat = U64.v start + ((U64.v wz + 1) * 8) in
+      if next_start_nat > Seq.length major || next_start_nat >= pow2 64 then ()
+      else if next_start_nat >= heap_size then ()
+      else
+        set_promoted_tag_preserves_objects_aux (U64.uint_to_t next_start_nat) major obj tag
+    end
+#pop-options
+
+/// Top-level: set_promoted_tag preserves objects enumeration from 0
+private let set_promoted_tag_preserves_objects
+  (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
+  : Lemma (objects zero_addr (set_promoted_tag major obj tag) == objects zero_addr major)
+  = set_promoted_tag_preserves_objects_aux zero_addr major obj tag
+
+/// Helper: set_promoted_tag preserves objects membership.
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 1"
+private let set_promoted_tag_preserves_objects_mem
+  (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (x: obj_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    Seq.mem obj (objects zero_addr major) /\
+                    Seq.mem x (objects zero_addr major))
+          (ensures Seq.mem x (objects zero_addr (set_promoted_tag major obj tag)))
+  = set_promoted_tag_preserves_objects major obj tag
+#pop-options
+
 /// After promote_object succeeds (new_addr ≠ 0), new_addr ∈ objects(result).
-#push-options "--z3rlimit 40 --fuel 1"
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 1"
 private let promote_object_adds_new_addr
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
@@ -277,7 +346,16 @@ private let promote_object_adds_new_addr
     let dst_obj : obj_addr = alloc_res.obj_out in
     copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wosize;
     assert (objects zero_addr (copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize) ==
-            objects zero_addr alloc_res.heap_out)
+            objects zero_addr alloc_res.heap_out);
+    // copy_fields preserves wfh_part1 and objects membership
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
+    copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wosize;
+    let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize in
+    assert (Seq.mem dst_obj (objects zero_addr copied));
+    // set_promoted_tag preserves objects
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    set_promoted_tag_preserves_objects copied dst_obj tag
   end
 #pop-options
 
@@ -331,6 +409,14 @@ let rec promote_all_aux_adds_promoted
         copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
         AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
         copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+        // Propagate wfh_part1 + fl_valid + fl_chain_terminates through set_promoted_tag
+        let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+        let tag = minor_tag minor obj in
+        minor_tag_bound minor obj;
+        copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
+        copy_fields_preserves_chain_avoids_self minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        set_promoted_tag_preserves_alloc_invariants copied dst_obj tag alloc_res.fp_out;
+        promote_object_success minor major obj fp wz;
         // fwd' extends fwd with obj -> new_addr
         let fwd' = extend_forwarding fwd obj res.new_addr in
         // Show fwd_all_targets_valid fwd' res.major_out:

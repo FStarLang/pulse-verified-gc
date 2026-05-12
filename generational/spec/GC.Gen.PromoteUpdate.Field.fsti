@@ -26,7 +26,8 @@ val update_major_pointers_field_effect
       j < U64.v (wosize_of_object obj major) /\
       U64.v obj + j * 8 + 8 <= heap_size /\
       (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false)
+      is_blue obj major = false /\
+      is_no_scan obj major = false)
     (ensures
       (let updated = update_major_pointers major fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
@@ -39,5 +40,6 @@ val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major /\
                     pointer_closure_modulo_fwd major fwd /\
                     fwd_all_targets_valid fwd major /\
-                    blue_fields_closed major)
+                    blue_fields_closed major /\
+                    no_scan_invariant major)
     (ensures well_formed_heap_part2 (update_major_pointers major fwd))

@@ -46,7 +46,8 @@ val update_all_objects_aux_step (major: heap) (objs: seq obj_addr)
                                 (fwd: forwarding_map) (idx: nat)
   : Lemma (requires idx < Seq.length objs /\ well_formed_heap_part1 major /\
                     objs == objects zero_addr major /\
-                    is_blue (Seq.index objs idx) major = false)
+                    is_blue (Seq.index objs idx) major = false /\
+                    is_no_scan (Seq.index objs idx) major = false)
           (ensures (let obj = Seq.index objs idx in
                     let wz = U64.v (wosize_of_object obj major) in
                     update_all_objects_aux major objs fwd idx ==
@@ -56,6 +57,14 @@ val update_all_objects_aux_skip_blue (major: heap) (objs: seq obj_addr)
                                      (fwd: forwarding_map) (idx: nat)
   : Lemma (requires idx < Seq.length objs /\
                     is_blue (Seq.index objs idx) major)
+          (ensures update_all_objects_aux major objs fwd idx ==
+                   update_all_objects_aux major objs fwd (idx + 1))
+
+val update_all_objects_aux_skip_no_scan (major: heap) (objs: seq obj_addr)
+                                        (fwd: forwarding_map) (idx: nat)
+  : Lemma (requires idx < Seq.length objs /\
+                    is_blue (Seq.index objs idx) major = false /\
+                    is_no_scan (Seq.index objs idx) major)
           (ensures update_all_objects_aux major objs fwd idx ==
                    update_all_objects_aux major objs fwd (idx + 1))
 

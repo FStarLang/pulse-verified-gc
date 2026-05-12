@@ -313,6 +313,18 @@ let minor_objects_valid (ms: minor_state) (x: U64.t)
           (ensures U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0) =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
   else minor_objects_aux_valid ms.data 0 (U64.v ms.bump) x
+
+/// Tag of a minor header is always < 256 (logand with 0xFF)
+let minor_tag_bound (ms: minor_state) (obj: U64.t)
+  : Lemma (minor_tag ms obj < 256)
+  = if U64.v obj >= 8 && U64.v obj < minor_heap_size then
+      let hdr_addr = U64.v obj - 8 in
+      if hdr_addr + 8 <= minor_heap_size && hdr_addr % 8 = 0 then
+        let hdr = minor_read_word ms.data (U64.uint_to_t hdr_addr) in
+        FStar.UInt.logand_le #64 (U64.v hdr) 255
+      else ()
+    else ()
+
 /// ---------------------------------------------------------------------------
 /// Wosize bound for minor objects
 /// ---------------------------------------------------------------------------
