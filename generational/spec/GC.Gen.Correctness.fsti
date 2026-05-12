@@ -245,7 +245,8 @@ val gen_gc_correct_full
                     allocated_objects_avoid_chain gs.gs_major fp /\
                     post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots /\
                     live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
-                    no_scan_invariant gs.gs_major)
+                    no_scan_invariant gs.gs_major /\
+                    minor_no_scan_invariant gs.gs_minor)
           (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
                     well_formed_heap res.mc_major))
 
@@ -324,6 +325,7 @@ val generational_gc_end_to_end
       // No infix objects in live set, no-scan invariant on major heap
       live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
       no_scan_invariant gs.gs_major /\
+      minor_no_scan_invariant gs.gs_minor /\
       // Major GC preconditions on the post-minor heap
       (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
        Mark.stack_props res.mc_major major_stack /\

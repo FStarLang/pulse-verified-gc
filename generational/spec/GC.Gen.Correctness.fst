@@ -127,7 +127,8 @@ let gen_gc_correct_full
                     allocated_objects_avoid_chain gs.gs_major fp /\
                     post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots /\
                     live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
-                    no_scan_invariant gs.gs_major)
+                    no_scan_invariant gs.gs_major /\
+                    minor_no_scan_invariant gs.gs_minor)
           (ensures (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
                     well_formed_heap res.mc_major)) =
   let minor = gs.gs_minor in
@@ -149,10 +150,10 @@ let gen_gc_correct_full
   // Establish part 2 (pointer closure) via blue_fields_closed
   promote_all_fwd_all_targets_valid minor major fp live_set;
   promote_all_preserves_blue_fields_closed minor major fp live_set;
-  // no_scan_invariant for post-promote heap: promotion copies raw data verbatim
-  // from minor no-scan objects, so their fields remain non-pointers.
-  // TCB: we assume the minor heap's no-scan objects satisfy the invariant.
-  assume (no_scan_invariant prom_res.major_final);
+  // no_scan_invariant for post-promote heap: prove from minor_no_scan_invariant
+  assert (allocated_avoid_chain major fp);
+  minor_reachable_subset minor (Seq.append roots (minor_roots_from_major major));
+  promote_all_preserves_no_scan_invariant minor major fp live_set;
   update_major_pointers_preserves_wfh_part2 prom_res.major_final prom_res.fwd_map;
   // Combine all 4 parts
   assert (well_formed_heap_part1 res.mc_major);
@@ -212,6 +213,7 @@ let generational_gc_end_to_end
       post_promote_pointer_closure gs.gs_minor gs.gs_major fp roots /\
       live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
       no_scan_invariant gs.gs_major /\
+      minor_no_scan_invariant gs.gs_minor /\
       (let res = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
        Mark.stack_props res.mc_major major_stack /\
        Mark.root_props res.mc_major major_roots /\
