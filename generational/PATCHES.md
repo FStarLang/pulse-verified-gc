@@ -781,7 +781,7 @@ leverage change for closing the performance gap with stock OCaml.
 | B13 | compat.c / U64.ne extern | **Trivial** | ✅ DONE |
 | B14b | fwd_array_size alias | **Trivial** | ✅ DONE |
 | 13 | krmlinit | **Low** — link convenience | ✅ Minimal (only 2 derived constants) |
-| 9  | Infix forwarding | **Critical** — crashes on closures | ⚠️ Deferred (needs infix model in spec) |
+| 9  | Infix forwarding | **Critical** — crashes on closures | ✅ **DONE** (phased calls + bridge fixup) |
 | 1  | zero_addr non-static | **High** — blocks clean extraction | ⚠️ Irreducible (1-word bridge patch) |
 | 2  | Configurable heap_size | **High** — blocks clean extraction | ⚠️ Irreducible (link-time settable) |
 | 3,4 | Scan range / HWM | **Medium** — performance only | ⚠️ Irreducible (needs scan-range proof) |
@@ -792,11 +792,11 @@ leverage change for closing the performance gap with stock OCaml.
 |---|--------|----------|--------|--------|
 | B13 | compat.c stub | **Trivial** | Trivial | ✅ DONE — empty |
 | B7  | Minor field abs→offset | **Critical** — perf bottleneck | Medium | ✅ **DONE** |
-| B6  | Infix parent injection | **Critical** — correctness | High | — Blocked on PATCH 9 |
+| B6  | Infix parent injection | **Critical** — correctness | High | ✅ **DONE** |
 | B12 | Allocation entry point | **High** — hot path | Medium | — Keep as-is |
 | B1  | Heap init | **High** — complex TCB | Medium | — Keep as-is |
 | B2,4,5 | Address translation | **High** — systemic | Medium | — Keep as-is |
-| B9  | Ref_table fwd rewriting | **Medium** — correctness | Low | — Keep as-is |
+| B9  | Ref_table fwd rewriting | **Medium** — correctness | Low | ✅ **DONE** |
 | B11 | Full GC wrapper | **Medium** — unverified roots | Medium | — Keep as-is |
 | B8  | Scan base setup | **Low** — tied to PATCH 3/4 | Low | — Tied to PATCHES 3,4 |
 | B3,10 | Root scan/writeback | **Low** — inherently OCaml | Low | — Keep as-is |
@@ -812,12 +812,12 @@ leverage change for closing the performance gap with stock OCaml.
 
 ### Future work (remaining items, in priority order)
 
-1. **Infix forwarding** (PATCH 9, B6) — model OCaml infix objects in
-   `well_formed_heap_part4`, handle `tag=249` in Cheney forwarding
-2. **Absolute minor addressing** (B2,4,7) — eliminate O(minor×fields) bridge
-   scans by making minor heap use absolute addresses (NULL-base trick)
-3. **Scan range** (PATCHES 3,4, B8) — parameterise `update_all_objects` with
+1. **Scan range** (PATCHES 3,4, B8) — parameterise `update_all_objects` with
    `[start, limit)` range, prove objects outside range have no minor pointers
+2. **Absolute minor addressing** (B2,4) — eliminate O(minor×fields) bridge
+   scans by making minor heap use absolute addresses (NULL-base trick)
+3. **Infix model** — model OCaml infix objects in `well_formed_heap_part4`,
+   handle `tag=249` in Cheney forwarding spec (currently handled in bridge only)
 4. **zero_addr non-static** (PATCH 1) — create thin `GC.Impl.Config` module
    or accept as 1-word bridge patch
 5. **Verified alloc/init** (B1, B12) — move heap init and retry loop into
