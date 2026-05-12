@@ -34,7 +34,6 @@ module ML = FStar.Math.Lemmas
 module MajorGC = GC.Impl
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
-module CheneyEnd2End = GC.Gen.CheneyEnd2End
 module CheneyCorr = GC.Gen.CheneyCorrectness
 
 /// ---------------------------------------------------------------------------
