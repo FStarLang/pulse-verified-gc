@@ -151,7 +151,7 @@ fn forward_if_minor
     Sim.not_minor_if_guards_fail ({data='md; bump='mb} <: minor_state) addr;
     CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
     SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
-  } else if U64.ne (U64.rem addr 8UL) 0UL {
+  } else if not (U64.eq (U64.rem addr 8UL) 0UL) {
     // addr not word-aligned → not minor → noop
     Sim.not_minor_if_guards_fail ({data='md; bump='mb} <: minor_state) addr;
     CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
@@ -160,7 +160,7 @@ fn forward_if_minor
     // Check forwarding array: already forwarded?
     let idx = SZ.uint64_to_sizet (U64.div addr 8UL);
     let fwd_val = fwd_arr.(idx);
-    if U64.ne fwd_val 0UL {
+    if not (U64.eq fwd_val 0UL) {
       // Already forwarded: fwd_arr[addr/8] ≠ 0 → cs_fwd addr ≠ 0 → noop
       Sim.represents_fwd_read 'farr (cs_pre.CheneySpec.cs_fwd) addr;
       CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
@@ -463,7 +463,7 @@ fn scan_loop
     } else if U64.gte obj minor_heap_size_u64 {
       // Unreachable: we proved obj < minor_heap_size
       scan := SZ.add s 1sz
-    } else if U64.ne (U64.rem obj 8UL) 0UL {
+    } else if not (U64.eq (U64.rem obj 8UL) 0UL) {
       // Unreachable: we proved obj % 8 == 0
       scan := SZ.add s 1sz
     } else {

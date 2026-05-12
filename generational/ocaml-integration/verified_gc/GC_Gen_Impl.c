@@ -339,11 +339,11 @@ forward_roots(
     uint64_t r = roots[iv];
     if (!(r < 8ULL))
       if (!(r >= minor_heap_size_u64))
-        if (!FStar_UInt64_ne(r % 8ULL, 0ULL))
+        if (!!(r % 8ULL == 0ULL))
         {
           size_t idx = (size_t)(r / 8ULL);
           uint64_t fwd_val = fwd_arr[idx];
-          if (!FStar_UInt64_ne(fwd_val, 0ULL))
+          if (!!(fwd_val == 0ULL))
           {
             uint64_t hdr_addr = r - 8ULL;
             uint64_t hdr = minor_read(minor, hdr_addr);
@@ -420,7 +420,7 @@ scan_loop(
       scan = s + (size_t)1U;
     else if (obj >= minor_heap_size_u64)
       scan = s + (size_t)1U;
-    else if (FStar_UInt64_ne(obj % 8ULL, 0ULL))
+    else if (!(obj % 8ULL == 0ULL))
       scan = s + (size_t)1U;
     else
     {
@@ -443,11 +443,11 @@ scan_loop(
           uint64_t child = minor_read(minor, field_addr);
           if (!(child < 8ULL))
             if (!(child >= minor_heap_size_u64))
-              if (!FStar_UInt64_ne(child % 8ULL, 0ULL))
+              if (!!(child % 8ULL == 0ULL))
               {
                 size_t idx = (size_t)(child / 8ULL);
                 uint64_t fwd_val = fwd_arr[idx];
-                if (!FStar_UInt64_ne(fwd_val, 0ULL))
+                if (!!(fwd_val == 0ULL))
                 {
                   uint64_t hdr_addr = child - 8ULL;
                   uint64_t hdr = minor_read(minor, hdr_addr);
