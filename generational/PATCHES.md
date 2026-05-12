@@ -8,7 +8,9 @@ F\*/Pulse source so the extraction is usable directly.
 
 ---
 
-## Current Status (updated 2025-06-06)
+## Current Status (updated 2025-06-07)
+
+### Extraction Patches (GC_Gen_Impl.c)
 
 | # | Patch | Status | Notes |
 |---|-------|--------|-------|
@@ -19,46 +21,80 @@ F\*/Pulse source so the extraction is usable directly.
 | 11 | `is_pointer` lower bound | ✅ **DONE** | Changed `v==0` to `v < mword`, extracts as `v < 8ULL` |
 | 12 | `is_valid_fp` lower bound | ✅ **DONE** (was already OK) | Already uses `v >= 8ULL` = `v >= mword` |
 | 13 | krmlinit | ✅ Minimal | Only sets `queue_size_sz` and `minor_heap_size_sz` |
-| B13 | compat.c stub | ✅ **DONE** | `U64.ne` → `not (U64.eq ...)`, no more extern |
-| 1,8 | zero_addr non-static | ⚠️ Bridge-only | `zero_addr` must be non-static for OCaml bridge |
-| 2  | Configurable heap_size | ⚠️ Bridge-only | `heap_size_u64` is settable at link time |
-| 3,4 | Scan range / HWM | ⚠️ Bridge-only | `update_scan_base`, `major_alloc_hwm` for perf |
-| 9  | Infix forwarding | ❌ Not started | `well_formed_heap_part4` assumes no infix objects |
+| B13 | compat.c / U64.ne extern | ✅ **DONE** | `U64.ne` → `not (U64.eq ...)`, compat.c now empty |
+| B14b | fwd_array_size alias | ✅ **DONE** | Bridge uses `queue_size_sz` directly |
+| 8  | update_all_objects start | ✅ **DONE** | Impl now starts at `zero_addr` instead of `0UL` |
+| 1  | zero_addr non-static | ⚠️ **Irreducible** | See note below |
+| 2  | Configurable heap_size | ⚠️ **Irreducible** | `heap_size_u64` is settable at link time |
+| 3,4 | Scan range / HWM | ⚠️ **Irreducible** | Performance opt; requires proving scan-range soundness |
+| 9  | Infix forwarding | ⚠️ **Deferred** | `well_formed_heap_part4` assumes no infix objects |
 
-### Bridge Code (alloc_gen.c — 528 lines, entirely unverified)
+### Irreducible Bridge Items
+
+**PATCH 1 (zero_addr non-static):** The verified spec correctly treats
+`zero_addr = 0`. The OCaml bridge overrides it with the mmap'd heap base
+absolute address. Making it non-static via KaRaMeL bundle API was attempted
+but pulls in spec functions with `Seq` types and generates unwanted
+`internal/Prims.h`. This is a 1-word visibility change (`static` removed).
+
+**PATCHES 3,4 (scan range):** The bridge narrows `update_all_objects` to scan
+only `[update_scan_base, major_alloc_hwm)` instead of `[0, heap_size)`.
+Verifying this requires proving that pre-existing major objects have no minor
+pointers after each collection — a significant spec invariant not currently
+tracked. Performance impact: ~3× faster on large heaps with few promotions.
+
+**PATCH 9 (infix objects):** OCaml infix objects (tag=249) require special
+forwarding during promotion. The verified spec's `well_formed_heap_part4`
+currently assumes no infix objects. Supporting them requires modeling the
+infix parent relationship in the formal heap model.
+
+### Bridge Code (alloc_gen.c — 527 lines, entirely unverified)
 
 | # | Bridge | Status | Notes |
 |---|--------|--------|-------|
-| B1  | Heap init | ❌ Not started | 96 lines, unverified |
-| B2,4,5 | Address translation | ❌ Not started | Minor still uses 0-based offsets |
-| B3,10 | Root scan/writeback | ❌ Not started | OCaml-specific, keep as thin shim |
-| B6  | Infix parent injection | ❌ Not started | 50 lines, tied to PATCH 9 |
-| B7  | Minor field abs→offset | ❌ Not started | **Major perf bottleneck** — O(minor×fields) |
-| B8  | Scan base setup | ❌ Not started | Tied to PATCHES 3,4 |
-| B9  | Ref_table fwd rewriting | ❌ Not started | 17 lines |
-| B11 | Full GC wrapper | ❌ Not started | 46 lines |
-| B12 | Allocation entry point | ❌ Not started | 56 lines, hot path |
-| B13 | compat.c stub | ✅ **DONE** | `FStar_UInt64_ne` eliminated from extraction |
+| B1  | Heap init | — Keep as-is | OCaml mmap integration, inherently unverified |
+| B2,4,5 | Address translation | — Keep as-is | Minor 0-based → absolute offsets |
+| B3,10 | Root scan/writeback | — Keep as-is | OCaml stack layout, inherently specific |
+| B6  | Infix parent injection | — Blocked on PATCH 9 | 50 lines, tied to infix model |
+| B7  | Minor field abs→offset | — Keep as-is | Performance bottleneck, needs spec change |
+| B8  | Scan base setup | — Tied to PATCHES 3,4 | Sets `update_scan_base` |
+| B9  | Ref_table fwd rewriting | — Keep as-is | 17 lines, OCaml-specific |
+| B11 | Full GC wrapper | — Keep as-is | 46 lines, orchestrates major GC |
+| B12 | Allocation entry point | — Keep as-is | 56 lines, hot path |
+| B13 | compat.c stub | ✅ **DONE** | Empty — no more externs needed |
 | B14 | verified_do_minor_gc | — Keep as-is | 5 lines, inherently OCaml-specific |
 
-### Verification Status (spec correctness)
+### Verification Status
 
 | Item | Status |
 |------|--------|
 | `assume (no_scan_invariant)` in Correctness.fst | ✅ **Eliminated** — proved via `promote_all_preserves_no_scan_invariant` |
-| All 152 generational modules verify | ✅ Clean build |
+| All 152 generational modules verify | ✅ Clean build (`make -j4`) |
 | Zero admits/assumes in spec | ✅ Confirmed |
-| Extraction compiles without KaRaMeL warnings | ✅ No dropped types |
-| All 8 OCaml benchmarks pass | ✅ binarytrees, fasta, quicksort, etc. |
+| Extraction compiles without KaRaMeL warnings | ✅ Zero warnings |
+| All 8 OCaml benchmarks pass | ✅ binarytrees, fasta, quicksort, fannkuchredux, count_change, nbodies, spectralnorm, mandelbrot |
+| Header file matches exactly | ✅ `diff GC_Gen_Impl.h` = empty |
+| krmlinit matches exactly | ✅ `diff krmlinit.c` = empty |
 
-### Remaining extraction diff (extraction → snapshot): 19 lines
+### Remaining extraction diff: 14 lines (all irreducible bridge infrastructure)
 
-Only bridge infrastructure remains:
-1. `zero_addr` non-static + `major_alloc_hwm` + `update_scan_base` globals (9 lines)
-2. `update_all_objects` scan range optimization (6 lines)
-3. `fwd_array_size` alias (2 lines)
+```diff
+< static uint64_t zero_addr = 0ULL;
+> uint64_t zero_addr = 0ULL;               // non-static for bridge (PATCH 1)
+> uint64_t major_alloc_hwm = 0ULL;         // scan optimization (PATCH 3)
+> uint64_t update_scan_base = 0ULL;        // scan optimization (PATCH 4)
 
-**Snapshot updated at commit `60e2828`**.
+< uint64_t pos = zero_addr;
+< bool done = false;
+> uint64_t pos = (update_scan_base > 0ULL) ? update_scan_base : zero_addr;
+> uint64_t scan_limit = (major_alloc_hwm > 0ULL) ? major_alloc_hwm : heap_size_u64;
+> bool done = (pos + 8ULL >= scan_limit);
+
+<     done = next_pos + 8ULL >= heap_size_u64;  (×3 occurrences)
+>     done = next_pos + 8ULL >= scan_limit;     (×3 occurrences)
+```
+
+**Snapshot matches extraction + these 14 bridge lines. Last updated at commit `373aa9e`.**
 
 ---
 
