@@ -93,3 +93,16 @@ fn alloc_minor_heap (_: unit)
   requires emp
   returns mh: minor_heap_t
   ensures is_minor mh (Seq.create minor_heap_size 0uy) 0UL
+
+/// ---------------------------------------------------------------------------
+/// Field Translation (absolute address → minor offset)
+/// ---------------------------------------------------------------------------
+
+/// Walk the minor heap and translate all scannable objects' fields from
+/// absolute addresses to minor-relative offsets.
+fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
+  requires is_minor mh 'd 'b **
+           pure (U64.v 'b <= minor_heap_size /\
+                 U64.v minor_base_addr > 0)
+  ensures exists* d2.
+    is_minor mh d2 'b

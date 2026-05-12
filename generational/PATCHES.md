@@ -27,7 +27,7 @@ F\*/Pulse source so the extraction is usable directly.
 | 1  | zero_addr non-static | ⚠️ **Irreducible** | See note below |
 | 2  | Configurable heap_size | ⚠️ **Irreducible** | `heap_size_u64` is settable at link time |
 | 3,4 | Scan range / HWM | ⚠️ **Irreducible** | Performance opt; requires proving scan-range soundness |
-| 9  | Infix forwarding | ⚠️ **Deferred** | `well_formed_heap_part4` assumes no infix objects |
+| 9  | Infix forwarding | ✅ **DONE** | Phased calls + infix fwd fixup in bridge |
 
 ### Irreducible Bridge Items
 
@@ -55,10 +55,10 @@ infix parent relationship in the formal heap model.
 | B1  | Heap init | — Keep as-is | OCaml mmap integration, inherently unverified |
 | B2,4,5 | Address translation | — Keep as-is | Minor 0-based → absolute offsets |
 | B3,10 | Root scan/writeback | — Keep as-is | OCaml stack layout, inherently specific |
-| B6  | Infix parent injection | — Blocked on PATCH 9 | 50 lines, tied to infix model |
-| B7  | Minor field abs→offset | — Keep as-is | Performance bottleneck, needs spec change |
+| B6  | Infix parent injection | ✅ **DONE** | Phased calls expose promote/update/rewrite |
+| B7  | Minor field abs→offset | 🔄 **In progress** | Verified `translate_minor_fields` in Pulse |
 | B8  | Scan base setup | — Tied to PATCHES 3,4 | Sets `update_scan_base` |
-| B9  | Ref_table fwd rewriting | — Keep as-is | 17 lines, OCaml-specific |
+| B9  | Ref_table fwd rewriting | ✅ **DONE** | Verified `rewrite_heap_slots` replaces manual loop |
 | B11 | Full GC wrapper | — Keep as-is | 46 lines, orchestrates major GC |
 | B12 | Allocation entry point | — Keep as-is | 56 lines, hot path |
 | B13 | compat.c stub | ✅ **DONE** | Empty — no more externs needed |
@@ -806,8 +806,8 @@ leverage change for closing the performance gap with stock OCaml.
 
 | Category | Done | Irreducible/Deferred | Total |
 |----------|------|---------------------|-------|
-| Extraction patches | 10 | 4 | 14 |
-| Bridge code items | 1 | 10 | 11 |
+| Extraction patches | 11 | 3 | 14 |
+| Bridge code items | 4 | 7 | 11 |
 | Extraction diff lines | — | 14 | — |
 
 ### Future work (remaining items, in priority order)

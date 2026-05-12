@@ -185,3 +185,191 @@ fn alloc_minor_heap (_: unit)
   mh
 }
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Translate absolute addresses to minor offsets in one object's fields
+/// ---------------------------------------------------------------------------
+
+/// Arithmetic helpers for minor heap traversal (minor_heap_size < pow2 57)
+let minor_wz_mul_no_overflow (wz bump: nat)
+  : Lemma (requires wz <= bump / 8 /\ bump <= minor_heap_size)
+          (ensures wz * 8 <= bump /\ wz * 8 < pow2 57)
+  = FStar.Math.Lemmas.lemma_mult_le_right 8 wz (bump / 8);
+    FStar.Math.Lemmas.multiply_fractions bump 8
+
+let minor_add_no_overflow (a b: nat)
+  : Lemma (requires a <= minor_heap_size /\ b <= minor_heap_size)
+          (ensures a + b < pow2 64)
+  = assert_norm (2 * pow2 57 < pow2 64)
+
+let minor_pos_advance_no_overflow (pos wz bump: nat)
+  : Lemma (requires pos <= minor_heap_size /\ wz <= bump / 8 /\ bump <= minor_heap_size)
+          (ensures (wz + 1) * 8 < pow2 64 /\ pos + (wz + 1) * 8 < pow2 64)
+  = minor_wz_mul_no_overflow wz bump;
+    assert_norm (2 * pow2 57 < pow2 64)
+
+/// For the inner loop: jv < wosize implies field at obj_addr + jv*8 is in bounds
+let minor_field_in_bounds (obj_addr wosize jv: nat)
+  : Lemma (requires obj_addr + wosize * 8 <= minor_heap_size /\
+                    obj_addr % 8 == 0 /\ jv < wosize)
+          (ensures jv * 8 < pow2 64 /\
+                   obj_addr + jv * 8 < pow2 64 /\
+                   obj_addr + jv * 8 + 8 <= minor_heap_size /\
+                   (obj_addr + jv * 8) % 8 == 0 /\
+                   jv + 1 < pow2 64)
+  = FStar.Math.Lemmas.lemma_mult_le_right 8 (jv + 1) wosize;
+    assert ((jv + 1) * 8 <= wosize * 8);
+    assert (jv * 8 + 8 <= wosize * 8);
+    assert (obj_addr + jv * 8 + 8 <= obj_addr + wosize * 8);
+    assert_norm (pow2 57 < pow2 64);
+    FStar.Math.Lemmas.cancel_mul_mod jv 8;
+    FStar.Math.Lemmas.modulo_addition_lemma obj_addr 8 jv
+
+/// Translate a single field: if it's an absolute minor pointer, replace with offset.
+/// minor_base_addr is the absolute address of the minor heap data buffer.
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+inline_for_extraction
+fn translate_one_field (mh: minor_heap_t) (minor_base_addr: U64.t)
+                       (bump: U64.t) (field_addr: U64.t)
+  requires is_minor mh 'd 'b **
+           pure (U64.v field_addr + 8 <= minor_heap_size /\
+                 U64.v field_addr % 8 == 0 /\
+                 U64.v bump <= minor_heap_size /\
+                 U64.v minor_base_addr > 0)
+  ensures exists* d2.
+    is_minor mh d2 'b
+{
+  let v = minor_read mh field_addr;
+  (* Check if v is a block value (even, non-null) within [minor_base, minor_base + bump) *)
+  if U64.gte v minor_base_addr {
+    let offset = U64.sub v minor_base_addr;
+    if U64.lt offset bump {
+      if U64.eq (U64.rem v 2UL) 0UL {
+        minor_write mh field_addr offset
+      }
+    }
+  }
+}
+#pop-options
+
+/// Translate all fields of one minor object from absolute to offset
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
+                           (bump: U64.t) (obj_addr: U64.t) (wosize: U64.t)
+  requires is_minor mh 'd 'b **
+           pure (U64.v obj_addr >= 8 /\
+                 U64.v obj_addr % 8 == 0 /\
+                 U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size /\
+                 U64.v bump <= minor_heap_size /\
+                 U64.v minor_base_addr > 0)
+  ensures exists* d2.
+    is_minor mh d2 'b
+{
+  let mut j = 0UL;
+  while (U64.lt !j wosize)
+    invariant exists* d_i jv.
+      is_minor mh d_i 'b **
+      R.pts_to j jv **
+      pure (U64.v jv <= U64.v wosize /\
+            U64.v obj_addr >= 8 /\
+            U64.v obj_addr % 8 == 0 /\
+            U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size /\
+            U64.v bump <= minor_heap_size /\
+            U64.v minor_base_addr > 0)
+  {
+    let jv = !j;
+    minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
+    let field_addr = U64.add obj_addr (U64.mul jv 8UL);
+    translate_one_field mh minor_base_addr bump field_addr;
+    j := U64.add jv 1UL
+  }
+}
+#pop-options
+
+/// Conditionally translate an object's fields (only if scannable)
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+inline_for_extraction
+fn maybe_translate_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
+                           (bump: U64.t) (obj_addr: U64.t)
+                           (wosize: U64.t) (tag_val: U64.t)
+  requires is_minor mh 'd 'b **
+           pure (U64.v obj_addr >= 8 /\
+                 U64.v obj_addr % 8 == 0 /\
+                 U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size /\
+                 U64.v bump <= minor_heap_size /\
+                 U64.v minor_base_addr > 0)
+  ensures exists* d2.
+    is_minor mh d2 'b
+{
+  if U64.lt tag_val 251UL {
+    translate_object_fields mh minor_base_addr bump obj_addr wosize
+  } else {
+    ()
+  }
+}
+#pop-options
+
+/// Walk the minor heap and translate all scannable objects' fields
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
+  requires is_minor mh 'd 'b **
+           pure (U64.v 'b <= minor_heap_size /\
+                 U64.v minor_base_addr > 0)
+  ensures exists* d2.
+    is_minor mh d2 'b
+{
+  unfold is_minor;
+  let bump = R.op_Bang mh.bump_ref;
+  fold (is_minor mh 'd bump);
+  if U64.lt bump 8UL {
+    ()
+  } else {
+    let mut pos = 0UL;
+    let mut done_ = false;
+    while (not !done_)
+      invariant exists* d_i pv dn.
+        is_minor mh d_i bump **
+        R.pts_to pos pv **
+        R.pts_to done_ dn **
+        pure (U64.v pv <= minor_heap_size /\
+              U64.v pv % 8 == 0 /\
+              U64.v bump <= minor_heap_size /\
+              U64.v bump >= 8 /\
+              U64.v minor_base_addr > 0 /\
+              (not dn ==> U64.v pv + 8 <= U64.v bump))
+  {
+    let pv = !pos;
+    let hdr = minor_read mh pv;
+    let wz = U64.shift_right hdr 10ul;
+    let tag_val = U64.logand hdr 0xFFUL;
+    if U64.eq wz 0UL {
+      done_ := true
+    } else if U64.gt wz (U64.div bump 8UL) {
+      done_ := true
+    } else {
+      minor_wz_mul_no_overflow (U64.v wz) (U64.v bump);
+      minor_add_no_overflow (U64.v pv + 8) (U64.v wz * 8);
+      let obj_off = U64.add pv 8UL;
+      let field_bytes = U64.mul wz 8UL;
+      let obj_end = U64.add obj_off field_bytes;
+      if U64.gt obj_end bump {
+        done_ := true
+      } else {
+        maybe_translate_fields mh minor_base_addr bump obj_off wz tag_val;
+        with d_after. assert (is_minor mh d_after bump);
+        minor_pos_advance_no_overflow (U64.v pv) (U64.v wz) (U64.v bump);
+        let next = U64.add pv (U64.mul (U64.add wz 1UL) 8UL);
+        pos := next;
+        if U64.gte next bump {
+          done_ := true
+        } else {
+          if U64.gt next (U64.sub bump 8UL) {
+            done_ := true
+          }
+        }
+      }
+    }
+  }
+  }
+}
+#pop-options
