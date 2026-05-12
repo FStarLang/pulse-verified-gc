@@ -8,20 +8,22 @@ F\*/Pulse source so the extraction is usable directly.
 
 ---
 
-## Current Status (updated 2025-05-12)
+## Current Status (updated 2025-06-06)
 
 | # | Patch | Status | Notes |
 |---|-------|--------|-------|
 | 5  | No-scan skip in update_all | ✅ **DONE** | Verified `is_no_scan_eq` + `getTag` check in `UpdatePtrs.fst` |
 | 7  | darken non-static | ✅ **DONE** | `GC.Impl.MarkBounded` added to API bundle in Makefile |
 | 10 | Tag preservation in promote | ✅ **DONE** | `Impl.Promote.fst` reads minor tag, uses `Obj.makeHeader` (clean extraction) |
-| 1,6,8 | zero_addr parameterisation | ❌ Bridge-only | `zero_addr` non-static; sweep/rescan start at `zero_addr` |
-| 2  | Configurable heap_size | ❌ Bridge-only | `heap_size_u64` is settable at link time |
-| 3,4 | Scan range / HWM | ❌ Bridge-only | `update_scan_base`, `major_alloc_hwm` for perf |
-| 9  | Infix forwarding | ❌ Not started | `well_formed_heap_part4` assumes no infix objects |
-| 11 | `is_pointer` lower bound | ❌ Bridge-only | Changed `v==0` to `v < zero_addr+8` |
-| 12 | `is_valid_fp` lower bound | ❌ Bridge-only | Changed `v>=8` to `v >= zero_addr+8` |
+| 6  | rescan_heap_impl start | ✅ **DONE** | Impl now starts at `zero_addr` (= 0UL in spec) |
+| 11 | `is_pointer` lower bound | ✅ **DONE** | Changed `v==0` to `v < mword`, extracts as `v < 8ULL` |
+| 12 | `is_valid_fp` lower bound | ✅ **DONE** (was already OK) | Already uses `v >= 8ULL` = `v >= mword` |
 | 13 | krmlinit | ✅ Minimal | Only sets `queue_size_sz` and `minor_heap_size_sz` |
+| B13 | compat.c stub | ✅ **DONE** | `U64.ne` → `not (U64.eq ...)`, no more extern |
+| 1,8 | zero_addr non-static | ⚠️ Bridge-only | `zero_addr` must be non-static for OCaml bridge |
+| 2  | Configurable heap_size | ⚠️ Bridge-only | `heap_size_u64` is settable at link time |
+| 3,4 | Scan range / HWM | ⚠️ Bridge-only | `update_scan_base`, `major_alloc_hwm` for perf |
+| 9  | Infix forwarding | ❌ Not started | `well_formed_heap_part4` assumes no infix objects |
 
 ### Bridge Code (alloc_gen.c — 528 lines, entirely unverified)
 
@@ -36,7 +38,7 @@ F\*/Pulse source so the extraction is usable directly.
 | B9  | Ref_table fwd rewriting | ❌ Not started | 17 lines |
 | B11 | Full GC wrapper | ❌ Not started | 46 lines |
 | B12 | Allocation entry point | ❌ Not started | 56 lines, hot path |
-| B13 | compat.c stub | ❌ Minimal | 1 function (`FStar_UInt64_ne`) |
+| B13 | compat.c stub | ✅ **DONE** | `FStar_UInt64_ne` eliminated from extraction |
 | B14 | verified_do_minor_gc | — Keep as-is | 5 lines, inherently OCaml-specific |
 
 ### Verification Status (spec correctness)
@@ -49,10 +51,14 @@ F\*/Pulse source so the extraction is usable directly.
 | Extraction compiles without KaRaMeL warnings | ✅ No dropped types |
 | All 8 OCaml benchmarks pass | ✅ binarytrees, fasta, quicksort, etc. |
 
-**Snapshot updated at commit `6ac30a1`**. The snapshot now uses the fresh
-extraction directly with only minimal bridge patches (zero_addr, scan range,
-is_pointer lower bound). The old prefixed names (`GC_Lib_Header_White` etc.)
-and `pack_header64`/`header_sem` issues are fully eliminated.
+### Remaining extraction diff (extraction → snapshot): 19 lines
+
+Only bridge infrastructure remains:
+1. `zero_addr` non-static + `major_alloc_hwm` + `update_scan_base` globals (9 lines)
+2. `update_all_objects` scan range optimization (6 lines)
+3. `fwd_array_size` alias (2 lines)
+
+**Snapshot updated at commit `60e2828`**.
 
 ---
 
