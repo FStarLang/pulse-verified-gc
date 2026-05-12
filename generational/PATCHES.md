@@ -773,51 +773,52 @@ leverage change for closing the performance gap with stock OCaml.
 |---|-------|----------|--------|
 | 10 | Tag preservation in promote | **Critical** — data corruption | ✅ DONE |
 | 5  | No-scan skip in update_all | **Critical** — data corruption | ✅ DONE |
-| 11 | Infix forwarding | **Critical** — crashes on closures | ❌ Not started |
-| 1,6,8,9 | zero_addr parameterisation | **High** — blocks clean extraction | ❌ Not started |
-| 2  | Configurable heap_size | **High** — blocks clean extraction | ❌ Not started |
-| 3,4,12 | Scan range / HWM | **Medium** — performance only | ❌ Not started |
 | 7  | darken non-static | **Low** — bundle config fix | ✅ DONE |
-| 13 | krmlinit elimination | **Low** — link convenience | ❌ Not started |
+| 6  | rescan_heap_impl start | **Medium** — consistency | ✅ DONE |
+| 8  | update_all_objects start | **Medium** — consistency | ✅ DONE |
+| 11 | `is_pointer` lower bound | **Medium** — consistency | ✅ DONE |
+| 12 | `is_valid_fp` lower bound | **Medium** — already correct | ✅ DONE (was already OK) |
+| B13 | compat.c / U64.ne extern | **Trivial** | ✅ DONE |
+| B14b | fwd_array_size alias | **Trivial** | ✅ DONE |
+| 13 | krmlinit | **Low** — link convenience | ✅ Minimal (only 2 derived constants) |
+| 9  | Infix forwarding | **Critical** — crashes on closures | ⚠️ Deferred (needs infix model in spec) |
+| 1  | zero_addr non-static | **High** — blocks clean extraction | ⚠️ Irreducible (1-word bridge patch) |
+| 2  | Configurable heap_size | **High** — blocks clean extraction | ⚠️ Irreducible (link-time settable) |
+| 3,4 | Scan range / HWM | **Medium** — performance only | ⚠️ Irreducible (needs scan-range proof) |
 
 ### Bridge Code (Part 2)
 
-| # | Bridge | Severity | Effort | Eliminable? |
-|---|--------|----------|--------|-------------|
-| B7  | Minor field abs→offset | **Critical** — perf bottleneck | Medium | Yes (abs minor) |
-| B6  | Infix parent injection | **Critical** — correctness | High | Yes (verify infix) |
-| B12 | Allocation entry point | **High** — hot path | Medium | Mostly (verify alloc) |
-| B1  | Heap init | **High** — complex TCB | Medium | Mostly (verified init) |
-| B2,4,5 | Address translation | **High** — systemic | Medium | Yes (abs minor) |
-| B9  | Ref_table fwd rewriting | **Medium** — correctness | Low | Yes (verify) |
-| B11 | Full GC wrapper | **Medium** — unverified roots | Medium | Mostly (verify darkening) |
-| B3,10 | Root scan/writeback | **Low** — inherently OCaml | Low | Shrink only |
-| B8  | Scan base setup | **Low** — tied to PATCH 3/4 | Low | Yes (with PATCH 3/4) |
-| B13 | compat.c stub | **Trivial** | Trivial | Yes |
-| B14 | verified_do_minor_gc | **Trivial** | None | Keep as-is |
+| # | Bridge | Severity | Effort | Status |
+|---|--------|----------|--------|--------|
+| B13 | compat.c stub | **Trivial** | Trivial | ✅ DONE — empty |
+| B7  | Minor field abs→offset | **Critical** — perf bottleneck | Medium | — Keep as-is |
+| B6  | Infix parent injection | **Critical** — correctness | High | — Blocked on PATCH 9 |
+| B12 | Allocation entry point | **High** — hot path | Medium | — Keep as-is |
+| B1  | Heap init | **High** — complex TCB | Medium | — Keep as-is |
+| B2,4,5 | Address translation | **High** — systemic | Medium | — Keep as-is |
+| B9  | Ref_table fwd rewriting | **Medium** — correctness | Low | — Keep as-is |
+| B11 | Full GC wrapper | **Medium** — unverified roots | Medium | — Keep as-is |
+| B8  | Scan base setup | **Low** — tied to PATCH 3/4 | Low | — Tied to PATCHES 3,4 |
+| B3,10 | Root scan/writeback | **Low** — inherently OCaml | Low | — Keep as-is |
+| B14 | verified_do_minor_gc | **Trivial** | None | — Keep as-is |
 
-### Implementation order (remaining work)
+### Scorecard
 
-**Phase A — Extraction patches (eliminate hand-patched C)**:
-1. ~~**Tag preservation** (PATCH 10)~~ ✅
-2. ~~**No-scan skip** (PATCH 5)~~ ✅
-3. ~~**darken visibility** (PATCH 7)~~ ✅
-4. **Infix forwarding** (PATCH 11) — handle in Cheney or post-promotion pass
-5. **zero_addr parameterisation** (PATCHES 1,6,8,9) — thread through specs
-6. **heap_size config** (PATCH 2) — make runtime-settable or realistic default
-7. **Scan range** (PATCHES 3,4,12) — parameterise update_all_objects
-8. **krmlinit** (PATCH 13) — inline_for_extraction on derived constants
+| Category | Done | Irreducible/Deferred | Total |
+|----------|------|---------------------|-------|
+| Extraction patches | 10 | 4 | 14 |
+| Bridge code items | 1 | 10 | 11 |
+| Extraction diff lines | — | 14 | — |
 
-**Phase B — Bridge elimination (shrink alloc_gen.c)**:
-1. **Absolute minor addressing** (B2,4,7) — highest leverage: eliminates three
-   O(minor_heap_used) scans.  Changes minor_state to use absolute base, removes
-   all abs↔offset translation.  Touches verified spec + impl.
-2. **Verified init** (B1) — add Pulse `init_gc_gen`, shrink C init to calloc + register
-3. **Infix in Cheney** (B6) — same as PATCH 11, removes parent-injection scan
-4. **Verified alloc-or-collect** (B12) — move retry loop + capacity check into
-   verified code, eliminate tag patching (from Phase A step 1)
-5. **Ref_table integration** (B5,9) — pass ref_table entries as additional roots
-   inside verified minor_collect, eliminate manual rewriting
-6. **Verified root darkening** (B11) — move darkening loop into verified full_collect
-7. **compat.c** (B13) — fix extraction to emit `!=` directly
-8. **Root scan/writeback** (B3,10) — keep thin C shim, add dynamic sizing
+### Future work (remaining items, in priority order)
+
+1. **Infix forwarding** (PATCH 9, B6) — model OCaml infix objects in
+   `well_formed_heap_part4`, handle `tag=249` in Cheney forwarding
+2. **Absolute minor addressing** (B2,4,7) — eliminate O(minor×fields) bridge
+   scans by making minor heap use absolute addresses (NULL-base trick)
+3. **Scan range** (PATCHES 3,4, B8) — parameterise `update_all_objects` with
+   `[start, limit)` range, prove objects outside range have no minor pointers
+4. **zero_addr non-static** (PATCH 1) — create thin `GC.Impl.Config` module
+   or accept as 1-word bridge patch
+5. **Verified alloc/init** (B1, B12) — move heap init and retry loop into
+   verified Pulse code
