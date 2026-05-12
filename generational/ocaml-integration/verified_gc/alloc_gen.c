@@ -55,6 +55,8 @@
 extern uint64_t zero_addr;
 extern uint64_t major_alloc_hwm;
 extern uint64_t update_scan_base;
+extern size_t fwd_array_size;
+extern size_t queue_size_sz;
 extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
 /* --- Globals --- */
@@ -90,7 +92,7 @@ static void ensure_heap(void) {
 
     /* NULL-base trick: GC offsets become absolute addresses */
     zero_addr = (uint64_t)(uintptr_t)major_base;
-    GC_Spec_Base_heap_size_u64 = (uint64_t)(uintptr_t)(major_base + major_bytes);
+    heap_size_u64 = (uint64_t)(uintptr_t)(major_base + major_bytes);
 
     gc_gen_heap.major.data = NULL;
     gc_gen_heap.major.size = major_bytes;
@@ -121,12 +123,12 @@ static void ensure_heap(void) {
         if (w >= 256) minor_words = w;
     }
     size_t minor_sz = minor_words * 8;
-    minor_heap_size = (krml_checked_int_t)minor_sz;
     minor_heap_size_u64 = (uint64_t)minor_sz;
     max_young_wosize_u64 = (uint64_t)(minor_words / 2);  /* max alloc = half minor heap */
 
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
+    fwd_array_size = queue_size_sz;  /* = minor_heap_size_u64 / 8 */
     uint8_t *minor_data = (uint8_t *)calloc(1, minor_sz);
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");
@@ -430,7 +432,7 @@ static void do_full_gc(void) {
         for (i = 0; i < root_count; i++) {
             uint64_t root = root_values[i];
             /* After minor GC, all roots should be major addresses (absolute) */
-            if (root >= zero_addr + 8 && root < GC_Spec_Base_heap_size_u64 &&
+            if (root >= zero_addr + 8 && root < heap_size_u64 &&
                 root % 8 == 0)
             {
                 uint64_t h_addr = root - 8;

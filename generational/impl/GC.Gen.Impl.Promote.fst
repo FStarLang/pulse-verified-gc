@@ -205,7 +205,11 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
       assert (pure (major_hdr_addr == SpecHeap.hd_address (new_obj <: obj_addr)));
       let major_hdr = read_word major major_hdr_addr;
       let wz_read = SpecObj.getWosize major_hdr;
-      let new_hdr = SpecObj.makeHeader wz_read Header.White tag;
+      let new_hdr = Obj.makeHeader wz_read Header.White tag;
+      // Bridge: Obj.makeHeader == SpecObj.makeHeader (both compute pack_header)
+      Obj.makeHeader_eq_pack_header wz_read Header.White tag;
+      SpecObj.makeHeader_is_pack_header64 wz_read Header.White tag;
+      assert (pure (new_hdr == SpecObj.makeHeader wz_read Header.White tag));
       // Unfold set_promoted_tag so SMT sees it equals our write_word
       PromoteSpec.set_promoted_tag_unfold ms_c (new_obj <: obj_addr) (minor_tag {data='md; bump='mb} obj);
       // Assert the key equality: our write matches set_promoted_tag
