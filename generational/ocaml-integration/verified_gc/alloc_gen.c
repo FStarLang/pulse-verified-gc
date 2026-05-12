@@ -55,7 +55,6 @@
 extern uint64_t zero_addr;
 extern uint64_t major_alloc_hwm;
 extern uint64_t update_scan_base;
-extern size_t fwd_array_size;
 extern size_t queue_size_sz;
 extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
@@ -128,7 +127,6 @@ static void ensure_heap(void) {
 
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
-    fwd_array_size = queue_size_sz;  /* = minor_heap_size_u64 / 8 */
     uint8_t *minor_data = (uint8_t *)calloc(1, minor_sz);
     if (!minor_data)
         caml_fatal_error("verified gen GC: cannot allocate minor heap");
@@ -142,7 +140,7 @@ static void ensure_heap(void) {
     gc_gen_heap.minor.bump_ref = bump_ref;
 
     /* --- Forwarding array --- */
-    gc_fwd_arr = (uint64_t *)calloc((size_t)fwd_array_size, sizeof(uint64_t));
+    gc_fwd_arr = (uint64_t *)calloc((size_t)queue_size_sz, sizeof(uint64_t));
     if (!gc_fwd_arr)
         caml_fatal_error("verified gen GC: cannot allocate fwd array");
 
@@ -246,7 +244,7 @@ static void do_minor_gc(void) {
     }
 
     /* 4. Zero forwarding array */
-    memset(gc_fwd_arr, 0, (size_t)fwd_array_size * sizeof(uint64_t));
+    memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
 
     /* 4.1. Infix closure fixup: OCaml closures with multiple entry points embed
      * Infix_tag (249) headers inside the parent closure. A pointer to an infix
@@ -370,7 +368,7 @@ static void do_minor_gc(void) {
             uint64_t fv = (uint64_t)(uintptr_t)(**r);
             if (fv >= 8 && fv < minor_heap_size_u64 && fv % 8 == 0) {
                 size_t idx = (size_t)(fv / 8);
-                if (idx < (size_t)fwd_array_size) {
+                if (idx < (size_t)queue_size_sz) {
                     uint64_t fwd_val = gc_fwd_arr[idx];
                     if (fwd_val != 0)
                         **r = (value)(uintptr_t)fwd_val;

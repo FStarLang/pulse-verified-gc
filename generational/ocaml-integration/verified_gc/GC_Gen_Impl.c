@@ -305,9 +305,6 @@ static void update_all_objects(heap_t major, uint64_t *fwd_arr)
 
 size_t queue_size_sz;
 
-/* Bridge alias: fwd array has one entry per minor-heap word */
-size_t fwd_array_size;
-
 static uint64_t fst__uint64_t_uint64_t(K___uint64_t_uint64_t x)
 {
   return x.fst;
