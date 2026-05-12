@@ -542,7 +542,7 @@ static uint64_t read_field(heap_t heap, uint64_t h_addr, uint64_t i)
 
 static bool is_pointer(uint64_t v)
 {
-  if (v < zero_addr + 8ULL)
+  if (v < 8ULL)
     return false;
   else if (v >= heap_size_u64)
     return false;
@@ -821,7 +821,7 @@ uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
 
 static bool is_valid_fp(uint64_t v)
 {
-  return v >= zero_addr + 8ULL && v < heap_size_u64 && v % 8ULL == 0ULL;
+  return v >= 8ULL && v < heap_size_u64 && v % 8ULL == 0ULL;
 }
 
 uint64_t init_heap(heap_t heap)

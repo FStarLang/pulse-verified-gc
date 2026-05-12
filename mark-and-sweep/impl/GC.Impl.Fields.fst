@@ -159,8 +159,8 @@ fn is_pointer (v: U64.t)
                                U64.v v < heap_size /\ 
                                U64.v v % U64.v mword == 0))
 {
-  // Check non-null
-  if (U64.eq v 0UL) {
+  // Check below minimum object address (mword = 8)
+  if (U64.lt v mword) {
     false
   } else {
     // Check within heap bounds

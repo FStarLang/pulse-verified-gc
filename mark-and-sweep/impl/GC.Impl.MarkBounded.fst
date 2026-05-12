@@ -1082,7 +1082,7 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   // Provide pow2 64 value to Z3 to avoid fuel-4 retry
   FStar.UInt.pow2_values 64;
 
-  let mut current = 0UL;
+  let mut current = (zero_addr <: U64.t);
 
   while (
     let v = !current;
