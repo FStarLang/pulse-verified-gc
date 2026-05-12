@@ -54,7 +54,7 @@
 /* --- Patched externs from GC_Gen_Impl.c --- */
 extern uint64_t zero_addr;
 extern uint64_t major_alloc_hwm;
-extern uint64_t update_scan_base;
+extern bool update_scan_base;
 extern size_t queue_size_sz;
 extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
@@ -307,41 +307,8 @@ static void do_minor_gc(void) {
      * to discover child objects during BFS.  Without this translation,
      * scan_loop can't follow inter-minor pointers and only root objects
      * get promoted, leaving dangling absolute pointers after reset. */
-    {
-        uint8_t *mdata = gc_gen_heap.minor.data;
-        uint64_t bump = *gc_gen_heap.minor.bump_ref;
-        uint64_t pos = 0;  /* byte offset of first header */
-        size_t translated_4_5 = 0;
-        size_t obj_count_4_5 = 0;
-
-        while (pos + 8 <= bump) {
-            uint64_t hdr = *(uint64_t *)(mdata + pos);
-            uint64_t wz = hdr >> 10;
-            uint64_t tag_val = hdr & 0xFF;
-            uint64_t obj_off = pos + 8;
-            if (wz == 0 || obj_off + wz * 8 > bump) break;
-            obj_count_4_5++;
-            /* Only translate pointer-containing objects (tag < no_scan_tag) */
-            if (tag_val < 251) {
-                uint64_t j;
-                for (j = 0; j < wz; j++) {
-                    uint64_t *field = (uint64_t *)(mdata + obj_off + j * 8);
-                    uint64_t v = *field;
-                    /* Check if value is an absolute minor pointer */
-                    if ((v & 1) == 0 && v != 0) {  /* block value (even, non-null) */
-                        uintptr_t uv = (uintptr_t)v;
-                        if (uv >= (uintptr_t)minor_base &&
-                            uv < (uintptr_t)minor_base + bump) {
-                            /* Translate absolute → offset */
-                            *field = (uint64_t)(uv - (uintptr_t)minor_base);
-                            translated_4_5++;
-                        }
-                    }
-                }
-            }
-            pos += (wz + 1) * 8;
-        }
-    }
+    translate_minor_fields(gc_gen_heap.minor,
+                           (uint64_t)(uintptr_t)minor_base);
 
     /* 4.6. Set up update_all_objects to only scan newly-promoted objects.
      * Pre-existing major objects' inter-generational pointers are handled
@@ -352,7 +319,8 @@ static void do_minor_gc(void) {
      * each scan position. */
     {
         uint64_t fp_pre = *gc_gen_heap.fp_ref;
-        update_scan_base = (fp_pre >= 8) ? (fp_pre - 8) : 0ULL;
+        major_alloc_hwm = (fp_pre >= 8) ? (fp_pre - 8) : 0ULL;
+        update_scan_base = true;
     }
 
     /* 5. Phased minor collection (replaces single minor_collect call).
@@ -425,11 +393,10 @@ static void do_minor_gc(void) {
 
     /* 5c. Rewrite major heap fields: replace minor pointers with forwarded addresses */
     update_all_objects(gc_gen_heap.major, gc_fwd_arr);
-    update_scan_base = 0ULL;  /* reset for next time */
+    update_scan_base = false;  /* reset for next time */
 
     /* 5d. Rewrite root array */
     rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
-
     /* 5e. Reset minor heap */
     minor_heap_reset(gc_gen_heap.minor);
 

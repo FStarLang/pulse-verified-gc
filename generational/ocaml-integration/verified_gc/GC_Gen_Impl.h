@@ -65,6 +65,8 @@ void minor_heap_reset(minor_heap_t mh);
 
 minor_heap_t alloc_minor_heap(void);
 
+void translate_minor_fields(minor_heap_t mh, uint64_t minor_base_addr);
+
 extern size_t queue_size_sz;
 
 void

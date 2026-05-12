@@ -9,10 +9,11 @@
 
 #include "internal/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 
-/* Bridge-visible */
 uint64_t zero_addr = 0ULL;
+
+/* Bridge globals for scan-range optimization */
 uint64_t major_alloc_hwm = 0ULL;
-uint64_t update_scan_base = 0ULL;
+bool update_scan_base = false;
 
 static uint8_t uint64_to_uint8(uint64_t x)
 {
@@ -494,6 +495,80 @@ minor_heap_t alloc_minor_heap(void)
   return ((minor_heap_t){ .data = data, .size = minor_heap_size_sz, .bump_ref = &bump_ref });
 }
 
+static void
+translate_object_fields(
+  minor_heap_t mh,
+  uint64_t minor_base_addr,
+  uint64_t bump,
+  uint64_t obj_addr,
+  uint64_t wosize
+)
+{
+  uint64_t j = 0ULL;
+  uint64_t __anf0 = j;
+  bool cond = __anf0 < wosize;
+  while (cond)
+  {
+    uint64_t jv = j;
+    uint64_t field_addr = obj_addr + jv * 8ULL;
+    uint64_t v = minor_read(mh, field_addr);
+    if (v >= minor_base_addr)
+    {
+      uint64_t offset = v - minor_base_addr;
+      if (offset < bump)
+        if (v % 2ULL == 0ULL)
+          minor_write(mh, field_addr, offset);
+    }
+    j = jv + 1ULL;
+    uint64_t __anf0 = j;
+    cond = __anf0 < wosize;
+  }
+}
+
+void translate_minor_fields(minor_heap_t mh, uint64_t minor_base_addr)
+{
+  uint64_t bump = *mh.bump_ref;
+  if (!(bump < 8ULL))
+  {
+    uint64_t pos = 0ULL;
+    bool done_ = false;
+    bool __anf0 = done_;
+    bool cond = !__anf0;
+    while (cond)
+    {
+      uint64_t pv = pos;
+      uint64_t hdr = minor_read(mh, pv);
+      uint64_t wz = hdr >> 10U;
+      uint64_t tag_val = hdr & 0xFFULL;
+      if (wz == 0ULL)
+        done_ = true;
+      else if (wz > bump / 8ULL)
+        done_ = true;
+      else
+      {
+        uint64_t obj_off = pv + 8ULL;
+        uint64_t field_bytes = wz * 8ULL;
+        uint64_t obj_end = obj_off + field_bytes;
+        if (obj_end > bump)
+          done_ = true;
+        else
+        {
+          if (tag_val < 251ULL)
+            translate_object_fields(mh, minor_base_addr, bump, obj_off, wz);
+          uint64_t next = pv + (wz + 1ULL) * 8ULL;
+          pos = next;
+          if (next >= bump)
+            done_ = true;
+          else if (next > bump - 8ULL)
+            done_ = true;
+        }
+      }
+      bool __anf0 = done_;
+      cond = !__anf0;
+    }
+  }
+}
+
 size_t queue_size_sz;
 
 void
@@ -832,9 +907,9 @@ void update_one_object(heap_t major, uint64_t *fwd_arr, uint64_t obj, uint64_t w
 
 void update_all_objects(heap_t major, uint64_t *fwd_arr)
 {
-  uint64_t pos = (update_scan_base > 0ULL) ? update_scan_base : zero_addr;
-  uint64_t scan_limit = (major_alloc_hwm > 0ULL) ? major_alloc_hwm : heap_size_u64;
-  bool done = (pos + 8ULL >= scan_limit);
+  uint64_t pos = update_scan_base ? major_alloc_hwm : zero_addr;
+  uint64_t scan_limit = update_scan_base ? heap_size_u64 : major_alloc_hwm;
+  bool done = false;
   bool __anf00 = done;
   bool cond = !__anf00;
   while (cond)
