@@ -8,6 +8,51 @@ F\*/Pulse source so the extraction is usable directly.
 
 ---
 
+## Current Status (updated 2026-05-12)
+
+| # | Patch | Status | Notes |
+|---|-------|--------|-------|
+| 5  | No-scan skip in update_all | ✅ **DONE** | Verified `is_no_scan_eq` + `getTag` check in `UpdatePtrs.fst` |
+| 7  | darken non-static | ✅ **DONE** | `GC.Impl.MarkBounded` added to API bundle in Makefile |
+| 10 | Tag preservation in promote | ✅ **DONE** | `Impl.Promote.fst` reads minor tag, rebuilds header with `makeHeader` |
+| 1,6,8,9 | zero_addr parameterisation | ❌ Not started | `zero_addr = 0UL` hardcoded in `GC.Spec.Base.fsti` |
+| 2  | Configurable heap_size | ❌ Not started | `heap_size` is abstract `val` but fixed at link time |
+| 3,4,12 | Scan range / HWM | ❌ Not started | `update_all_objects` still scans full heap in verified code |
+| 11 | Infix forwarding | ❌ Not started | `well_formed_heap_part4` assumes no infix objects |
+| 13 | krmlinit elimination | ❌ Not started | Hand-patched `krmlinit.c` still needed |
+
+### Bridge Code (alloc_gen.c — 528 lines, entirely unverified)
+
+| # | Bridge | Status | Notes |
+|---|--------|--------|-------|
+| B1  | Heap init | ❌ Not started | 96 lines, unverified |
+| B2,4,5 | Address translation | ❌ Not started | Minor still uses 0-based offsets |
+| B3,10 | Root scan/writeback | ❌ Not started | OCaml-specific, keep as thin shim |
+| B6  | Infix parent injection | ❌ Not started | 50 lines, tied to PATCH 11 |
+| B7  | Minor field abs→offset | ❌ Not started | **Major perf bottleneck** — O(minor×fields) |
+| B8  | Scan base setup | ❌ Not started | Tied to PATCHES 3,4 |
+| B9  | Ref_table fwd rewriting | ❌ Not started | 17 lines |
+| B11 | Full GC wrapper | ❌ Not started | 46 lines |
+| B12 | Allocation entry point | ❌ Not started | 56 lines, hot path |
+| B13 | compat.c stub | ❌ Not started | 1 function (`FStar_UInt64_ne`) |
+| B14 | verified_do_minor_gc | — Keep as-is | 5 lines, inherently OCaml-specific |
+
+### Verification Status (spec correctness)
+
+| Item | Status |
+|------|--------|
+| `assume (no_scan_invariant)` in Correctness.fst | ✅ **Eliminated** — proved via `promote_all_preserves_no_scan_invariant` |
+| All 152 generational modules verify | ✅ Clean build |
+| Zero admits/assumes in spec | ✅ Confirmed |
+
+**The snapshot in `ocaml-integration/verified_gc/` still has ALL the hand patches
+applied** (zero_addr globals, scan range restriction, tag patching loop, infix
+forwarding, etc.).  The snapshot was last updated at commit `527a7c2` for the tag
+preservation extraction, but the hand patches for PATCHES 1,3,4,6,8,9,11,12,13
+remain in the snapshot files.
+
+---
+
 ## Cosmetic / naming diffs (not real patches)
 
 These arise because the integration copy was extracted with an older `-no-prefix`
@@ -134,7 +179,7 @@ done = next_pos + 8ULL >= scan_limit;
 
 ---
 
-## PATCH 5 — No-scan tag skip in `update_all_objects`
+## PATCH 5 — No-scan tag skip in `update_all_objects` — ✅ DONE
 
 **File**: `GC_Gen_Impl.c`, lines 273–300
 
@@ -151,15 +196,12 @@ bigarrays, custom blocks), not pointers.  Without this guard, the field
 scanner interprets raw bytes as pointers and corrupts data (e.g., OCaml
 bytecode stored in Code_val strings).
 
-**Plan to eliminate**:
-1. The mark-and-sweep code already has `is_no_scan` checks (`GC.Impl.Closure`,
-   `GC.Impl.MarkBounded`).  The same pattern needs to be added to
-   `update_all_objects` in `GC.Gen.Impl.UpdatePtrs.fst`.
-2. When the header's tag ≥ `no_scan_tag`, skip the field-rewriting loop and
-   just advance `pos` past the object.
-3. The spec-level `update_all_objects_aux` in `GC.Gen.Promote` already handles
-   this correctly (via `object_fields` which returns `[]` for no-scan objects).
-   The impl just needs to match.
+**Plan to eliminate**: ✅ **DONE**.  The verified `update_all_objects` in
+`GC.Gen.Impl.UpdatePtrs.fst` now includes an `is_no_scan` check using
+`GC.Impl.Object.getTag` compared against `no_scan_tag`.  A bridging lemma
+`is_no_scan_eq` connects the runtime tag comparison to the spec predicate.
+When `tag >= no_scan_tag`, the field-rewriting loop is skipped.  This matches
+the hand patch and is fully verified.
 
 ---
 
@@ -185,7 +227,7 @@ as pointers.
 
 ---
 
-## PATCH 7 — `darken_if_white_bounded` non-static
+## PATCH 7 — `darken_if_white_bounded` non-static — ✅ DONE
 
 **File**: `GC_Gen_Impl.c`, line 550
 
@@ -203,11 +245,9 @@ GC roots during the mark phase.  The extracted version is `static`
 (file-internal) because KaRaMeL only exports functions listed in the API
 bundle.
 
-**Plan to eliminate**:
-1. Add `darken_if_white_bounded` (or a wrapper) to the API bundle modules
-   in `GC.Gen.Impl.fsti`.
-2. Or: add `GC.Impl.MarkBounded` to the API modules in the `-bundle` flag.
-3. Either way, the function becomes non-static in the extraction.
+**Plan to eliminate**: ✅ **DONE**.  `GC.Impl.MarkBounded` is now listed in the
+API bundle modules in the Makefile (`-bundle 'GC.Gen.Impl+...+GC.Impl.MarkBounded=...'`).
+This makes `darken_if_white_bounded` non-static in the extracted C output.
 
 ---
 
@@ -249,7 +289,7 @@ uint64_t current = zero_addr;
 
 ---
 
-## PATCH 10 — Tag patching after Cheney promotion
+## PATCH 10 — Tag patching after Cheney promotion — ✅ DONE
 
 **File**: `GC_Gen_Impl.c`, lines 871–886
 
@@ -270,14 +310,13 @@ in promoted headers.  This loses the original tag, which matters for:
 - No-scan objects (tag ≥ 251): their fields would be wrongly scanned
 - Closures (tag = 247) and infix objects (tag = 249): require special handling
 
-**Plan to eliminate**:
-1. Fix `allocate_part1` in `GC.Gen.Impl.Promote.fst` to accept and preserve
-   the original tag from the minor heap object.
-2. The tag should be read from the minor heap header (`hd_address(src)`) and
-   written into the promoted header.
-3. This requires threading the tag through `cheney_copy_one` → `allocate_part1`.
-4. The spec (`GC.Gen.Promote`) already models tag preservation — the impl
-   just doesn't implement it.
+**Plan to eliminate**: ✅ **DONE**.  `GC.Gen.Impl.Promote.fst` now reads the
+minor heap header via `Obj.getTag minor_hdr`, rebuilds the promoted header with
+`makeHeader wz_read Header.White tag`, and writes it via `set_promoted_tag`.
+A bridging lemma `minor_tag_bound` connects the impl tag to the spec `minor_tag`.
+The hand-patched tag-fixup loop in the snapshot is no longer needed — the
+extraction now produces correct tag preservation natively.
+(Landed in commits `d73649a`, `527a7c2`.)
 
 ---
 
@@ -687,16 +726,16 @@ leverage change for closing the performance gap with stock OCaml.
 
 ### Extraction Patches (Part 1)
 
-| # | Patch | Severity | Effort |
+| # | Patch | Severity | Status |
 |---|-------|----------|--------|
-| 10 | Tag preservation in promote | **Critical** — data corruption | Medium |
-| 5  | No-scan skip in update_all | **Critical** — data corruption | Low |
-| 11 | Infix forwarding | **Critical** — crashes on closures | High |
-| 1,6,8,9 | zero_addr parameterisation | **High** — blocks clean extraction | Medium |
-| 2  | Configurable heap_size | **High** — blocks clean extraction | Low |
-| 3,4,12 | Scan range / HWM | **Medium** — performance only | Medium |
-| 7  | darken non-static | **Low** — bundle config fix | Trivial |
-| 13 | krmlinit elimination | **Low** — link convenience | Low |
+| 10 | Tag preservation in promote | **Critical** — data corruption | ✅ DONE |
+| 5  | No-scan skip in update_all | **Critical** — data corruption | ✅ DONE |
+| 11 | Infix forwarding | **Critical** — crashes on closures | ❌ Not started |
+| 1,6,8,9 | zero_addr parameterisation | **High** — blocks clean extraction | ❌ Not started |
+| 2  | Configurable heap_size | **High** — blocks clean extraction | ❌ Not started |
+| 3,4,12 | Scan range / HWM | **Medium** — performance only | ❌ Not started |
+| 7  | darken non-static | **Low** — bundle config fix | ✅ DONE |
+| 13 | krmlinit elimination | **Low** — link convenience | ❌ Not started |
 
 ### Bridge Code (Part 2)
 
@@ -714,16 +753,16 @@ leverage change for closing the performance gap with stock OCaml.
 | B13 | compat.c stub | **Trivial** | Trivial | Yes |
 | B14 | verified_do_minor_gc | **Trivial** | None | Keep as-is |
 
-### Implementation order
+### Implementation order (remaining work)
 
 **Phase A — Extraction patches (eliminate hand-patched C)**:
-1. **Tag preservation** (PATCH 10) — fix `allocate_part1` to thread the tag
-2. **No-scan skip** (PATCH 5) — add tag check in `update_all_objects`
-3. **Infix forwarding** (PATCH 11) — handle in Cheney or post-promotion pass
-4. **zero_addr parameterisation** (PATCHES 1,6,8,9) — thread through specs
-5. **heap_size config** (PATCH 2) — make runtime-settable or realistic default
-6. **Scan range** (PATCHES 3,4,12) — parameterise update_all_objects
-7. **darken visibility** (PATCH 7) — add to API bundle
+1. ~~**Tag preservation** (PATCH 10)~~ ✅
+2. ~~**No-scan skip** (PATCH 5)~~ ✅
+3. ~~**darken visibility** (PATCH 7)~~ ✅
+4. **Infix forwarding** (PATCH 11) — handle in Cheney or post-promotion pass
+5. **zero_addr parameterisation** (PATCHES 1,6,8,9) — thread through specs
+6. **heap_size config** (PATCH 2) — make runtime-settable or realistic default
+7. **Scan range** (PATCHES 3,4,12) — parameterise update_all_objects
 8. **krmlinit** (PATCH 13) — inline_for_extraction on derived constants
 
 **Phase B — Bridge elimination (shrink alloc_gen.c)**:
