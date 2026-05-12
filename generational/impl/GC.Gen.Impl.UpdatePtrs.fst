@@ -349,7 +349,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
   update_major_pointers_unfold 'ms fwd;
   objects_initial_membership 'ms;
 
-  let mut pos = 0UL;
+  let mut pos = (zero_addr <: U64.t);
   let mut done = false;
   while (not !done)
     invariant exists* ms_i pos_i b.
