@@ -8,18 +8,20 @@ F\*/Pulse source so the extraction is usable directly.
 
 ---
 
-## Current Status (updated 2026-05-12)
+## Current Status (updated 2025-05-12)
 
 | # | Patch | Status | Notes |
 |---|-------|--------|-------|
 | 5  | No-scan skip in update_all | ✅ **DONE** | Verified `is_no_scan_eq` + `getTag` check in `UpdatePtrs.fst` |
 | 7  | darken non-static | ✅ **DONE** | `GC.Impl.MarkBounded` added to API bundle in Makefile |
-| 10 | Tag preservation in promote | ✅ **DONE** | `Impl.Promote.fst` reads minor tag, rebuilds header with `makeHeader` |
-| 1,6,8,9 | zero_addr parameterisation | ❌ Not started | `zero_addr = 0UL` hardcoded in `GC.Spec.Base.fsti` |
-| 2  | Configurable heap_size | ❌ Not started | `heap_size` is abstract `val` but fixed at link time |
-| 3,4,12 | Scan range / HWM | ❌ Not started | `update_all_objects` still scans full heap in verified code |
-| 11 | Infix forwarding | ❌ Not started | `well_formed_heap_part4` assumes no infix objects |
-| 13 | krmlinit elimination | ❌ Not started | Hand-patched `krmlinit.c` still needed |
+| 10 | Tag preservation in promote | ✅ **DONE** | `Impl.Promote.fst` reads minor tag, uses `Obj.makeHeader` (clean extraction) |
+| 1,6,8 | zero_addr parameterisation | ❌ Bridge-only | `zero_addr` non-static; sweep/rescan start at `zero_addr` |
+| 2  | Configurable heap_size | ❌ Bridge-only | `heap_size_u64` is settable at link time |
+| 3,4 | Scan range / HWM | ❌ Bridge-only | `update_scan_base`, `major_alloc_hwm` for perf |
+| 9  | Infix forwarding | ❌ Not started | `well_formed_heap_part4` assumes no infix objects |
+| 11 | `is_pointer` lower bound | ❌ Bridge-only | Changed `v==0` to `v < zero_addr+8` |
+| 12 | `is_valid_fp` lower bound | ❌ Bridge-only | Changed `v>=8` to `v >= zero_addr+8` |
+| 13 | krmlinit | ✅ Minimal | Only sets `queue_size_sz` and `minor_heap_size_sz` |
 
 ### Bridge Code (alloc_gen.c — 528 lines, entirely unverified)
 
@@ -28,13 +30,13 @@ F\*/Pulse source so the extraction is usable directly.
 | B1  | Heap init | ❌ Not started | 96 lines, unverified |
 | B2,4,5 | Address translation | ❌ Not started | Minor still uses 0-based offsets |
 | B3,10 | Root scan/writeback | ❌ Not started | OCaml-specific, keep as thin shim |
-| B6  | Infix parent injection | ❌ Not started | 50 lines, tied to PATCH 11 |
+| B6  | Infix parent injection | ❌ Not started | 50 lines, tied to PATCH 9 |
 | B7  | Minor field abs→offset | ❌ Not started | **Major perf bottleneck** — O(minor×fields) |
 | B8  | Scan base setup | ❌ Not started | Tied to PATCHES 3,4 |
 | B9  | Ref_table fwd rewriting | ❌ Not started | 17 lines |
 | B11 | Full GC wrapper | ❌ Not started | 46 lines |
 | B12 | Allocation entry point | ❌ Not started | 56 lines, hot path |
-| B13 | compat.c stub | ❌ Not started | 1 function (`FStar_UInt64_ne`) |
+| B13 | compat.c stub | ❌ Minimal | 1 function (`FStar_UInt64_ne`) |
 | B14 | verified_do_minor_gc | — Keep as-is | 5 lines, inherently OCaml-specific |
 
 ### Verification Status (spec correctness)
@@ -44,23 +46,22 @@ F\*/Pulse source so the extraction is usable directly.
 | `assume (no_scan_invariant)` in Correctness.fst | ✅ **Eliminated** — proved via `promote_all_preserves_no_scan_invariant` |
 | All 152 generational modules verify | ✅ Clean build |
 | Zero admits/assumes in spec | ✅ Confirmed |
+| Extraction compiles without KaRaMeL warnings | ✅ No dropped types |
+| All 8 OCaml benchmarks pass | ✅ binarytrees, fasta, quicksort, etc. |
 
-**The snapshot in `ocaml-integration/verified_gc/` still has ALL the hand patches
-applied** (zero_addr globals, scan range restriction, tag patching loop, infix
-forwarding, etc.).  The snapshot was last updated at commit `527a7c2` for the tag
-preservation extraction, but the hand patches for PATCHES 1,3,4,6,8,9,11,12,13
-remain in the snapshot files.
+**Snapshot updated at commit `6ac30a1`**. The snapshot now uses the fresh
+extraction directly with only minimal bridge patches (zero_addr, scan range,
+is_pointer lower bound). The old prefixed names (`GC_Lib_Header_White` etc.)
+and `pack_header64`/`header_sem` issues are fully eliminated.
 
 ---
 
-## Cosmetic / naming diffs (not real patches)
+## Cosmetic / naming diffs — ✅ RESOLVED
 
-These arise because the integration copy was extracted with an older `-no-prefix`
-set that excluded `GC.Lib.Header` and `GC.Spec.Base`.  The current extraction
-strips all prefixes (e.g. `White` instead of `GC_Lib_Header_White`).
-
-**Plan**: After all real patches are eliminated, re-copy the extraction output.
-These naming diffs disappear automatically.
+The old snapshot used prefixed names (`GC_Lib_Header_White`, `GC_Lib_Header_color_sem`)
+from an older extraction. The current extraction strips all prefixes via `-no-prefix`
+flags, producing clean `White`, `Gray`, `Blue`, `Black`, `color_sem` names.
+This is now resolved — the snapshot uses the current extraction output directly.
 
 ---
 
