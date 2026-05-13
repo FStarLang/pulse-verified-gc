@@ -24,10 +24,6 @@ module ML = FStar.Math.Lemmas
 /// Pure helper lemmas for overflow checking
 /// ---------------------------------------------------------------------------
 
-/// Specification: what field address should be
-let spec_field_address (h_addr: nat) (i: nat) : nat =
-  h_addr + i * 8
-
 /// Lemma: mword is 8
 let lemma_mword_is_8 () : Lemma (U64.v mword == 8) = ()
 
@@ -159,8 +155,10 @@ fn is_pointer (v: U64.t)
                                U64.v v < heap_size /\ 
                                U64.v v % U64.v mword == 0))
 {
-  // Check below minimum object address (mword = 8)
-  if (U64.lt v mword) {
+  // Lower bound: zero_addr + mword (in spec zero_addr=0, so this is 8;
+  // at deployment zero_addr is the heap base address)
+  let lo = U64.add zero_addr mword;
+  if (U64.lt v lo) {
     false
   } else {
     // Check within heap bounds
