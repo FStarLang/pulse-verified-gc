@@ -44,12 +44,12 @@
 #ifndef CAML_INTERNALS
 #define CAML_INTERNALS
 #endif
-#include <caml/misc.h>
-#include <caml/mlvalues.h>
-#include <caml/roots.h>
-#include <caml/minor_gc.h>  /* for struct caml_ref_table */
-#include <caml/domain_state.h>  /* for Caml_state */
-#include <caml/address_class.h> /* for In_heap, caml_page_table_add */
+#include "../caml/misc.h"
+#include "../caml/mlvalues.h"
+#include "../caml/roots.h"
+#include "../caml/minor_gc.h"  /* for struct caml_ref_table */
+#include "../caml/domain_state.h"  /* for Caml_state */
+#include "../caml/address_class.h" /* for In_heap, caml_page_table_add */
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 extern uint64_t zero_addr;
@@ -63,11 +63,6 @@ static gen_heap_t   gc_gen_heap;
 static uint64_t    *gc_fwd_arr;
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
-
-/* Inline fast-path globals for Alloc_small_aux (memory.h) */
-uint64_t *vergc_minor_bump_ref;
-uint8_t  *vergc_minor_base;
-uint64_t  vergc_minor_size;
 
 /* Root scanning: parallel arrays for roots and writeback locations */
 #define MAX_ROOTS  (1 << 18)  /* 256K root slots */
@@ -143,11 +138,6 @@ static void ensure_heap(void) {
     uint64_t *bump_ref = (uint64_t *)calloc(1, sizeof(uint64_t));
     if (!bump_ref) caml_fatal_error("verified gen GC: malloc bump_ref");
     gc_gen_heap.minor.bump_ref = bump_ref;
-
-    /* Initialize inline fast-path globals for Alloc_small_aux */
-    vergc_minor_bump_ref = bump_ref;
-    vergc_minor_base     = minor_data;
-    vergc_minor_size     = (uint64_t)minor_sz;
 
     /* --- Forwarding array --- */
     gc_fwd_arr = (uint64_t *)calloc((size_t)queue_size_sz, sizeof(uint64_t));
@@ -288,7 +278,14 @@ static void do_minor_gc(void) {
      * each scan position. */
     {
         uint64_t fp_pre = *gc_gen_heap.fp_ref;
-        major_alloc_hwm = (fp_pre >= 8) ? (fp_pre - 8) : 0ULL;
+        /* fp_pre must be a valid absolute address (>= zero_addr + 8).
+         * If it's 0 or small (major heap full / no free blocks), no
+         * objects can be promoted, so set hwm to heap end for an empty
+         * scan range [heap_size_u64, heap_size_u64). */
+        if (fp_pre >= zero_addr + 8)
+            major_alloc_hwm = fp_pre - 8;
+        else
+            major_alloc_hwm = heap_size_u64;
         update_scan_base = true;
     }
 

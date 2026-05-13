@@ -96,7 +96,7 @@ ALL_KRML_MODS = \
   GC.Impl GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark \
   GC.Impl.MarkBounded GC.Impl.Sweep GC.Impl.Coalesce \
   GC.Impl.FusedSweepCoalesce GC.Impl.Allocator \
-  GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+  GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.Base GC.Spec.Heap GC.Spec.Object \
   GC.Lib.Header GC.Lib.Address
 
@@ -111,6 +111,11 @@ ALL_KRML = $(foreach m,$(ALL_KRML_MODS),$(OUTPUT_DIR)/$(subst .,_,$(m)).krml) \
 $(OUTPUT_DIR)/%.krml: verify | $(OUTPUT_DIR)
 	$(FSTAR) --odir $(OUTPUT_DIR) --codegen krml \
 	  --extract_module $(subst _,.,$*) $(subst _,.,$*).fst
+
+# GC.Impl.ArrayWord — interface-only module (assumed vals, no .fst)
+$(OUTPUT_DIR)/GC_Impl_ArrayWord.krml: verify | $(OUTPUT_DIR)
+	$(FSTAR) --odir $(OUTPUT_DIR) --codegen krml \
+	  --extract_module GC.Impl.ArrayWord GC.Impl.ArrayWord.fsti
 
 # FStar.Pervasives.Native (tuple types used by allocate) — special case
 $(OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)

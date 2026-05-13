@@ -55,10 +55,6 @@ void minor_collect(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_
 uint64_t
 gen_gc(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr, gray_stack_rec st);
 
-uint64_t minor_read(minor_heap_t mh, uint64_t addr);
-
-void minor_write(minor_heap_t mh, uint64_t addr, uint64_t v);
-
 uint64_t minor_alloc(minor_heap_t mh, uint64_t wosize, uint64_t tag);
 
 void minor_heap_reset(minor_heap_t mh);
