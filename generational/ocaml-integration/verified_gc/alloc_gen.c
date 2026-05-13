@@ -64,11 +64,21 @@ static uint64_t    *gc_fwd_arr;
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
 
+/* Inline fast-path globals for Alloc_small_aux (memory.h) */
+uint64_t *vergc_minor_bump_ref;
+uint8_t  *vergc_minor_base;
+uint64_t  vergc_minor_size;
+
 /* Root scanning: parallel arrays for roots and writeback locations */
 #define MAX_ROOTS  (1 << 18)  /* 256K root slots */
 static uint64_t   root_values[MAX_ROOTS];
 static value      *root_locs[MAX_ROOTS];
 static size_t      root_count;
+
+/* Track total bytes promoted since last major GC.  When this approaches
+ * the major heap size, we trigger a major GC to avoid promotion failures. */
+static uint64_t   bytes_promoted_since_major = 0;
+static int        in_full_gc = 0;  /* re-entrancy guard */
 
 /* --- Heap initialization --- */
 
@@ -139,6 +149,11 @@ static void ensure_heap(void) {
     if (!bump_ref) caml_fatal_error("verified gen GC: malloc bump_ref");
     gc_gen_heap.minor.bump_ref = bump_ref;
 
+    /* Initialize inline fast-path globals for Alloc_small_aux */
+    vergc_minor_bump_ref = bump_ref;
+    vergc_minor_base     = minor_data;
+    vergc_minor_size     = (uint64_t)minor_sz;
+
     /* --- Forwarding array --- */
     gc_fwd_arr = (uint64_t *)calloc((size_t)queue_size_sz, sizeof(uint64_t));
     if (!gc_fwd_arr)
@@ -189,7 +204,15 @@ static void scan_minor_root(value root, value *root_ptr) {
     if (root_count >= MAX_ROOTS) return;
 
     /* Only collect block roots (not integers) */
-    if (!Is_block(root) || Wosize_val(root) == 0) return;
+    if (!Is_block(root)) return;
+
+    /* Validate the pointer is a real heap address, not a minor offset
+     * that leaked from a previous GC cycle. Valid pointers are large
+     * absolute addresses; minor offsets are small (< minor_heap_size). */
+    uintptr_t r = (uintptr_t)root;
+    if (r < (uintptr_t)minor_heap_size_u64) return;
+
+    if (Wosize_val(root) == 0) return;
 
     uint64_t translated;
     if (is_minor_absolute(root)) {
@@ -207,9 +230,12 @@ static void scan_minor_root(value root, value *root_ptr) {
 
 /* --- Minor collection --- */
 
-static void do_minor_gc(void) {
-    ensure_heap();
-    Caml_state->_stat_minor_collections++;
+static void do_major_gc_only(void);  /* forward decl */
+static void do_full_gc(void);       /* forward decl */
+
+/* Core minor GC implementation.  If major heap space is insufficient,
+ * promotion will partially fail.  The caller must handle this. */
+static int do_minor_gc_core(void) {
 
     /* 1. Collect roots */
     root_count = 0;
@@ -256,65 +282,63 @@ static void do_minor_gc(void) {
         /* root_locs for infix parents are unused (NULL) — fill them */
         for (size_t k = root_count - infix_parents_added; k < root_count; k++)
             root_locs[k] = NULL;
-        if (infix_parents_added > 0)
-            caml_gc_message(0x20, "[gen-gc] infix: added %zu parent roots\n", infix_parents_added);
     }
 
-    /* 4.5. Translate minor heap fields: absolute → offset.
-     * OCaml stores absolute addresses in object fields, but the verified GC
-     * uses offset-based minor addressing.  The Cheney algorithm needs offsets
-     * to discover child objects during BFS.  Without this translation,
-     * scan_loop can't follow inter-minor pointers and only root objects
-     * get promoted, leaving dangling absolute pointers after reset. */
+    /* 4.5. Translate minor heap fields: absolute → offset. */
     translate_minor_fields(gc_gen_heap.minor,
                            (uint64_t)(uintptr_t)minor_base);
 
-    /* 4.6. Set up update_all_objects to only scan newly-promoted objects.
-     * Pre-existing major objects' inter-generational pointers are handled
-     * via ref_table iteration after minor_collect (step 5.5 below).
-     *
-     * IMPORTANT: fp is an OBJECT address (header + 8). The scan needs the
-     * HEADER address (fp - 8) because update_all_objects reads headers at
-     * each scan position. */
-    {
-        uint64_t fp_pre = *gc_gen_heap.fp_ref;
-        /* fp_pre must be a valid absolute address (>= zero_addr + 8).
-         * If it's 0 or small (major heap full / no free blocks), no
-         * objects can be promoted, so set hwm to heap end for an empty
-         * scan range [heap_size_u64, heap_size_u64). */
-        if (fp_pre >= zero_addr + 8)
-            major_alloc_hwm = fp_pre - 8;
-        else
-            major_alloc_hwm = heap_size_u64;
-        update_scan_base = true;
-    }
+    /* 4.6. We will update promoted objects individually via fwd_arr walk,
+     * and old inter-gen pointers via ref_table (step 5.5).  No need for
+     * update_all_objects' full-heap scan. */
 
-    /* 5. Phased minor collection (replaces single minor_collect call).
-     * Split into individual phases so we can insert infix forwarding
-     * between promote and update. */
+    /* 5. Phased minor collection */
 
     /* 5a. Cheney BFS: promote reachable minor objects to major heap */
     cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
                          gc_gen_heap.fp_ref, gc_fwd_arr,
                          root_values, (size_t)root_count);
 
-    /* 5b. Infix forwarding fixup: synthesize forwarding entries for infix
-     * sub-objects inside promoted closures. */
+    /* 5b. Infix forwarding fixup */
     synthesize_infix_forwarding(gc_gen_heap.minor, gc_fwd_arr);
 
-    /* 5c. Rewrite major heap fields: replace minor pointers with forwarded addresses */
-    update_all_objects(gc_gen_heap.major, gc_fwd_arr);
-    update_scan_base = false;  /* reset for next time */
+    /* 5c. Rewrite fields of PROMOTED objects only.
+     * Walk fwd_arr: any non-zero entry maps minor offset → major address.
+     * For each promoted object, read its header to get wosize, then call
+     * update_one_object to replace minor offsets in its fields. */
+    {
+        size_t fwd_slots = (size_t)(minor_heap_size_u64 / 8);
+        for (size_t i = 0; i < fwd_slots; i++) {
+            uint64_t major_addr = gc_fwd_arr[i];
+            if (major_addr == 0) continue;
+            /* major_addr is the object address (first field).  Header is at major_addr - 8. */
+            uint64_t hdr = *(uint64_t*)(uintptr_t)(major_addr - 8);
+            uint64_t wosize = hdr >> 10;
+            uint64_t tag = hdr & 0xFF;
+            if (wosize > 0 && tag < 251) {
+                update_one_object(gc_gen_heap.major, gc_fwd_arr, major_addr, wosize);
+            }
+        }
+    }
 
     /* 5d. Rewrite root array */
     rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
-    /* 5e. Reset minor heap */
+
+    /* 5d.1 Count failed promotions (roots still containing minor offsets) */
+    size_t failed = 0;
+    {
+        uint64_t minor_limit = minor_heap_size_u64;
+        for (size_t i = 0; i < root_count; i++) {
+            uint64_t rv = root_values[i];
+            if (rv >= 8 && rv < minor_limit && rv % 8 == 0)
+                failed++;
+        }
+    }
+
+    /* 5f. Reset minor heap */
     minor_heap_reset(gc_gen_heap.minor);
 
-    /* 5.5. Ref_table-based pointer rewriting using verified rewrite_heap_slots.
-     * Extract field byte-addresses from ref_table entries, then call the
-     * verified function to apply forwarding.  This replaces the full major-heap
-     * scan that update_all_objects used to do for pre-existing major objects. */
+    /* 5.5. Ref_table-based pointer rewriting */
     {
         struct caml_ref_table *tbl = Caml_state->_ref_table;
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
@@ -335,16 +359,27 @@ static void do_minor_gc(void) {
         }
     }
 
-    /* Tag patching is done INSIDE minor_collect (before update_all_objects)
-     * so that no-scan objects (tag >= 251) are correctly skipped. */
-
-    /* 6. Write back rewritten roots to OCaml locations. */
+    /* 6. Write back rewritten roots to OCaml locations.
+     *
+     * After rewrite_roots_impl, root_values[i] contains either:
+     *  - A major heap absolute address (promoted object) — write back
+     *  - A non-heap absolute address (not in minor range) — write back
+     *  - A minor heap OFFSET (failed promotion, fwd_val was 0) — INVALID
+     *  - 0 — skip (non-block root)
+     *
+     * Minor offsets must NOT be written back as they are no longer valid
+     * (minor heap has been reset).  Replace with Val_unit so the next GC
+     * cycle's Is_block() check skips them safely. */
     {
+        uint64_t minor_limit = minor_heap_size_u64;
         size_t i;
         for (i = 0; i < root_count; i++) {
             if (root_locs[i] != NULL) {
                 uint64_t rewritten = root_values[i];
-                if (rewritten != 0) {
+                if (rewritten == 0) continue;
+                if (rewritten < minor_limit) {
+                    *root_locs[i] = Val_unit;
+                } else {
                     *root_locs[i] = (value)(uintptr_t)rewritten;
                 }
             }
@@ -353,19 +388,54 @@ static void do_minor_gc(void) {
 
     /* 7. Clear ref_table */
     Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
+
+    return (failed > 0) ? 1 : 0;
+}
+
+static void do_minor_gc(void) {
+    ensure_heap();
+    if (*gc_gen_heap.minor.bump_ref == 0) return;  /* nothing to collect */
+    Caml_state->_stat_minor_collections++;
+
+    /* Proactive major GC: run a full GC periodically to prevent the major
+     * heap from filling up.  Without this, promotion failures during minor
+     * GC corrupt program data by losing live objects.
+     *
+     * Trigger when cumulative promoted data exceeds 50% of major heap.
+     * Using bump_before as a conservative upper bound on promoted bytes. */
+    if (!in_full_gc) {
+        uint64_t bump = *gc_gen_heap.minor.bump_ref;
+        uint64_t major_size = heap_size_u64 - zero_addr;
+        /* Use 25% threshold — aggressive, but prevents fragmentation-induced failures */
+        uint64_t threshold = major_size / 4;
+        if (bytes_promoted_since_major + bump > threshold) {
+            do_full_gc();
+            if (*gc_gen_heap.minor.bump_ref == 0) return;
+        }
+    }
+
+    uint64_t fp_before = *gc_gen_heap.fp_ref;
+    uint64_t bump_before = *gc_gen_heap.minor.bump_ref;
+
+    int had_failures = do_minor_gc_core();
+
+    /* Track promoted bytes (approximate by the minor bump value) */
+    bytes_promoted_since_major += bump_before;
+
+    if (had_failures) {
+        do_major_gc_only();
+    }
 }
 
 /* --- Full GC (minor + major) --- */
 
-static void do_full_gc(void) {
-    ensure_heap();
-    caml_gc_message(0x20, "Verified gen GC: full collection\n");
+static int full_gc_count = 0;
+
+/* Run major mark-and-sweep only (no minor collection).
+ * Assumes minor heap is empty (already collected). */
+static void do_major_gc_only(void) {
     Caml_state->_stat_major_collections++;
-
-    /* Phase 1: Minor collection to promote live young objects */
-    do_minor_gc();
-
-    /* Phase 2: Major mark-and-sweep */
+    full_gc_count++;
 
     /* Allocate gray stack */
     size_t gray_cap = gc_gen_heap.major.size / 64;
@@ -374,20 +444,19 @@ static void do_full_gc(void) {
     if (!gray_storage)
         caml_fatal_error("verified gen GC: cannot allocate gray stack");
 
-    size_t gray_top = gray_cap;  /* stack grows downward; cap = empty */
+    size_t gray_top = gray_cap;
     gray_stack_rec gc_stack;
     gc_stack.storage = gray_storage;
     gc_stack.top = &gray_top;
     gc_stack.cap = gray_cap;
 
-    /* Scan roots again — darken live major objects into gray stack */
+    /* Scan roots — darken live major objects */
     root_count = 0;
     caml_do_roots(scan_minor_root, 1);
     {
         size_t i;
         for (i = 0; i < root_count; i++) {
             uint64_t root = root_values[i];
-            /* After minor GC, all roots should be major addresses (absolute) */
             if (root >= zero_addr + 8 && root < heap_size_u64 &&
                 root % 8 == 0)
             {
@@ -402,7 +471,23 @@ static void do_full_gc(void) {
     uint64_t new_fp = collect(gc_gen_heap.major, gc_stack, fp);
     *gc_gen_heap.fp_ref = new_fp;
 
+    /* Reset promotion counter after major collection */
+    bytes_promoted_since_major = 0;
+
     free(gray_storage);
+}
+
+static void do_full_gc(void) {
+    ensure_heap();
+    in_full_gc = 1;
+
+    /* Phase 1: Minor collection to promote live young objects */
+    do_minor_gc();
+
+    /* Phase 2: Major mark-and-sweep */
+    do_major_gc_only();
+
+    in_full_gc = 0;
 }
 
 /* --- Allocation entry point --- */
@@ -410,11 +495,7 @@ static void do_full_gc(void) {
 void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     ensure_heap();
 
-    /* Trigger minor GC when minor heap cannot fit this allocation, BEFORE
-     * calling gen_alloc.  Without this, gen_alloc's minor_alloc fails and
-     * falls back to the major heap.  Objects allocated on the major heap
-     * via Alloc_small_aux have their fields set via Field() (not caml_modify),
-     * creating untracked major→minor pointers that our GC can't rewrite. */
+    /* Trigger minor GC when minor heap cannot fit this allocation. */
     {
         uint64_t bump = *gc_gen_heap.minor.bump_ref;
         uint64_t needed = ((uint64_t)wosize + 1) * 8;
