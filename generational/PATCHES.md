@@ -26,7 +26,7 @@ F\*/Pulse source so the extraction is usable directly.
 | 8  | update_all_objects start | ✅ **DONE** | Impl now starts at `zero_addr` instead of `0UL` |
 | 1  | zero_addr non-static | ⚠️ **Irreducible** | See note below |
 | 2  | Configurable heap_size | ⚠️ **Irreducible** | `heap_size_u64` is settable at link time |
-| 3,4 | Scan range / HWM | ⚠️ **Irreducible** | Performance opt; requires proving scan-range soundness |
+| 3,4 | Scan range / HWM | ✅ **ELIMINATED** | Bridge now walks fwd_arr + calls `update_one_object`; `update_all_objects` reverted to clean extraction |
 | 9  | Infix forwarding | ✅ **DONE** | Phased calls + infix fwd fixup in bridge |
 
 ### Irreducible Bridge Items
@@ -37,11 +37,15 @@ absolute address. Making it non-static via KaRaMeL bundle API was attempted
 but pulls in spec functions with `Seq` types and generates unwanted
 `internal/Prims.h`. This is a 1-word visibility change (`static` removed).
 
-**PATCHES 3,4 (scan range):** The bridge narrows `update_all_objects` to scan
-only `[update_scan_base, major_alloc_hwm)` instead of `[0, heap_size)`.
-Verifying this requires proving that pre-existing major objects have no minor
-pointers after each collection — a significant spec invariant not currently
-tracked. Performance impact: ~3× faster on large heaps with few promotions.
+**PATCHES 3,4 (scan range): ✅ ELIMINATED.** Previously the bridge narrowed
+`update_all_objects` to scan only newly-promoted objects via `update_scan_base`
+and `major_alloc_hwm` globals. This was INCORRECT for a free-list allocator
+(promoted objects can land anywhere in the heap, not just at the end) and caused
+heap corruption at binarytrees depth ≥14. The fix: the bridge now walks the
+`fwd_arr` to find all promoted objects and calls the verified `update_one_object`
+on each. The `update_all_objects` function has been reverted to its clean
+extraction form (full heap scan from `zero_addr`). It is no longer called during
+minor collection — only the fwd_arr walk + `update_one_object` is used.
 
 **PATCH 9 (infix objects):** OCaml infix objects (tag=249) require special
 forwarding during promotion. The verified spec's `well_formed_heap_part4`
@@ -58,7 +62,7 @@ infix parent relationship in the formal heap model.
 | B6  | Infix parent injection | ✅ **DONE** | Verified `find_infix_parents` replaces 43-line C loop |
 | B6b | Infix fwd synthesis | ✅ **DONE** | Verified `synthesize_infix_forwarding` replaces 57-line C loop |
 | B7  | Minor field abs→offset | ✅ **DONE** | Verified `translate_minor_fields` replaces 35-line C loop |
-| B8  | Scan base setup | — Tied to PATCHES 3,4 | Sets `update_scan_base` |
+| B8  | Scan base setup | ✅ **ELIMINATED** | Removed with PATCHES 3,4; fwd_arr walk replaces scan-range |
 | B9  | Ref_table fwd rewriting | ✅ **DONE** | Verified `rewrite_heap_slots` replaces manual loop |
 | B11 | Full GC wrapper | — Keep as-is | 46 lines, orchestrates major GC |
 | B12 | Allocation entry point | — Keep as-is | 56 lines, hot path |
@@ -73,11 +77,23 @@ infix parent relationship in the formal heap model.
 | All 152 generational modules verify | ✅ Clean build (`make -j4`) |
 | Zero admits/assumes in spec | ✅ Confirmed |
 | Extraction compiles without KaRaMeL warnings | ✅ Zero warnings |
-| All 8 OCaml benchmarks pass | ✅ binarytrees, fasta, quicksort, fannkuchredux, count_change, nbodies, spectralnorm, mandelbrot |
+| All 8 OCaml benchmarks pass | ✅ binarytrees (incl. depth 14, 16), fasta, quicksort, fannkuchredux, count_change, nbodies, spectralnorm, mandelbrot |
 | Header file matches exactly | ✅ `diff GC_Gen_Impl.h` = empty |
 | krmlinit matches exactly | ✅ `diff krmlinit.c` = empty |
 
-### Remaining extraction diff: 14 lines (all irreducible bridge infrastructure)
+### Remaining extraction diff: 3 semantic patches + inlining optimizations
+
+The remaining diff between `_extract/GC_Gen_Impl.c` and `verified_gc/GC_Gen_Impl.c`
+consists of:
+
+| Category | Lines | Items |
+|----------|-------|-------|
+| NULL-base deployment | 3 | `zero_addr` non-static, `is_pointer`/`is_valid_fp` lower bounds |
+| Extern primitives | ~12 | `read_u64_le`/`write_u64_le` extern → inline bodies |
+| Performance inlining | ~8 | `read_word`/`write_word`/`minor_read`/`minor_write` static inline |
+
+All are inherent to the deployment model (NULL-base mmap trick, lack of extern
+implementation file) and do not affect functional correctness.
 
 ```diff
 < static uint64_t zero_addr = 0ULL;

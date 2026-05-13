@@ -26,10 +26,6 @@ static inline void minor_write(minor_heap_t mh, uint64_t addr, uint64_t v);
 
 uint64_t zero_addr = 0ULL;
 
-/* Bridge globals for scan-range optimization */
-uint64_t major_alloc_hwm = 0ULL;
-bool update_scan_base = false;
-
 static inline uint64_t read_word(heap_t h, uint64_t addr)
 {
   return *(uint64_t *)(h.data + (size_t)addr);
@@ -992,9 +988,8 @@ void update_one_object(heap_t major, uint64_t *fwd_arr, uint64_t obj, uint64_t w
 
 void update_all_objects(heap_t major, uint64_t *fwd_arr)
 {
-  uint64_t pos = update_scan_base ? major_alloc_hwm : zero_addr;
-  uint64_t scan_limit = update_scan_base ? heap_size_u64 : major_alloc_hwm;
-  bool done = (pos + 8ULL >= scan_limit);
+  uint64_t pos = zero_addr;
+  bool done = false;
   bool __anf00 = done;
   bool cond = !__anf00;
   while (cond)
@@ -1010,7 +1005,7 @@ void update_all_objects(heap_t major, uint64_t *fwd_arr)
       uint64_t total_bytes = total_words * 8ULL;
       uint64_t next_pos = p + total_bytes;
       pos = next_pos;
-      done = next_pos + 8ULL >= scan_limit;
+      done = next_pos + 8ULL >= heap_size_u64;
     }
     else
     {
@@ -1021,7 +1016,7 @@ void update_all_objects(heap_t major, uint64_t *fwd_arr)
         uint64_t total_bytes = total_words * 8ULL;
         uint64_t next_pos = p + total_bytes;
         pos = next_pos;
-        done = next_pos + 8ULL >= scan_limit;
+        done = next_pos + 8ULL >= heap_size_u64;
       }
       else
       {
@@ -1050,7 +1045,7 @@ void update_all_objects(heap_t major, uint64_t *fwd_arr)
           cond = __anf0 < wosize;
         }
         pos = next_pos;
-        done = next_pos + 8ULL >= scan_limit;
+        done = next_pos + 8ULL >= heap_size_u64;
       }
     }
     bool __anf0 = done;

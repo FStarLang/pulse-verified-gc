@@ -53,8 +53,6 @@
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 extern uint64_t zero_addr;
-extern uint64_t major_alloc_hwm;
-extern bool update_scan_base;
 extern size_t queue_size_sz;
 extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
@@ -538,10 +536,6 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         /* The verified allocate() sets tag=0; patch in the correct tag. */
         uint8_t *hdr_ptr = (uint8_t *)ret;
         hdr_ptr[0] = tag;  /* tag is in lowest byte of header */
-        /* Track high-water mark so update_all_objects only scans used portion */
-        uint64_t obj_end = result + (uint64_t)wosize * 8;
-        if (obj_end > major_alloc_hwm)
-            major_alloc_hwm = obj_end;
         return ret;
     }
 }
