@@ -8,7 +8,7 @@ F\*/Pulse source so the extraction is usable directly.
 
 ---
 
-## Current Status (updated 2025-06-07)
+## Current Status (updated 2025-06-13)
 
 ### Extraction Patches (GC_Gen_Impl.c)
 
@@ -18,8 +18,8 @@ F\*/Pulse source so the extraction is usable directly.
 | 7  | darken non-static | ✅ **DONE** | `GC.Impl.MarkBounded` added to API bundle in Makefile |
 | 10 | Tag preservation in promote | ✅ **DONE** | `Impl.Promote.fst` reads minor tag, uses `Obj.makeHeader` (clean extraction) |
 | 6  | rescan_heap_impl start | ✅ **DONE** | Impl now starts at `zero_addr` (= 0UL in spec) |
-| 11 | `is_pointer` lower bound | ✅ **DONE** | Changed `v==0` to `v < mword`, extracts as `v < 8ULL` |
-| 12 | `is_valid_fp` lower bound | ✅ **DONE** (was already OK) | Already uses `v >= 8ULL` = `v >= mword` |
+| 11 | `is_pointer` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
+| 12 | `is_valid_fp` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
 | 13 | krmlinit | ✅ Minimal | Only sets `queue_size_sz` and `minor_heap_size_sz` |
 | B13 | compat.c / U64.ne extern | ✅ **DONE** | `U64.ne` → `not (U64.eq ...)`, compat.c now empty |
 | B14b | fwd_array_size alias | ✅ **DONE** | Bridge uses `queue_size_sz` directly |
@@ -88,12 +88,13 @@ consists of:
 
 | Category | Lines | Items |
 |----------|-------|-------|
-| NULL-base deployment | 3 | `zero_addr` non-static, `is_pointer`/`is_valid_fp` lower bounds |
+| NULL-base deployment | 1 | `zero_addr` non-static |
 | Extern primitives | ~12 | `read_u64_le`/`write_u64_le` extern → inline bodies |
 | Performance inlining | ~8 | `read_word`/`write_word`/`minor_read`/`minor_write` static inline |
 
-All are inherent to the deployment model (NULL-base mmap trick, lack of extern
-implementation file) and do not affect functional correctness.
+`is_pointer` and `is_valid_fp` lower-bound patches are **eliminated** — the
+verified Pulse code now uses `U64.add zero_addr mword` which extracts as
+`zero_addr + 8ULL`, matching deployment needs directly.
 
 ```diff
 < static uint64_t zero_addr = 0ULL;
@@ -265,25 +266,19 @@ the hand patch and is fully verified.
 
 ---
 
-## PATCH 6 — `is_pointer` lower-bound check
+## PATCH 6 — `is_pointer` lower-bound check — ✅ ELIMINATED
 
-**File**: `GC_Gen_Impl.c`, line 531
+**File**: `GC_Gen_Impl.c` (`is_pointer` function)
 
-**What changed**:
-```c
-// Extracted:
-if (v == 0ULL)
+**Original issue**: The extracted code checked `v == 0ULL` or `v < 8ULL`, which
+with the NULL-base trick misclassified low addresses as pointers. The deployment
+needed `v < zero_addr + 8ULL`.
 
-// Patched:
-if (v < zero_addr + 8ULL)
-```
-
-**Why**: With the NULL-base trick, the heap starts at `zero_addr` (not 0).
-A valid object pointer must be ≥ `zero_addr + 8` (room for a header).
-The extracted code only checks `v == 0` which misclassifies low addresses
-as pointers.
-
-**Plan to eliminate**: Same as PATCH 1 — parameterise by `zero_addr`.
+**Resolution**: ✅ **ELIMINATED**.  The verified Pulse source (`GC.Impl.Fields.fst`)
+now uses `U64.add zero_addr mword` instead of `mword` for the lower bound.
+KaRaMeL extracts this as `zero_addr + 8ULL`, matching deployment needs directly.
+The extraction introduces a `let lo = zero_addr + 8ULL` local — trivially
+equivalent to the inline form in the deployment copy.
 
 ---
 
@@ -311,22 +306,16 @@ This makes `darken_if_white_bounded` non-static in the extracted C output.
 
 ---
 
-## PATCH 8 — `is_valid_fp` uses `zero_addr`
+## PATCH 8 — `is_valid_fp` uses `zero_addr` — ✅ ELIMINATED
 
-**File**: `GC_Gen_Impl.c`, line 1056
+**File**: `GC_Gen_Impl.c` (`is_valid_fp` function)
 
-**What changed**:
-```c
-// Extracted:
-return v >= 8ULL && v < heap_size_u64 && v % 8ULL == 0ULL;
+**Original issue**: The extracted code checked `v >= 8ULL` which doesn't account
+for the NULL-base trick where the heap starts at `zero_addr`.
 
-// Patched:
-return v >= zero_addr + 8ULL && v < heap_size_u64 && v % 8ULL == 0ULL;
-```
-
-**Why**: Same as PATCH 1/6 — NULL-base trick requires `zero_addr` offset.
-
-**Plan to eliminate**: Same as PATCH 1.
+**Resolution**: ✅ **ELIMINATED**.  The verified Pulse source (`GC.Impl.Allocator.fst`)
+now uses `U64.add zero_addr mword` instead of `mword`. KaRaMeL extracts this as
+`v >= zero_addr + 8ULL`, matching deployment needs directly.
 
 ---
 
@@ -794,8 +783,8 @@ leverage change for closing the performance gap with stock OCaml.
 | 7  | darken non-static | **Low** — bundle config fix | ✅ DONE |
 | 6  | rescan_heap_impl start | **Medium** — consistency | ✅ DONE |
 | 8  | update_all_objects start | **Medium** — consistency | ✅ DONE |
-| 11 | `is_pointer` lower bound | **Medium** — consistency | ✅ DONE |
-| 12 | `is_valid_fp` lower bound | **Medium** — already correct | ✅ DONE (was already OK) |
+| 11 | `is_pointer` lower bound | **Medium** — consistency | ✅ **ELIMINATED** — verified with `U64.add zero_addr mword` |
+| 12 | `is_valid_fp` lower bound | **Medium** — already correct | ✅ **ELIMINATED** — verified with `U64.add zero_addr mword` |
 | B13 | compat.c / U64.ne extern | **Trivial** | ✅ DONE |
 | B14b | fwd_array_size alias | **Trivial** | ✅ DONE |
 | 13 | krmlinit | **Low** — link convenience | ✅ Minimal (only 2 derived constants) |
@@ -825,9 +814,9 @@ leverage change for closing the performance gap with stock OCaml.
 
 | Category | Done | Irreducible/Deferred | Total |
 |----------|------|---------------------|-------|
-| Extraction patches | 11 | 3 | 14 |
+| Extraction patches | 11 (+2 eliminated) | 1 | 14 |
 | Bridge code items | 7 | 6 | 13 |
-| Extraction diff lines | — | 14 | — |
+| Extraction diff lines | — | ~12 | — |
 | alloc_gen.c lines | — | 479 | — |
 
 ### Future work (remaining items, in priority order)
