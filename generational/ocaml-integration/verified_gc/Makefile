@@ -3,7 +3,7 @@ CC      ?= gcc
 CFLAGS  ?= -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
 CFLAGS  += -I. -Iinternal -Ikrmllib -Ikrmllib/krml -Ikrmllib/krml/internal
 # Allow access to OCaml runtime internals (for alloc_gen.c)
-CFLAGS  += -I..
+CFLAGS  += -I.. -I../ocaml-4.14-verified-gen/runtime
 
 OBJECTS = GC_Gen_Impl.o GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.o \
           krmlinit.o compat.o alloc_gen.o
