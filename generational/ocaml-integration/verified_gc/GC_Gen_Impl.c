@@ -173,7 +173,8 @@ static uint64_t read_field(heap_t heap, uint64_t h_addr, uint64_t i)
 
 static bool is_pointer(uint64_t v)
 {
-  if (v < zero_addr + 8ULL)
+  uint64_t lo = zero_addr + 8ULL;
+  if (v < lo)
     return false;
   else if (v >= heap_size_u64)
     return false;
