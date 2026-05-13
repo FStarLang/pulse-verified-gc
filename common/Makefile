@@ -40,6 +40,7 @@ SPEC_CHECKED = \
 
 # Impl checked files
 IMPL_CHECKED = \
+  impl/GC.Impl.ArrayWord.fsti.checked \
   impl/GC.Impl.Heap.fst.checked \
   impl/GC.Impl.Object.fst.checked \
   impl/GC.Impl.Stack.fsti.checked \
@@ -115,7 +116,12 @@ spec/GC.Spec.Base.fsti.checked
 
 # --- Impl dependencies ---
 
+impl/GC.Impl.ArrayWord.fsti.checked: impl/GC.Impl.ArrayWord.fsti \
+spec/GC.Spec.Heap.fsti.checked \
+spec/GC.Spec.Base.fsti.checked
+
 impl/GC.Impl.Heap.fst.checked: impl/GC.Impl.Heap.fst \
+impl/GC.Impl.ArrayWord.fsti.checked \
 spec/GC.Spec.Heap.fsti.checked \
 spec/GC.Spec.Base.fsti.checked
 

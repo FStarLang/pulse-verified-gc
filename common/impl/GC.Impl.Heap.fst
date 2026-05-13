@@ -25,6 +25,7 @@ module Seq = FStar.Seq
 /// Re-export from Base so spec heap == Pulse heap_state
 module Base = GC.Spec.Base
 module SpecHeap = GC.Spec.Heap
+module ArrayWord = GC.Impl.ArrayWord
 
 /// Machine word size in bytes (8 bytes = 64 bits)
 inline_for_extraction
@@ -340,7 +341,7 @@ let hp_addr_plus_8 (addr: hp_addr)
     assert_norm (heap_size % 8 == 0)
 
 /// Read a 64-bit word from the heap (little-endian)
-/// Reads 8 consecutive bytes and combines them
+/// Uses word-level primitive for single load instead of 8 byte reads
 fn read_word (h: heap_t) (addr: hp_addr)
   requires is_heap h 's
   returns v: U64.t
@@ -348,35 +349,10 @@ fn read_word (h: heap_t) (addr: hp_addr)
           pure (v == SpecHeap.read_word 's addr)
 {
   hp_addr_plus_8 addr;
-  reveal_opaque (`%spec_read_word) spec_read_word;
   unfold is_heap;
   let base = SZ.uint64_to_sizet addr;
-  
-  // Read 8 bytes
-  let b0 = h.data.(base);
-  let b1 = h.data.(SZ.add base 1sz);
-  let b2 = h.data.(SZ.add base 2sz);
-  let b3 = h.data.(SZ.add base 3sz);
-  let b4 = h.data.(SZ.add base 4sz);
-  let b5 = h.data.(SZ.add base 5sz);
-  let b6 = h.data.(SZ.add base 6sz);
-  let b7 = h.data.(SZ.add base 7sz);
-  
-  assert (pure (
-    b0 == Seq.index 's (U64.v addr) /\
-    b1 == Seq.index 's (U64.v addr + 1) /\
-    b2 == Seq.index 's (U64.v addr + 2) /\
-    b3 == Seq.index 's (U64.v addr + 3) /\
-    b4 == Seq.index 's (U64.v addr + 4) /\
-    b5 == Seq.index 's (U64.v addr + 5) /\
-    b6 == Seq.index 's (U64.v addr + 6) /\
-    b7 == Seq.index 's (U64.v addr + 7)
-  ));
-  
-  // Combine into 64-bit word (little-endian)
-  let v = combine_bytes b0 b1 b2 b3 b4 b5 b6 b7;
+  let v = ArrayWord.read_u64_le h.data base;
   SpecHeap.read_word_spec 's addr;
-  
   fold (is_heap h 's);
   v
 }
@@ -397,6 +373,7 @@ fn write_byte (h: heap_t) (addr: val_addr) (v: U8.t)
 }
 
 /// Write a 64-bit word to the heap (little-endian)
+/// Uses word-level primitive for single store instead of 8 byte writes
 fn write_word (h: heap_t) (addr: hp_addr) (v: U64.t)
   requires is_heap h 's
   ensures is_heap h (SpecHeap.write_word 's addr v) **
@@ -406,27 +383,7 @@ fn write_word (h: heap_t) (addr: hp_addr) (v: U64.t)
   reveal_opaque (`%spec_write_word) spec_write_word;
   unfold is_heap;
   let base = SZ.uint64_to_sizet addr;
-  
-  // Split into 8 bytes (little-endian)
-  let b0 = uint64_to_uint8 v;
-  let b1 = uint64_to_uint8 (U64.shift_right v 8ul);
-  let b2 = uint64_to_uint8 (U64.shift_right v 16ul);
-  let b3 = uint64_to_uint8 (U64.shift_right v 24ul);
-  let b4 = uint64_to_uint8 (U64.shift_right v 32ul);
-  let b5 = uint64_to_uint8 (U64.shift_right v 40ul);
-  let b6 = uint64_to_uint8 (U64.shift_right v 48ul);
-  let b7 = uint64_to_uint8 (U64.shift_right v 56ul);
-  
-  // Write 8 bytes
-  h.data.(base) <- b0;
-  h.data.(SZ.add base 1sz) <- b1;
-  h.data.(SZ.add base 2sz) <- b2;
-  h.data.(SZ.add base 3sz) <- b3;
-  h.data.(SZ.add base 4sz) <- b4;
-  h.data.(SZ.add base 5sz) <- b5;
-  h.data.(SZ.add base 6sz) <- b6;
-  h.data.(SZ.add base 7sz) <- b7;
-  
+  ArrayWord.write_u64_le h.data base v;
   SpecHeap.write_word_spec 's addr v;
   fold (is_heap h (SpecHeap.write_word 's addr v))
 }

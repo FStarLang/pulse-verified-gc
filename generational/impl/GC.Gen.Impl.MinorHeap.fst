@@ -20,6 +20,7 @@ module Seq = FStar.Seq
 open GC.Spec.Base
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+module ArrayWord = GC.Impl.ArrayWord
 
 /// Platform assumption: SizeT can hold U64 values (true on 64-bit)
 assume val platform_fits_u64 : squash SZ.fits_u64
@@ -58,15 +59,7 @@ fn minor_read (mh: minor_heap_t) (addr: U64.t)
 {
   unfold is_minor;
   let base = SZ.uint64_to_sizet addr;
-  let b0 = mh.data.(base);
-  let b1 = mh.data.(SZ.add base 1sz);
-  let b2 = mh.data.(SZ.add base 2sz);
-  let b3 = mh.data.(SZ.add base 3sz);
-  let b4 = mh.data.(SZ.add base 4sz);
-  let b5 = mh.data.(SZ.add base 5sz);
-  let b6 = mh.data.(SZ.add base 6sz);
-  let b7 = mh.data.(SZ.add base 7sz);
-  let v = combine_bytes_impl b0 b1 b2 b3 b4 b5 b6 b7;
+  let v = ArrayWord.read_u64_le mh.data base;
   fold (is_minor mh 'd 'b);
   v
 }
@@ -78,22 +71,7 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
 {
   unfold is_minor;
   let base = SZ.uint64_to_sizet addr;
-  let b0 = FStar.Int.Cast.uint64_to_uint8 v;
-  let b1 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right v 8ul);
-  let b2 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right v 16ul);
-  let b3 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right v 24ul);
-  let b4 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right v 32ul);
-  let b5 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right v 40ul);
-  let b6 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right v 48ul);
-  let b7 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right v 56ul);
-  mh.data.(base) <- b0;
-  mh.data.(SZ.add base 1sz) <- b1;
-  mh.data.(SZ.add base 2sz) <- b2;
-  mh.data.(SZ.add base 3sz) <- b3;
-  mh.data.(SZ.add base 4sz) <- b4;
-  mh.data.(SZ.add base 5sz) <- b5;
-  mh.data.(SZ.add base 6sz) <- b6;
-  mh.data.(SZ.add base 7sz) <- b7;
+  ArrayWord.write_u64_le mh.data base v;
   fold (is_minor mh (minor_write_word_t 'd addr v) 'b)
 }
 
@@ -384,10 +362,6 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
 /// each embedded infix header (tag=249) synthesizes:
 ///   fwd_arr[(infix_val_off)/8] = fwd_arr[(parent_val_off)/8] + delta
 /// where delta = infix_val_off - parent_val_off.
-
-/// The forwarding array size = minor_heap_size / 8
-noextract
-let fwd_arr_size : n:pos{n == minor_heap_size / 8} = minor_heap_size / 8
 
 /// SizeT version for array indexing
 let fwd_arr_size_sz : n:SZ.t{SZ.v n == fwd_arr_size} =
