@@ -106,3 +106,51 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
                  U64.v minor_base_addr > 0)
   ensures exists* d2.
     is_minor mh d2 'b
+
+/// ---------------------------------------------------------------------------
+/// Infix Forwarding Synthesis
+/// ---------------------------------------------------------------------------
+
+/// Number of entries in the forwarding array = minor_heap_size / 8
+noextract
+let fwd_arr_size : n:pos{n == minor_heap_size / 8} = minor_heap_size / 8
+
+/// Walk the minor heap and synthesize forwarding entries for infix sub-objects.
+/// For each closure whose parent was promoted (fwd_arr entry != 0), finds embedded
+/// infix headers and computes their forwarded address as parent_fwd + delta.
+fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
+  requires is_minor mh 'd 'b **
+           pts_to fwd_arr 'farr **
+           pure (U64.v 'b <= minor_heap_size /\
+                 Seq.length 'farr == fwd_arr_size)
+  ensures exists* farr2.
+    is_minor mh 'd 'b **
+    pts_to fwd_arr farr2 **
+    pure (Seq.length farr2 == fwd_arr_size)
+
+/// ---------------------------------------------------------------------------
+/// Infix Parent Discovery
+/// ---------------------------------------------------------------------------
+
+/// Walk the minor heap and find all closures with embedded infix headers.
+/// For each infix found, adds the parent closure's object address to the roots
+/// array. Returns the count of parents added.
+///
+/// roots: pre-allocated array with capacity `cap`
+/// nroots: current number of used entries in roots
+fn find_infix_parents (mh: minor_heap_t)
+                      (roots: array U64.t)
+                      (nroots: SZ.t)
+                      (cap: SZ.t)
+  requires is_minor mh 'd 'b **
+           pts_to roots 'rs **
+           pure (U64.v 'b <= minor_heap_size /\
+                 Seq.length 'rs == SZ.v cap /\
+                 SZ.v nroots <= SZ.v cap)
+  returns added: SZ.t
+  ensures exists* rs2.
+    is_minor mh 'd 'b **
+    pts_to roots rs2 **
+    pure (Seq.length rs2 == SZ.v cap /\
+          SZ.v added <= SZ.v cap - SZ.v nroots /\
+          SZ.v nroots + SZ.v added <= SZ.v cap)
