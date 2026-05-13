@@ -131,7 +131,7 @@ static void ensure_heap(void) {
     }
     size_t minor_sz = minor_words * 8;
     minor_heap_size_u64 = (uint64_t)minor_sz;
-    max_young_wosize_u64 = (uint64_t)(minor_words / 2);  /* max alloc = half minor heap */
+    max_young_wosize_u64 = 256ULL;  /* match OCaml's Max_young_wosize */
 
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
