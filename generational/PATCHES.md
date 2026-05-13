@@ -8,7 +8,7 @@ F\*/Pulse source so the extraction is usable directly.
 
 ---
 
-## Current Status (updated 2025-06-13)
+## Current Status (updated 2025-06-14)
 
 ### Extraction Patches (GC_Gen_Impl.c)
 
@@ -77,11 +77,11 @@ infix parent relationship in the formal heap model.
 | All 152 generational modules verify | ✅ Clean build (`make -j4`) |
 | Zero admits/assumes in spec | ✅ Confirmed |
 | Extraction compiles without KaRaMeL warnings | ✅ Zero warnings |
-| All 8 OCaml benchmarks pass | ✅ binarytrees (incl. depth 14, 16), fasta, quicksort, fannkuchredux, count_change, nbodies, spectralnorm, mandelbrot |
+| All 8 OCaml benchmarks pass | ✅ binarytrees (depth 14, 16), fasta, quicksort, fannkuchredux, count_change, nbodies, spectralnorm, mandelbrot. Fixed `max_young_wosize_u64` heap corruption (commit `37431eb`). |
 | Header file matches exactly | ✅ `diff GC_Gen_Impl.h` = empty |
 | krmlinit matches exactly | ✅ `diff krmlinit.c` = empty |
 
-### Remaining extraction diff: 3 semantic patches + inlining optimizations
+### Remaining extraction diff: 3 categories of irreducible patches
 
 The remaining diff between `_extract/GC_Gen_Impl.c` and `verified_gc/GC_Gen_Impl.c`
 consists of:
@@ -96,23 +96,29 @@ consists of:
 verified Pulse code now uses `U64.add zero_addr mword` which extracts as
 `zero_addr + 8ULL`, matching deployment needs directly.
 
+Scan-range patches (PATCHES 3,4: `major_alloc_hwm`, `update_scan_base`) are
+**eliminated** — the bridge now walks `fwd_arr` and calls the verified
+`update_one_object` per promoted object. `update_all_objects` is reverted
+to its clean extraction form.
+
 ```diff
+  // 1. Extern primitives → inline bodies
+< extern uint64_t read_u64_le(uint8_t *arr, size_t offset);
+< extern void write_u64_le(uint8_t *arr, size_t offset, uint64_t v);
+> static inline uint64_t read_u64_le(...) { return *(uint64_t *)(arr + offset); }
+> static inline void write_u64_le(...) { *(uint64_t *)(arr + offset) = v; }
+
+  // 2. zero_addr visibility
 < static uint64_t zero_addr = 0ULL;
-> uint64_t zero_addr = 0ULL;               // non-static for bridge (PATCH 1)
-> uint64_t major_alloc_hwm = 0ULL;         // scan optimization (PATCH 3)
-> uint64_t update_scan_base = 0ULL;        // scan optimization (PATCH 4)
+> uint64_t zero_addr = 0ULL;
 
-< uint64_t pos = zero_addr;
-< bool done = false;
-> uint64_t pos = (update_scan_base > 0ULL) ? update_scan_base : zero_addr;
-> uint64_t scan_limit = (major_alloc_hwm > 0ULL) ? major_alloc_hwm : heap_size_u64;
-> bool done = (pos + 8ULL >= scan_limit);
-
-<     done = next_pos + 8ULL >= heap_size_u64;  (×3 occurrences)
->     done = next_pos + 8ULL >= scan_limit;     (×3 occurrences)
+  // 3. Performance inlining (read_word, write_word, minor_read, minor_write)
+< static uint64_t read_word(heap_t h, uint64_t addr) { ... read_u64_le(h.data, base); }
+> static inline uint64_t read_word(heap_t h, uint64_t addr) { return *(uint64_t *)(h.data + (size_t)addr); }
+  // (same pattern for write_word, minor_read, minor_write)
 ```
 
-**Snapshot matches extraction + these 14 bridge lines. Last updated at commit `373aa9e`.**
+**Snapshot matches extraction + these 3 categories. Last updated at commit `d4b9602`.**
 
 ---
 
