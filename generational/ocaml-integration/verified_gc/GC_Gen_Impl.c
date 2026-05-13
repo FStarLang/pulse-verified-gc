@@ -569,6 +569,156 @@ void translate_minor_fields(minor_heap_t mh, uint64_t minor_base_addr)
   }
 }
 
+size_t fwd_arr_size_sz;
+
+void synthesize_infix_forwarding(minor_heap_t mh, uint64_t *fwd_arr)
+{
+  uint64_t bump = *mh.bump_ref;
+  if (!(bump < 8ULL))
+  {
+    uint64_t pos = 0ULL;
+    bool done_ = false;
+    bool __anf00 = done_;
+    bool cond = !__anf00;
+    while (cond)
+    {
+      uint64_t pv = pos;
+      uint64_t hdr = minor_read(mh, pv);
+      uint64_t wz = hdr >> 10U;
+      uint64_t tag_val = hdr & 0xFFULL;
+      if (wz == 0ULL)
+        done_ = true;
+      else if (wz > bump / 8ULL)
+        done_ = true;
+      else
+      {
+        uint64_t obj_off = pv + 8ULL;
+        uint64_t field_bytes = wz * 8ULL;
+        uint64_t obj_end = obj_off + field_bytes;
+        if (obj_end > bump)
+          done_ = true;
+        else
+        {
+          if (tag_val == 247ULL)
+          {
+            uint64_t obj_off1 = pv + 8ULL;
+            size_t parent_idx = (size_t)(obj_off1 / 8ULL);
+            uint64_t parent_fwd = fwd_arr[parent_idx];
+            if (parent_fwd > 0ULL)
+              if (parent_fwd < 9223372036854775808ULL)
+              {
+                uint64_t obj_addr = pv + 8ULL;
+                uint64_t j = 0ULL;
+                uint64_t __anf0 = j;
+                bool cond = __anf0 < wz;
+                while (cond)
+                {
+                  uint64_t jv = j;
+                  uint64_t field_off = obj_addr + jv * 8ULL;
+                  uint64_t fhdr = minor_read(mh, field_off);
+                  uint64_t ftag = fhdr & 0xFFULL;
+                  if (ftag == 249ULL)
+                  {
+                    uint64_t infix_val_off = field_off + 8ULL;
+                    uint64_t delta = infix_val_off - obj_addr;
+                    uint64_t new_fwd = parent_fwd + delta;
+                    size_t infix_idx = (size_t)(infix_val_off / 8ULL);
+                    if (infix_idx < fwd_arr_size_sz)
+                      fwd_arr[infix_idx] = new_fwd;
+                  }
+                  j = jv + 1ULL;
+                  uint64_t __anf0 = j;
+                  cond = __anf0 < wz;
+                }
+              }
+          }
+          uint64_t next = pv + (wz + 1ULL) * 8ULL;
+          pos = next;
+          if (next >= bump)
+            done_ = true;
+          else if (next > bump - 8ULL)
+            done_ = true;
+        }
+      }
+      bool __anf0 = done_;
+      cond = !__anf0;
+    }
+  }
+}
+
+size_t find_infix_parents(minor_heap_t mh, uint64_t *roots, size_t nroots, size_t cap)
+{
+  uint64_t bump = *mh.bump_ref;
+  if (bump < 8ULL)
+    return (size_t)0U;
+  else
+  {
+    uint64_t pos = 0ULL;
+    bool done_ = false;
+    size_t count = nroots;
+    bool __anf00 = done_;
+    bool cond = !__anf00;
+    while (cond)
+    {
+      uint64_t pv = pos;
+      uint64_t hdr = minor_read(mh, pv);
+      uint64_t wz = hdr >> 10U;
+      uint64_t tag_val = hdr & 0xFFULL;
+      if (wz == 0ULL)
+        done_ = true;
+      else if (wz > bump / 8ULL)
+        done_ = true;
+      else
+      {
+        uint64_t obj_off = pv + 8ULL;
+        uint64_t field_bytes = wz * 8ULL;
+        uint64_t obj_end = obj_off + field_bytes;
+        if (obj_end > bump)
+          done_ = true;
+        else
+        {
+          if (tag_val == 247ULL)
+          {
+            uint64_t obj_addr = pv + 8ULL;
+            uint64_t j = 0ULL;
+            uint64_t __anf0 = j;
+            bool cond = __anf0 < wz;
+            while (cond)
+            {
+              uint64_t jv = j;
+              uint64_t field_off = obj_addr + jv * 8ULL;
+              uint64_t fhdr = minor_read(mh, field_off);
+              uint64_t ftag = fhdr & 0xFFULL;
+              if (ftag == 249ULL)
+              {
+                size_t cnt_v = count;
+                if (cnt_v < cap)
+                {
+                  roots[cnt_v] = obj_addr;
+                  count = cnt_v + (size_t)1U;
+                }
+              }
+              j = jv + 1ULL;
+              uint64_t __anf0 = j;
+              cond = __anf0 < wz;
+            }
+          }
+          uint64_t next = pv + (wz + 1ULL) * 8ULL;
+          pos = next;
+          if (next >= bump)
+            done_ = true;
+          else if (next > bump - 8ULL)
+            done_ = true;
+        }
+      }
+      bool __anf0 = done_;
+      cond = !__anf0;
+    }
+    size_t final_count = count;
+    return final_count - nroots;
+  }
+}
+
 size_t queue_size_sz;
 
 void

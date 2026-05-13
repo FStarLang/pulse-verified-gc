@@ -14,6 +14,8 @@
 
 extern size_t minor_heap_size_sz;
 
+extern size_t fwd_arr_size_sz;
+
 
 #define internal_GC_Gen_Impl_H_DEFINED
 #endif /* internal_GC_Gen_Impl_H */

@@ -18,6 +18,7 @@ __attribute__ ((visibility ("hidden")))
 void krmlinit_globals(void)
 {
   minor_heap_size_sz = (size_t)minor_heap_size_u64;
+  fwd_arr_size_sz = (size_t)(minor_heap_size_u64 / 8ULL);
   queue_size_sz = (size_t)(minor_heap_size_u64 / 8ULL);
 }
 

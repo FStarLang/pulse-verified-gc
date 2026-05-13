@@ -247,56 +247,15 @@ static void do_minor_gc(void) {
     /* 4. Zero forwarding array */
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
 
-    /* 4.1. Infix closure fixup: OCaml closures with multiple entry points embed
-     * Infix_tag (249) headers inside the parent closure. A pointer to an infix
-     * closure points into the MIDDLE of the parent closure block. Cheney must
-     * promote the WHOLE parent, not just the infix fragment.
-     *
-     * Walk the minor heap to find all infix headers. For each, add the PARENT
-     * closure as an additional root so Cheney promotes it. After cheney_promote_phase,
-     * synthetic forwarding entries are set up inside minor_collect so that
-     * update_all_objects correctly rewrites infix pointers. */
+    /* 4.1. Infix closure fixup: find closures with embedded infix headers
+     * and add their parent addresses as additional roots for Cheney. */
     {
-        uint8_t *mdata = gc_gen_heap.minor.data;
-        uint64_t bump = *gc_gen_heap.minor.bump_ref;
-        uint64_t pos = 0;
-        size_t infix_parents_added = 0;
-        while (pos + 8 <= bump) {
-            uint64_t hdr = *(uint64_t *)(mdata + pos);
-            uint64_t wz = hdr >> 10;
-            uint64_t tag_val = hdr & 0xFF;
-            if (wz == 0 || pos + 8 + wz * 8 > bump) break;
-            /* Check each field for embedded infix headers */
-            if (tag_val == 247) {  /* Closure_tag */
-                uint64_t j;
-                for (j = 0; j < wz; j++) {
-                    uint64_t field_off = pos + 8 + j * 8;
-                    if (field_off + 8 <= bump) {
-                        uint64_t fhdr = *(uint64_t *)(mdata + field_off);
-                        uint64_t ftag = fhdr & 0xFF;
-                        if (ftag == 249) {  /* Infix_tag */
-                            /* This is an embedded infix header at field_off.
-                             * The parent object address = pos + 8.
-                             * Add parent as root if not already present. */
-                            uint64_t parent_obj = pos + 8;
-                            if (root_count < MAX_ROOTS) {
-                                root_values[root_count] = parent_obj;
-                                root_locs[root_count] = NULL;
-                                root_count++;
-                                infix_parents_added++;
-                            } else {
-                                caml_fatal_error("verified gen GC: root overflow (infix parent)");
-                            }
-                            /* Skip past the infix header (don't re-enter) */
-                            uint64_t infix_wz = fhdr >> 10;
-                            /* The infix "wosize" is the byte distance / 8 from parent to infix */
-                            /* Skip to after the infix fields to avoid double-counting */
-                        }
-                    }
-                }
-            }
-            pos += (wz + 1) * 8;
-        }
+        size_t infix_parents_added = find_infix_parents(
+            gc_gen_heap.minor, root_values, root_count, MAX_ROOTS);
+        root_count += infix_parents_added;
+        /* root_locs for infix parents are unused (NULL) — fill them */
+        for (size_t k = root_count - infix_parents_added; k < root_count; k++)
+            root_locs[k] = NULL;
         if (infix_parents_added > 0)
             caml_gc_message(0x20, "[gen-gc] infix: added %zu parent roots\n", infix_parents_added);
     }
@@ -332,64 +291,9 @@ static void do_minor_gc(void) {
                          gc_gen_heap.fp_ref, gc_fwd_arr,
                          root_values, (size_t)root_count);
 
-    /* 5b. Infix forwarding fixup: after promotion, fwd_arr has entries for
-     * parent closures but NOT for embedded infix sub-objects. Walk minor
-     * heap, find closures (tag=247) with infix headers (tag=249), and
-     * synthesize forwarding entries for infix VALUE addresses.
-     *
-     * OCaml infix layout:
-     *   parent header at offset P, parent value at P+8
-     *   ... fields ...
-     *   infix header at offset I (within parent's fields), infix value at I+8
-     *   Infix_offset = infix "wosize" * 8 = byte distance from parent value to infix value
-     *
-     * After Cheney promotes parent:
-     *   fwd_arr[(P+8)/8] = new_parent_addr (major heap VALUE address)
-     * We synthesize:
-     *   fwd_arr[(I+8)/8] = fwd_arr[(P+8)/8] + (I+8 - (P+8))
-     */
-    {
-        uint8_t *mdata = gc_gen_heap.minor.data;
-        uint64_t bump = *gc_gen_heap.minor.bump_ref;
-        uint64_t pos = 0;
-        size_t infix_fwd_count = 0;
-        while (pos + 8 <= bump) {
-            uint64_t hdr = *(uint64_t *)(mdata + pos);
-            uint64_t wz = hdr >> 10;
-            uint64_t tag_val = hdr & 0xFF;
-            if (wz == 0 || pos + 8 + wz * 8 > bump) break;
-            if (tag_val == 247) {  /* Closure_tag */
-                uint64_t parent_val_off = pos + 8;
-                size_t parent_idx = (size_t)(parent_val_off / 8);
-                uint64_t parent_fwd = (parent_idx < (size_t)queue_size_sz)
-                                      ? gc_fwd_arr[parent_idx] : 0;
-                if (parent_fwd != 0) {
-                    /* Parent was promoted. Check fields for infix headers. */
-                    uint64_t j;
-                    for (j = 0; j < wz; j++) {
-                        uint64_t field_off = pos + 8 + j * 8;
-                        if (field_off + 8 <= bump) {
-                            uint64_t fhdr = *(uint64_t *)(mdata + field_off);
-                            uint64_t ftag = fhdr & 0xFF;
-                            if (ftag == 249) {  /* Infix_tag */
-                                uint64_t infix_val_off = field_off + 8;
-                                uint64_t delta = infix_val_off - parent_val_off;
-                                size_t infix_idx = (size_t)(infix_val_off / 8);
-                                if (infix_idx < (size_t)queue_size_sz) {
-                                    gc_fwd_arr[infix_idx] = parent_fwd + delta;
-                                    infix_fwd_count++;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            pos += (wz + 1) * 8;
-        }
-        if (infix_fwd_count > 0)
-            caml_gc_message(0x20, "[gen-gc] infix: %zu forwarding entries\n",
-                            infix_fwd_count);
-    }
+    /* 5b. Infix forwarding fixup: synthesize forwarding entries for infix
+     * sub-objects inside promoted closures. */
+    synthesize_infix_forwarding(gc_gen_heap.minor, gc_fwd_arr);
 
     /* 5c. Rewrite major heap fields: replace minor pointers with forwarded addresses */
     update_all_objects(gc_gen_heap.major, gc_fwd_arr);
