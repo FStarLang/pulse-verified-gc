@@ -48,14 +48,15 @@ forwarding during promotion. The verified spec's `well_formed_heap_part4`
 currently assumes no infix objects. Supporting them requires modeling the
 infix parent relationship in the formal heap model.
 
-### Bridge Code (alloc_gen.c — 527 lines, entirely unverified)
+### Bridge Code (alloc_gen.c — 479 lines)
 
 | # | Bridge | Status | Notes |
 |---|--------|--------|-------|
 | B1  | Heap init | — Keep as-is | OCaml mmap integration, inherently unverified |
 | B2,4,5 | Address translation | — Keep as-is | Minor 0-based → absolute offsets |
 | B3,10 | Root scan/writeback | — Keep as-is | OCaml stack layout, inherently specific |
-| B6  | Infix parent injection | ✅ **DONE** | Phased calls expose promote/update/rewrite |
+| B6  | Infix parent injection | ✅ **DONE** | Verified `find_infix_parents` replaces 43-line C loop |
+| B6b | Infix fwd synthesis | ✅ **DONE** | Verified `synthesize_infix_forwarding` replaces 57-line C loop |
 | B7  | Minor field abs→offset | ✅ **DONE** | Verified `translate_minor_fields` replaces 35-line C loop |
 | B8  | Scan base setup | — Tied to PATCHES 3,4 | Sets `update_scan_base` |
 | B9  | Ref_table fwd rewriting | ✅ **DONE** | Verified `rewrite_heap_slots` replaces manual loop |
@@ -747,11 +748,12 @@ use `<>` which KaRaMeL translates to `!=` directly.  Trivial fix.
 The bridge adds **three O(minor_heap_used) scans** per minor collection
 that stock OCaml does not have:
 
-| Scan | Lines | Cost | Eliminable? |
-|------|-------|------|-------------|
-| BRIDGE 6: infix parent scan | 249–299 | O(minor_used) | Yes (PATCH 11) |
-| BRIDGE 7: field abs→offset | 301–341 | O(minor_used × fields) | Yes (abs minor addr) |
-| BRIDGE 4: ref_table translation | 218–228 | O(ref_table) | Yes (abs minor addr) |
+| Scan | Lines | Cost | Status |
+|------|-------|------|--------|
+| BRIDGE 6: infix parent scan | — | O(minor_used) | ✅ **Verified** (`find_infix_parents`) |
+| BRIDGE 6b: infix fwd synth | — | O(minor_used) | ✅ **Verified** (`synthesize_infix_forwarding`) |
+| BRIDGE 7: field abs→offset | — | O(minor_used × fields) | ✅ **Verified** (`translate_minor_fields`) |
+| BRIDGE 4: ref_table translation | 218–228 | O(ref_table) | Eliminable (abs minor addr) |
 
 **BRIDGE 7 is almost certainly the dominant overhead source.**  It touches
 every field of every minor object, with pointer arithmetic and conditional
@@ -793,6 +795,7 @@ leverage change for closing the performance gap with stock OCaml.
 | B13 | compat.c stub | **Trivial** | Trivial | ✅ DONE — empty |
 | B7  | Minor field abs→offset | **Critical** — perf bottleneck | Medium | ✅ **DONE** |
 | B6  | Infix parent injection | **Critical** — correctness | High | ✅ **DONE** |
+| B6b | Infix fwd synthesis | **Critical** — correctness | High | ✅ **DONE** |
 | B12 | Allocation entry point | **High** — hot path | Medium | — Keep as-is |
 | B1  | Heap init | **High** — complex TCB | Medium | — Keep as-is |
 | B2,4,5 | Address translation | **High** — systemic | Medium | — Keep as-is |
@@ -807,8 +810,9 @@ leverage change for closing the performance gap with stock OCaml.
 | Category | Done | Irreducible/Deferred | Total |
 |----------|------|---------------------|-------|
 | Extraction patches | 11 | 3 | 14 |
-| Bridge code items | 5 | 6 | 11 |
+| Bridge code items | 7 | 6 | 13 |
 | Extraction diff lines | — | 14 | — |
+| alloc_gen.c lines | — | 479 | — |
 
 ### Future work (remaining items, in priority order)
 
@@ -816,8 +820,9 @@ leverage change for closing the performance gap with stock OCaml.
    `[start, limit)` range, prove objects outside range have no minor pointers
 2. **Absolute minor addressing** (B2,4) — eliminate O(minor×fields) bridge
    scans by making minor heap use absolute addresses (NULL-base trick)
-3. **Infix model** — model OCaml infix objects in `well_formed_heap_part4`,
-   handle `tag=249` in Cheney forwarding spec (currently handled in bridge only)
+3. **Infix model** — model OCaml infix objects in `well_formed_heap_part4` and
+   add semantic correctness proofs for `find_infix_parents` and
+   `synthesize_infix_forwarding` (currently verified for memory safety only)
 4. **zero_addr non-static** (PATCH 1) — create thin `GC.Impl.Config` module
    or accept as 1-word bridge patch
 5. **Verified alloc/init** (B1, B12) — move heap init and retry loop into
