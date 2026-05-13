@@ -9,31 +9,22 @@
 
 #include "internal/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 
-/* Inline word-level heap read/write — replaces KaRaMeL extern stubs.
- * Must be static inline so the compiler can fold them into callers. */
-static inline uint64_t read_u64_le(uint8_t *arr, size_t offset) {
-  return *(uint64_t *)(arr + offset);
-}
-static inline void write_u64_le(uint8_t *arr, size_t offset, uint64_t v) {
-  *(uint64_t *)(arr + offset) = v;
-}
+extern uint64_t read_u64_le(uint8_t *arr, size_t offset);
 
-/* Forward declarations for inline helpers used before their definitions */
-static inline uint64_t read_word(heap_t h, uint64_t addr);
-static inline void write_word(heap_t h, uint64_t addr, uint64_t v);
-static inline uint64_t minor_read(minor_heap_t mh, uint64_t addr);
-static inline void minor_write(minor_heap_t mh, uint64_t addr, uint64_t v);
+extern void write_u64_le(uint8_t *arr, size_t offset, uint64_t v);
 
-uint64_t zero_addr = 0ULL;
+uint64_t zero_addr = 0ULL; /* non-static: bridge sets to mmap'd base */
 
-static inline uint64_t read_word(heap_t h, uint64_t addr)
+static uint64_t read_word(heap_t h, uint64_t addr)
 {
-  return *(uint64_t *)(h.data + (size_t)addr);
+  size_t base = (size_t)addr;
+  return read_u64_le(h.data, base);
 }
 
-static inline void write_word(heap_t h, uint64_t addr, uint64_t v)
+static void write_word(heap_t h, uint64_t addr, uint64_t v)
 {
-  *(uint64_t *)(h.data + (size_t)addr) = v;
+  size_t base = (size_t)addr;
+  write_u64_le(h.data, base, v);
 }
 
 static uint64_t hd_address(uint64_t f_addr)
@@ -368,17 +359,16 @@ static uint64_t make_header(uint64_t wosize, uint64_t tag)
   return wosize << 10U | tag;
 }
 
-/* minor_read/minor_write: declared extern in header but only used within
- * this TU.  We provide static-inline bodies here; the header declaration
- * is satisfied by the non-inline fallback the compiler may emit. */
-static inline uint64_t minor_read(minor_heap_t mh, uint64_t addr)
+uint64_t minor_read(minor_heap_t mh, uint64_t addr)
 {
-  return *(uint64_t *)(mh.data + (size_t)addr);
+  size_t base = (size_t)addr;
+  return read_u64_le(mh.data, base);
 }
 
-static inline void minor_write(minor_heap_t mh, uint64_t addr, uint64_t v)
+void minor_write(minor_heap_t mh, uint64_t addr, uint64_t v)
 {
-  *(uint64_t *)(mh.data + (size_t)addr) = v;
+  size_t base = (size_t)addr;
+  write_u64_le(mh.data, base, v);
 }
 
 uint64_t minor_alloc(minor_heap_t mh, uint64_t wosize, uint64_t tag)

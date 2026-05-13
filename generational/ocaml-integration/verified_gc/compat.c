@@ -1,18 +1,19 @@
-/* compat.c — Stub file for standalone compilation.
+/* compat.c — Implementations of extern primitives declared by KaRaMeL extraction.
  *
- * All FStar library functions that KaRaMeL needs have been eliminated
- * from the extraction (U64.ne → not (U64.eq), etc.), so this file
- * is now empty. Kept as a placeholder in case future extractions
- * reintroduce extern dependencies.
+ * GC_Gen_Impl.c (the extracted verified code) declares these as:
+ *   extern uint64_t read_u64_le(uint8_t *arr, size_t offset);
+ *   extern void write_u64_le(uint8_t *arr, size_t offset, uint64_t v);
+ *
+ * They originate from GC.Impl.ArrayWord's `assume val` declarations in F*,
+ * which model word-level heap read/write as opaque primitives.  On
+ * little-endian platforms (x86-64, AArch64-LE), these are simple aligned
+ * word loads/stores.
  */
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Word-level heap read/write (GC.Impl.ArrayWord assumed vals).
- * On little-endian platforms (x86-64, AArch64-LE), these are simple
- * aligned word loads/stores. */
 uint64_t read_u64_le(uint8_t *arr, size_t offset) {
   return *(uint64_t *)(arr + offset);
 }

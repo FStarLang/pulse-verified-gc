@@ -21,7 +21,7 @@ F\*/Pulse source so the extraction is usable directly.
 | 11 | `is_pointer` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
 | 12 | `is_valid_fp` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
 | 13 | krmlinit | ✅ Minimal | Only sets `queue_size_sz` and `minor_heap_size_sz` |
-| B13 | compat.c / U64.ne extern | ✅ **DONE** | `U64.ne` → `not (U64.eq ...)`, compat.c now empty |
+| B13 | compat.c extern primitives | ✅ **DONE** | Implements `read_u64_le`/`write_u64_le` externs from `GC.Impl.ArrayWord` |
 | B14b | fwd_array_size alias | ✅ **DONE** | Bridge uses `queue_size_sz` directly |
 | 8  | update_all_objects start | ✅ **DONE** | Impl now starts at `zero_addr` instead of `0UL` |
 | 1  | zero_addr non-static | ⚠️ **Irreducible** | See note below |
@@ -81,16 +81,23 @@ infix parent relationship in the formal heap model.
 | Header file matches exactly | ✅ `diff GC_Gen_Impl.h` = empty |
 | krmlinit matches exactly | ✅ `diff krmlinit.c` = empty |
 
-### Remaining extraction diff: 3 categories of irreducible patches
+### Remaining extraction diff: 1 line
 
-The remaining diff between `_extract/GC_Gen_Impl.c` and `verified_gc/GC_Gen_Impl.c`
-consists of:
+The `verified_gc/` snapshot is now a **verbatim copy** of `_extract/` with a
+single semantic change:
 
-| Category | Lines | Items |
-|----------|-------|-------|
-| NULL-base deployment | 1 | `zero_addr` non-static |
-| Extern primitives | ~12 | `read_u64_le`/`write_u64_le` extern → inline bodies |
-| Performance inlining | ~8 | `read_word`/`write_word`/`minor_read`/`minor_write` static inline |
+```diff
+< static uint64_t zero_addr = 0ULL;
+> uint64_t zero_addr = 0ULL; /* non-static: bridge sets to mmap'd base */
+```
+
+All other extracted files (`GC_Gen_Impl.h`, internal headers, `krmlinit.c`,
+`GC_Gen_Base_*.c`) are **identical** to the extraction output.
+
+The extern primitives (`read_u64_le`, `write_u64_le`) are left as KaRaMeL
+declared them (`extern`) and implemented in `compat.c`, which is linked into
+`libvergc_gen.a`.  The extracted `read_word`, `write_word`, `minor_read`,
+`minor_write` call through to these externs — no inlining patches.
 
 `is_pointer` and `is_valid_fp` lower-bound patches are **eliminated** — the
 verified Pulse code now uses `U64.add zero_addr mword` which extracts as
@@ -100,25 +107,6 @@ Scan-range patches (PATCHES 3,4: `major_alloc_hwm`, `update_scan_base`) are
 **eliminated** — the bridge now walks `fwd_arr` and calls the verified
 `update_one_object` per promoted object. `update_all_objects` is reverted
 to its clean extraction form.
-
-```diff
-  // 1. Extern primitives → inline bodies
-< extern uint64_t read_u64_le(uint8_t *arr, size_t offset);
-< extern void write_u64_le(uint8_t *arr, size_t offset, uint64_t v);
-> static inline uint64_t read_u64_le(...) { return *(uint64_t *)(arr + offset); }
-> static inline void write_u64_le(...) { *(uint64_t *)(arr + offset) = v; }
-
-  // 2. zero_addr visibility
-< static uint64_t zero_addr = 0ULL;
-> uint64_t zero_addr = 0ULL;
-
-  // 3. Performance inlining (read_word, write_word, minor_read, minor_write)
-< static uint64_t read_word(heap_t h, uint64_t addr) { ... read_u64_le(h.data, base); }
-> static inline uint64_t read_word(heap_t h, uint64_t addr) { return *(uint64_t *)(h.data + (size_t)addr); }
-  // (same pattern for write_word, minor_read, minor_write)
-```
-
-**Snapshot matches extraction + these 3 categories. Last updated at commit `d4b9602`.**
 
 ---
 
