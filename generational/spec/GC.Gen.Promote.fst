@@ -1162,13 +1162,187 @@ private let promote_object_frame_old_header
 
 /// Per-step: promote_object preserves no_scan_invariant
 ///
-/// NOTE: This proof was already broken at HEAD (pre-existing failure in commit
-/// 2ca86c2) due to split_queries interaction with forall instantiation and
-/// hp_addr refinement checks. The proof outline is correct (new-object branch
-/// uses copy_fields_all_correct + minor_no_scan_invariant; old-object branch
-/// uses alloc_spec_new_objects_blue_part1 + promote_object_frame_old_field +
-/// no_scan_invariant_elim). Admitted pending allocator fix for leftover=1 case.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+/// Proof outline:
+/// - OOM case: promote_object returns original heap, invariant preserved trivially
+/// - Success case (new_addr ≠ 0): use no_scan_invariant_intro.  For each (src, idx):
+///     * src ≠ dst: header/field reads unchanged (frame lemmas) → original invariant
+///     * src = dst, idx < wz: copy_fields_all_correct + minor_no_scan_invariant
+///     * src = dst, idx ≥ wz: leftover=1 allocator padding (see assume below)
+///
+/// The alloc_from_block non-split case can give wosize = wz+1, leaving one
+/// uninitialized padding field.  This assume discharges the padding obligation;
+/// it can be eliminated by either (a) zeroing the padding word in promote_object
+/// or (b) restricting the allocator to exact-fit only.
+
+/// Helper for new-object case: fields of the promoted object are non-pointer
+/// when the object is no_scan.
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0 --split_queries always"
+private let promote_no_scan_new_object
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (field_idx: nat)
+  : Lemma
+    (requires (
+      let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+      alloc_res.obj_out <> 0UL /\
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      minor_no_scan_invariant minor /\
+      Seq.mem obj (minor_objects minor) /\
+      wz == minor_wosize minor obj /\
+      minor_tag minor obj < 256 /\
+      (U64.v alloc_res.obj_out >= U64.v mword /\
+       U64.v alloc_res.obj_out < heap_size /\
+       U64.v alloc_res.obj_out % U64.v mword == 0) /\
+      (let dst_obj : obj_addr = alloc_res.obj_out in
+       let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+       let tag = minor_tag minor obj in
+       let g' = set_promoted_tag copied dst_obj tag in
+       is_no_scan dst_obj g' /\
+       field_idx < U64.v (wosize_of_object dst_obj g') /\
+       U64.v dst_obj + field_idx * 8 < heap_size)))
+    (ensures (
+      let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+      let dst_obj : obj_addr = alloc_res.obj_out in
+      let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+      let tag = minor_tag minor obj in
+      let g' = set_promoted_tag copied dst_obj tag in
+      let field_addr : hp_addr = U64.uint_to_t (U64.v dst_obj + field_idx * 8) in
+      ~(is_pointer_field (read_word g' field_addr))))
+  =
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+  AllocProps.alloc_spec_obj_valid major fp wz;
+  let dst_obj : obj_addr = alloc_res.obj_out in
+  let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+  let tag = minor_tag minor obj in
+  let g' = set_promoted_tag copied dst_obj tag in
+  let field_addr : hp_addr = U64.uint_to_t (U64.v dst_obj + field_idx * 8) in
+  // set_promoted_tag only writes the header; field reads are unchanged
+  hd_address_spec dst_obj;
+  set_promoted_tag_read_frame copied dst_obj tag field_addr;
+  if field_idx < wz then begin
+    // Establish prerequisites for copy_fields_all_correct
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+    wfh_part1_obj_bound alloc_res.heap_out dst_obj;
+    dst_fields_valid_from_bounds (dst_obj <: U64.t) wz;
+    copy_fields_all_correct minor alloc_res.heap_out obj dst_obj wz;
+    assert (read_word copied field_addr == minor_read_field minor obj field_idx);
+    // Derive minor_tag minor obj >= 251 from is_no_scan dst_obj g'
+    set_promoted_tag_unfold copied dst_obj tag;
+    let hdr_addr = hd_address dst_obj in
+    let new_hdr = makeHeader (getWosize (read_word copied hdr_addr)) White (U64.uint_to_t tag) in
+    read_write_same copied hdr_addr new_hdr;
+    assert (read_word g' hdr_addr == new_hdr);
+    tag_of_object_spec dst_obj g';
+    makeHeader_getTag (getWosize (read_word copied hdr_addr)) White (U64.uint_to_t tag);
+    assert (tag_of_object dst_obj g' == U64.uint_to_t tag);
+    is_no_scan_spec dst_obj g';
+    no_scan_tag_val ();
+    assert (minor_tag minor obj >= 251);
+    // Now use minor_no_scan_invariant
+    assert (field_idx < minor_wosize minor obj);
+    ()
+  end else begin
+    // field_idx >= wz: allocator leftover=1 padding field.
+    assume (~(is_pointer_field (read_word g' field_addr)))
+  end
+#pop-options
+
+/// Helper for old-object case: fields of pre-existing objects are non-pointer
+/// when the object is no_scan (frame lemma through promote_object).
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0 --split_queries always"
+private let promote_no_scan_old_object
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (src: obj_addr) (field_idx: nat)
+  : Lemma
+    (requires (
+      let fuel : nat = heap_size / U64.v mword in
+      let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+      alloc_res.obj_out <> 0UL /\
+      no_scan_invariant major /\
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp fuel /\
+      AllocLemmas.fl_chain_terminates major fp fuel /\
+      allocated_avoid_chain major fp /\
+      minor_tag minor obj < 256 /\
+      (U64.v alloc_res.obj_out >= U64.v mword /\
+       U64.v alloc_res.obj_out < heap_size /\
+       U64.v alloc_res.obj_out % U64.v mword == 0) /\
+      (let dst_obj : obj_addr = alloc_res.obj_out in
+       let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+       let tag = minor_tag minor obj in
+       let g' = set_promoted_tag copied dst_obj tag in
+       (src <: U64.t) <> (dst_obj <: U64.t) /\
+       Seq.mem src (objects zero_addr g') /\
+       is_no_scan src g' /\
+       ~(is_blue src g') /\
+       field_idx < U64.v (wosize_of_object src g') /\
+       U64.v src + field_idx * 8 < heap_size /\
+       objects zero_addr g' == objects zero_addr alloc_res.heap_out /\
+       dst_fields_valid dst_obj wz /\
+       well_formed_heap_part1 alloc_res.heap_out /\
+       Seq.mem dst_obj (objects zero_addr alloc_res.heap_out))))
+    (ensures (
+      let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+      let dst_obj : obj_addr = alloc_res.obj_out in
+      let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+      let tag = minor_tag minor obj in
+      let g' = set_promoted_tag copied dst_obj tag in
+      let field_addr : hp_addr = U64.uint_to_t (U64.v src + field_idx * 8) in
+      ~(is_pointer_field (read_word g' field_addr))))
+  =
+  let fuel : nat = heap_size / U64.v mword in
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+  AllocProps.alloc_spec_obj_valid major fp wz;
+  let dst_obj : obj_addr = alloc_res.obj_out in
+  let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+  let tag = minor_tag minor obj in
+  let g' = set_promoted_tag copied dst_obj tag in
+  let field_addr : hp_addr = U64.uint_to_t (U64.v src + field_idx * 8) in
+  // Frame through set_promoted_tag: hd_address(src) ≠ hd_address(dst_obj)
+  hd_address_spec src;
+  hd_address_spec dst_obj;
+  hd_address_injective src dst_obj;
+  set_promoted_tag_read_frame copied dst_obj tag (hd_address src);
+  // Frame through copy_fields: hd_address(src) outside [dst_obj, dst_obj + wz*8)
+  if U64.v src < U64.v dst_obj then
+    copy_fields_frame minor alloc_res.heap_out obj dst_obj 0 wz (hd_address src)
+  else begin
+    objects_separated zero_addr alloc_res.heap_out dst_obj src;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+    copy_fields_frame minor alloc_res.heap_out obj dst_obj 0 wz (hd_address src)
+  end;
+  // header(src) same in g' and alloc_res.heap_out → same in g' and major
+  color_of_object_spec src g';
+  color_of_object_spec src alloc_res.heap_out;
+  is_blue_iff src g';
+  is_blue_iff src alloc_res.heap_out;
+  // src ∈ objects(major) by contrapositive of alloc_spec_new_objects_blue_part1
+  AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wz;
+  assert (Seq.mem src (objects zero_addr major));
+  // Use promote_object_frame_old_header
+  promote_object_frame_old_header minor major obj fp wz src;
+  is_no_scan_spec src g';
+  is_no_scan_spec src major;
+  tag_of_object_spec src g';
+  tag_of_object_spec src major;
+  is_blue_iff src major;
+  color_of_object_spec src major;
+  wosize_of_object_spec src g';
+  wosize_of_object_spec src major;
+  // Bounds
+  wfh_part1_obj_bound major src;
+  FStar.Math.Lemmas.lemma_mult_le_right 8 (field_idx + 1) (U64.v (wosize_of_object src major));
+  // Field reads unchanged
+  promote_object_frame_old_field minor major obj fp wz src field_idx;
+  // Original invariant
+  no_scan_invariant_elim major src field_idx
+#pop-options
+
+/// Main proof: promote_object preserves no_scan_invariant
+#push-options "--z3rlimit 400 --fuel 0 --ifuel 0"
 let promote_object_preserves_no_scan_invariant
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma
@@ -1182,7 +1356,57 @@ let promote_object_preserves_no_scan_invariant
       Seq.mem obj (minor_objects minor) /\
       wz == minor_wosize minor obj)
     (ensures no_scan_invariant (promote_object minor major obj fp wz).major_out)
-  = admit ()
+  =
+  let fuel : nat = heap_size / U64.v mword in
+  let res = promote_object minor major obj fp wz in
+  if res.new_addr = 0UL then begin
+    promote_object_oom minor major obj fp wz;
+    assert (res.major_out == major)
+  end else begin
+    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+    (if alloc_res.obj_out = 0UL then promote_object_oom minor major obj fp wz else ());
+    AllocProps.alloc_spec_obj_valid major fp wz;
+    let dst_obj : obj_addr = alloc_res.obj_out in
+    promote_object_success minor major obj fp wz;
+    let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    let g' = res.major_out in
+    assert (g' == set_promoted_tag copied dst_obj tag);
+    // Shared facts
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz;
+    AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+    wfh_part1_obj_bound alloc_res.heap_out dst_obj;
+    copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
+    set_promoted_tag_preserves_objects copied dst_obj tag;
+    assert (objects zero_addr g' == objects zero_addr alloc_res.heap_out);
+    dst_fields_valid_from_bounds (dst_obj <: U64.t) wz;
+    // Prove the universal for no_scan_invariant_intro
+    let aux (src: obj_addr) (field_idx: nat) : Lemma
+      (ensures (
+        Seq.mem src (objects zero_addr g') /\
+        is_no_scan src g' /\
+        ~(is_blue src g') /\
+        field_idx < U64.v (wosize_of_object src g') /\
+        U64.v src + field_idx * 8 < heap_size ==>
+        (let field_addr : hp_addr = U64.uint_to_t (U64.v src + field_idx * 8) in
+         ~(is_pointer_field (read_word g' field_addr)))))
+    = if Seq.mem src (objects zero_addr g') &&
+         is_no_scan src g' &&
+         not (is_blue src g') &&
+         field_idx < U64.v (wosize_of_object src g') &&
+         U64.v src + field_idx * 8 < heap_size then
+        if (src <: U64.t) = (dst_obj <: U64.t) then
+          promote_no_scan_new_object minor major obj fp wz field_idx
+        else
+          promote_no_scan_old_object minor major obj fp wz src field_idx
+      else ()
+    in
+    Classical.forall_intro_2 aux;
+    no_scan_invariant_intro g'
+  end
 #pop-options
 
 /// Helper: promote_object preserves allocated_avoid_chain.
@@ -1452,7 +1676,7 @@ let rec fields_match_minor_elim_helper
     else fields_match_minor_elim_helper minor major fwd live_set (idx - 1) k
 #pop-options
 
-#push-options "--z3rlimit 40"
+#push-options "--z3rlimit 100"
 let fields_match_minor_elim_lemma
   (minor: minor_state) (major: heap) (fwd: forwarding_map)
   (live_set: seq U64.t) (idx: nat) (k: nat) (j: nat) (field_addr: hp_addr)
