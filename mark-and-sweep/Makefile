@@ -79,6 +79,7 @@ verify-impl: $(addsuffix .checked,$(ALL_SRC))
 # --- Pattern rules (verification) -------------------------------------------
 
 # Bridge lemmas: no z3refresh (some queries benefit from accumulated state)
+# friend GC.Spec.Base is declared in the module source
 spec/GC.Test.Bridge.fst.checked: spec/GC.Test.Bridge.fst
 	$(FSTAR) $<
 

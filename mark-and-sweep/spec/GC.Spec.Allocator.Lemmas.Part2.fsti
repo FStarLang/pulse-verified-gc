@@ -19,7 +19,7 @@ module Seq = FStar.Seq
 val alloc_from_block_preserves_wfh_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
         (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
@@ -88,7 +88,7 @@ val alloc_spec_read_other : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
                   fl_valid g fp (heap_size / U64.v mword) /\
                   fl_chain_terminates g fp (heap_size / U64.v mword) /\
                   requested_wz >= 1 /\
-                  Seq.mem other (objects 0UL g) /\
+                  Seq.mem other (objects zero_addr g) /\
                   // other is NOT in the free-list chain
                   chain_avoids g fp other (heap_size / U64.v mword) = true /\
                   // addr is in the body of other
@@ -108,7 +108,7 @@ val alloc_spec_preserves_chain_avoids_other : (g: heap) -> (fp: U64.t) -> (reque
                   chain_avoids g fp excl (heap_size / U64.v mword) = true /\
                   U64.v excl >= U64.v mword /\ U64.v excl < heap_size /\
                   U64.v excl % U64.v mword == 0 /\
-                  Seq.mem (excl <: obj_addr) (objects 0UL g))
+                  Seq.mem (excl <: obj_addr) (objects zero_addr g))
         (ensures (let r = alloc_spec g fp requested_wz in
                   chain_avoids r.heap_out r.fp_out excl (heap_size / U64.v mword) = true))
 
@@ -139,7 +139,7 @@ val alloc_spec_read_field_gt0 :
                   fl_chain_terminates g fp (heap_size / U64.v mword) /\
                   requested_wz >= 1 /\
                   (alloc_spec g fp requested_wz).obj_out <> 0UL /\
-                  Seq.mem src (objects 0UL g) /\
+                  Seq.mem src (objects zero_addr g) /\
                   src <> (alloc_spec g fp requested_wz).obj_out /\
                   j > 0 /\
                   j < U64.v (wosize_of_object src g) /\
@@ -154,24 +154,24 @@ val alloc_spec_read_field_gt0 :
 val alloc_from_block_rem_in_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in
                    bwz >= wz /\ bwz - wz >= 2))
         (ensures (let (g', rem_fp) = alloc_from_block g obj wz next_fp in
                   is_pointer_field rem_fp /\
-                  Seq.mem rem_fp (objects 0UL g')))
+                  Seq.mem rem_fp (objects zero_addr g')))
 
 /// **Theorem**: alloc_from_block preserves object membership under just
 /// well_formed_heap_part1. (Public wrapper for internal part1 proof.)
 val alloc_from_block_preserves_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
         (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
-                  (forall (h: obj_addr). Seq.mem h (objects 0UL g) ==> Seq.mem h (objects 0UL g'))))
+                  (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: Any object in the post-alloc heap that was NOT in the pre-alloc
 /// heap is blue. (The only possible new object is the remainder block,
@@ -185,8 +185,8 @@ val alloc_spec_new_objects_blue_part1 :
                   (alloc_spec g fp requested_wz).obj_out <> 0UL)
         (ensures (let r = alloc_spec g fp requested_wz in
                   forall (x: obj_addr).
-                    Seq.mem x (objects 0UL r.heap_out) /\
-                    ~(Seq.mem x (objects 0UL g)) ==>
+                    Seq.mem x (objects zero_addr r.heap_out) /\
+                    ~(Seq.mem x (objects zero_addr g)) ==>
                     is_blue x r.heap_out = true))
 
 /// **Theorem**: Backward inclusion for alloc_from_block (split case).
@@ -195,13 +195,13 @@ val alloc_spec_new_objects_blue_part1 :
 val alloc_from_block_objects_backward_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (h: obj_addr) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in
                    bwz >= wz /\ wz >= 1 /\ bwz - wz >= 2) /\
                   (let (g', _) = alloc_from_block g obj wz next_fp in
-                   Seq.mem h (objects 0UL g') /\
-                   ~(Seq.mem h (objects 0UL g))))
+                   Seq.mem h (objects zero_addr g') /\
+                   ~(Seq.mem h (objects zero_addr g))))
         (ensures h == snd (alloc_from_block g obj wz next_fp))
 
 /// **Theorem**: alloc_spec preserves no_black_objects under well_formed_heap_part1.

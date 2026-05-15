@@ -84,7 +84,7 @@ let gen_gc_correctness (gs_init: gen_state) (major_final: heap)
   // 1. Major heap is well-formed
   well_formed_heap major_final /\
   // 2. All objects in final state are white or blue (fully collected)
-  (forall (x: obj_addr). Seq.mem x (objects 0UL major_final) ==>
+  (forall (x: obj_addr). Seq.mem x (objects zero_addr major_final) ==>
     is_white x major_final \/ is_blue x major_final) /\
   // 3. Objects that were reachable in the major heap survive
   //    (their field data is preserved)
@@ -194,7 +194,7 @@ val gen_gc_correct
 /// - Are non-minor pointers targeting valid objects in the original major heap
 let minor_field_targets_major (v: U64.t) (major: heap) : prop =
   U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-  Seq.mem (v <: obj_addr) (objects 0UL major)
+  Seq.mem (v <: obj_addr) (objects zero_addr major)
 
 let minor_fields_well_formed (minor: minor_state) (major: heap) (roots: seq U64.t) : prop =
   let live_set = live_set_of minor major roots in
@@ -218,7 +218,7 @@ let all_promotions_succeed (minor: minor_state) (major: heap) (fp: U64.t) (roots
 /// This is a standard allocator invariant: the free list contains only blue/free blocks.
 let allocated_objects_avoid_chain (major: heap) (fp: U64.t) : prop =
   forall (obj: obj_addr).
-    Seq.mem obj (objects 0UL major) /\ ~(is_blue obj major) ==>
+    Seq.mem obj (objects zero_addr major) /\ ~(is_blue obj major) ==>
     AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true
 
 /// After promote_all, pointer fields that are NOT rewritable minor pointers still

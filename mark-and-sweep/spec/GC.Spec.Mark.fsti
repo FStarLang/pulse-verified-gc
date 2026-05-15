@@ -33,13 +33,13 @@ let rec stack_elements_valid (g: heap) (st: seq obj_addr)
   if Seq.length st = 0 then True
   else
     let obj = Seq.head st in
-    Seq.mem obj (objects 0UL g) /\
+    Seq.mem obj (objects zero_addr g) /\
     stack_elements_valid g (Seq.tail st)
 
 /// All gray objects are on the stack
 let gray_objects_on_stack (g: heap) (st: seq obj_addr) : prop =
   forall (obj: obj_addr). 
-    Seq.mem obj (objects 0UL g) /\ is_gray obj g ==> Seq.mem obj st
+    Seq.mem obj (objects zero_addr g) /\ is_gray obj g ==> Seq.mem obj st
 
 /// Stack elements point to gray objects
 let stack_points_to_gray (g: heap) (st: seq obj_addr) : prop =
@@ -64,11 +64,11 @@ val stack_head_is_gray : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires stack_props g st /\ Seq.length st > 0)
         (ensures (let obj = Seq.head st in
                   is_gray obj g /\
-                  Seq.mem obj (objects 0UL g)))
+                  Seq.mem obj (objects zero_addr g)))
 
 /// Transfer stack_elements_valid when objects are equal
 val sev_transfer : (g: heap) -> (g': heap) -> (st: seq obj_addr) ->
-  Lemma (requires objects 0UL g == objects 0UL g' /\ stack_elements_valid g st)
+  Lemma (requires objects zero_addr g == objects zero_addr g' /\ stack_elements_valid g st)
         (ensures stack_elements_valid g' st)
 
 /// White element not in gray stack (colors exclusive)
@@ -90,12 +90,12 @@ val obj_not_in_cons : (obj: obj_addr) -> (child: obj_addr) -> (st: seq obj_addr)
 /// stack_elements_valid implies subset of objects
 val sev_mem_objects : (g: heap) -> (st: seq obj_addr) -> (x: obj_addr) ->
   Lemma (requires stack_elements_valid g st /\ Seq.mem x st)
-        (ensures Seq.mem x (objects 0UL g))
+        (ensures Seq.mem x (objects zero_addr g))
 
 /// Stack length is bounded by number of objects
 val stack_length_bound : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires stack_elements_valid g st /\ stack_no_dups st)
-        (ensures Seq.length st <= Seq.length (objects 0UL g))
+        (ensures Seq.length st <= Seq.length (objects zero_addr g))
 
 /// ---------------------------------------------------------------------------
 /// Root Properties
@@ -104,7 +104,7 @@ val stack_length_bound : (g: heap) -> (st: seq obj_addr) ->
 /// Roots are valid heap pointers to objects (gray or black)
 let root_props (g: heap) (roots: seq obj_addr) : prop =
   forall (r: obj_addr). Seq.mem r roots ==>
-    (Seq.mem r (objects 0UL g) /\
+    (Seq.mem r (objects zero_addr g) /\
      (is_gray r g \/ is_black r g))
 
 /// ---------------------------------------------------------------------------
@@ -147,12 +147,12 @@ val push_children_stack_monotone : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
 /// ---------------------------------------------------------------------------
 
 val color_change_preserves_wf : (g: heap) -> (obj: obj_addr) -> (c: color) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g))
         (ensures well_formed_heap (set_object_color obj g c))
 
 val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
                                   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures well_formed_heap (fst (push_children g st obj i ws)))
@@ -160,7 +160,7 @@ val push_children_preserves_wf : (g: heap) -> (st: seq obj_addr) -> (obj: obj_ad
 val push_children_preserves_stack_props :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\
-                  is_black obj g /\ Seq.mem obj (objects 0UL g) /\
+                  is_black obj g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ~(Seq.mem obj st))
@@ -237,7 +237,7 @@ val mark_aux_empty : (g: heap) -> (st: seq obj_addr) -> (fuel: nat) ->
 
 /// Tri-color invariant: no black object points to a white (resolved) object
 let tri_color_invariant (g: heap) : prop =
-  let objs = objects 0UL g in
+  let objs = objects zero_addr g in
   forall (obj: obj_addr) (child: obj_addr). 
     Seq.mem obj objs ==>
     is_black obj g ==>
@@ -247,22 +247,22 @@ let tri_color_invariant (g: heap) : prop =
 
 /// After marking, no gray objects remain
 let noGreyObjects (g: heap) : prop =
-  let objs = objects 0UL g in
+  let objs = objects zero_addr g in
   forall (obj: obj_addr). Seq.mem obj objs ==>
     not (is_gray obj g)
 
 /// No black objects initially
 let no_black_objects (g: heap) : prop =
-  forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_black obj g)
+  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_black obj g)
 
 /// No blue objects
 let no_blue_objects (g: heap) : prop =
-  forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_blue obj g)
+  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_blue obj g)
 
 /// No non-blue object points to a blue object
 let no_pointer_to_blue (g: heap) : prop =
   forall (src dst: obj_addr).
-    Seq.mem src (objects 0UL g) /\ ~(is_blue src g) /\ points_to g src dst ==>
+    Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\ points_to g src dst ==>
     ~(is_blue dst g)
 
 /// ---------------------------------------------------------------------------
@@ -330,15 +330,15 @@ val mark_no_grey_remains : (g: heap) -> (st: seq obj_addr) ->
 
 val push_children_no_new_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) -> 
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
-  Lemma (requires ~(is_white x g) /\ Seq.mem x (objects 0UL g) /\ 
-                  well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires ~(is_white x g) /\ Seq.mem x (objects zero_addr g) /\ 
+                  well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_white x (fst (push_children g st obj i ws))))
 
 val push_children_obj_children_non_white : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (child: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   points_to g obj child)
         (ensures (let ws = wosize_of_object obj g in
@@ -347,8 +347,8 @@ val push_children_obj_children_non_white : (g: heap) -> (st: seq obj_addr) -> (o
 
 val push_children_preserves_points_to : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) -> (child: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
-                  Seq.mem b (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
+                  Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
@@ -356,7 +356,7 @@ val push_children_preserves_points_to : (g: heap) -> (st: seq obj_addr) -> (obj:
 
 val push_children_black_backward : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   is_black b (fst (push_children g st obj i ws)))
@@ -364,8 +364,8 @@ val push_children_black_backward : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
 
 val push_children_preserves_is_no_scan : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (b: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
-                  Seq.mem b (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
+                  Seq.mem b (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
@@ -373,15 +373,15 @@ val push_children_preserves_is_no_scan : (g: heap) -> (st: seq obj_addr) -> (obj
 
 val push_children_preserves_objects : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
-                  objects 0UL g' == objects 0UL g))
+                  objects zero_addr g' == objects zero_addr g))
 
 val mark_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures objects 0UL (fst (mark_step g st)) == objects 0UL g)
+        (ensures objects zero_addr (fst (mark_step g st)) == objects zero_addr g)
 
 val mark_step_preserves_density : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
@@ -397,7 +397,7 @@ val mark_preserves_density : (g: heap) -> (st: seq obj_addr) ->
 
 val push_children_preserves_resolve : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (addr: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
@@ -409,16 +409,16 @@ val mark_preserves_tri_color : (g: heap) -> (st: seq obj_addr) ->
 
 val mark_aux_preserves_objects : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   (fuel: nat) ->
-  Lemma (ensures objects 0UL (mark_aux g st fuel) == objects 0UL g)
+  Lemma (ensures objects zero_addr (mark_aux g st fuel) == objects zero_addr g)
 
 val mark_preserves_objects_gt0 : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length (objects 0UL g) > 0)
-        (ensures Seq.length (objects 0UL (mark g st)) > 0)
+  Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length (objects zero_addr g) > 0)
+        (ensures Seq.length (objects zero_addr (mark g st)) > 0)
 
 val push_children_no_new_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ ~(is_blue x g) /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures ~(is_blue x (fst (push_children g st obj i ws))))
@@ -426,7 +426,7 @@ val push_children_no_new_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_add
 val push_children_preserves_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ is_blue x g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures is_blue x (fst (push_children g st obj i ws)))
@@ -434,7 +434,7 @@ val push_children_preserves_blue : (g: heap) -> (st: seq obj_addr) -> (obj: obj_
 val black_successor_is_black : (g: heap) -> (src: obj_addr) -> (dst: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ tri_color_invariant g /\
                   no_pointer_to_blue g /\
-                  Seq.mem src (objects 0UL g) /\ Seq.mem dst (objects 0UL g) /\
+                  Seq.mem src (objects zero_addr g) /\ Seq.mem dst (objects zero_addr g) /\
                   is_black src g /\ mem_graph_edge (create_graph g) src dst)
         (ensures is_black dst g)
 
@@ -457,13 +457,13 @@ val black_reach_is_black : (graph: graph_state{graph_wf graph}) -> (g: heap{well
 
 val color_preserves_get_field :
   (target: obj_addr) -> (h: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) -> (i: U64.t{U64.v i >= 1}) ->
-  Lemma (requires Seq.mem target (objects 0UL g) /\ Seq.mem h (objects 0UL g) /\
+  Lemma (requires Seq.mem target (objects zero_addr g) /\ Seq.mem h (objects zero_addr g) /\
                   U64.v i <= U64.v (wosize_of_object h g))
         (ensures HeapGraph.get_field (set_object_color target g c) h i == HeapGraph.get_field g h i)
 
 val color_preserves_create_graph :
   (obj: obj_addr) -> (g: heap{well_formed_heap g}) -> (c: color) ->
-  Lemma (requires Seq.mem obj (objects 0UL g))
+  Lemma (requires Seq.mem obj (objects zero_addr g))
         (ensures create_graph (set_object_color obj g c) == create_graph g)
 
 /// ---------------------------------------------------------------------------
@@ -472,7 +472,7 @@ val color_preserves_create_graph :
 
 /// push_children preserves create_graph
 val push_children_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_addr) -> 
-                                           (obj: obj_addr{Seq.mem obj (objects 0UL g)}) ->
+                                           (obj: obj_addr{Seq.mem obj (objects zero_addr g)}) ->
                                            (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
   Lemma (requires U64.v ws <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54)
@@ -483,20 +483,20 @@ val mark_preserves_create_graph : (g: heap{well_formed_heap g}) -> (st: seq obj_
 
 /// well_formed_heap implies object_fits_in_heap
 val wf_implies_object_fits : (g: heap) -> (hd: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem hd (objects 0UL g))
+  Lemma (requires well_formed_heap g /\ Seq.mem hd (objects zero_addr g))
         (ensures HeapGraph.object_fits_in_heap hd g)
 
 /// color change preserves object_fits_in_heap
 val color_preserves_object_fits : (target: obj_addr) -> (hd: obj_addr) -> (g: heap) -> (c: Header.color_sem) ->
-  Lemma (requires HeapGraph.object_fits_in_heap hd g /\ Seq.mem target (objects 0UL g) /\
+  Lemma (requires HeapGraph.object_fits_in_heap hd g /\ Seq.mem target (objects zero_addr g) /\
                   U64.v (wosize_of_object target g) < pow2 54)
         (ensures HeapGraph.object_fits_in_heap hd (set_object_color target g c))
 
 /// push_children preserves wosize
 val push_children_preserves_wosize : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
-                  Seq.mem x (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -504,8 +504,8 @@ val push_children_preserves_wosize : (g: heap) -> (st: seq obj_addr) -> (obj: ob
 
 val push_children_preserves_get_field : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (x: obj_addr) -> (j: U64.t{U64.v j >= 1}) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
-                  Seq.mem x (objects 0UL g) /\ U64.v j <= U64.v (wosize_of_object x g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
+                  Seq.mem x (objects zero_addr g) /\ U64.v j <= U64.v (wosize_of_object x g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   ws == wosize_of_object obj g /\
                   HeapGraph.object_fits_in_heap obj g)
@@ -518,27 +518,27 @@ val push_children_preserves_get_field : (g: heap) -> (st: seq obj_addr) -> (obj:
 
 val mark_preserves_get_field : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   (x: obj_addr) -> (i: U64.t{U64.v i >= 1}) ->
-  Lemma (requires Seq.mem x (objects 0UL g) /\ U64.v i <= U64.v (wosize_of_object x g))
+  Lemma (requires Seq.mem x (objects zero_addr g) /\ U64.v i <= U64.v (wosize_of_object x g))
         (ensures HeapGraph.get_field (mark g st) x i == HeapGraph.get_field g x i)
 
 val mark_preserves_wosize : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   (x: obj_addr) ->
-  Lemma (requires Seq.mem x (objects 0UL g))
+  Lemma (requires Seq.mem x (objects zero_addr g))
         (ensures wosize_of_object x (mark g st) == wosize_of_object x g)
 
 val mark_preserves_is_no_scan : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   (x: obj_addr) ->
-  Lemma (requires Seq.mem x (objects 0UL g))
+  Lemma (requires Seq.mem x (objects zero_addr g))
         (ensures is_no_scan x (mark g st) == is_no_scan x g)
 
 val mark_no_new_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   (x: obj_addr) ->
-  Lemma (requires Seq.mem x (objects 0UL g) /\ ~(is_blue x g))
+  Lemma (requires Seq.mem x (objects zero_addr g) /\ ~(is_blue x g))
         (ensures ~(is_blue x (mark g st)))
 
 val mark_preserves_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
   (x: obj_addr) ->
-  Lemma (requires Seq.mem x (objects 0UL g) /\ is_blue x g)
+  Lemma (requires Seq.mem x (objects zero_addr g) /\ is_blue x g)
         (ensures is_blue x (mark g st))
 
 val mark_preserves_no_pointer_to_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
@@ -582,7 +582,7 @@ val mark_black_is_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj
 /// check_and_darken_field preserves well_formed_heap
 val check_and_darken_field_preserves_wf :
   (g: heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (wz: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v wz <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   Seq.length g == heap_size /\
@@ -590,17 +590,17 @@ val check_and_darken_field_preserves_wf :
                   HeapGraph.is_pointer_field (HeapGraph.get_field g obj i))
         (ensures (let v = HeapGraph.get_field g obj i in
                   let target : obj_addr = v in
-                  Seq.mem target (objects 0UL g) /\
+                  Seq.mem target (objects zero_addr g) /\
                   (is_white target g ==>
                     (well_formed_heap (set_object_color target g Header.Gray) /\
-                     Seq.mem obj (objects 0UL (set_object_color target g Header.Gray)) /\
+                     Seq.mem obj (objects zero_addr (set_object_color target g Header.Gray)) /\
                      U64.v wz <= U64.v (wosize_of_object obj (set_object_color target g Header.Gray)) /\
                      U64.v (wosize_of_object obj (set_object_color target g Header.Gray)) < pow2 54))))
 
 /// pointer field values resolve to themselves in well-formed heaps
 val pointer_field_resolve_identity :
   (g: heap) -> (obj: obj_addr) -> (i: U64.t{U64.v i >= 1}) -> (wz: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   U64.v wz <= U64.v (wosize_of_object obj g) /\
                   U64.v (wosize_of_object obj g) < pow2 54 /\
                   Seq.length g == heap_size /\

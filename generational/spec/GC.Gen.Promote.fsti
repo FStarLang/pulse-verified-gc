@@ -514,11 +514,11 @@ val copy_fields_preserves_objects
   (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
   : Lemma (requires
              well_formed_heap major /\
-             Seq.mem dst_obj (objects 0UL major) /\
+             Seq.mem dst_obj (objects zero_addr major) /\
              U64.v dst_obj % 8 == 0 /\
              U64.v (wosize_of_object dst_obj major) >= n)
           (ensures
-             objects 0UL (copy_fields minor major src_obj dst_obj 0 n) == objects 0UL major)
+             objects zero_addr (copy_fields minor major src_obj dst_obj 0 n) == objects zero_addr major)
 
 /// promote_object preserves existing object membership
 val promote_object_preserves_objects
@@ -528,8 +528,8 @@ val promote_object_preserves_objects
              GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword))
           (ensures
              (let res = promote_object minor major obj fp wosize in
-              (forall (x: obj_addr). Seq.mem x (objects 0UL major) ==>
-                Seq.mem x (objects 0UL res.major_out))))
+              (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
+                Seq.mem x (objects zero_addr res.major_out))))
 
 /// copy_fields preserves the allocator invariants (wfh_part1, fl_valid, fl_chain_terminates)
 /// when dst_obj is not in the free-list chain.
@@ -540,7 +540,7 @@ val copy_fields_preserves_alloc_invariants
   (fp: U64.t)
   : Lemma (requires
              well_formed_heap_part1 major /\
-             Seq.mem dst_obj (objects 0UL major) /\
+             Seq.mem dst_obj (objects zero_addr major) /\
              U64.v dst_obj % 8 == 0 /\
              U64.v (wosize_of_object dst_obj major) >= n /\
              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
@@ -619,7 +619,7 @@ let minor_no_scan_invariant (minor: minor_state) : prop =
 /// (Defined here for use in the no-scan preservation proof.)
 let allocated_avoid_chain (major: heap) (fp: U64.t) : prop =
   forall (x: obj_addr).
-    Seq.mem x (objects 0UL major) /\ ~(is_blue x major) ==>
+    Seq.mem x (objects zero_addr major) /\ ~(is_blue x major) ==>
     AllocLemmas.chain_avoids major fp x (heap_size / U64.v mword) = true
 
 /// promote_all_spec preserves no_scan_invariant: after promoting all live
@@ -645,13 +645,13 @@ val promote_all_preserves_no_scan_invariant
 let heap_objects_dense (g: heap) : prop =
   forall (start: hp_addr).
     U64.v start + 8 < heap_size ==>
-    Seq.mem (f_address start) (objects 0UL g) ==>
+    Seq.mem (f_address start) (objects zero_addr g) ==>
     Seq.length (objects start g) > 0 ==>
     (let wz = getWosize (read_word g start) in
      let next = U64.v start + ((U64.v wz + 1) * 8) in
      next + 8 < heap_size ==>
      Seq.length (objects (U64.uint_to_t next) g) > 0 /\
-     Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))
+     Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g))
 
 
 /// Predicate: every forwarded object's address is in the objects of heap g
@@ -675,23 +675,23 @@ let fwd_all_targets_valid (fwd: forwarding_map) (g: heap) : prop =
 /// Pointer closure modulo forwarding
 let pointer_closure_modulo_fwd (major: heap) (fwd: forwarding_map) : prop =
   forall (src: obj_addr) (j: nat).
-    Seq.mem src (objects 0UL major) /\
+    Seq.mem src (objects zero_addr major) /\
     j < U64.v (wosize_of_object src major) /\
     U64.v src + j * 8 + 8 <= heap_size ==>
     (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
      is_pointer v /\ ~(is_minor_pointer v /\ fwd v <> 0UL) ==>
-     Seq.mem (v <: obj_addr) (objects 0UL major))
+     Seq.mem (v <: obj_addr) (objects zero_addr major))
 
 /// Blue fields closed: for blue (free-list) objects, all pointer fields
 /// target valid objects in the heap.
 [@@"opaque_to_smt"]
 let blue_fields_closed (major: heap) : prop =
   forall (src: obj_addr) (j: nat).
-    Seq.mem src (objects 0UL major) /\ is_blue src major /\
+    Seq.mem src (objects zero_addr major) /\ is_blue src major /\
     j < U64.v (wosize_of_object src major) /\
     U64.v src + j * 8 + 8 <= heap_size ==>
     (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-     is_pointer v ==> Seq.mem (v <: obj_addr) (objects 0UL major))
+     is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr major))
 
 /// Predicate: all promoted objects in the major heap have field data matching
 /// the original minor-heap values (pre-pointer-update).
@@ -837,7 +837,7 @@ val fields_match_minor_intro_by_proof
 [@@"opaque_to_smt"]
 let chain_objects_blue (major: heap) (fp: U64.t) : prop =
   forall (obj: obj_addr).
-    Seq.mem obj (objects 0UL major) /\ ~(is_blue obj major) ==>
+    Seq.mem obj (objects zero_addr major) /\ ~(is_blue obj major) ==>
     AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true
 
 /// Minor collection that promotes ALL minor objects.

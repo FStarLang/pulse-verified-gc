@@ -46,9 +46,9 @@ module Header = GC.Lib.Header
 private let rec sweep_aux_preserves_wosize_any
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                     SpecSweep.fp_in_heap fp g /\
-                    Seq.mem x (objects 0UL g) /\
+                    Seq.mem x (objects zero_addr g) /\
                     Seq.mem x objs /\
                     Graph.is_vertex_set (HeapGraph.coerce_to_vertex_list objs))
           (ensures wosize_of_object x g == wosize_of_object x (fst (SpecSweep.sweep_aux g objs fp)))
@@ -70,7 +70,7 @@ private let rec sweep_aux_preserves_wosize_any
         HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
         assert (~(Seq.mem x (Seq.tail objs)));
         // x still in objects g'
-        assert (Seq.mem x (objects 0UL g'));
+        assert (Seq.mem x (objects zero_addr g'));
         // fp' in heap
         (if is_white obj g then () else ());
         assert (SpecSweep.fp_in_heap fp' g');
@@ -81,7 +81,7 @@ private let rec sweep_aux_preserves_wosize_any
         SpecSweep.sweep_object_preserves_other_header g obj fp x;
         assert (wosize_of_object x g' == wosize_of_object x g);
         // x still in objects g' and in tail objs
-        assert (Seq.mem x (objects 0UL g'));
+        assert (Seq.mem x (objects zero_addr g'));
         Seq.lemma_mem_inversion objs;
         assert (Seq.mem x (Seq.tail objs));
         // fp' in heap
@@ -100,10 +100,10 @@ private let sweep_preserves_wosize_all
   : Lemma (requires well_formed_heap g /\
                     noGreyObjects g /\
                     SpecSweep.fp_in_heap fp g /\
-                    Seq.mem x (objects 0UL g))
+                    Seq.mem x (objects zero_addr g))
           (ensures wosize_of_object x g == wosize_of_object x (fst (SpecSweep.sweep g fp)))
   = GC.Spec.HeapModel.objects_is_vertex_set g;
-    sweep_aux_preserves_wosize_any g (objects 0UL g) fp x
+    sweep_aux_preserves_wosize_any g (objects zero_addr g) fp x
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ private let sweep_color_correspondence
               noGreyObjects g /\
               SpecSweep.fp_in_heap fp g /\
               gs == fst (SpecSweep.sweep g fp) /\
-              Seq.mem x (objects 0UL g))
+              Seq.mem x (objects zero_addr g))
     (ensures (is_black x g <==> ~(is_blue x gs)))
   = wf_objects_non_infix g x;
     is_black_iff x g;
@@ -138,7 +138,7 @@ private let sweep_color_correspondence
       assert (~(is_black x g))
     end else if is_blue x g then begin
       GC.Spec.HeapModel.objects_is_vertex_set g;
-      SpecSweep.sweep_aux_blue_stays_blue g (objects 0UL g) fp x;
+      SpecSweep.sweep_aux_blue_stays_blue g (objects zero_addr g) fp x;
       assert (is_blue x gs);
       assert (~(is_black x g))
     end else begin
@@ -162,7 +162,7 @@ private let sweep_preserves_body_read_black
   : Lemma (requires well_formed_heap g /\
                     noGreyObjects g /\
                     SpecSweep.fp_in_heap fp g /\
-                    Seq.mem x (objects 0UL g) /\
+                    Seq.mem x (objects zero_addr g) /\
                     is_black x g /\
                     U64.v a >= U64.v x /\
                     U64.v a + 8 <= U64.v x + U64.v (wosize_of_object x g) * 8)
@@ -170,7 +170,7 @@ private let sweep_preserves_body_read_black
   = GC.Spec.HeapModel.objects_is_vertex_set g;
     assert (U64.v a < U64.v x + U64.v (wosize_of_object x g) * 8);
     assert (U64.v a % 8 = 0);
-    SpecSweep.sweep_aux_preserves_field_member g (objects 0UL g) fp x a
+    SpecSweep.sweep_aux_preserves_field_member g (objects zero_addr g) fp x a
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -281,9 +281,9 @@ private let rec objects_contiguous_lemma
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let objects_fit_lemma
   (g: heap) (x: obj_addr)
-  : Lemma (requires Seq.mem x (objects 0UL g))
+  : Lemma (requires Seq.mem x (objects zero_addr g))
           (ensures U64.v x + U64.v (wosize_of_object x g) * 8 <= heap_size)
-  = objects_member_size_bound 0UL g x;
+  = objects_member_size_bound zero_addr g x;
     hd_address_spec x;
     wosize_of_object_spec x g
 #pop-options
@@ -298,7 +298,7 @@ private let objects_fit_lemma
 private let rec sweep_aux_preserves_past_all
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                     SpecSweep.fp_in_heap fp g /\
                     (forall (x: obj_addr). Seq.mem x objs ==>
                       U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8))
@@ -377,17 +377,73 @@ private let rec sweep_aux_preserves_past_all
     end
 #pop-options
 
-/// Top-level: sweep preserves bytes past all objects
+/// sweep_aux preserves reads at addresses below zero_addr
+/// (sweep only writes at hd_address(obj) >= zero_addr and obj >= zero_addr + mword)
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+private let rec sweep_aux_preserves_below_zero
+  (g: heap) (objs: seq obj_addr) (fp: U64.t) (a: hp_addr)
+  : Lemma (requires well_formed_heap g /\
+                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
+                    SpecSweep.fp_in_heap fp g /\
+                    U64.v a + U64.v mword <= U64.v zero_addr)
+          (ensures read_word (fst (SpecSweep.sweep_aux g objs fp)) a == read_word g a)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let obj = Seq.head objs in
+      let (g', fp') = SpecSweep.sweep_object g obj fp in
+      Seq.lemma_index_is_nth objs 0;
+      SpecSweep.sweep_object_preserves_objects g obj fp;
+      SpecSweep.sweep_object_preserves_wf g obj fp;
+      wf_objects_non_infix g obj;
+      // obj >= mword >= 8, hd_address(obj) = obj - 8 >= zero_addr
+      // a + 8 <= zero_addr, so a < zero_addr <= hd_address(obj) <= obj
+      hd_address_spec obj;
+      objects_addresses_gt_start zero_addr g obj;
+      assert (U64.v obj > U64.v zero_addr);
+      assert (U64.v (hd_address obj) >= U64.v zero_addr);
+      assert (U64.v a < U64.v zero_addr);
+      // Therefore a <> hd_address(obj) and a <> obj
+      if is_infix obj g then begin
+        assert (g' == g);
+        assert (fp' == fp)
+      end else if is_white obj g then begin
+        let ws = wosize_of_object obj g in
+        let hd = GC.Spec.Heap.hd_address obj in
+        let g_sf =
+          if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+            read_write_different g obj a fp;
+            HeapGraph.set_field g obj 1UL fp
+          end else g
+        in
+        makeBlue_eq obj g_sf;
+        color_change_header_locality obj a g_sf Header.Blue;
+        assert (read_word g' a == read_word g a)
+      end else if is_black obj g then begin
+        makeWhite_eq obj g;
+        color_change_header_locality obj a g Header.White;
+        assert (read_word g' a == read_word g a)
+      end else begin
+        colors_exclusive obj g;
+        assert (g' == g)
+      end;
+      assert (read_word g' a == read_word g a);
+      // For tail: need well_formed_heap g' and fp' in heap
+      (if is_white obj g then () else ());
+      // Recurse
+      sweep_aux_preserves_below_zero g' (Seq.tail objs) fp' a
+    end
+#pop-options
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let sweep_preserves_past_all_objects
   (g: heap) (fp: U64.t) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
                     noGreyObjects g /\
                     SpecSweep.fp_in_heap fp g /\
-                    (forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       U64.v a >= U64.v x + U64.v (wosize_of_object x g) * 8))
           (ensures read_word (fst (SpecSweep.sweep g fp)) a == read_word g a)
-  = sweep_aux_preserves_past_all g (objects 0UL g) fp a
+  = sweep_aux_preserves_past_all g (objects zero_addr g) fp a
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -403,7 +459,7 @@ private let sweep_preserves_header_parts_black
                     noGreyObjects g /\
                     SpecSweep.fp_in_heap fp g /\
                     gs == fst (SpecSweep.sweep g fp) /\
-                    Seq.mem x (objects 0UL g) /\
+                    Seq.mem x (objects zero_addr g) /\
                     is_black x g)
           (ensures getWosize (read_word g (hd_address x)) == getWosize (read_word gs (hd_address x)) /\
                    getTag (read_word g (hd_address x)) == getTag (read_word gs (hd_address x)))
@@ -420,7 +476,7 @@ private let sweep_preserves_header_parts_black
 /// ---------------------------------------------------------------------------
 
 /// The proof instantiates combined_proof with:
-///   h_f = g, h_c = gs, objs = objects 0UL g, fb = 0UL, rw = 0, fp = 0UL
+///   h_f = g, h_c = gs, objs = objects zero_addr g, fb = 0UL, rw = 0, fp = 0UL
 /// where gs = fst (sweep g fp).
 
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
@@ -429,17 +485,17 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
     (requires well_formed_heap g /\
               SI.heap_objects_dense g /\
               SpecSweep.fp_in_heap fp g /\
-              (forall (x: obj_addr). Seq.mem x (objects 0UL g) ==>
+              (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                 ~(is_gray x g)))
     (ensures fused_sweep_coalesce g ==
              SpecCoalesce.coalesce (fst (SpecSweep.sweep g fp)))
   =
   let gs = fst (SpecSweep.sweep g fp) in
-  let objs = objects 0UL g in
+  let objs = objects zero_addr g in
 
   // Establish gs properties
   SpecSweep.sweep_preserves_objects g fp;
-  assert (objects 0UL gs == objs);
+  assert (objects zero_addr gs == objs);
   SpecSweep.sweep_preserves_wf g fp;
   assert (well_formed_heap gs);
 
@@ -466,7 +522,7 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
 
   // === Condition 4: Agree below bound ===
   // With rw=0, bound = if len objs > 0 then hd_address(head objs) else heap_size
-  // Case 1: objs nonempty → head objs = f_address 0UL = 8UL, hd_address 8UL = 0UL, bound=0 → vacuous
+  // Case 1: objs nonempty → head objs = f_address zero_addr = 8UL, hd_address 8UL = 0UL, bound=0 → vacuous
   // Case 2: objs empty → bound = heap_size → need all reads to agree
   //   But when objs is empty, sweep_aux does nothing, so g == gs anyway
   let cond4 : squash (let bound = if 0 > 0 then U64.v 0UL - 8
@@ -474,15 +530,28 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
                       else heap_size in
           forall (a: hp_addr). U64.v a + 8 <= bound ==> read_word g a == read_word gs a)
     = if Seq.length objs > 0 then begin
-        objects_nonempty_head 0UL g;
-        f_address_spec 0UL;
-        hd_address_spec (f_address 0UL)
-        // bound = 0, vacuously true
+        objects_nonempty_head zero_addr g;
+        f_address_spec zero_addr;
+        hd_address_spec (f_address zero_addr);
+        // bound = U64.v zero_addr
+        // For any a:hp_addr with U64.v a + 8 <= U64.v zero_addr,
+        // a is below all objects, so sweep doesn't touch it.
+        // All objects x have hd_address x >= zero_addr > a, and x >= zero_addr + mword > a.
+        // sweep only writes at hd_address(obj) and obj for each obj in objs.
+        let aux (a: hp_addr) : Lemma
+          (requires U64.v a + 8 <= U64.v zero_addr)
+          (ensures read_word g a == read_word gs a)
+        = // a < zero_addr, but every obj in objs satisfies U64.v (hd_address obj) >= U64.v zero_addr
+          // So a is past all objects in the reverse direction.
+          // Use: sweep only modifies headers and first fields, all of which are >= zero_addr
+          sweep_aux_preserves_below_zero g objs fp a
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
       end else begin
-        // objs = objects 0UL g is empty, so sweep_aux g objs fp = (g, fp)
+        // objs = objects zero_addr g is empty, so sweep_aux g objs fp = (g, fp)
         // meaning gs = g and all reads agree trivially
         assert (Seq.length objs = 0);
-        // sweep g fp = sweep_aux g (objects 0UL g) fp = sweep_aux g objs fp
+        // sweep g fp = sweep_aux g (objects zero_addr g) fp = sweep_aux g objs fp
         // When objs is empty, sweep_aux g Seq.empty fp = (g, fp) by definition
         // So gs = fst (sweep g fp) = fst (sweep_aux g objs fp) = g
         ()
@@ -531,10 +600,10 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   // === Condition 10: fb validity — vacuously true (rw=0) ===
 
   // === Condition 11: Well-separated ===
-  objects_well_separated_lemma 0UL g;
+  objects_well_separated_lemma zero_addr g;
 
   // === Condition 12: Contiguous ===
-  objects_contiguous_lemma 0UL g;
+  objects_contiguous_lemma zero_addr g;
 
   // === Condition 13: Run-object contiguity — vacuously true (rw=0) ===
 
@@ -547,18 +616,18 @@ let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   FStar.Classical.forall_intro (FStar.Classical.move_requires cond14_aux);
 
   // === Apply combined_proof ===
-  // Instantiate: h_f = g, h_c = gs, objs = objects 0UL g, fb = 0UL, rw = 0, fp = 0UL
+  // Instantiate: h_f = g, h_c = gs, objs = objects zero_addr g, fb = 0UL, rw = 0, fp = 0UL
   Ind.combined_proof g gs g gs objs 0UL 0 0UL;
   // This gives: fused_aux g g objs 0UL 0 0UL == coalesce_aux gs gs objs 0UL 0 0UL
   assert (fused_aux g g objs 0UL 0 0UL == SpecCoalesce.coalesce_aux gs gs objs 0UL 0 0UL);
 
-  // LHS: fused_sweep_coalesce g = fused_aux g g (objects 0UL g) 0UL 0 0UL  (by definition)
+  // LHS: fused_sweep_coalesce g = fused_aux g g (objects zero_addr g) 0UL 0 0UL  (by definition)
 
-  // RHS: coalesce gs = coalesce_aux gs gs (objects 0UL gs) 0UL 0 0UL  (by definition)
-  //     = coalesce_aux gs gs (objects 0UL g) 0UL 0 0UL   (since objects 0UL gs == objects 0UL g)
+  // RHS: coalesce gs = coalesce_aux gs gs (objects zero_addr gs) 0UL 0 0UL  (by definition)
+  //     = coalesce_aux gs gs (objects zero_addr g) 0UL 0 0UL   (since objects zero_addr gs == objects zero_addr g)
   //     = coalesce_aux gs gs objs 0UL 0 0UL
-  assert (SpecCoalesce.coalesce gs == SpecCoalesce.coalesce_aux gs gs (objects 0UL gs) 0UL 0 0UL);
-  assert (objects 0UL gs == objs);
+  assert (SpecCoalesce.coalesce gs == SpecCoalesce.coalesce_aux gs gs (objects zero_addr gs) 0UL 0 0UL);
+  assert (objects zero_addr gs == objs);
   assert (SpecCoalesce.coalesce gs == SpecCoalesce.coalesce_aux gs gs objs 0UL 0 0UL);
 
   // Conclude

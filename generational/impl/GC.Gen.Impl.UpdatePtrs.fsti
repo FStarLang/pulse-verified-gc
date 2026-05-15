@@ -103,7 +103,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
            pure (GC.Spec.Fields.well_formed_heap_part1 'ms /\
                  PromoteSpec.heap_objects_dense 'ms /\
                  heap_size > 8 /\
-                 Seq.length (GC.Spec.Fields.objects 0UL 'ms) > 0 /\
+                 Seq.length (GC.Spec.Fields.objects zero_addr 'ms) > 0 /\
                  Seq.length 'farr == fwd_array_size /\
                  represents_fwd 'farr fwd)
   ensures exists* ms2.

@@ -80,7 +80,7 @@ val update_all_objects_positional_step
   : Lemma (requires well_formed_heap_part1 major /\
                     heap_objects_dense major /\
                     U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.mem (f_address pos) (objects zero_addr major) /\
                     Seq.length (objects pos major) > 0 /\
                     is_blue (f_address pos) major = false /\
                     is_no_scan (f_address pos) major = false)
@@ -93,7 +93,7 @@ val update_all_objects_positional_step
                     U64.v obj + wz * 8 <= heap_size /\
                     well_formed_heap_part1 major' /\
                     heap_objects_dense major' /\
-                    objects 0UL major' == objects 0UL major /\
+                    objects zero_addr major' == objects zero_addr major /\
                     // Spec equality: when next is still within heap bounds
                     (next_nat < heap_size ==>
                       update_all_objects_aux major' (objects (U64.uint_to_t next_nat) major') fwd 0 ==
@@ -103,7 +103,7 @@ val update_all_objects_positional_step
                       major' == update_all_objects_aux major (objects pos major) fwd 0) /\
                     // Density: next position is valid (when not done)
                     (next_nat + 8 < heap_size ==>
-                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major') /\
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects zero_addr major') /\
                       Seq.length (objects (U64.uint_to_t next_nat) major') > 0)))
 
 /// Blue positional step: when the object is blue, skip without modification
@@ -112,7 +112,7 @@ val update_all_objects_positional_step_blue
   : Lemma (requires well_formed_heap_part1 major /\
                     heap_objects_dense major /\
                     U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.mem (f_address pos) (objects zero_addr major) /\
                     Seq.length (objects pos major) > 0 /\
                     is_blue (f_address pos) major)
           (ensures (let hdr = read_word major pos in
@@ -130,7 +130,7 @@ val update_all_objects_positional_step_blue
                       major == update_all_objects_aux major (objects pos major) fwd 0) /\
                     // Density: next position is valid
                     (next_nat + 8 < heap_size ==>
-                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major) /\
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects zero_addr major) /\
                       Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
 
 /// No-scan positional step: when the object has tag >= no_scan_tag, skip it
@@ -139,7 +139,7 @@ val update_all_objects_positional_step_no_scan
   : Lemma (requires well_formed_heap_part1 major /\
                     heap_objects_dense major /\
                     U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.mem (f_address pos) (objects zero_addr major) /\
                     Seq.length (objects pos major) > 0 /\
                     is_blue (f_address pos) major = false /\
                     is_no_scan (f_address pos) major)
@@ -155,7 +155,7 @@ val update_all_objects_positional_step_no_scan
                     (next_nat >= heap_size ==>
                       major == update_all_objects_aux major (objects pos major) fwd 0) /\
                     (next_nat + 8 < heap_size ==>
-                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects 0UL major) /\
+                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects zero_addr major) /\
                       Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
 
 /// Terminal step: when next_pos >= heap_size, processing gives the final result.
@@ -163,7 +163,7 @@ val update_all_objects_terminal_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
                     U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects 0UL major) /\
+                    Seq.mem (f_address pos) (objects zero_addr major) /\
                     Seq.length (objects pos major) > 0 /\
                     is_blue (f_address pos) major = false /\
                     is_no_scan (f_address pos) major = false)
@@ -177,11 +177,11 @@ val update_all_objects_terminal_step
                       (let major' = update_object_pointers major obj wz fwd 0 in
                        major' == update_all_objects_aux major (objects pos major) fwd 0))))
 
-/// The first object in objects 0UL is at position 0 (when heap_size > 8)
+/// The first object in objects zero_addr is at position 0 (when heap_size > 8)
 val objects_initial_membership (g: heap)
   : Lemma (requires heap_size > 8 /\ well_formed_heap_part1 g /\
-                    Seq.length (objects 0UL g) > 0)
-          (ensures Seq.mem (f_address 0UL) (objects 0UL g))
+                    Seq.length (objects zero_addr g) > 0)
+          (ensures Seq.mem (f_address zero_addr) (objects zero_addr g))
 
 /// update_major_pointers preserves object headers
 val update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
@@ -324,7 +324,7 @@ val promote_all_read_other
   : Lemma (requires well_formed_heap_part1 major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-                    Seq.mem other (objects 0UL major) /\
+                    Seq.mem other (objects zero_addr major) /\
                     AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true /\
                     U64.v addr >= U64.v other /\
                     U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8)

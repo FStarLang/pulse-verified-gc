@@ -60,8 +60,7 @@ let alloc_search_fuel_0 (g: heap) (head prev cur: U64.t) (wz: nat)
 /// When cur is invalid (not a valid obj_addr): OOM
 let alloc_search_invalid (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    (cur = 0UL \/
-                     U64.v cur < U64.v mword \/
+                    (U64.v cur < U64.v zero_addr + U64.v mword \/
                      U64.v cur >= heap_size \/
                      U64.v cur % U64.v mword <> 0))
           (ensures alloc_search g head prev cur wz fuel ==
@@ -71,7 +70,7 @@ let alloc_search_invalid (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
 /// When the block is too small: advance to next
 let alloc_search_advance (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v mword /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
                     U64.v cur < heap_size /\
                     U64.v cur % U64.v mword = 0 /\
                     (let hdr = read_word g (hd_address (cur <: obj_addr)) in
@@ -83,7 +82,7 @@ let alloc_search_advance (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
 /// When the block fits and prev = 0 (head of list)
 let alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v mword /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
                     U64.v cur < heap_size /\
                     U64.v cur % U64.v mword = 0 /\
                     prev = 0UL /\
@@ -99,7 +98,7 @@ let alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: na
 /// When the block fits and prev is a valid hp_addr
 let alloc_search_found_prev (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v mword /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
                     U64.v cur < heap_size /\
                     U64.v cur % U64.v mword = 0 /\
                     prev <> 0UL /\

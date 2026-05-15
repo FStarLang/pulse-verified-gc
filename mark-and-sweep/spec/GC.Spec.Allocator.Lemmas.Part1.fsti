@@ -18,7 +18,7 @@ module Seq = FStar.Seq
 val alloc_split_facts_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let block_wz = U64.v (getWosize hdr) in
                    block_wz >= wz /\ block_wz - wz >= 2))
@@ -65,7 +65,7 @@ val alloc_split_facts_part1 :
 val alloc_split_g3_agrees_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (p: hp_addr) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hd = hd_address obj in
                    let hdr = read_word g hd in
                    let block_wz = U64.v (getWosize hdr) in
@@ -82,23 +82,23 @@ val alloc_split_g3_agrees_part1 :
 val alloc_split_old_in_new_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (h: obj_addr) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let block_wz = U64.v (getWosize hdr) in
                    block_wz >= wz /\ block_wz - wz >= 2) /\
-                  Seq.mem h (objects 0UL g))
+                  Seq.mem h (objects zero_addr g))
         (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                  Seq.mem h (objects 0UL g3)))
+                  Seq.mem h (objects zero_addr g3)))
 
 /// alloc_from_block preserves objects membership under part1
 val alloc_from_block_objects_facts_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
         (ensures (let (g', rem_fp) = alloc_from_block g obj wz next_fp in
-                  (forall (h: obj_addr). Seq.mem h (objects 0UL g) ==> Seq.mem h (objects 0UL g'))))
+                  (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// Writing within an object body preserves the objects enumeration
 val write_body_preserves_objects_local :
@@ -116,11 +116,11 @@ val write_body_preserves_objects_local :
 val alloc_from_block_preserves_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz))
         (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
-                  (forall (h: obj_addr). Seq.mem h (objects 0UL g) ==> Seq.mem h (objects 0UL g'))))
+                  (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
 
 /// **Theorem**: In the split case (block_wz - wz >= 2), the remainder fp
 /// returned by alloc_from_block is a valid pointer AND is in objects of
@@ -128,10 +128,10 @@ val alloc_from_block_preserves_objects_part1 :
 val alloc_from_block_rem_in_objects_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let bwz = U64.v (getWosize hdr) in
                    bwz >= wz /\ bwz - wz >= 2))
         (ensures (let (g', rem_fp) = alloc_from_block g obj wz next_fp in
                   is_pointer_field rem_fp /\
-                  Seq.mem rem_fp (objects 0UL g')))
+                  Seq.mem rem_fp (objects zero_addr g')))

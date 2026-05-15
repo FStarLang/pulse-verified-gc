@@ -46,13 +46,13 @@ let free_list_props (g: heap) (fp: U64.t) : prop =
 /// Free-pointer validity: either null (0) or a valid object address in the heap
 let fp_in_heap (fp: U64.t) (g: heap) : prop =
   fp = 0UL \/ (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-               U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects 0UL g))
+               U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects zero_addr g))
 
 /// fp_in_heap implies fp can be coerced to obj_addr when non-null
 val fp_in_heap_elim : (fp: U64.t) -> (g: heap) ->
   Lemma (requires fp_in_heap fp g /\ fp <> 0UL)
         (ensures U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                 U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects 0UL g))
+                 U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects zero_addr g))
 
 /// ---------------------------------------------------------------------------
 /// Sweep Step: Process One Object
@@ -96,7 +96,7 @@ let rec sweep_aux (g: heap) (objs: seq obj_addr) (fp: U64.t)
     sweep_aux g' (Seq.tail objs) fp'
 
 let sweep (g: heap) (fp: U64.t) : GTot (heap & U64.t) =
-  sweep_aux g (objects 0UL g) fp
+  sweep_aux g (objects zero_addr g) fp
 
 /// ---------------------------------------------------------------------------
 /// Sweep Object Lemmas
@@ -108,12 +108,12 @@ val sweep_object_black_becomes_white : (g: heap) -> (obj: obj_addr) -> (fp: U64.
 
 val sweep_object_color_locality : (g: heap) -> (obj1: obj_addr) -> (obj2: obj_addr) -> (fp: U64.t) ->
   Lemma (requires obj1 <> obj2 /\ well_formed_heap g /\
-                  Seq.mem obj1 (objects 0UL g) /\ Seq.mem obj2 (objects 0UL g))
+                  Seq.mem obj1 (objects zero_addr g) /\ Seq.mem obj2 (objects zero_addr g))
         (ensures color_of_object obj2 (fst (sweep_object g obj1 fp)) == color_of_object obj2 g)
 
 val sweep_object_preserves_objects : (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
-        (ensures objects 0UL (fst (sweep_object g obj fp)) == objects 0UL g)
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g))
+        (ensures objects zero_addr (fst (sweep_object g obj fp)) == objects zero_addr g)
 
 val sweep_object_resets_self_color : (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
   Lemma (requires (is_white obj g \/ is_black obj g) /\ ~(is_infix obj g))
@@ -121,7 +121,7 @@ val sweep_object_resets_self_color : (g: heap) -> (obj: obj_addr) -> (fp: U64.t)
                  (is_black obj g ==> is_white obj (fst (sweep_object g obj fp))))
 
 val sweep_object_preserves_wf : (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                   fp_in_heap fp g)
         (ensures well_formed_heap (fst (sweep_object g obj fp)))
 
@@ -132,7 +132,7 @@ val sweep_object_preserves_objects_from : (start: hp_addr) -> (g: heap) -> (obj:
 val sweep_object_preserves_objects_suffix : (h_addr: hp_addr) -> (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
                   Seq.length (objects h_addr g) > 0 /\
-                  Seq.mem (f_address h_addr) (objects 0UL g))
+                  Seq.mem (f_address h_addr) (objects zero_addr g))
         (ensures (let obj = f_address h_addr in
                   let wz = getWosize (read_word g h_addr) in
                   let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
@@ -157,7 +157,7 @@ val sweep_aux_empty : (g: heap) -> (fp: U64.t) ->
 val sweep_aux_objects_step : (h_addr: hp_addr) -> (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
                   Seq.length (objects h_addr g) > 0 /\
-                  Seq.mem (f_address h_addr) (objects 0UL g) /\
+                  Seq.mem (f_address h_addr) (objects zero_addr g) /\
                   U64.v h_addr + 8 < heap_size)
         (ensures (let obj = f_address h_addr in
                   let wz = getWosize (read_word g h_addr) in
@@ -173,8 +173,8 @@ val sweep_aux_objects_step : (h_addr: hp_addr) -> (g: heap) -> (fp: U64.t) ->
 val sweep_aux_non_member_color : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires ~(Seq.mem x objs) /\
                   well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
-                  Seq.mem x (objects 0UL g) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
+                  Seq.mem x (objects zero_addr g) /\
                   fp_in_heap fp g)
         (ensures color_of_object x (fst (sweep_aux g objs fp)) == color_of_object x g)
 
@@ -185,7 +185,7 @@ val coerce_tail_lemma : (objs: seq obj_addr) ->
 
 val sweep_aux_black_survives : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ is_black x g /\ Seq.mem x objs /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                   is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                   fp_in_heap fp g)
         (ensures is_white x (fst (sweep_aux g objs fp)))
@@ -193,15 +193,15 @@ val sweep_aux_black_survives : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) 
 val sweep_aux_white_stays : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires is_white x g /\ ~(Seq.mem x objs) /\
                   well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
-                  Seq.mem x (objects 0UL g) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
+                  Seq.mem x (objects zero_addr g) /\
                   fp_in_heap fp g)
         (ensures is_white x (fst (sweep_aux g objs fp)))
 
 val sweep_aux_white_in_objs_becomes_blue : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires is_white x g /\ Seq.mem x objs /\
                   well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                   is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                   fp_in_heap fp g)
         (ensures is_blue x (fst (sweep_aux g objs fp)))
@@ -209,24 +209,24 @@ val sweep_aux_white_in_objs_becomes_blue : (g: heap) -> (objs: seq obj_addr) -> 
 val sweep_aux_blue_stays_blue : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires is_blue x g /\ Seq.mem x objs /\
                   well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                   is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                   fp_in_heap fp g)
         (ensures is_blue x (fst (sweep_aux g objs fp)))
 
 val sweep_aux_preserves_objects : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                   fp_in_heap fp g)
-        (ensures objects 0UL (fst (sweep_aux g objs fp)) == objects 0UL g)
+        (ensures objects zero_addr (fst (sweep_aux g objs fp)) == objects zero_addr g)
 
 val sweep_preserves_objects : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ fp_in_heap fp g)
-        (ensures objects 0UL (fst (sweep g fp)) == objects 0UL g)
+        (ensures objects zero_addr (fst (sweep g fp)) == objects zero_addr g)
 
 val sweep_aux_preserves_wf : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                   fp_in_heap fp g)
         (ensures well_formed_heap (fst (sweep_aux g objs fp)))
 
@@ -237,34 +237,34 @@ val sweep_preserves_wf : (g: heap) -> (fp: U64.t) ->
 val sweep_black_survives : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ fp_in_heap fp g)
         (ensures (forall (x: obj_addr). 
-                   Seq.mem x (objects 0UL g) /\ is_black x g ==> 
-                   Seq.mem x (objects 0UL (fst (sweep g fp))) /\
+                   Seq.mem x (objects zero_addr g) /\ is_black x g ==> 
+                   Seq.mem x (objects zero_addr (fst (sweep g fp))) /\
                    is_white x (fst (sweep g fp))))
 
 val sweep_white_becomes_blue : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ fp_in_heap fp g)
         (ensures (forall (x: obj_addr). 
-                   Seq.mem x (objects 0UL g) /\ is_white x g ==> 
+                   Seq.mem x (objects zero_addr g) /\ is_white x g ==> 
                    is_blue x (fst (sweep g fp))))
 
 val sweep_blue_stays_blue : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ fp_in_heap fp g)
         (ensures (forall (x: obj_addr). 
-                   Seq.mem x (objects 0UL g) /\ is_blue x g ==> 
+                   Seq.mem x (objects zero_addr g) /\ is_blue x g ==> 
                    is_blue x (fst (sweep g fp))))
 
 val sweep_resets_colors : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\
                   fp_in_heap fp g)
         (ensures (forall (x: obj_addr). 
-                   Seq.mem x (objects 0UL (fst (sweep g fp))) ==>
+                   Seq.mem x (objects zero_addr (fst (sweep g fp))) ==>
                    is_white x (fst (sweep g fp)) \/ is_blue x (fst (sweep g fp))))
 
 val sweep_final_colors : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\
                   fp_in_heap fp g)
         (ensures (forall (x: obj_addr). 
-                   Seq.mem x (objects 0UL (fst (sweep g fp))) ==>
+                   Seq.mem x (objects zero_addr (fst (sweep g fp))) ==>
                    not (is_gray x (fst (sweep g fp))) /\
                    not (is_black x (fst (sweep g fp)))))
 
@@ -272,23 +272,23 @@ val sweep_resets_black_to_white : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\
                   fp_in_heap fp g)
         (ensures (forall (x: obj_addr). 
-                   Seq.mem x (objects 0UL g) /\ is_black x g ==>
+                   Seq.mem x (objects zero_addr g) /\ is_black x g ==>
                    is_white x (fst (sweep g fp))))
 
 val sweep_no_gray_or_black : (g: heap) -> (fp: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\
                   fp_in_heap fp g)
         (ensures (forall (x: obj_addr). 
-                   Seq.mem x (objects 0UL (fst (sweep g fp))) ==>
+                   Seq.mem x (objects zero_addr (fst (sweep g fp))) ==>
                    not (is_gray x (fst (sweep g fp))) /\
                    not (is_black x (fst (sweep g fp)))))
 
 val sweep_object_preserves_other_body_read :
   (g: heap) -> (obj: obj_addr) -> (fp: U64.t) -> (x: obj_addr) -> (a: hp_addr) ->
   Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   fp_in_heap fp g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   obj <> x /\
                   U64.v a >= U64.v x /\
                   U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
@@ -297,9 +297,9 @@ val sweep_object_preserves_other_body_read :
 
 val sweep_object_preserves_other_header :
   (g: heap) -> (obj: obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
-  Lemma (requires Seq.mem obj (objects 0UL g) /\
+  Lemma (requires Seq.mem obj (objects zero_addr g) /\
                   fp_in_heap fp g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   obj <> x)
         (ensures (let g' = fst (sweep_object g obj fp) in
                   read_word g' (GC.Spec.Heap.hd_address x) == read_word g (GC.Spec.Heap.hd_address x) /\
@@ -307,7 +307,7 @@ val sweep_object_preserves_other_header :
 
 val sweep_object_preserves_self_wosize :
   (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
-  Lemma (requires Seq.mem obj (objects 0UL g) /\ fp_in_heap fp g)
+  Lemma (requires Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g)
         (ensures wosize_of_object obj (fst (sweep_object g obj fp)) == wosize_of_object obj g)
 
 val sweep_object_white_field0 :
@@ -320,9 +320,9 @@ val sweep_object_white_field0 :
 val sweep_aux_preserves_field_member :
   (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) -> (a: hp_addr) ->
   Lemma (requires well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                   fp_in_heap fp g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   Seq.mem x objs /\
                   is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                   is_black x g /\
@@ -334,21 +334,21 @@ val sweep_aux_preserves_field_member :
 val sweep_aux_preserves_wosize_nonmember :
   (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\
-                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+                  (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                   fp_in_heap fp g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   ~(Seq.mem x objs))
         (ensures wosize_of_object x g == wosize_of_object x (fst (sweep_aux g objs fp)))
 
 val sweep_preserves_wosize_black : (g: heap) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ is_black x g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   fp_in_heap fp g)
         (ensures wosize_of_object x g == wosize_of_object x (fst (sweep g fp)))
 
 val sweep_preserves_tag_black : (g: heap) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ is_black x g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   fp_in_heap fp g)
         (ensures getTag (read_word g (GC.Spec.Heap.hd_address x)) ==
                  getTag (read_word (fst (sweep g fp)) (GC.Spec.Heap.hd_address x)))
@@ -362,14 +362,14 @@ val get_pointer_fields_aux_preserved :
 
 val sweep_preserves_edges : (g: heap) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ is_black x g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   fp_in_heap fp g)
         (ensures HeapGraph.get_pointer_fields g x == 
                  HeapGraph.get_pointer_fields (fst (sweep g fp)) x)
 
 val sweep_preserves_field : (g: heap) -> (fp: U64.t) -> (x: obj_addr) -> (i: U64.t) ->
   Lemma (requires well_formed_heap g /\ noGreyObjects g /\ is_black x g /\
-                  Seq.mem x (objects 0UL g) /\
+                  Seq.mem x (objects zero_addr g) /\
                   fp_in_heap fp g /\
                   U64.v i >= 1 /\ U64.v i <= U64.v (wosize_of_object x g))
         (ensures HeapGraph.get_field (fst (sweep g fp)) x i ==

@@ -236,7 +236,7 @@ fn minor_collect (gh: gen_heap_t)
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  minor_wf ({ data = 'd; bump = 'b }) /\
                   minor_guards_complete ({ data = 'd; bump = 'b }) /\
-                 Seq.length (SpecFields.objects 0UL 's) > 0)
+                 Seq.length (SpecFields.objects zero_addr 's) > 0)
   ensures exists* d2 b2 s2 fp2 rs2 farr2.
     is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
@@ -249,8 +249,8 @@ fn minor_collect (gh: gen_heap_t)
       fp2 == res.mc_fp /\
       rs2 == res.mc_roots /\
       U64.v b2 == 0 /\
-      (forall (x: obj_addr). Seq.mem x (SpecFields.objects 0UL 's) ==>
-        Seq.mem x (SpecFields.objects 0UL s2)) /\
+      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
+        Seq.mem x (SpecFields.objects zero_addr s2)) /\
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
       SpecFields.well_formed_heap_part1 s2 /\
       AllocLemmas.fl_valid s2 fp2 (heap_size / U64.v mword) /\
@@ -335,7 +335,7 @@ fn gen_gc (gh: gen_heap_t)
              (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
              minor_wf ({ data = 'd; bump = 'b }) /\
              minor_guards_complete ({ data = 'd; bump = 'b }) /\
-             Seq.length (SpecFields.objects 0UL 's) > 0 /\
+             Seq.length (SpecFields.objects zero_addr 's) > 0 /\
              Mark.no_black_objects 's /\
              (let res = CheneySpec.cheney_collect_spec
                           ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
@@ -355,8 +355,8 @@ fn gen_gc (gh: gen_heap_t)
       rs2 == res.mc_roots /\
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
       U64.v b2 == 0 /\
-      (forall (x: obj_addr). Seq.mem x (SpecFields.objects 0UL 's) ==>
-        Seq.mem x (SpecFields.objects 0UL res.mc_major)) /\
+      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
+        Seq.mem x (SpecFields.objects zero_addr res.mc_major)) /\
       SpecFields.well_formed_heap_part1 res.mc_major /\
       AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword))

@@ -42,7 +42,7 @@ let darken_if_white_bounded_spec (g: heap_state) (st: Seq.seq obj_addr)
 /// Spec function: what check_and_darken_bounded computes
 let check_and_darken_bounded_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
   : GTot (heap_state & Seq.seq obj_addr)
-  = if U64.v v > 0 && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
+  = if U64.v v >= U64.v zero_addr + U64.v mword && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
       darken_if_white_bounded_spec g st (U64.sub v mword) cap
     else (g, st)
 

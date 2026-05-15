@@ -29,7 +29,7 @@ val fused_unfold (g: heap)
   : Lemma
     (requires Seq.length g == heap_size)
     (ensures Defs.fused_sweep_coalesce g ==
-             Defs.fused_aux g g (objects 0UL g) 0UL 0 0UL)
+             Defs.fused_aux g g (objects zero_addr g) 0UL 0 0UL)
 
 /// ---------------------------------------------------------------------------
 /// is_black reading from current heap via suffix preservation
@@ -89,7 +89,7 @@ val whiten_from_original
       is_black obj g0 /\
       read_word g' (hd_address obj) == read_word g0 (hd_address obj) /\
       well_formed_heap g0 /\
-      Seq.mem obj (objects 0UL g0))
+      Seq.mem obj (objects zero_addr g0))
     (ensures
       (let h_addr = hd_address obj in
        let hdr = read_word g' h_addr in

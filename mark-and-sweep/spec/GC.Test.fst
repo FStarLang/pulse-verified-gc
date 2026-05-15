@@ -356,17 +356,17 @@ let init_collect_alloc
     let g_mark = g0 in
     // fp_in_heap: fp0 = mword, which is in objects
     Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
-    assert (Seq.mem (mword <: obj_addr) (objects 0UL g0));
+    assert (Seq.mem (mword <: obj_addr) (objects zero_addr g0));
     assert (fp_in_heap fp0 g0);
     // All objects are blue → vacuous white/non-blue preconditions
     let blue_implies_not_white (o: obj_addr)
-      : Lemma (requires Seq.mem o (objects 0UL g0) /\ is_white o g0)
+      : Lemma (requires Seq.mem o (objects zero_addr g0) /\ is_white o g0)
               (ensures U64.v (wosize_of_object o g0) >= 1)
       = is_white_iff o g0; is_blue_iff o g0
     in
     Classical.forall_intro (Classical.move_requires blue_implies_not_white);
     let blue_implies_no_chain (o: obj_addr)
-      : Lemma (requires Seq.mem o (objects 0UL g0) /\ ~(is_blue o g0))
+      : Lemma (requires Seq.mem o (objects zero_addr g0) /\ ~(is_blue o g0))
               (ensures chain_not_visits g0 fp0 o (heap_size / U64.v mword))
       = ()  // vacuously true — all objects are blue
     in
@@ -377,7 +377,7 @@ let init_collect_alloc
     // Establish noGreyObjects for sweep_preserves_wf
     // All objects are blue after init → not gray
     let no_grey (obj: obj_addr)
-      : Lemma (requires Seq.mem obj (objects 0UL g0))
+      : Lemma (requires Seq.mem obj (objects zero_addr g0))
               (ensures not (is_gray obj g0))
       = is_blue_iff obj g0; is_gray_iff obj g0
     in
@@ -399,7 +399,7 @@ let init_fp_in_heap (g: heap)
   = let (g', fp) = init_heap_spec g in
     init_objects_eq g;
     Seq.lemma_mem_snoc (Seq.empty #hp_addr) (mword <: hp_addr);
-    assert (Seq.mem (mword <: obj_addr) (objects 0UL g'))
+    assert (Seq.mem (mword <: obj_addr) (objects zero_addr g'))
 
 /// After init, all gc_precondition properties hold for bounded mark.
 /// This is the bounded variant of init_enables_collect.

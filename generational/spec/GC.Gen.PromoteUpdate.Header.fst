@@ -147,7 +147,7 @@ private let rec update_all_objects_aux_preserves_blue_field
       let field_addr : hp_addr = U64.uint_to_t (U64.v h + j * 8) in
       if U64.v h > U64.v obj then begin
         // h > obj: field_addr >= h > obj + wz*8, so above obj's body
-        objects_separated 0UL major obj h;
+        objects_separated zero_addr major obj h;
         assert (U64.v obj + (wz + 1) * 8 <= U64.v h);
         assert (U64.v field_addr >= U64.v h);
         assert (U64.v field_addr >= U64.v obj + wz * 8);
@@ -155,7 +155,7 @@ private let rec update_all_objects_aux_preserves_blue_field
       end else begin
         // h < obj: field_addr < h + wosize_h * 8 <= obj, so below obj's body
         let wz_h = U64.v (wosize_of_object h major) in
-        objects_separated 0UL major h obj;
+        objects_separated zero_addr major h obj;
         assert (U64.v h + (wz_h + 1) * 8 <= U64.v obj);
         assert (U64.v field_addr < U64.v h + wz_h * 8);
         assert (U64.v field_addr < U64.v obj);

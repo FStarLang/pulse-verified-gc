@@ -42,11 +42,11 @@ let wosize_of_object_bound = SpecObject.wosize_of_object_bound
 /// This wrapper avoids Pulse SMT encoding issues with Seq.mem on seq obj_addr
 /// (the refinement interpretation for obj_addr confuses Z3 in Pulse pure clauses).
 let in_objects (obj: obj_addr) (g: heap_state) : prop =
-  Seq.mem obj (objects 0UL g)
+  Seq.mem obj (objects zero_addr g)
 /// Bridge: Pulse is_pointer result ↔ spec is_pointer_field
-/// Both check: v % 8 == 0 ∧ v > 0 ∧ v < heap_size
+/// Both check: v % 8 == 0 ∧ v >= zero_addr + mword ∧ v < heap_size
 let is_pointer_eq (v: U64.t)
-  : Lemma (((U64.v v > 0 /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0)
+  : Lemma (((U64.v v >= U64.v zero_addr + U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0)
              <==> HeapGraph.is_pointer_field v))
   = ()
 
@@ -116,7 +116,7 @@ let darken_if_white_spec (g: heap_state) (st: Seq.seq obj_addr) (h_addr: hp_addr
 /// Spec function: what check_and_darken computes (Pulse-friendly form)
 let check_and_darken_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
   : GTot (heap_state & Seq.seq obj_addr)
-  = if U64.v v > 0 && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
+  = if U64.v v >= U64.v zero_addr + U64.v mword && U64.v v < heap_size && U64.v v % U64.v mword = 0 then
       darken_if_white_spec g st (U64.sub v mword)
     else (g, st)
 
@@ -125,7 +125,7 @@ let check_and_darken_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 100 --split_queries no"
 let check_and_darken_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
     (obj: obj_addr) (wz: U64.t) (i: U64.t{U64.v i >= 1})
-  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v wz <= U64.v (wosize_of_object obj g) /\
                     U64.v (wosize_of_object obj g) < pow2 54 /\
                     Seq.length g == heap_size /\
@@ -133,7 +133,7 @@ let check_and_darken_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U6
                     v == HeapGraph.get_field g obj i)
           (ensures (let (g', _) = check_and_darken_spec g st v in
                     well_formed_heap g' /\
-                    Seq.mem obj (objects 0UL g') /\
+                    Seq.mem obj (objects zero_addr g') /\
                     U64.v wz <= U64.v (wosize_of_object obj g') /\
                     U64.v (wosize_of_object obj g') < pow2 54))
   = is_pointer_eq v;
@@ -153,7 +153,7 @@ let check_and_darken_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U6
 let push_children_step (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
                        (i: U64.t{U64.v i >= 1}) (wz: U64.t)
   : Lemma (requires U64.v i <= U64.v wz /\
-                    well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+                    well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v wz <= U64.v (wosize_of_object obj g) /\
                     U64.v (wosize_of_object obj g) < pow2 54)
           (ensures (let v = HeapGraph.get_field g obj i in
@@ -187,7 +187,7 @@ let push_children_step_rw (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
                     Seq.length g == heap_size /\
                     U64.v h_addr + U64.v mword * U64.v i + U64.v mword <= heap_size /\
                     h_addr == SpecHeap.hd_address obj /\
-                    well_formed_heap g /\ Seq.mem obj (objects 0UL g) /\
+                    well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v wz <= U64.v (wosize_of_object obj g) /\
                     U64.v (wosize_of_object obj g) < pow2 54)
           (ensures (let v = spec_read_word g (spec_field_address (U64.v h_addr) (U64.v i)) in
@@ -207,7 +207,7 @@ let push_children_step_rw (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
 #push-options "--z3rlimit 100"
 let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires SpecFields.well_formed_heap g /\
-                    Seq.mem f_addr (SpecFields.objects 0UL g))
+                    Seq.mem f_addr (SpecFields.objects zero_addr g))
           (ensures (let h_addr = U64.v f_addr - U64.v mword in
                     let hdr = SpecHeap.read_word g (SpecHeap.hd_address f_addr) in
                     let wz = getWosize hdr in
@@ -226,7 +226,7 @@ let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
 let blacken_eq (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_gray f_addr g /\
-                    Seq.mem f_addr (SpecFields.objects 0UL g) /\
+                    Seq.mem f_addr (SpecFields.objects zero_addr g) /\
                     SpecFields.well_formed_heap g)
           (ensures (let h_addr = SpecHeap.hd_address f_addr in
                     let hdr = SpecHeap.read_word g h_addr in
@@ -256,7 +256,7 @@ let blacken_eq (g: heap_state) (f_addr: obj_addr)
 let grayen_eq (g: heap_state) (child: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_white child g /\
-                    Seq.mem child (SpecFields.objects 0UL g) /\
+                    Seq.mem child (SpecFields.objects zero_addr g) /\
                     SpecFields.well_formed_heap g /\
                     GC.Lib.Header.valid_header64 (SpecHeap.read_word g (SpecHeap.hd_address child)))
           (ensures (let h_addr = SpecHeap.hd_address child in
@@ -522,7 +522,7 @@ fn maybe_push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wo
 /// Bridge: makeBlack preserves objects list
 /// Goes through makeBlack_eq + color_change_preserves_objects
 let makeBlack_preserves_objects (obj: obj_addr) (g: GC.Spec.Base.heap)
-  : Lemma (SpecFields.objects 0UL (SpecObject.makeBlack obj g) == SpecFields.objects 0UL g)
+  : Lemma (SpecFields.objects zero_addr (SpecObject.makeBlack obj g) == SpecFields.objects zero_addr g)
   = SpecObject.makeBlack_eq obj g;
     SpecFields.color_change_preserves_objects g obj GC.Lib.Header.Black
 
@@ -537,7 +537,7 @@ let mark_step_scan_preserves_objects
                     wz == SpecObject.wosize_of_object f_addr g)
           (ensures (let g' = SpecObject.makeBlack f_addr g in
                     let (g'', _) = SpecMark.push_children g' tl f_addr 1UL wz in
-                    SpecFields.objects 0UL g'' == SpecFields.objects 0UL g))
+                    SpecFields.objects zero_addr g'' == SpecFields.objects zero_addr g))
   = SpecMarkInv.mark_inv_elim_wfh g (Seq.cons f_addr tl);
     SpecMarkInv.mark_inv_head_gray g (Seq.cons f_addr tl);
     makeBlack_preserves_objects f_addr g;

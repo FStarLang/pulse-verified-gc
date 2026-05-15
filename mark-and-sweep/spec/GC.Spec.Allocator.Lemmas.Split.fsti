@@ -18,29 +18,29 @@ module Seq = FStar.Seq
 /// Named precondition for split-case lemmas
 let alloc_split_pre (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) : prop =
   well_formed_heap g /\
-  Seq.mem obj (objects 0UL g) /\
+  Seq.mem obj (objects zero_addr g) /\
   (let hdr = read_word g (hd_address obj) in
    let block_wz = U64.v (getWosize hdr) in
    block_wz >= wz /\ block_wz - wz >= 2) /\
-  (is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g))
+  (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g))
 
 /// Section 5: Exact-fit preserves well_formed_heap
 val alloc_exact_preserves_wf :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let block_wz = U64.v (getWosize hdr) in
                    block_wz >= wz /\ block_wz - wz < 2))
         (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                   well_formed_heap g' /\
-                  objects 0UL g' == objects 0UL g))
+                  objects zero_addr g' == objects zero_addr g))
 
 /// Helper: next_hd objects agree after split
 val split_next_hd_objects_eq :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let block_wz = U64.v (getWosize hdr) in
                    block_wz >= wz /\ block_wz - wz >= 2))
@@ -57,7 +57,7 @@ val split_next_hd_objects_eq :
 val split_next_hd_objects_eq_part1 :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    let block_wz = U64.v (getWosize hdr) in
                    block_wz >= wz /\ block_wz - wz >= 2))
@@ -93,7 +93,7 @@ val split_new_mem_in_old_or_rem :
   Lemma (requires
       Seq.length g3 == Seq.length g /\
       well_formed_heap g /\
-      Seq.mem obj (objects 0UL g) /\
+      Seq.mem obj (objects zero_addr g) /\
       (let hd = hd_address obj in
        let hdr = read_word g hd in
        U64.v (getWosize hdr) == block_wz /\
@@ -112,7 +112,7 @@ val split_new_mem_in_old_or_rem :
           objects (U64.uint_to_t next_hd_nat <: hp_addr) g3 == objects (U64.uint_to_t next_hd_nat <: hp_addr) g) /\
         U64.v start <= U64.v hd)) /\
       Seq.mem h (objects start g3) /\
-      (U64.v start = 0 \/ Seq.mem (f_address start) (objects 0UL g)) /\
+      (U64.v start = U64.v zero_addr \/ Seq.mem (f_address start) (objects zero_addr g)) /\
       Seq.mem obj (objects start g))
     (ensures (let rem_hd_nat = U64.v (hd_address obj) + (1 + wz) * 8 in
               let rem_obj_nat = rem_hd_nat + 8 in
@@ -182,9 +182,9 @@ val alloc_split_facts :
 val alloc_split_old_in_new :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) -> (h: obj_addr) ->
   Lemma (requires alloc_split_pre g obj wz next_fp /\
-                  Seq.mem h (objects 0UL g))
+                  Seq.mem h (objects zero_addr g))
         (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                  Seq.mem h (objects 0UL g3)))
+                  Seq.mem h (objects zero_addr g3)))
 
 /// Remainder object is in post-split objects list
 val alloc_split_rem_in_objects :
@@ -192,7 +192,7 @@ val alloc_split_rem_in_objects :
   Lemma (requires alloc_split_pre g obj wz next_fp)
         (ensures (let (g3, rem_fp) = alloc_from_block g obj wz next_fp in
                   is_pointer_field rem_fp /\
-                  (is_pointer_field rem_fp ==> Seq.mem rem_fp (objects 0UL g3))))
+                  (is_pointer_field rem_fp ==> Seq.mem rem_fp (objects zero_addr g3))))
 
 /// Split case preserves well_formed_heap
 val alloc_split_preserves_wf :
@@ -205,9 +205,9 @@ val alloc_split_preserves_wf :
 val alloc_from_block_preserves_wf :
   (g: heap) -> (obj: obj_addr) -> (wz: nat) -> (next_fp: U64.t) ->
   Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   (let hdr = read_word g (hd_address obj) in
                    U64.v (getWosize hdr) >= wz) /\
-                  (is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g)))
+                  (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g)))
         (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                   well_formed_heap g'))

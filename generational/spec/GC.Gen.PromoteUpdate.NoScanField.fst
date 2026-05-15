@@ -73,14 +73,14 @@ private let rec update_all_objects_aux_preserves_no_scan_field
       // Show field of h is preserved: h != obj (h is no-scan, obj is not no-scan)
       let field_addr : hp_addr = U64.uint_to_t (U64.v h + j * 8) in
       if U64.v h > U64.v obj then begin
-        objects_separated 0UL major obj h;
+        objects_separated zero_addr major obj h;
         assert (U64.v obj + (wz + 1) * 8 <= U64.v h);
         assert (U64.v field_addr >= U64.v h);
         assert (U64.v field_addr >= U64.v obj + wz * 8);
         update_object_pointers_preserves_addr_above major obj wz fwd 0 field_addr
       end else begin
         let wz_h = U64.v (wosize_of_object h major) in
-        objects_separated 0UL major h obj;
+        objects_separated zero_addr major h obj;
         assert (U64.v h + (wz_h + 1) * 8 <= U64.v obj);
         assert (U64.v field_addr < U64.v h + wz_h * 8);
         assert (U64.v field_addr < U64.v obj);

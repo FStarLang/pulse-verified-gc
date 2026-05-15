@@ -37,7 +37,7 @@ val make_header_getTag : (wz: U64.t{U64.v wz < pow2 54}) ->
 val header_write_same_wosize_preserves_objects :
   (g: heap) -> (obj: obj_addr) -> (new_hdr: U64.t) ->
   Lemma (requires getWosize new_hdr == getWosize (read_word g (hd_address obj)))
-        (ensures objects 0UL (write_word g (hd_address obj) new_hdr) == objects 0UL g)
+        (ensures objects zero_addr (write_word g (hd_address obj) new_hdr) == objects zero_addr g)
 
 /// Section 3: efptu congruence and monotonicity
 
@@ -75,8 +75,8 @@ val header_write_doesnt_change_own_fields :
 val header_write_doesnt_change_other_fields :
   (g: heap) -> (obj: obj_addr) -> (src: obj_addr) -> (new_hdr: U64.t) -> (k: nat) ->
   Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects 0UL g) /\
-                  Seq.mem src (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
+                  Seq.mem src (objects zero_addr g) /\
                   src <> obj /\
                   k < U64.v (wosize_of_object src g))
         (ensures (let fa = U64.add_mod src (U64.mul_mod (U64.uint_to_t k) mword) in

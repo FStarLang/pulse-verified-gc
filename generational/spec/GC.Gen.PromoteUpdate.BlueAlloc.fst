@@ -120,8 +120,7 @@ private let rec alloc_search_preserves_bfc
   =
   let open GC.Spec.Allocator in
   if fuel = 0 then ()
-  else if cur_fp = 0UL then ()
-  else if U64.v cur_fp < U64.v mword then ()
+  else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
   else if U64.v cur_fp >= heap_size then ()
   else if U64.v cur_fp % U64.v mword <> 0 then ()
   else begin
@@ -176,9 +175,9 @@ private let rec alloc_search_preserves_bfc
                  U64.v prev_fp % U64.v mword = 0 then begin
                 hd_address_spec obj;
                 if U64.v prev_fp < U64.v obj then
-                  objects_separated 0UL g (prev_fp <: obj_addr) obj
+                  objects_separated zero_addr g (prev_fp <: obj_addr) obj
                 else
-                  objects_separated 0UL g obj (prev_fp <: obj_addr);
+                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
                 // prev_fp and hd(obj) are word-separated (from objects_separated)
                 read_write_different g' (prev_fp <: hp_addr) (hd_address obj) new_rem_fp;
                 color_of_header_eq obj (write_word g' (prev_fp <: hp_addr) new_rem_fp) g'
@@ -192,16 +191,16 @@ private let rec alloc_search_preserves_bfc
               wosize_of_object_spec src g;
               wosize_of_object_spec obj g;
               if U64.v src < U64.v obj then
-                objects_separated 0UL g src obj
+                objects_separated zero_addr g src obj
               else
-                objects_separated 0UL g obj src;
+                objects_separated zero_addr g obj src;
               GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp (hd_address src);
               if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
                  U64.v prev_fp % U64.v mword = 0 then begin
                 if U64.v src < U64.v prev_fp then
-                  objects_separated 0UL g src (prev_fp <: obj_addr)
+                  objects_separated zero_addr g src (prev_fp <: obj_addr)
                 else if U64.v src > U64.v prev_fp then
-                  objects_separated 0UL g (prev_fp <: obj_addr) src
+                  objects_separated zero_addr g (prev_fp <: obj_addr) src
                 else ();  // src = prev_fp: hd(src) = src - 8 ≠ src = prev_fp (write addr)
                 read_write_different g' (prev_fp <: hp_addr) (hd_address src) new_rem_fp
               end else ();
@@ -221,9 +220,9 @@ private let rec alloc_search_preserves_bfc
                    U64.v prev_fp % U64.v mword = 0 then begin
                   if src <> prev_fp then begin
                     if U64.v src < U64.v prev_fp then
-                      objects_separated 0UL g src (prev_fp <: obj_addr)
+                      objects_separated zero_addr g src (prev_fp <: obj_addr)
                     else
-                      objects_separated 0UL g (prev_fp <: obj_addr) src
+                      objects_separated zero_addr g (prev_fp <: obj_addr) src
                   end else ();
                   read_write_different g' (prev_fp <: hp_addr) field_addr new_rem_fp
                 end else ();
@@ -301,8 +300,8 @@ private let rec alloc_search_preserves_bfc
                   AllocLemmas.alloc_from_block_preserves_objects_part1 g obj wz next_fp;
                   assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g'));
                   assert (prev_fp <> obj);
-                  objects_separated 0UL g (prev_fp <: obj_addr) obj;
-                  objects_separated 0UL g obj (prev_fp <: obj_addr);
+                  objects_separated zero_addr g (prev_fp <: obj_addr) obj;
+                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
                   hd_address_spec (prev_fp <: obj_addr);
                   wosize_of_object_spec (prev_fp <: obj_addr) g;
                   GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp
@@ -332,8 +331,8 @@ private let rec alloc_search_preserves_bfc
                   assert (Seq.mem (prev_fp <: obj_addr) (objects zero_addr g'));
                   // Establish wosize(prev_fp, g') == wosize(prev_fp, g) via frame
                   assert (prev_fp <> obj);
-                  objects_separated 0UL g (prev_fp <: obj_addr) obj;
-                  objects_separated 0UL g obj (prev_fp <: obj_addr);
+                  objects_separated zero_addr g (prev_fp <: obj_addr) obj;
+                  objects_separated zero_addr g obj (prev_fp <: obj_addr);
                   hd_address_spec (prev_fp <: obj_addr);
                   wosize_of_object_spec (prev_fp <: obj_addr) g;
                   GC.Gen.AllocProps.alloc_from_block_read_frame g obj wz next_fp

@@ -151,7 +151,7 @@ fn read_succ (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
 fn is_pointer (v: U64.t)
   requires emp
   returns b: bool
-  ensures emp ** pure (b <==> (U64.v v > 0 /\ 
+  ensures emp ** pure (b <==> (U64.v v >= U64.v zero_addr + U64.v mword /\ 
                                U64.v v < heap_size /\ 
                                U64.v v % U64.v mword == 0))
 {

@@ -152,7 +152,7 @@ let write_body_preserves_objects
       U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
       U64.v addr % 8 = 0)
     (ensures objects zero_addr (write_word g addr v) == objects zero_addr g) =
-  write_body_preserves_objects_aux 0UL g obj addr v
+  write_body_preserves_objects_aux zero_addr g obj addr v
 
 /// ---------------------------------------------------------------------------
 /// write_body_preserves_fl_valid_aux
@@ -182,13 +182,13 @@ private let rec write_body_preserves_fl_valid_aux_impl
     let fp_obj : obj_addr = fp in
     AllocLemmas.fl_valid_elim g fp fuel;
     if U64.v dst_obj < U64.v fp then begin
-      objects_separated 0UL g dst_obj fp_obj;
+      objects_separated zero_addr g dst_obj fp_obj;
       wosize_of_object_spec dst_obj g;
       hd_address_spec fp_obj;
       read_write_different g addr (fp <: hp_addr) v;
       read_write_different g addr (hd_address fp_obj) v
     end else begin
-      objects_separated 0UL g fp_obj dst_obj;
+      objects_separated zero_addr g fp_obj dst_obj;
       wosize_of_object_spec fp_obj g;
       hd_address_spec fp_obj;
       read_write_different g addr (fp <: hp_addr) v;
@@ -251,11 +251,11 @@ private let rec write_body_preserves_not_in_fl_chain_impl
     let fp_obj : obj_addr = fp in
     AllocLemmas.fl_valid_elim g fp fuel;
     if U64.v dst_obj < U64.v fp then begin
-      objects_separated 0UL g dst_obj fp_obj;
+      objects_separated zero_addr g dst_obj fp_obj;
       wosize_of_object_spec dst_obj g;
       read_write_different g addr (fp <: hp_addr) v
     end else begin
-      objects_separated 0UL g fp_obj dst_obj;
+      objects_separated zero_addr g fp_obj dst_obj;
       wosize_of_object_spec fp_obj g;
       read_write_different g addr (fp <: hp_addr) v
     end;
@@ -314,11 +314,11 @@ private let rec write_body_preserves_fl_chain_terminates_impl
     let fp_obj : obj_addr = fp in
     AllocLemmas.fl_valid_elim g fp fuel;
     if U64.v dst_obj < U64.v fp then begin
-      objects_separated 0UL g dst_obj fp_obj;
+      objects_separated zero_addr g dst_obj fp_obj;
       wosize_of_object_spec dst_obj g;
       read_write_different g addr (fp <: hp_addr) v
     end else begin
-      objects_separated 0UL g fp_obj dst_obj;
+      objects_separated zero_addr g fp_obj dst_obj;
       wosize_of_object_spec fp_obj g;
       read_write_different g addr (fp <: hp_addr) v
     end;
@@ -378,10 +378,10 @@ let write_body_preserves_chain_avoids_self
       hd_address_spec dst_obj;
       wosize_of_object_spec dst_obj g;
       if U64.v a < U64.v dst_obj then begin
-        objects_separated 0UL g a dst_obj;
+        objects_separated zero_addr g a dst_obj;
         read_write_different g addr (a <: hp_addr) v
       end else begin
-        objects_separated 0UL g dst_obj a;
+        objects_separated zero_addr g dst_obj a;
         read_write_different g addr (a <: hp_addr) v
       end
     in
@@ -617,7 +617,7 @@ let copy_fields_preserves_wfh_part1
     hd_address_spec h;
     hd_address_spec dst_obj;
     if U64.v h > U64.v dst_obj then begin
-      objects_separated 0UL major dst_obj h;
+      objects_separated zero_addr major dst_obj h;
       wosize_of_object_spec dst_obj major;
       assert (U64.v h > U64.v dst_obj + wz_dst * 8)
     end else if U64.v h < U64.v dst_obj then begin

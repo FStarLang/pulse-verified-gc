@@ -7,6 +7,8 @@
 *)
 module GC.Test.Bridge
 
+friend GC.Spec.Base
+
 open FStar.Seq
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -198,7 +200,7 @@ let init_objects_eq (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     fp == mword /\
-                    objects 0UL g' == Seq.cons (mword <: obj_addr) Seq.empty))
+                    objects zero_addr g' == Seq.cons (mword <: obj_addr) Seq.empty))
   = let (g', fp) = init_heap_spec g in
     assert (fp == mword);
     wz_bounds ();
@@ -217,7 +219,7 @@ let init_objects_eq (g: heap)
 private let init_mem_mword (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
-                    Seq.mem mword (objects 0UL g')))
+                    Seq.mem mword (objects zero_addr g')))
   = init_objects_eq g;
     let (g', _) = init_heap_spec g in
     Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr)
@@ -327,7 +329,7 @@ let init_wf (g: heap)
     init_header_at_zero g;
     let total_words = heap_size / U64.v mword in
     let wz = total_words - 1 in
-    let objs = objects 0UL g' in
+    let objs = objects zero_addr g' in
     assert (objs == Seq.cons (mword <: obj_addr) Seq.empty);
     hd_address_spec (mword <: obj_addr);
     wosize_of_object_spec (mword <: obj_addr) g';
@@ -409,7 +411,7 @@ let init_no_black (g: heap)
     hd_address_spec (mword <: obj_addr);
     is_black_iff (mword <: obj_addr) g';
     let aux (obj: obj_addr)
-      : Lemma (requires Seq.mem obj (objects 0UL g'))
+      : Lemma (requires Seq.mem obj (objects zero_addr g'))
               (ensures ~(is_black obj g'))
       = Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr);
         assert (obj == mword);
@@ -437,7 +439,7 @@ let init_no_gray (g: heap)
     hd_address_spec (mword <: obj_addr);
     is_gray_iff (mword <: obj_addr) g';
     let aux (obj: obj_addr)
-      : Lemma (requires Seq.mem obj (objects 0UL g'))
+      : Lemma (requires Seq.mem obj (objects zero_addr g'))
               (ensures ~(is_gray obj g'))
       = Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr);
         assert (obj == mword);
@@ -463,8 +465,8 @@ let init_no_pointer_to_blue (g: heap)
     let total_words = heap_size / U64.v mword in
     let wz = total_words - 1 in
     let aux (src dst: obj_addr) : Lemma
-      (Seq.mem src (objects 0UL g') /\ points_to g' src dst ==> ~(is_blue dst g'))
-    = if Seq.mem src (objects 0UL g') && points_to g' src dst then begin
+      (Seq.mem src (objects zero_addr g') /\ points_to g' src dst ==> ~(is_blue dst g'))
+    = if Seq.mem src (objects zero_addr g') && points_to g' src dst then begin
         Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr);
         assert (src == mword);
         wosize_of_object_spec src g';
@@ -484,7 +486,7 @@ let init_no_pointer_to_blue (g: heap)
 let init_objects_nonempty (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
-                    Seq.length (objects 0UL g') > 0))
+                    Seq.length (objects zero_addr g') > 0))
   = init_objects_eq g
 #pop-options
 
@@ -563,9 +565,9 @@ let init_graph_wf (g: heap)
 /// =========================================================================
 /// Lemma 11: init_dense — heap_objects_dense after init_heap_spec
 /// =========================================================================
-/// With the weakened heap_objects_dense (guarded by membership in objects 0UL g),
+/// With the weakened heap_objects_dense (guarded by membership in objects zero_addr g),
 /// init density is trivially satisfied: the only position whose f_address is in
-/// objects 0UL g' = [8] is start=0, and for that position the next position is
+/// objects zero_addr g' = [8] is start=0, and for that position the next position is
 /// at heap_size (out of bounds), making the implication vacuously true.
 
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
@@ -576,8 +578,8 @@ let init_dense (g: heap)
     init_objects_eq g;
     wz_bounds ();
     init_header_at_zero g;
-    // objects 0UL g' == [mword], a singleton
-    let objs = objects 0UL g' in
+    // objects zero_addr g' == [mword], a singleton
+    let objs = objects zero_addr g' in
     // Characterize membership: mem y objs ↔ y = mword
     Seq.lemma_mem_snoc (Seq.empty #obj_addr) (mword <: obj_addr);
     assert (Seq.equal (Seq.snoc (Seq.empty #obj_addr) (mword <: obj_addr))
@@ -593,14 +595,14 @@ let init_dense (g: heap)
     assert ((wz_nat + 1) * 8 == heap_size);
     let aux (start: hp_addr) : Lemma
       (U64.v start + 8 < heap_size ==>
-       Seq.mem (f_address start) (objects 0UL g') ==>
+       Seq.mem (f_address start) (objects zero_addr g') ==>
        Seq.length (objects start g') > 0 ==>
        (let wz = getWosize (read_word g' start) in
         let next = U64.v start + ((U64.v wz + 1) * 8) in
         next + 8 < heap_size ==>
         Seq.length (objects (U64.uint_to_t next) g') > 0 /\
-        Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
-    = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects 0UL g') then begin
+        Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g')))
+    = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects zero_addr g') then begin
         // f_address start = start + 8 ∈ [mword] means start = 0
         f_address_spec start;
         assert (f_address start == (mword <: obj_addr));
@@ -689,10 +691,10 @@ let rec fl_valid_transfer_skip (g g': heap) (fp: U64.t) (skip: obj_addr) (fuel: 
   : Lemma
     (requires fl_valid g fp fuel /\
               chain_not_visits g fp skip fuel /\
-              objects 0UL g' == objects 0UL g /\
+              objects zero_addr g' == objects zero_addr g /\
               (forall (a: obj_addr).
-                 (Seq.mem a (objects 0UL g) /\ a <> skip) ==>
-                 (Seq.mem a (objects 0UL g') /\
+                 (Seq.mem a (objects zero_addr g) /\ a <> skip) ==>
+                 (Seq.mem a (objects zero_addr g') /\
                   (U64.v (wosize_of_object a g) >= 1 ==>
                     U64.v (wosize_of_object a g') >= 1) /\
                   (U64.v (wosize_of_object a g) >= 1 /\
@@ -710,7 +712,7 @@ let rec fl_valid_transfer_skip (g g': heap) (fp: U64.t) (skip: obj_addr) (fuel: 
       fl_valid_elim g fp fuel;
       let obj_fp : obj_addr = fp in
       let hd_fp = hd_address obj_fp in
-      assert (Seq.mem fp (objects 0UL g'));
+      assert (Seq.mem fp (objects zero_addr g'));
       assert (U64.v (wosize_of_object obj_fp g') >= 1);
       if U64.v hd_fp + 16 <= heap_size then begin
         assert (read_word g' obj_fp == read_word g obj_fp);
@@ -732,12 +734,12 @@ let rec fl_valid_transfer_skip (g g': heap) (fp: U64.t) (skip: obj_addr) (fuel: 
 /// for any other object obj. This is because adjacent objects with that relationship
 /// would require wosize = 0.
 let chain_node_ne_hd_address (g: heap) (node obj: obj_addr)
-  : Lemma (requires Seq.mem node (objects 0UL g) /\ Seq.mem obj (objects 0UL g) /\
+  : Lemma (requires Seq.mem node (objects zero_addr g) /\ Seq.mem obj (objects zero_addr g) /\
                     U64.v (wosize_of_object node g) >= 1 /\ node <> obj)
           (ensures U64.v node <> U64.v (hd_address obj))
   = hd_address_spec obj;
     if U64.v node < U64.v obj then begin
-      objects_separated 0UL g node obj;
+      objects_separated zero_addr g node obj;
       // obj > node + wosize(node)*8 ≥ node + 8
       // hd_address(obj) = obj - 8 ≥ node + 1 (strict)
       // But actually obj > node + wosize*8 and hd_address = obj - 8
@@ -747,7 +749,7 @@ let chain_node_ne_hd_address (g: heap) (node obj: obj_addr)
       // Contradiction with wosize ≥ 1
       assert (U64.v obj > U64.v node + U64.v (wosize_of_object node g) * 8)
     end else begin
-      objects_separated 0UL g obj node;
+      objects_separated zero_addr g obj node;
       // node > obj + wosize(obj)*8
       // hd_address(obj) = obj - 8 < obj ≤ node
       // If node = obj - 8: node < obj, contradicts node > obj
@@ -765,7 +767,7 @@ let sweep_object_preserves_fl_valid_chain
   (g: heap) (obj: obj_addr) (fp_chain: U64.t) (fp_arg: U64.t) (fuel: nat)
   : Lemma
     (requires well_formed_heap g /\
-              Seq.mem obj (objects 0UL g) /\
+              Seq.mem obj (objects zero_addr g) /\
               fp_in_heap fp_arg g /\
               fl_valid g fp_chain fuel /\
               chain_not_visits g fp_chain obj fuel)
@@ -773,14 +775,14 @@ let sweep_object_preserves_fl_valid_chain
   = let g' = fst (sweep_object g obj fp_arg) in
     sweep_object_preserves_objects g obj fp_arg;
     let aux (a: obj_addr)
-      : Lemma (requires Seq.mem a (objects 0UL g) /\ a <> obj)
-              (ensures Seq.mem a (objects 0UL g') /\
+      : Lemma (requires Seq.mem a (objects zero_addr g) /\ a <> obj)
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
                         U64.v (hd_address a) + 16 <= heap_size ==>
                          read_word g' a == read_word g a))
-      = assert (Seq.mem a (objects 0UL g'));
+      = assert (Seq.mem a (objects zero_addr g'));
         sweep_object_preserves_other_header g obj fp_arg a;
         if U64.v (wosize_of_object a g) >= 1 &&
            U64.v (hd_address a) + 16 <= heap_size then
@@ -802,7 +804,7 @@ let rec chain_not_visits_preserved_by_sweep_object
   (g: heap) (obj: obj_addr) (fp_arg: U64.t) (fp_chain: U64.t) (skip: obj_addr) (fuel: nat)
   : Lemma
     (requires well_formed_heap g /\
-              Seq.mem obj (objects 0UL g) /\
+              Seq.mem obj (objects zero_addr g) /\
               fp_in_heap fp_arg g /\
               fl_valid g fp_chain fuel /\
               chain_not_visits g fp_chain obj fuel /\
@@ -895,7 +897,7 @@ let rec sweep_aux_produces_fl_valid
     (requires well_formed_heap g /\
               fl_valid g fp big_fuel /\
               fp_in_heap fp g /\
-              (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects 0UL g)) /\
+              (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
               is_vertex_set (coerce_to_vertex_list objs) /\
               // White objects have wosize >= 1
               (forall (o: obj_addr). Seq.mem o objs /\ is_white o g ==>
@@ -915,10 +917,10 @@ let rec sweep_aux_produces_fl_valid
       // Objects preserved
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
-      assert (objects 0UL g1 == objects 0UL g);
+      assert (objects zero_addr g1 == objects zero_addr g);
 
       // Head is in objects
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
 
       if is_infix obj g then begin
         // Infix: (g1, fp1) = (g, fp), fl_valid unchanged
@@ -941,7 +943,7 @@ let rec sweep_aux_produces_fl_valid
         assert (fl_valid g1 fp big_fuel);
 
         // Construct fl_valid g1 obj big_fuel via fl_valid_step:
-        assert (Seq.mem obj (objects 0UL g1));
+        assert (Seq.mem obj (objects zero_addr g1));
         sweep_object_preserves_self_wosize g obj fp;
         assert (U64.v (wosize_of_object obj g1) >= 1);
         // chain_not_visits gives fp ≠ obj (first hop)
@@ -1086,14 +1088,14 @@ let sweep_produces_fl_valid
     (requires well_formed_heap g /\
               fl_valid g fp big_fuel /\
               fp_in_heap fp g /\
-              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ is_white o g ==>
+              (forall (o: obj_addr). Seq.mem o (objects zero_addr g) /\ is_white o g ==>
                 U64.v (wosize_of_object o g) >= 1) /\
-              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ ~(is_blue o g) ==>
+              (forall (o: obj_addr). Seq.mem o (objects zero_addr g) /\ ~(is_blue o g) ==>
                 chain_not_visits g fp o big_fuel))
     (ensures (let (g', fp') = sweep g fp in
               fl_valid g' fp' big_fuel))
   = objects_is_vertex_set g;
-    sweep_aux_produces_fl_valid g (objects 0UL g) fp
+    sweep_aux_produces_fl_valid g (objects zero_addr g) fp
 #pop-options
 
 /// =========================================================================
@@ -1104,7 +1106,7 @@ let sweep_produces_fl_valid
 let init_all_blue (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
-                    forall (obj: obj_addr). Seq.mem obj (objects 0UL g') ==> is_blue obj g'))
+                    forall (obj: obj_addr). Seq.mem obj (objects zero_addr g') ==> is_blue obj g'))
   = let (g', _) = init_heap_spec g in
     wz_bounds ();
     init_objects_eq g;
@@ -1116,7 +1118,7 @@ let init_all_blue (g: heap)
     hd_address_spec (mword <: obj_addr);
     is_blue_iff (mword <: obj_addr) g';
     let aux (obj: obj_addr)
-      : Lemma (requires Seq.mem obj (objects 0UL g'))
+      : Lemma (requires Seq.mem obj (objects zero_addr g'))
               (ensures is_blue obj g')
       = Seq.lemma_mem_snoc Seq.empty (mword <: hp_addr);
         assert (obj == mword);
@@ -1263,7 +1265,7 @@ private let init_alloc_exact_objects (g: heap) (wz: nat)
           (ensures (let (g0, _) = init_heap_spec g in
                     let wz' = if wz = 0 then 1 else wz in
                     let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
-                    objects 0UL g' == objects 0UL g0))
+                    objects zero_addr g' == objects zero_addr g0))
   = let (g0, _) = init_heap_spec g in
     wz_bounds ();
     init_objects_eq g;
@@ -1284,8 +1286,8 @@ private let init_alloc_exact_objects (g: heap) (wz: nat)
     assert (U64.v (getWosize (read_word g0 zero_addr)) == bwz);
     // Both objects walks: start at 0, wosize bwz, next = heap_size, stop
     // F* should unfold objects once and see they're equal
-    assert (objects 0UL g' == Seq.cons (mword <: hp_addr) Seq.empty);
-    assert (objects 0UL g0 == Seq.cons (mword <: hp_addr) Seq.empty)
+    assert (objects zero_addr g' == Seq.cons (mword <: hp_addr) Seq.empty);
+    assert (objects zero_addr g0 == Seq.cons (mword <: hp_addr) Seq.empty)
 #pop-options
 
 /// When the requested size exceeds the single init block (wz' > 127),
@@ -1406,7 +1408,7 @@ private let init_alloc_split_objects (g: heap) (wz: nat)
                     let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
                     let ron = (2 + wz') * 8 in
                     let rem_obj : hp_addr = U64.uint_to_t ron in
-                    objects 0UL g' == Seq.cons (mword <: hp_addr) (Seq.cons rem_obj Seq.empty)))
+                    objects zero_addr g' == Seq.cons (mword <: hp_addr) (Seq.cons rem_obj Seq.empty)))
   = let (g0, _) = init_heap_spec g in
     wz_bounds ();
     let wz' = if wz = 0 then 1 else wz in
@@ -1427,7 +1429,7 @@ private let init_alloc_split_objects (g: heap) (wz: nat)
     assert (next1 == rhn);
     assert (rhn < heap_size);
     assert (rhn < Seq.length g');
-    // So objects 0UL g' = Seq.cons mword (objects rh g')
+    // So objects zero_addr g' = Seq.cons mword (objects rh g')
     // Now prove the tail
     init_alloc_split_objects_tail g wz
 #pop-options
@@ -1438,7 +1440,7 @@ let init_alloc_objects_nonempty (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g0, fp0) = init_heap_spec g in
                     let r = alloc_spec g0 fp0 wz in
-                    Seq.length (objects 0UL r.heap_out) > 0))
+                    Seq.length (objects zero_addr r.heap_out) > 0))
   = let (g0, fp0) = init_heap_spec g in
     let wz' = if wz = 0 then 1 else wz in
     let bwz = heap_size / U64.v mword - 1 in
@@ -1654,9 +1656,9 @@ private let init_alloc_exact_no_pointer_to_blue (g: heap) (wz: nat)
     hd_address_spec (mword <: obj_addr);
     wosize_of_object_bound (mword <: obj_addr) g';
     let aux (src dst: obj_addr) : Lemma
-      (Seq.mem src (objects 0UL g') /\ ~(is_blue src g') /\ points_to g' src dst ==>
+      (Seq.mem src (objects zero_addr g') /\ ~(is_blue src g') /\ points_to g' src dst ==>
        ~(is_blue dst g'))
-    = if Seq.mem src (objects 0UL g') && points_to g' src dst then begin
+    = if Seq.mem src (objects zero_addr g') && points_to g' src dst then begin
         Seq.lemma_mem_snoc (Seq.empty #obj_addr) (mword <: obj_addr);
         assert (src == mword);
         no_pointer_fields_no_efptu g' mword (wosize_of_object mword g') dst
@@ -1682,16 +1684,16 @@ private let no_pointer_to_blue_two_objects
   (g': heap) (rem_obj: obj_addr)
   : Lemma
     (requires
-      objects 0UL g' == Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) /\
+      objects zero_addr g' == Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) /\
       is_blue rem_obj g' /\
       ~(is_blue (mword <: obj_addr) g') /\
       (forall (dst: obj_addr). ~(points_to g' mword dst)))
     (ensures no_pointer_to_blue g')
   = let s2 = Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) in
     let aux (src dst: obj_addr) : Lemma
-      (Seq.mem src (objects 0UL g') /\ ~(is_blue src g') /\ points_to g' src dst ==>
+      (Seq.mem src (objects zero_addr g') /\ ~(is_blue src g') /\ points_to g' src dst ==>
        ~(is_blue dst g'))
-    = if Seq.mem src (objects 0UL g') && not (is_blue src g') && points_to g' src dst then begin
+    = if Seq.mem src (objects zero_addr g') && not (is_blue src g') && points_to g' src dst then begin
         assert (Seq.mem src s2);
         mem_two_objects src mword rem_obj;
         assert (src == mword \/ src == rem_obj);
@@ -1752,7 +1754,7 @@ private let init_alloc_split_no_pointer_to_blue (g: heap) (wz: nat)
     let ron = (2 + wz') * 8 in
     let rem_obj : obj_addr = U64.uint_to_t ron in
     init_alloc_split_objects g wz;
-    assert (objects 0UL g' == Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)));
+    assert (objects zero_addr g' == Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)));
     init_alloc_split_rem_blue g wz;
     assert (is_blue rem_obj g');
     init_alloc_split_mword_not_blue g wz;
@@ -1848,10 +1850,10 @@ private let all_edges_empty_two (g: heap) (obj1 obj2: obj_addr)
 /// Helper: graph with empty edges is well-formed
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let graph_wf_empty_edges (g: heap)
-  : Lemma (requires all_edges g (objects 0UL g) == Seq.empty)
+  : Lemma (requires all_edges g (objects zero_addr g) == Seq.empty)
           (ensures graph_wf (create_graph g))
   = objects_is_vertex_set g;
-    let objs = objects 0UL g in
+    let objs = objects zero_addr g in
     let gr = create_graph_from_heap g objs in
     assert (gr.edges == Seq.empty);
     let aux (e: edge) : Lemma (Seq.mem e gr.edges ==> Seq.mem (fst e) gr.vertices /\ Seq.mem (snd e) gr.vertices)
@@ -2197,7 +2199,7 @@ private let init_alloc_dense_split_step
       U64.v rem_obj == (2 + wz') * 8 /\
       U64.v rhn == (1 + wz') * 8 /\
       s2 == Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) /\
-      objects 0UL g' == s2 /\
+      objects zero_addr g' == s2 /\
       // Header facts:
       getWosize (read_word g' zero_addr) == U64.uint_to_t wz' /\
       getWosize (read_word g' rhn) == U64.uint_to_t (bwz - wz' - 1) /\
@@ -2205,14 +2207,14 @@ private let init_alloc_dense_split_step
       objects rhn g' == Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr))
     (ensures
       U64.v start + 8 < heap_size ==>
-      Seq.mem (f_address start) (objects 0UL g') ==>
+      Seq.mem (f_address start) (objects zero_addr g') ==>
       Seq.length (objects start g') > 0 ==>
       (let wz_h = getWosize (read_word g' start) in
        let next = U64.v start + (U64.v wz_h + 1) * 8 in
        next + 8 < heap_size ==>
        Seq.length (objects (U64.uint_to_t next) g') > 0 /\
-       Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
-  = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects 0UL g') then begin
+       Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g')))
+  = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects zero_addr g') then begin
       f_address_spec start;
       assert (Seq.mem (f_address start) s2);
       mem_two_objects (f_address start) mword rem_obj;
@@ -2227,8 +2229,8 @@ private let init_alloc_dense_split_step
         assert (f_address rhn == rem_obj);
         mem_cons_pair #obj_addr rem_obj mword rem_obj;
         assert (Seq.mem rem_obj s2);
-        assert (Seq.mem rem_obj (objects 0UL g'));
-        assert (Seq.mem (f_address rhn) (objects 0UL g'));
+        assert (Seq.mem rem_obj (objects zero_addr g'));
+        assert (Seq.mem (f_address rhn) (objects zero_addr g'));
         assert (objects rhn g' == Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr));
         assert (Seq.length (objects rhn g') > 0)
       end
@@ -2271,14 +2273,14 @@ let init_alloc_dense (g: heap) (wz: nat)
       init_alloc_exact_wosize g wz;
       let aux (start: hp_addr) : Lemma
         (U64.v start + 8 < heap_size ==>
-         Seq.mem (f_address start) (objects 0UL g') ==>
+         Seq.mem (f_address start) (objects zero_addr g') ==>
          Seq.length (objects start g') > 0 ==>
          (let wz_h = getWosize (read_word g' start) in
           let next = U64.v start + (U64.v wz_h + 1) * 8 in
           next + 8 < heap_size ==>
           Seq.length (objects (U64.uint_to_t next) g') > 0 /\
-          Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
-      = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects 0UL g') then begin
+          Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g')))
+      = if U64.v start + 8 < heap_size && Seq.mem (f_address start) (objects zero_addr g') then begin
           f_address_spec start;
           mem_cons_singleton #obj_addr (f_address start) mword;
           assert (f_address start == (mword <: obj_addr));
@@ -2302,7 +2304,7 @@ let init_alloc_dense (g: heap) (wz: nat)
       let rem_obj : obj_addr = U64.uint_to_t ron in
       let rhn : hp_addr = U64.uint_to_t ((1 + wz') * 8) in
       let s2 = Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) in
-      assert (objects 0UL g' == s2);
+      assert (objects zero_addr g' == s2);
       Classical.forall_intro (Classical.move_requires
         (init_alloc_dense_split_step g' wz' bwz rem_obj rhn s2));
       heap_objects_dense_intro g'
@@ -2364,7 +2366,7 @@ private let init_alloc_fp_in_heap_split (g: heap) (wz: nat)
     let rem_obj : obj_addr = U64.uint_to_t ron in
     let s2 = Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) in
     let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
-    assert (objects 0UL g' == s2);
+    assert (objects zero_addr g' == s2);
     mem_cons_pair #obj_addr rem_obj mword rem_obj
 #pop-options
 
@@ -2447,7 +2449,7 @@ private let init_alloc_fp_valid_split (g: heap) (wz: nat)
     let rem_obj : obj_addr = U64.uint_to_t ron in
     let (g', _) = alloc_from_block g0 (mword <: obj_addr) wz' 0UL in
     let s2 = Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) in
-    assert (objects 0UL g' == s2);
+    assert (objects zero_addr g' == s2);
     mem_cons_pair #obj_addr rem_obj mword rem_obj;
     fp_valid_intro (rem_obj <: obj_addr) g'
 #pop-options
@@ -2478,7 +2480,7 @@ private let init_alloc_no_gray (g: heap) (wz: nat) (obj: obj_addr)
   : Lemma (requires g == Seq.create heap_size 0uy /\
                     (let (g0, fp0) = init_heap_spec g in
                      let r = alloc_spec g0 fp0 wz in
-                     Seq.mem obj (objects 0UL r.heap_out)))
+                     Seq.mem obj (objects zero_addr r.heap_out)))
           (ensures (let (g0, fp0) = init_heap_spec g in
                     let r = alloc_spec g0 fp0 wz in
                     ~(is_gray obj r.heap_out)))
@@ -2513,7 +2515,7 @@ private let init_alloc_no_gray (g: heap) (wz: nat) (obj: obj_addr)
         let ron = (2 + wz') * 8 in
         let rem_obj : obj_addr = U64.uint_to_t ron in
         let s2 = Seq.cons #obj_addr mword (Seq.cons #obj_addr rem_obj (Seq.empty #obj_addr)) in
-        assert (objects 0UL g' == s2);
+        assert (objects zero_addr g' == s2);
         mem_two_objects obj mword rem_obj;
         init_alloc_split_headers g wz;
         alloc_split_normal_read_hd g0 mword wz' 0UL;
@@ -2549,7 +2551,7 @@ let init_alloc_mark_inv (g: heap) (wz: nat)
     init_alloc_dense g wz;
     init_alloc_objects_nonempty g wz;
     let no_gray_all (obj: obj_addr) : Lemma
-      (requires Seq.mem obj (objects 0UL r.heap_out))
+      (requires Seq.mem obj (objects zero_addr r.heap_out))
       (ensures ~(is_gray obj r.heap_out))
     = init_alloc_no_gray g wz obj
     in

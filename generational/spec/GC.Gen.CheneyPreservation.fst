@@ -39,7 +39,7 @@ module Mark = GC.Spec.Mark
 private let set_promoted_tag_preserves_no_black
   (g: heap) (dst: obj_addr) (tag: nat{tag < 256})
   : Lemma (requires Mark.no_black_objects g /\
-                    Seq.mem dst (objects 0UL g))
+                    Seq.mem dst (objects zero_addr g))
           (ensures Mark.no_black_objects (set_promoted_tag g dst tag))
   = let g' = set_promoted_tag g dst tag in
     set_promoted_tag_preserves_objects g dst tag;
@@ -49,7 +49,7 @@ private let set_promoted_tag_preserves_no_black
     let new_hdr = makeHeader (getWosize hdr) White (U64.uint_to_t tag) in
     hd_address_spec dst;
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures ~(is_black h g'))
     = hd_address_spec h;
       if h = dst then begin
@@ -73,18 +73,18 @@ private let set_promoted_tag_preserves_no_black
 private let copy_fields_preserves_no_black
   (minor: minor_state) (g: heap) (obj: U64.t) (dst: obj_addr) (wz: nat{wz > 0})
   : Lemma (requires Mark.no_black_objects g /\
-                    Seq.mem dst (objects 0UL g) /\
+                    Seq.mem dst (objects zero_addr g) /\
                     well_formed_heap_part1 g /\
                     U64.v (wosize_of_object dst g) >= wz /\
                     dst_fields_valid dst wz)
           (ensures Mark.no_black_objects (copy_fields minor g obj dst 0 wz))
   = copy_fields_preserves_objects_aux minor g obj dst 0 wz;
     let result = copy_fields minor g obj dst 0 wz in
-    assert (objects 0UL result == objects 0UL g);
+    assert (objects zero_addr result == objects zero_addr g);
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL result))
+      (requires Seq.mem h (objects zero_addr result))
       (ensures ~(is_black h result))
-    = assert (Seq.mem h (objects 0UL g));
+    = assert (Seq.mem h (objects zero_addr g));
       hd_address_spec h;
       hd_address_spec dst;
       if h = dst then begin
@@ -93,13 +93,13 @@ private let copy_fields_preserves_no_black
         is_black_iff h g;
         is_black_iff h result
       end else if U64.v h < U64.v dst then begin
-        objects_separated 0UL g h dst;
+        objects_separated zero_addr g h dst;
         copy_fields_frame minor g obj dst 0 wz (hd_address h);
         color_of_header_eq h g result;
         is_black_iff h g;
         is_black_iff h result
       end else begin
-        objects_separated 0UL g dst h;
+        objects_separated zero_addr g dst h;
         wosize_of_object_spec dst g;
         copy_fields_frame minor g obj dst 0 wz (hd_address h);
         color_of_header_eq h g result;
@@ -136,7 +136,7 @@ private let promote_object_preserves_no_black
     AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
     AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
     let dst : obj_addr = alloc_res.obj_out in
-    assert (Seq.mem dst (objects 0UL g_alloc));
+    assert (Seq.mem dst (objects zero_addr g_alloc));
     assert (U64.v (wosize_of_object dst g_alloc) >= wz);
 
     // Step 3: copy_fields preserves no_black (delegated)
@@ -148,7 +148,7 @@ private let promote_object_preserves_no_black
 
     // Step 4: set_promoted_tag preserves no_black (factored lemma)
     copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
-    assert (Seq.mem dst (objects 0UL result));
+    assert (Seq.mem dst (objects zero_addr result));
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
     set_promoted_tag_preserves_no_black result dst tag
@@ -280,7 +280,7 @@ private let rec cheney_forward_roots_preserves_no_black
 /// cheney_scan preserves no_black_objects (recursive)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
 
 private let rec cheney_scan_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
@@ -303,9 +303,7 @@ private let rec cheney_scan_preserves_no_black
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_no_black minor cs obj 0 wz;
-    assert (fuel > 0);
-    let fuel' = fuel - 1 in
-    cheney_scan_preserves_no_black minor cs' (scan + 1) fuel'
+    cheney_scan_preserves_no_black minor cs' (scan + 1) (fuel - 1)
   end
 
 #pop-options

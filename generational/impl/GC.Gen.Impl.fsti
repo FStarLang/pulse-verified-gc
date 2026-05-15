@@ -154,7 +154,7 @@ fn minor_collect (gh: gen_heap_t)
 
              // Major heap contains at least one object (the initial
              // free-list sentinel; needed for free-list operations)
-             Seq.length (SpecFields.objects 0UL 's) > 0)
+             Seq.length (SpecFields.objects zero_addr 's) > 0)
   ensures exists* d2 b2 s2 fp2 rs2 farr2.
     is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
@@ -185,8 +185,8 @@ fn minor_collect (gh: gen_heap_t)
       // Every object that existed in the major heap before collection
       // still exists afterward; promotion only adds objects, never
       // removes existing ones
-      (forall (x: obj_addr). Seq.mem x (SpecFields.objects 0UL 's) ==>
-        Seq.mem x (SpecFields.objects 0UL s2)) /\
+      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
+        Seq.mem x (SpecFields.objects zero_addr s2)) /\
 
       // --- Root rewriting ---
       // Each root has been pointwise rewritten through the forwarding
@@ -273,7 +273,7 @@ fn gen_gc (gh: gen_heap_t)
              minor_guards_complete ({ data = 'd; bump = 'b }) /\
 
              // Major heap has at least one object (free-list sentinel)
-             Seq.length (SpecFields.objects 0UL 's) > 0 /\
+             Seq.length (SpecFields.objects zero_addr 's) > 0 /\
 
              // No major-heap object is black: the tri-color starting
              // state requires all objects to be white (allocated) or
@@ -344,8 +344,8 @@ fn gen_gc (gh: gen_heap_t)
 
       // Pre-existing major-heap objects survive minor collection
       // (promotion only adds, never removes)
-      (forall (x: obj_addr). Seq.mem x (SpecFields.objects 0UL 's) ==>
-        Seq.mem x (SpecFields.objects 0UL res.mc_major)) /\
+      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
+        Seq.mem x (SpecFields.objects zero_addr res.mc_major)) /\
 
       // Post-minor heap satisfies size-bounds invariant
       SpecFields.well_formed_heap_part1 res.mc_major /\

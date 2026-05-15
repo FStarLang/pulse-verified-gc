@@ -102,17 +102,17 @@ val flush_blue_length
   (g: heap) (fb: U64.t) (rw: nat) (fp: U64.t)
   : Lemma (Seq.length (fst (flush_blue g fb rw fp)) == Seq.length g)
 
-/// When objects 0UL g is non-empty, f_address 0UL is in it
+/// When objects zero_addr g is non-empty, f_address zero_addr is in it
 val objects_mem_at_zero (g: heap)
   : Lemma
-    (requires Seq.length g == heap_size /\ Seq.length (objects 0UL g) > 0)
-    (ensures Seq.mem (f_address 0UL) (objects 0UL g))
+    (requires Seq.length g == heap_size /\ Seq.length (objects zero_addr g) > 0)
+    (ensures Seq.mem (f_address zero_addr) (objects zero_addr g))
 
 /// The initial call to coalesce matches coalesce_aux with initial state
 val coalesce_unfold (g: heap)
   : Lemma
     (requires Seq.length g == heap_size)
-    (ensures coalesce g == coalesce_aux g g (objects 0UL g) 0UL 0 0UL)
+    (ensures coalesce g == coalesce_aux g g (objects zero_addr g) 0UL 0 0UL)
 
 /// run_words bounded by heap_size / mword (fits in U64)
 val run_words_fits (g0: heap) (start: hp_addr) (objs: seq obj_addr)

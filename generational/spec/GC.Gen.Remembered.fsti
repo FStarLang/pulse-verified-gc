@@ -63,7 +63,7 @@ val minor_roots_from_major (major: heap)
 val scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   : Lemma (requires
              well_formed_heap major /\
-             Seq.mem obj (objects 0UL major) /\
+             Seq.mem obj (objects zero_addr major) /\
              field_idx >= 1 /\ field_idx <= U64.v (wosize_of_object obj major) /\
              U64.v obj + field_idx * 8 + 8 <= heap_size /\
              (U64.v obj + field_idx * 8) % 8 == 0 /\

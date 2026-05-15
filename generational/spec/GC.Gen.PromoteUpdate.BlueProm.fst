@@ -48,8 +48,8 @@ private let headers_disjoint_from_separation
   (g: heap) (src dst_obj: obj_addr)
   : Lemma
     (requires
-      Seq.mem src (objects 0UL g) /\
-      Seq.mem dst_obj (objects 0UL g) /\
+      Seq.mem src (objects zero_addr g) /\
+      Seq.mem dst_obj (objects zero_addr g) /\
       src <> dst_obj)
     (ensures
       (U64.v (hd_address src) + U64.v mword <= U64.v (hd_address dst_obj) \/
@@ -57,9 +57,9 @@ private let headers_disjoint_from_separation
   = hd_address_spec src;
     hd_address_spec dst_obj;
     if U64.v src < U64.v dst_obj then
-      objects_separated 0UL g src dst_obj
+      objects_separated zero_addr g src dst_obj
     else
-      objects_separated 0UL g dst_obj src
+      objects_separated zero_addr g dst_obj src
 #pop-options
 
 /// Helper: prove copy_fields_preserves_other precondition for the obj address
@@ -71,8 +71,8 @@ private let copy_fields_other_obj_precond
   (ao dst_obj: obj_addr) (wosize: nat{wosize > 0})
   : Lemma
     (requires
-      Seq.mem ao (objects 0UL g) /\
-      Seq.mem dst_obj (objects 0UL g) /\
+      Seq.mem ao (objects zero_addr g) /\
+      Seq.mem dst_obj (objects zero_addr g) /\
       ao <> dst_obj /\
       U64.v (wosize_of_object dst_obj g) >= wosize)
     (ensures
@@ -80,12 +80,12 @@ private let copy_fields_other_obj_precond
       read_word g (ao <: hp_addr))
   = hd_address_spec ao;
     hd_address_spec dst_obj;
-    objects_member_size_bound 0UL g dst_obj;
+    objects_member_size_bound zero_addr g dst_obj;
     wosize_of_object_spec dst_obj g;
     if U64.v ao < U64.v dst_obj then
-      objects_separated 0UL g ao dst_obj
+      objects_separated zero_addr g ao dst_obj
     else
-      objects_separated 0UL g dst_obj ao;
+      objects_separated zero_addr g dst_obj ao;
     copy_fields_preserves_other minor g src_obj dst_obj 0 wosize (ao <: hp_addr)
 #pop-options
 
@@ -98,8 +98,8 @@ private let read_word_preserved_at_obj
   (ao dst_obj: obj_addr) (wosize: nat{wosize > 0}) (tag: nat{tag < 256})
   : Lemma
     (requires
-      Seq.mem ao (objects 0UL g) /\
-      Seq.mem dst_obj (objects 0UL g) /\
+      Seq.mem ao (objects zero_addr g) /\
+      Seq.mem dst_obj (objects zero_addr g) /\
       ao <> dst_obj /\
       U64.v (wosize_of_object dst_obj g) >= wosize /\
       U64.v (wosize_of_object ao g) >= 1)
@@ -110,13 +110,13 @@ private let read_word_preserved_at_obj
   = copy_fields_other_obj_precond minor g src_obj ao dst_obj wosize;
     hd_address_spec ao;
     hd_address_spec dst_obj;
-    objects_member_size_bound 0UL g dst_obj;
-    objects_member_size_bound 0UL g ao;
+    objects_member_size_bound zero_addr g dst_obj;
+    objects_member_size_bound zero_addr g ao;
     wosize_of_object_spec dst_obj g;
     wosize_of_object_spec ao g;
     // hd disjointness: ao + 16 <= dst_obj (when ao < dst) or dst_obj <= ao
     if U64.v ao < U64.v dst_obj then
-      objects_separated 0UL g ao dst_obj
+      objects_separated zero_addr g ao dst_obj
     else ();
     set_promoted_tag_read_frame (copy_fields minor g src_obj dst_obj 0 wosize) dst_obj tag (ao <: hp_addr)
 #pop-options
@@ -128,8 +128,8 @@ private let copy_fields_other_hdr_precond
   (g: heap) (src dst_obj: obj_addr) (wosize: nat{wosize > 0})
   : Lemma
     (requires
-      Seq.mem src (objects 0UL g) /\
-      Seq.mem dst_obj (objects 0UL g) /\
+      Seq.mem src (objects zero_addr g) /\
+      Seq.mem dst_obj (objects zero_addr g) /\
       src <> dst_obj /\
       U64.v (wosize_of_object dst_obj g) >= wosize)
     (ensures
@@ -139,12 +139,12 @@ private let copy_fields_other_hdr_precond
          U64.v dst_obj + k * 8 + 8 <= U64.v (hd_address src))))
   = hd_address_spec src;
     hd_address_spec dst_obj;
-    objects_member_size_bound 0UL g dst_obj;
+    objects_member_size_bound zero_addr g dst_obj;
     wosize_of_object_spec dst_obj g;
     if U64.v src < U64.v dst_obj then
-      objects_separated 0UL g src dst_obj
+      objects_separated zero_addr g src dst_obj
     else
-      objects_separated 0UL g dst_obj src
+      objects_separated zero_addr g dst_obj src
 #pop-options
 
 /// Helper: read at any address of a non-dst object is preserved through
@@ -202,14 +202,14 @@ private let bfc_field_disjoint
     hd_address_spec src;
     hd_address_spec dst_obj;
     if U64.v src < U64.v dst_obj then begin
-      objects_separated 0UL new_major src dst_obj;
+      objects_separated zero_addr new_major src dst_obj;
       // src + wosize_as_wosize(src)*8 < dst_obj
       // Since j < wosize(src): field = src + j*8 < src + wosize(src)*8 <= dst_obj - 8
       // So field + 8 <= dst_obj <= dst_obj + k*8 for all k >= 0
       // Also field < dst_obj - 8 = hd(dst_obj), so field + 8 <= hd(dst_obj)
       ()
     end else begin
-      objects_separated 0UL new_major dst_obj src;
+      objects_separated zero_addr new_major dst_obj src;
       wosize_of_object_spec dst_obj new_major;
       // src > dst_obj + wosize_as_wosize(dst_obj)*8 >= dst_obj + wosize*8
       // field = src + j*8 >= src > dst_obj + wosize*8 > dst_obj + k*8 for k < wosize
@@ -541,7 +541,7 @@ private let chain_blue_proof_for_excl
     end;
     assert (Seq.mem excl (objects zero_addr major));
     // 3. dst_obj ∈ objects(major)
-    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp 0UL fp
+    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp zero_addr fp
       (if wosize = 0 then 1 else wosize) fuel;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_pre_part1 major fp wosize;
     // 4. Header of excl preserved → derive non-blue in major

@@ -15,7 +15,7 @@ open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let promote_object_read_other
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0}) (other: obj_addr) (addr: hp_addr)
@@ -36,20 +36,21 @@ let promote_object_read_other
     let new_addr = alloc_res.obj_out in
     AllocLemmas.alloc_spec_read_other major fp wosize other addr;
     assert (read_word new_major addr == read_word major addr);
-    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp 0UL fp
+    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp zero_addr fp
       (if wosize = 0 then 1 else wosize) fuel;
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
     let dst_obj : obj_addr = new_addr in
     GC.Gen.AllocProps.alloc_spec_obj_ne_excl major fp wosize other;
     assert (new_addr <> other);
     GC.Gen.AllocProps.alloc_spec_obj_wosize_pre_part1 major fp wosize;
     assert (U64.v (wosize_of_object dst_obj major) >= wosize);
+    hd_address_spec dst_obj;
+    wfh_part1_obj_bound major dst_obj;
     if U64.v other < U64.v new_addr then begin
-      objects_separated 0UL major other dst_obj;
-      hd_address_spec dst_obj;
+      objects_separated zero_addr major other dst_obj;
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize addr
     end else begin
-      objects_separated 0UL major dst_obj other;
-      hd_address_spec dst_obj;
+      objects_separated zero_addr major dst_obj other;
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize addr
     end;
     // Bridge: set_promoted_tag preserves read at addr (addr ≠ hd_address dst_obj)
@@ -89,13 +90,13 @@ private let promote_transfer_read
     hd_address_spec ao;
     hd_address_spec dst_obj;
     if U64.v ao < U64.v dst_obj then begin
-      objects_separated 0UL new_major ao dst_obj;
+      objects_separated zero_addr new_major ao dst_obj;
       // ao + wosize(ao)*8 < dst_obj, wosize(ao) >= 1 → ao + 8 < dst_obj
       // Word-aligned → ao + 8 <= hd(dst_obj) = dst_obj - 8
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize ao;
       set_promoted_tag_read_frame copied dst_obj tag ao
     end else begin
-      objects_separated 0UL new_major dst_obj ao;
+      objects_separated zero_addr new_major dst_obj ao;
       wosize_of_object_spec dst_obj new_major;
       // ao > dst_obj + wosize_of_object(dst_obj)*8 >= dst_obj + 8
       // So hd(dst_obj) + 8 = dst_obj <= ao

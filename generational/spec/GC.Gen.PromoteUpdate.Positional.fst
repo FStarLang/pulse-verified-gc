@@ -439,17 +439,17 @@ let update_all_objects_terminal_step
     end
 #pop-options
 
-/// Initial membership: first object is at f_address 0UL when heap has objects.
+/// Initial membership: first object is at f_address zero_addr when heap has objects.
 /// The precondition that objects zero_addr g is nonempty is a standard heap invariant
 /// (same approach as mark-and-sweep's heap_objects_dense).
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 40"
 let objects_initial_membership (g: heap)
   : Lemma (requires heap_size > 8 /\ well_formed_heap_part1 g /\
                     Seq.length (objects zero_addr g) > 0)
-          (ensures Seq.mem (f_address 0UL) (objects zero_addr g))
+          (ensures Seq.mem (f_address zero_addr) (objects zero_addr g))
   = // With fuel 2, Z3 can unfold objects zero_addr g and see that when it's nonempty,
-    // the head is f_address 0UL. From the definition:
-    // objects zero_addr g = cons (f_address 0UL) (objects next g) when nonempty.
-    // Therefore Seq.mem (f_address 0UL) (objects zero_addr g).
+    // the head is f_address zero_addr. From the definition:
+    // objects zero_addr g = cons (f_address zero_addr) (objects next g) when nonempty.
+    // Therefore Seq.mem (f_address zero_addr) (objects zero_addr g).
     ()
 #pop-options

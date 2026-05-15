@@ -40,7 +40,7 @@ private let rec split_new_mem_in_old_or_rem_part1
   : Lemma (requires
       Seq.length g3 == Seq.length g /\
       well_formed_heap_part1 g /\
-      Seq.mem obj (objects 0UL g) /\
+      Seq.mem obj (objects zero_addr g) /\
       (let hd = hd_address obj in
        let hdr = read_word g hd in
        U64.v (getWosize hdr) == block_wz /\
@@ -59,7 +59,7 @@ private let rec split_new_mem_in_old_or_rem_part1
           objects (U64.uint_to_t next_hd_nat <: hp_addr) g3 == objects (U64.uint_to_t next_hd_nat <: hp_addr) g) /\
         U64.v start <= U64.v hd)) /\
       Seq.mem h (objects start g3) /\
-      (U64.v start = 0 \/ Seq.mem (f_address start) (objects 0UL g)) /\
+      (U64.v start = U64.v zero_addr \/ Seq.mem (f_address start) (objects zero_addr g)) /\
       Seq.mem obj (objects start g))
     (ensures (let rem_hd_nat = U64.v (hd_address obj) + (1 + wz) * 8 in
               let rem_obj_nat = rem_hd_nat + 8 in
@@ -146,10 +146,17 @@ private let rec split_new_mem_in_old_or_rem_part1
                 (if next_nat_g3 >= heap_size then Seq.empty
                  else objects (U64.uint_to_t next_nat_g3 <: hp_addr) g);
               assert (Seq.mem first (objects start g));
-              objects_later_in_earlier 0UL g start first;
+              // Need U64.v zero_addr <= U64.v start for objects_later_in_earlier
+              (if U64.v start = U64.v zero_addr then ()
+               else begin
+                 f_address_spec start;
+                 objects_addresses_gt_start zero_addr g (f_address start)
+               end);
+              assert (U64.v zero_addr <= U64.v start);
+              objects_later_in_earlier zero_addr g start first;
               hd_address_spec first;
               wosize_of_object_spec first g;
-              objects_separated 0UL g first obj;
+              objects_separated zero_addr g first obj;
               assert (U64.v hd % 8 == 0);
               assert (U64.v start % 8 == 0);
               FStar.Math.Lemmas.cancel_mul_mod (U64.v wz_g_here) 8;
@@ -164,7 +171,9 @@ private let rec split_new_mem_in_old_or_rem_part1
               assert (obj <> first);
               objects_nonempty_first_mem next_hp g obj;
               mem_cons_lemma (f_address next_hp) first (objects next_hp g);
-              objects_later_in_earlier 0UL g start (f_address next_hp);
+              if U64.v start = U64.v zero_addr then ()
+              else objects_addresses_gt_start zero_addr g (f_address start);
+              objects_later_in_earlier zero_addr g start (f_address next_hp);
               split_new_mem_in_old_or_rem_part1 next_hp g g3 obj wz block_wz h;
               let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
               let rem_obj_nat = rem_hd_nat + 8 in
@@ -190,7 +199,7 @@ private let rec split_new_mem_in_old_or_rem_part1
 private let alloc_split_wf_part1_v2
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz >= 2))
@@ -208,7 +217,7 @@ private let alloc_split_wf_part1_v2
     let (g3, _) = alloc_from_block g obj wz next_fp in
     hd_address_spec obj;
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g3))
+      (requires Seq.mem h (objects zero_addr g3))
       (ensures (let w = wosize_of_object h g3 in
                 U64.v (hd_address h) + 8 + U64.v w * 8 <= Seq.length g3))
     = wosize_of_object_spec h g3;
@@ -227,17 +236,18 @@ private let alloc_split_wf_part1_v2
         = alloc_split_g3_agrees_part1 g obj wz next_fp p
         in
         FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-        split_new_mem_in_old_or_rem_part1 0UL g g3 obj wz block_wz h;
-        assert (Seq.mem h (objects 0UL g));
+        objects_addresses_gt_start zero_addr g obj;
+        split_new_mem_in_old_or_rem_part1 zero_addr g g3 obj wz block_wz h;
+        assert (Seq.mem h (objects zero_addr g));
         // Header of h is unchanged
         hd_address_spec h;
         wosize_of_object_spec h g;
         wosize_of_object_spec obj g;
         if U64.v h < U64.v obj then begin
-          objects_separated 0UL g h obj;
+          objects_separated zero_addr g h obj;
           alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
         end else begin
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
           assert (U64.v (hd_address h) > U64.v hd + block_wz * 8 - 8);
           assert (U64.v (hd_address h) <> U64.v hd);
           assert (U64.v (hd_address h) <> rem_hd_nat);
@@ -258,7 +268,7 @@ private let alloc_split_wf_part1_v2
 private let alloc_exact_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz < 2))
@@ -279,7 +289,7 @@ private let alloc_exact_preserves_wfh_part1
     // since the only modified header is at hd with same wosize.
     // So part1 transfers trivially.
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures (let w = wosize_of_object h g' in
                 U64.v (hd_address h) + 8 + U64.v w * 8 <= Seq.length g'))
     = hd_address_spec h;
@@ -289,9 +299,9 @@ private let alloc_exact_preserves_wfh_part1
         read_write_same g hd new_hdr
       else begin
         if U64.v h < U64.v obj then
-          objects_separated 0UL g h obj
+          objects_separated zero_addr g h obj
         else
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
         read_write_different g hd (hd_address h) new_hdr
       end
     in
@@ -307,7 +317,7 @@ private let alloc_exact_preserves_wfh_part1
 let alloc_from_block_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
@@ -329,18 +339,18 @@ let alloc_from_block_preserves_wfh_part1
 private let write_body_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     U64.v addr >= U64.v obj /\
                     U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                     U64.v addr % 8 = 0)
           (ensures well_formed_heap_part1 (write_word g addr v))
   = // write_body doesn't change headers (addr >= obj > hd_address(obj))
     // so objects walk is unchanged, and all bounds remain valid
-    write_body_preserves_objects_local 0UL g obj addr v;
+    write_body_preserves_objects_local zero_addr g obj addr v;
     let g' = write_word g addr v in
-    assert (objects 0UL g' == objects 0UL g);
+    assert (objects zero_addr g' == objects zero_addr g);
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures (let w = wosize_of_object h g' in
                 U64.v (hd_address h) + 8 + U64.v w * 8 <= Seq.length g'))
     = hd_address_spec h;
@@ -356,10 +366,10 @@ private let write_body_preserves_wfh_part1
         read_write_different g addr (hd_address h) v
       else begin
         if U64.v h < U64.v obj then begin
-          objects_separated 0UL g h obj;
+          objects_separated zero_addr g h obj;
           read_write_different g addr (hd_address h) v
         end else begin
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
           read_write_different g addr (hd_address h) v
         end
       end
@@ -383,14 +393,13 @@ private let rec alloc_search_preserves_wfh_part1
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                     well_formed_heap_part1 r.heap_out))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -402,7 +411,7 @@ private let rec alloc_search_preserves_wfh_part1
       hd_address_bounds obj;
       fl_valid_gives_mem g cur_fp fuel;
       fl_valid_gives_wosize g cur_fp fuel;
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
       let next_fp =
         if U64.v hd + 16 <= heap_size then read_word g obj
         else 0UL
@@ -416,7 +425,7 @@ private let rec alloc_search_preserves_wfh_part1
           let prev : obj_addr = prev_fp in
           // prev ∈ objects(0, g')
           alloc_from_block_objects_facts_part1 g obj wz next_fp;
-          assert (Seq.mem prev (objects 0UL g'));
+          assert (Seq.mem prev (objects zero_addr g'));
           // wosize(prev, g') == wosize(prev, g)
           wosize_of_object_spec prev g;
           wosize_of_object_bound prev g;
@@ -424,19 +433,19 @@ private let rec alloc_search_preserves_wfh_part1
           if block_wz - wz >= 2 then begin
             let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
             if U64.v prev < U64.v obj then begin
-              objects_separated 0UL g prev obj;
+              objects_separated zero_addr g prev obj;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
             end else begin
               wosize_of_object_spec obj g;
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
             end
           end else begin
             assert (prev <> obj);
             if U64.v prev < U64.v obj then
-              objects_separated 0UL g prev obj
+              objects_separated zero_addr g prev obj
             else
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
             let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
             alloc_from_block_exact g obj wz next_fp;
             read_write_different g hd (hd_address prev) alloc_hdr
@@ -480,17 +489,17 @@ let alloc_spec_preserves_wfh_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 private let alloc_split_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz >= 2) /\
                     wz >= 1 /\
-                    Seq.mem a (objects 0UL g) /\
+                    Seq.mem a (objects zero_addr g) /\
                     U64.v a >= U64.v mword /\
                     U64.v a < heap_size /\
                     U64.v a % U64.v mword = 0)
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem a (objects 0UL g') /\
+                    Seq.mem a (objects zero_addr g') /\
                     (U64.v (wosize_of_object a g) >= 1 ==>
                       U64.v (wosize_of_object a g') >= 1) /\
                     (U64.v (wosize_of_object a g) >= 1 /\
@@ -540,7 +549,7 @@ private let alloc_split_fl_transfer_pre_part1
         wosize_of_object_spec obj g3
       end else begin
         if U64.v a < U64.v obj then begin
-          objects_separated 0UL g a obj;
+          objects_separated zero_addr g a obj;
           // a + wosize(a)*8 < obj, hd = obj - 8, rem_hd > hd, rem_obj > rem_hd
           // so hd_address(a) = a - 8 < a < obj - 8 = hd < rem_hd < rem_obj
           // and a < obj - 8 = hd < rem_hd < rem_obj
@@ -549,7 +558,7 @@ private let alloc_split_fl_transfer_pre_part1
           wosize_of_object_spec a g;
           wosize_of_object_spec a g'
         end else begin
-          objects_separated 0UL g obj a;
+          objects_separated zero_addr g obj a;
           // a > obj + wosize(obj)*8 = obj + block_wz*8 = hd + (block_wz+1)*8
           // rem_obj = hd + (1+wz)*8 + 8 <= hd + (block_wz)*8 < a
           // so hd < rem_hd < rem_obj < a, and hd_address(a) = a - 8 >= hd + block_wz*8
@@ -572,16 +581,16 @@ private let alloc_split_fl_transfer_pre_part1
 private let alloc_exact_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz < 2) /\
-                    Seq.mem a (objects 0UL g) /\
+                    Seq.mem a (objects zero_addr g) /\
                     U64.v a >= U64.v mword /\
                     U64.v a < heap_size /\
                     U64.v a % U64.v mword = 0)
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem a (objects 0UL g') /\
+                    Seq.mem a (objects zero_addr g') /\
                     (U64.v (wosize_of_object a g) >= 1 ==>
                       U64.v (wosize_of_object a g') >= 1) /\
                     (U64.v (wosize_of_object a g) >= 1 /\
@@ -610,9 +619,9 @@ private let alloc_exact_fl_transfer_pre_part1
       end else begin
         // a ≠ obj: header at hd_address(a) ≠ hd, and a ≠ hd
         if U64.v a < U64.v obj then
-          objects_separated 0UL g a obj
+          objects_separated zero_addr g a obj
         else
-          objects_separated 0UL g obj a;
+          objects_separated zero_addr g obj a;
         read_write_different g hd (hd_address a) alloc_hdr;
         read_write_different g hd (a <: hp_addr) alloc_hdr;
         wosize_of_object_spec a g;
@@ -633,7 +642,7 @@ private let rec fl_valid_field_write_part1
   : Lemma
     (requires fl_valid g fp fuel /\
               well_formed_heap_part1 g /\
-              Seq.mem p (objects 0UL g) /\
+              Seq.mem p (objects zero_addr g) /\
               U64.v (wosize_of_object p g) >= 1 /\
               v <> p /\
               fl_valid (write_word g (p <: hp_addr) v) v tail_fuel /\
@@ -653,15 +662,15 @@ private let rec fl_valid_field_write_part1
       wfh_part1_obj_bound g p;
       wosize_of_object_bound p g;
       write_word_preserves_objects_part1 g p (p <: hp_addr) v;
-      assert (objects 0UL g' == objects 0UL g);
-      assert (Seq.mem fp (objects 0UL g'));
+      assert (objects zero_addr g' == objects zero_addr g);
+      assert (Seq.mem fp (objects zero_addr g'));
       // wosize preserved: hd_fp ≠ p (the write position)
       hd_address_spec obj_fp;
       if U64.v fp <> U64.v p then begin
         if U64.v fp > U64.v p then
-          objects_separated 0UL g p obj_fp
+          objects_separated zero_addr g p obj_fp
         else
-          objects_separated 0UL g obj_fp p
+          objects_separated zero_addr g obj_fp p
       end;
       read_write_different g (p <: hp_addr) (hd_fp <: hp_addr) v;
       wosize_of_object_spec obj_fp g;
@@ -688,7 +697,7 @@ private let rec fl_valid_field_write_tail_part1
   (g: heap) (p: obj_addr) (v: U64.t) (fuel: nat)
   : Lemma
     (requires well_formed_heap_part1 g /\
-              Seq.mem p (objects 0UL g) /\
+              Seq.mem p (objects zero_addr g) /\
               U64.v (wosize_of_object p g) >= 1 /\
               v <> p /\
               fl_valid g v fuel)
@@ -707,14 +716,14 @@ private let rec fl_valid_field_write_tail_part1
       wfh_part1_obj_bound g p;
       wosize_of_object_bound p g;
       write_word_preserves_objects_part1 g p (p <: hp_addr) v;
-      assert (objects 0UL g' == objects 0UL g);
+      assert (objects zero_addr g' == objects zero_addr g);
       // wosize preserved at v: hd_v ≠ p
       hd_address_spec obj_v;
       if U64.v v <> U64.v p then begin
         if U64.v v > U64.v p then
-          objects_separated 0UL g p obj_v
+          objects_separated zero_addr g p obj_v
         else
-          objects_separated 0UL g obj_v p
+          objects_separated zero_addr g obj_v p
       end;
       read_write_different g (p <: hp_addr) (hd_v <: hp_addr) v;
       wosize_of_object_spec obj_v g;
@@ -754,7 +763,7 @@ private let rec alloc_search_preserves_fl_valid_part1
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1 /\
                        U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
                        read_word g (prev_fp <: obj_addr) = cur_fp)))
@@ -763,8 +772,7 @@ private let rec alloc_search_preserves_fl_valid_part1
           (decreases fuel)
   = let big_fuel = heap_size / U64.v mword in
     if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -777,7 +785,7 @@ private let rec alloc_search_preserves_fl_valid_part1
       fl_valid_gives_mem g cur_fp fuel;
       fl_valid_gives_wosize g cur_fp fuel;
       fl_valid_next g cur_fp fuel;
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
       assert (U64.v (wosize_of_object obj g) >= 1);
       wosize_of_object_spec obj g;
       wosize_of_object_bound obj g;
@@ -793,14 +801,14 @@ private let rec alloc_search_preserves_fl_valid_part1
       assert (fl_chain_terminates g next_fp (fuel - 1));
       if block_wz >= wz then begin
         // ===== Found a suitable block =====
-        // Establish: is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g)
+        // Establish: is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g)
         // Using FL-based reasoning instead of next_fp_in_objects
         (if next_fp = 0UL then ()
          else if U64.v next_fp < U64.v mword then ()
          else if U64.v next_fp >= heap_size then ()
          else if U64.v next_fp % U64.v mword <> 0 then ()
          else fl_valid_elim g next_fp (fuel - 1));
-        assert (is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g));
+        assert (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g));
         alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
         let (g', new_fp) = alloc_from_block g obj wz next_fp in
         // Upgrade fl_valid g next_fp (fuel-1) to fl_valid g next_fp big_fuel
@@ -815,7 +823,7 @@ private let rec alloc_search_preserves_fl_valid_part1
             let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
             let rem_obj_nat = rem_hd_nat + 8 in
             let rem_wz = block_wz - wz - 1 in
-            // Prove Seq.mem new_fp (objects 0UL g') inline
+            // Prove Seq.mem new_fp (objects zero_addr g') inline
             // (replaces alloc_from_block_objects_facts which gave is_pointer_field rem_fp ==> ...)
             // new_fp = rem_obj from alloc_split_facts_part1
             // rem_obj ∈ objects(0, g') via:
@@ -824,9 +832,9 @@ private let rec alloc_search_preserves_fl_valid_part1
             //   3. objects(hd, g') = cons obj (objects(rem_hd, g')) since wosize(obj, g') = wz
             //   4. rem_obj ∈ objects(hd, g')
             //   5. f_address hd = obj ∈ objects(0, g')
-            //   6. objects_later_in_earlier 0UL g' hd rem_obj
+            //   6. objects_later_in_earlier zero_addr g' hd rem_obj
             alloc_split_old_in_new_part1 g obj wz next_fp obj;
-            assert (Seq.mem obj (objects 0UL g'));
+            assert (Seq.mem obj (objects zero_addr g'));
             // Reconstruct g' to reason about rem_obj membership
             alloc_from_block_split_normal g obj wz next_fp;
             let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
@@ -852,13 +860,15 @@ private let rec alloc_search_preserves_fl_valid_part1
             // rem_obj ∈ objects(hd, g3): objects(hd, g3) = cons obj (objects(rem_hd, g3))
             mem_cons_lemma rem_obj_addr obj (objects rem_hd g3);
             // objects_later_in_earlier: hd <= hd, and f_address hd = obj ∈ objects(0, g3)
-            objects_later_in_earlier 0UL g3 hd rem_obj_addr;
-            assert (Seq.mem new_fp (objects 0UL g'));
-            assert (is_pointer_field new_fp ==> Seq.mem new_fp (objects 0UL g'));
+            objects_addresses_gt_start zero_addr g obj;
+            hd_address_spec obj;
+            objects_later_in_earlier zero_addr g3 hd rem_obj_addr;
+            assert (Seq.mem new_fp (objects zero_addr g'));
+            assert (is_pointer_field new_fp ==> Seq.mem new_fp (objects zero_addr g'));
             // Transfer fl_valid g next_fp big_fuel to g'
             let transfer_aux (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -902,11 +912,11 @@ private let rec alloc_search_preserves_fl_valid_part1
              else if U64.v next_fp % U64.v mword <> 0 then ()
              else begin
                // next_fp is valid and in objects(0,g)
-               assert (Seq.mem next_fp (objects 0UL g));
+               assert (Seq.mem next_fp (objects zero_addr g));
                if U64.v next_fp < U64.v obj then begin
                  assert (U64.v next_fp < U64.v new_fp)
                end else begin
-                 objects_separated 0UL g obj (next_fp <: obj_addr);
+                 objects_separated zero_addr g obj (next_fp <: obj_addr);
                  assert (U64.v next_fp > U64.v obj + block_wz * 8);
                  assert (U64.v new_fp < U64.v obj + block_wz * 8);
                  assert (U64.v next_fp > U64.v new_fp)
@@ -921,8 +931,8 @@ private let rec alloc_search_preserves_fl_valid_part1
             alloc_from_block_exact g obj wz next_fp;
             // Transfer fl_valid g next_fp big_fuel to g'
             let transfer_aux (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -949,8 +959,8 @@ private let rec alloc_search_preserves_fl_valid_part1
             let rem_wz = block_wz - wz - 1 in
             // Step 1: Transfer fl_valid from g to g' for head_fp
             let transfer_aux_s (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -964,9 +974,9 @@ private let rec alloc_search_preserves_fl_valid_part1
             // Step 2: Build fl_valid g' new_fp big_fuel (same as prev_fp=0 split case)
             fl_valid_transfer g g' next_fp big_fuel;
             fl_valid_weaken g' next_fp big_fuel (big_fuel - 1);
-            // Prove Seq.mem new_fp (objects 0UL g')
+            // Prove Seq.mem new_fp (objects zero_addr g')
             alloc_split_old_in_new_part1 g obj wz next_fp obj;
-            assert (Seq.mem obj (objects 0UL g'));
+            assert (Seq.mem obj (objects zero_addr g'));
             // Reconstruct intermediate heaps
             alloc_from_block_split_normal g obj wz next_fp;
             let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
@@ -990,8 +1000,10 @@ private let rec alloc_search_preserves_fl_valid_part1
               mem_cons_lemma rem_obj_addr rem_obj_addr (objects next_hd_hp g3)
             end;
             mem_cons_lemma rem_obj_addr obj (objects rem_hd g3);
-            objects_later_in_earlier 0UL g3 hd rem_obj_addr;
-            assert (Seq.mem new_fp (objects 0UL g'));
+            objects_addresses_gt_start zero_addr g obj;
+            hd_address_spec obj;
+            objects_later_in_earlier zero_addr g3 hd rem_obj_addr;
+            assert (Seq.mem new_fp (objects zero_addr g'));
             // wosize of new_fp in g': need wosize_of_object new_fp g' >= 1
             make_header_getWosize (U64.uint_to_t rem_wz) blue_bits 0UL;
             read_write_different g2_tmp rem_obj rem_hd next_fp;
@@ -1011,13 +1023,13 @@ private let rec alloc_search_preserves_fl_valid_part1
              else if U64.v next_fp % U64.v mword <> 0 then ()
              else begin
                if U64.v next_fp <= U64.v obj then begin
-                 objects_separated 0UL g (next_fp <: obj_addr) obj;
+                 objects_separated zero_addr g (next_fp <: obj_addr) obj;
                  assert (U64.v obj > U64.v next_fp + U64.v (wosize_of_object (next_fp <: obj_addr) g) * 8);
                  assert (U64.v new_fp < U64.v obj + block_wz * 8);
                  assert (U64.v next_fp < U64.v obj);
                  assert (U64.v new_fp >= U64.v obj)
                end else begin
-                 objects_separated 0UL g obj (next_fp <: obj_addr);
+                 objects_separated zero_addr g obj (next_fp <: obj_addr);
                  assert (U64.v next_fp > U64.v obj + block_wz * 8);
                  assert (U64.v new_fp < U64.v obj + block_wz * 8)
                end
@@ -1026,15 +1038,15 @@ private let rec alloc_search_preserves_fl_valid_part1
             fl_valid_step g' new_fp big_fuel;
             assert (fl_valid g' new_fp big_fuel);
             // Step 3: prev_fp ∈ objects(0, g') with wosize >= 1
-            assert (Seq.mem prev_fp (objects 0UL g'));
+            assert (Seq.mem prev_fp (objects zero_addr g'));
             alloc_split_fl_transfer_pre_part1 g obj wz next_fp prev_obj;
             assert (U64.v (wosize_of_object prev_obj g') >= 1);
             // Step 4: new_fp ≠ prev_fp
             (if U64.v prev_fp <= U64.v obj then begin
-               objects_separated 0UL g prev_obj obj;
+               objects_separated zero_addr g prev_obj obj;
                assert (U64.v new_fp > U64.v prev_fp)
              end else begin
-               objects_separated 0UL g obj prev_obj;
+               objects_separated zero_addr g obj prev_obj;
                assert (U64.v prev_fp > U64.v obj + block_wz * 8);
                assert (U64.v new_fp < U64.v obj + block_wz * 8);
                assert (U64.v new_fp < U64.v prev_fp)
@@ -1054,8 +1066,8 @@ private let rec alloc_search_preserves_fl_valid_part1
             alloc_from_block_exact g obj wz next_fp;
             // Step 1: Transfer fl_valid from g to g' for head_fp
             let transfer_aux_e (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1070,7 +1082,7 @@ private let rec alloc_search_preserves_fl_valid_part1
             fl_valid_transfer g g' next_fp big_fuel;
             assert (fl_valid g' new_fp big_fuel);
             // Step 3: prev_fp ∈ objects(0, g') with wosize >= 1
-            assert (Seq.mem prev_fp (objects 0UL g'));
+            assert (Seq.mem prev_fp (objects zero_addr g'));
             alloc_exact_fl_transfer_pre_part1 g obj wz next_fp prev_obj;
             assert (U64.v (wosize_of_object prev_obj g') >= 1);
             // Step 4: new_fp ≠ prev_fp
@@ -1134,7 +1146,7 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1 /\
                        U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
                        read_word g (prev_fp <: obj_addr) = cur_fp)) /\
@@ -1149,8 +1161,7 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
           (decreases fuel)
   = let big_fuel = heap_size / U64.v mword in
     if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -1163,7 +1174,7 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
       fl_valid_gives_mem g cur_fp fuel;
       fl_valid_gives_wosize g cur_fp fuel;
       fl_valid_next g cur_fp fuel;
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
       assert (U64.v (wosize_of_object obj g) >= 1);
       wosize_of_object_spec obj g;
       wosize_of_object_bound obj g;
@@ -1179,14 +1190,14 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
       assert (fl_chain_terminates g next_fp (fuel - 1));
       if block_wz >= wz then begin
         // ===== Found a suitable block =====
-        // Establish: is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g)
+        // Establish: is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g)
         // Using FL-based reasoning instead of next_fp_in_objects
         (if next_fp = 0UL then ()
          else if U64.v next_fp < U64.v mword then ()
          else if U64.v next_fp >= heap_size then ()
          else if U64.v next_fp % U64.v mword <> 0 then ()
          else fl_valid_elim g next_fp (fuel - 1));
-        assert (is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g));
+        assert (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g));
         alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
         let (g', new_fp) = alloc_from_block g obj wz next_fp in
         // Upgrade fl_valid/terminates g next_fp (fuel-1) to big_fuel
@@ -1201,8 +1212,8 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
             alloc_split_facts_part1 g obj wz next_fp;
             alloc_from_block_objects_facts_part1 g obj wz next_fp;
             let transfer_aux (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1244,8 +1255,8 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
             alloc_exact_preserves_wfh_part1 g obj wz next_fp;
             alloc_from_block_exact g obj wz next_fp;
             let transfer_aux_e (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1284,8 +1295,8 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
             let rem_wz = block_wz - wz - 1 in
             // Establish quantifier: for a in objects(g), read g' a = read g a
             let transfer_aux_s (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1310,10 +1321,10 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
             read_write_same g2_tmp rem_obj next_fp;
             assert (read_word g' new_fp == next_fp);
             (if U64.v prev_fp <= U64.v obj then begin
-               objects_separated 0UL g prev_obj obj;
+               objects_separated zero_addr g prev_obj obj;
                assert (U64.v new_fp > U64.v prev_fp)
              end else begin
-               objects_separated 0UL g obj prev_obj;
+               objects_separated zero_addr g obj prev_obj;
                assert (U64.v prev_fp > U64.v obj + block_wz * 8);
                assert (U64.v new_fp < U64.v obj + block_wz * 8);
                assert (U64.v new_fp < U64.v prev_fp)
@@ -1359,8 +1370,8 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
             alloc_exact_preserves_wfh_part1 g obj wz next_fp;
             alloc_from_block_exact g obj wz next_fp;
             let transfer_aux_e (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1458,7 +1469,7 @@ private let rec alloc_search_obj_not_in_chain_part1
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1 /\
                        U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
                        read_word g (prev_fp <: obj_addr) = cur_fp)) /\
@@ -1473,8 +1484,7 @@ private let rec alloc_search_obj_not_in_chain_part1
           (decreases fuel)
   = let big_fuel = heap_size / U64.v mword in
     if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -1487,7 +1497,7 @@ private let rec alloc_search_obj_not_in_chain_part1
       fl_valid_gives_mem g cur_fp fuel;
       fl_valid_gives_wosize g cur_fp fuel;
       fl_valid_next g cur_fp fuel;
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
       assert (U64.v (wosize_of_object obj g) >= 1);
       wosize_of_object_spec obj g;
       wosize_of_object_bound obj g;
@@ -1532,8 +1542,8 @@ private let rec alloc_search_obj_not_in_chain_part1
             read_write_same g2 rem_obj next_fp;
             assert (read_word g' new_fp == next_fp);
             let transfer_aux (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1555,8 +1565,8 @@ private let rec alloc_search_obj_not_in_chain_part1
             // ----- Exact-fit: new_fp = next_fp -----
             alloc_from_block_exact g obj wz next_fp;
             let transfer_aux_e (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1593,8 +1603,8 @@ private let rec alloc_search_obj_not_in_chain_part1
             assert (g' == g3);
             assert (new_fp == rem_obj);
             let transfer_aux_s (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1605,10 +1615,10 @@ private let rec alloc_search_obj_not_in_chain_part1
             FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux_s);
             write_word_locality g' (prev_obj <: hp_addr) new_fp;
             (if U64.v prev_fp <= U64.v obj then begin
-               objects_separated 0UL g prev_obj obj;
+               objects_separated zero_addr g prev_obj obj;
                assert (U64.v new_fp > U64.v prev_fp)
              end else begin
-               objects_separated 0UL g obj prev_obj;
+               objects_separated zero_addr g obj prev_obj;
                assert (U64.v prev_fp > U64.v obj + block_wz * 8);
                assert (U64.v new_fp < U64.v obj + block_wz * 8);
                assert (U64.v new_fp < U64.v prev_fp)
@@ -1660,8 +1670,8 @@ private let rec alloc_search_obj_not_in_chain_part1
             // ----- Exact-fit sub-case (prev != 0) -----
             alloc_from_block_exact g obj wz next_fp;
             let transfer_aux_e (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -1885,7 +1895,7 @@ private let rec alloc_search_read_body
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)) /\
                     (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                      r.obj_out <> 0UL /\
@@ -1895,8 +1905,7 @@ private let rec alloc_search_read_body
                     read_word r.heap_out addr == read_word g addr))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -1950,7 +1959,7 @@ private let rec alloc_search_read_body
           end else begin
             // prev_fp > obj, and objects_separated gives prev_fp > obj + block_wz*8
             // addr + 8 <= obj + wz*8 <= obj + block_wz*8 < prev_fp
-            objects_separated 0UL g obj prev_fp;
+            objects_separated zero_addr g obj prev_fp;
             wosize_of_object_spec obj g;
             assert (U64.v prev_fp > U64.v obj + block_wz * 8);
             assert (U64.v addr + 8 <= U64.v obj + wz * 8);
@@ -1994,7 +2003,7 @@ private let rec alloc_search_read_other
   : Lemma (requires well_formed_heap_part1 g /\
                     fl_valid g cur_fp fuel /\
                     wz >= 1 /\
-                    Seq.mem other (objects 0UL g) /\
+                    Seq.mem other (objects zero_addr g) /\
                     chain_avoids g cur_fp other fuel = true /\
                     U64.v addr >= U64.v other /\
                     U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other g) * 8 /\
@@ -2003,14 +2012,13 @@ private let rec alloc_search_read_other
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                     read_word r.heap_out addr == read_word g addr))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -2039,7 +2047,7 @@ private let rec alloc_search_read_other
         let other_wz = U64.v (wosize_of_object other g) in
         if U64.v other < U64.v obj then begin
           // other < obj: objects_separated gives obj > other + other_wz * 8
-          objects_separated 0UL g other obj;
+          objects_separated zero_addr g other obj;
           assert (U64.v obj > U64.v other + other_wz * 8);
           // addr + 8 <= other + other_wz*8 < obj
           // hd = obj - 8: addr + 8 <= other + other_wz*8 <= obj - 8 = hd
@@ -2049,7 +2057,7 @@ private let rec alloc_search_read_other
           alloc_from_block_read_other_body g obj wz next_fp addr
         end else begin
           // other > obj: objects_separated gives other > obj + block_wz * 8
-          objects_separated 0UL g obj other;
+          objects_separated zero_addr g obj other;
           assert (U64.v other > U64.v obj + block_wz * 8);
           assert (U64.v addr >= U64.v other);
           assert (U64.v other > U64.v obj + block_wz * 8);
@@ -2084,7 +2092,7 @@ private let rec alloc_search_read_other
             read_write_different g' (prev_fp <: hp_addr) addr new_fp
           end else begin
             // prev_fp > other: objects_separated gives prev_fp > other + other_wz * 8
-            objects_separated 0UL g other prev_fp;
+            objects_separated zero_addr g other prev_fp;
             assert (U64.v prev_fp > U64.v other + other_wz * 8);
             assert (U64.v addr + 8 <= U64.v other + other_wz * 8);
             assert (U64.v addr + 8 <= U64.v prev_fp);
@@ -2111,7 +2119,7 @@ let alloc_spec_read_other (g: heap) (fp: U64.t) (requested_wz: nat)
                     fl_valid g fp (heap_size / U64.v mword) /\
                     fl_chain_terminates g fp (heap_size / U64.v mword) /\
                     requested_wz >= 1 /\
-                    Seq.mem other (objects 0UL g) /\
+                    Seq.mem other (objects zero_addr g) /\
                     chain_avoids g fp other (heap_size / U64.v mword) = true /\
                     U64.v addr >= U64.v other /\
                     U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other g) * 8)
@@ -2145,13 +2153,13 @@ private let rec alloc_search_preserves_chain_avoids_other
                     // excl is a valid object
                     U64.v excl >= U64.v mword /\ U64.v excl < heap_size /\
                     U64.v excl % U64.v mword == 0 /\
-                    Seq.mem (excl <: obj_addr) (objects 0UL g) /\
+                    Seq.mem (excl <: obj_addr) (objects zero_addr g) /\
                     (prev_fp <> 0UL ==>
                       (prev_fp <> cur_fp /\
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1 /\
                        U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
                        read_word g (prev_fp <: obj_addr) = cur_fp)) /\
@@ -2166,8 +2174,7 @@ private let rec alloc_search_preserves_chain_avoids_other
           (decreases fuel)
   = let big_fuel = heap_size / U64.v mword in
     if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -2219,19 +2226,19 @@ private let rec alloc_search_preserves_chain_avoids_other
             // rem_obj is at cur_fp + (wz+1)*8 which is within [hd, hd + (block_wz+1)*8)
             // excl ≠ cur_fp and both in objects, so objects_separated gives disjointness
             (if U64.v excl < U64.v cur_fp then begin
-               objects_separated 0UL g excl obj;
+               objects_separated zero_addr g excl obj;
                assert (U64.v cur_fp > U64.v excl + U64.v (wosize_of_object excl g) * 8);
                assert (rem_obj_nat > U64.v excl)
              end else begin
-               objects_separated 0UL g obj excl;
+               objects_separated zero_addr g obj excl;
                assert (U64.v excl > U64.v obj + block_wz * 8);
                assert (rem_obj_nat < U64.v obj + block_wz * 8)
              end);
             assert (rem_obj <> excl);
             // Transfer chain_avoids for next_fp chain to g'
             let transfer_aux (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -2265,8 +2272,8 @@ private let rec alloc_search_preserves_chain_avoids_other
             // ----- Exact-fit: new_fp = next_fp -----
             alloc_from_block_exact g obj wz next_fp;
             let transfer_aux_e (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -2307,8 +2314,8 @@ private let rec alloc_search_preserves_chain_avoids_other
             let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
             assert (new_fp == rem_obj);
             let transfer_aux_s (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -2332,10 +2339,10 @@ private let rec alloc_search_preserves_chain_avoids_other
             // prev_fp ≠ excl (shown above)
             // rem_obj ≠ excl (objects_separated on cur_fp vs excl)
             (if U64.v excl < U64.v cur_fp then begin
-               objects_separated 0UL g excl obj;
+               objects_separated zero_addr g excl obj;
                assert (rem_obj_nat > U64.v excl)
              end else begin
-               objects_separated 0UL g obj excl;
+               objects_separated zero_addr g obj excl;
                assert (U64.v excl > U64.v obj + block_wz * 8);
                assert (rem_obj_nat < U64.v obj + block_wz * 8)
              end);
@@ -2349,10 +2356,10 @@ private let rec alloc_search_preserves_chain_avoids_other
             assert (U64.v (hd_address (new_fp <: obj_addr)) + 16 <= heap_size);
             read_write_same (write_word (write_word g hd (make_header (U64.uint_to_t wz) white_bits 0UL)) (U64.uint_to_t rem_hd_nat <: hp_addr) (make_header (U64.uint_to_t (block_wz - wz - 1)) blue_bits 0UL)) rem_obj next_fp;
             (if U64.v prev_fp < U64.v cur_fp then begin
-               objects_separated 0UL g prev_obj obj;
+               objects_separated zero_addr g prev_obj obj;
                assert (U64.v new_fp > U64.v prev_fp)
              end else begin
-               objects_separated 0UL g obj prev_obj;
+               objects_separated zero_addr g obj prev_obj;
                assert (U64.v new_fp < U64.v prev_fp)
              end);
             read_write_different g' (prev_obj <: hp_addr) (new_fp <: hp_addr) new_fp;
@@ -2385,8 +2392,8 @@ private let rec alloc_search_preserves_chain_avoids_other
             // ----- Exact-fit sub-case (prev != 0) -----
             alloc_from_block_exact g obj wz next_fp;
             let transfer_aux_e (a: obj_addr) : Lemma
-              (requires Seq.mem a (objects 0UL g))
-              (ensures Seq.mem a (objects 0UL g') /\
+              (requires Seq.mem a (objects zero_addr g))
+              (ensures Seq.mem a (objects zero_addr g') /\
                        (U64.v (wosize_of_object a g) >= 1 ==>
                          U64.v (wosize_of_object a g') >= 1) /\
                        (U64.v (wosize_of_object a g) >= 1 /\
@@ -2461,8 +2468,7 @@ private let rec alloc_search_no_alloc_unchanged
                     r.obj_out = 0UL ==> (r.heap_out == g /\ r.fp_out == head_fp)))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -2491,7 +2497,7 @@ let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz:
                     chain_avoids g fp excl (heap_size / U64.v mword) = true /\
                     U64.v excl >= U64.v mword /\ U64.v excl < heap_size /\
                     U64.v excl % U64.v mword == 0 /\
-                    Seq.mem (excl <: obj_addr) (objects 0UL g))
+                    Seq.mem (excl <: obj_addr) (objects zero_addr g))
           (ensures (let r = alloc_spec g fp requested_wz in
                     chain_avoids r.heap_out r.fp_out excl (heap_size / U64.v mword) = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
@@ -2517,7 +2523,7 @@ private let alloc_from_block_preserves_wfh_part4
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
                     well_formed_heap_part4 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz) /\
                     wz >= 1)
@@ -2536,7 +2542,7 @@ private let alloc_from_block_preserves_wfh_part4
       let rem_obj_nat = rem_hd_nat + 8 in
       let rem_obj_addr : obj_addr = U64.uint_to_t rem_obj_nat in
       let aux (h: obj_addr) : Lemma
-        (requires Seq.mem h (objects 0UL g'))
+        (requires Seq.mem h (objects zero_addr g'))
         (ensures ~(is_infix h g'))
       = tag_of_object_spec h g';
         is_infix_spec h g';
@@ -2558,14 +2564,15 @@ private let alloc_from_block_preserves_wfh_part4
           = alloc_split_g3_agrees_part1 g obj wz next_fp p
           in
           FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-          split_new_mem_in_old_or_rem_part1 0UL g g' obj wz block_wz h;
-          assert (Seq.mem h (objects 0UL g));
+          objects_addresses_gt_start zero_addr g obj;
+          split_new_mem_in_old_or_rem_part1 zero_addr g g' obj wz block_wz h;
+          assert (Seq.mem h (objects zero_addr g));
           wosize_of_object_spec obj g;
           if U64.v h < U64.v obj then begin
-            objects_separated 0UL g h obj;
+            objects_separated zero_addr g h obj;
             alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
           end else begin
-            objects_separated 0UL g obj h;
+            objects_separated zero_addr g obj h;
             alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
           end;
           // Now read_word g' (hd_address h) == read_word g (hd_address h)
@@ -2581,7 +2588,7 @@ private let alloc_from_block_preserves_wfh_part4
       make_header_getWosize (U64.uint_to_t block_wz) white_bits 0UL;
       header_write_same_wosize_preserves_objects g obj new_hdr;
       let aux (h: obj_addr) : Lemma
-        (requires Seq.mem h (objects 0UL g'))
+        (requires Seq.mem h (objects zero_addr g'))
         (ensures ~(is_infix h g'))
       = tag_of_object_spec h g';
         is_infix_spec h g';
@@ -2592,9 +2599,9 @@ private let alloc_from_block_preserves_wfh_part4
           infix_tag_val ()
         end else begin
           if U64.v h < U64.v obj then
-            objects_separated 0UL g h obj
+            objects_separated zero_addr g h obj
           else
-            objects_separated 0UL g obj h;
+            objects_separated zero_addr g obj h;
           read_write_different g hd (hd_address h) new_hdr;
           tag_of_object_spec h g;
           is_infix_spec h g
@@ -2614,16 +2621,16 @@ private let write_body_preserves_wfh_part4
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
                     well_formed_heap_part4 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     U64.v addr >= U64.v obj /\
                     U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
                     U64.v addr % 8 = 0)
           (ensures well_formed_heap_part4 (write_word g addr v))
-  = write_body_preserves_objects_local 0UL g obj addr v;
+  = write_body_preserves_objects_local zero_addr g obj addr v;
     let g' = write_word g addr v in
-    assert (objects 0UL g' == objects 0UL g);
+    assert (objects zero_addr g' == objects zero_addr g);
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures ~(is_infix h g'))
     = hd_address_spec h;
       hd_address_spec obj;
@@ -2635,10 +2642,10 @@ private let write_body_preserves_wfh_part4
         read_write_different g addr (hd_address h) v
       else begin
         if U64.v h < U64.v obj then begin
-          objects_separated 0UL g h obj;
+          objects_separated zero_addr g h obj;
           read_write_different g addr (hd_address h) v
         end else begin
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
           read_write_different g addr (hd_address h) v
         end
       end
@@ -2664,14 +2671,13 @@ private let rec alloc_search_preserves_wfh_part4
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                     well_formed_heap_part4 r.heap_out))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -2683,7 +2689,7 @@ private let rec alloc_search_preserves_wfh_part4
       hd_address_bounds obj;
       fl_valid_gives_mem g cur_fp fuel;
       fl_valid_gives_wosize g cur_fp fuel;
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
       let next_fp =
         if U64.v hd + 16 <= heap_size then read_word g obj
         else 0UL
@@ -2697,26 +2703,26 @@ private let rec alloc_search_preserves_wfh_part4
                 U64.v prev_fp % U64.v mword = 0 then begin
           let prev : obj_addr = prev_fp in
           alloc_from_block_objects_facts_part1 g obj wz next_fp;
-          assert (Seq.mem prev (objects 0UL g'));
+          assert (Seq.mem prev (objects zero_addr g'));
           wosize_of_object_spec prev g;
           wosize_of_object_bound prev g;
           hd_address_spec prev;
           if block_wz - wz >= 2 then begin
             let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
             if U64.v prev < U64.v obj then begin
-              objects_separated 0UL g prev obj;
+              objects_separated zero_addr g prev obj;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
             end else begin
               wosize_of_object_spec obj g;
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
             end
           end else begin
             assert (prev <> obj);
             if U64.v prev < U64.v obj then
-              objects_separated 0UL g prev obj
+              objects_separated zero_addr g prev obj
             else
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
             let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
             alloc_from_block_exact g obj wz next_fp;
             read_write_different g hd (hd_address prev) alloc_hdr
@@ -2770,7 +2776,7 @@ private let rec alloc_search_read_field_gt0
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
                     wz >= 1 /\
-                    Seq.mem src (objects 0UL g) /\
+                    Seq.mem src (objects zero_addr g) /\
                     j > 0 /\
                     j < U64.v (wosize_of_object src g) /\
                     U64.v src + j * 8 + 8 <= heap_size /\
@@ -2780,15 +2786,14 @@ private let rec alloc_search_read_field_gt0
                       (U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                     let addr : hp_addr = U64.uint_to_t (U64.v src + j * 8) in
                     read_word r.heap_out addr == read_word g addr))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -2813,13 +2818,13 @@ private let rec alloc_search_read_field_gt0
         wosize_of_object_spec obj g;
         // objects_separated: addr doesn't overlap alloc_from_block writes
         if U64.v src < U64.v obj then begin
-          objects_separated 0UL g src obj;
+          objects_separated zero_addr g src obj;
           // src + wosize(src)*8 <= hd(obj) = obj - 8
           // addr = src + j*8 < src + wosize(src)*8 <= obj - 8 = hd
           // So addr + 8 <= hd, and addr < rem_hd, addr < rem_field
           alloc_from_block_read_other_body g obj wz next_fp addr
         end else begin
-          objects_separated 0UL g obj src;
+          objects_separated zero_addr g obj src;
           // src > obj + block_wz * 8 (since obj < src, separated)
           // addr = src + j*8 >= src > obj + block_wz*8 >= obj + (wz+2)*8 (for split)
           // In exact case: only hd written, which is < obj < src <= addr
@@ -2839,13 +2844,13 @@ private let rec alloc_search_read_field_gt0
             read_write_different g' (prev_fp <: hp_addr) addr new_fp
           end else begin
             if U64.v prev_fp < U64.v src then begin
-              objects_separated 0UL g prev_fp src;
+              objects_separated zero_addr g prev_fp src;
               // prev_fp + wosize(prev)*8 <= src - 8 < src <= addr
               assert (U64.v prev_fp + 8 <= U64.v src);
               assert (U64.v addr >= U64.v src);
               read_write_different g' (prev_fp <: hp_addr) addr new_fp
             end else begin
-              objects_separated 0UL g src prev_fp;
+              objects_separated zero_addr g src prev_fp;
               // src + wosize(src)*8 <= prev_fp - 8
               // addr = src + j*8 < src + wosize(src)*8 <= prev_fp - 8 < prev_fp
               assert (U64.v addr + 8 <= U64.v prev_fp);
@@ -2874,7 +2879,7 @@ let alloc_spec_read_field_gt0 (g: heap) (fp: U64.t) (requested_wz: nat)
                     fl_chain_terminates g fp (heap_size / U64.v mword) /\
                     requested_wz >= 1 /\
                     (alloc_spec g fp requested_wz).obj_out <> 0UL /\
-                    Seq.mem src (objects 0UL g) /\
+                    Seq.mem src (objects zero_addr g) /\
                     src <> (alloc_spec g fp requested_wz).obj_out /\
                     j > 0 /\
                     j < U64.v (wosize_of_object src g) /\
@@ -2902,13 +2907,13 @@ let alloc_from_block_preserves_objects_part1 = alloc_from_block_preserves_object
 private let alloc_from_block_new_objects_blue_split
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz >= 2) /\
                     (let (g', _) = alloc_from_block g obj wz next_fp in
-                     Seq.mem h (objects 0UL g') /\
-                     ~(Seq.mem h (objects 0UL g))))
+                     Seq.mem h (objects zero_addr g') /\
+                     ~(Seq.mem h (objects zero_addr g))))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                     is_blue h g' = true))
   = alloc_split_facts_part1 g obj wz next_fp;
@@ -2927,7 +2932,8 @@ private let alloc_from_block_new_objects_blue_split
     = alloc_split_g3_agrees_part1 g obj wz next_fp p
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-    split_new_mem_in_old_or_rem_part1 0UL g g3 obj wz block_wz h;
+    objects_addresses_gt_start zero_addr g obj;
+    split_new_mem_in_old_or_rem_part1 zero_addr g g3 obj wz block_wz h;
     // h ∉ objects(g), so h = rem_obj
     assert (U64.v h == rem_obj_nat);
     // The remainder header at rem_hd has blue_bits
@@ -2951,13 +2957,13 @@ private let alloc_from_block_new_objects_blue_split
 private let alloc_from_block_no_new_objects_exact
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz < 2) /\
                     (let (g', _) = alloc_from_block g obj wz next_fp in
-                     Seq.mem h (objects 0UL g')))
-          (ensures Seq.mem h (objects 0UL g))
+                     Seq.mem h (objects zero_addr g')))
+          (ensures Seq.mem h (objects zero_addr g))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
@@ -2977,12 +2983,12 @@ private let alloc_from_block_no_new_objects_exact
 private let alloc_from_block_new_objects_blue
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz /\ wz >= 1) /\
                     (let (g', _) = alloc_from_block g obj wz next_fp in
-                     Seq.mem h (objects 0UL g') /\
-                     ~(Seq.mem h (objects 0UL g))))
+                     Seq.mem h (objects zero_addr g') /\
+                     ~(Seq.mem h (objects zero_addr g))))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                     is_blue h g' = true))
   = let hdr = read_word g (hd_address obj) in
@@ -3047,18 +3053,17 @@ private let rec alloc_search_new_objects_blue_part1
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                     r.obj_out <> 0UL ==>
                     (forall (x: obj_addr).
-                      Seq.mem x (objects 0UL r.heap_out) /\
-                      ~(Seq.mem x (objects 0UL g)) ==>
+                      Seq.mem x (objects zero_addr r.heap_out) /\
+                      ~(Seq.mem x (objects zero_addr g)) ==>
                       is_blue x r.heap_out = true)))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -3070,7 +3075,7 @@ private let rec alloc_search_new_objects_blue_part1
       hd_address_bounds obj;
       fl_valid_gives_mem g cur_fp fuel;
       fl_valid_gives_wosize g cur_fp fuel;
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
       let next_fp =
         if U64.v hd + 16 <= heap_size then read_word g obj
         else 0UL
@@ -3080,7 +3085,7 @@ private let rec alloc_search_new_objects_blue_part1
         let (g', new_rem_fp) = alloc_from_block g obj wz next_fp in
         // Prove: new objects in g' are blue
         let aux_blue (x: obj_addr) : Lemma
-          (requires Seq.mem x (objects 0UL g') /\ ~(Seq.mem x (objects 0UL g)))
+          (requires Seq.mem x (objects zero_addr g') /\ ~(Seq.mem x (objects zero_addr g)))
           (ensures is_blue x g' = true)
         = alloc_from_block_new_objects_blue g obj wz next_fp x
         in
@@ -3092,9 +3097,9 @@ private let rec alloc_search_new_objects_blue_part1
           let prev : obj_addr = prev_fp in
           // prev ≠ obj → prev's header is separate from obj's block
           // Therefore the prev_fp write preserves objects and colors
-          assert (Seq.mem prev (objects 0UL g));
+          assert (Seq.mem prev (objects zero_addr g));
           alloc_from_block_objects_facts_part1 g obj wz next_fp;
-          assert (Seq.mem prev (objects 0UL g'));
+          assert (Seq.mem prev (objects zero_addr g'));
           wosize_of_object_spec prev g;
           wosize_of_object_bound prev g;
           hd_address_spec prev;
@@ -3102,33 +3107,33 @@ private let rec alloc_search_new_objects_blue_part1
           if block_wz - wz >= 2 then begin
             let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
             if U64.v prev < U64.v obj then begin
-              objects_separated 0UL g prev obj;
+              objects_separated zero_addr g prev obj;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
             end else begin
               wosize_of_object_spec obj g;
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
             end
           end else begin
             if U64.v prev < U64.v obj then
-              objects_separated 0UL g prev obj
+              objects_separated zero_addr g prev obj
             else
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
             alloc_from_block_exact g obj wz next_fp;
             let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
             read_write_different g hd (hd_address prev) alloc_hdr
           end;
           wosize_of_object_spec prev g';
           // write at prev_fp preserves objects
-          write_body_preserves_objects_local 0UL g' prev (prev <: hp_addr) new_rem_fp;
+          write_body_preserves_objects_local zero_addr g' prev (prev <: hp_addr) new_rem_fp;
           // For any new object x: show is_blue x in write_word g'
           let heap_out = write_word g' (prev <: hp_addr) new_rem_fp in
           let aux_xfer (x: obj_addr) : Lemma
-            (requires Seq.mem x (objects 0UL heap_out) /\
-                     ~(Seq.mem x (objects 0UL g)))
+            (requires Seq.mem x (objects zero_addr heap_out) /\
+                     ~(Seq.mem x (objects zero_addr g)))
             (ensures is_blue x heap_out = true)
           = // objects(heap_out) == objects(g'), so x ∈ objects(g')
-            assert (Seq.mem x (objects 0UL g'));
+            assert (Seq.mem x (objects zero_addr g'));
             // x ∉ objects(g) → is_blue x g'
             assert (is_blue x g' = true);
             // write at prev_fp preserves is_blue for x (prev_fp ≠ hd_address x)
@@ -3155,15 +3160,16 @@ private let rec alloc_search_new_objects_blue_part1
               = alloc_split_g3_agrees_part1 g obj wz next_fp p
               in
               FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-              split_new_mem_in_old_or_rem_part1 0UL g g' obj wz block_wz x;
+              objects_addresses_gt_start zero_addr g obj;
+              split_new_mem_in_old_or_rem_part1 zero_addr g g' obj wz block_wz x;
               assert (U64.v x == rem_obj_nat);
               assert (U64.v (hd_address x) == rem_hd_nat);
               // prev is separate from obj's block
               if U64.v prev < U64.v obj then begin
-                objects_separated 0UL g prev obj;
+                objects_separated zero_addr g prev obj;
                 assert (U64.v prev + U64.v (wosize_of_object prev g) * 8 < U64.v obj)
               end else begin
-                objects_separated 0UL g obj prev;
+                objects_separated zero_addr g obj prev;
                 assert (U64.v prev > U64.v obj + block_wz * 8);
                 wosize_of_object_spec obj g
               end;
@@ -3198,8 +3204,8 @@ let alloc_spec_new_objects_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
                     (alloc_spec g fp requested_wz).obj_out <> 0UL)
           (ensures (let r = alloc_spec g fp requested_wz in
                     forall (x: obj_addr).
-                      Seq.mem x (objects 0UL r.heap_out) /\
-                      ~(Seq.mem x (objects 0UL g)) ==>
+                      Seq.mem x (objects zero_addr r.heap_out) /\
+                      ~(Seq.mem x (objects zero_addr g)) ==>
                       is_blue x r.heap_out = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_new_objects_blue_part1 g fp 0UL fp wz (heap_size / U64.v mword)
@@ -3214,13 +3220,13 @@ let alloc_spec_new_objects_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 let alloc_from_block_objects_backward_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let bwz = U64.v (getWosize hdr) in
                      bwz >= wz /\ wz >= 1 /\ bwz - wz >= 2) /\
                     (let (g', _) = alloc_from_block g obj wz next_fp in
-                     Seq.mem h (objects 0UL g') /\
-                     ~(Seq.mem h (objects 0UL g))))
+                     Seq.mem h (objects zero_addr g') /\
+                     ~(Seq.mem h (objects zero_addr g))))
           (ensures h == snd (alloc_from_block g obj wz next_fp))
   = alloc_split_facts_part1 g obj wz next_fp;
     let hd = hd_address obj in
@@ -3237,7 +3243,8 @@ let alloc_from_block_objects_backward_part1
     = alloc_split_g3_agrees_part1 g obj wz next_fp p
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-    split_new_mem_in_old_or_rem_part1 0UL g g3 obj wz block_wz h;
+    objects_addresses_gt_start zero_addr g obj;
+    split_new_mem_in_old_or_rem_part1 zero_addr g g3 obj wz block_wz h;
     // h ∉ objects(g), so h must be rem_obj
     assert (U64.v h == rem_obj_nat);
     // rem_fp = rem_obj from alloc_split_facts_part1
@@ -3261,24 +3268,24 @@ let alloc_from_block_objects_backward_part1
 private let field_write_preserves_no_black_part1
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires GC.Spec.Mark.no_black_objects g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     U64.v addr >= U64.v obj /\
                     U64.v addr < U64.v obj + U64.v (wosize_of_object obj g) * 8 /\
                     U64.v addr % 8 = 0)
           (ensures GC.Spec.Mark.no_black_objects (write_word g addr v))
   = let g' = write_word g addr v in
-    write_body_preserves_objects_local 0UL g obj addr v;
+    write_body_preserves_objects_local zero_addr g obj addr v;
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures ~(is_black h g'))
-    = assert (Seq.mem h (objects 0UL g));
+    = assert (Seq.mem h (objects zero_addr g));
       hd_address_spec h;
       hd_address_spec obj;
       if U64.v h <= U64.v obj then begin
         read_write_different g addr (hd_address h) v;
         color_of_header_eq h g g'
       end else begin
-        objects_separated 0UL g obj h;
+        objects_separated zero_addr g obj h;
         read_write_different g addr (hd_address h) v;
         color_of_header_eq h g g'
       end
@@ -3296,7 +3303,7 @@ private let alloc_from_block_preserves_no_black_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires GC.Spec.Mark.no_black_objects g /\
                     well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz /\ wz >= 1))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
@@ -3329,16 +3336,17 @@ private let alloc_from_block_preserves_no_black_part1
       make_header_getColor (U64.uint_to_t rem_wz) blue_bits 0UL;
       getColor_raw (make_header (U64.uint_to_t rem_wz) blue_bits 0UL);
       let aux (h: obj_addr) : Lemma
-        (requires Seq.mem h (objects 0UL g'))
+        (requires Seq.mem h (objects zero_addr g'))
         (ensures ~(is_black h g'))
-      = split_new_mem_in_old_or_rem_part1 0UL g g' obj wz block_wz h;
+      = objects_addresses_gt_start zero_addr g obj;
+        split_new_mem_in_old_or_rem_part1 zero_addr g g' obj wz block_wz h;
         if U64.v h = rem_obj_nat then begin
           // New remainder object: blue header → not black
           hd_address_spec rem_obj_addr;
           color_of_object_spec rem_obj_addr g';
           is_black_iff rem_obj_addr g'
         end else begin
-          assert (Seq.mem h (objects 0UL g));
+          assert (Seq.mem h (objects zero_addr g));
           if h = obj then begin
             // Allocated block: white header → not black
             color_of_object_spec obj g';
@@ -3347,10 +3355,10 @@ private let alloc_from_block_preserves_no_black_part1
             // Pre-existing other object: header unchanged → not black
             hd_address_spec h;
             if U64.v h < U64.v obj then begin
-              objects_separated 0UL g h obj;
+              objects_separated zero_addr g h obj;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
             end else begin
-              objects_separated 0UL g obj h;
+              objects_separated zero_addr g obj h;
               assert (U64.v (hd_address h) > U64.v hd + block_wz * 8);
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address h)
             end;
@@ -3370,18 +3378,18 @@ private let alloc_from_block_preserves_no_black_part1
       make_header_getColor (U64.uint_to_t block_wz) white_bits 0UL;
       getColor_raw alloc_hdr;
       let aux (h: obj_addr) : Lemma
-        (requires Seq.mem h (objects 0UL g'))
+        (requires Seq.mem h (objects zero_addr g'))
         (ensures ~(is_black h g'))
-      = assert (Seq.mem h (objects 0UL g));
+      = assert (Seq.mem h (objects zero_addr g));
         if h = obj then begin
           color_of_object_spec obj g';
           is_black_iff obj g'
         end else begin
           hd_address_spec h;
           if U64.v h < U64.v obj then
-            objects_separated 0UL g h obj
+            objects_separated zero_addr g h obj
           else
-            objects_separated 0UL g obj h;
+            objects_separated zero_addr g obj h;
           read_write_different g hd (hd_address h) alloc_hdr;
           color_of_header_eq h g g'
         end
@@ -3408,14 +3416,13 @@ private let rec alloc_search_preserves_no_black_part1
                        U64.v prev_fp >= U64.v mword /\
                        U64.v prev_fp < heap_size /\
                        U64.v prev_fp % U64.v mword = 0 /\
-                       Seq.mem prev_fp (objects 0UL g) /\
+                       Seq.mem prev_fp (objects zero_addr g) /\
                        U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
                     GC.Spec.Mark.no_black_objects r.heap_out))
           (decreases fuel)
   = if fuel = 0 then ()
-    else if cur_fp = 0UL then ()
-    else if U64.v cur_fp < U64.v mword then ()
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
     else if U64.v cur_fp >= heap_size then ()
     else if U64.v cur_fp % U64.v mword <> 0 then ()
     else begin
@@ -3428,7 +3435,7 @@ private let rec alloc_search_preserves_no_black_part1
       fl_valid_gives_mem g cur_fp fuel;
       fl_valid_gives_wosize g cur_fp fuel;
       wosize_of_object_spec obj g;
-      assert (Seq.mem obj (objects 0UL g));
+      assert (Seq.mem obj (objects zero_addr g));
       let next_fp =
         if U64.v hd + 16 <= heap_size then read_word g obj
         else 0UL
@@ -3441,7 +3448,7 @@ private let rec alloc_search_preserves_no_black_part1
                 U64.v prev_fp % U64.v mword = 0 then begin
           let prev : obj_addr = prev_fp in
           alloc_from_block_objects_facts_part1 g obj wz next_fp;
-          assert (Seq.mem prev (objects 0UL g'));
+          assert (Seq.mem prev (objects zero_addr g'));
           alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
           hd_address_spec prev;
           wosize_of_object_spec prev g;
@@ -3451,10 +3458,10 @@ private let rec alloc_search_preserves_no_black_part1
             let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
             let rem_obj_nat = rem_hd_nat + 8 in
             if U64.v prev < U64.v obj then begin
-              objects_separated 0UL g prev obj;
+              objects_separated zero_addr g prev obj;
               alloc_split_g3_agrees_part1 g obj wz next_fp (hd_address prev)
             end else begin
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
               assert (U64.v prev > U64.v obj + block_wz * 8);
               assert (U64.v (hd_address prev) > U64.v obj + block_wz * 8 - 8);
               assert (U64.v (hd_address prev) <> U64.v hd);
@@ -3464,9 +3471,9 @@ private let rec alloc_search_preserves_no_black_part1
             end
           end else begin
             if U64.v prev < U64.v obj then
-              objects_separated 0UL g prev obj
+              objects_separated zero_addr g prev obj
             else
-              objects_separated 0UL g obj prev;
+              objects_separated zero_addr g obj prev;
             let alloc_hdr = make_header (U64.uint_to_t block_wz) white_bits 0UL in
             alloc_from_block_exact g obj wz next_fp;
             read_write_different g hd (hd_address prev) alloc_hdr

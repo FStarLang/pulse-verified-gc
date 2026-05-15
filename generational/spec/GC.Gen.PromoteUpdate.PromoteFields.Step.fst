@@ -136,6 +136,9 @@ private let promote_step_fields_forall
         assert (k < idx);
         assert (fwd' obj_k == fwd obj_k);
         let wz_k = minor_wosize minor obj_k in
+        assert (fwd obj_k <> 0UL);
+        assert (U64.v (fwd obj_k) % 8 == 0);
+        assert (U64.v (fwd obj_k) >= U64.v mword);
         is_val_addr_spec (fwd obj_k);
         assert (is_val_addr (fwd obj_k));
         assert (Seq.mem ((fwd obj_k) <: obj_addr) (objects zero_addr major));
@@ -242,7 +245,7 @@ private let promote_step_chain_forall
 
 /// Wosize of objects that avoid the chain is preserved through promote_object.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let promote_object_wosize_preserved
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wz: nat{wz > 0}) (other: obj_addr)
@@ -260,22 +263,51 @@ let promote_object_wosize_preserved
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
     let new_major = alloc_res.heap_out in
     let new_addr = alloc_res.obj_out in
+    assert (new_addr <> 0UL);
     GC.Gen.AllocProps.alloc_spec_obj_ne_excl major fp wz other;
     GC.Gen.AllocProps.alloc_spec_read_header_other_part1 major fp wz other;
     assert (read_word new_major (hd_address other) == read_word major (hd_address other));
-    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp 0UL fp
+    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp zero_addr fp
       (if wz = 0 then 1 else wz) fuel;
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
+    assert (U64.v new_addr >= U64.v mword);
     let dst_obj : obj_addr = new_addr in
     GC.Gen.AllocProps.alloc_spec_obj_wosize_pre_part1 major fp wz;
     assert (U64.v (wosize_of_object dst_obj major) >= wz);
     hd_address_spec other;
     hd_address_spec dst_obj;
     let a = hd_address other in
+    // dst_obj is in objects (from alloc_search_obj_in_objects_pre_part1 + new_addr <> 0UL)
+    assert (Seq.mem dst_obj (objects zero_addr major));
+    // Use wfh_part1_obj_bound to get dst_obj + wosize*8 <= heap_size
+    wfh_part1_obj_bound major dst_obj;
+    assert (U64.v dst_obj + wz * 8 <= heap_size);
     if U64.v other < U64.v new_addr then begin
-      objects_separated 0UL major other dst_obj;
+      objects_separated zero_addr major other dst_obj;
+      // Bridge: a + 8 = other <= dst_obj <= dst_obj + k*8 for all k
+      assert (U64.v a + 8 = U64.v other);
+      assert (U64.v other <= U64.v dst_obj);
       copy_fields_preserves_other minor new_major obj dst_obj 0 wz a
     end else begin
-      objects_separated 0UL major dst_obj other;
+      objects_separated zero_addr major dst_obj other;
+      // objects_separated: other > dst_obj + wosize_of_object_as_wosize(dst_obj,major)*8
+      // wosize_of_object_as_wosize = wosize_of_object (with bound proof)
+      wosize_of_object_spec dst_obj major;
+      let ws = U64.v (wosize_of_object dst_obj major) in
+      assert (U64.v other > U64.v dst_obj + ws * 8);
+      assert (ws >= wz);
+      // Alignment: other % 8 == 0, (dst_obj + ws*8) % 8 == 0, other > dst_obj + ws*8
+      // ==> other >= dst_obj + ws*8 + 8 >= dst_obj + wz*8 + 8
+      assert (U64.v other % 8 == 0);
+      assert (U64.v dst_obj % 8 == 0);
+      // Explicit: other - (dst_obj + ws*8) > 0 and is a multiple of 8, so >= 8
+      assert ((U64.v other - (U64.v dst_obj + ws * 8)) % 8 == 0);
+      assert (U64.v other >= U64.v dst_obj + ws * 8 + 8);
+      assert (U64.v other >= U64.v dst_obj + wz * 8 + 8);
+      // Now: a = other - 8, so a >= dst_obj + wz*8
+      // For k < wz: dst_obj + k*8 + 8 <= dst_obj + (wz-1)*8 + 8 = dst_obj + wz*8 <= a
+      assert (U64.v a = U64.v other - 8);
+      assert (U64.v a >= U64.v dst_obj + wz * 8);
       copy_fields_preserves_other minor new_major obj dst_obj 0 wz a
     end;
     // Bridge: set_promoted_tag preserves header of other (other ≠ dst_obj)
@@ -310,9 +342,10 @@ private let promote_object_wosize_self
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
-    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp 0UL fp
+    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp zero_addr fp
       (if wz = 0 then 1 else wz) fuel;
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    assert (U64.v alloc_res.obj_out >= U64.v mword);
     let dst_obj : obj_addr = alloc_res.obj_out in
     assert (well_formed_heap_part1 alloc_res.heap_out);
     assert (Seq.mem dst_obj (objects zero_addr alloc_res.heap_out));

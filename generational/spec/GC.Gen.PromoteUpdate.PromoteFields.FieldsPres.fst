@@ -18,7 +18,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// Helper: extend chain_all_inv from idx to idx+1 when wz=0 (vacuous case).
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let chain_all_inv_extend_skip
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)

@@ -113,4 +113,4 @@ val update_all_objects_terminal_step
 val objects_initial_membership (g: heap)
   : Lemma (requires heap_size > 8 /\ well_formed_heap_part1 g /\
                     Seq.length (objects zero_addr g) > 0)
-          (ensures Seq.mem (f_address 0UL) (objects zero_addr g))
+          (ensures Seq.mem (f_address zero_addr) (objects zero_addr g))
