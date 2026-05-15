@@ -353,7 +353,7 @@ let mark_preserves_field_read_forall
 #pop-options
 
 /// mark preserves no_scan_invariant
-#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let mark_preserves_no_scan_invariant
   (h_init: heap{well_formed_heap h_init /\ no_scan_invariant h_init})
   (st: seq obj_addr{stack_props h_init st})
@@ -384,7 +384,131 @@ let mark_preserves_no_scan_invariant
     no_scan_invariant_intro h_mark
 #pop-options
 
-#push-options "--z3rlimit 1600 --fuel 2 --ifuel 1"
+/// ---------------------------------------------------------------------------
+/// Shared helper: prove white object's field doesn't point to blue object
+/// ---------------------------------------------------------------------------
+/// Split into sub-cases for small Z3 queries.
+
+/// Sub-case: no_scan object has no pointer fields (contradiction branch)
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+private let sweep_field_no_scan_contradiction
+  (h_mark h_sweep: heap) (x: obj_addr) (i: nat) (fp: U64.t)
+  : Lemma
+    (requires
+      well_formed_heap h_mark /\
+      no_scan_invariant h_mark /\
+      fp_in_heap fp h_mark /\
+      h_sweep == fst (sweep h_mark fp) /\
+      objects zero_addr h_sweep == objects zero_addr h_mark /\
+      Seq.mem x (objects zero_addr h_mark) /\
+      is_black x h_mark /\
+      is_no_scan x h_mark /\
+      i >= 1 /\ i <= U64.v (wosize_of_object x h_mark) /\ i < pow2 64 /\
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_mark x iu in
+       HeapGraph.is_pointer_field field_val))
+    (ensures False)
+  = let iu = U64.uint_to_t i in
+    wf_implies_object_fits h_mark x;
+    HeapGraph.object_fits_to_bound x h_mark;
+    wosize_of_object_bound x h_mark;
+    let idx = U64.v iu - 1 in
+    assert (idx < U64.v (wosize_of_object x h_mark));
+    HeapGraph.get_field_addr_eq h_mark x iu;
+    colors_exclusive x h_mark;
+    assert (~(is_blue x h_mark));
+    no_scan_invariant_elim h_mark x idx
+#pop-options
+
+/// Sub-case: pointer field → successor was black → contradiction with blue
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+private let sweep_field_black_successor_not_blue
+  (h_mark h_sweep: heap) (x: obj_addr) (i: nat) (fp: U64.t)
+  : Lemma
+    (requires
+      well_formed_heap h_mark /\
+      noGreyObjects h_mark /\
+      tri_color_invariant h_mark /\
+      no_pointer_to_blue h_mark /\
+      fp_in_heap fp h_mark /\
+      h_sweep == fst (sweep h_mark fp) /\
+      objects zero_addr h_sweep == objects zero_addr h_mark /\
+      Seq.mem x (objects zero_addr h_mark) /\
+      is_black x h_mark /\
+      ~(is_no_scan x h_mark) /\
+      is_vertex_set (HeapGraph.coerce_to_vertex_list (objects zero_addr h_mark)) /\
+      i >= 1 /\ i <= U64.v (wosize_of_object x h_mark) /\ i < pow2 64 /\
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_mark x iu in
+       HeapGraph.is_pointer_field field_val /\
+       Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep)))
+    (ensures
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_mark x iu in
+       ~(is_blue (field_val <: obj_addr) h_sweep)))
+  = let iu = U64.uint_to_t i in
+    let field_val = HeapGraph.get_field h_mark x iu in
+    wf_implies_object_fits h_mark x;
+    HeapGraph.pointer_field_is_graph_edge h_mark (objects zero_addr h_mark) x iu;
+    black_successor_is_black h_mark x (field_val <: obj_addr);
+    sweep_black_survives h_mark fp;
+    colors_exclusive (field_val <: obj_addr) h_sweep
+#pop-options
+
+/// Combined: prove white object's field property after sweep
+/// (shared by sweep_post_sweep_strong and sweep_post_sweep_strong_gen)
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+private let sweep_post_field_property
+  (h_mark h_sweep: heap) (x: obj_addr) (i: nat) (fp: U64.t)
+  : Lemma
+    (requires
+      well_formed_heap h_mark /\
+      noGreyObjects h_mark /\
+      tri_color_invariant h_mark /\
+      no_scan_invariant h_mark /\
+      no_pointer_to_blue h_mark /\
+      fp_in_heap fp h_mark /\
+      h_sweep == fst (sweep h_mark fp) /\
+      objects zero_addr h_sweep == objects zero_addr h_mark /\
+      is_vertex_set (HeapGraph.coerce_to_vertex_list (objects zero_addr h_mark)) /\
+      Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep /\
+      i >= 1 /\ i <= U64.v (wosize_of_object x h_sweep) /\ i < pow2 64)
+    (ensures
+      (let iu = U64.uint_to_t i in
+       let field_val = HeapGraph.get_field h_sweep x iu in
+       U64.v field_val < U64.v zero_addr + U64.v mword \/
+       U64.v field_val >= heap_size \/
+       U64.v field_val % U64.v mword <> 0 \/
+       ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
+         is_blue (field_val <: obj_addr) h_sweep)))
+  = // x is white after sweep; determine x's color in h_mark
+    assert (Seq.mem x (objects zero_addr h_mark));
+    color_exhaustive x h_mark;
+    colors_exclusive x h_mark;
+    colors_exclusive x h_sweep;
+    sweep_white_becomes_blue h_mark fp;
+    sweep_blue_stays_blue h_mark fp;
+    sweep_black_survives h_mark fp;
+    // white/gray/blue in h_mark → contradiction (x is white not blue in h_sweep)
+    assert (is_black x h_mark);
+    let iu = U64.uint_to_t i in
+    sweep_preserves_wosize_black h_mark fp x;
+    sweep_preserves_field h_mark fp x iu;
+    let field_val = HeapGraph.get_field h_sweep x iu in
+    if U64.v field_val < U64.v zero_addr + U64.v mword then ()
+    else if U64.v field_val >= heap_size then ()
+    else if U64.v field_val % U64.v mword <> 0 then ()
+    else begin
+      assert (HeapGraph.is_pointer_field field_val);
+      if is_no_scan x h_mark then
+        sweep_field_no_scan_contradiction h_mark h_sweep x i fp
+      else if Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) then
+        sweep_field_black_successor_not_blue h_mark h_sweep x i fp
+      else ()
+    end
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let sweep_post_sweep_strong h_init st fp =
   let h_mark = mark h_init st in
   let h_sweep = fst (sweep h_mark fp) in
@@ -408,15 +532,12 @@ let sweep_post_sweep_strong h_init st fp =
   sweep_preserves_objects h_mark fp;
   assert (objects zero_addr h_sweep == objects zero_addr h_mark);
   sweep_resets_colors h_mark fp;
-  sweep_black_survives h_mark fp;
-  sweep_white_becomes_blue h_mark fp;
-  sweep_blue_stays_blue h_mark fp;
   objects_is_vertex_set h_mark;
 
   // post_sweep part
   assert (well_formed_heap h_sweep);
 
-  // Phase 3: Inner quantifier — for white objects, fields don't point to blue objects
+  // Phase 3: Inner quantifier — delegated to shared helper
   let aux (x: obj_addr) (i: nat) : Lemma
     (requires Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep)
     (ensures
@@ -429,69 +550,7 @@ let sweep_post_sweep_strong h_init st fp =
        ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
          is_blue (field_val <: obj_addr) h_sweep)))
   = if i < 1 || i > U64.v (wosize_of_object x h_sweep) || i >= pow2 64 then ()
-    else begin
-    // x is white in h_sweep; determine x's color in h_mark
-    assert (Seq.mem x (objects zero_addr h_mark));
-    color_exhaustive x h_mark;
-    colors_exclusive x h_mark;
-    colors_exclusive x h_sweep;
-    // white in h_mark → blue in h_sweep (contradiction: x white in h_sweep)
-    // gray in h_mark → contradiction with noGreyObjects
-    // blue in h_mark → blue in h_sweep (contradiction: x white in h_sweep)
-    // So x must be black in h_mark
-    assert (is_black x h_mark);
-
-    let iu = U64.uint_to_t i in
-
-    // wosize preserved through sweep for black objects
-    sweep_preserves_wosize_black h_mark fp x;
-    assert (wosize_of_object x h_sweep == wosize_of_object x h_mark);
-
-    // field preserved through sweep for black objects
-    sweep_preserves_field h_mark fp x iu;
-    let field_val = HeapGraph.get_field h_sweep x iu in
-    assert (field_val == HeapGraph.get_field h_mark x iu);
-
-    if U64.v field_val < U64.v zero_addr + U64.v mword then ()
-    else if U64.v field_val >= heap_size then ()
-    else if U64.v field_val % U64.v mword <> 0 then ()
-    else begin
-      // field_val >= zero_addr + mword, < heap_size, % 8 = 0
-      if is_no_scan x h_mark then begin
-        // Contradiction: no_scan_invariant says fields of no_scan non-blue objects
-        // are not pointer fields, but we've established is_pointer_field field_val
-        assert (HeapGraph.is_pointer_field field_val);
-        wf_implies_object_fits h_mark x;
-        HeapGraph.object_fits_to_bound x h_mark;
-        wosize_of_object_bound x h_mark;
-        let idx = U64.v iu - 1 in
-        assert (idx < U64.v (wosize_of_object x h_mark));
-        HeapGraph.get_field_addr_eq h_mark x iu;
-        // field_val == read_word h_mark (x + idx*8)
-        colors_exclusive x h_mark;
-        assert (~(is_blue x h_mark));
-        no_scan_invariant_elim h_mark x idx
-        // ~(is_pointer_field field_val) ∧ is_pointer_field field_val → contradiction
-      end
-      else begin
-        // HeapGraph.is_pointer_field: v % mword = 0 && v > 0 && v < heap_size
-        assert (HeapGraph.is_pointer_field field_val);
-
-        wf_implies_object_fits h_mark x;
-        mark_preserves_wosize h_init st x;
-        HeapGraph.pointer_field_is_graph_edge h_mark (objects zero_addr h_mark) x iu;
-        // mem_graph_edge (create_graph_from_heap h_mark (objects zero_addr h_mark)) x field_val
-        // = mem_graph_edge (create_graph h_mark) x field_val
-
-        if Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) then begin
-          black_successor_is_black h_mark x (field_val <: obj_addr);
-          // field_val is black in h_mark → white in h_sweep (via sweep_black_survives)
-          colors_exclusive (field_val <: obj_addr) h_sweep
-          // white → not blue, so ~(is_blue field_val h_sweep)
-        end else ()
-      end
-    end
-    end
+    else sweep_post_field_property h_mark h_sweep x i fp
   in
   let wrap (x: obj_addr) : Lemma
     (forall (i: nat).
@@ -518,11 +577,52 @@ let sweep_post_sweep_strong h_init st fp =
 /// object header position is preserved, which preserves the objects walk
 /// structure and hence heap_objects_dense.
 
-/// Helper: sweep_aux preserves wosize_of_object for any object x (any color).
-/// Key insight: sweep_object preserves wosize of x whether x is the processed
-/// object (sweep_object_preserves_self_wosize) or a different one
-/// (sweep_object_preserves_other_header). No color condition is needed.
-#push-options "--z3rlimit 1500 --fuel 2 --ifuel 1"
+/// Helper: one step of sweep_aux preserves wosize and recursive preconditions
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+private let sweep_aux_step_wosize
+  (g: heap) (objs: seq obj_addr{Seq.length objs > 0}) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires
+      well_formed_heap g /\
+      (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
+      fp_in_heap fp g /\
+      Seq.mem x (objects zero_addr g) /\
+      is_vertex_set (HeapGraph.coerce_to_vertex_list objs))
+    (ensures (
+      let obj = Seq.head objs in
+      let (g', fp') = sweep_object g obj fp in
+      well_formed_heap g' /\
+      (forall (o: obj_addr). Seq.mem o (Seq.tail objs) ==> Seq.mem o (objects zero_addr g')) /\
+      fp_in_heap fp' g' /\
+      Seq.mem x (objects zero_addr g') /\
+      is_vertex_set (HeapGraph.coerce_to_vertex_list (Seq.tail objs)) /\
+      wosize_of_object x g == wosize_of_object x g'))
+  = let obj = Seq.head objs in
+    let (g', fp') = sweep_object g obj fp in
+    Seq.lemma_index_is_nth objs 0;
+    sweep_object_preserves_objects g obj fp;
+    sweep_object_preserves_wf g obj fp;
+    wf_objects_non_infix g obj;
+    // fp_in_heap fp' g'
+    if is_white obj g then begin
+      assert (fp' == obj);
+      assert (Seq.mem obj (objects zero_addr g'));
+      assert (fp_in_heap fp' g')
+    end else begin
+      assert (fp' == fp);
+      assert (fp_in_heap fp' g')
+    end;
+    // Tail preserves vertex_set
+    HeapGraph.coerce_tail_lemma objs;
+    is_vertex_set_tail (HeapGraph.coerce_to_vertex_list objs);
+    // Wosize preservation at this step
+    if obj = x then
+      sweep_object_preserves_self_wosize g x fp
+    else
+      sweep_object_preserves_other_header g obj fp x
+#pop-options
+
+/// sweep_aux preserves wosize: now uses the step helper for small rlimit
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 private let rec sweep_aux_preserves_wosize
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires
@@ -535,38 +635,10 @@ private let rec sweep_aux_preserves_wosize
     (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
+      sweep_aux_step_wosize g objs fp x;
       let obj = Seq.head objs in
       let (g', fp') = sweep_object g obj fp in
-      Seq.lemma_index_is_nth objs 0;
-      sweep_object_preserves_objects g obj fp;
-      sweep_object_preserves_wf g obj fp;
-      wf_objects_non_infix g obj;
-      // Establish fp_in_heap fp' g'
-      if is_white obj g then begin
-        assert (fp' == obj);
-        assert (Seq.mem obj (objects zero_addr g'));
-        assert (fp_in_heap fp' g')
-      end else begin
-        assert (fp' == fp);
-        assert (fp_in_heap fp' g')
-      end;
-      // Tail preserves vertex_set
-      HeapGraph.coerce_tail_lemma objs;
-      is_vertex_set_tail (HeapGraph.coerce_to_vertex_list objs);
-      // Wosize preservation at this step + recursion
-      if obj = x then begin
-        // Self case: sweep_object preserves wosize of processed object (all colors)
-        sweep_object_preserves_self_wosize g x fp;
-        // x ∉ tail: from vertex set, head ∉ tail (via coerce)
-        HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
-        // Recurse on tail (x ∉ tail, so always uses the obj≠x branch internally)
-        sweep_aux_preserves_wosize g' (Seq.tail objs) fp' x
-      end else begin
-        // Other case: sweep_object preserves wosize of different object
-        sweep_object_preserves_other_header g obj fp x;
-        // Recurse on tail
-        sweep_aux_preserves_wosize g' (Seq.tail objs) fp' x
-      end
+      sweep_aux_preserves_wosize g' (Seq.tail objs) fp' x
     end
 #pop-options
 
@@ -942,7 +1014,7 @@ let mark_satisfies_mark_post h_init st roots fp =
 /// The proof is structurally identical to sweep_post_sweep_strong but
 /// derives mark properties from mark_post instead of calling mark_preserves_*.
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let sweep_post_sweep_strong_gen h_init h_mark roots fp =
   let h_sweep = fst (sweep h_mark fp) in
   // Extract mark properties
@@ -952,17 +1024,15 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
   mark_post_elim_objects h_init h_mark roots fp;
   mark_post_elim_tri_color h_init h_mark roots fp;
   mark_post_elim_fp h_init h_mark roots fp;
+  mark_post_elim_no_scan h_init h_mark roots fp;
 
   // Sweep invariants
   sweep_preserves_wf h_mark fp;
   sweep_preserves_objects h_mark fp;
   sweep_resets_colors h_mark fp;
-  sweep_black_survives h_mark fp;
-  sweep_white_becomes_blue h_mark fp;
-  sweep_blue_stays_blue h_mark fp;
   objects_is_vertex_set h_mark;
 
-  // Phase 3: for white objects in h_sweep, fields don't point to blue objects
+  // Phase 3: delegated to shared helper
   let aux (x: obj_addr) (i: nat) : Lemma
     (requires Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep)
     (ensures
@@ -975,47 +1045,7 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
        ~(Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) /\
          is_blue (field_val <: obj_addr) h_sweep)))
   = if i < 1 || i > U64.v (wosize_of_object x h_sweep) || i >= pow2 64 then ()
-    else begin
-      assert (Seq.mem x (objects zero_addr h_mark));
-      color_exhaustive x h_mark;
-      colors_exclusive x h_mark;
-      colors_exclusive x h_sweep;
-      assert (is_black x h_mark);
-      let iu = U64.uint_to_t i in
-      sweep_preserves_wosize_black h_mark fp x;
-      sweep_preserves_field h_mark fp x iu;
-      let field_val = HeapGraph.get_field h_sweep x iu in
-      if U64.v field_val < U64.v zero_addr + U64.v mword then ()
-      else if U64.v field_val >= heap_size then ()
-      else if U64.v field_val % U64.v mword <> 0 then ()
-      else begin
-        if is_no_scan x h_mark then begin
-          // Contradiction via no_scan_invariant (same as sweep_post_sweep_strong)
-          assert (HeapGraph.is_pointer_field field_val);
-          wf_implies_object_fits h_mark x;
-          HeapGraph.object_fits_to_bound x h_mark;
-          wosize_of_object_bound x h_mark;
-          let idx = U64.v iu - 1 in
-          assert (idx < U64.v (wosize_of_object x h_mark));
-          HeapGraph.get_field_addr_eq h_mark x iu;
-          colors_exclusive x h_mark;
-          assert (~(is_blue x h_mark));
-          mark_post_elim_no_scan h_init h_mark roots fp;
-          no_scan_invariant_elim h_mark x idx
-        end
-        else begin
-          assert (HeapGraph.is_pointer_field field_val);
-          wf_implies_object_fits h_mark x;
-          // wosize preserved from h_init to h_mark
-          assert (wosize_of_object x h_mark == wosize_of_object x h_init);
-          HeapGraph.pointer_field_is_graph_edge h_mark (objects zero_addr h_mark) x iu;
-          if Seq.mem (field_val <: obj_addr) (objects zero_addr h_sweep) then begin
-            black_successor_is_black h_mark x (field_val <: obj_addr);
-            colors_exclusive (field_val <: obj_addr) h_sweep
-          end else ()
-        end
-      end
-    end
+    else sweep_post_field_property h_mark h_sweep x i fp
   in
   let wrap (x: obj_addr) : Lemma
     (forall (i: nat).

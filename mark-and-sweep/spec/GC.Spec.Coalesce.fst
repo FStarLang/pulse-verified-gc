@@ -1562,8 +1562,7 @@ let post_sweep_strong (g: heap) : prop =
     i >= 1 /\ i <= U64.v (wosize_of_object x g) /\ i < pow2 64 ==>
     (let iu = U64.uint_to_t i in
      let field_val = HeapGraph.get_field g x iu in
-     field_val = 0UL \/
-     U64.v field_val < U64.v mword \/
+     U64.v field_val < U64.v zero_addr + U64.v mword \/
      U64.v field_val >= heap_size \/
      U64.v field_val % U64.v mword <> 0 \/
      ~(Seq.mem (field_val <: obj_addr) (objects zero_addr g) /\ is_blue (field_val <: obj_addr) g)))
