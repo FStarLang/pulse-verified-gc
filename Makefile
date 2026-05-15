@@ -97,6 +97,10 @@ generational: $(addsuffix .checked,$(ALL_SRC))
 common/spec/%.checked: common/spec/%
 	$(FSTAR) $<
 
+# GC.Lib.Header needs higher rlimit for bitvector reasoning
+common/lib/GC.Lib.Header.fst.checked: common/lib/GC.Lib.Header.fst
+	$(FSTAR) --z3rlimit 20 $<
+
 common/lib/%.checked: common/lib/%
 	$(FSTAR) $<
 
@@ -127,9 +131,9 @@ mark-and-sweep/impl/%.checked: mark-and-sweep/impl/%
 	$(FSTAR) --split_queries always --z3refresh $<
 
 # generational/spec — default flags, with specific overrides
-# Promote.fst: --query_stats prevents Z3 context accumulation across queries
+# Promote.fst: split_queries always for robust SMT; #restart-solver + per-function options handle context
 generational/spec/GC.Gen.Promote.fst.checked: generational/spec/GC.Gen.Promote.fst
-	$(FSTAR) --query_stats --split_queries always $<
+	$(FSTAR) --split_queries always $<
 
 generational/spec/GC.Gen.WriteBodyLemmas.fst.checked: generational/spec/GC.Gen.WriteBodyLemmas.fst
 	$(FSTAR) --query_stats --split_queries always $<

@@ -2758,6 +2758,49 @@ let rec chain_avoids_transfer_excl2
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// Helper: chain_avoids_transfer_excl2_obj — variant with obj_addr forall.
+/// Same proof structure as chain_avoids_transfer_excl2 but the read-frame
+/// hypothesis quantifies over obj_addr directly (no (a <: obj_addr) coercion).
+/// ---------------------------------------------------------------------------
+
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec chain_avoids_transfer_excl2_obj
+  (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
+  : Lemma
+    (requires chain_avoids g fp excl fuel = true /\
+              chain_avoids g fp excl2 fuel = true /\
+              fl_valid g fp fuel /\
+              (forall (a: obj_addr). Seq.mem a (objects 0UL g) /\
+                U64.v (wosize_of_object a g) >= 1 /\
+                U64.v (hd_address a) + 16 <= heap_size /\
+                (a <: U64.t) <> excl /\ (a <: U64.t) <> excl2 ==>
+                  read_word g' a == read_word g a))
+    (ensures chain_avoids g' fp excl fuel = true)
+    (decreases fuel)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if fuel = 0 then ()
+    else begin
+      assert (fp <> excl);
+      assert (fp <> excl2);
+      fl_valid_gives_mem g fp fuel;
+      fl_valid_gives_wosize g fp fuel;
+      let hd = hd_address (fp <: obj_addr) in
+      if U64.v hd + 16 > heap_size then ()
+      else begin
+        assert (read_word g' (fp <: obj_addr) == read_word g (fp <: obj_addr));
+        chain_avoids_tail g fp excl fuel;
+        chain_avoids_tail g fp excl2 fuel;
+        fl_valid_next g fp fuel;
+        chain_avoids_transfer_excl2_obj g g' (read_word g (fp <: obj_addr)) excl excl2 (fuel - 1)
+      end
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Helper: chain_avoids_unfold_steps — unfold n valid steps.
 /// ---------------------------------------------------------------------------
 

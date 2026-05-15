@@ -86,10 +86,6 @@ private let promote_all_step_case
 let fwd_zero_from (fwd: forwarding_map) (live_set: seq U64.t) (idx: nat) : prop =
   forall (k:nat). idx <= k /\ k < Seq.length live_set ==> fwd (Seq.index live_set k) = 0UL
 
-/// Distinctness: no two positions in live_set share the same address.
-let distinct_live_set (live_set: seq U64.t) : prop =
-  forall (i j: nat). i < Seq.length live_set /\ j < Seq.length live_set /\ i <> j ==>
-    Seq.index live_set i <> Seq.index live_set j
 
 /// Main recursive proof — runs at fuel 0 to prevent cascade.
 /// The key invariant is fwd_zero_from: unprocessed positions have fwd = 0.

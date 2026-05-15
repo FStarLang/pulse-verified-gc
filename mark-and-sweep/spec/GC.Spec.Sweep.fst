@@ -26,84 +26,12 @@ module Header = GC.Lib.Header
 /// Free List Properties
 /// ---------------------------------------------------------------------------
 
-let rec free_list_valid (g: heap) (fp: U64.t) (visited: seq U64.t) (fuel: nat)
-  : GTot bool (decreases fuel)
-  =
-  if fuel = 0 then true
-  else begin
-    if fp = 0UL then true
-    else if U64.v fp >= heap_size then false
-    else if U64.v fp % U64.v mword <> 0 then false
-    else if U64.v fp < U64.v mword then false  // Not a valid obj_addr
-    else begin
-      let obj : obj_addr = fp in
-      if Seq.mem fp visited then false
-      else
-        let next = HeapGraph.get_field g obj 1UL in
-        free_list_valid g next (Seq.cons fp visited) (fuel - 1)
-    end
-  end
-
-let free_list_props (g: heap) (fp: U64.t) : prop =
-  free_list_valid g fp Seq.empty (heap_size / U64.v mword)
-
-/// Free-pointer validity: either null (0) or a valid object address in the heap
-let fp_in_heap (fp: U64.t) (g: heap) : prop =
-  fp = 0UL \/ (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-               U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects 0UL g))
-
 /// fp_in_heap implies fp can be coerced to obj_addr when non-null
 let fp_in_heap_elim (fp: U64.t) (g: heap)
   : Lemma (requires fp_in_heap fp g /\ fp <> 0UL)
           (ensures U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
                    U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects 0UL g))
   = ()
-
-/// ---------------------------------------------------------------------------
-/// Sweep Step: Process One Object
-/// ---------------------------------------------------------------------------
-
-/// Sweep one object:
-/// - If white -> mark blue + add to free list (link field 1 to fp)
-/// - If black -> make white (reset for next cycle)
-/// - Otherwise (gray/blue) -> skip
-let sweep_object (g: heap) (obj: obj_addr) (fp: U64.t) 
-  : GTot (heap & U64.t)
-  =
-  // Skip infix objects — their lifetime is tied to the parent closure
-  if is_infix obj g then (g, fp)
-  else if is_white obj g then
-    let ws = wosize_of_object obj g in
-    let hd = GC.Spec.Heap.hd_address obj in
-    let g' = 
-      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-        assert (U64.v (GC.Spec.Heap.hd_address obj) + U64.v mword * (U64.v 1UL + 1) <= heap_size);
-        HeapGraph.set_field g obj 1UL fp
-      end else g
-    in
-    let g'' = makeBlue obj g' in
-    (g'', obj)
-  else if is_black obj g then
-    let g' = makeWhite obj g in
-    (g', fp)
-  else
-    (g, fp)
-
-/// ---------------------------------------------------------------------------
-/// Sweep Phase: Iterate Over All Objects
-/// ---------------------------------------------------------------------------
-
-let rec sweep_aux (g: heap) (objs: seq obj_addr) (fp: U64.t)
-  : GTot (heap & U64.t) (decreases Seq.length objs)
-  =
-  if Seq.length objs = 0 then (g, fp)
-  else
-    let obj = Seq.head objs in
-    let (g', fp') = sweep_object g obj fp in
-    sweep_aux g' (Seq.tail objs) fp'
-
-let sweep (g: heap) (fp: U64.t) : GTot (heap & U64.t) =
-  sweep_aux g (objects 0UL g) fp
 
 /// ---------------------------------------------------------------------------
 /// Sweep Object Lemmas

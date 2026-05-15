@@ -146,12 +146,51 @@ private let promote_object_preserves_no_black
     copy_fields_preserves_no_black minor g_alloc obj dst wz;
     let result = copy_fields minor g_alloc obj dst 0 wz in
 
-    // Step 4: set_promoted_tag preserves no_black (factored lemma)
+    // Step 4: clean_promote_leftover preserves no_black
     copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
     assert (Seq.mem dst (objects 0UL result));
+    copy_fields_preserves_wfh_part1 minor g_alloc obj dst wz;
+    assert (well_formed_heap_part1 result);
+    let cleaned = clean_promote_leftover result dst wz in
+    clean_promote_leftover_preserves_objects result dst wz;
+    assert (objects 0UL cleaned == objects 0UL result);
+    let aux_clean (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects 0UL cleaned))
+      (ensures ~(is_black h cleaned))
+    = assert (Seq.mem h (objects 0UL result));
+      hd_address_spec h;
+      hd_address_spec dst;
+      if h = dst then begin
+        clean_promote_leftover_preserves_header result dst wz;
+        color_of_header_eq h result cleaned;
+        is_black_iff h result;
+        is_black_iff h cleaned
+      end else if U64.v h < U64.v dst then begin
+        // hd_address h < h < dst <= dst + wz*8
+        clean_promote_leftover_read_frame result dst wz (hd_address h);
+        color_of_header_eq h result cleaned;
+        is_black_iff h result;
+        is_black_iff h cleaned
+      end else begin
+        // h > dst, so objects_separated gives h > dst + wosize*8
+        objects_separated 0UL result dst h;
+        wosize_of_object_spec dst result;
+        // Either hd_address h <> dst + wz*mword or getWosize <= wz
+        // Both disjuncts of clean_promote_leftover_read_frame precondition
+        clean_promote_leftover_read_frame result dst wz (hd_address h);
+        color_of_header_eq h result cleaned;
+        is_black_iff h result;
+        is_black_iff h cleaned
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_clean);
+    assert (Mark.no_black_objects cleaned);
+
+    // Step 5: set_promoted_tag preserves no_black (factored lemma)
+    assert (Seq.mem dst (objects 0UL cleaned));
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_no_black result dst tag
+    set_promoted_tag_preserves_no_black cleaned dst tag
   end
 
 #pop-options

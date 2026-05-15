@@ -504,7 +504,11 @@ private let promote_object_preserves_objects_part1
     let copied = WriteBody.copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_objects copied dst_obj tag
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    WriteBody.copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+    clean_promote_leftover_preserves_objects copied dst_obj wz;
+    let cleaned = clean_promote_leftover copied dst_obj wz in
+    set_promoted_tag_preserves_objects cleaned dst_obj tag
   end
 
 #pop-options

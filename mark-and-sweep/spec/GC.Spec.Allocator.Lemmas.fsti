@@ -321,6 +321,18 @@ val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
                           read_word g' (a <: obj_addr) == read_word g (a <: obj_addr))))
           (ensures chain_avoids g' fp excl fuel = true)
 
+/// chain_avoids_transfer_excl2_obj: variant with forall over obj_addr (avoids coercion issues).
+val chain_avoids_transfer_excl2_obj (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    chain_avoids g fp excl2 fuel = true /\
+                    fl_valid g fp fuel /\
+                    (forall (a: obj_addr). Seq.mem a (objects 0UL g) /\
+                      U64.v (wosize_of_object a g) >= 1 /\
+                      U64.v (hd_address a) + 16 <= heap_size /\
+                      (a <: U64.t) <> excl /\ (a <: U64.t) <> excl2 ==>
+                        read_word g' a == read_word g a))
+          (ensures chain_avoids g' fp excl fuel = true)
+
 /// **Theorem**: alloc_spec removes obj_out from the chain.
 val alloc_spec_obj_not_in_chain : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\

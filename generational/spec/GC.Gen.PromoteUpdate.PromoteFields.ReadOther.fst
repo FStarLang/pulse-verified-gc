@@ -56,11 +56,14 @@ let promote_object_read_other
     promote_object_success minor major obj fp wosize;
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
     let tag = minor_tag minor obj in
+    let cleaned = clean_promote_leftover copied dst_obj wosize in
     minor_tag_bound minor obj;
     hd_address_injective other dst_obj;
     hd_address_spec dst_obj;
+    clean_promote_leftover_read_frame copied dst_obj wosize addr;
+    assert (read_word cleaned addr == read_word copied addr);
     // From objects_separated + addr bounds, addr is disjoint from hd_address dst_obj
-    set_promoted_tag_read_frame copied dst_obj tag addr
+    set_promoted_tag_read_frame cleaned dst_obj tag addr
 #pop-options
 
 /// Helper: read_word through copy_fields + set_promoted_tag = read_word original
@@ -82,9 +85,11 @@ private let promote_transfer_read
       minor_tag minor obj < 256)
     (ensures
       (let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+       let cleaned = clean_promote_leftover copied dst_obj wosize in
        let tag = minor_tag minor obj in
-       read_word (set_promoted_tag copied dst_obj tag) ao == read_word new_major ao))
+       read_word (set_promoted_tag cleaned dst_obj tag) ao == read_word new_major ao))
   = let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let cleaned = clean_promote_leftover copied dst_obj wosize in
     let tag = minor_tag minor obj in
     hd_address_spec ao;
     hd_address_spec dst_obj;
@@ -93,14 +98,18 @@ private let promote_transfer_read
       // ao + wosize(ao)*8 < dst_obj, wosize(ao) >= 1 → ao + 8 < dst_obj
       // Word-aligned → ao + 8 <= hd(dst_obj) = dst_obj - 8
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize ao;
-      set_promoted_tag_read_frame copied dst_obj tag ao
+      clean_promote_leftover_read_frame copied dst_obj wosize ao;
+      assert (read_word cleaned ao == read_word copied ao);
+      set_promoted_tag_read_frame cleaned dst_obj tag ao
     end else begin
       objects_separated 0UL new_major dst_obj ao;
       wosize_of_object_spec dst_obj new_major;
       // ao > dst_obj + wosize_of_object(dst_obj)*8 >= dst_obj + 8
       // So hd(dst_obj) + 8 = dst_obj <= ao
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize ao;
-      set_promoted_tag_read_frame copied dst_obj tag ao
+      clean_promote_leftover_read_frame copied dst_obj wosize ao;
+      assert (read_word cleaned ao == read_word copied ao);
+      set_promoted_tag_read_frame cleaned dst_obj tag ao
     end
 #pop-options
 
@@ -134,16 +143,32 @@ let promote_object_preserves_chain_avoids
     assert (AllocLemmas.chain_avoids new_major new_fp dst_obj fuel = true);
     AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
     assert (AllocLemmas.fl_valid new_major new_fp fuel);
+    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize;
+    assert (AllocLemmas.fl_chain_terminates new_major new_fp fuel);
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
     assert (well_formed_heap_part1 new_major);
     promote_object_success minor major obj fp wosize;
-    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
-    let tag = minor_tag minor obj in
-    minor_tag_bound minor obj;
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
+    copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
+    copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
+    chain_avoids_implies_not_in_fl_chain new_major new_fp dst_obj fuel;
+    copy_fields_preserves_fl_valid_aux minor new_major obj dst_obj 0 wosize new_fp fuel;
+    copy_fields_preserves_fl_chain_terminates minor new_major obj dst_obj 0 wosize new_fp fuel;
+    copy_fields_preserves_chain_avoids_self minor new_major obj dst_obj 0 wosize new_fp fuel;
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let tag = minor_tag minor obj in
+    let cleaned = clean_promote_leftover copied dst_obj wosize in
+    minor_tag_bound minor obj;
     assert (Seq.mem dst_obj (objects zero_addr new_major));
     assert (U64.v (wosize_of_object dst_obj new_major) >= wosize);
+    assert (well_formed_heap_part1 copied);
+    assert (Seq.mem dst_obj (objects zero_addr copied));
+    assert (AllocLemmas.fl_valid copied new_fp fuel);
+    assert (AllocLemmas.fl_chain_terminates copied new_fp fuel);
+    assert (AllocLemmas.chain_avoids copied new_fp dst_obj fuel = true);
+    clean_promote_leftover_preserves_objects copied dst_obj wosize;
+    clean_promote_leftover_preserves_alloc_invariants copied dst_obj wosize new_fp;
     hd_address_spec dst_obj;
     assert (U64.v dst_obj + wosize * 8 <= heap_size);
     dst_fields_valid_from_bounds dst_obj wosize;
@@ -152,11 +177,11 @@ let promote_object_preserves_chain_avoids
                Seq.mem a (objects zero_addr new_major) /\ a <> excl /\ a <> dst_obj /\
                U64.v (wosize_of_object (a <: obj_addr) new_major) >= 1 /\
                U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size)
-      (ensures read_word (set_promoted_tag copied dst_obj tag) a == read_word new_major a)
+      (ensures read_word (set_promoted_tag cleaned dst_obj tag) a == read_word new_major a)
     = promote_transfer_read minor new_major obj dst_obj wosize (a <: obj_addr)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_helper);
-    AllocLemmas.chain_avoids_transfer_excl2 new_major (set_promoted_tag copied dst_obj tag) new_fp excl dst_obj fuel
+    AllocLemmas.chain_avoids_transfer_excl2 new_major (set_promoted_tag cleaned dst_obj tag) new_fp excl dst_obj fuel
 #pop-options
 
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries no"

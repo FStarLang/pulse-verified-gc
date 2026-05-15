@@ -74,11 +74,30 @@ let set_promoted_tag (major: heap) (obj: U64.t) (tag: nat) : GTot heap =
     write_word major hd new_hdr
   else major
 
+/// Zero any leftover field beyond the requested wosize.
+///
+/// The allocator may give a block 1 word larger than requested (leftover < 2
+/// case in alloc_from_block).  That extra field retains residual data from
+/// the previously-freed object, which could look like a pointer, violating
+/// the no_scan_invariant.  Zeroing it ensures is_pointer_field returns false.
+let clean_promote_leftover (g: heap) (obj: U64.t) (wz: nat) : GTot heap =
+  if U64.v obj >= U64.v mword && U64.v obj < heap_size && U64.v obj % U64.v mword = 0 then
+    let hdr = read_word g (hd_address (obj <: obj_addr)) in
+    let block_wz = U64.v (getWosize hdr) in
+    let extra_off = U64.v obj + wz * U64.v mword in
+    if block_wz > wz && extra_off + U64.v mword <= heap_size then begin
+      FStar.Math.Lemmas.lemma_mod_plus (U64.v obj) wz (U64.v mword);
+      write_word g (U64.uint_to_t extra_off <: hp_addr) 0UL
+    end
+    else g
+  else g
+
 /// Promote a single object from minor heap to major heap.
 ///
 /// 1. Read wosize and tag from minor object header
 /// 2. Allocate in major heap via the major allocator
 /// 3. Copy field data from minor to major
+/// 3b. Zero any leftover field (allocator may give 1 extra word)
 /// 4. Set the correct tag from the minor header
 ///
 /// If major allocation fails (OOM), returns new_addr = 0.
@@ -93,9 +112,10 @@ let promote_object (minor: minor_state) (major: heap) (obj: U64.t)
     { major_out = major; fp_out = fp; new_addr = 0UL }
   else
     let copied_major = copy_fields minor new_major obj new_addr 0 wosize in
+    let cleaned = clean_promote_leftover copied_major new_addr wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    let final_major = set_promoted_tag copied_major new_addr tag in
+    let final_major = set_promoted_tag cleaned new_addr tag in
     { major_out = final_major; fp_out = new_fp; new_addr = new_addr }
 
 /// Unfold: when alloc fails (OOM), promote_object returns original heap/fp unchanged.
@@ -105,15 +125,16 @@ val promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
           (ensures (let res = promote_object minor major obj fp wosize in
                     res.major_out == major /\ res.fp_out == fp /\ res.new_addr == 0UL))
 
-/// Unfold: when alloc succeeds, promote_object = alloc + copy_fields + set_promoted_tag.
+/// Unfold: when alloc succeeds, promote_object = alloc + copy_fields + clean_leftover + set_promoted_tag.
 val promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
                            (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL)
           (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
                     let res = promote_object minor major obj fp wosize in
                     let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
+                    let cleaned = clean_promote_leftover copied alloc_res.obj_out wosize in
                     let tag = minor_tag minor obj in
-                    res.major_out == set_promoted_tag copied alloc_res.obj_out tag /\
+                    res.major_out == set_promoted_tag cleaned alloc_res.obj_out tag /\
                     res.fp_out == alloc_res.fp_out /\
                     res.new_addr == alloc_res.obj_out))
 
@@ -125,6 +146,79 @@ val set_promoted_tag_unfold
            write_word major (hd_address obj)
              (makeHeader (getWosize (read_word major (hd_address obj)))
                          White (U64.uint_to_t tag)))
+
+/// ---------------------------------------------------------------------------
+/// clean_promote_leftover lemmas
+/// ---------------------------------------------------------------------------
+
+/// clean_promote_leftover preserves reads at addresses other than the extra field
+val clean_promote_leftover_read_frame
+  (g: heap) (obj: obj_addr) (wz: nat) (addr: hp_addr)
+  : Lemma (requires U64.v addr <> U64.v obj + wz * U64.v mword \/
+                    U64.v (getWosize (read_word g (hd_address obj))) <= wz)
+          (ensures read_word (clean_promote_leftover g obj wz) addr == read_word g addr)
+
+/// clean_promote_leftover preserves the header of obj (since wz > 0 means
+/// the extra field address differs from hd_address obj = obj - 8)
+val clean_promote_leftover_preserves_header
+  (g: heap) (obj: obj_addr) (wz: nat{wz > 0})
+  : Lemma (read_word (clean_promote_leftover g obj wz) (hd_address obj) ==
+           read_word g (hd_address obj))
+
+/// clean_promote_leftover preserves object enumeration
+val clean_promote_leftover_preserves_objects
+  (g: heap) (obj: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires well_formed_heap_part1 g /\ Seq.mem obj (objects zero_addr g))
+          (ensures objects zero_addr (clean_promote_leftover g obj wz) == objects zero_addr g)
+
+/// clean_promote_leftover preserves allocator invariants
+val clean_promote_leftover_preserves_alloc_invariants
+  (g: heap) (obj: obj_addr) (wz: nat{wz > 0}) (fp: U64.t)
+  : Lemma (requires
+             well_formed_heap_part1 g /\
+             Seq.mem obj (objects zero_addr g) /\
+             AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+             AllocLemmas.chain_avoids g fp obj (heap_size / U64.v mword) = true)
+          (ensures (let g' = clean_promote_leftover g obj wz in
+                    well_formed_heap_part1 g' /\
+                    AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword)))
+
+/// clean_promote_leftover sets the extra field to 0UL when block_wz > wz
+val clean_promote_leftover_zeroes_extra
+  (g: heap) (obj: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires
+             U64.v (getWosize (read_word g (hd_address obj))) > wz /\
+             U64.v obj + wz * U64.v mword + U64.v mword <= heap_size)
+          (ensures (let extra_addr : hp_addr =
+                      (FStar.Math.Lemmas.lemma_mod_plus (U64.v obj) wz (U64.v mword);
+                       U64.uint_to_t (U64.v obj + wz * U64.v mword)) in
+                    read_word (clean_promote_leftover g obj wz) extra_addr == 0UL))
+
+/// clean_promote_leftover equals write_word when block_wz > wz
+val clean_promote_leftover_is_write
+  (g: heap) (obj: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires
+             U64.v (getWosize (read_word g (hd_address obj))) > wz /\
+             U64.v obj + wz * U64.v mword + U64.v mword <= heap_size)
+          (ensures (let extra_addr : hp_addr =
+                      (FStar.Math.Lemmas.lemma_mod_plus (U64.v obj) wz (U64.v mword);
+                       U64.uint_to_t (U64.v obj + wz * U64.v mword)) in
+                    clean_promote_leftover g obj wz == write_word g extra_addr 0UL))
+
+/// clean_promote_leftover is the identity when block_wz <= wz
+val clean_promote_leftover_noop
+  (g: heap) (obj: obj_addr) (wz: nat)
+  : Lemma (requires U64.v (getWosize (read_word g (hd_address obj))) <= wz)
+          (ensures clean_promote_leftover g obj wz == g)
+
+/// clean_promote_leftover preserves well_formed_heap_part4
+val clean_promote_leftover_preserves_wfh_part4
+  (g: heap) (obj: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part4 g /\
+                     Seq.mem obj (objects zero_addr g))
+          (ensures well_formed_heap_part4 (clean_promote_leftover g obj wz))
 
 /// set_promoted_tag preserves the objects enumeration (same wosize → same objects list)
 val set_promoted_tag_preserves_objects

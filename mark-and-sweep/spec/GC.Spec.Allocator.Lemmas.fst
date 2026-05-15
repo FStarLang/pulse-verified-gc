@@ -63,6 +63,7 @@ let alloc_spec_preserves_objects = alloc_spec_preserves_objects
 let make_header_getColor = make_header_getColor
 let alloc_spec_preserves_no_black = alloc_spec_preserves_no_black
 let chain_avoids_transfer_excl2 = chain_avoids_transfer_excl2
+let chain_avoids_transfer_excl2_obj = chain_avoids_transfer_excl2_obj
 let alloc_spec_obj_not_in_chain = alloc_spec_obj_not_in_chain
 let alloc_spec_preserves_objects_part1 = alloc_spec_preserves_objects_part1
 

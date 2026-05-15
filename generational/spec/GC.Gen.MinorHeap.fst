@@ -645,6 +645,9 @@ let minor_alloc_preserves_existing (ms: minor_state)
     let byte_offset = xv + i * 8 in
     assert (byte_offset + 8 <= old_bump);
     // byte_offset = hdr_addr + (i+1)*8, so byte_offset % 8 == hdr_addr % 8 == 0
+    FStar.Math.Lemmas.distributivity_add_left i 1 8;
+    assert ((i + 1) * 8 == i * 8 + 8);
+    assert (hdr_addr + 8 == xv);
     assert (byte_offset == hdr_addr + (i + 1) * 8);
     FStar.Math.Lemmas.modulo_addition_lemma hdr_addr 8 (i + 1);
     assert (byte_offset % 8 == 0);

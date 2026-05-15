@@ -385,10 +385,6 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
 ///   fwd_arr[(infix_val_off)/8] = fwd_arr[(parent_val_off)/8] + delta
 /// where delta = infix_val_off - parent_val_off.
 
-/// The forwarding array size = minor_heap_size / 8
-noextract
-let fwd_arr_size : n:pos{n == minor_heap_size / 8} = minor_heap_size / 8
-
 /// SizeT version for array indexing
 let fwd_arr_size_sz : n:SZ.t{SZ.v n == fwd_arr_size} =
   SZ.uint64_to_sizet (U64.div minor_heap_size_u64 8UL)

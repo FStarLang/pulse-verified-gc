@@ -24,10 +24,6 @@ module ML = FStar.Math.Lemmas
 /// Pure helper lemmas for overflow checking
 /// ---------------------------------------------------------------------------
 
-/// Specification: what field address should be
-let spec_field_address (h_addr: nat) (i: nat) : nat =
-  h_addr + i * 8
-
 /// Lemma: mword is 8
 let lemma_mword_is_8 () : Lemma (U64.v mword == 8) = ()
 

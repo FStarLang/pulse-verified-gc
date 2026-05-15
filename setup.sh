@@ -2,8 +2,9 @@
 # setup.sh — Install F* toolchain for pulse-verified-gc
 #
 # Usage:
-#   ./setup.sh              Install F* v2026.04.17 binary release
+#   ./setup.sh              Install F* v2026.05.10 binary release
 #   ./setup.sh --nightly    Install latest nightly instead
+#   ./setup.sh --release    Install latest official release
 #
 # Prerequisites: curl, bash
 # Result: fstar/ directory with bin/fstar.exe, bin/krml, etc.
@@ -13,12 +14,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FSTAR_DIR="$SCRIPT_DIR/fstar"
 
-# Default: nightly release
-SOURCE="--nightly"
-VERSION="nightly-2026-04-21"
+# Default: latest official release
+SOURCE="--release"
+VERSION="v2026.05.10"
 
 if [[ "${1:-}" == "--nightly" ]]; then
   SOURCE="--nightly"
+  VERSION=""
+  shift
+elif [[ "${1:-}" == "--release" ]]; then
+  SOURCE="--release"
   VERSION=""
   shift
 fi

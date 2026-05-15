@@ -31,13 +31,6 @@ module SweepInv = GC.Spec.SweepInv
 /// Bounded Stack Properties (no gray_objects_on_stack)
 /// ---------------------------------------------------------------------------
 
-/// Stack properties without the "all grays on stack" requirement.
-/// With overflow, gray objects may exist in the heap but not on the stack.
-let bounded_stack_props (g: heap) (st: seq obj_addr) : prop =
-  stack_elements_valid g st /\
-  stack_points_to_gray g st /\
-  stack_no_dups st
-
 /// bounded_stack_props is weaker than stack_props
 let bounded_from_full (g: heap) (st: seq obj_addr)
   : Lemma (requires stack_props g st)
@@ -49,18 +42,8 @@ let bounded_from_full (g: heap) (st: seq obj_addr)
 /// ---------------------------------------------------------------------------
 
 /// Count objects that are NOT black in a sequence.
-let rec count_non_black_in (g: heap) (objs: seq obj_addr)
-  : GTot nat (decreases Seq.length objs)
-  = if Seq.length objs = 0 then 0
-    else
-      let obj = Seq.head objs in
-      let rest = count_non_black_in g (Seq.tail objs) in
-      if is_black obj g then rest
-      else rest + 1
 
 /// Count non-black objects in the full objects list.
-let count_non_black (g: heap) : GTot nat =
-  count_non_black_in g (objects 0UL g)
 
 /// ---------------------------------------------------------------------------
 /// Push children with bounded stack capacity
@@ -68,34 +51,6 @@ let count_non_black (g: heap) : GTot nat =
 
 /// Like push_children, but skips push when stack is at capacity.
 /// The child is still made gray — it stays gray in the heap for later rescan.
-let rec push_children_bounded
-  (g: heap) (st: seq obj_addr) (obj: obj_addr)
-  (i: U64.t{U64.v i >= 1}) (ws: U64.t) (cap: nat)
-  : GTot (heap & seq obj_addr) (decreases (U64.v ws - U64.v i))
-  =
-  if U64.v i > U64.v ws then (g, st)
-  else
-    let v = HeapGraph.get_field g obj i in
-    let (g', st') =
-      if HeapGraph.is_pointer_field v then begin
-        HeapGraph.is_pointer_field_is_obj_addr v;
-        let child_raw : obj_addr = v in
-        let child = resolve_object child_raw g in
-        if is_white child g then
-          let g' = makeGray child g in
-          if Seq.length st < cap then
-            (g', Seq.cons child st)
-          else
-            (g', st)  // overflow: child gray in heap, not on stack
-        else
-          (g, st)
-      end else
-        (g, st)
-    in
-    if U64.v i < U64.v ws then
-      push_children_bounded g' st' obj (U64.add i 1UL) ws cap
-    else
-      (g', st')
 
 /// The heap output of push_children_bounded is identical to push_children.
 /// Both perform the same makeGray mutations; only the stack differs.
@@ -150,19 +105,6 @@ let rec push_children_bounded_heap_eq
 /// ---------------------------------------------------------------------------
 
 /// Process one gray object with bounded stack: pop, blacken, push children (bounded).
-let mark_step_bounded (g: heap) (st: seq obj_addr) (cap: nat)
-  : GTot (heap & seq obj_addr)
-  =
-  if Seq.length st = 0 then (g, st)
-  else
-    let obj = Seq.head st in
-    let st' = Seq.tail st in
-    let g' = makeBlack obj g in
-    let ws = wosize_of_object obj g in
-    if is_no_scan obj g then
-      (g', st')
-    else
-      push_children_bounded g' st' obj 1UL ws cap
 
 /// The heap output of mark_step_bounded is identical to mark_step
 /// (given stacks with the same head, since both pop the head).
@@ -181,32 +123,12 @@ let mark_step_bounded_heap_eq (g: heap) (st_b: seq obj_addr) (st_u: seq obj_addr
 /// Inner mark loop (drain stack)
 /// ---------------------------------------------------------------------------
 
-let rec mark_inner_loop (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
-  : GTot (heap & seq obj_addr) (decreases fuel)
-  =
-  if fuel = 0 || Seq.length st = 0 then (g, st)
-  else
-    let (g', st') = mark_step_bounded g st cap in
-    mark_inner_loop g' st' cap (fuel - 1)
 
 /// ---------------------------------------------------------------------------
 /// Heap rescan: linear scan for remaining gray objects
 /// ---------------------------------------------------------------------------
 
 /// Walk the objects list, collecting gray objects onto the stack (up to cap).
-let rec rescan_heap (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
-  : GTot (seq obj_addr) (decreases Seq.length objs)
-  =
-  if Seq.length objs = 0 then st
-  else
-    let obj = Seq.head objs in
-    let st' =
-      if is_gray obj g && not (Seq.mem obj st) && Seq.length st < cap then
-        Seq.cons obj st
-      else
-        st
-    in
-    rescan_heap g (Seq.tail objs) st' cap
 
 /// ---------------------------------------------------------------------------
 /// Key lemmas: push_children_bounded preserves bounded_stack_props
@@ -949,16 +871,6 @@ let rec mark_inner_loop_drains
 
 /// The full bounded mark: rescan → drain → rescan → ... until no grays.
 /// Termination: count_non_black strictly decreases each non-trivial iteration.
-let rec mark_bounded (g: heap) (cap: nat{cap > 0}) (fuel: nat)
-  : GTot heap (decreases fuel)
-  = if fuel = 0 then g
-    else
-      let st = rescan_heap g (objects 0UL g) Seq.empty cap in
-      if Seq.length st = 0 then g
-      else
-        let inner_fuel = count_non_black g in
-        let (g', _) = mark_inner_loop g st cap inner_fuel in
-        mark_bounded g' cap (fuel - 1)
 
 /// mark_bounded preserves well-formedness and density
 let rec mark_bounded_preserves_inv (g: heap) (cap: nat{cap > 0}) (fuel: nat)

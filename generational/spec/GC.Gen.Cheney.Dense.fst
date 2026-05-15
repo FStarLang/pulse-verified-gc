@@ -714,6 +714,85 @@ let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// clean_promote_leftover preserves density
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+
+private let clean_promote_leftover_preserves_dense
+  (g: heap) (obj: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires well_formed_heap_part1 g /\
+                    heap_objects_dense g /\
+                    Seq.mem obj (objects zero_addr g))
+          (ensures heap_objects_dense (clean_promote_leftover g obj wz))
+  = let g' = clean_promote_leftover g obj wz in
+    clean_promote_leftover_preserves_objects g obj wz;
+    assert (objects zero_addr g' == objects zero_addr g);
+    assert (Seq.length g' == Seq.length g);
+    let obj_wz = U64.v (wosize_of_object obj g) in
+    hd_address_spec obj;
+    wosize_of_object_spec obj g;
+    assert (U64.v mword == 8);
+    let aux (start: hp_addr)
+      : Lemma
+        (requires U64.v start + 8 < heap_size /\
+                 Seq.mem (f_address start) (objects 0UL g') /\
+                 Seq.length (objects start g') > 0)
+        (ensures (let wz' = getWosize (read_word g' start) in
+                  let next = U64.v start + ((U64.v wz' + 1) * 8) in
+                  next + 8 < heap_size ==>
+                  Seq.length (objects (U64.uint_to_t next) g') > 0 /\
+                  Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g')))
+      = f_address_spec start;
+        assert (Seq.mem (f_address start) (objects 0UL g));
+        if obj_wz <= wz then begin
+          clean_promote_leftover_read_frame g obj wz start;
+          assert (read_word g' start == read_word g start);
+          objects_nonempty_from_header g' g start
+        end else begin
+          assert (obj_wz >= wz + 1);
+          assert (U64.v obj + obj_wz * 8 <= heap_size);
+          assert (U64.v obj + wz * 8 + 8 <= heap_size);
+          header_separated_from_fields g obj start (wz + 1);
+          assert (U64.v start + 8 <= U64.v obj + wz * 8 \/
+                  U64.v obj + wz * 8 + 8 <= U64.v start);
+          assert (U64.v start <> U64.v obj + wz * U64.v mword);
+          clean_promote_leftover_read_frame g obj wz start;
+          assert (read_word g' start == read_word g start);
+          objects_nonempty_from_header g' g start
+        end;
+        assert (Seq.length (objects start g) > 0);
+        let wz' = getWosize (read_word g start) in
+        assert (getWosize (read_word g' start) == wz');
+        let next = U64.v start + ((U64.v wz' + 1) * 8) in
+        if next + 8 < heap_size then begin
+          let next_hp : hp_addr = U64.uint_to_t next in
+          assert (Seq.mem (f_address next_hp) (objects 0UL g));
+          assert (Seq.length (objects next_hp g) > 0);
+          assert (Seq.mem (f_address next_hp) (objects 0UL g'));
+          if obj_wz <= wz then begin
+            clean_promote_leftover_read_frame g obj wz next_hp;
+            assert (read_word g' next_hp == read_word g next_hp);
+            objects_nonempty_from_header g g' next_hp
+          end else begin
+            assert (obj_wz >= wz + 1);
+            assert (U64.v obj + obj_wz * 8 <= heap_size);
+            assert (U64.v obj + wz * 8 + 8 <= heap_size);
+            header_separated_from_fields g obj next_hp (wz + 1);
+            assert (U64.v next_hp + 8 <= U64.v obj + wz * 8 \/
+                    U64.v obj + wz * 8 + 8 <= U64.v next_hp);
+            assert (U64.v next_hp <> U64.v obj + wz * U64.v mword);
+            clean_promote_leftover_read_frame g obj wz next_hp;
+            assert (read_word g' next_hp == read_word g next_hp);
+            objects_nonempty_from_header g g' next_hp
+          end
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// set_promoted_tag preserves density
 /// ---------------------------------------------------------------------------
 ///
@@ -724,8 +803,7 @@ let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 
 private let set_promoted_tag_preserves_dense
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
-  : Lemma (requires well_formed_heap_part1 major /\
-                    heap_objects_dense major /\
+  : Lemma (requires heap_objects_dense major /\
                     Seq.mem obj (objects zero_addr major))
           (ensures heap_objects_dense (set_promoted_tag major obj tag))
   = let g' = set_promoted_tag major obj tag in
@@ -816,14 +894,18 @@ let promote_object_preserves_dense
       let dst_obj : obj_addr = alloc_res.obj_out in
       // Step 1: copy_fields preserves density
       copy_fields_preserves_dense minor alloc_res.heap_out obj dst_obj wz;
-      // Step 2: set_promoted_tag preserves density
+      // Step 2: clean_promote_leftover + set_promoted_tag preserve density
       let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
       let tag = minor_tag minor obj in
       minor_tag_bound minor obj;
       copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
       copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
       assert (Seq.mem dst_obj (objects zero_addr copied));
-      set_promoted_tag_preserves_dense copied dst_obj tag
+      clean_promote_leftover_preserves_objects copied dst_obj wz;
+      clean_promote_leftover_preserves_dense copied dst_obj wz;
+      let cleaned = clean_promote_leftover copied dst_obj wz in
+      assert (Seq.mem dst_obj (objects zero_addr cleaned));
+      set_promoted_tag_preserves_dense cleaned dst_obj tag
     end
 
 #pop-options
