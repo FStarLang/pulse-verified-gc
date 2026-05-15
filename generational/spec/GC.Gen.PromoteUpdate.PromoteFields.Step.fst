@@ -95,7 +95,7 @@ private let promote_step_one_field_other
 
 /// Assemble: use fields_match_minor_intro_by_proof with a proof function.
 #restart-solver
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --split_queries always"
 private let promote_step_fields_forall
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -133,6 +133,10 @@ private let promote_step_fields_forall
       if obj_k = obj then
         promote_preserves_fields minor major obj fp wz
       else begin
+        // k < idx+1 and k <> idx (since obj_k <> obj = Seq.index live_set idx) → k < idx
+        assert (k <= idx);
+        assert (Seq.index live_set k <> Seq.index live_set idx);
+        assert (k <> idx);
         assert (k < idx);
         assert (fwd' obj_k == fwd obj_k);
         let wz_k = minor_wosize minor obj_k in
@@ -287,7 +291,9 @@ let promote_object_wosize_preserved
       // Bridge: a + 8 = other <= dst_obj <= dst_obj + k*8 for all k
       assert (U64.v a + 8 = U64.v other);
       assert (U64.v other <= U64.v dst_obj);
-      copy_fields_preserves_other minor new_major obj dst_obj 0 wz a
+      copy_fields_preserves_other minor new_major obj dst_obj 0 wz a;
+      // a < dst_obj <= dst_obj + wz*8 (since wz >= 1), so a <> dst_obj + wz*8
+      assert (U64.v a < U64.v dst_obj + wz * 8)
     end else begin
       objects_separated zero_addr major dst_obj other;
       // objects_separated: other > dst_obj + wosize_of_object_as_wosize(dst_obj,major)*8
@@ -310,13 +316,43 @@ let promote_object_wosize_preserved
       assert (U64.v a >= U64.v dst_obj + wz * 8);
       copy_fields_preserves_other minor new_major obj dst_obj 0 wz a
     end;
-    // Bridge: set_promoted_tag preserves header of other (other ≠ dst_obj)
+    // Bridge: padding + set_promoted_tag preserve header of other (other ≠ dst_obj)
     promote_object_success minor major obj fp wz;
     let copied = copy_fields minor new_major obj dst_obj 0 wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
     hd_address_injective other dst_obj;
-    set_promoted_tag_read_frame copied dst_obj tag a;
+    // Establish dst_fields_valid for copy_fields_frame
+    dst_fields_valid_from_bounds dst_obj wz;
+    // Padding frame for header of other
+    copy_fields_frame minor new_major obj dst_obj 0 wz (hd_address dst_obj);
+    wosize_of_object_spec dst_obj new_major;
+    wosize_of_object_spec dst_obj copied;
+    let actual_wz = U64.v (wosize_of_object dst_obj copied) in
+    if actual_wz <= wz then
+      zero_promote_padding_noop copied dst_obj wz
+    else begin
+      // Need: a <> dst_obj + wz * 8 for zero_promote_padding_frame.
+      // Two cases based on relative position of other and dst_obj:
+      if U64.v other < U64.v dst_obj then
+        // a = other - 8 < other <= dst_obj, and dst_obj + wz*8 >= dst_obj (wz>=1)
+        // So a < dst_obj <= dst_obj + wz*8
+        assert (U64.v a < U64.v dst_obj + wz * 8)
+      else begin
+        // other > dst_obj. Use objects_separated on new_major where wosize(dst_obj) = actual_wz > wz
+        AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+        objects_separated zero_addr new_major dst_obj other;
+        // objects_separated: other > dst_obj + actual_wz*8 >= dst_obj + (wz+1)*8
+        // alignment: a = other - 8 >= dst_obj + actual_wz*8 >= dst_obj + wz*8 + 8
+        wosize_of_object_spec dst_obj new_major;
+        assert (U64.v other > U64.v dst_obj + actual_wz * 8);
+        assert (U64.v a > U64.v dst_obj + wz * 8)
+      end;
+      zero_promote_padding_frame copied dst_obj wz a
+    end;
+    let padded = zero_promote_padding copied dst_obj wz in
+    set_promoted_tag_read_frame padded dst_obj tag a;
     wosize_of_object_spec other major;
     wosize_of_object_spec other (promote_object minor major obj fp wz).major_out
 #pop-options
@@ -446,11 +482,53 @@ private let promote_object_chain_avoids_self
     let mtag = minor_tag minor obj in
     minor_tag_bound minor obj;
     promote_object_success minor major obj fp wz;
+    // chain_avoids through zero_promote_padding
+    zero_promote_padding_preserves_alloc_invariants copied dst_obj wz alloc_res.fp_out;
+    let padded = zero_promote_padding copied dst_obj wz in
     // chain_avoids through set_promoted_tag
-    set_promoted_tag_preserves_alloc_invariants copied dst_obj mtag alloc_res.fp_out;
+    set_promoted_tag_preserves_alloc_invariants padded dst_obj mtag alloc_res.fp_out;
     FStar.Classical.forall_intro
-      (FStar.Classical.move_requires (set_tag_preserves_read_at_obj_step copied dst_obj mtag));
-    AllocLemmas.chain_avoids_transfer copied (set_promoted_tag copied dst_obj mtag)
+      (FStar.Classical.move_requires (set_tag_preserves_read_at_obj_step padded dst_obj mtag));
+    // Transfer chain_avoids from copied through padding
+    // Establish wosize(dst_obj, copied) >= wz for pad_read_helper
+    wfh_part1_obj_bound alloc_res.heap_out dst_obj;
+    dst_fields_valid_from_bounds dst_obj wz;
+    hd_address_spec dst_obj;
+    copy_fields_frame minor alloc_res.heap_out obj dst_obj 0 wz (hd_address dst_obj);
+    wosize_of_object_spec dst_obj alloc_res.heap_out;
+    wosize_of_object_spec dst_obj copied;
+    assert (Seq.mem dst_obj (objects zero_addr copied));
+    assert (U64.v (wosize_of_object dst_obj copied) >= wz);
+    let pad_read_helper (a: obj_addr)
+      : Lemma (requires Seq.mem a (objects zero_addr copied) /\
+                        Seq.mem dst_obj (objects zero_addr copied) /\
+                        U64.v (wosize_of_object dst_obj copied) >= wz /\
+                        U64.v (wosize_of_object a copied) >= 1 /\
+                        U64.v (hd_address a) + 16 <= heap_size)
+              (ensures read_word padded a == read_word copied a)
+      = if (a <: U64.t) = (dst_obj <: U64.t) then
+          // a == dst_obj: pad_pos = dst + wz*8, reading at dst. Since wz >= 1, they differ.
+          zero_promote_padding_frame copied dst_obj wz (a <: hp_addr)
+        else begin
+          hd_address_spec a;
+          hd_address_spec dst_obj;
+          if U64.v a < U64.v dst_obj then begin
+            objects_separated zero_addr copied a dst_obj;
+            // a < dst_obj <= dst_obj + wz*8 (wz >= 1)
+            assert (U64.v (a <: U64.t) < U64.v dst_obj + wz * 8)
+          end else begin
+            objects_separated zero_addr copied dst_obj a;
+            // a > dst_obj + ws*8 where ws = wosize_of_object_as_wosize dst_obj copied >= wz
+            // Hence a > dst_obj + wz*8
+            assert (U64.v (a <: U64.t) > U64.v dst_obj + wz * 8)
+          end;
+          zero_promote_padding_frame copied dst_obj wz (a <: hp_addr)
+        end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires pad_read_helper);
+    AllocLemmas.chain_avoids_transfer copied padded
+      alloc_res.fp_out dst_obj fuel;
+    AllocLemmas.chain_avoids_transfer padded (set_promoted_tag padded dst_obj mtag)
       alloc_res.fp_out dst_obj fuel
 #pop-options
 
@@ -499,12 +577,25 @@ private let promote_object_wosize_self_full
     // Objects preserved through copy_fields
     copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
     let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+    // Wosize preserved through zero_promote_padding (writes at field wz, not header)
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+    copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+    wfh_part1_obj_bound alloc_res.heap_out dst_obj;
+    dst_fields_valid_from_bounds dst_obj wz;
+    hd_address_spec dst_obj;
+    zero_promote_padding_frame copied dst_obj wz (hd_address dst_obj);
+    wosize_of_object_spec dst_obj copied;
+    let padded = zero_promote_padding copied dst_obj wz in
+    wosize_of_object_spec dst_obj padded;
+    // Objects preserved through zero_promote_padding
+    assert (Seq.mem dst_obj (objects zero_addr copied));
+    zero_promote_padding_preserves_objects copied dst_obj wz;
+    assert (Seq.mem dst_obj (objects zero_addr padded));
     // Wosize preserved through set_promoted_tag
     promote_object_success minor major obj fp wz;
     let mtag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    assert (Seq.mem dst_obj (objects zero_addr copied));
-    set_promoted_tag_preserves_wosize_self copied dst_obj mtag
+    set_promoted_tag_preserves_wosize_self padded dst_obj mtag
 #pop-options
 
 /// Single-k proof for chain_all_inv_intro: proves the body of the forall
@@ -554,17 +645,25 @@ private let promote_step_chain_one_k
       copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
       promote_object_success minor major obj fp wz;
       let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+      // zero_promote_padding preserves objects
+      AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+      copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+      zero_promote_padding_preserves_objects copied dst_obj wz;
+      let padded = zero_promote_padding copied dst_obj wz in
       let mtag = minor_tag minor obj in
       minor_tag_bound minor obj;
-      set_promoted_tag_preserves_objects copied dst_obj mtag;
+      set_promoted_tag_preserves_objects padded dst_obj mtag;
       assert (Seq.mem dst_obj (objects zero_addr res.major_out))
     end
     else begin
       chain_all_inv_elim minor major fp live_set fwd idx;
       let wz_k = minor_wosize minor ok in
-      if fwd ok <> 0UL && wz_k > 0 && is_val_addr (fwd ok) then
+      if fwd ok <> 0UL && wz_k > 0 && is_val_addr (fwd ok) then begin
+        assert (Seq.mem ((fwd ok) <: obj_addr) (objects zero_addr major));
+        assert (U64.v (wosize_of_object ((fwd ok) <: obj_addr) major) >= wz_k);
+        assert (AllocLemmas.chain_avoids major fp (fwd ok) (heap_size / U64.v mword) = true);
         promote_step_chain_k minor major obj fp wz ((fwd ok) <: obj_addr) wz_k
-      else ()
+      end else ()
     end
 #pop-options
 

@@ -110,6 +110,51 @@ private let copy_fields_preserves_no_black
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
+/// Helper: zero_promote_padding preserves no_black_objects
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+private let zero_promote_padding_preserves_no_black
+  (g: heap) (dst: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires Mark.no_black_objects g /\
+                    well_formed_heap_part1 g /\
+                    Seq.mem dst (objects zero_addr g))
+          (ensures Mark.no_black_objects (zero_promote_padding g dst wz))
+  = zero_promote_padding_preserves_objects g dst wz;
+    let padded = zero_promote_padding g dst wz in
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects zero_addr padded))
+      (ensures ~(is_black h padded))
+    = assert (Seq.mem h (objects zero_addr g));
+      hd_address_spec h;
+      hd_address_spec dst;
+      if h = dst then begin
+        // hd_address dst = dst - 8, pad at dst + wz*8: these differ since wz*8 + 8 > 0
+        assert (U64.v (hd_address h) == U64.v dst - U64.v mword);
+        assert (U64.v (hd_address h) <> U64.v dst + wz * U64.v mword);
+        zero_promote_padding_frame g dst wz (hd_address h);
+        color_of_header_eq h g padded;
+        is_black_iff h g;
+        is_black_iff h padded
+      end else begin
+        if U64.v h < U64.v dst then begin
+          objects_separated zero_addr g h dst;
+          zero_promote_padding_frame g dst wz (hd_address h)
+        end else begin
+          objects_separated zero_addr g dst h;
+          wosize_of_object_spec dst g;
+          let actual_wz = U64.v (wosize_of_object dst g) in
+          if actual_wz <= wz then
+            zero_promote_padding_noop g dst wz
+          else
+            zero_promote_padding_frame g dst wz (hd_address h)
+        end;
+        color_of_header_eq h g padded;
+        is_black_iff h g;
+        is_black_iff h padded
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
 
 private let promote_object_preserves_no_black
@@ -146,12 +191,17 @@ private let promote_object_preserves_no_black
     copy_fields_preserves_no_black minor g_alloc obj dst wz;
     let result = copy_fields minor g_alloc obj dst 0 wz in
 
-    // Step 4: set_promoted_tag preserves no_black (factored lemma)
+    // Step 4: zero_promote_padding + set_promoted_tag preserve no_black
     copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
+    copy_fields_preserves_wfh_part1 minor g_alloc obj dst wz;
     assert (Seq.mem dst (objects zero_addr result));
+    zero_promote_padding_preserves_no_black result dst wz;
+    zero_promote_padding_preserves_objects result dst wz;
+    zero_promote_padding_preserves_wfh_part1 result dst wz;
+    let padded = zero_promote_padding result dst wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_no_black result dst tag
+    set_promoted_tag_preserves_no_black padded dst tag
   end
 
 #pop-options

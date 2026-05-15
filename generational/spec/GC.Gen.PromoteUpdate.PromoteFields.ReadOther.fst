@@ -53,18 +53,19 @@ let promote_object_read_other
       objects_separated zero_addr major dst_obj other;
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize addr
     end;
-    // Bridge: set_promoted_tag preserves read at addr (addr ≠ hd_address dst_obj)
+    // Bridge: padding and set_promoted_tag preserve read at addr
     promote_object_success minor major obj fp wosize;
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
     hd_address_injective other dst_obj;
     hd_address_spec dst_obj;
-    // From objects_separated + addr bounds, addr is disjoint from hd_address dst_obj
-    set_promoted_tag_read_frame copied dst_obj tag addr
+    zero_promote_padding_frame copied dst_obj wosize addr;
+    let padded = zero_promote_padding copied dst_obj wosize in
+    set_promoted_tag_read_frame padded dst_obj tag addr
 #pop-options
 
-/// Helper: read_word through copy_fields + set_promoted_tag = read_word original
+/// Helper: read_word through copy_fields + zero_promote_padding + set_promoted_tag = read_word original
 /// for objects other than dst_obj.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let promote_transfer_read
@@ -83,25 +84,25 @@ private let promote_transfer_read
       minor_tag minor obj < 256)
     (ensures
       (let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+       let padded = zero_promote_padding copied dst_obj wosize in
        let tag = minor_tag minor obj in
-       read_word (set_promoted_tag copied dst_obj tag) ao == read_word new_major ao))
+       read_word (set_promoted_tag padded dst_obj tag) ao == read_word new_major ao))
   = let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let padded = zero_promote_padding copied dst_obj wosize in
     let tag = minor_tag minor obj in
     hd_address_spec ao;
     hd_address_spec dst_obj;
     if U64.v ao < U64.v dst_obj then begin
       objects_separated zero_addr new_major ao dst_obj;
-      // ao + wosize(ao)*8 < dst_obj, wosize(ao) >= 1 → ao + 8 < dst_obj
-      // Word-aligned → ao + 8 <= hd(dst_obj) = dst_obj - 8
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize ao;
-      set_promoted_tag_read_frame copied dst_obj tag ao
+      zero_promote_padding_frame copied dst_obj wosize ao;
+      set_promoted_tag_read_frame padded dst_obj tag ao
     end else begin
       objects_separated zero_addr new_major dst_obj ao;
       wosize_of_object_spec dst_obj new_major;
-      // ao > dst_obj + wosize_of_object(dst_obj)*8 >= dst_obj + 8
-      // So hd(dst_obj) + 8 = dst_obj <= ao
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize ao;
-      set_promoted_tag_read_frame copied dst_obj tag ao
+      zero_promote_padding_frame copied dst_obj wosize ao;
+      set_promoted_tag_read_frame padded dst_obj tag ao
     end
 #pop-options
 
@@ -139,6 +140,7 @@ let promote_object_preserves_chain_avoids
     assert (well_formed_heap_part1 new_major);
     promote_object_success minor major obj fp wosize;
     let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let padded = zero_promote_padding copied dst_obj wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
     GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
@@ -153,11 +155,11 @@ let promote_object_preserves_chain_avoids
                Seq.mem a (objects zero_addr new_major) /\ a <> excl /\ a <> dst_obj /\
                U64.v (wosize_of_object (a <: obj_addr) new_major) >= 1 /\
                U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size)
-      (ensures read_word (set_promoted_tag copied dst_obj tag) a == read_word new_major a)
+      (ensures read_word (set_promoted_tag padded dst_obj tag) a == read_word new_major a)
     = promote_transfer_read minor new_major obj dst_obj wosize (a <: obj_addr)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_helper);
-    AllocLemmas.chain_avoids_transfer_excl2 new_major (set_promoted_tag copied dst_obj tag) new_fp excl dst_obj fuel
+    AllocLemmas.chain_avoids_transfer_excl2 new_major (set_promoted_tag padded dst_obj tag) new_fp excl dst_obj fuel
 #pop-options
 
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries no"

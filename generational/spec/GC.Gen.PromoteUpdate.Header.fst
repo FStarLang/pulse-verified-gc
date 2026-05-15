@@ -352,10 +352,12 @@ private let promote_object_adds_new_addr
     copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wosize;
     let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize in
     assert (Seq.mem dst_obj (objects zero_addr copied));
-    // set_promoted_tag preserves objects
+    // zero_promote_padding + set_promoted_tag preserve objects
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_objects copied dst_obj tag
+    zero_promote_padding_preserves_objects copied dst_obj wosize;
+    let padded = zero_promote_padding copied dst_obj wosize in
+    set_promoted_tag_preserves_objects padded dst_obj tag
   end
 #pop-options
 
@@ -409,13 +411,15 @@ let rec promote_all_aux_adds_promoted
         copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
         AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
         copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
-        // Propagate wfh_part1 + fl_valid + fl_chain_terminates through set_promoted_tag
+        // Propagate wfh_part1 + fl_valid + fl_chain_terminates through pad + set_promoted_tag
         let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
         let tag = minor_tag minor obj in
         minor_tag_bound minor obj;
         copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
         copy_fields_preserves_chain_avoids_self minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
-        set_promoted_tag_preserves_alloc_invariants copied dst_obj tag alloc_res.fp_out;
+        zero_promote_padding_preserves_alloc_invariants copied dst_obj wz alloc_res.fp_out;
+        let padded = zero_promote_padding copied dst_obj wz in
+        set_promoted_tag_preserves_alloc_invariants padded dst_obj tag alloc_res.fp_out;
         promote_object_success minor major obj fp wz;
         // fwd' extends fwd with obj -> new_addr
         let fwd' = extend_forwarding fwd obj res.new_addr in

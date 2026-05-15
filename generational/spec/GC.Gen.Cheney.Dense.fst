@@ -187,6 +187,64 @@ private let copy_fields_preserves_dense
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// zero_promote_padding preserves density
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+
+private let zero_promote_padding_preserves_dense
+  (major: heap) (dst_obj: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major /\
+                    Seq.mem dst_obj (objects zero_addr major))
+          (ensures heap_objects_dense (zero_promote_padding major dst_obj wz))
+  = let actual_wz = U64.v (wosize_of_object dst_obj major) in
+    if actual_wz <= wz then
+      // Noop case: identity
+      zero_promote_padding_noop major dst_obj wz
+    else begin
+      // Write case: actual_wz > wz, so actual_wz >= wz + 1
+      let major' = zero_promote_padding major dst_obj wz in
+      zero_promote_padding_preserves_objects major dst_obj wz;
+      assert (objects zero_addr major' == objects zero_addr major);
+      let aux (start: hp_addr)
+        : Lemma
+          (requires U64.v start + 8 < heap_size /\
+                   Seq.mem (f_address start) (objects zero_addr major') /\
+                   Seq.length (objects start major') > 0)
+          (ensures (let wz_s = getWosize (read_word major' start) in
+                    let next = U64.v start + ((U64.v wz_s + 1) * 8) in
+                    next + 8 < heap_size ==>
+                    Seq.length (objects (U64.uint_to_t next) major') > 0 /\
+                    Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr major')))
+        = f_address_spec start;
+          wosize_of_object_spec dst_obj major;
+          hd_address_spec dst_obj;
+          assert (Seq.mem (f_address start) (objects zero_addr major));
+          wfh_part1_obj_bound major dst_obj;
+          // actual_wz >= wz + 1, so header_separated_from_fields with n = wz + 1 works
+          header_separated_from_fields major dst_obj start (wz + 1);
+          zero_promote_padding_frame major dst_obj wz start;
+          assert (read_word major' start == read_word major start);
+          objects_nonempty_from_header major' major start;
+          let wz_s = getWosize (read_word major start) in
+          let next = U64.v start + ((U64.v wz_s + 1) * 8) in
+          if next + 8 < heap_size then begin
+            let next_hp : hp_addr = U64.uint_to_t next in
+            f_address_spec next_hp;
+            assert (Seq.mem (f_address next_hp) (objects zero_addr major));
+            header_separated_from_fields major dst_obj next_hp (wz + 1);
+            zero_promote_padding_frame major dst_obj wz next_hp;
+            assert (read_word major' next_hp == read_word major next_hp);
+            objects_nonempty_from_header major major' next_hp
+          end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    end
+
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// alloc_from_block split case density
 /// ---------------------------------------------------------------------------
 
@@ -815,14 +873,22 @@ let promote_object_preserves_dense
       let dst_obj : obj_addr = alloc_res.obj_out in
       // Step 1: copy_fields preserves density
       copy_fields_preserves_dense minor alloc_res.heap_out obj dst_obj wz;
-      // Step 2: set_promoted_tag preserves density
+      // Step 2: zero_promote_padding preserves density
       let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+      let padded = zero_promote_padding copied dst_obj wz in
       let tag = minor_tag minor obj in
       minor_tag_bound minor obj;
       copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
       copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
       assert (Seq.mem dst_obj (objects zero_addr copied));
-      set_promoted_tag_preserves_dense copied dst_obj tag
+      wfh_part1_obj_bound copied dst_obj;
+      AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+      zero_promote_padding_preserves_dense copied dst_obj wz;
+      zero_promote_padding_preserves_wfh_part1 copied dst_obj wz;
+      zero_promote_padding_preserves_objects copied dst_obj wz;
+      assert (Seq.mem dst_obj (objects zero_addr padded));
+      // Step 3: set_promoted_tag preserves density
+      set_promoted_tag_preserves_dense padded dst_obj tag
     end
 
 #pop-options

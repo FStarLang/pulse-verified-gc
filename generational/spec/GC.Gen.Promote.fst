@@ -85,8 +85,9 @@ let promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
           (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
                     let res = promote_object minor major obj fp wosize in
                     let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
+                    let padded = zero_promote_padding copied alloc_res.obj_out wosize in
                     let tag = minor_tag minor obj in
-                    res.major_out == set_promoted_tag copied alloc_res.obj_out tag /\
+                    res.major_out == set_promoted_tag padded alloc_res.obj_out tag /\
                     res.fp_out == alloc_res.fp_out /\
                     res.new_addr == alloc_res.obj_out)) = ()
 
@@ -96,6 +97,121 @@ let set_promoted_tag_unfold
            write_word major (hd_address obj)
              (makeHeader (getWosize (read_word major (hd_address obj)))
                          White (U64.uint_to_t tag))) = ()
+
+/// zero_promote_padding lemmas
+let zero_promote_padding_frame
+  (g: heap) (dst: obj_addr) (wz: nat) (addr: hp_addr)
+  : Lemma (requires U64.v addr <> U64.v dst + wz * U64.v mword)
+          (ensures read_word (zero_promote_padding g dst wz) addr == read_word g addr)
+  = let actual_wz = U64.v (wosize_of_object dst g) in
+    if actual_wz > wz then
+      let pad_nat = U64.v dst + wz * U64.v mword in
+      if pad_nat < heap_size && pad_nat % U64.v mword = 0 then
+        read_write_different g (U64.uint_to_t pad_nat <: hp_addr) addr 0UL
+      else ()
+    else ()
+
+let zero_promote_padding_preserves_wosize
+  (g: heap) (dst: obj_addr) (wz: nat)
+  : Lemma (wosize_of_object dst (zero_promote_padding g dst wz) == wosize_of_object dst g)
+  = let actual_wz = U64.v (wosize_of_object dst g) in
+    if actual_wz > wz then
+      let pad_nat = U64.v dst + wz * U64.v mword in
+      if pad_nat < heap_size && pad_nat % U64.v mword = 0 then begin
+        let pad_addr : hp_addr = U64.uint_to_t pad_nat in
+        let hd = hd_address dst in
+        hd_address_spec dst;
+        // hd_address dst = dst - 8, padding is at dst + wz*8 (wz >= 1)
+        // so hd < dst <= pad, meaning hd != pad
+        assert (U64.v hd <> U64.v pad_addr);
+        read_write_different g pad_addr hd 0UL;
+        wosize_of_object_spec dst g;
+        wosize_of_object_spec dst (write_word g pad_addr 0UL)
+      end else ()
+    else ()
+
+let zero_promote_padding_noop
+  (g: heap) (dst: obj_addr) (wz: nat)
+  : Lemma (requires U64.v (wosize_of_object dst g) <= wz)
+          (ensures zero_promote_padding g dst wz == g)
+  = ()
+
+let zero_promote_padding_write
+  (g: heap) (dst: obj_addr) (wz: nat)
+  : Lemma (requires U64.v (wosize_of_object dst g) > wz /\
+                    U64.v dst + wz * U64.v mword < heap_size)
+          (ensures zero_promote_padding g dst wz ==
+                   write_word g (U64.uint_to_t (U64.v dst + wz * U64.v mword) <: hp_addr) 0UL)
+  = wosize_of_object_spec dst g
+
+let zero_promote_padding_preserves_objects
+  (g: heap) (dst: obj_addr) (wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem dst (objects zero_addr g))
+          (ensures objects zero_addr (zero_promote_padding g dst wz) == objects zero_addr g)
+  = let actual_wz = U64.v (wosize_of_object dst g) in
+    if actual_wz > wz then begin
+      // actual_wz > wz implies actual_wz >= wz + 1
+      // wfh_part1_obj_bound: dst + actual_wz * 8 <= heap_size
+      // so dst + wz * 8 + 8 <= heap_size, hence dst + wz * 8 < heap_size
+      wfh_part1_obj_bound g dst;
+      zero_promote_padding_write g dst wz;
+      let pad_addr : hp_addr = U64.uint_to_t (U64.v dst + wz * U64.v mword) in
+      assert (U64.v pad_addr >= U64.v dst);
+      assert (U64.v pad_addr < U64.v dst + actual_wz * U64.v mword);
+      write_word_preserves_objects_part1 g dst pad_addr 0UL
+    end else
+      zero_promote_padding_noop g dst wz
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+let zero_promote_padding_preserves_wfh_part1
+  (g: heap) (dst: obj_addr) (wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem dst (objects zero_addr g))
+          (ensures well_formed_heap_part1 (zero_promote_padding g dst wz))
+  = let g' = zero_promote_padding g dst wz in
+    zero_promote_padding_preserves_objects g dst wz;
+    zero_promote_padding_preserves_wosize g dst wz;
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects zero_addr g'))
+      (ensures (let wz_h = wosize_of_object h g' in
+                U64.v (hd_address h) + 8 + U64.v wz_h * 8 <= Seq.length g'))
+    = assert (Seq.mem h (objects zero_addr g));
+      if h = dst then begin
+        assert (wosize_of_object h g' == wosize_of_object h g);
+        wfh_part1_obj_bound g h
+      end else begin
+        hd_address_spec h;
+        hd_address_spec dst;
+        // Need addr <> pad_pos. Padding is at dst + wz*8.
+        // hd_address h = h - 8. We need h - 8 <> dst + wz*8.
+        // objects_separated gives h >= dst + wosize_of_object(dst)*8 + 8 (if h > dst)
+        // or h + wosize_of_object(h)*8 + 8 <= dst (if h < dst).
+        if U64.v h < U64.v dst then begin
+          objects_separated zero_addr g h dst;
+          // h + wosize(h)*8 + 8 <= dst, so h - 8 < h <= dst - 8 - wosize(h)*8 < dst <= dst + wz*8
+          zero_promote_padding_frame g dst wz (hd_address h)
+        end else begin
+          objects_separated zero_addr g dst h;
+          wosize_of_object_spec dst g;
+          // h >= dst + wosize_of_object(dst)*8 + 8
+          // hd_address h = h - 8 >= dst + wosize_of_object(dst)*8
+          // padding at dst + wz*8, wosize_of_object(dst) >= wz, so pad <= dst + wosize_of_object(dst)*8
+          // If wosize_of_object(dst) > wz, then pad = dst + wz*8 < dst + wosize_of_object(dst)*8 <= hd_address h
+          // If wosize_of_object(dst) == wz, zero_promote_padding is identity
+          let actual_wz = U64.v (wosize_of_object dst g) in
+          if actual_wz <= wz then
+            zero_promote_padding_noop g dst wz
+          else
+            zero_promote_padding_frame g dst wz (hd_address h)
+        end;
+        wosize_of_object_spec h g;
+        wosize_of_object_spec h g';
+        wfh_part1_obj_bound g h
+      end
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// set_promoted_tag preserves allocator invariants
@@ -310,6 +426,41 @@ let set_promoted_tag_preserves_alloc_invariants
     set_promoted_tag_preserves_fl_chain_terminates major obj tag fp fuel
 #pop-options
 
+/// zero_promote_padding preserves allocator invariants
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+let zero_promote_padding_preserves_alloc_invariants
+  (g: heap) (dst: obj_addr) (wz: nat) (fp: U64.t)
+  : Lemma (requires
+             well_formed_heap_part1 g /\
+             Seq.mem dst (objects zero_addr g) /\
+             AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+             AllocLemmas.chain_avoids g fp dst (heap_size / U64.v mword) = true)
+          (ensures (let g' = zero_promote_padding g dst wz in
+                    well_formed_heap_part1 g' /\
+                    Seq.mem dst (objects zero_addr g') /\
+                    AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword) /\
+                    AllocLemmas.chain_avoids g' fp dst (heap_size / U64.v mword) = true))
+  = let fuel : nat = heap_size / U64.v mword in
+    let actual_wz = U64.v (wosize_of_object dst g) in
+    zero_promote_padding_preserves_wfh_part1 g dst wz;
+    zero_promote_padding_preserves_objects g dst wz;
+    if actual_wz > wz then begin
+      // Write case: pad_addr = dst + wz * 8
+      wfh_part1_obj_bound g dst;
+      zero_promote_padding_write g dst wz;
+      let pad_addr : hp_addr = U64.uint_to_t (U64.v dst + wz * U64.v mword) in
+      assert (U64.v pad_addr >= U64.v dst);
+      assert (U64.v pad_addr < U64.v dst + actual_wz * U64.v mword);
+      WriteBody.chain_avoids_implies_not_in_fl_chain g fp dst fuel;
+      WriteBody.write_body_preserves_fl_valid_aux g dst pad_addr 0UL fp fuel;
+      WriteBody.write_body_preserves_fl_chain_terminates g dst pad_addr 0UL fp fuel;
+      WriteBody.write_body_preserves_chain_avoids_self g dst pad_addr 0UL fp fuel
+    end else
+      zero_promote_padding_noop g dst wz
+#pop-options
+
 /// promote_object preserves allocator invariants
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let promote_object_preserves_alloc_invariants
@@ -351,7 +502,10 @@ let promote_object_preserves_alloc_invariants
       minor_tag_bound minor obj;
       copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wosize;
       copy_fields_preserves_chain_avoids_self minor alloc_res.heap_out obj dst_obj 0 wosize alloc_res.fp_out fuel;
-      set_promoted_tag_preserves_alloc_invariants copied dst_obj tag alloc_res.fp_out
+      // zero_promote_padding preserves invariants
+      zero_promote_padding_preserves_alloc_invariants copied dst_obj wosize alloc_res.fp_out;
+      let padded = zero_promote_padding copied dst_obj wosize in
+      set_promoted_tag_preserves_alloc_invariants padded dst_obj tag alloc_res.fp_out
     end
 #pop-options
 
@@ -598,7 +752,7 @@ let copy_fields_all_correct
 
 /// After promote_object, if allocation succeeds AND the destination
 /// has valid bounds, all field data is preserved.
-#push-options "--z3rlimit 160 --fuel 2 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 2 --split_queries always"
 let promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
@@ -648,14 +802,19 @@ let promote_preserves_fields
       assert (U64.v alloc_res.obj_out + 8 <= heap_size);
       assert (U64.v alloc_res.obj_out < heap_size);
       let dst_obj : obj_addr = alloc_res.obj_out in
+      let padded = zero_promote_padding copied dst_obj wosize in
       let field_frame (j: nat{j < wosize}) : Lemma
-        (read_word (set_promoted_tag copied dst_obj tag) (U64.uint_to_t (U64.v dst_obj + j * 8))
+        (read_word (set_promoted_tag padded dst_obj tag) (U64.uint_to_t (U64.v dst_obj + j * 8))
               == read_word copied (U64.uint_to_t (U64.v dst_obj + j * 8)))
       = FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
         assert (U64.v dst_obj + j * 8 + 8 <= heap_size);
         let addr : hp_addr = U64.uint_to_t (U64.v dst_obj + j * 8) in
         hd_address_spec dst_obj;
-        set_promoted_tag_read_frame copied dst_obj tag addr
+        // j < wosize → j*8 < wosize*8 → addr <> pad position
+        assert (j * 8 < wosize * 8);
+        assert (U64.v addr <> U64.v dst_obj + wosize * U64.v mword);
+        zero_promote_padding_frame copied dst_obj wosize addr;
+        set_promoted_tag_read_frame padded dst_obj tag addr
       in
       FStar.Classical.forall_intro field_frame
     end else ()
@@ -781,12 +940,16 @@ let promote_object_preserves_objects_part1
     copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wosize;
     assert (objects zero_addr (copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize) ==
             objects zero_addr alloc_res.heap_out);
-    // set_promoted_tag preserves objects too (same wosize header write)
+    // zero_promote_padding and set_promoted_tag preserve objects
     let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_objects copied dst_obj tag;
-    assert (objects zero_addr (set_promoted_tag copied dst_obj tag) ==
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
+    copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wosize;
+    zero_promote_padding_preserves_objects copied dst_obj wosize;
+    let padded = zero_promote_padding copied dst_obj wosize in
+    set_promoted_tag_preserves_objects padded dst_obj tag;
+    assert (objects zero_addr (set_promoted_tag padded dst_obj tag) ==
             objects zero_addr copied)
   end
 #pop-options
@@ -1108,10 +1271,16 @@ private let promote_object_frame_old_field
   end;
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
   assert (read_word copied field_addr == read_word alloc_res.heap_out field_addr);
-  // 3. set_promoted_tag only writes at hd_address dst_obj
+  // 3. zero_promote_padding only writes at dst_obj + wz*8, disjoint from field_addr
+  //    (field_addr is in src's body, which is disjoint from dst_obj's body by objects_separated)
+  let pad_nat = U64.v dst_obj + wz * U64.v mword in
+  assert (U64.v field_addr <> pad_nat);
+  zero_promote_padding_frame copied dst_obj wz field_addr;
+  let padded = zero_promote_padding copied dst_obj wz in
+  // 4. set_promoted_tag only writes at hd_address dst_obj
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_read_frame copied dst_obj tag field_addr
+  set_promoted_tag_read_frame padded dst_obj tag field_addr
 #pop-options
 
 /// Helper: for a non-blue, no-scan object src != dst_obj, its header is
@@ -1154,10 +1323,15 @@ private let promote_object_frame_old_header
   copy_fields_preserves_other minor alloc_res.heap_out obj dst_obj 0 wz (hd_address src);
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
   assert (read_word copied (hd_address src) == read_word alloc_res.heap_out (hd_address src));
-  // 3. set_promoted_tag writes at hd_address dst_obj, not at hd_address src
+  // 3. zero_promote_padding writes at dst_obj + wz*8, not at hd_address src
+  let pad_nat = U64.v dst_obj + wz * U64.v mword in
+  assert (U64.v (hd_address src) <> pad_nat);
+  zero_promote_padding_frame copied dst_obj wz (hd_address src);
+  let padded = zero_promote_padding copied dst_obj wz in
+  // 4. set_promoted_tag writes at hd_address dst_obj, not at hd_address src
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_read_frame copied dst_obj tag (hd_address src)
+  set_promoted_tag_read_frame padded dst_obj tag (hd_address src)
 #pop-options
 
 /// Per-step: promote_object preserves no_scan_invariant
@@ -1196,8 +1370,9 @@ private let promote_no_scan_new_object
        U64.v alloc_res.obj_out % U64.v mword == 0) /\
       (let dst_obj : obj_addr = alloc_res.obj_out in
        let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+       let padded = zero_promote_padding copied dst_obj wz in
        let tag = minor_tag minor obj in
-       let g' = set_promoted_tag copied dst_obj tag in
+       let g' = set_promoted_tag padded dst_obj tag in
        is_no_scan dst_obj g' /\
        field_idx < U64.v (wosize_of_object dst_obj g') /\
        U64.v dst_obj + field_idx * 8 < heap_size)))
@@ -1205,8 +1380,9 @@ private let promote_no_scan_new_object
       let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
       let dst_obj : obj_addr = alloc_res.obj_out in
       let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+      let padded = zero_promote_padding copied dst_obj wz in
       let tag = minor_tag minor obj in
-      let g' = set_promoted_tag copied dst_obj tag in
+      let g' = set_promoted_tag padded dst_obj tag in
       let field_addr : hp_addr = U64.uint_to_t (U64.v dst_obj + field_idx * 8) in
       ~(is_pointer_field (read_word g' field_addr))))
   =
@@ -1214,14 +1390,21 @@ private let promote_no_scan_new_object
   AllocProps.alloc_spec_obj_valid major fp wz;
   let dst_obj : obj_addr = alloc_res.obj_out in
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
-  let g' = set_promoted_tag copied dst_obj tag in
+  let g' = set_promoted_tag padded dst_obj tag in
   let field_addr : hp_addr = U64.uint_to_t (U64.v dst_obj + field_idx * 8) in
   // set_promoted_tag only writes the header; field reads are unchanged
   hd_address_spec dst_obj;
-  set_promoted_tag_read_frame copied dst_obj tag field_addr;
+  set_promoted_tag_read_frame padded dst_obj tag field_addr;
+  // So read_word g' field_addr == read_word padded field_addr
   if field_idx < wz then begin
-    // Establish prerequisites for copy_fields_all_correct
+    // zero_promote_padding frame: padding is at dst + wz*8, field is at dst + field_idx*8
+    // field_idx < wz, so these are different
+    assert (U64.v field_addr <> U64.v dst_obj + wz * U64.v mword);
+    zero_promote_padding_frame copied dst_obj wz field_addr;
+    // So read_word padded field_addr == read_word copied field_addr
+    // Now the original proof for field_idx < wz applies to copied
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
     AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
     AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
@@ -1230,13 +1413,16 @@ private let promote_no_scan_new_object
     copy_fields_all_correct minor alloc_res.heap_out obj dst_obj wz;
     assert (read_word copied field_addr == minor_read_field minor obj field_idx);
     // Derive minor_tag minor obj >= 251 from is_no_scan dst_obj g'
-    set_promoted_tag_unfold copied dst_obj tag;
+    set_promoted_tag_unfold padded dst_obj tag;
     let hdr_addr = hd_address dst_obj in
-    let new_hdr = makeHeader (getWosize (read_word copied hdr_addr)) White (U64.uint_to_t tag) in
-    read_write_same copied hdr_addr new_hdr;
+    zero_promote_padding_preserves_wosize copied dst_obj wz;
+    assert (U64.v hdr_addr <> U64.v dst_obj + wz * U64.v mword);
+    zero_promote_padding_frame copied dst_obj wz hdr_addr;
+    let new_hdr = makeHeader (getWosize (read_word padded hdr_addr)) White (U64.uint_to_t tag) in
+    read_write_same padded hdr_addr new_hdr;
     assert (read_word g' hdr_addr == new_hdr);
     tag_of_object_spec dst_obj g';
-    makeHeader_getTag (getWosize (read_word copied hdr_addr)) White (U64.uint_to_t tag);
+    makeHeader_getTag (getWosize (read_word padded hdr_addr)) White (U64.uint_to_t tag);
     assert (tag_of_object dst_obj g' == U64.uint_to_t tag);
     is_no_scan_spec dst_obj g';
     no_scan_tag_val ();
@@ -1245,8 +1431,47 @@ private let promote_no_scan_new_object
     assert (field_idx < minor_wosize minor obj);
     ()
   end else begin
-    // field_idx >= wz: allocator leftover=1 padding field.
-    assume (~(is_pointer_field (read_word g' field_addr)))
+    // field_idx >= wz: the padding field was zeroed by zero_promote_padding
+    // read_word g' field_addr == read_word padded field_addr (from set_promoted_tag_read_frame above)
+    // The padding position is dst_obj + wz * 8
+    // Since field_idx >= wz and field_idx < actual_wz, and actual_wz <= wz+1 from allocator,
+    // field_idx == wz. So field_addr is exactly the padding position.
+    assert (field_idx >= wz);
+    // Show field_idx == wz: actual_wz <= wz + 1 (allocator leftover < 2)
+    AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+    // wosize_of_object dst_obj alloc_res.heap_out >= wz
+    // From the set_promoted_tag_unfold, wosize is preserved through padding and tag steps
+    // field_idx < wosize_of_object dst_obj g' (from requires)
+    // In the leftover=1 case, wosize_of_object = wz + 1, so field_idx in {wz}
+    // In the exact case, wosize_of_object = wz, but then field_idx < wz contradicts field_idx >= wz
+    // Either way, field_addr = dst_obj + wz * 8 = padding address
+    // zero_promote_padding wrote 0UL there (since actual_wz > wz in this branch)
+    let actual_wz = U64.v (wosize_of_object dst_obj copied) in
+    // actual_wz > wz in this branch (otherwise field_idx >= wz >= actual_wz contradicts requires)
+    zero_promote_padding_preserves_wosize copied dst_obj wz;
+    set_promoted_tag_unfold padded dst_obj tag;
+    let hdr_addr2 = hd_address dst_obj in
+    assert (U64.v hdr_addr2 <> U64.v dst_obj + wz * U64.v mword);
+    zero_promote_padding_frame copied dst_obj wz hdr_addr2;
+    // wosize_of_object dst_obj padded == wosize_of_object dst_obj copied
+    // and the final heap's wosize comes from reading padded's header (set_promoted_tag preserves wosize)
+    // The padding field: zero_promote_padding writes 0UL at dst_obj + wz * 8 when actual_wz > wz
+    let pad_nat = U64.v dst_obj + wz * U64.v mword in
+    assert (pad_nat == U64.v field_addr);
+    assert (pad_nat < heap_size);
+    assert (pad_nat % U64.v mword == 0);
+    // zero_promote_padding g dst wz with actual_wz > wz writes 0UL at pad_nat
+    let pad_hp : hp_addr = U64.uint_to_t pad_nat in
+    assert (pad_hp == field_addr);
+    // Read from padded at field_addr = 0UL
+    read_write_same copied pad_hp 0UL;
+    assert (read_word (write_word copied pad_hp 0UL) pad_hp == 0UL);
+    // Need: padded == write_word copied pad_hp 0UL at this position
+    // This follows from the definition of zero_promote_padding
+    assert (read_word padded field_addr == 0UL);
+    // is_pointer_field 0UL = false because U64.v 0UL = 0 < U64.v zero_addr + U64.v mword
+    assert (~(is_pointer_field (read_word padded field_addr)));
+    ()
   end
 #pop-options
 
@@ -1272,8 +1497,9 @@ private let promote_no_scan_old_object
        U64.v alloc_res.obj_out % U64.v mword == 0) /\
       (let dst_obj : obj_addr = alloc_res.obj_out in
        let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+       let padded = zero_promote_padding copied dst_obj wz in
        let tag = minor_tag minor obj in
-       let g' = set_promoted_tag copied dst_obj tag in
+       let g' = set_promoted_tag padded dst_obj tag in
        (src <: U64.t) <> (dst_obj <: U64.t) /\
        Seq.mem src (objects zero_addr g') /\
        is_no_scan src g' /\
@@ -1288,8 +1514,9 @@ private let promote_no_scan_old_object
       let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
       let dst_obj : obj_addr = alloc_res.obj_out in
       let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+      let padded = zero_promote_padding copied dst_obj wz in
       let tag = minor_tag minor obj in
-      let g' = set_promoted_tag copied dst_obj tag in
+      let g' = set_promoted_tag padded dst_obj tag in
       let field_addr : hp_addr = U64.uint_to_t (U64.v src + field_idx * 8) in
       ~(is_pointer_field (read_word g' field_addr))))
   =
@@ -1298,14 +1525,17 @@ private let promote_no_scan_old_object
   AllocProps.alloc_spec_obj_valid major fp wz;
   let dst_obj : obj_addr = alloc_res.obj_out in
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
-  let g' = set_promoted_tag copied dst_obj tag in
+  let g' = set_promoted_tag padded dst_obj tag in
   let field_addr : hp_addr = U64.uint_to_t (U64.v src + field_idx * 8) in
   // Frame through set_promoted_tag: hd_address(src) ≠ hd_address(dst_obj)
   hd_address_spec src;
   hd_address_spec dst_obj;
   hd_address_injective src dst_obj;
-  set_promoted_tag_read_frame copied dst_obj tag (hd_address src);
+  set_promoted_tag_read_frame padded dst_obj tag (hd_address src);
+  // Frame through zero_promote_padding: hd_address(src) ≠ dst_obj + wz*8
+  zero_promote_padding_frame copied dst_obj wz (hd_address src);
   // Frame through copy_fields: hd_address(src) outside [dst_obj, dst_obj + wz*8)
   if U64.v src < U64.v dst_obj then
     copy_fields_frame minor alloc_res.heap_out obj dst_obj 0 wz (hd_address src)
@@ -1369,10 +1599,11 @@ let promote_object_preserves_no_scan_invariant
     let dst_obj : obj_addr = alloc_res.obj_out in
     promote_object_success minor major obj fp wz;
     let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+    let padded = zero_promote_padding copied dst_obj wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
     let g' = res.major_out in
-    assert (g' == set_promoted_tag copied dst_obj tag);
+    assert (g' == set_promoted_tag padded dst_obj tag);
     // Shared facts
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
     AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz;
@@ -1380,7 +1611,9 @@ let promote_object_preserves_no_scan_invariant
     AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
     wfh_part1_obj_bound alloc_res.heap_out dst_obj;
     copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
-    set_promoted_tag_preserves_objects copied dst_obj tag;
+    // zero_promote_padding preserves objects (only writes a field, not a header)
+    zero_promote_padding_preserves_wosize copied dst_obj wz;
+    set_promoted_tag_preserves_objects padded dst_obj tag;
     assert (objects zero_addr g' == objects zero_addr alloc_res.heap_out);
     dst_fields_valid_from_bounds (dst_obj <: U64.t) wz;
     // Prove the universal for no_scan_invariant_intro
@@ -1447,29 +1680,29 @@ private let promote_object_preserves_allocated_avoid_chain
   copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
   copy_fields_preserves_chain_avoids_self minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
   let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+  let padded = zero_promote_padding copied dst_obj wz in
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
-  set_promoted_tag_preserves_objects copied dst_obj tag;
-  set_promoted_tag_preserves_alloc_invariants copied dst_obj tag alloc_res.fp_out;
-  // Step A: set_promoted_tag preserves reads at ALL obj_addr positions
-  //   For a ≠ dst_obj: object bodies are separated (hd_address dst_obj not in a's body)
-  //   For a = dst_obj: set_promoted_tag writes at hd_address dst_obj, not at dst_obj itself
+  zero_promote_padding_preserves_objects copied dst_obj wz;
+  zero_promote_padding_preserves_alloc_invariants copied dst_obj wz alloc_res.fp_out;
+  set_promoted_tag_preserves_objects padded dst_obj tag;
+  set_promoted_tag_preserves_alloc_invariants padded dst_obj tag alloc_res.fp_out;
+  // Step A: full pipeline preserves reads at ALL obj_addr positions
   let set_tag_read_frame_at_obj (a: obj_addr)
-    : Lemma (requires Seq.mem a (objects zero_addr copied) /\
-                      U64.v (wosize_of_object a copied) >= 1 /\
+    : Lemma (requires Seq.mem a (objects zero_addr padded) /\
+                      U64.v (wosize_of_object a padded) >= 1 /\
                       U64.v (hd_address a) + 16 <= heap_size)
-            (ensures read_word (set_promoted_tag copied dst_obj tag) a ==
-                     read_word copied a)
+            (ensures read_word (set_promoted_tag padded dst_obj tag) a ==
+                     read_word padded a)
     = hd_address_spec a;
       hd_address_spec dst_obj;
       if (a <: U64.t) = (dst_obj <: U64.t) then
-        // dst_obj = a, but set_promoted_tag writes at hd_address dst_obj = dst_obj - 8 ≠ dst_obj
-        set_promoted_tag_read_frame copied dst_obj tag (a <: hp_addr)
+        set_promoted_tag_read_frame padded dst_obj tag (a <: hp_addr)
       else begin
         if U64.v a < U64.v dst_obj then
-          objects_separated zero_addr copied a dst_obj
+          objects_separated zero_addr padded a dst_obj
         else ();
-        set_promoted_tag_read_frame copied dst_obj tag (a <: hp_addr)
+        set_promoted_tag_read_frame padded dst_obj tag (a <: hp_addr)
       end
   in
   // Step B: copy_fields preserves reads at obj_addr positions ≠ dst_obj
@@ -1491,9 +1724,38 @@ private let promote_object_preserves_allocated_avoid_chain
         copy_fields_preserves_other minor alloc_res.heap_out obj dst_obj 0 wz (a <: hp_addr)
       end
   in
-  // Step C: chain_avoids for dst_obj through set_promoted_tag
+  // Helper: padding preserves reads at all obj_addr positions (needed for chain_avoids_transfer)
+  let pad_read_frame_at_obj (a: obj_addr)
+    : Lemma (requires Seq.mem a (objects zero_addr copied) /\
+                      U64.v (wosize_of_object a copied) >= 1 /\
+                      U64.v (hd_address a) + 16 <= heap_size /\
+                      a <> dst_obj)
+            (ensures read_word padded a == read_word copied a)
+    = hd_address_spec a;
+      hd_address_spec dst_obj;
+      if U64.v a < U64.v dst_obj then
+        objects_separated zero_addr copied a dst_obj
+      else
+        objects_separated zero_addr copied dst_obj a;
+      zero_promote_padding_frame copied dst_obj wz (a <: hp_addr)
+  in
+  let pad_read_frame_at_obj_all (a: obj_addr)
+    : Lemma (requires Seq.mem a (objects zero_addr copied) /\
+                      U64.v (wosize_of_object a copied) >= 1 /\
+                      U64.v (hd_address a) + 16 <= heap_size)
+            (ensures read_word padded a == read_word copied a)
+    = if (a <: U64.t) = (dst_obj <: U64.t) then
+        // padding is at dst_obj + wz*8, reading at dst_obj; wz >= 1 so they differ
+        zero_promote_padding_frame copied dst_obj wz (a <: hp_addr)
+      else
+        pad_read_frame_at_obj a
+  in
+  Classical.forall_intro (Classical.move_requires pad_read_frame_at_obj_all);
+  // Step C: chain_avoids for dst_obj through padding and set_promoted_tag
+  AllocLemmas.chain_avoids_transfer copied padded
+    alloc_res.fp_out dst_obj fuel;
   Classical.forall_intro (Classical.move_requires set_tag_read_frame_at_obj);
-  AllocLemmas.chain_avoids_transfer copied (set_promoted_tag copied dst_obj tag)
+  AllocLemmas.chain_avoids_transfer padded (set_promoted_tag padded dst_obj tag)
     alloc_res.fp_out dst_obj fuel;
   // Step D: chain_avoids for each old non-blue excl ≠ dst_obj
   let proof_for_excl (excl: obj_addr)
@@ -1503,46 +1765,43 @@ private let promote_object_preserves_allocated_avoid_chain
     = if (excl <: U64.t) = (dst_obj <: U64.t) then ()
       else begin
         // excl is an old object: derive excl ∈ objects(major).
-        // Step 1: excl's header is unchanged through the pipeline (excl ≠ dst_obj)
-        //   From set_promoted_tag_preserves_objects, objects(res.major_out) == objects(copied).
-        //   From copy_fields_preserves_objects_aux, objects(copied) == objects(heap_out).
         assert (Seq.mem excl (objects zero_addr alloc_res.heap_out));
-        // Step 2: show ~(is_blue excl alloc_res.heap_out)
-        //   header of excl ≠ dst_obj is unchanged by set_promoted_tag and copy_fields
+        // header of excl ≠ dst_obj is unchanged through copy + padding + set_tag
         hd_address_spec excl;
         hd_address_spec dst_obj;
         objects_separated zero_addr alloc_res.heap_out excl dst_obj;
         objects_separated zero_addr alloc_res.heap_out dst_obj excl;
-        set_promoted_tag_read_frame copied dst_obj tag (hd_address excl);
         copy_fields_preserves_other minor alloc_res.heap_out obj dst_obj 0 wz (hd_address excl);
-        // Explicitly chain: read_word g' (hd_address excl) = read_word heap_out (hd_address excl)
+        zero_promote_padding_frame copied dst_obj wz (hd_address excl);
+        set_promoted_tag_read_frame padded dst_obj tag (hd_address excl);
         assert (read_word copied (hd_address excl) == read_word alloc_res.heap_out (hd_address excl));
-        assert (read_word res.major_out (hd_address excl) == read_word copied (hd_address excl));
+        assert (read_word padded (hd_address excl) == read_word copied (hd_address excl));
+        assert (read_word res.major_out (hd_address excl) == read_word padded (hd_address excl));
         assert (read_word res.major_out (hd_address excl) == read_word alloc_res.heap_out (hd_address excl));
         is_blue_iff excl res.major_out;
         is_blue_iff excl alloc_res.heap_out;
         color_of_object_spec excl res.major_out;
         color_of_object_spec excl alloc_res.heap_out;
         assert (~(is_blue excl alloc_res.heap_out));
-        // Step 3: by alloc_spec_new_objects_blue_part1 contrapositive, excl ∈ objects(major)
+        // by alloc_spec_new_objects_blue_part1 contrapositive, excl ∈ objects(major)
         AllocLemmas.alloc_spec_new_objects_blue_part1 major fp wz;
         assert (Seq.mem excl (objects zero_addr major));
-        // Step 4: now we can use promote_object_frame_old_header
         promote_object_frame_old_header minor major obj fp wz excl;
-        // read_word res.major_out (hd_address excl) == read_word major (hd_address excl)
         is_blue_iff excl major;
         color_of_object_spec excl major;
         assert (~(is_blue excl major));
-        // From allocated_avoid_chain: chain_avoids in original heap
         assert (AllocLemmas.chain_avoids major fp excl fuel = true);
         // Through alloc
         AllocLemmas.alloc_spec_preserves_chain_avoids_other major fp wz (excl <: U64.t);
-        // Through copy_fields: use chain_avoids_transfer_excl2
+        // Through copy_fields
         Classical.forall_intro (Classical.move_requires cf_read_frame_at_obj);
         AllocLemmas.chain_avoids_transfer_excl2 alloc_res.heap_out copied
           alloc_res.fp_out (excl <: U64.t) (dst_obj <: U64.t) fuel;
-        // Through set_promoted_tag: use chain_avoids_transfer
-        AllocLemmas.chain_avoids_transfer copied (set_promoted_tag copied dst_obj tag)
+        // Through padding: copied→padded
+        AllocLemmas.chain_avoids_transfer copied padded
+          alloc_res.fp_out (excl <: U64.t) fuel;
+        // Through set_promoted_tag: padded→result
+        AllocLemmas.chain_avoids_transfer padded (set_promoted_tag padded dst_obj tag)
           alloc_res.fp_out (excl <: U64.t) fuel
       end
   in
