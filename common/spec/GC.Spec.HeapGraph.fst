@@ -205,6 +205,20 @@ let coerce_cons_lemma (hd: obj_addr) (tl: seq obj_addr)
     assert (Seq.equal (Seq.tail (Seq.cons hd tl)) tl)
 #pop-options
 
+/// Members of coerced sequence satisfy the obj_addr refinement
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+let rec coerce_mem_is_obj_addr (s: seq obj_addr) (v: vertex_id)
+  : Lemma (requires Seq.mem v (coerce_to_vertex_list s))
+          (ensures U64.v v >= U64.v mword)
+          (decreases Seq.length s)
+  = if Seq.length s = 0 then ()
+    else begin
+      mem_cons (Seq.head s) (coerce_to_vertex_list (Seq.tail s));
+      if v = Seq.head s then ()
+      else coerce_mem_is_obj_addr (Seq.tail s) v
+    end
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Create Graph from Heap
 /// ---------------------------------------------------------------------------

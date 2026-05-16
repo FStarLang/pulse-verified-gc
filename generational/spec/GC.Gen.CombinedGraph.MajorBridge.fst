@@ -98,35 +98,77 @@ let heapgraph_edge_implies_combined
     graph_vertices_mem major dst;
     // Classify dst as MajorV
     heapgraph_edge_classify ms major src dst;
-    // Now we need to show the edge exists in the combined graph.
-    // We know: src ∈ objects zero_addr major, dst ∈ objects zero_addr major,
-    // classify_major_field ms major dst == Some (MajorV dst),
-    // and (src, dst) is a HeapGraph edge (meaning dst is a pointer field of src).
-    //
-    // From the HeapGraph edge, there exists field index i such that:
-    //   get_field major src i = dst (where i is 1-indexed, 1..wosize)
-    //   is_pointer_field dst = true
-    //
-    // The combined graph uses 0-indexed fields:
-    //   read_word major (src + j*8) for j = 0..wosize-1
-    //
-    // The connection: get_field major src (j+1) = read_word major (src + j*8)
-    //   (this is get_field_addr_eq from HeapGraph)
-    //
-    // We need major_field_edge_intro with:
-    //   - src ∈ objects zero_addr major ✓
-    //   - j < wosize ✓ (from i <= wosize, j = i-1)
-    //   - ~(is_no_scan src major) — follows from having pointer fields
-    //   - classify_major_field ms major (read_word major ...) == Some (MajorV dst) ✓
-    //
-    // The gap is extracting the field index from the HeapGraph edge.
-    // HeapGraph doesn't export a reverse lemma (edge → field index).
-    // We use admit here and note this requires adding all_edges_mem_rev to HeapGraph.
-    admit ()
+    // Get field index from HeapGraph infrastructure
+    objects_is_vertex_set major;
+    // From well_formed_heap + membership, get object_fits_in_heap
+    wf_object_size_bound major src;
+    HeapGraph.object_fits_in_heap_intro src major;
+    // Get edge in object_edges via source membership
+    HeapGraph.all_edges_source_membership major (objects zero_addr major) src dst;
+    // (src,dst) ∈ object_edges major src implies get_pointer_fields is non-empty
+    // which implies ~(is_no_scan src major)
+    HeapGraph.object_edges_dst_in_pointer_fields major src dst;
+    // get_pointer_fields_aux_mem_rev gives us the existential field index
+    let ws = wosize_of_object src major in
+    HeapGraph.get_pointer_fields_aux_mem_rev major src 1UL ws dst;
+    // Now we have: ∃ j >= 1. j <= wosize ∧ get_field major src j == dst ∧ is_pointer_field dst
+    // Extract the witness using indefinite_description_ghost
+    let p = fun (j: U64.t) -> U64.v j >= 1 /\ U64.v j <= U64.v ws /\
+                               HeapGraph.get_field major src j == dst /\
+                               HeapGraph.is_pointer_field dst in
+    let j = FStar.IndefiniteDescription.indefinite_description_ghost U64.t p in
+    // Convert to 0-indexed: i = U64.v j - 1
+    let i = U64.v j - 1 in
+    // Use get_field_addr_eq to connect get_field (1-indexed) to read_word (0-indexed)
+    HeapGraph.get_field_addr_eq major src j;
+    // get_field_addr_eq gives: get_field major src j == read_word major (src + (j-1)*8)
+    // So read_word major (src + i*8) == dst
+    // Now invoke major_field_edge_intro
+    major_field_edge_intro ms major src i (MajorV dst)
 
 /// ---------------------------------------------------------------------------
 /// Reachability bridge
 /// ---------------------------------------------------------------------------
+
+/// HeapGraph reachability → combined reachability (by induction on reach witness)
+let rec heapgraph_reach_implies_combined_aux
+  (ms: minor_state) (major: heap)
+  (roots: seq combined_vertex)
+  (major_root: obj_addr{mem_graph_vertex (create_graph major) major_root})
+  (dst: obj_addr{mem_graph_vertex (create_graph major) dst})
+  (r: reach (create_graph major) major_root dst)
+  : Lemma (requires
+      well_formed_heap major /\
+      minor_wf ms /\
+      graph_wf (create_graph major) /\
+      Seq.mem (MajorV major_root) roots /\
+      Seq.mem major_root (objects zero_addr major))
+    (ensures
+      combined_reachable (build_combined_graph ms major) roots (MajorV dst))
+    (decreases r)
+  = let g = create_graph major in
+    let cg = build_combined_graph ms major in
+    match r with
+    | ReachRefl _ ->
+      // dst = major_root, which is in roots
+      major_vertex_char ms major major_root;
+      combined_reachable_root cg roots (MajorV major_root)
+    | ReachTrans _ mid _ r_to_mid ->
+      // mid has type vertex_id with mem_graph_vertex refinement
+      // Prove it satisfies obj_addr (>= mword) via coerce_mem_is_obj_addr
+      HeapGraph.coerce_mem_is_obj_addr (objects zero_addr major) mid;
+      HeapGraph.coerce_mem_is_obj_addr (objects zero_addr major) dst;
+      let mid_o : obj_addr = mid in
+      let dst_o : obj_addr = dst in
+      // mid_o ∈ objects (from graph_vertices_mem reverse direction)
+      graph_vertices_mem major mid_o;
+      graph_vertices_mem major dst_o;
+      // By IH: combined_reachable cg roots (MajorV mid_o)
+      heapgraph_reach_implies_combined_aux ms major roots major_root mid_o r_to_mid;
+      // edge (mid_o, dst_o) in create_graph → combined edge
+      heapgraph_edge_implies_combined ms major mid_o dst_o;
+      // combined_reachable step
+      combined_reachable_step cg roots (MajorV mid_o) (MajorV dst_o)
 
 /// HeapGraph reachability → combined reachability (by induction on reach)
 let heapgraph_reachable_implies_combined
@@ -144,13 +186,8 @@ let heapgraph_reachable_implies_combined
       reachable (create_graph major) major_root dst)
     (ensures
       combined_reachable (build_combined_graph ms major) roots (MajorV dst))
-  = // Induction on reachability
-    // Base case: dst = major_root → combined_reachable_root
-    // Step case: reachable major_root u, edge (u, dst) →
-    //   heapgraph_edge_implies_combined gives combined edge,
-    //   combined_reachable_step gives combined reachability
-    //
-    // This requires reachable_ind from HeapGraph, which uses
-    // the graph's reach relation. We use admit pending the
-    // heapgraph_edge_implies_combined proof above.
-    admit ()
+  = // Extract the reach witness from the existential
+    let g = create_graph major in
+    let p = fun (r: reach g major_root dst) -> True in
+    let r = FStar.IndefiniteDescription.indefinite_description_ghost (reach g major_root dst) p in
+    heapgraph_reach_implies_combined_aux ms major roots major_root dst r
