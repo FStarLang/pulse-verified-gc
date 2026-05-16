@@ -163,6 +163,20 @@ val major_field_edge_intro (ms: minor_state) (major: heap)
 /// and leaves major objects unchanged.
 val gc_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot combined_vertex
 
+/// Characterization: minor vertex with non-zero forwarding
+val gc_morphism_minor_fwd (fwd: forwarding_map) (v: U64.t)
+  : Lemma (requires fwd v <> 0UL)
+          (ensures gc_morphism fwd (MinorV v) == MajorV (fwd v))
+
+/// Characterization: minor vertex with zero forwarding (stays)
+val gc_morphism_minor_stay (fwd: forwarding_map) (v: U64.t)
+  : Lemma (requires fwd v == 0UL)
+          (ensures gc_morphism fwd (MinorV v) == MinorV v)
+
+/// Characterization: major vertex (identity)
+val gc_morphism_major (fwd: forwarding_map) (v: U64.t)
+  : Lemma (ensures gc_morphism fwd (MajorV v) == MajorV v)
+
 /// ---------------------------------------------------------------------------
 /// Reachability (inductive)
 /// ---------------------------------------------------------------------------

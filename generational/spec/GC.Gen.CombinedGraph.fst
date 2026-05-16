@@ -679,6 +679,20 @@ let gc_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot combined_verte
   match v with
   | MinorV a -> if fwd a <> 0UL then MajorV (fwd a) else MinorV a
   | MajorV a -> MajorV a
+
+let gc_morphism_minor_fwd (fwd: forwarding_map) (v: U64.t)
+  : Lemma (requires fwd v <> 0UL)
+          (ensures gc_morphism fwd (MinorV v) == MajorV (fwd v))
+  = ()
+
+let gc_morphism_minor_stay (fwd: forwarding_map) (v: U64.t)
+  : Lemma (requires fwd v == 0UL)
+          (ensures gc_morphism fwd (MinorV v) == MinorV v)
+  = ()
+
+let gc_morphism_major (fwd: forwarding_map) (v: U64.t)
+  : Lemma (ensures gc_morphism fwd (MajorV v) == MajorV v)
+  = ()
 #pop-options
 
 /// The prop-level predicate: exists a derivation
