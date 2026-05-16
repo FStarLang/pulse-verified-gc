@@ -10,6 +10,7 @@ MAKEFILE_DIR := $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 SNAPSHOT := $(MAKEFILE_DIR)../../snapshot
 
 CFLAGS  ?= -O2 -flto -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
+CFLAGS  += -include $(SNAPSHOT)/compat.h
 CFLAGS  += -I$(SNAPSHOT) -I$(SNAPSHOT)/internal \
            -I$(SNAPSHOT)/krmllib -I$(SNAPSHOT)/krmllib/krml -I$(SNAPSHOT)/krmllib/krml/internal
 # Allow access to OCaml runtime internals (for alloc_gen.c)

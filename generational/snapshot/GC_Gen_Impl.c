@@ -334,18 +334,32 @@ uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
   }
 }
 
-void minor_collect(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr)
+void
+minor_collect(
+  gen_heap_t gh,
+  uint64_t *roots,
+  size_t nroots,
+  uint64_t *fwd_arr,
+  uint64_t *queue
+)
 {
-  cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, roots, nroots);
+  cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
   update_all_objects(gh.major, fwd_arr);
   rewrite_roots_impl(roots, fwd_arr, nroots);
   minor_heap_reset(gh.minor);
 }
 
 uint64_t
-gen_gc(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr, gray_stack_rec st)
+gen_gc(
+  gen_heap_t gh,
+  uint64_t *roots,
+  size_t nroots,
+  uint64_t *fwd_arr,
+  uint64_t *queue,
+  gray_stack_rec st
+)
 {
-  minor_collect(gh, roots, nroots, fwd_arr);
+  minor_collect(gh, roots, nroots, fwd_arr, queue);
   uint64_t fp_val = *gh.fp_ref;
   uint64_t final_fp = collect(gh.major, st, fp_val);
   *gh.fp_ref = final_fp;
@@ -932,13 +946,12 @@ cheney_promote_phase(
   heap_t major,
   uint64_t *fp_ref,
   uint64_t *fwd_arr,
+  uint64_t *queue,
   uint64_t *roots,
   size_t nroots
 )
 {
-  KRML_CHECK_SIZE(sizeof (uint64_t), queue_size_sz);
-  uint64_t queue[queue_size_sz];
-  memset(queue, 0U, queue_size_sz * sizeof (uint64_t));
+  Pulse_Lib_Array_fill(queue_size_sz, queue, 0ULL, (void *)0U);
   size_t back = (size_t)0U;
   forward_roots(minor, major, fp_ref, fwd_arr, queue, &back, roots, nroots);
   scan_loop(minor, major, fp_ref, fwd_arr, queue, &back);

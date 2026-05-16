@@ -50,10 +50,24 @@ gen_heap_t;
 
 uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag);
 
-void minor_collect(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr);
+void
+minor_collect(
+  gen_heap_t gh,
+  uint64_t *roots,
+  size_t nroots,
+  uint64_t *fwd_arr,
+  uint64_t *queue
+);
 
 uint64_t
-gen_gc(gen_heap_t gh, uint64_t *roots, size_t nroots, uint64_t *fwd_arr, gray_stack_rec st);
+gen_gc(
+  gen_heap_t gh,
+  uint64_t *roots,
+  size_t nroots,
+  uint64_t *fwd_arr,
+  uint64_t *queue,
+  gray_stack_rec st
+);
 
 uint64_t minor_read(minor_heap_t mh, uint64_t addr);
 
@@ -112,6 +126,7 @@ cheney_promote_phase(
   heap_t major,
   uint64_t *fp_ref,
   uint64_t *fwd_arr,
+  uint64_t *queue,
   uint64_t *roots,
   size_t nroots
 );

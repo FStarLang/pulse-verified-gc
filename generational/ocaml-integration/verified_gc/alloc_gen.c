@@ -59,6 +59,7 @@ extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_a
 /* --- Globals --- */
 static gen_heap_t   gc_gen_heap;
 static uint64_t    *gc_fwd_arr;
+static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-allocated) */
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
 
@@ -156,6 +157,11 @@ static void ensure_heap(void) {
     gc_fwd_arr = (uint64_t *)calloc((size_t)queue_size_sz, sizeof(uint64_t));
     if (!gc_fwd_arr)
         caml_fatal_error("verified gen GC: cannot allocate fwd array");
+
+    /* --- BFS queue (heap-allocated to avoid stack overflow for large minor heaps) --- */
+    gc_queue = (uint64_t *)calloc((size_t)queue_size_sz, sizeof(uint64_t));
+    if (!gc_queue)
+        caml_fatal_error("verified gen GC: cannot allocate BFS queue");
 
     /* Register our minor heap with OCaml's domain state so that
      * Is_young() recognizes minor pointers.  Without this, the write
@@ -294,7 +300,7 @@ static int do_minor_gc_core(void) {
 
     /* 5a. Cheney BFS: promote reachable minor objects to major heap */
     cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
-                         gc_gen_heap.fp_ref, gc_fwd_arr,
+                         gc_gen_heap.fp_ref, gc_fwd_arr, gc_queue,
                          root_values, (size_t)root_count);
 
     /* 5b. Infix forwarding fixup */

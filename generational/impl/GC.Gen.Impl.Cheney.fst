@@ -18,6 +18,7 @@ module GC.Gen.Impl.Cheney
 
 open Pulse.Lib.Pervasives
 open Pulse.Lib.Array.PtsTo
+module PArr = Pulse.Lib.Array
 module R = Pulse.Lib.Reference
 module GR = Pulse.Lib.GhostReference
 module SZ = FStar.SizeT
@@ -577,11 +578,13 @@ fn scan_loop
 fn cheney_promote_phase
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
+  (queue: larray U64.t queue_size)
   (roots: array U64.t) (nroots: SZ.t)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
            R.pts_to fp_ref 'fp **
            pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
            pts_to roots 'rs **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap 'ms /\
@@ -595,11 +598,12 @@ fn cheney_promote_phase
                  minor_wf minor_st /\
                   minor_guards_complete minor_st /\
                  Seq.length (SF.objects zero_addr 'ms) > 0)
-  ensures exists* md2 mb2 ms2 fp2 farr2 rs2.
+  ensures exists* md2 mb2 ms2 fp2 farr2 rs2 qv2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
     pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
     pts_to roots rs2 **
     pure (let minor_st : minor_state = { data = 'md; bump = 'mb } in
           let prom = CheneySpec.cheney_promote minor_st 'ms 'fp 'rs in
@@ -616,8 +620,8 @@ fn cheney_promote_phase
           Seq.length farr2 == fwd_array_size /\
           rs2 == 'rs)
 {
-  // Allocate BFS queue on the stack
-  let mut queue = [| 0UL; queue_size_sz |];
+  // Zero the BFS queue (heap-allocated, passed from caller)
+  PArr.fill queue_size_sz queue 0UL;
   let mut back = 0sz;
 
   // Help SMT: well_formed_heap implies well_formed_heap_part1

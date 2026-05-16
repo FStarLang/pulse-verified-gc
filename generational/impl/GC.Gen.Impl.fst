@@ -223,9 +223,11 @@ let cheney_collect_spec_unfold (minor: minor_state) (major: heap_state) (fp: U64
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
                  (fwd_arr: array U64.t)
+                 (queue: larray U64.t Cheney.queue_size)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
            pure (SpecFields.well_formed_heap 's /\
                  AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
                  AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
@@ -237,10 +239,11 @@ fn minor_collect (gh: gen_heap_t)
                  minor_wf ({ data = 'd; bump = 'b }) /\
                   minor_guards_complete ({ data = 'd; bump = 'b }) /\
                  Seq.length (SpecFields.objects zero_addr 's) > 0)
-  ensures exists* d2 b2 s2 fp2 rs2 farr2.
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
@@ -260,7 +263,7 @@ fn minor_collect (gh: gen_heap_t)
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
   // Postcondition: ms_post == (cheney_promote ...).major_final, etc.
-  cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr roots nroots;
+  cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr queue roots nroots;
 
   // Extract ghost state from promote phase
   with ms_post. assert (is_heap gh.major ms_post);
@@ -319,10 +322,12 @@ fn minor_collect (gh: gen_heap_t)
 fn gen_gc (gh: gen_heap_t)
           (roots: array U64.t) (nroots: SZ.t)
           (fwd_arr: array U64.t)
+          (queue: larray U64.t Cheney.queue_size)
           (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
            is_gray_stack st 'st **
            pure (
              SpecFields.well_formed_heap 's /\
@@ -341,10 +346,11 @@ fn gen_gc (gh: gen_heap_t)
                           ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
               MajorGC.gc_precondition res.mc_major 'st res.mc_fp (stack_capacity st)))
   returns final_fp: U64.t
-  ensures exists* d2 b2 s2 rs2 farr2 st2.
+  ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
     is_gen_heap gh d2 b2 s2 final_fp **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
     is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
@@ -362,12 +368,13 @@ fn gen_gc (gh: gen_heap_t)
       AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword))
 {
   // Phase 1: Minor collection (Cheney BFS promotion)
-  minor_collect gh roots nroots fwd_arr;
+  minor_collect gh roots nroots fwd_arr queue;
 
-  with d2 b2 s_mid fp_mid rs_mid farr_mid. assert (
+  with d2 b2 s_mid fp_mid rs_mid farr_mid _qv_mid. assert (
     is_gen_heap gh d2 b2 s_mid fp_mid **
     pts_to roots rs_mid **
-    pts_to fwd_arr farr_mid);
+    pts_to fwd_arr farr_mid **
+    pts_to queue _qv_mid);
 
   // Phase 2: Unfold gen heap to access major heap separately
   unfold is_gen_heap;

@@ -33,6 +33,7 @@ module PromoteSpec = GC.Gen.Promote
 module MajorGC = GC.Impl
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
+module Cheney = GC.Gen.Impl.Cheney
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -100,9 +101,11 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
                  (fwd_arr: array U64.t)
+                 (queue: larray U64.t Cheney.queue_size)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
            pure (
              // Major heap has valid OCaml object layout: every object's
              // header+body fits in the byte array, pointer fields target
@@ -155,10 +158,11 @@ fn minor_collect (gh: gen_heap_t)
              // Major heap contains at least one object (the initial
              // free-list sentinel; needed for free-list operations)
              Seq.length (SpecFields.objects zero_addr 's) > 0)
-  ensures exists* d2 b2 s2 fp2 rs2 farr2.
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
@@ -225,10 +229,12 @@ fn minor_collect (gh: gen_heap_t)
 fn gen_gc (gh: gen_heap_t)
           (roots: array U64.t) (nroots: SZ.t)
           (fwd_arr: array U64.t)
+          (queue: larray U64.t Cheney.queue_size)
           (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
            is_gray_stack st 'st **
            pure (
              // ============================
@@ -297,10 +303,11 @@ fn gen_gc (gh: gen_heap_t)
                           ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
               MajorGC.gc_precondition res.mc_major 'st res.mc_fp (stack_capacity st)))
   returns final_fp: U64.t
-  ensures exists* d2 b2 s2 rs2 farr2 st2.
+  ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
     is_gen_heap gh d2 b2 s2 final_fp **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
     is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
