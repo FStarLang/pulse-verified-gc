@@ -79,6 +79,12 @@ static size_t      root_count;
 static uint64_t   bytes_promoted_since_major = 0;
 static int        in_full_gc = 0;  /* re-entrancy guard */
 
+/* Fast-path tracking: when only non-pointer objects (tag >= no_scan_tag) are
+ * allocated in the minor heap, we can skip translate_minor_fields,
+ * find_infix_parents, synthesize_infix_forwarding, and the field-rewrite
+ * pass since no object fields contain heap pointers. */
+static int        minor_has_pointer_objects = 0;
+
 /* --- Heap initialization --- */
 
 static void ensure_heap(void) {
@@ -279,7 +285,7 @@ static int do_minor_gc_core(void) {
 
     /* 4.1. Infix closure fixup: find closures with embedded infix headers
      * and add their parent addresses as additional roots for Cheney. */
-    {
+    if (minor_has_pointer_objects) {
         size_t infix_parents_added = find_infix_parents(
             gc_gen_heap.minor, root_values, root_count, MAX_ROOTS);
         root_count += infix_parents_added;
@@ -288,9 +294,11 @@ static int do_minor_gc_core(void) {
             root_locs[k] = NULL;
     }
 
-    /* 4.5. Translate minor heap fields: absolute → offset. */
-    translate_minor_fields(gc_gen_heap.minor,
-                           (uint64_t)(uintptr_t)minor_base);
+    /* 4.5. Translate minor heap fields: absolute → offset.
+     * Skip when all minor objects are non-pointer (tag >= no_scan_tag). */
+    if (minor_has_pointer_objects)
+        translate_minor_fields(gc_gen_heap.minor,
+                               (uint64_t)(uintptr_t)minor_base);
 
     /* 4.6. We will update promoted objects individually via fwd_arr walk,
      * and old inter-gen pointers via ref_table (step 5.5).  No need for
@@ -303,14 +311,17 @@ static int do_minor_gc_core(void) {
                          gc_gen_heap.fp_ref, gc_fwd_arr, gc_queue,
                          root_values, (size_t)root_count);
 
-    /* 5b. Infix forwarding fixup */
-    synthesize_infix_forwarding(gc_gen_heap.minor, gc_fwd_arr);
+    /* 5b. Infix forwarding fixup — only needed for closure objects */
+    if (minor_has_pointer_objects)
+        synthesize_infix_forwarding(gc_gen_heap.minor, gc_fwd_arr);
 
     /* 5c. Rewrite fields of PROMOTED objects only.
      * Walk fwd_arr: any non-zero entry maps minor offset → major address.
      * For each promoted object, read its header to get wosize, then call
-     * update_one_object to replace minor offsets in its fields. */
-    {
+     * update_one_object to replace minor offsets in its fields.
+     * Skip when no pointer-bearing objects were allocated (tag >= no_scan_tag
+     * means no fields contain pointers). */
+    if (minor_has_pointer_objects) {
         size_t fwd_slots = (size_t)(minor_heap_size_u64 / 8);
         for (size_t i = 0; i < fwd_slots; i++) {
             uint64_t major_addr = gc_fwd_arr[i];
@@ -341,6 +352,7 @@ static int do_minor_gc_core(void) {
 
     /* 5f. Reset minor heap */
     minor_heap_reset(gc_gen_heap.minor);
+    minor_has_pointer_objects = 0;  /* reset for next cycle */
 
     /* 5.5. Ref_table-based pointer rewriting */
     {
@@ -526,6 +538,10 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         caml_fatal_error("verified gen GC: out of memory after collection");
         return NULL;  /* unreachable */
     }
+
+    /* Track if any pointer-bearing objects are in the minor heap */
+    if (result < minor_heap_size_u64 && tag < 251)
+        minor_has_pointer_objects = 1;
 
     /* gen_alloc returns the object address (first field = header + 8).
      * OCaml's Alloc_small_aux expects an HP (header pointer).

@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 /* --- Heap configuration (GC.Spec.ZeroAddr externs) --- */
 
@@ -30,10 +31,14 @@ bool FStar_UInt64_ne(uint64_t a, uint64_t b) { return a != b; }
 /* --- Pulse library functions --- */
 
 /* Pulse.Lib.Array.fill — fill an array with a constant value.
- * After ghost erasure: fill(n, arr, val, <erased>). */
+ * After ghost erasure: fill(n, arr, val, <erased>).
+ * Optimized: use memset for zero fill (common case). */
 void Pulse_Lib_Array_fill(size_t n, uint64_t *arr, uint64_t val, void *ghost) {
   (void)ghost;
-  for (size_t i = 0; i < n; i++) arr[i] = val;
+  if (val == 0)
+    memset(arr, 0, n * sizeof(uint64_t));
+  else
+    for (size_t i = 0; i < n; i++) arr[i] = val;
 }
 
 /* --- Word-level heap read/write (GC.Impl.ArrayWord assumed vals) ---
