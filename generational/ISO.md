@@ -358,6 +358,39 @@ This omits injectivity and the backward direction. It's approximately half
 the proof effort (~300-500 lines) and captures the essential safety property:
 **no reachable object is lost, and the pointer structure is faithfully preserved**.
 
+---
+
+## 8. Implementation Progress
+
+### Phase 1: Infrastructure
+
+| Task | Status | File | Notes |
+|------|--------|------|-------|
+| Define `combined_vertex` (tagged MinorV/MajorV) | ✅ Done | CombinedGraph.fsti | Handles overlapping addr spaces |
+| Define `combined_graph` record type | ✅ Done | CombinedGraph.fsti | `cg_vertices + cg_edges` |
+| Field classification (minor + major) | ✅ Done | CombinedGraph.fst | Both check Seq.mem for destinations |
+| Edge construction from all objects | ✅ Done | CombinedGraph.fst | `all_minor_edges`, `all_major_edges` |
+| Tag membership lemmas | ✅ Done | CombinedGraph.fst | Using `Seq.mem_cons` |
+| Vertex characterization (minor/major) | ✅ Done | CombinedGraph.fst | `minor_vertex_char`, `major_vertex_char` |
+| Well-formedness proof | ✅ Done | CombinedGraph.fst | 0 admits, all edge endpoints proven |
+| Inductive reachability type | ✅ Done | CombinedGraph.fst | `combined_reach` with CR_root/CR_step |
+| Reachability intro/elim lemmas | ✅ Done | CombinedGraph.fst | `combined_reachable_root/step/ind` |
+| Root classification | ✅ Done | CombinedGraph.fst | `classify_roots_impl` |
+| Reachability bridge (combined↔live_set) | TODO | — | Next step |
+
+**Verification stats**: 0 admits, 3.5s verification time, z3rlimit ≤ 20.
+
+### Commits
+- `a02e9f8` — Fixed zero_addr abstraction (gen2 compatibility)
+- `da68249` — CombinedGraph: fully verified (0 admits, 3.5s)
+
+### Next steps
+1. **Reachability bridge**: Prove `minor_reachable_implies_combined` and
+   `major_reachable_implies_combined` — showing that objects reachable in
+   the individual heaps are also reachable in the combined graph.
+2. **Forward morphism** (Phase 2): Vertex survival through GC.
+3. **Edge preservation** (Phase 3): The hard part — 4 cases.
+
 The full isomorphism additionally guarantees **no spurious objects** appear in
 the post-GC state (every post-GC reachable object came from a pre-GC reachable
 object). This is also valuable but somewhat less critical.
