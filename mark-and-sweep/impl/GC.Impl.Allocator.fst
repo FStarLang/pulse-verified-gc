@@ -94,7 +94,7 @@ let hd_address_eq (obj: obj_addr)
 /// ---------------------------------------------------------------------------
 
 let is_valid_fp (v: U64.t) : bool =
-  U64.gte v mword &&
+  U64.gte v (U64.add zero_addr mword) &&
   U64.lt v heap_size_u64 &&
   (U64.rem v mword = 0UL)
 

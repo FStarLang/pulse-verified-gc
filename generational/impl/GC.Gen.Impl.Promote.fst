@@ -53,18 +53,8 @@ fn read_minor_wosize (minor: minor_heap_t) (obj: U64.t)
 module PromoteSpec = GC.Gen.Promote
 module WBL = GC.Gen.WriteBodyLemmas
 
-private let u64_gt_as_nat_gt (x: U64.t) (y: U64.t)
-  : Lemma (requires U64.gt x y == true)
-          (ensures U64.v x > U64.v y)
-  = ()
-
-private let u64_not_gt_as_nat_le (x: U64.t) (y: U64.t)
-  : Lemma (requires U64.gt x y == false)
-          (ensures U64.v x <= U64.v y)
-  = ()
-
 inline_for_extraction
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
                     (src_obj: U64.t) (dst_obj: U64.t)
                     (wosize: U64.t)
@@ -103,12 +93,6 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
     // Source: minor_obj + iv * 8
     let src_off = U64.mul iv 8UL;
     let src_addr = U64.add src_obj src_off;
-    // NL arithmetic: iv < wosize ==> src_obj + iv*8 + 8 <= minor_heap_size
-    assert (pure (U64.v iv < U64.v wosize /\
-                  U64.v src_addr == U64.v src_obj + U64.v iv * 8 /\
-                  U64.v src_obj + (U64.v iv + 1) * 8 <= U64.v src_obj + U64.v wosize * 8 /\
-                  U64.v src_addr + 8 <= minor_heap_size /\
-                  U64.v src_addr % 8 == 0));
     let field_val = minor_read minor src_addr;
     // Dest: major_obj + iv * 8
     let dst_off = U64.mul iv 8UL;
@@ -125,65 +109,41 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 }
 #pop-options
 
-private let promote_leftover_addr_valid
-  (obj: obj_addr) (wosize: U64.t) (wz_read: U64.t) (g: heap)
-  : Lemma (requires
-             U64.v (SpecObj.wosize_of_object obj g) == U64.v wz_read /\
-             U64.v obj + U64.v (SpecObj.wosize_of_object obj g) * 8 <= heap_size /\
-             U64.v wz_read > U64.v wosize)
-          (ensures
-             U64.v (U64.add obj (U64.mul wosize 8UL)) == U64.v obj + U64.v wosize * 8 /\
-             U64.v (U64.add obj (U64.mul wosize 8UL)) + 8 <= heap_size /\
-             U64.v (U64.add obj (U64.mul wosize 8UL)) % 8 == 0)
-  = let extra_addr = U64.add obj (U64.mul wosize 8UL) in
-    assert (U64.v extra_addr == U64.v obj + U64.v wosize * 8);
-    FStar.Math.Lemmas.lemma_mult_le_right 8 (U64.v wosize + 1) (U64.v wz_read);
-    FStar.Math.Lemmas.distributivity_add_left (U64.v wosize) 1 8;
-    assert (U64.v extra_addr + 8 == U64.v obj + (U64.v wosize + 1) * 8);
-    assert (U64.v extra_addr + 8 <= U64.v obj + U64.v wz_read * 8);
-    assert (U64.v extra_addr + 8 <= heap_size);
-    FStar.Math.Lemmas.lemma_mod_plus (U64.v obj) (U64.v wosize) 8;
-    assert (U64.v extra_addr % 8 == 0)
-
+/// Zero the padding field if the allocator gave extra space (leftover=1 case).
+/// After this, the ghost state matches zero_promote_padding.
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0 --split_queries always"
 inline_for_extraction
-fn clean_promote_leftover_write_impl
-  (major: heap_t) (obj: obj_addr) (wosize: U64.t) (wz_read: U64.t)
+fn zero_padding_step (major: heap_t) (dst_obj: U64.t) (wosize: U64.t)
   requires is_heap major 'ms **
-           pure (wz_read == SpecObj.getWosize (SpecHeap.read_word 'ms (SpecHeap.hd_address obj)) /\
-                 U64.v obj + U64.v (SpecObj.wosize_of_object obj 'ms) * 8 <= heap_size /\
-                 U64.gt wz_read wosize == true /\
-                 U64.v wosize > 0)
-  ensures is_heap major (PromoteSpec.clean_promote_leftover 'ms (obj <: U64.t) (U64.v wosize))
+           pure (U64.v dst_obj >= U64.v mword /\
+                 U64.v dst_obj < heap_size /\
+                 U64.v dst_obj % U64.v mword == 0 /\
+                 U64.v wosize > 0 /\
+                 SF.well_formed_heap_part1 'ms /\
+                 Seq.mem ((dst_obj <: obj_addr)) (SF.objects zero_addr 'ms) /\
+                 U64.v dst_obj + U64.v wosize * 8 <= heap_size)
+  ensures exists* ms'. is_heap major ms' **
+    pure (ms' == PromoteSpec.zero_promote_padding 'ms (dst_obj <: U64.t) (U64.v wosize))
 {
-  u64_gt_as_nat_gt wz_read wosize;
-  assert (pure (U64.v wz_read > U64.v wosize));
-  SpecObj.wosize_of_object_spec obj 'ms;
-  assert (pure (U64.v (SpecObj.wosize_of_object obj 'ms) == U64.v wz_read));
-  promote_leftover_addr_valid obj wosize wz_read 'ms;
-  let extra_addr = U64.add obj (U64.mul wosize 8UL);
-  assert (pure (U64.v extra_addr + 8 <= heap_size));
-  write_word major (extra_addr <: hp_addr) 0UL;
-  PromoteSpec.clean_promote_leftover_is_write 'ms obj (U64.v wosize);
-  rewrite (is_heap major (SpecHeap.write_word 'ms (extra_addr <: hp_addr) 0UL))
-       as (is_heap major (PromoteSpec.clean_promote_leftover 'ms (obj <: U64.t) (U64.v wosize)))
+  let hdr_addr = U64.sub dst_obj 8UL;
+  SpecHeap.hd_address_spec (dst_obj <: obj_addr);
+  let hdr = read_word major hdr_addr;
+  let actual_wz = SpecObj.getWosize hdr;
+  SpecObj.wosize_of_object_spec (dst_obj <: obj_addr) 'ms;
+  if U64.gt actual_wz wosize {
+    // actual_wz > wosize means pad_addr + 8 <= heap_size by wfh_part1 bounds
+    SF.wfh_part1_obj_bound 'ms (dst_obj <: obj_addr);
+    assert (pure (U64.v actual_wz > U64.v wosize));
+    assert (pure (U64.v dst_obj + U64.v actual_wz * 8 <= heap_size));
+    assert (pure (U64.v dst_obj + U64.v wosize * 8 + 8 <= heap_size));
+    let pad_addr = U64.add dst_obj (U64.mul wosize 8UL);
+    write_word major pad_addr 0UL;
+    PromoteSpec.zero_promote_padding_write 'ms (dst_obj <: obj_addr) (U64.v wosize)
+  } else {
+    PromoteSpec.zero_promote_padding_noop 'ms (dst_obj <: obj_addr) (U64.v wosize)
+  }
 }
-
-inline_for_extraction
-fn clean_promote_leftover_noop_impl
-  (major: heap_t) (obj: obj_addr) (wosize: U64.t) (wz_read: U64.t)
-  requires is_heap major 'ms **
-           pure (wz_read == SpecObj.getWosize (SpecHeap.read_word 'ms (SpecHeap.hd_address obj)) /\
-                 U64.gt wz_read wosize == false /\
-                 U64.v wosize > 0)
-  ensures is_heap major (PromoteSpec.clean_promote_leftover 'ms (obj <: U64.t) (U64.v wosize))
-{
-  u64_not_gt_as_nat_le wz_read wosize;
-  assert (pure (U64.v wz_read <= U64.v wosize));
-  SpecObj.wosize_of_object_spec obj 'ms;
-  PromoteSpec.clean_promote_leftover_noop 'ms obj (U64.v wosize);
-  rewrite (is_heap major 'ms)
-       as (is_heap major (PromoteSpec.clean_promote_leftover 'ms (obj <: U64.t) (U64.v wosize)))
-}
+#pop-options
 
 /// Promote one minor-heap object to the major heap.
 /// Returns the new address in major heap (0UL on OOM).
@@ -265,56 +225,42 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
       copy_fields_loop minor major obj new_obj wosize;
       // Bind the existential witnesses from copy_fields_loop
       with md_c mb_c ms_c. _;
-      // copy_fields preserves object membership and header bounds for the promoted block
-      WBL.copy_fields_preserves_objects_aux
-        {data='md; bump='mb}
-        (GC.Spec.Allocator.alloc_spec 'ms 'fp (U64.v wosize)).heap_out
-        obj (new_obj <: obj_addr) 0 (U64.v wosize);
-      WBL.copy_fields_preserves_wfh_part1
-        {data='md; bump='mb}
-        (GC.Spec.Allocator.alloc_spec 'ms 'fp (U64.v wosize)).heap_out
+      // Establish wfh_part1 and membership in copied heap for zero_padding_step
+      AllocLemmas.alloc_spec_preserves_wfh_part1 'ms fp (U64.v wosize);
+      WBL.copy_fields_preserves_wfh_part1 {data='md; bump='mb}
+        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
         obj (new_obj <: obj_addr) (U64.v wosize);
-      // Read promoted major header to inspect the allocated block size
-      let major_hdr_addr = U64.sub new_obj 8UL;
-      SpecHeap.hd_address_spec (new_obj <: obj_addr);
-      assert (pure (U64.v major_hdr_addr == U64.v (SpecHeap.hd_address (new_obj <: obj_addr))));
-      assert (pure (major_hdr_addr == SpecHeap.hd_address (new_obj <: obj_addr)));
-      let major_hdr = read_word major major_hdr_addr;
-      let wz_read = SpecObj.getWosize major_hdr;
-      assert (pure (major_hdr == SpecHeap.read_word ms_c major_hdr_addr));
-      assert (pure (wz_read == SpecObj.getWosize (SpecHeap.read_word ms_c (SpecHeap.hd_address (new_obj <: obj_addr)))));
-      SF.wfh_part1_obj_bound ms_c (new_obj <: obj_addr);
-      // Zero the allocator leftover field when the allocated block is larger than requested
-      if U64.gt wz_read wosize {
-        clean_promote_leftover_write_impl major (new_obj <: obj_addr) wosize wz_read
-      } else {
-        clean_promote_leftover_noop_impl major (new_obj <: obj_addr) wosize wz_read
-      };
+      WBL.copy_fields_preserves_objects_aux {data='md; bump='mb}
+        (GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize)).heap_out
+        obj (new_obj <: obj_addr) 0 (U64.v wosize);
+      // --- Zero padding field if allocator gave extra space (leftover=1 case) ---
+      zero_padding_step major new_obj wosize;
+      with ms_p. _;
       // --- Retag: copy the tag from minor header to the promoted major header ---
+      // Read minor header to extract the original tag
       let minor_hdr = minor_read minor (U64.sub obj 8UL);
       let tag = Obj.getTag minor_hdr;
+      // Connect impl tag to spec minor_tag and establish bound
       minor_tag_bound {data='md; bump='mb} obj;
       assert (pure (U64.v tag == minor_tag {data='md; bump='mb} obj));
       assert (pure (minor_tag {data='md; bump='mb} obj < 256));
-      let major_hdr_cleaned = read_word major major_hdr_addr;
-      let wz_cleaned = SpecObj.getWosize major_hdr_cleaned;
-      let new_hdr = Obj.makeHeader wz_cleaned Header.White tag;
-      Obj.makeHeader_eq_pack_header wz_cleaned Header.White tag;
-      SpecObj.makeHeader_is_pack_header64 wz_cleaned Header.White tag;
-      assert (pure (new_hdr == SpecObj.makeHeader wz_cleaned Header.White tag));
-      PromoteSpec.set_promoted_tag_unfold
-        (PromoteSpec.clean_promote_leftover ms_c (new_obj <: U64.t) (U64.v wosize))
-        (new_obj <: obj_addr)
-        (minor_tag {data='md; bump='mb} obj);
+      // Read promoted major header (from padded state) and rebuild with correct tag
+      let major_hdr_addr = U64.sub new_obj 8UL;
+      SpecHeap.hd_address_spec (new_obj <: obj_addr);
+      assert (pure (major_hdr_addr == SpecHeap.hd_address (new_obj <: obj_addr)));
+      let major_hdr = read_word major major_hdr_addr;
+      let wz_read = SpecObj.getWosize major_hdr;
+      let new_hdr = Obj.makeHeader wz_read Header.White tag;
+      // Bridge: Obj.makeHeader == SpecObj.makeHeader (both compute pack_header)
+      Obj.makeHeader_eq_pack_header wz_read Header.White tag;
+      SpecObj.makeHeader_is_pack_header64 wz_read Header.White tag;
+      assert (pure (new_hdr == SpecObj.makeHeader wz_read Header.White tag));
+      // Unfold set_promoted_tag so SMT sees it equals our write_word on padded state
+      PromoteSpec.set_promoted_tag_unfold ms_p (new_obj <: obj_addr) (minor_tag {data='md; bump='mb} obj);
+      // Assert the key equality: our write matches set_promoted_tag
       assert (pure (
-        SpecHeap.write_word
-          (PromoteSpec.clean_promote_leftover ms_c (new_obj <: U64.t) (U64.v wosize))
-          major_hdr_addr
-          new_hdr ==
-        PromoteSpec.set_promoted_tag
-          (PromoteSpec.clean_promote_leftover ms_c (new_obj <: U64.t) (U64.v wosize))
-          (new_obj <: U64.t)
-          (minor_tag {data='md; bump='mb} obj)));
+        SpecHeap.write_word ms_p major_hdr_addr new_hdr ==
+        PromoteSpec.set_promoted_tag ms_p (new_obj <: U64.t) (minor_tag {data='md; bump='mb} obj)));
       write_word major major_hdr_addr new_hdr;
       // Ghost: prove spec refinement + allocator invariant preservation
       PromoteSpec.promote_object_success {data='md; bump='mb} 'ms obj 'fp (U64.v wosize);

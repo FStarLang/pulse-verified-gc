@@ -162,8 +162,8 @@ let sweep_post_elim_objects_bridge (g_pre g_post: GC.Spec.Base.heap) (new_fp: U6
 /// Bridge: obj_in_objects for initial head object (avoids heap subtyping in Pulse)
 let obj_in_objects_head_bridge (g: GC.Spec.Base.heap)
   : Lemma (requires Seq.length (SpecFields.objects zero_addr g) > 0)
-          (ensures 8 < heap_size ==> SI.obj_in_objects (U64.uint_to_t 8) g)
-  = if heap_size > 8 then SI.obj_in_objects_head g
+          (ensures SI.obj_in_objects (GC.Spec.Heap.f_address zero_addr) g)
+  = SI.obj_in_objects_head g
 
 /// ---------------------------------------------------------------------------
 /// Density / Objects Nonempty Bridge Lemmas
@@ -189,7 +189,7 @@ let density_next_bridge (h_addr: hp_addr) (g_init g_post: GC.Spec.Base.heap) (wz
               SI.obj_in_objects (U64.uint_to_t (next_nat + 8)) g_post /\
               Seq.length (SpecFields.objects (U64.uint_to_t next_nat) g_post) > 0))
   = let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
-    // 1. From density of g_init: obj_in_objects (next + 8) g_init and mem in objects 0UL g_init
+    // 1. From density of g_init: obj_in_objects (next + 8) g_init and mem in objects zero_addr g_init
     SI.objects_dense_obj_in h_addr g_init;
     // 2. Transfer obj_in_objects from g_init to g_post via objects equality
     SI.obj_in_objects_transfer (U64.uint_to_t (next_nat + 8)) g_init g_post;
@@ -476,7 +476,7 @@ let is_black_bridge (g: heap_state) (f_addr: obj_addr) (h_addr: hp_addr) (hdr: U
 
 /// Combined white-case preservation: writing to field 1 preserves wfh + objects.
 /// Uses h_addr (outer scope) not field1_addr in ensures.
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --split_queries always"
 let sweep_white_write_preserves (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecFields.well_formed_heap g /\

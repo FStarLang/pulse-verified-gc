@@ -104,7 +104,7 @@ private let rec objects_strictly_monotone (g: heap) (i j: nat)
     (ensures U64.v (Seq.index (objects zero_addr g) i) < U64.v (Seq.index (objects zero_addr g) j))
     (decreases j - i) =
   if j = i + 1 then
-    objects_monotone_adjacent g 0UL i
+    objects_monotone_adjacent g zero_addr i
   else begin
     objects_strictly_monotone g i (j - 1);
     objects_strictly_monotone g (j - 1) j
@@ -183,7 +183,7 @@ let rec update_all_objects_aux_after_preserves_field
       hd_address_spec other;
       // obj + j*8 < obj + wz_obj*8 < other (by objects_separated, since obj < other and both in objs)
       let wz_obj = U64.v (wosize_of_object obj major) in
-      objects_separated 0UL major obj other;
+      objects_separated zero_addr major obj other;
       assert (U64.v obj + (wz_obj + 1) * 8 <= U64.v other);
       assert (U64.v obj + j * 8 < U64.v other);
       let field_addr : hp_addr = U64.uint_to_t (U64.v obj + j * 8) in
@@ -302,7 +302,7 @@ let rec update_all_objects_aux_field_effect
       hd_address_spec other;
       // other's body is [other, other + wz_other*8), and by objects_separated,
       // other + (wz_other+1)*8 <= obj, so obj + j*8 >= obj > other + wz_other*8
-      objects_separated 0UL major other obj;
+      objects_separated zero_addr major other obj;
       let field_addr : hp_addr = U64.uint_to_t (U64.v obj + j * 8) in
       assert (U64.v field_addr >= U64.v other + wz_other * 8);
       assert (forall (k:nat). k < wz_other ==>

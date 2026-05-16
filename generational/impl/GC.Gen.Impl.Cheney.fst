@@ -594,7 +594,7 @@ fn cheney_promote_phase
                  SZ.v nroots == Seq.length 'rs /\
                  minor_wf minor_st /\
                   minor_guards_complete minor_st /\
-                 Seq.length (SF.objects 0UL 'ms) > 0)
+                 Seq.length (SF.objects zero_addr 'ms) > 0)
   ensures exists* md2 mb2 ms2 fp2 farr2 rs2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
@@ -612,7 +612,7 @@ fn cheney_promote_phase
           AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
           PromoteSpec.heap_objects_dense ms2 /\
           PromoteSpec.chain_objects_blue ms2 fp2 /\
-          Seq.length (SF.objects 0UL ms2) > 0 /\
+          Seq.length (SF.objects zero_addr ms2) > 0 /\
           Seq.length farr2 == fwd_array_size /\
           rs2 == 'rs)
 {

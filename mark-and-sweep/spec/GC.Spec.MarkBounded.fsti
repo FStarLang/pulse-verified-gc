@@ -47,7 +47,7 @@ let rec count_non_black_in (g: heap) (objs: seq obj_addr)
       else rest + 1
 
 let count_non_black (g: heap) : GTot nat =
-  count_non_black_in g (objects 0UL g)
+  count_non_black_in g (objects zero_addr g)
 
 /// ---------------------------------------------------------------------------
 /// Push children with bounded stack capacity
@@ -151,7 +151,7 @@ let rec mark_bounded (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : GTot heap (decreases fuel)
   = if fuel = 0 then g
     else
-      let st = rescan_heap g (objects 0UL g) Seq.empty cap in
+      let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
       if Seq.length st = 0 then g
       else
         let inner_fuel = count_non_black g in
@@ -178,7 +178,7 @@ val push_children_bounded_preserves_bsp :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
   Lemma (requires well_formed_heap g /\ is_black obj g /\
-                  Seq.mem obj (objects 0UL g) /\
+                  Seq.mem obj (objects zero_addr g) /\
                   bounded_stack_props g st /\
                   ~(Seq.mem obj st) /\
                   U64.v ws <= U64.v (wosize_of_object obj g) /\
@@ -192,25 +192,25 @@ val bounded_stack_head_is_gray (g: heap) (st: seq obj_addr)
   : Lemma (requires bounded_stack_props g st /\ Seq.length st > 0)
           (ensures (let obj = Seq.head st in
                     is_gray obj g /\
-                    Seq.mem obj (objects 0UL g)))
+                    Seq.mem obj (objects zero_addr g)))
 
 val mark_step_bounded_preserves_bsp
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                  Seq.length (objects 0UL g) > 0 /\ SweepInv.heap_objects_dense g)
+                  Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g)
         (ensures (let (g', st') = mark_step_bounded g st cap in
                   well_formed_heap g' /\ bounded_stack_props g' st'))
 
 val push_children_bounded_preserves_objects :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
-  Lemma (ensures objects 0UL (fst (push_children_bounded g st obj i ws cap)) == objects 0UL g)
+  Lemma (ensures objects zero_addr (fst (push_children_bounded g st obj i ws cap)) == objects zero_addr g)
         (decreases (U64.v ws - U64.v i))
 
 val mark_step_bounded_preserves_objects
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st)
-        (ensures objects 0UL (fst (mark_step_bounded g st cap)) == objects 0UL g)
+        (ensures objects zero_addr (fst (mark_step_bounded g st cap)) == objects zero_addr g)
 
 val push_children_bounded_preserves_density :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
@@ -261,24 +261,24 @@ val push_children_bounded_count_non_black :
   (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
   Lemma (ensures (let (g', _) = push_children_bounded g st obj i ws cap in
-                  count_non_black_in g' (objects 0UL g) == count_non_black_in g (objects 0UL g)))
+                  count_non_black_in g' (objects zero_addr g) == count_non_black_in g (objects zero_addr g)))
         (decreases (U64.v ws - U64.v i))
 
 val mark_step_bounded_decreases_non_black
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                  Seq.length (objects 0UL g) > 0 /\ SweepInv.heap_objects_dense g)
+                  Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g)
         (ensures count_non_black (fst (mark_step_bounded g st cap)) < count_non_black g)
 
 val cons_gray_preserves_bsp (g: heap) (obj: obj_addr) (st: seq obj_addr)
   : Lemma (requires bounded_stack_props g st /\ is_gray obj g /\
-                   Seq.mem obj (objects 0UL g) /\ ~(Seq.mem obj st))
+                   Seq.mem obj (objects zero_addr g) /\ ~(Seq.mem obj st))
           (ensures bounded_stack_props g (Seq.cons obj st))
 
 val rescan_heap_bsp_gen
   (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
   : Lemma (requires bounded_stack_props g st /\
-                   (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects 0UL g)))
+                   (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects zero_addr g)))
           (ensures bounded_stack_props g (rescan_heap g objs st cap))
           (decreases Seq.length objs)
 
@@ -287,7 +287,7 @@ val empty_bounded_stack_props (g: heap)
 
 val rescan_heap_bounded_stack_props
   (g: heap) (objs: seq obj_addr) (cap: nat)
-  : Lemma (requires (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects 0UL g)))
+  : Lemma (requires (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects zero_addr g)))
           (ensures bounded_stack_props g (rescan_heap g objs Seq.empty cap))
 
 val rescan_heap_monotone
@@ -312,19 +312,19 @@ val rescan_complete_gen
 val rescan_complete
   (g: heap) (cap: nat)
   : Lemma (requires cap > 0)
-          (ensures (let st = rescan_heap g (objects 0UL g) Seq.empty cap in
+          (ensures (let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
                   Seq.length st = 0 ==>
-                  (forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))))
+                  (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g))))
 
 val mark_inner_loop_preserves_inv
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    Seq.length st <= cap /\ cap > 0)
           (ensures (let (g', st') = mark_inner_loop g st cap fuel in
                     well_formed_heap g' /\ bounded_stack_props g' st' /\
-                    Seq.length (objects 0UL g') > 0 /\
+                    Seq.length (objects zero_addr g') > 0 /\
                     SweepInv.heap_objects_dense g' /\
                     Seq.length st' <= cap))
           (decreases fuel)
@@ -332,15 +332,15 @@ val mark_inner_loop_preserves_inv
 val mark_inner_loop_preserves_objects
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
-          (ensures objects 0UL (fst (mark_inner_loop g st cap fuel)) == objects 0UL g)
+          (ensures objects zero_addr (fst (mark_inner_loop g st cap fuel)) == objects zero_addr g)
           (decreases fuel)
 
 val mark_inner_loop_count_non_increasing
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
           (ensures count_non_black (fst (mark_inner_loop g st cap fuel)) <= count_non_black g)
           (decreases fuel)
@@ -348,7 +348,7 @@ val mark_inner_loop_count_non_increasing
 val mark_inner_loop_count_decreases
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    Seq.length st > 0 /\ fuel > 0)
           (ensures count_non_black (fst (mark_inner_loop g st cap fuel)) < count_non_black g)
@@ -356,7 +356,7 @@ val mark_inner_loop_count_decreases
 val mark_inner_loop_drains
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    fuel >= count_non_black g)
           (ensures Seq.length (snd (mark_inner_loop g st cap fuel)) = 0)
@@ -364,26 +364,26 @@ val mark_inner_loop_drains
 
 val mark_bounded_preserves_inv (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
           (ensures (let g' = mark_bounded g cap fuel in
                     well_formed_heap g' /\
-                    Seq.length (objects 0UL g') > 0 /\
+                    Seq.length (objects zero_addr g') > 0 /\
                     SweepInv.heap_objects_dense g'))
           (decreases fuel)
 
 val mark_bounded_preserves_objects (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
-          (ensures objects 0UL (mark_bounded g cap fuel) == objects 0UL g)
+          (ensures objects zero_addr (mark_bounded g cap fuel) == objects zero_addr g)
           (decreases fuel)
 
 val mark_bounded_count_decreases (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\ fuel > 0 /\
-                   Seq.length (rescan_heap g (objects 0UL g) Seq.empty cap) > 0)
+                   Seq.length (rescan_heap g (objects zero_addr g) Seq.empty cap) > 0)
           (ensures count_non_black (mark_bounded g cap fuel) < count_non_black g)
           (decreases fuel)
 
@@ -398,7 +398,7 @@ val count_non_black_zero_no_gray (g: heap)
 
 val mark_bounded_completes (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    fuel >= count_non_black g)
           (ensures SweepInv.no_gray_objects (mark_bounded g cap fuel))

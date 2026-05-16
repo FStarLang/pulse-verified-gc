@@ -17,12 +17,12 @@ open GC.Spec.Graph
 val zeroed_heap_read_word (addr: hp_addr)
   : Lemma (read_word (Seq.create heap_size 0uy) addr == 0UL)
 
-/// After init_heap_spec on a zeroed heap, objects 0UL g' == [mword].
+/// After init_heap_spec on a zeroed heap, objects zero_addr g' == [mword].
 val init_objects_eq (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', fp) = init_heap_spec g in
                     fp == mword /\
-                    objects 0UL g' == Seq.cons (mword <: obj_addr) Seq.empty))
+                    objects zero_addr g' == Seq.cons (mword <: obj_addr) Seq.empty))
 
 /// well_formed_heap holds after init_heap_spec on a zeroed heap.
 val init_wf (g: heap)
@@ -54,7 +54,7 @@ val init_no_pointer_to_blue (g: heap)
 val init_objects_nonempty (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
-                    Seq.length (objects 0UL g') > 0))
+                    Seq.length (objects zero_addr g') > 0))
 
 /// graph_wf holds for the init heap (no edges → vacuously well-formed).
 val init_graph_wf (g: heap)
@@ -63,7 +63,7 @@ val init_graph_wf (g: heap)
                     graph_wf (create_graph g')))
 
 /// heap_objects_dense holds after init_heap_spec on a zeroed heap.
-/// With the weakened predicate (guarded by membership in objects 0UL g),
+/// With the weakened predicate (guarded by membership in objects zero_addr g),
 /// init density is trivially satisfied.
 val init_dense (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
@@ -103,9 +103,9 @@ val sweep_produces_fl_valid (g: heap) (fp: FStar.UInt64.t)
     (requires well_formed_heap g /\
               fl_valid g fp (heap_size / FStar.UInt64.v mword) /\
               fp_in_heap fp g /\
-              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ is_white o g ==>
+              (forall (o: obj_addr). Seq.mem o (objects zero_addr g) /\ is_white o g ==>
                 FStar.UInt64.v (wosize_of_object o g) >= 1) /\
-              (forall (o: obj_addr). Seq.mem o (objects 0UL g) /\ ~(is_blue o g) ==>
+              (forall (o: obj_addr). Seq.mem o (objects zero_addr g) /\ ~(is_blue o g) ==>
                 chain_not_visits g fp o (heap_size / FStar.UInt64.v mword)))
     (ensures (let (g', fp') = sweep g fp in
               fl_valid g' fp' (heap_size / FStar.UInt64.v mword)))
@@ -114,14 +114,14 @@ val sweep_produces_fl_valid (g: heap) (fp: FStar.UInt64.t)
 val init_all_blue (g: heap)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g', _) = init_heap_spec g in
-                    forall (obj: obj_addr). Seq.mem obj (objects 0UL g') ==> is_blue obj g'))
+                    forall (obj: obj_addr). Seq.mem obj (objects zero_addr g') ==> is_blue obj g'))
 
 /// After init + alloc, objects list is nonempty.
 val init_alloc_objects_nonempty (g: heap) (wz: nat)
   : Lemma (requires g == Seq.create heap_size 0uy)
           (ensures (let (g0, fp0) = init_heap_spec g in
                     let r = alloc_spec g0 fp0 wz in
-                    Seq.length (objects 0UL r.heap_out) > 0))
+                    Seq.length (objects zero_addr r.heap_out) > 0))
 
 /// After init + alloc, no_pointer_to_blue holds.
 val init_alloc_no_pointer_to_blue (g: heap) (wz: nat)

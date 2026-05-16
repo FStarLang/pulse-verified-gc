@@ -682,13 +682,12 @@ fn sweep (heap: heap_t) (fp: U64.t)
   let cur_init : U64.t = zero_addr;
   let mut current = cur_init;
   let mut free_ptr = fp;
-  // Bridge: f_address zero_addr == uint_to_t 8 == f_address cur_init
+  // Bridge: f_address zero_addr == zero_addr + mword
   SpecHeap.f_address_spec cur_init;
-  assert (pure (SpecHeap.f_address cur_init == U64.uint_to_t 8));
   assert (pure (U64.v cur_init + 8 < heap_size ==>
     SI.obj_in_objects (SpecHeap.f_address cur_init) 's));
-  // Establish sweep_aux initial condition: sweep g fp = sweep_aux g (objects 0UL g) fp
-  // and cur_init = zero_addr = 0UL, so objects (uint_to_t (v cur_init)) 's = objects 0UL 's
+  // Establish sweep_aux initial condition: sweep g fp = sweep_aux g (objects zero_addr g) fp
+  // cur_init = zero_addr, so objects (uint_to_t (v cur_init)) 's = objects zero_addr 's
   assert (pure (U64.v cur_init < heap_size ==>
     SpecSweep.sweep_aux 's (SpecFields.objects (U64.uint_to_t (U64.v cur_init)) 's) fp ==
     SpecSweep.sweep 's fp));

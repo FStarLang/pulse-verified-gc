@@ -135,8 +135,7 @@ let rec alloc_search (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
                      (cur_fp: U64.t) (requested_wz: nat) (fuel: nat)
   : GTot alloc_result (decreases fuel)
   = if fuel = 0 then { heap_out = g; fp_out = head_fp; obj_out = 0UL }
-    else if cur_fp = 0UL then { heap_out = g; fp_out = head_fp; obj_out = 0UL }
-    else if U64.v cur_fp < U64.v mword then { heap_out = g; fp_out = head_fp; obj_out = 0UL }
+    else if U64.v cur_fp < U64.v zero_addr + U64.v mword then { heap_out = g; fp_out = head_fp; obj_out = 0UL }
     else if U64.v cur_fp >= heap_size then { heap_out = g; fp_out = head_fp; obj_out = 0UL }
     else if U64.v cur_fp % U64.v mword <> 0 then { heap_out = g; fp_out = head_fp; obj_out = 0UL }
     else begin
@@ -222,8 +221,7 @@ val alloc_search_fuel_0 (g: heap) (head prev cur: U64.t) (wz: nat)
 /// When cur is invalid (not a valid obj_addr): OOM
 val alloc_search_invalid (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    (cur = 0UL \/
-                     U64.v cur < U64.v mword \/
+                    (U64.v cur < U64.v zero_addr + U64.v mword \/
                      U64.v cur >= heap_size \/
                      U64.v cur % U64.v mword <> 0))
           (ensures alloc_search g head prev cur wz fuel ==
@@ -232,7 +230,7 @@ val alloc_search_invalid (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
 /// When the block is too small: advance to next
 val alloc_search_advance (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v mword /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
                     U64.v cur < heap_size /\
                     U64.v cur % U64.v mword = 0 /\
                     (let hdr = read_word g (hd_address (cur <: obj_addr)) in
@@ -243,7 +241,7 @@ val alloc_search_advance (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
 /// When the block fits and prev = 0 (head of list)
 val alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v mword /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
                     U64.v cur < heap_size /\
                     U64.v cur % U64.v mword = 0 /\
                     prev = 0UL /\
@@ -258,7 +256,7 @@ val alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: na
 /// When the block fits and prev is a valid hp_addr
 val alloc_search_found_prev (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v mword /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
                     U64.v cur < heap_size /\
                     U64.v cur % U64.v mword = 0 /\
                     prev <> 0UL /\

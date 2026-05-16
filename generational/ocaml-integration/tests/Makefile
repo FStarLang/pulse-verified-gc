@@ -10,10 +10,7 @@ UNCHANGED_OCAMLRUN    ?= ../ocaml-4.14-unchanged/runtime/ocamlrun
 VERIFIED_MS_OCAMLRUN  ?= ../../../mark-and-sweep/ocaml-integration/ocaml-4.14-verified-gc/runtime/ocamlrun
 
 %.byte: %.ml
-	$(OCAMLC) -custom \
-		-cclib -L../ocaml-4.14-verified-gen/runtime/verified_gc \
-		-cclib -lvergc_gen \
-		-o $@ $<
+	$(OCAMLC) -o $@ $<
 
 BENCHMARKS = binarytrees fasta quicksort fannkuchredux count_change nbodies spectralnorm mandelbrot
 

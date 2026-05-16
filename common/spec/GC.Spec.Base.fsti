@@ -56,9 +56,9 @@ let hp_addr_32 = a:FStar.UInt32.t{
   FStar.UInt32.v a % 8 == 0
 }
 
-/// Zero address is a valid hp_addr
-inline_for_extraction
-let zero_addr : hp_addr = 0UL
+/// Base address of the heap (abstract — instantiated at deployment).
+/// Must have room for at least one object header after it.
+val zero_addr : a:hp_addr{U64.v a + U64.v mword < heap_size}
 
 /// Object address: hp_addr with room for header before it (>= 8)
 /// Used for all operations that access object headers via hd_address

@@ -26,13 +26,13 @@ module Seq = FStar.Seq
 let alloc_exact_preserves_wf
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz < 2))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                     well_formed_heap g' /\
-                    objects 0UL g' == objects 0UL g))
+                    objects zero_addr g' == objects zero_addr g))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
@@ -52,7 +52,7 @@ let alloc_exact_preserves_wf
 
     // --- Part 1: size bounds ---
     let aux1 (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures (let w = wosize_of_object h g' in
                 U64.v (hd_address h) + 8 + U64.v w * 8 <= Seq.length g'))
     = wosize_of_object_spec h g;
@@ -63,9 +63,9 @@ let alloc_exact_preserves_wf
         read_write_same g hd new_hdr
       else begin
         if U64.v h < U64.v obj then
-          objects_separated 0UL g h obj
+          objects_separated zero_addr g h obj
         else
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
         read_write_different g hd (hd_address h) new_hdr
       end
     in
@@ -73,11 +73,11 @@ let alloc_exact_preserves_wf
 
     // --- Part 2: pointer targets ---
     let aux2 (src dst: obj_addr) : Lemma
-      (requires Seq.mem src (objects 0UL g') /\
+      (requires Seq.mem src (objects zero_addr g') /\
                 (let w = wosize_of_object src g' in
                  U64.v w < pow2 54 /\
                  exists_field_pointing_to_unchecked g' src w dst))
-      (ensures Seq.mem dst (objects 0UL g'))
+      (ensures Seq.mem dst (objects zero_addr g'))
     = wosize_of_object_spec src g;
       wosize_of_object_spec src g';
       wosize_of_object_bound src g;
@@ -86,9 +86,9 @@ let alloc_exact_preserves_wf
         read_write_same g hd new_hdr
       else begin
         if U64.v src < U64.v obj then
-          objects_separated 0UL g src obj
+          objects_separated zero_addr g src obj
         else
-          objects_separated 0UL g obj src;
+          objects_separated zero_addr g obj src;
         read_write_different g hd (hd_address src) new_hdr
       end;
       let wz_src = wosize_of_object src g in
@@ -105,10 +105,10 @@ let alloc_exact_preserves_wf
       efptu_congruence g' g src wz_src dst
     in
     let aux2_imp (src dst: obj_addr) : Lemma
-      ((Seq.mem src (objects 0UL g') /\
+      ((Seq.mem src (objects zero_addr g') /\
         U64.v (wosize_of_object src g') < pow2 54 /\
         exists_field_pointing_to_unchecked g' src (wosize_of_object src g') dst) ==>
-       Seq.mem dst (objects 0UL g'))
+       Seq.mem dst (objects zero_addr g'))
     = FStar.Classical.move_requires (aux2 src) dst
     in
     FStar.Classical.forall_intro_2 aux2_imp;
@@ -117,7 +117,7 @@ let alloc_exact_preserves_wf
     // We'll prove part 4 first (no infix objects), then use it for part 3.
     // Part 4 proof:
     let not_infix (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures ~(is_infix h g'))
     = is_infix_spec h g';
       tag_of_object_spec h g';
@@ -132,9 +132,9 @@ let alloc_exact_preserves_wf
         assert (tag_of_object h g' <> infix_tag)
       end else begin
         if U64.v h < U64.v obj then
-          objects_separated 0UL g h obj
+          objects_separated zero_addr g h obj
         else
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
         read_write_different g hd (hd_address h) new_hdr;
         is_infix_spec h g;
         tag_of_object_spec h g
@@ -142,18 +142,18 @@ let alloc_exact_preserves_wf
     in
     // Part 3: infix_wf holds because no object is infix
     let no_infix_pf (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g') /\ is_infix h g')
+      (requires Seq.mem h (objects zero_addr g') /\ is_infix h g')
       (ensures (let p = parent_closure_addr_nat h g' in
                 p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-                Seq.mem (U64.uint_to_t p) (objects 0UL g') /\
+                Seq.mem (U64.uint_to_t p) (objects zero_addr g') /\
                 is_closure (U64.uint_to_t p) g'))
     = not_infix h  // Derives ~(is_infix h g'), contradicting requires
     in
-    infix_wf_intro g' (objects 0UL g') no_infix_pf;
+    infix_wf_intro g' (objects zero_addr g') no_infix_pf;
 
     // --- Part 4: no infix objects ---
     let aux4_imp (h: obj_addr) : Lemma
-      (Seq.mem h (objects 0UL g') ==> ~(is_infix h g'))
+      (Seq.mem h (objects zero_addr g') ==> ~(is_infix h g'))
     = FStar.Classical.move_requires not_infix h
     in
     FStar.Classical.forall_intro aux4_imp
@@ -177,7 +177,7 @@ let alloc_exact_preserves_wf
 let split_next_hd_objects_eq
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz >= 2))
@@ -230,7 +230,7 @@ let split_next_hd_objects_eq
 let split_next_hd_objects_eq_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz >= 2))
@@ -374,7 +374,7 @@ let rec split_old_mem_in_new
   : Lemma (requires
       Seq.length g3 == Seq.length g /\
       well_formed_heap g /\
-      Seq.mem obj (objects 0UL g) /\
+      Seq.mem obj (objects zero_addr g) /\
       (let hd = hd_address obj in
        let hdr = read_word g hd in
        U64.v (getWosize hdr) == block_wz /\
@@ -399,7 +399,7 @@ let rec split_old_mem_in_new
         U64.v start <= U64.v hd)) /\
       Seq.mem h (objects start g) /\
       // Loop invariant: start is a valid object boundary from 0
-      (U64.v start = 0 \/ Seq.mem (f_address start) (objects 0UL g)))
+      (U64.v start = U64.v zero_addr \/ Seq.mem (f_address start) (objects zero_addr g)))
     (ensures Seq.mem h (objects start g3))
     (decreases (Seq.length g - U64.v start))
   = let hd = hd_address obj in
@@ -501,12 +501,21 @@ let rec split_old_mem_in_new
                 (if next_nat >= heap_size then Seq.empty
                  else objects (U64.uint_to_t next_nat <: hp_addr) g);
               assert (Seq.mem first (objects start g));
-              objects_later_in_earlier 0UL g start first;
-              assert (Seq.mem first (objects 0UL g));
+              // Establish start >= zero_addr
+              (match () with
+               | _ ->
+                 if U64.v start = U64.v zero_addr then ()
+                 else begin
+                   objects_addresses_gt_start zero_addr g (f_address start);
+                   f_address_spec start
+                 end);
+              assert (U64.v zero_addr <= U64.v start);
+              objects_later_in_earlier zero_addr g start first;
+              assert (Seq.mem first (objects zero_addr g));
               // Step 2: Use objects_separated on first and obj
               hd_address_spec first;
               wosize_of_object_spec first g;
-              objects_separated 0UL g first obj;
+              objects_separated zero_addr g first obj;
               // Gives: U64.v obj > U64.v first + U64.v wz_g * 8
               //      = (U64.v start + 8) + U64.v wz_g * 8
               // So: U64.v hd = U64.v obj - 8 > U64.v start + U64.v wz_g * 8
@@ -519,13 +528,13 @@ let rec split_old_mem_in_new
               // positive multiple of 8 is >= 8, so hd >= start + wz_g*8 + 8 = next_nat
               assert (next_nat <= U64.v hd);
               // Establish loop invariant for recursive call:
-              // Need: Seq.mem (f_address next_hp) (objects 0UL g)
+              // Need: Seq.mem (f_address next_hp) (objects zero_addr g)
               // h ∈ objects next_hp g, so f_address next_hp ∈ objects next_hp g
               objects_nonempty_first_mem next_hp g h;
               // f_address next_hp ∈ objects next_hp g, so via mem_cons it's in objects start g
               mem_cons_lemma (f_address next_hp) first (objects next_hp g);
-              // And from objects start g to objects 0UL g
-              objects_later_in_earlier 0UL g start (f_address next_hp);
+              // And from objects start g to objects zero_addr g
+              objects_later_in_earlier zero_addr g start (f_address next_hp);
               split_old_mem_in_new next_hp g g3 obj wz block_wz h;
               mem_cons_lemma h first (objects next_hp g3)
             end
@@ -548,7 +557,7 @@ let rec split_new_mem_in_old_or_rem
   : Lemma (requires
       Seq.length g3 == Seq.length g /\
       well_formed_heap g /\
-      Seq.mem obj (objects 0UL g) /\
+      Seq.mem obj (objects zero_addr g) /\
       (let hd = hd_address obj in
        let hdr = read_word g hd in
        U64.v (getWosize hdr) == block_wz /\
@@ -568,7 +577,7 @@ let rec split_new_mem_in_old_or_rem
         U64.v start <= U64.v hd)) /\
       Seq.mem h (objects start g3) /\
       // Loop invariants: start is a valid object boundary from 0 in g
-      (U64.v start = 0 \/ Seq.mem (f_address start) (objects 0UL g)) /\
+      (U64.v start = U64.v zero_addr \/ Seq.mem (f_address start) (objects zero_addr g)) /\
       // obj is reachable from start in g (needed to show next_hp is a boundary)
       Seq.mem obj (objects start g))
     (ensures (let rem_hd_nat = U64.v (hd_address obj) + (1 + wz) * 8 in
@@ -669,11 +678,19 @@ let rec split_new_mem_in_old_or_rem
                 (if next_nat_g3 >= heap_size then Seq.empty
                  else objects (U64.uint_to_t next_nat_g3 <: hp_addr) g);
               assert (Seq.mem first (objects start g));
-              objects_later_in_earlier 0UL g start first;
-              // objects_separated gives obj > first + wz_g_here * 8
+              // Establish start >= zero_addr
+              (match () with
+               | _ ->
+                 if U64.v start = U64.v zero_addr then ()
+                 else begin
+                   objects_addresses_gt_start zero_addr g (f_address start);
+                   f_address_spec start
+                 end);
+              assert (U64.v zero_addr <= U64.v start);
+              objects_later_in_earlier zero_addr g start first;
               hd_address_spec first;
               wosize_of_object_spec first g;
-              objects_separated 0UL g first obj;
+              objects_separated zero_addr g first obj;
               // Alignment: hd > start + wz_g_here*8, both mult of 8, so hd >= next_nat_g3
               assert (U64.v hd % 8 == 0);
               assert (U64.v start % 8 == 0);
@@ -689,10 +706,10 @@ let rec split_new_mem_in_old_or_rem
                 (if next_nat_g >= heap_size then Seq.empty
                  else objects (U64.uint_to_t next_nat_g <: hp_addr) g);
               assert (obj <> first);
-              // 2. f_address next_hp ∈ objects 0UL g
+              // 2. f_address next_hp ∈ objects zero_addr g
               objects_nonempty_first_mem next_hp g obj;
               mem_cons_lemma (f_address next_hp) first (objects next_hp g);
-              objects_later_in_earlier 0UL g start (f_address next_hp);
+              objects_later_in_earlier zero_addr g start (f_address next_hp);
               split_new_mem_in_old_or_rem next_hp g g3 obj wz block_wz h;
               let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
               let rem_obj_nat = rem_hd_nat + 8 in
@@ -714,6 +731,13 @@ let rec split_new_mem_in_old_or_rem
 /// 6d: Shared precondition and fact-establishing lemmas
 /// ---------------------------------------------------------------------------
 
+let alloc_split_pre (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) : prop =
+  well_formed_heap g /\
+  Seq.mem obj (objects zero_addr g) /\
+  (let hdr = read_word g (hd_address obj) in
+   let block_wz = U64.v (getWosize hdr) in
+   block_wz >= wz /\ block_wz - wz >= 2) /\
+  (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g))
 
 /// Per-point g3 agreement: at any hp_addr p that is not one of the 3 write
 /// positions, g3 returns the same read_word as g.
@@ -858,9 +882,9 @@ let alloc_split_facts
 let alloc_split_old_in_new
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires alloc_split_pre g obj wz next_fp /\
-                    Seq.mem h (objects 0UL g))
+                    Seq.mem h (objects zero_addr g))
           (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem h (objects 0UL g3)))
+                    Seq.mem h (objects zero_addr g3)))
   = alloc_split_facts g obj wz next_fp;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -884,7 +908,9 @@ let alloc_split_old_in_new
     = alloc_split_g3_agrees g obj wz next_fp p
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-    split_old_mem_in_new 0UL g g3 obj wz block_wz h
+    objects_addresses_gt_start zero_addr g obj;
+    assert (U64.v zero_addr <= U64.v hd);
+    split_old_mem_in_new zero_addr g g3 obj wz block_wz h
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -898,7 +924,7 @@ let alloc_split_rem_in_objects
   : Lemma (requires alloc_split_pre g obj wz next_fp)
           (ensures (let (g3, rem_fp) = alloc_from_block g obj wz next_fp in
                     is_pointer_field rem_fp /\
-                    (is_pointer_field rem_fp ==> Seq.mem rem_fp (objects 0UL g3))))
+                    (is_pointer_field rem_fp ==> Seq.mem rem_fp (objects zero_addr g3))))
   = alloc_split_facts g obj wz next_fp;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -912,6 +938,11 @@ let alloc_split_rem_in_objects
     hd_address_spec obj;
     f_address_spec rem_hd;
     let rem_obj_addr : obj_addr = f_address rem_hd in
+    // Prove is_pointer_field rem_obj_addr
+    objects_addresses_gt_start zero_addr g obj;
+    assert (U64.v rem_obj_addr >= U64.v zero_addr + U64.v mword);
+    assert (U64.v rem_obj_addr < heap_size);
+    assert (U64.v rem_obj_addr % U64.v mword = 0);
     // rem_obj is in objects(rem_hd, g3) as the head element
     if next_hd_nat >= heap_size then
       mem_cons_lemma rem_obj_addr rem_obj_addr (Seq.empty #obj_addr)
@@ -926,7 +957,9 @@ let alloc_split_rem_in_objects
     alloc_split_old_in_new g obj wz next_fp obj;
     f_address_spec hd;
     // objects(hd, g3) ⊆ objects(0, g3) via objects_later_in_earlier
-    objects_later_in_earlier 0UL g3 hd rem_obj_addr
+    objects_addresses_gt_start zero_addr g obj;
+    assert (U64.v zero_addr <= U64.v hd);
+    objects_later_in_earlier zero_addr g3 hd rem_obj_addr
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -953,7 +986,7 @@ let alloc_split_wf_part1
     hd_address_spec obj;
     reveal_opaque (`%well_formed_heap) well_formed_heap;
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g3))
+      (requires Seq.mem h (objects zero_addr g3))
       (ensures (let w = wosize_of_object h g3 in
                 U64.v (hd_address h) + 8 + U64.v w * 8 <= Seq.length g3))
     = wosize_of_object_spec h g3;
@@ -975,18 +1008,20 @@ let alloc_split_wf_part1
         = alloc_split_g3_agrees g obj wz next_fp p
         in
         FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-        split_new_mem_in_old_or_rem 0UL g g3 obj wz block_wz h;
+        objects_addresses_gt_start zero_addr g obj;
+        assert (U64.v zero_addr <= U64.v hd);
+        split_new_mem_in_old_or_rem zero_addr g g3 obj wz block_wz h;
         // h ∈ objects(0, g) (since h ≠ rem_obj_addr)
-        assert (Seq.mem h (objects 0UL g));
+        assert (Seq.mem h (objects zero_addr g));
         // Header of h is unchanged (h ≠ obj, h ≠ rem_obj_addr, so hd_address h ≠ hd, rem_hd)
         hd_address_spec h;
         wosize_of_object_spec h g;
         wosize_of_object_spec obj g;
         if U64.v h < U64.v obj then begin
-          objects_separated 0UL g h obj;
+          objects_separated zero_addr g h obj;
           alloc_split_g3_agrees g obj wz next_fp (hd_address h)
         end else begin
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
           // h > obj + wosize_of_object obj g * 8 = obj + block_wz * 8
           // hd_address h = h - 8 > obj + block_wz*8 - 8 = hd + block_wz*8
           // hd + block_wz*8 >= hd + (wz+2)*8 > rem_obj_nat > rem_hd_nat > hd
@@ -1015,7 +1050,7 @@ let alloc_split_wf_part2_obj
                      U64.v wz_obj < pow2 54 /\
                      exists_field_pointing_to_unchecked g3 obj wz_obj dst))
           (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem dst (objects 0UL g3)))
+                    Seq.mem dst (objects zero_addr g3)))
   = alloc_split_facts g obj wz next_fp;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -1079,7 +1114,7 @@ let rec alloc_split_wf_part2_rem_aux
                        U64.v cur_wz <= U64.v (wosize_of_object rem_obj g3) /\
                        exists_field_pointing_to_unchecked g3 rem_obj cur_wz dst))))
           (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem dst (objects 0UL g3)))
+                    Seq.mem dst (objects zero_addr g3)))
           (decreases U64.v cur_wz)
   = alloc_split_facts g obj wz next_fp;
     let hd = hd_address obj in
@@ -1168,12 +1203,12 @@ let alloc_split_wf_part2_rem
                      is_pointer_field rem_fp /\
                      (is_pointer_field rem_fp ==>
                       (let rem_obj : obj_addr = rem_fp in
-                       Seq.mem rem_obj (objects 0UL g3) /\
+                       Seq.mem rem_obj (objects zero_addr g3) /\
                        (let wz_rem = wosize_of_object rem_obj g3 in
                         U64.v wz_rem < pow2 54 /\
                         exists_field_pointing_to_unchecked g3 rem_obj wz_rem dst)))))
           (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem dst (objects 0UL g3)))
+                    Seq.mem dst (objects zero_addr g3)))
   = alloc_split_facts g obj wz next_fp;
     let (g3, rem_fp) = alloc_from_block g obj wz next_fp in
     let rem_obj : obj_addr = rem_fp in
@@ -1193,12 +1228,12 @@ let alloc_split_wf_part2_other
                     (let (g3, rem_fp) = alloc_from_block g obj wz next_fp in
                      let rem_obj = rem_fp in
                      src <> obj /\ src <> rem_obj /\
-                     Seq.mem src (objects 0UL g3) /\
+                     Seq.mem src (objects zero_addr g3) /\
                      (let wz_src = wosize_of_object src g3 in
                       U64.v wz_src < pow2 54 /\
                       exists_field_pointing_to_unchecked g3 src wz_src dst)))
           (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem dst (objects 0UL g3)))
+                    Seq.mem dst (objects zero_addr g3)))
   = alloc_split_facts g obj wz next_fp;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -1220,15 +1255,17 @@ let alloc_split_wf_part2_other
     = alloc_split_g3_agrees g obj wz next_fp p
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-    split_new_mem_in_old_or_rem 0UL g g3 obj wz block_wz src;
-    assert (Seq.mem src (objects 0UL g));
+    objects_addresses_gt_start zero_addr g obj;
+    assert (U64.v zero_addr <= U64.v hd);
+    split_new_mem_in_old_or_rem zero_addr g g3 obj wz block_wz src;
+    assert (Seq.mem src (objects zero_addr g));
     // src's header is at hd_address(src), which ≠ hd and ≠ rem_hd
     // (because src ≠ obj and src ≠ rem_obj, and objects are non-overlapping)
     wosize_of_object_spec obj g;
     if U64.v src < U64.v obj then begin
-      objects_separated 0UL g src obj
+      objects_separated zero_addr g src obj
     end else begin
-      objects_separated 0UL g obj src;
+      objects_separated zero_addr g obj src;
       assert (U64.v src > U64.v obj + U64.v (wosize_of_object_as_wosize obj g) * 8);
       assert (U64.v (hd_address src) > U64.v hd + block_wz * 8 - 8);
       assert (U64.v (hd_address src) <> U64.v hd);
@@ -1285,7 +1322,7 @@ let alloc_split_wf_part4
     hd_address_spec obj;
     reveal_opaque (`%well_formed_heap) well_formed_heap;
     let not_infix (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g3))
+      (requires Seq.mem h (objects zero_addr g3))
       (ensures ~(is_infix h g3))
     = is_infix_spec h g3;
       tag_of_object_spec h g3;
@@ -1308,13 +1345,15 @@ let alloc_split_wf_part4
         = alloc_split_g3_agrees g obj wz next_fp p
         in
         FStar.Classical.forall_intro (FStar.Classical.move_requires aux_before);
-        split_new_mem_in_old_or_rem 0UL g g3 obj wz block_wz h;
-        assert (Seq.mem h (objects 0UL g));
+        objects_addresses_gt_start zero_addr g obj;
+        assert (U64.v zero_addr <= U64.v hd);
+        split_new_mem_in_old_or_rem zero_addr g g3 obj wz block_wz h;
+        assert (Seq.mem h (objects zero_addr g));
         wosize_of_object_spec obj g;
         if U64.v h < U64.v obj then begin
-          objects_separated 0UL g h obj
+          objects_separated zero_addr g h obj
         end else begin
-          objects_separated 0UL g obj h;
+          objects_separated zero_addr g obj h;
           assert (U64.v h > U64.v obj + U64.v (wosize_of_object_as_wosize obj g) * 8);
           assert (U64.v (hd_address h) > U64.v hd + block_wz * 8 - 8);
           assert (U64.v (hd_address h) <> U64.v hd);
@@ -1327,7 +1366,7 @@ let alloc_split_wf_part4
       end
     in
     let not_infix_imp (h: obj_addr) : Lemma
-      (Seq.mem h (objects 0UL g3) ==> ~(is_infix h g3))
+      (Seq.mem h (objects zero_addr g3) ==> ~(is_infix h g3))
     = FStar.Classical.move_requires not_infix h
     in
     FStar.Classical.forall_intro not_infix_imp
@@ -1342,11 +1381,11 @@ let alloc_split_wf_part4
 let alloc_split_preserves_wf
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      let block_wz = U64.v (getWosize hdr) in
                      block_wz >= wz /\ block_wz - wz >= 2) /\
-                    (is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g)))
+                    (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g)))
           (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
                     well_formed_heap g3))
   = alloc_split_facts g obj wz next_fp;
@@ -1365,10 +1404,10 @@ let alloc_split_preserves_wf
     // Part 2: pointer targets
     alloc_split_rem_in_objects g obj wz next_fp;
     let aux2 (src dst: obj_addr) : Lemma
-      (requires Seq.mem src (objects 0UL g3) /\
+      (requires Seq.mem src (objects zero_addr g3) /\
                 U64.v (wosize_of_object src g3) < pow2 54 /\
                 exists_field_pointing_to_unchecked g3 src (wosize_of_object src g3) dst)
-      (ensures Seq.mem dst (objects 0UL g3))
+      (ensures Seq.mem dst (objects zero_addr g3))
     = if src = obj then
         alloc_split_wf_part2_obj g obj wz next_fp dst
       else if src = rem_fp then
@@ -1377,10 +1416,10 @@ let alloc_split_preserves_wf
         alloc_split_wf_part2_other g obj wz next_fp src dst
     in
     let aux2_imp (src dst: obj_addr) : Lemma
-      ((Seq.mem src (objects 0UL g3) /\
+      ((Seq.mem src (objects zero_addr g3) /\
         U64.v (wosize_of_object src g3) < pow2 54 /\
         exists_field_pointing_to_unchecked g3 src (wosize_of_object src g3) dst) ==>
-       Seq.mem dst (objects 0UL g3))
+       Seq.mem dst (objects zero_addr g3))
     = FStar.Classical.move_requires (aux2 src) dst
     in
     FStar.Classical.forall_intro_2 aux2_imp;
@@ -1390,14 +1429,14 @@ let alloc_split_preserves_wf
 
     // Part 3: infix_wf (vacuous since no objects are infix)
     let no_infix_pf (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g3) /\ is_infix h g3)
+      (requires Seq.mem h (objects zero_addr g3) /\ is_infix h g3)
       (ensures (let p = parent_closure_addr_nat h g3 in
                 p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-                Seq.mem (U64.uint_to_t p) (objects 0UL g3) /\
+                Seq.mem (U64.uint_to_t p) (objects zero_addr g3) /\
                 is_closure (U64.uint_to_t p) g3))
     = ()  // Vacuous: part4 proves ~(is_infix h g3)
     in
-    infix_wf_intro g3 (objects 0UL g3) no_infix_pf;
+    infix_wf_intro g3 (objects zero_addr g3) no_infix_pf;
 
     reveal_opaque (`%well_formed_heap) well_formed_heap
 #pop-options
@@ -1409,10 +1448,10 @@ let alloc_split_preserves_wf
 let alloc_from_block_preserves_wf
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap g /\
-                    Seq.mem obj (objects 0UL g) /\
+                    Seq.mem obj (objects zero_addr g) /\
                     (let hdr = read_word g (hd_address obj) in
                      U64.v (getWosize hdr) >= wz) /\
-                    (is_pointer_field next_fp ==> Seq.mem next_fp (objects 0UL g)))
+                    (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g)))
           (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
                     well_formed_heap g'))
   = let hdr = read_word g (hd_address obj) in

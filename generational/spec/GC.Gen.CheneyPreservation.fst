@@ -39,7 +39,7 @@ module Mark = GC.Spec.Mark
 private let set_promoted_tag_preserves_no_black
   (g: heap) (dst: obj_addr) (tag: nat{tag < 256})
   : Lemma (requires Mark.no_black_objects g /\
-                    Seq.mem dst (objects 0UL g))
+                    Seq.mem dst (objects zero_addr g))
           (ensures Mark.no_black_objects (set_promoted_tag g dst tag))
   = let g' = set_promoted_tag g dst tag in
     set_promoted_tag_preserves_objects g dst tag;
@@ -49,7 +49,7 @@ private let set_promoted_tag_preserves_no_black
     let new_hdr = makeHeader (getWosize hdr) White (U64.uint_to_t tag) in
     hd_address_spec dst;
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL g'))
+      (requires Seq.mem h (objects zero_addr g'))
       (ensures ~(is_black h g'))
     = hd_address_spec h;
       if h = dst then begin
@@ -73,18 +73,18 @@ private let set_promoted_tag_preserves_no_black
 private let copy_fields_preserves_no_black
   (minor: minor_state) (g: heap) (obj: U64.t) (dst: obj_addr) (wz: nat{wz > 0})
   : Lemma (requires Mark.no_black_objects g /\
-                    Seq.mem dst (objects 0UL g) /\
+                    Seq.mem dst (objects zero_addr g) /\
                     well_formed_heap_part1 g /\
                     U64.v (wosize_of_object dst g) >= wz /\
                     dst_fields_valid dst wz)
           (ensures Mark.no_black_objects (copy_fields minor g obj dst 0 wz))
   = copy_fields_preserves_objects_aux minor g obj dst 0 wz;
     let result = copy_fields minor g obj dst 0 wz in
-    assert (objects 0UL result == objects 0UL g);
+    assert (objects zero_addr result == objects zero_addr g);
     let aux (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL result))
+      (requires Seq.mem h (objects zero_addr result))
       (ensures ~(is_black h result))
-    = assert (Seq.mem h (objects 0UL g));
+    = assert (Seq.mem h (objects zero_addr g));
       hd_address_spec h;
       hd_address_spec dst;
       if h = dst then begin
@@ -93,18 +93,63 @@ private let copy_fields_preserves_no_black
         is_black_iff h g;
         is_black_iff h result
       end else if U64.v h < U64.v dst then begin
-        objects_separated 0UL g h dst;
+        objects_separated zero_addr g h dst;
         copy_fields_frame minor g obj dst 0 wz (hd_address h);
         color_of_header_eq h g result;
         is_black_iff h g;
         is_black_iff h result
       end else begin
-        objects_separated 0UL g dst h;
+        objects_separated zero_addr g dst h;
         wosize_of_object_spec dst g;
         copy_fields_frame minor g obj dst 0 wz (hd_address h);
         color_of_header_eq h g result;
         is_black_iff h g;
         is_black_iff h result
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+/// Helper: zero_promote_padding preserves no_black_objects
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+private let zero_promote_padding_preserves_no_black
+  (g: heap) (dst: obj_addr) (wz: nat{wz > 0})
+  : Lemma (requires Mark.no_black_objects g /\
+                    well_formed_heap_part1 g /\
+                    Seq.mem dst (objects zero_addr g))
+          (ensures Mark.no_black_objects (zero_promote_padding g dst wz))
+  = zero_promote_padding_preserves_objects g dst wz;
+    let padded = zero_promote_padding g dst wz in
+    let aux (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects zero_addr padded))
+      (ensures ~(is_black h padded))
+    = assert (Seq.mem h (objects zero_addr g));
+      hd_address_spec h;
+      hd_address_spec dst;
+      if h = dst then begin
+        // hd_address dst = dst - 8, pad at dst + wz*8: these differ since wz*8 + 8 > 0
+        assert (U64.v (hd_address h) == U64.v dst - U64.v mword);
+        assert (U64.v (hd_address h) <> U64.v dst + wz * U64.v mword);
+        zero_promote_padding_frame g dst wz (hd_address h);
+        color_of_header_eq h g padded;
+        is_black_iff h g;
+        is_black_iff h padded
+      end else begin
+        if U64.v h < U64.v dst then begin
+          objects_separated zero_addr g h dst;
+          zero_promote_padding_frame g dst wz (hd_address h)
+        end else begin
+          objects_separated zero_addr g dst h;
+          wosize_of_object_spec dst g;
+          let actual_wz = U64.v (wosize_of_object dst g) in
+          if actual_wz <= wz then
+            zero_promote_padding_noop g dst wz
+          else
+            zero_promote_padding_frame g dst wz (hd_address h)
+        end;
+        color_of_header_eq h g padded;
+        is_black_iff h g;
+        is_black_iff h padded
       end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
@@ -136,7 +181,7 @@ private let promote_object_preserves_no_black
     AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
     AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
     let dst : obj_addr = alloc_res.obj_out in
-    assert (Seq.mem dst (objects 0UL g_alloc));
+    assert (Seq.mem dst (objects zero_addr g_alloc));
     assert (U64.v (wosize_of_object dst g_alloc) >= wz);
 
     // Step 3: copy_fields preserves no_black (delegated)
@@ -146,51 +191,17 @@ private let promote_object_preserves_no_black
     copy_fields_preserves_no_black minor g_alloc obj dst wz;
     let result = copy_fields minor g_alloc obj dst 0 wz in
 
-    // Step 4: clean_promote_leftover preserves no_black
+    // Step 4: zero_promote_padding + set_promoted_tag preserve no_black
     copy_fields_preserves_objects_aux minor g_alloc obj dst 0 wz;
-    assert (Seq.mem dst (objects 0UL result));
     copy_fields_preserves_wfh_part1 minor g_alloc obj dst wz;
-    assert (well_formed_heap_part1 result);
-    let cleaned = clean_promote_leftover result dst wz in
-    clean_promote_leftover_preserves_objects result dst wz;
-    assert (objects 0UL cleaned == objects 0UL result);
-    let aux_clean (h: obj_addr) : Lemma
-      (requires Seq.mem h (objects 0UL cleaned))
-      (ensures ~(is_black h cleaned))
-    = assert (Seq.mem h (objects 0UL result));
-      hd_address_spec h;
-      hd_address_spec dst;
-      if h = dst then begin
-        clean_promote_leftover_preserves_header result dst wz;
-        color_of_header_eq h result cleaned;
-        is_black_iff h result;
-        is_black_iff h cleaned
-      end else if U64.v h < U64.v dst then begin
-        // hd_address h < h < dst <= dst + wz*8
-        clean_promote_leftover_read_frame result dst wz (hd_address h);
-        color_of_header_eq h result cleaned;
-        is_black_iff h result;
-        is_black_iff h cleaned
-      end else begin
-        // h > dst, so objects_separated gives h > dst + wosize*8
-        objects_separated 0UL result dst h;
-        wosize_of_object_spec dst result;
-        // Either hd_address h <> dst + wz*mword or getWosize <= wz
-        // Both disjuncts of clean_promote_leftover_read_frame precondition
-        clean_promote_leftover_read_frame result dst wz (hd_address h);
-        color_of_header_eq h result cleaned;
-        is_black_iff h result;
-        is_black_iff h cleaned
-      end
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_clean);
-    assert (Mark.no_black_objects cleaned);
-
-    // Step 5: set_promoted_tag preserves no_black (factored lemma)
-    assert (Seq.mem dst (objects 0UL cleaned));
+    assert (Seq.mem dst (objects zero_addr result));
+    zero_promote_padding_preserves_no_black result dst wz;
+    zero_promote_padding_preserves_objects result dst wz;
+    zero_promote_padding_preserves_wfh_part1 result dst wz;
+    let padded = zero_promote_padding result dst wz in
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_no_black cleaned dst tag
+    set_promoted_tag_preserves_no_black padded dst tag
   end
 
 #pop-options
@@ -319,7 +330,7 @@ private let rec cheney_forward_roots_preserves_no_black
 /// cheney_scan preserves no_black_objects (recursive)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
 
 private let rec cheney_scan_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
@@ -342,9 +353,7 @@ private let rec cheney_scan_preserves_no_black
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_no_black minor cs obj 0 wz;
-    assert (fuel > 0);
-    let fuel' = fuel - 1 in
-    cheney_scan_preserves_no_black minor cs' (scan + 1) fuel'
+    cheney_scan_preserves_no_black minor cs' (scan + 1) (fuel - 1)
   end
 
 #pop-options

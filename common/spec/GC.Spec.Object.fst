@@ -676,7 +676,7 @@ let rec objects (start: hp_addr) (g: heap) : GTot (Seq.seq hp_addr) (decreases (
 
 /// Get all allocated block addresses (as hp_addr)
 let allocated_blocks (g: heap) : GTot (Seq.seq hp_addr) =
-  objects 0UL g
+  objects zero_addr g
 
 /// Coerce hp_addr to obj_addr when >= 8 is known
 /// Used to convert addresses from objects list to obj_addr
@@ -782,67 +782,14 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
 #pop-options
 
 /// All objects in objects list have addresses >= 8
-/// Proof: f_address start = start + 8 (no overflow when start + 8 <= heap size < 2^64)
-/// For objects 0UL g, first object is at f_address 0 = 8, rest are higher
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 150"
-let rec objects_addresses_ge_8 (g: heap) (x: hp_addr)
-  : Lemma (requires Seq.mem x (objects 0UL g))
-          (ensures U64.v x >= 8)
-          (decreases Seq.length g)
-  = let start = 0UL in
-    if U64.v start + 8 >= Seq.length g then (
-      // objects 0 g = empty, so x ∈ empty is false - vacuously true
-      ()
-    )
-    else begin
-      let header = read_word g start in
-      let wz = getWosize header in
-      let obj_addr_raw = f_address start in
-      // f_address 0 = 0 + 8 = 8
-      f_address_spec start;
-      assert (U64.v obj_addr_raw = U64.v start + 8);
-      let obj_addr : hp_addr = obj_addr_raw in
-      let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + (obj_size_nat * 8) in
-      if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then (
-        // objects 0 g = empty in this case - vacuously true
-        ()
-      ) else if next_start_nat >= heap_size then (
-        // objects 0 g = cons obj_addr empty = cons 8 empty
-        let obj_addr_hp : hp_addr = obj_addr in
-        Seq.Properties.mem_cons obj_addr_hp Seq.empty;
-        // x ∈ (cons obj_addr empty) means x = obj_addr
-        assert (x = obj_addr_hp);
-        // x = 8 >= 8
-        assert (U64.v x = 8)
-      ) else begin
-        let next_start_raw = U64.uint_to_t next_start_nat in
-        // Prove next_start is valid (same as in objects)
-        assert (U64.v next_start_raw = next_start_nat);
-        assert (next_start_nat < heap_size);
-        FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v start) (obj_size_nat * 8) 8;
-        assert (U64.v next_start_raw % U64.v mword == 0);
-        let next_start : hp_addr = next_start_raw in
-        let obj_addr_hp : hp_addr = obj_addr in
-        let rest = objects next_start g in
-        // objects 0 g = cons obj_addr rest = cons 8 rest
-        // x ∈ (cons obj_addr rest) means x = obj_addr or x ∈ rest
-        Seq.Properties.mem_cons obj_addr_hp rest;
-        if x = obj_addr_hp then (
-          // x = 8 >= 8
-          assert (U64.v x = 8)
-        ) else (
-          // x ∈ rest = objects next_start g
-          assert (Seq.mem x rest);
-          // next_start >= 8
-          assert (U64.v next_start >= 8);
-          // By objects_addresses_gt_start: all y ∈ objects next_start g have y > next_start
-          objects_addresses_gt_start next_start g x;
-          assert (U64.v x > U64.v next_start);
-          assert (U64.v x > 8)
-        )
-      end
-    end
+/// Proof: objects_addresses_gt_start gives x > zero_addr >= 0,
+/// so x >= 1, and since x is word-aligned (hp_addr), x >= 8.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+let objects_addresses_ge_8 (g: heap) (x: hp_addr)
+  : Lemma (requires Seq.mem x (objects zero_addr g))
+          (ensures U64.v x >= U64.v zero_addr + U64.v mword)
+  = objects_addresses_gt_start zero_addr g x
+    // U64.v x > U64.v zero_addr, both divisible by 8, so U64.v x >= U64.v zero_addr + 8
 #pop-options
 
 /// ---------------------------------------------------------------------------

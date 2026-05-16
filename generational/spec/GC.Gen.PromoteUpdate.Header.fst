@@ -147,7 +147,7 @@ private let rec update_all_objects_aux_preserves_blue_field
       let field_addr : hp_addr = U64.uint_to_t (U64.v h + j * 8) in
       if U64.v h > U64.v obj then begin
         // h > obj: field_addr >= h > obj + wz*8, so above obj's body
-        objects_separated 0UL major obj h;
+        objects_separated zero_addr major obj h;
         assert (U64.v obj + (wz + 1) * 8 <= U64.v h);
         assert (U64.v field_addr >= U64.v h);
         assert (U64.v field_addr >= U64.v obj + wz * 8);
@@ -155,7 +155,7 @@ private let rec update_all_objects_aux_preserves_blue_field
       end else begin
         // h < obj: field_addr < h + wosize_h * 8 <= obj, so below obj's body
         let wz_h = U64.v (wosize_of_object h major) in
-        objects_separated 0UL major h obj;
+        objects_separated zero_addr major h obj;
         assert (U64.v h + (wz_h + 1) * 8 <= U64.v obj);
         assert (U64.v field_addr < U64.v h + wz_h * 8);
         assert (U64.v field_addr < U64.v obj);
@@ -352,12 +352,12 @@ private let promote_object_adds_new_addr
     copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wosize;
     let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize in
     assert (Seq.mem dst_obj (objects zero_addr copied));
-    clean_promote_leftover_preserves_objects copied dst_obj wosize;
-    let cleaned = clean_promote_leftover copied dst_obj wosize in
-    // set_promoted_tag preserves objects
+    // zero_promote_padding + set_promoted_tag preserve objects
     let tag = minor_tag minor obj in
     minor_tag_bound minor obj;
-    set_promoted_tag_preserves_objects cleaned dst_obj tag
+    zero_promote_padding_preserves_objects copied dst_obj wosize;
+    let padded = zero_promote_padding copied dst_obj wosize in
+    set_promoted_tag_preserves_objects padded dst_obj tag
   end
 #pop-options
 
@@ -392,12 +392,34 @@ let rec promote_all_aux_adds_promoted
         // OOM: fwd unchanged, heap unchanged — invariant trivially preserved
         ()
       else begin
+        let fuel = heap_size / U64.v mword in
         // new_addr is in objects of res.major_out
         promote_object_adds_new_addr minor major obj fp wz;
         // existing objects persist
         promote_object_preserves_objects_part1 minor major obj fp wz;
-        // allocator invariants for the recursive call
-        promote_object_preserves_alloc_invariants minor major obj fp wz;
+        // allocator properties for recursion
+        let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+        GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
+        let dst_obj : obj_addr = alloc_res.obj_out in
+        AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+        AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wz;
+        chain_avoids_implies_not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel;
+        AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wz;
+        copy_fields_preserves_fl_valid_aux minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        copy_fields_preserves_fl_chain_terminates minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
+        copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wz;
+        // Propagate wfh_part1 + fl_valid + fl_chain_terminates through pad + set_promoted_tag
+        let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+        let tag = minor_tag minor obj in
+        minor_tag_bound minor obj;
+        copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wz;
+        copy_fields_preserves_chain_avoids_self minor alloc_res.heap_out obj dst_obj 0 wz alloc_res.fp_out fuel;
+        zero_promote_padding_preserves_alloc_invariants copied dst_obj wz alloc_res.fp_out;
+        let padded = zero_promote_padding copied dst_obj wz in
+        set_promoted_tag_preserves_alloc_invariants padded dst_obj tag alloc_res.fp_out;
         promote_object_success minor major obj fp wz;
         // fwd' extends fwd with obj -> new_addr
         let fwd' = extend_forwarding fwd obj res.new_addr in

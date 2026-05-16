@@ -611,13 +611,13 @@ let pointer_closed_from_universal_0 (g: heap) (addrs: list obj_addr) : Lemma
 
 /// Top-level unpack: parse raw heap into logical form
 let unpack (g: heap) : GTot (option heap_l) =
-  let entries = unpack_objects g 0UL in
+  let entries = unpack_objects g zero_addr in
   if pointer_closed entries then Some entries
   else None
 
 /// Bridge: pointer_closed implies unpack succeeds
 let pointer_closed_implies_unpack (g: heap) : Lemma
-  (requires pointer_closed (unpack_objects g 0UL) = true)
+  (requires pointer_closed (unpack_objects g zero_addr) = true)
   (ensures Some? (unpack g))
   = ()
 

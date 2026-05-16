@@ -291,7 +291,7 @@ let next_pos_no_overflow (np: nat)
 #push-options "--z3rlimit 40"
 let color_2_implies_blue (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
   : Lemma (requires hdr == GC.Spec.Heap.read_word g p /\
-                    Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects 0UL g) /\
+                    Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects zero_addr g) /\
                     GC.Lib.Header.get_color (U64.v hdr) = 2)
           (ensures GC.Spec.Object.is_blue (GC.Spec.Heap.f_address p) g)
   = assert_norm (U64.v GC.Spec.Base.mword = 8);
@@ -303,7 +303,7 @@ let color_2_implies_blue (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: 
 /// Helper: raw color != 2 implies not is_blue
 let color_not2_implies_not_blue (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
   : Lemma (requires hdr == GC.Spec.Heap.read_word g p /\
-                    Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects 0UL g) /\
+                    Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects zero_addr g) /\
                     GC.Lib.Header.get_color (U64.v hdr) <> 2)
           (ensures ~(GC.Spec.Object.is_blue (GC.Spec.Heap.f_address p) g))
   = assert_norm (U64.v GC.Spec.Base.mword = 8);
@@ -316,7 +316,7 @@ let color_not2_implies_not_blue (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size
 /// Bridge: runtime tag comparison matches spec is_no_scan
 let is_no_scan_eq (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
   : Lemma (requires hdr == GC.Spec.Heap.read_word g p /\
-                    Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects 0UL g))
+                    Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects zero_addr g))
           (ensures U64.gte (GC.Impl.Object.getTag hdr) GC.Impl.Object.no_scan_tag ==
                    GC.Spec.Object.is_no_scan (GC.Spec.Heap.f_address p) g)
   = assert_norm (U64.v GC.Spec.Base.mword = 8);
@@ -336,7 +336,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
            pure (SpecFields.well_formed_heap_part1 'ms /\
                  PromoteSpec.heap_objects_dense 'ms /\
                  heap_size > 8 /\
-                 Seq.length (SpecFields.objects 0UL 'ms) > 0 /\
+                 Seq.length (SpecFields.objects zero_addr 'ms) > 0 /\
                  Seq.length 'farr == fwd_array_size /\
                  represents_fwd 'farr fwd)
   ensures exists* ms2.
@@ -345,7 +345,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     pure (SpecFields.well_formed_heap_part1 ms2 /\
           ms2 == PromoteSpec.update_major_pointers 'ms fwd)
 {
-  // Unfold: update_major_pointers = update_all_objects_aux on objects 0UL
+  // Unfold: update_major_pointers = update_all_objects_aux on objects zero_addr
   update_major_pointers_unfold 'ms fwd;
   objects_initial_membership 'ms;
 
@@ -367,7 +367,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
             (b == true ==> ms_i == PromoteSpec.update_major_pointers 'ms fwd) /\
             // When not done: valid scan position with spec connection
             (b == false ==> (U64.v pos_i + 8 < heap_size /\
-              Seq.mem (GC.Spec.Heap.f_address pos_i) (SpecFields.objects 0UL ms_i) /\
+              Seq.mem (GC.Spec.Heap.f_address pos_i) (SpecFields.objects zero_addr ms_i) /\
               Seq.length (SpecFields.objects pos_i ms_i) > 0 /\
               GC.Gen.Promote.update_all_objects_aux ms_i
                 (SpecFields.objects pos_i ms_i) fwd 0 ==
@@ -379,7 +379,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     assert (pure (SpecFields.well_formed_heap_part1 ms_cur /\
                   PromoteSpec.heap_objects_dense ms_cur /\
                   U64.v p + 8 < heap_size /\
-                  Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects 0UL ms_cur) /\
+                  Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects zero_addr ms_cur) /\
                   Seq.length (SpecFields.objects p ms_cur) > 0));
     // Read header and get wosize + color
     let hdr = read_word major p;
@@ -412,7 +412,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
         (U64.v next_pos + 8 >= heap_size ==>
           ms_cur == PromoteSpec.update_major_pointers 'ms fwd) /\
         (U64.v next_pos + 8 < heap_size ==>
-          (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_cur) /\
+          (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects zero_addr ms_cur) /\
            Seq.length (SpecFields.objects next_pos ms_cur) > 0 /\
            GC.Gen.Promote.update_all_objects_aux ms_cur
              (SpecFields.objects next_pos ms_cur) fwd 0 ==
@@ -442,7 +442,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
           (U64.v next_pos + 8 >= heap_size ==>
             ms_cur == PromoteSpec.update_major_pointers 'ms fwd) /\
           (U64.v next_pos + 8 < heap_size ==>
-            (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_cur) /\
+            (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects zero_addr ms_cur) /\
              Seq.length (SpecFields.objects next_pos ms_cur) > 0 /\
              GC.Gen.Promote.update_all_objects_aux ms_cur
                (SpecFields.objects next_pos ms_cur) fwd 0 ==
@@ -483,7 +483,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
           (U64.v next_pos + 8 >= heap_size ==>
             ms_after == PromoteSpec.update_major_pointers 'ms fwd) /\
           (U64.v next_pos + 8 < heap_size ==>
-            (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects 0UL ms_after) /\
+            (Seq.mem (GC.Spec.Heap.f_address next_pos) (SpecFields.objects zero_addr ms_after) /\
              Seq.length (SpecFields.objects next_pos ms_after) > 0 /\
              GC.Gen.Promote.update_all_objects_aux ms_after
                (SpecFields.objects next_pos ms_after) fwd 0 ==

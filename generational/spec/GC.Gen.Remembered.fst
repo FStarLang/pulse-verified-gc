@@ -55,7 +55,7 @@ let rec scan_objects_list (major: heap) (objs: seq obj_addr) (idx: nat)
     Seq.append refs rest
 
 let scan_major_for_minor_refs (major: heap) : GTot (seq remembered_ref) =
-  let objs = objects 0UL major in
+  let objs = objects zero_addr major in
   scan_objects_list major objs 0
 
 /// ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ let rec scan_objects_list_witness (major: heap) (objs: seq obj_addr) (idx: nat) 
 let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   : Lemma (requires
              well_formed_heap major /\
-             Seq.mem obj (objects 0UL major) /\
+             Seq.mem obj (objects zero_addr major) /\
              field_idx >= 1 /\ field_idx <= U64.v (wosize_of_object obj major) /\
              U64.v obj + field_idx * 8 + 8 <= heap_size /\
              (U64.v obj + field_idx * 8) % 8 == 0 /\
@@ -160,7 +160,7 @@ let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
              Seq.mem (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))
                      (minor_roots_from_major major)) =
   let target = read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) in
-  let objs = objects 0UL major in
+  let objs = objects zero_addr major in
   let wz = U64.v (wosize_of_object obj major) in
 
   // Step 1: find an entry in scan_object_fields with .rem_target == target

@@ -151,12 +151,14 @@ fn read_succ (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
 fn is_pointer (v: U64.t)
   requires emp
   returns b: bool
-  ensures emp ** pure (b <==> (U64.v v > 0 /\ 
+  ensures emp ** pure (b <==> (U64.v v >= U64.v zero_addr + U64.v mword /\ 
                                U64.v v < heap_size /\ 
                                U64.v v % U64.v mword == 0))
 {
-  // Check below minimum object address (mword = 8)
-  if (U64.lt v mword) {
+  // Lower bound: zero_addr + mword (in spec zero_addr=0, so this is 8;
+  // at deployment zero_addr is the heap base address)
+  let lo = U64.add zero_addr mword;
+  if (U64.lt v lo) {
     false
   } else {
     // Check within heap bounds

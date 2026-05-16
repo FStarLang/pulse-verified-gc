@@ -99,7 +99,7 @@ let rec update_object_pointers_preserves_other_header
           // By objects_separated: other > obj + wosize*8 >= obj + i*8 = addr
           // So hd_address(other) = other - 8 >= obj + wosize*8 - 8 > addr  
           hd_address_spec other;
-          objects_separated 0UL major obj other;
+          objects_separated zero_addr major obj other;
           assert (U64.v addr < U64.v (hd_address other));
           let major' = write_word major addr new_val in
           read_write_different major addr (hd_address other) new_val;

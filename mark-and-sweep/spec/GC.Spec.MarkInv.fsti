@@ -29,7 +29,7 @@ val mark_inv (g: heap) (st: seq obj_addr) : prop
 
 val mark_inv_intro : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\
-                  Seq.length (objects 0UL g) > 0 /\ SweepInv.heap_objects_dense g)
+                  Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g)
         (ensures mark_inv g st)
 
 /// ---------------------------------------------------------------------------
@@ -54,20 +54,20 @@ val mark_inv_elim_sp : (g: heap) -> (st: seq obj_addr) ->
 /// Non-quantified extraction lemmas for Pulse use
 /// ---------------------------------------------------------------------------
 
-/// Elimination: objects 0UL is non-empty
+/// Elimination: objects zero_addr is non-empty
 val mark_inv_elim_objects : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
-        (ensures Seq.length (objects 0UL g) > 0)
+        (ensures Seq.length (objects zero_addr g) > 0)
 
 /// Stack head is gray and a valid object
 val mark_inv_head_gray : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st /\ Seq.length st > 0)
         (ensures is_gray (Seq.head st) g /\
-                 Seq.mem (Seq.head st) (objects 0UL g))
+                 Seq.mem (Seq.head st) (objects zero_addr g))
 
 /// Object in objects list has hd_address + (1+wosize)*mword <= heap_size
 val mark_inv_obj_fields_bound : (g: heap) -> (obj: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects 0UL g))
+  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g))
         (ensures U64.v (hd_address obj) + U64.v mword +
                  (U64.v (wosize_of_object obj g) * U64.v mword) <= heap_size)
 
@@ -98,7 +98,7 @@ val mark_inv_step_scan : (g: heap) -> (obj: obj_addr) -> (tl: seq obj_addr) ->
 
 val mark_inv_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) ->
   Lemma (requires mark_inv g st)
-        (ensures objects 0UL (fst (mark_step g st)) == objects 0UL g)
+        (ensures objects zero_addr (fst (mark_step g st)) == objects zero_addr g)
 
 /// ---------------------------------------------------------------------------
 /// Density elimination and preservation
@@ -114,7 +114,7 @@ val mark_inv_elim_density : (g: heap) -> (st: seq obj_addr) ->
 
 /// The gray stack length is bounded by the number of heap objects.
 /// Proof: stack_no_dups + stack_elements_valid imply the stack is a
-/// duplicate-free subsequence of (objects 0UL g), hence no longer.
+/// duplicate-free subsequence of (objects zero_addr g), hence no longer.
 /// Combined with objects_count * mword <= heap_size, this gives
 /// Seq.length st <= heap_size / mword < heap_size.
 val mark_inv_stack_bound : (g: heap) -> (st: seq obj_addr) ->

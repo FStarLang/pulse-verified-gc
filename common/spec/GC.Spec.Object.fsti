@@ -306,10 +306,10 @@ val allocated_blocks (g: heap) : GTot (seq hp_addr)
 /// Coerce hp_addr to obj_addr when >= 8 is known
 val hp_to_obj (h: hp_addr{U64.v h >= U64.v mword}) : obj_addr
 
-/// All objects in objects 0UL g have addresses >= 8
+/// All objects in objects zero_addr g have addresses >= zero_addr + mword
 val objects_addresses_ge_8 (g: heap) (x: hp_addr)
-  : Lemma (requires Seq.mem x (objects 0UL g))
-          (ensures U64.v x >= U64.v mword)
+  : Lemma (requires Seq.mem x (objects zero_addr g))
+          (ensures U64.v x >= U64.v zero_addr + U64.v mword)
 
 /// ---------------------------------------------------------------------------
 /// Color Mutation Correctness Lemmas

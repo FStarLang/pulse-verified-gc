@@ -8,7 +8,7 @@ F\*/Pulse source so the extraction is usable directly.
 
 ---
 
-## Current Status (updated 2025-06-07)
+## Current Status (updated 2025-06-14)
 
 ### Extraction Patches (GC_Gen_Impl.c)
 
@@ -18,15 +18,15 @@ F\*/Pulse source so the extraction is usable directly.
 | 7  | darken non-static | ✅ **DONE** | `GC.Impl.MarkBounded` added to API bundle in Makefile |
 | 10 | Tag preservation in promote | ✅ **DONE** | `Impl.Promote.fst` reads minor tag, uses `Obj.makeHeader` (clean extraction) |
 | 6  | rescan_heap_impl start | ✅ **DONE** | Impl now starts at `zero_addr` (= 0UL in spec) |
-| 11 | `is_pointer` lower bound | ✅ **DONE** | Changed `v==0` to `v < mword`, extracts as `v < 8ULL` |
-| 12 | `is_valid_fp` lower bound | ✅ **DONE** (was already OK) | Already uses `v >= 8ULL` = `v >= mword` |
+| 11 | `is_pointer` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
+| 12 | `is_valid_fp` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
 | 13 | krmlinit | ✅ Minimal | Only sets `queue_size_sz` and `minor_heap_size_sz` |
-| B13 | compat.c / U64.ne extern | ✅ **DONE** | `U64.ne` → `not (U64.eq ...)`, compat.c now empty |
+| B13 | compat.c extern primitives | ✅ **DONE** | Implements `read_u64_le`/`write_u64_le` externs from `GC.Impl.ArrayWord` |
 | B14b | fwd_array_size alias | ✅ **DONE** | Bridge uses `queue_size_sz` directly |
 | 8  | update_all_objects start | ✅ **DONE** | Impl now starts at `zero_addr` instead of `0UL` |
 | 1  | zero_addr non-static | ⚠️ **Irreducible** | See note below |
 | 2  | Configurable heap_size | ⚠️ **Irreducible** | `heap_size_u64` is settable at link time |
-| 3,4 | Scan range / HWM | ⚠️ **Irreducible** | Performance opt; requires proving scan-range soundness |
+| 3,4 | Scan range / HWM | ✅ **ELIMINATED** | Bridge now walks fwd_arr + calls `update_one_object`; `update_all_objects` reverted to clean extraction |
 | 9  | Infix forwarding | ✅ **DONE** | Phased calls + infix fwd fixup in bridge |
 
 ### Irreducible Bridge Items
@@ -37,11 +37,15 @@ absolute address. Making it non-static via KaRaMeL bundle API was attempted
 but pulls in spec functions with `Seq` types and generates unwanted
 `internal/Prims.h`. This is a 1-word visibility change (`static` removed).
 
-**PATCHES 3,4 (scan range):** The bridge narrows `update_all_objects` to scan
-only `[update_scan_base, major_alloc_hwm)` instead of `[0, heap_size)`.
-Verifying this requires proving that pre-existing major objects have no minor
-pointers after each collection — a significant spec invariant not currently
-tracked. Performance impact: ~3× faster on large heaps with few promotions.
+**PATCHES 3,4 (scan range): ✅ ELIMINATED.** Previously the bridge narrowed
+`update_all_objects` to scan only newly-promoted objects via `update_scan_base`
+and `major_alloc_hwm` globals. This was INCORRECT for a free-list allocator
+(promoted objects can land anywhere in the heap, not just at the end) and caused
+heap corruption at binarytrees depth ≥14. The fix: the bridge now walks the
+`fwd_arr` to find all promoted objects and calls the verified `update_one_object`
+on each. The `update_all_objects` function has been reverted to its clean
+extraction form (full heap scan from `zero_addr`). It is no longer called during
+minor collection — only the fwd_arr walk + `update_one_object` is used.
 
 **PATCH 9 (infix objects):** OCaml infix objects (tag=249) require special
 forwarding during promotion. The verified spec's `well_formed_heap_part4`
@@ -58,7 +62,7 @@ infix parent relationship in the formal heap model.
 | B6  | Infix parent injection | ✅ **DONE** | Verified `find_infix_parents` replaces 43-line C loop |
 | B6b | Infix fwd synthesis | ✅ **DONE** | Verified `synthesize_infix_forwarding` replaces 57-line C loop |
 | B7  | Minor field abs→offset | ✅ **DONE** | Verified `translate_minor_fields` replaces 35-line C loop |
-| B8  | Scan base setup | — Tied to PATCHES 3,4 | Sets `update_scan_base` |
+| B8  | Scan base setup | ✅ **ELIMINATED** | Removed with PATCHES 3,4; fwd_arr walk replaces scan-range |
 | B9  | Ref_table fwd rewriting | ✅ **DONE** | Verified `rewrite_heap_slots` replaces manual loop |
 | B11 | Full GC wrapper | — Keep as-is | 46 lines, orchestrates major GC |
 | B12 | Allocation entry point | — Keep as-is | 56 lines, hot path |
@@ -73,29 +77,36 @@ infix parent relationship in the formal heap model.
 | All 152 generational modules verify | ✅ Clean build (`make -j4`) |
 | Zero admits/assumes in spec | ✅ Confirmed |
 | Extraction compiles without KaRaMeL warnings | ✅ Zero warnings |
-| All 8 OCaml benchmarks pass | ✅ binarytrees, fasta, quicksort, fannkuchredux, count_change, nbodies, spectralnorm, mandelbrot |
+| All 8 OCaml benchmarks pass | ✅ binarytrees (depth 14, 16), fasta, quicksort, fannkuchredux, count_change, nbodies, spectralnorm, mandelbrot. Fixed `max_young_wosize_u64` heap corruption (commit `37431eb`). |
 | Header file matches exactly | ✅ `diff GC_Gen_Impl.h` = empty |
 | krmlinit matches exactly | ✅ `diff krmlinit.c` = empty |
 
-### Remaining extraction diff: 14 lines (all irreducible bridge infrastructure)
+### Remaining extraction diff: 1 line
+
+The `verified_gc/` snapshot is now a **verbatim copy** of `_extract/` with a
+single semantic change:
 
 ```diff
 < static uint64_t zero_addr = 0ULL;
-> uint64_t zero_addr = 0ULL;               // non-static for bridge (PATCH 1)
-> uint64_t major_alloc_hwm = 0ULL;         // scan optimization (PATCH 3)
-> uint64_t update_scan_base = 0ULL;        // scan optimization (PATCH 4)
-
-< uint64_t pos = zero_addr;
-< bool done = false;
-> uint64_t pos = (update_scan_base > 0ULL) ? update_scan_base : zero_addr;
-> uint64_t scan_limit = (major_alloc_hwm > 0ULL) ? major_alloc_hwm : heap_size_u64;
-> bool done = (pos + 8ULL >= scan_limit);
-
-<     done = next_pos + 8ULL >= heap_size_u64;  (×3 occurrences)
->     done = next_pos + 8ULL >= scan_limit;     (×3 occurrences)
+> uint64_t zero_addr = 0ULL; /* non-static: bridge sets to mmap'd base */
 ```
 
-**Snapshot matches extraction + these 14 bridge lines. Last updated at commit `373aa9e`.**
+All other extracted files (`GC_Gen_Impl.h`, internal headers, `krmlinit.c`,
+`GC_Gen_Base_*.c`) are **identical** to the extraction output.
+
+The extern primitives (`read_u64_le`, `write_u64_le`) are left as KaRaMeL
+declared them (`extern`) and implemented in `compat.c`, which is linked into
+`libvergc_gen.a`.  The extracted `read_word`, `write_word`, `minor_read`,
+`minor_write` call through to these externs — no inlining patches.
+
+`is_pointer` and `is_valid_fp` lower-bound patches are **eliminated** — the
+verified Pulse code now uses `U64.add zero_addr mword` which extracts as
+`zero_addr + 8ULL`, matching deployment needs directly.
+
+Scan-range patches (PATCHES 3,4: `major_alloc_hwm`, `update_scan_base`) are
+**eliminated** — the bridge now walks `fwd_arr` and calls the verified
+`update_one_object` per promoted object. `update_all_objects` is reverted
+to its clean extraction form.
 
 ---
 
@@ -249,25 +260,19 @@ the hand patch and is fully verified.
 
 ---
 
-## PATCH 6 — `is_pointer` lower-bound check
+## PATCH 6 — `is_pointer` lower-bound check — ✅ ELIMINATED
 
-**File**: `GC_Gen_Impl.c`, line 531
+**File**: `GC_Gen_Impl.c` (`is_pointer` function)
 
-**What changed**:
-```c
-// Extracted:
-if (v == 0ULL)
+**Original issue**: The extracted code checked `v == 0ULL` or `v < 8ULL`, which
+with the NULL-base trick misclassified low addresses as pointers. The deployment
+needed `v < zero_addr + 8ULL`.
 
-// Patched:
-if (v < zero_addr + 8ULL)
-```
-
-**Why**: With the NULL-base trick, the heap starts at `zero_addr` (not 0).
-A valid object pointer must be ≥ `zero_addr + 8` (room for a header).
-The extracted code only checks `v == 0` which misclassifies low addresses
-as pointers.
-
-**Plan to eliminate**: Same as PATCH 1 — parameterise by `zero_addr`.
+**Resolution**: ✅ **ELIMINATED**.  The verified Pulse source (`GC.Impl.Fields.fst`)
+now uses `U64.add zero_addr mword` instead of `mword` for the lower bound.
+KaRaMeL extracts this as `zero_addr + 8ULL`, matching deployment needs directly.
+The extraction introduces a `let lo = zero_addr + 8ULL` local — trivially
+equivalent to the inline form in the deployment copy.
 
 ---
 
@@ -295,22 +300,16 @@ This makes `darken_if_white_bounded` non-static in the extracted C output.
 
 ---
 
-## PATCH 8 — `is_valid_fp` uses `zero_addr`
+## PATCH 8 — `is_valid_fp` uses `zero_addr` — ✅ ELIMINATED
 
-**File**: `GC_Gen_Impl.c`, line 1056
+**File**: `GC_Gen_Impl.c` (`is_valid_fp` function)
 
-**What changed**:
-```c
-// Extracted:
-return v >= 8ULL && v < heap_size_u64 && v % 8ULL == 0ULL;
+**Original issue**: The extracted code checked `v >= 8ULL` which doesn't account
+for the NULL-base trick where the heap starts at `zero_addr`.
 
-// Patched:
-return v >= zero_addr + 8ULL && v < heap_size_u64 && v % 8ULL == 0ULL;
-```
-
-**Why**: Same as PATCH 1/6 — NULL-base trick requires `zero_addr` offset.
-
-**Plan to eliminate**: Same as PATCH 1.
+**Resolution**: ✅ **ELIMINATED**.  The verified Pulse source (`GC.Impl.Allocator.fst`)
+now uses `U64.add zero_addr mword` instead of `mword`. KaRaMeL extracts this as
+`v >= zero_addr + 8ULL`, matching deployment needs directly.
 
 ---
 
@@ -778,8 +777,8 @@ leverage change for closing the performance gap with stock OCaml.
 | 7  | darken non-static | **Low** — bundle config fix | ✅ DONE |
 | 6  | rescan_heap_impl start | **Medium** — consistency | ✅ DONE |
 | 8  | update_all_objects start | **Medium** — consistency | ✅ DONE |
-| 11 | `is_pointer` lower bound | **Medium** — consistency | ✅ DONE |
-| 12 | `is_valid_fp` lower bound | **Medium** — already correct | ✅ DONE (was already OK) |
+| 11 | `is_pointer` lower bound | **Medium** — consistency | ✅ **ELIMINATED** — verified with `U64.add zero_addr mword` |
+| 12 | `is_valid_fp` lower bound | **Medium** — already correct | ✅ **ELIMINATED** — verified with `U64.add zero_addr mword` |
 | B13 | compat.c / U64.ne extern | **Trivial** | ✅ DONE |
 | B14b | fwd_array_size alias | **Trivial** | ✅ DONE |
 | 13 | krmlinit | **Low** — link convenience | ✅ Minimal (only 2 derived constants) |
@@ -809,9 +808,9 @@ leverage change for closing the performance gap with stock OCaml.
 
 | Category | Done | Irreducible/Deferred | Total |
 |----------|------|---------------------|-------|
-| Extraction patches | 11 | 3 | 14 |
+| Extraction patches | 11 (+2 eliminated) | 1 | 14 |
 | Bridge code items | 7 | 6 | 13 |
-| Extraction diff lines | — | 14 | — |
+| Extraction diff lines | — | ~12 | — |
 | alloc_gen.c lines | — | 479 | — |
 
 ### Future work (remaining items, in priority order)

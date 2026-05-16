@@ -184,9 +184,9 @@ fn fused_sweep_coalesce (heap: heap_t)
 
       // 2b. s_flush length from flush_blue_impl postcondition (already have Seq.length s_flush == heap_size)
 
-      // 2c. Establish Seq.mem obj (objects 0UL 's) via density
+      // 2c. Establish Seq.mem obj (objects zero_addr 's) via density
       // obj == f_address cur, obj_in_objects is in the invariant from density lemmas
-      // SI.obj_in_objects_elim was called above, giving Seq.mem obj (objects 0UL 's)
+      // SI.obj_in_objects_elim was called above, giving Seq.mem obj (objects zero_addr 's)
 
       // 3. Write white header for the black object
       let white_hdr = makeHeader wz Header.White (getTag hdr);

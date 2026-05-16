@@ -40,7 +40,7 @@ val promote_all_read_other
   : Lemma (requires well_formed_heap_part1 major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-                    Seq.mem other (objects 0UL major) /\
+                    Seq.mem other (objects zero_addr major) /\
                     AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true /\
                     U64.v addr >= U64.v other /\
                     U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8)
