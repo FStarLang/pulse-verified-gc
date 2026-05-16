@@ -92,9 +92,12 @@ let reachable_subgraph_isomorphism
     combined_reachable cg combined_roots v /\
     fwd_morphism fwd u == fwd_morphism fwd v ==> u == v) /\
   // (B) Image in post-GC: reachable pre-GC vertices map to post-GC vertices
+  //     The morphism result is a valid heap address in the post-GC graph.
   (forall (v: combined_vertex).
     combined_reachable cg combined_roots v ==>
-    Seq.mem (fwd_morphism fwd v) g_final.vertices) /\
+    (let w = fwd_morphism fwd v in
+     U64.v w >= 0 /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+     Seq.mem (w <: hp_addr) g_final.vertices)) /\
   // (C) Surjectivity on reachable: post-GC reachable vertices have pre-images
   (forall (w: vertex_id).
     Seq.mem w g_final.vertices /\
@@ -103,14 +106,19 @@ let reachable_subgraph_isomorphism
                            reachable g_final r w) ==>
     (exists (v: combined_vertex).
       combined_reachable cg combined_roots v /\
-      fwd_morphism fwd v == w)) /\
+      fwd_morphism fwd v == (w <: U64.t))) /\
   // (D) Edge equivalence (biconditional): edges are preserved in both directions
   //     This is the canonical induced-subgraph isomorphism condition.
+  //     Quantified over reachable vertices whose morphism images are valid addresses.
   (forall (u v: combined_vertex).
     combined_reachable cg combined_roots u /\
-    combined_reachable cg combined_roots v ==>
+    combined_reachable cg combined_roots v /\
+    (let fu = fwd_morphism fwd u in
+     let fv = fwd_morphism fwd v in
+     U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+     U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0) ==>
     (mem_ce (u, v) cg <==>
-     Seq.mem (fwd_morphism fwd u, fwd_morphism fwd v) g_final.edges))
+     Seq.mem ((fwd_morphism fwd u <: hp_addr), (fwd_morphism fwd v <: hp_addr)) g_final.edges))
 
 /// ---------------------------------------------------------------------------
 /// The Main Theorem

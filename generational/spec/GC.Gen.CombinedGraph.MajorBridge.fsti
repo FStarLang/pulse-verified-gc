@@ -27,6 +27,7 @@ open GC.Spec.Graph
 open GC.Spec.HeapModel
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Promote
 open GC.Gen.CombinedGraph
 
 module HeapGraph = GC.Spec.HeapGraph
