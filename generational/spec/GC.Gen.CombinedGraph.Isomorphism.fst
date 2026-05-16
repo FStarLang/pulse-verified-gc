@@ -167,7 +167,26 @@ let property_c_surjectivity
 /// Backward (⟸): Post-GC edge (φ(u), φ(v)) exists. Since mark/sweep
 ///   preserves fields of black objects (Pillar 5), the edge was present in
 ///   mc_major. Then by edge preservation reverse, it came from a combined edge.
-let property_d_edges
+
+/// Forward direction: combined edge → post-GC edge
+let property_d_forward
+  (ms: minor_state) (major: heap) (fwd: forwarding_map)
+  (combined_roots: seq combined_vertex)
+  (h_final: heap) : prop =
+  let cg = pre_gc_graph ms major in
+  let g_final = create_graph h_final in
+  forall (u v: combined_vertex).
+    combined_reachable cg combined_roots u /\
+    combined_reachable cg combined_roots v /\
+    mem_ce (u, v) cg /\
+    (let fu = fwd_morphism fwd u in
+     let fv = fwd_morphism fwd v in
+     U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+     U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0) ==>
+    Seq.mem ((fwd_morphism fwd u <: hp_addr), (fwd_morphism fwd v <: hp_addr)) g_final.edges
+
+/// Backward direction: post-GC edge → combined edge
+let property_d_backward
   (ms: minor_state) (major: heap) (fwd: forwarding_map)
   (combined_roots: seq combined_vertex)
   (h_final: heap) : prop =
@@ -179,9 +198,17 @@ let property_d_edges
     (let fu = fwd_morphism fwd u in
      let fv = fwd_morphism fwd v in
      U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
-     U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0) ==>
-    (mem_ce (u, v) cg <==>
-     Seq.mem ((fwd_morphism fwd u <: hp_addr), (fwd_morphism fwd v <: hp_addr)) g_final.edges)
+     U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0) /\
+    Seq.mem ((fwd_morphism fwd u <: hp_addr), (fwd_morphism fwd v <: hp_addr)) g_final.edges ==>
+    mem_ce (u, v) cg
+
+/// Combined (biconditional): the full edge equivalence
+let property_d_edges
+  (ms: minor_state) (major: heap) (fwd: forwarding_map)
+  (combined_roots: seq combined_vertex)
+  (h_final: heap) : prop =
+  property_d_forward ms major fwd combined_roots h_final /\
+  property_d_backward ms major fwd combined_roots h_final
 
 /// ---------------------------------------------------------------------------
 /// Main theorem proof
@@ -189,14 +216,12 @@ let property_d_edges
 
 /// The main theorem composes all four properties.
 ///
-/// Current status: This proof uses admits for each property sub-proof.
-/// The admits are annotated with what infrastructure is needed.
-///
-/// Admits breakdown:
-///   Property (A): 1 admit — mixed case (MinorV/MajorV non-collision)
-///   Property (B): 1 admit — reachability preservation through minor collect + mark/sweep  
-///   Property (C): 1 admit — image decomposition (old major ∪ promoted)
-///   Property (D): 1 admit — edge biconditional through full GC cycle
+/// Proof status:
+///   Property (A): ✅ Fully proven (3 match cases)
+///   Property (B): assume — needs morphism_image_preservation + mark/sweep composition
+///   Property (C): assume — needs image decomposition (old major ∪ promoted)
+///   Property (D): assume — split into forward/backward; forward via EdgePres + MSFrame
+///   reachable_implies_forwarded: ✅ Fully proven (Seq.index_mem chain)
 let generational_gc_isomorphism
   (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
   (combined_roots: seq combined_vertex)
