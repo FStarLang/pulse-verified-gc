@@ -282,6 +282,25 @@ let rec make_edges_mem (h_addr: vertex_id) (succs: seq vertex_id) (v: vertex_id)
       Seq.mem_cons (h_addr, hd) (make_edges h_addr (Seq.tail succs))
     end
 
+/// Reverse: if (h_addr, v) is in make_edges h_addr succs, then v is in succs
+let rec make_edges_mem_rev (h_addr: vertex_id) (succs: seq vertex_id) (v: vertex_id)
+  : Lemma (requires Seq.mem (h_addr, v) (make_edges h_addr succs))
+          (ensures Seq.mem v succs)
+          (decreases Seq.length succs)
+  = if Seq.length succs = 0 then ()
+    else begin
+      let dst = Seq.head succs in
+      let tl = Seq.tail succs in
+      let edges = make_edges h_addr succs in
+      // edges = cons (h_addr, dst) (make_edges h_addr tl)
+      if (h_addr, v) = (h_addr, dst) then ()
+      else begin
+        // (h_addr, v) must be in make_edges h_addr tl
+        Seq.mem_cons (h_addr, dst) (make_edges h_addr tl);
+        make_edges_mem_rev h_addr tl v
+      end
+    end
+
 /// If a pointer field at index j (i <= j <= ws) exists, it's in get_pointer_fields_aux
 let rec get_pointer_fields_aux_mem (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   (j: U64.t{U64.v j >= 1})
@@ -333,6 +352,126 @@ let rec all_edges_superset (g: heap) (objs: seq obj_addr) (obj: obj_addr)
         = Seq.lemma_mem_append edges1 (all_edges g (Seq.tail objs))
       in FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
     end
+
+/// Reverse of all_edges_superset: if e ∈ all_edges g objs,
+/// then there exists obj ∈ objs such that e ∈ object_edges g obj
+let rec all_edges_decompose (g: heap) (objs: seq obj_addr) (e: edge)
+  : Lemma (requires Seq.mem e (all_edges g objs))
+          (ensures exists (obj: obj_addr). Seq.mem obj objs /\ Seq.mem e (object_edges g obj))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let h_addr = Seq.head objs in
+      let edges1 = object_edges g h_addr in
+      let rest = all_edges g (Seq.tail objs) in
+      Seq.lemma_mem_append edges1 rest;
+      if Seq.mem e edges1 then ()
+      else begin
+        all_edges_decompose g (Seq.tail objs) e
+      end
+    end
+
+/// From object_edges decomposition: if (src, dst) ∈ object_edges g src,
+/// then dst ∈ get_pointer_fields g src
+let object_edges_dst_in_pointer_fields (g: heap) (src: obj_addr) (dst: vertex_id)
+  : Lemma (requires Seq.mem (src, dst) (object_edges g src))
+          (ensures Seq.mem dst (get_pointer_fields g src))
+  = make_edges_mem_rev src (get_pointer_fields g src) dst
+
+/// Reverse of get_pointer_fields_aux_mem: if v ∈ get_pointer_fields_aux,
+/// then there exists j ∈ [i, ws] such that get_field g obj j == v
+let rec get_pointer_fields_aux_mem_rev
+  (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t) (v: vertex_id)
+  : Lemma (requires Seq.mem v (get_pointer_fields_aux g obj i ws))
+          (ensures exists (j: U64.t{U64.v j >= 1}).
+            U64.v j >= U64.v i /\ U64.v j <= U64.v ws /\
+            get_field g obj j == v /\ is_pointer_field v)
+          (decreases (U64.v ws - U64.v i + 1))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let fld = get_field g obj i in
+      let rest =
+        if U64.v i < U64.v ws then
+          get_pointer_fields_aux g obj (U64.add i 1UL) ws
+        else
+          Seq.empty
+      in
+      if is_pointer_field fld then begin
+        is_pointer_field_is_obj_addr fld;
+        // result = cons fld rest
+        if v = fld then ()
+        else begin
+          // v must be in rest
+          Seq.mem_cons fld rest;
+          if U64.v i < U64.v ws then
+            get_pointer_fields_aux_mem_rev g obj (U64.add i 1UL) ws v
+          else ()
+        end
+      end else begin
+        // result = rest (fld was not a pointer field)
+        if U64.v i < U64.v ws then
+          get_pointer_fields_aux_mem_rev g obj (U64.add i 1UL) ws v
+        else ()
+      end
+    end
+
+/// Every edge in make_edges h succs has h as the source
+let rec make_edges_source (h_addr: vertex_id) (succs: seq vertex_id) (e: edge)
+  : Lemma (requires Seq.mem e (make_edges h_addr succs))
+          (ensures fst e == h_addr)
+          (decreases Seq.length succs)
+  = if Seq.length succs = 0 then ()
+    else begin
+      let dst = Seq.head succs in
+      let tl = Seq.tail succs in
+      if e = (h_addr, dst) then ()
+      else begin
+        Seq.mem_cons (h_addr, dst) (make_edges h_addr tl);
+        make_edges_source h_addr tl e
+      end
+    end
+
+/// Combined reverse: graph edge → field index.
+/// If (src, dst) is an edge in create_graph_from_heap, then there exists
+/// a field index j ∈ [1, wosize] such that get_field g src j == dst.
+/// Helper: if (src,dst) ∈ all_edges g objs, then (src,dst) ∈ object_edges g (Seq.head objs')
+/// for some suffix objs' of objs with head = src (where src is fst of e).
+/// More directly: proves that all_edges membership implies object_edges membership for the source.
+let rec all_edges_source_membership (g: heap) (objs: seq obj_addr) (src: obj_addr) (dst: vertex_id)
+  : Lemma (requires Seq.mem (src, dst) (all_edges g objs))
+          (ensures Seq.mem (src, dst) (object_edges g src))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let h_addr = Seq.head objs in
+      let edges1 = object_edges g h_addr in
+      let rest = all_edges g (Seq.tail objs) in
+      Seq.lemma_mem_append edges1 rest;
+      if Seq.mem (src, dst) edges1 then begin
+        // (src,dst) ∈ object_edges g h_addr = make_edges h_addr (get_pointer_fields g h_addr)
+        make_edges_source h_addr (get_pointer_fields g h_addr) (src, dst);
+        // make_edges_source tells us src == h_addr, so object_edges g src = edges1
+        ()
+      end else begin
+        all_edges_source_membership g (Seq.tail objs) src dst
+      end
+    end
+
+let graph_edge_has_field_index
+  (g: heap) (objs: seq obj_addr) (src: obj_addr) (dst: vertex_id)
+  : Lemma (requires
+      is_vertex_set (coerce_to_vertex_list objs) /\
+      Seq.mem (src, dst) (create_graph_from_heap g objs).edges /\
+      Seq.mem src objs /\ object_fits_in_heap src g /\ ~(is_no_scan src g))
+    (ensures exists (j: U64.t{U64.v j >= 1}).
+      U64.v j <= U64.v (wosize_of_object src g) /\
+      get_field g src j == dst /\ is_pointer_field dst)
+  = // (src, dst) ∈ create_graph_from_heap.edges = all_edges g objs
+    all_edges_source_membership g objs src dst;
+    // Now we have: Seq.mem (src, dst) (object_edges g src)
+    object_edges_dst_in_pointer_fields g src dst;
+    let ws = wosize_of_object src g in
+    get_pointer_fields_aux_mem_rev g src 1UL ws dst
 
 /// Combined: pointer field at index j → graph edge
 let pointer_field_is_graph_edge (g: heap) (objs: seq obj_addr) (obj: obj_addr)
