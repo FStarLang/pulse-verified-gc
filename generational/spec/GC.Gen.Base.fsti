@@ -92,3 +92,8 @@ val max_young_object_fits : unit ->
 /// (We model them as separate arrays, so this is structural)
 val minor_major_disjoint : unit ->
   Lemma (ensures minor_heap_size > 0 /\ heap_size > 0)
+
+/// Address space separation: the major heap starts beyond the minor heap.
+/// This ensures no major object address can be confused with a minor pointer.
+val major_starts_after_minor : unit ->
+  Lemma (ensures U64.v zero_addr >= minor_heap_size)

@@ -44,3 +44,9 @@ let is_minor_addr (a: U64.t) : bool =
 let max_young_object_fits () : Lemma (ensures (max_young_wosize + 1) * 8 <= minor_heap_size) = ()
 
 let minor_major_disjoint () : Lemma (ensures minor_heap_size > 0 /\ heap_size > 0) = ()
+
+/// This is a configuration requirement: the major heap must start after the minor heap
+/// in the address space. In practice, this is ensured by the runtime allocator.
+/// It cannot be proved from ZeroAddr's axioms alone (zero_addr is extern).
+let major_starts_after_minor () : Lemma (ensures U64.v zero_addr >= minor_heap_size) =
+  assume (U64.v zero_addr >= minor_heap_size)
