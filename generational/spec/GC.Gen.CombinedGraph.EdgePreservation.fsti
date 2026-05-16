@@ -92,3 +92,50 @@ val major_field_through_minor_collect
        let field_addr = U64.uint_to_t (U64.v src + i * 8) in
        read_word minor_res.mc_major field_addr ==
          read_word major field_addr))
+
+/// ---------------------------------------------------------------------------
+/// Step 1b: Field rewritten through minor collection (Case 3 — major→minor)
+/// ---------------------------------------------------------------------------
+
+/// When a major object `src` has a field pointing to a minor object `dst`
+/// that gets promoted (fwd dst <> 0UL), the field is rewritten to fwd(dst).
+/// This is the "pointer forwarding" case: after GC, the major heap references
+/// the promoted copy of the minor object.
+///
+/// Composes: promote_all_read_other + update_major_pointers_field_effect
+val major_field_forwarded_by_minor_collect
+  (ms: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src: obj_addr) (i: nat)
+  : Lemma
+    (requires
+      // Object and field membership
+      Seq.mem src (objects zero_addr major) /\
+      i < U64.v (wosize_of_object src major) /\
+      ~(is_no_scan src major) /\
+      is_blue src major = false /\
+      U64.v src + i * 8 + 8 <= heap_size /\
+      (U64.v src + i * 8) % 8 == 0 /\
+      // The field value IS a minor pointer that gets forwarded
+      (let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let field_val = read_word major (U64.uint_to_t (U64.v src + i * 8)) in
+       is_minor_pointer field_val /\ prom_res.fwd_map field_val <> 0UL) /\
+      // Allocator preconditions
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.chain_avoids major fp src (heap_size / U64.v mword) = true /\
+      // Intermediate heap facts
+      (let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       Seq.mem src (objects zero_addr prom_res.major_final) /\
+       wosize_of_object src prom_res.major_final == wosize_of_object src major /\
+       is_blue src prom_res.major_final = false /\
+       is_no_scan src prom_res.major_final = false))
+    (ensures
+      (let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let minor_res = minor_collect_spec ms major fp roots in
+       let field_addr = U64.uint_to_t (U64.v src + i * 8) in
+       let old_val = read_word major field_addr in
+       read_word minor_res.mc_major field_addr == prom_res.fwd_map old_val))
