@@ -375,8 +375,14 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 | Well-formedness proof | ✅ Done | CombinedGraph.fst | 0 admits, all edge endpoints proven |
 | Inductive reachability type | ✅ Done | CombinedGraph.fst | `combined_reach` with CR_root/CR_step |
 | Reachability intro/elim lemmas | ✅ Done | CombinedGraph.fst | `combined_reachable_root/step/ind` |
-| Root classification | ✅ Done | CombinedGraph.fst | `classify_roots_impl` |
-| Reachability bridge (combined↔live_set) | TODO | — | Next step |
+| Root classification | ✅ Done | CombinedGraph.fst | `classify_roots` + mem lemmas |
+| `classify_minor_field_minor` characterization | ✅ Done | CombinedGraph.fst | Needed by Bridge |
+| `minor_field_edge_intro` | ✅ Done | CombinedGraph.fst | Edge exists when field classifies |
+| `minor_successors_char` | ✅ Done | Reachability.fst | y ∈ succ(x) ⟺ ∃i. field i = y |
+| Minor→Combined bridge (`minor_successor_edge`) | ✅ Done | Bridge.fst | 0 admits, 2.2s |
+| Minor→Combined bridge (`minor_reachable_implies_combined`) | ✅ Done | Bridge.fst | Induction via `minor_reachable_ind` |
+| Major→Combined bridge | TODO | — | Next step |
+| Reachability bridge (combined↔live_set) | TODO | — | Compose minor+major bridges |
 
 **Verification stats**: 0 admits, 3.5s verification time, z3rlimit ≤ 20.
 

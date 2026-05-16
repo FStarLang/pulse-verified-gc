@@ -84,6 +84,13 @@ val classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
 val classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
   : GTot (option combined_vertex)
 
+/// Characterization: classify_major_field returns MajorV v when v is a major object
+/// and not a minor pointer
+val classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
+                    ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
+          (ensures classify_major_field ms major v == Some (MajorV v))
+
 /// ---------------------------------------------------------------------------
 /// Graph Construction
 /// ---------------------------------------------------------------------------
@@ -134,6 +141,19 @@ val minor_field_edge_intro (ms: minor_state) (major: heap)
                     i < minor_wosize ms src /\
                     classify_minor_field ms major (minor_read_field ms src i) == Some dst)
           (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major))
+
+/// If a field of major object src is classified as a pointer, the
+/// corresponding edge exists in the combined graph.
+val major_field_edge_intro (ms: minor_state) (major: heap)
+  (src: obj_addr) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (objects zero_addr major) /\
+                    i < U64.v (wosize_of_object src major) /\
+                    ~(is_no_scan src major) /\
+                    U64.v src + i * 8 + 8 <= heap_size /\
+                    (U64.v src + i * 8) % 8 == 0 /\
+                    classify_major_field ms major
+                      (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some dst)
+          (ensures mem_ce (MajorV src, dst) (build_combined_graph ms major))
 
 /// ---------------------------------------------------------------------------
 /// GC Morphism (forwarding map as graph homomorphism)

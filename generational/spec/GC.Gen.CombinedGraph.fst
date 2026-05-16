@@ -54,6 +54,12 @@ let classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
     else
       None
 
+let classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
+                    ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
+          (ensures classify_major_field ms major v == Some (MajorV v))
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// Edge Construction Helpers
 /// ---------------------------------------------------------------------------
@@ -531,6 +537,124 @@ let minor_field_edge_intro (ms: minor_state) (major: heap)
     // Step 4: edge is in all_minor_edges from 0
     all_minor_edges_includes_object ms major minor_objs src k (MinorV src, dst);
     // Step 5: all_minor_edges ⊆ cg_edges
+    Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
+                         (all_major_edges ms major major_objs 0)
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Major Edge Introduction Helpers
+/// ---------------------------------------------------------------------------
+
+/// If classify produces dst at field i, edge is in major_field_edges from i
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let major_field_edge_at
+  (ms: minor_state) (major: heap) (src: obj_addr) (wz: nat) (i: nat)
+  (dst: combined_vertex)
+  : Lemma (requires i < wz /\
+                    (let field_offset = U64.v src + i * 8 in
+                     field_offset + 8 <= heap_size /\ field_offset % 8 == 0 /\
+                     classify_major_field ms major (read_word major (U64.uint_to_t field_offset)) == Some dst))
+          (ensures Seq.mem (MajorV src, dst) (major_field_edges ms major src wz i))
+  = let field_offset = U64.v src + i * 8 in
+    let v = read_word major (U64.uint_to_t field_offset) in
+    let rest = major_field_edges ms major src wz (i + 1) in
+    Seq.mem_cons (MajorV src, dst) rest
+#pop-options
+
+/// If the edge is in major_field_edges from a later index, it's also in from earlier
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let rec major_field_edge_later
+  (ms: minor_state) (major: heap) (src: obj_addr) (wz: nat) (start: nat) (target_idx: nat)
+  (dst: combined_vertex)
+  : Lemma (requires start <= target_idx /\ target_idx < wz /\
+                    (let field_offset = U64.v src + target_idx * 8 in
+                     field_offset + 8 <= heap_size /\ field_offset % 8 == 0 /\
+                     classify_major_field ms major (read_word major (U64.uint_to_t field_offset)) == Some dst))
+          (ensures Seq.mem (MajorV src, dst) (major_field_edges ms major src wz start))
+          (decreases (wz - start))
+  = if start >= wz then ()
+    else if start = target_idx then
+      major_field_edge_at ms major src wz start dst
+    else begin
+      let field_offset = U64.v src + start * 8 in
+      if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
+      else begin
+        let v = read_word major (U64.uint_to_t field_offset) in
+        let rest = major_field_edges ms major src wz (start + 1) in
+        major_field_edge_later ms major src wz (start + 1) target_idx dst;
+        match classify_major_field ms major v with
+        | Some dst' -> Seq.mem_cons (MajorV src, dst') rest
+        | None -> ()
+      end
+    end
+#pop-options
+
+/// Find index of src in a seq obj_addr
+private let rec find_index_from_obj (objs: seq obj_addr) (src: obj_addr) (idx: nat)
+  : Ghost nat
+    (requires idx <= Seq.length objs /\ (exists (k:nat). idx <= k /\ k < Seq.length objs /\ Seq.index objs k == src))
+    (ensures fun r -> idx <= r /\ r < Seq.length objs /\ Seq.index objs r == src)
+    (decreases (Seq.length objs - idx))
+  = if Seq.index objs idx = src then idx
+    else find_index_from_obj objs src (idx + 1)
+
+/// If e is in all_major_edges from some index k, then e is in all_major_edges from 0
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+private let rec all_major_edges_suffix
+  (ms: minor_state) (major: heap) (objs: seq obj_addr) (idx: nat) (e: combined_edge)
+  : Lemma (requires idx <= Seq.length objs /\
+                    Seq.mem e (all_major_edges ms major objs idx))
+          (ensures Seq.mem e (all_major_edges ms major objs 0))
+          (decreases idx)
+  = if idx = 0 then ()
+    else begin
+      let prev : nat = idx - 1 in
+      Seq.lemma_mem_append (major_object_edges ms major (Seq.index objs prev))
+                           (all_major_edges ms major objs idx);
+      all_major_edges_suffix ms major objs prev e
+    end
+#pop-options
+
+/// Given that src appears at index k in objs, and e is in major_object_edges of src,
+/// then e is in all_major_edges from 0
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let all_major_edges_includes_object
+  (ms: minor_state) (major: heap) (objs: seq obj_addr) (src: obj_addr) (k: nat)
+  (e: combined_edge)
+  : Lemma (requires k < Seq.length objs /\
+                    Seq.index objs k == src /\
+                    Seq.mem e (major_object_edges ms major src))
+          (ensures Seq.mem e (all_major_edges ms major objs 0))
+  = Seq.lemma_mem_append (major_object_edges ms major (Seq.index objs k))
+                         (all_major_edges ms major objs (k + 1));
+    all_major_edges_suffix ms major objs k e
+#pop-options
+
+/// Main edge introduction lemma for major fields
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+let major_field_edge_intro (ms: minor_state) (major: heap)
+  (src: obj_addr) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (objects zero_addr major) /\
+                    i < U64.v (wosize_of_object src major) /\
+                    ~(is_no_scan src major) /\
+                    U64.v src + i * 8 + 8 <= heap_size /\
+                    (U64.v src + i * 8) % 8 == 0 /\
+                    classify_major_field ms major
+                      (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some dst)
+          (ensures mem_ce (MajorV src, dst) (build_combined_graph ms major))
+  = let minor_objs = minor_objects ms in
+    let major_objs = objects zero_addr major in
+    let wz = U64.v (wosize_of_object src major) in
+    // Step 1: edge is in major_field_edges from index 0
+    major_field_edge_later ms major src wz 0 i dst;
+    // Step 2: major_field_edges from 0 == major_object_edges (since not no_scan)
+    assert (major_object_edges ms major src == major_field_edges ms major src wz 0);
+    // Step 3: find src's index in major_objs
+    Classical.move_requires (Seq.mem_index src) major_objs;
+    let k = find_index_from_obj major_objs src 0 in
+    // Step 4: edge is in all_major_edges from 0
+    all_major_edges_includes_object ms major major_objs src k (MajorV src, dst);
+    // Step 5: all_major_edges ⊆ cg_edges (right side of append)
     Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
                          (all_major_edges ms major major_objs 0)
 #pop-options
