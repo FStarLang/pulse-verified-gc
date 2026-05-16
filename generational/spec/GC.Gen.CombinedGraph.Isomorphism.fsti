@@ -185,7 +185,22 @@ val generational_gc_isomorphism
        let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        forall (v: U64.t).
          combined_reachable cg combined_roots (MinorV v) ==>
-         Seq.mem v live_set))
+         Seq.mem v live_set) /\
+      // Promoted targets are disjoint from pre-existing non-blue major objects
+      // (follows from: promote allocates from free list, non-blue objects avoid chain)
+      (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+       let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
+       forall (v: U64.t) (obj: obj_addr).
+         Seq.mem v live_set /\ prom_res.fwd_map v <> 0UL /\
+         Seq.mem obj (objects zero_addr gs.gs_major) /\ ~(is_blue obj gs.gs_major) ==>
+         prom_res.fwd_map v <> obj) /\
+      // Reachable major vertices are valid non-blue objects in the pre-GC heap
+      (let cg = build_combined_graph gs.gs_minor gs.gs_major in
+       forall (v: U64.t).
+         combined_reachable cg combined_roots (MajorV v) ==>
+         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+         Seq.mem (v <: obj_addr) (objects zero_addr gs.gs_major) /\
+         ~(is_blue (v <: obj_addr) gs.gs_major)))
     (ensures
       (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
