@@ -377,25 +377,40 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 | Reachability intro/elim lemmas | ✅ Done | CombinedGraph.fst | `combined_reachable_root/step/ind` |
 | Root classification | ✅ Done | CombinedGraph.fst | `classify_roots` + mem lemmas |
 | `classify_minor_field_minor` characterization | ✅ Done | CombinedGraph.fst | Needed by Bridge |
-| `minor_field_edge_intro` | ✅ Done | CombinedGraph.fst | Edge exists when field classifies |
+| `classify_major_field_major` characterization | ✅ Done | CombinedGraph.fst | Needed by major bridge |
+| `minor_field_edge_intro` | ✅ Done | CombinedGraph.fst | Edge exists when minor field classifies |
+| `major_field_edge_intro` | ✅ Done | CombinedGraph.fst | Edge exists when major field classifies |
 | `minor_successors_char` | ✅ Done | Reachability.fst | y ∈ succ(x) ⟺ ∃i. field i = y |
 | Minor→Combined bridge (`minor_successor_edge`) | ✅ Done | Bridge.fst | 0 admits, 2.2s |
 | Minor→Combined bridge (`minor_reachable_implies_combined`) | ✅ Done | Bridge.fst | Induction via `minor_reachable_ind` |
-| Major→Combined bridge | TODO | — | Next step |
+| gc_morphism characterization lemmas | ✅ Done | CombinedGraph.fst | minor_fwd/minor_stay/major |
+| Major→Combined bridge | TODO | — | Needs HeapGraph↔classify_major_field bridge |
 | Reachability bridge (combined↔live_set) | TODO | — | Compose minor+major bridges |
 
-**Verification stats**: 0 admits, 3.5s verification time, z3rlimit ≤ 20.
+### Phase 2: Forward Morphism (started)
+
+| Task | Status | File | Notes |
+|------|--------|------|-------|
+| `minor_vertex_survives` | ✅ Done | ForwardMorphism.fst | Uses gc_morphism_minor_fwd |
+| `major_vertex_identity` | ✅ Done | ForwardMorphism.fst | Trivial from gc_morphism_major |
+| Injectivity of fwd on live_set | TODO | — | Follows from alloc distinctness |
+| Root mapping correctness | TODO | — | Compose rewrite_roots + classify_roots |
+
+**Verification stats**: All modules 0 admits. CombinedGraph 7.3s, Bridge 2.2s, ForwardMorphism <1s.
 
 ### Commits
 - `a02e9f8` — Fixed zero_addr abstraction (gen2 compatibility)
 - `da68249` — CombinedGraph: fully verified (0 admits, 3.5s)
+- `135d887` — Edge intro + Bridge lemmas (minor_successor_edge, minor_reachable_implies_combined)
+- `2fe8d63` — Major edge intro + classify_major_field_major
+- `6088ba8` — gc_morphism characterization + ForwardMorphism module
 
 ### Next steps
-1. **Reachability bridge**: Prove `minor_reachable_implies_combined` and
-   `major_reachable_implies_combined` — showing that objects reachable in
-   the individual heaps are also reachable in the combined graph.
-2. **Forward morphism** (Phase 2): Vertex survival through GC.
-3. **Edge preservation** (Phase 3): The hard part — 4 cases.
+1. **Major→Combined bridge**: Connect HeapGraph's `get_pointer_fields` to
+   `classify_major_field`. Show edges in `create_graph major` produce edges
+   in `build_combined_graph ms major`. Then induction on `reach`.
+2. **Edge preservation** (Phase 3): The 4 cases using `field_correspondence`.
+3. **Backward morphism** (Phase 4): Injectivity + surjectivity.
 
 The full isomorphism additionally guarantees **no spurious objects** appear in
 the post-GC state (every post-GC reachable object came from a pre-GC reachable
