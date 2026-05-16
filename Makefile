@@ -48,7 +48,11 @@ MS_SRC     = $(wildcard mark-and-sweep/spec/*.fst mark-and-sweep/spec/*.fsti \
                         mark-and-sweep/impl/*.fst mark-and-sweep/impl/*.fsti)
 GEN_SRC    = $(wildcard generational/spec/*.fst generational/spec/*.fsti \
                         generational/impl/*.fst generational/impl/*.fsti)
-ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC)
+
+# Test files require zero_addr = 0 (concrete instantiation); exclude from default build
+TEST_SRC   = mark-and-sweep/spec/GC.Test.Bridge.fst mark-and-sweep/spec/GC.Test.fst \
+             mark-and-sweep/impl/GC.Impl.Test.fst
+ALL_SRC    = $(filter-out $(TEST_SRC),$(COMMON_SRC) $(MS_SRC) $(GEN_SRC))
 
 # --- Auto-generated dependency graph ----------------------------------------
 
