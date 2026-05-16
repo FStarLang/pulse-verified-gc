@@ -171,9 +171,11 @@ private let nth_mask_2bit (i: nat{i < 64}) : Lemma (nth #64 mask_2bit i = (i >= 
   one_nth_lemma #64 i; pow2_nth_lemma #64 1 i;
   assert_norm (pow2_n #64 1 = 2); logor_definition #64 1 2 i
 
+#push-options "--z3rlimit 50"
 private let c_eq_c_and_mask2 (c: uint_t 64{c < 4}) : Lemma (logand #64 c mask_2bit = c) =
   logor_1_2_eq_3 (); logand_mask #64 c 2;
   assert_norm (pow2 2 = 4); assert_norm (pow2 2 - 1 = 3)
+#pop-options
 
 private let small_nth_zero (c: uint_t 64{c < 4}) (i: nat{i < 64 /\ i < 62}) : Lemma (nth #64 c i = false) =
   c_eq_c_and_mask2 c; logand_definition #64 c mask_2bit i; nth_mask_2bit i
