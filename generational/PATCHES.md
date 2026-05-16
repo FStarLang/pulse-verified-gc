@@ -93,10 +93,14 @@ infix parent relationship in the formal heap model.
 
 ### Remaining extraction diff: 0 lines
 
-The `verified_gc/` snapshot is a **verbatim copy** of `_extract/` with **no
-semantic changes**. Both `zero_addr` and `heap_size_u64` are now extracted as
-`extern` declarations (from `GC.Spec.ZeroAddr.fsti`), eliminating the last
-manual patch (previously: `static` removal on `zero_addr`).
+The `verified_gc/` directory **no longer maintains copies** of extracted files.
+Its Makefile uses `VPATH = ../../snapshot` to compile directly from the
+snapshot sources. After `make snapshot` in `generational/`, a `make clean && make`
+in `verified_gc/` picks up any changes automatically — no manual copy step.
+
+Both `zero_addr` and `heap_size_u64` are extracted as `extern` declarations
+(from `GC.Spec.ZeroAddr.fsti`), eliminating the last manual patch (previously:
+`static` removal on `zero_addr`).
 
 The extern primitives (`read_u64_le`, `write_u64_le`) are left as KaRaMeL
 declared them (`extern`) and implemented in `compat.c`, which also provides
