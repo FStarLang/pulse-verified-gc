@@ -1,19 +1,30 @@
-/* compat.c — Implementations of extern primitives declared by KaRaMeL extraction.
+/* compat.c — Extern primitives for the extracted verified GC.
  *
- * GC_Gen_Impl.c (the extracted verified code) declares these as:
- *   extern uint64_t read_u64_le(uint8_t *arr, size_t offset);
- *   extern void write_u64_le(uint8_t *arr, size_t offset, uint64_t v);
+ * Provides:
+ *   1. Heap configuration constants (GC.Spec.ZeroAddr externs)
+ *   2. Word-level heap read/write (GC.Impl.ArrayWord assumed vals)
  *
- * They originate from GC.Impl.ArrayWord's `assume val` declarations in F*,
- * which model word-level heap read/write as opaque primitives.  On
- * little-endian platforms (x86-64, AArch64-LE), these are simple aligned
- * word loads/stores.
+ * The heap configuration values (zero_addr, heap_size_u64) must be set
+ * by the bridge BEFORE calling krmlinit() — see verified_gc_bridge.c.
  */
 
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 
+/* --- Heap configuration (GC.Spec.ZeroAddr externs) --- */
+
+/* Base address of the managed heap (byte offset into the heap array).
+ * Set by the bridge before krmlinit(). */
+uint64_t zero_addr = 0;
+
+/* Heap size in bytes (must be word-aligned, >= 16).
+ * Set by the bridge before krmlinit(). */
+uint64_t heap_size_u64 = 0;
+
+/* --- Word-level heap read/write (GC.Impl.ArrayWord assumed vals) ---
+ * On little-endian platforms (x86-64, AArch64-LE), these are simple
+ * aligned word loads/stores. */
 uint64_t read_u64_le(uint8_t *arr, size_t offset) {
   return *(uint64_t *)(arr + offset);
 }
