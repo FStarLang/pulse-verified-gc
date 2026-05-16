@@ -66,6 +66,10 @@ all: verify
 
 # --- Pattern rules (verification) -------------------------------------------
 
+# GC.Gen.Promote.fst needs split_queries + higher rlimit for abstract heap_size proofs
+spec/GC.Gen.Promote.fst.checked: spec/GC.Gen.Promote.fst
+	$(FSTAR) --split_queries always --z3rlimit_factor 3 $<
+
 spec/%.checked: spec/%
 	$(FSTAR) $<
 
@@ -166,6 +170,7 @@ snapshot: extract
 	@cp $(EXTRACT_DIR)/GC_Gen_Impl.c $(SNAPSHOT_DIR)/
 	@cp $(EXTRACT_DIR)/GC_Gen_Impl.h $(SNAPSHOT_DIR)/
 	@cp $(EXTRACT_DIR)/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.c $(SNAPSHOT_DIR)/ 2>/dev/null || true
+	@cp $(EXTRACT_DIR)/GC_Spec_ZeroAddr.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
 	@cp $(EXTRACT_DIR)/internal/*.h $(SNAPSHOT_DIR)/internal/ 2>/dev/null || true
 	@# Copy krmlinit.h but NOT krmlinit.c (we have a clean replacement in snapshot/)
 	@cp $(EXTRACT_DIR)/krmlinit.h $(SNAPSHOT_DIR)/

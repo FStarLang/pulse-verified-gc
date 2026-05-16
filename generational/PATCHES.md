@@ -21,21 +21,31 @@ F\*/Pulse source so the extraction is usable directly.
 | 11 | `is_pointer` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
 | 12 | `is_valid_fp` lower bound | ✅ **ELIMINATED** | Verified code uses `U64.add zero_addr mword`, extracts as `zero_addr + 8ULL` |
 | 13 | krmlinit | ✅ Minimal | Only sets `queue_size_sz` and `minor_heap_size_sz` |
-| B13 | compat.c extern primitives | ✅ **DONE** | Implements `read_u64_le`/`write_u64_le` externs from `GC.Impl.ArrayWord` |
+| B13 | compat.c extern primitives | ✅ **DONE** | Implements `read_u64_le`/`write_u64_le` + provides `zero_addr`/`heap_size_u64` storage |
 | B14b | fwd_array_size alias | ✅ **DONE** | Bridge uses `queue_size_sz` directly |
 | 8  | update_all_objects start | ✅ **DONE** | Impl now starts at `zero_addr` instead of `0UL` |
-| 1  | zero_addr non-static | ⚠️ **Irreducible** | See note below |
-| 2  | Configurable heap_size | ⚠️ **Irreducible** | `heap_size_u64` is settable at link time |
+| 1  | zero_addr non-static | ✅ **ELIMINATED** | `zero_addr` is now `extern` from `GC.Spec.ZeroAddr.fsti`; defined in `compat.c` |
+| 2  | Configurable heap_size | ✅ **ELIMINATED** | `heap_size_u64` is now `extern` from `GC.Spec.ZeroAddr.fsti`; defined in `compat.c` |
 | 3,4 | Scan range / HWM | ✅ **ELIMINATED** | Bridge now walks fwd_arr + calls `update_one_object`; `update_all_objects` reverted to clean extraction |
 | 9  | Infix forwarding | ✅ **DONE** | Phased calls + infix fwd fixup in bridge |
 
-### Irreducible Bridge Items
+### Extern Configuration (GC.Spec.ZeroAddr)
 
-**PATCH 1 (zero_addr non-static):** The verified spec correctly treats
-`zero_addr = 0`. The OCaml bridge overrides it with the mmap'd heap base
-absolute address. Making it non-static via KaRaMeL bundle API was attempted
-but pulls in spec functions with `Seq` types and generates unwanted
-`internal/Prims.h`. This is a 1-word visibility change (`static` removed).
+`GC.Spec.ZeroAddr.fsti` is an interface-only module declaring two extern
+constants:
+
+```c
+extern uint64_t zero_addr;       /* heap base address */
+extern uint64_t heap_size_u64;   /* heap upper bound (= base + size) */
+```
+
+KaRaMeL extracts these as extern declarations (no `static`, no initial value).
+`compat.c` provides the storage, and the bridge (`alloc_gen.c`) sets them to
+the actual mmap'd heap base and upper bound before calling `krmlinit_globals()`.
+
+This replaces the old approach where `zero_addr` was a `static uint64_t` in
+`GC_Gen_Impl.c` (requiring a manual `static` removal patch) and `heap_size_u64`
+was a compiled constant in `GC_Gen_Base_*.c`.
 
 **PATCHES 3,4 (scan range): ✅ ELIMINATED.** Previously the bridge narrowed
 `update_all_objects` to scan only newly-promoted objects via `update_scan_base`
@@ -81,21 +91,16 @@ infix parent relationship in the formal heap model.
 | Header file matches exactly | ✅ `diff GC_Gen_Impl.h` = empty |
 | krmlinit matches exactly | ✅ `diff krmlinit.c` = empty |
 
-### Remaining extraction diff: 1 line
+### Remaining extraction diff: 0 lines
 
-The `verified_gc/` snapshot is now a **verbatim copy** of `_extract/` with a
-single semantic change:
-
-```diff
-< static uint64_t zero_addr = 0ULL;
-> uint64_t zero_addr = 0ULL; /* non-static: bridge sets to mmap'd base */
-```
-
-All other extracted files (`GC_Gen_Impl.h`, internal headers, `krmlinit.c`,
-`GC_Gen_Base_*.c`) are **identical** to the extraction output.
+The `verified_gc/` snapshot is a **verbatim copy** of `_extract/` with **no
+semantic changes**. Both `zero_addr` and `heap_size_u64` are now extracted as
+`extern` declarations (from `GC.Spec.ZeroAddr.fsti`), eliminating the last
+manual patch (previously: `static` removal on `zero_addr`).
 
 The extern primitives (`read_u64_le`, `write_u64_le`) are left as KaRaMeL
-declared them (`extern`) and implemented in `compat.c`, which is linked into
+declared them (`extern`) and implemented in `compat.c`, which also provides
+storage for `zero_addr` and `heap_size_u64`.  These are linked into
 `libvergc_gen.a`.  The extracted `read_word`, `write_word`, `minor_read`,
 `minor_write` call through to these externs — no inlining patches.
 

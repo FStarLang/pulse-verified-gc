@@ -831,9 +831,52 @@ let copy_fields_all_correct
   end
 #pop-options
 
+/// Pointwise lemma: for a specific field j, promote_object preserves the value.
+/// Takes addr as pre-computed hp_addr to avoid uint_to_t subtyping cascade in ensures.
+#restart-solver
+#push-options "--z3rlimit 30 --fuel 2 --split_queries always"
+let promote_preserves_field_at
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (j: nat)
+  (dst_addr: U64.t) (addr: hp_addr)
+  : Lemma
+    (requires
+      U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
+      j < wosize /\
+      U64.v dst_addr % 8 == 0 /\
+      U64.v dst_addr + (wosize - 1) * 8 + 8 <= heap_size /\
+      U64.v addr == U64.v dst_addr + j * 8 /\
+      (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+       alloc_res.obj_out == dst_addr /\
+       alloc_res.obj_out <> 0UL))
+    (ensures
+      (let res = promote_object minor major obj fp wosize in
+       read_word res.major_out addr == minor_read_field minor obj j))
+  = let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+    assert (alloc_res.obj_out == dst_addr);
+    promote_object_success minor major obj fp wosize;
+    dst_fields_valid_from_bounds dst_addr wosize;
+    copy_fields_all_correct minor alloc_res.heap_out obj dst_addr wosize;
+    let copied = copy_fields minor alloc_res.heap_out obj dst_addr 0 wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    (if U64.v dst_addr < U64.v mword then
+      FStar.Math.Lemmas.small_mod (U64.v dst_addr) (U64.v mword)
+     else ());
+    let dst_obj : obj_addr = dst_addr in
+    let padded = zero_promote_padding copied dst_obj wosize in
+    FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
+    assert (U64.v dst_obj + j * 8 + 8 <= heap_size);
+    hd_address_spec dst_obj;
+    assert (j * 8 < wosize * 8);
+    assert (U64.v addr <> U64.v dst_obj + wosize * U64.v mword);
+    zero_promote_padding_frame copied dst_obj wosize addr;
+    set_promoted_tag_read_frame padded dst_obj tag addr
+#pop-options
+
 /// After promote_object, if allocation succeeds AND the destination
 /// has valid bounds, all field data is preserved.
-#push-options "--z3rlimit 100 --fuel 2 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 0"
 let promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
@@ -853,52 +896,20 @@ let promote_preserves_fields
     promote_object_success minor major obj fp wosize;
     if U64.v alloc_res.obj_out % 8 = 0 &&
        U64.v alloc_res.obj_out + (wosize - 1) * 8 + 8 <= heap_size then begin
-      // Establish dst_fields_valid
-      let dfv_aux (j: nat) : Lemma
-        (requires j < wosize)
-        (ensures U64.v alloc_res.obj_out + j * 8 + 8 <= heap_size /\
-                (U64.v alloc_res.obj_out + j * 8) % 8 == 0)
-      = assert (j <= wosize - 1);
-        FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
-        assert (j * 8 <= (wosize - 1) * 8);
-        FStar.Math.Lemmas.modulo_lemma 0 8;
-        FStar.Math.Lemmas.lemma_mod_plus (U64.v alloc_res.obj_out) j 8
+      dst_fields_valid_from_bounds alloc_res.obj_out wosize;
+      // step: postcondition as implication (guards U64.uint_to_t well-formedness)
+      let step (j: nat) : Lemma
+        (j < wosize ==>
+         (let res = promote_object minor major obj fp wosize in
+          read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8))
+          == minor_read_field minor obj j))
+      = if j < wosize then begin
+          FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
+          let addr : hp_addr = U64.uint_to_t (U64.v alloc_res.obj_out + j * 8) in
+          promote_preserves_field_at minor major obj fp wosize j alloc_res.obj_out addr
+        end
       in
-      FStar.Classical.forall_intro (FStar.Classical.move_requires dfv_aux);
-      assert (dst_fields_valid alloc_res.obj_out wosize);
-      copy_fields_all_correct minor alloc_res.heap_out obj alloc_res.obj_out wosize;
-      // set_promoted_tag only modifies the header; field reads are preserved
-      let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
-      let tag = minor_tag minor obj in
-      minor_tag_bound minor obj;
-      // alloc_res.obj_out is a valid obj_addr: >= mword, < heap_size, % mword == 0
-      // obj_out <> 0UL, obj_out % 8 == 0, so obj_out >= 8 = mword
-      assert (alloc_res.obj_out <> 0UL);
-      assert (U64.v alloc_res.obj_out % U64.v mword == 0);
-      // obj_out <> 0 and obj_out % 8 == 0 means obj_out >= 8
-      // Proof by contradiction: if obj_out < 8, then small_mod gives obj_out % 8 = obj_out = 0
-      (if U64.v alloc_res.obj_out < U64.v mword then
-        FStar.Math.Lemmas.small_mod (U64.v alloc_res.obj_out) (U64.v mword)
-       else ());
-      assert (U64.v alloc_res.obj_out >= U64.v mword);
-      assert (U64.v alloc_res.obj_out + 8 <= heap_size);
-      assert (U64.v alloc_res.obj_out < heap_size);
-      let dst_obj : obj_addr = alloc_res.obj_out in
-      let padded = zero_promote_padding copied dst_obj wosize in
-      let field_frame (j: nat{j < wosize}) : Lemma
-        (read_word (set_promoted_tag padded dst_obj tag) (U64.uint_to_t (U64.v dst_obj + j * 8))
-              == read_word copied (U64.uint_to_t (U64.v dst_obj + j * 8)))
-      = FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
-        assert (U64.v dst_obj + j * 8 + 8 <= heap_size);
-        let addr : hp_addr = U64.uint_to_t (U64.v dst_obj + j * 8) in
-        hd_address_spec dst_obj;
-        // j < wosize → j*8 < wosize*8 → addr <> pad position
-        assert (j * 8 < wosize * 8);
-        assert (U64.v addr <> U64.v dst_obj + wosize * U64.v mword);
-        zero_promote_padding_frame copied dst_obj wosize addr;
-        set_promoted_tag_read_frame padded dst_obj tag addr
-      in
-      FStar.Classical.forall_intro field_frame
+      FStar.Classical.forall_intro step
     end else ()
   end
 #pop-options

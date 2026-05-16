@@ -5,35 +5,15 @@
   KaRaMeL version: 772e4f63642524f6fb3c15fcb1b9398dd6afea7f
  */
 
-#include "internal/GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
+#ifndef GC_Spec_ZeroAddr_H
+#define GC_Spec_ZeroAddr_H
 
-uint64_t heap_size_u640;
+#include "krmllib.h"
 
-uint64_t zero_addr0;
+extern uint64_t heap_size_u64;
 
-bool uu___is_Black(color_sem projectee)
-{
-  switch (projectee)
-  {
-    case Black:
-      {
-        return true;
-      }
-    default:
-      {
-        return false;
-      }
-  }
-}
+extern uint64_t zero_addr;
 
-static uint32_t wosize_shift = 10U;
 
-uint64_t getWosize(uint64_t header)
-{
-  return header >> wosize_shift;
-}
-
-uint64_t minor_heap_size_u64 = 2048ULL;
-
-uint64_t max_young_wosize_u64 = 128ULL;
-
+#define GC_Spec_ZeroAddr_H_DEFINED
+#endif /* GC_Spec_ZeroAddr_H */

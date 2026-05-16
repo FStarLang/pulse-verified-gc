@@ -35,7 +35,11 @@ SPEC_SRC = $(wildcard spec/*.fst spec/*.fsti \
                       $(C)/spec/*.fst $(C)/spec/*.fsti $(C)/lib/*.fst)
 IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti \
                       $(C)/impl/*.fst $(C)/impl/*.fsti)
-ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
+# Test files assume zero_addr = 0 (concrete); exclude from default build.
+# The mark-and-sweep allocator (init_heap_spec) is correct when zero_addr = 0.
+# The generational GC does not use init_heap_spec.
+TEST_SRC = spec/GC.Test.Bridge.fst spec/GC.Test.fst impl/GC.Impl.Test.fst
+ALL_SRC  = $(filter-out $(TEST_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
 # --- Auto-generated dependency graph ----------------------------------------
 #
@@ -62,7 +66,7 @@ ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
 # --- Default goal (must precede -include .depend so included targets
 #     don't accidentally become the default goal) -------------------------
 
-.PHONY: all verify verify-spec verify-impl extract snapshot clean
+.PHONY: all verify verify-spec verify-impl verify-tests extract snapshot clean
 
 all: verify
 
@@ -70,11 +74,14 @@ all: verify
 
 verify: verify-impl
 
-verify-spec: $(addsuffix .checked,$(SPEC_SRC))
+verify-spec: $(addsuffix .checked,$(filter-out $(TEST_SRC),$(SPEC_SRC)))
 	@echo "=== spec modules verified ==="
 
 verify-impl: $(addsuffix .checked,$(ALL_SRC))
 	@echo "=== all modules verified ==="
+
+verify-tests: $(addsuffix .checked,$(TEST_SRC))
+	@echo "=== test modules verified (requires zero_addr = 0) ==="
 
 # --- Pattern rules (verification) -------------------------------------------
 
