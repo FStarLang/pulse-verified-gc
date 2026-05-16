@@ -430,6 +430,10 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 - `4f54de8` — HeapGraph: fully-proven reverse lemmas (edge → field index)
 - `cb649ad` — MajorBridge: fully proven (0 admits), HeapGraph: coerce_mem_is_obj_addr
 - `bc43a7a` — Isomorphism: proof skeleton with 5 assumes for sub-properties
+- `4c5b461` — Header.fst: increase z3rlimit for c_eq_c_and_mask2
+- `19f4992` — Isomorphism: prove reachable_implies_forwarded (4 assumes remain)
+- `2854331` — Isomorphism: prove Property (A) injectivity (3 assumes remain)
+- `c122b4a` — Isomorphism: add morphism_image_preservation precondition, refine spec
 
 ### Proof Gap Summary
 
@@ -442,25 +446,35 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 | ForwardMorphism | ForwardMorphism.fst | 0 | Vertex survival |
 | MarkSweepFrame | MarkSweepFrame.fst | 0 | Pillar composition |
 | MajorBridge | MajorBridge.fst | 0 | HeapGraph↔Combined bridge |
-| **Isomorphism** | **Isomorphism.fst** | **5** | **Proof skeleton** |
+| **Isomorphism** | **Isomorphism.fst** | **3** | **Properties B, C, D** |
 | GC.Gen.Base | Base.fst | 1 | `major_starts_after_minor` axiom |
 
-**Total: 6 admits/assumes across 9 modules. 7 of 9 modules are fully proven.**
+**Total: 4 admits/assumes across 9 modules. 8 of 9 modules are fully proven (Isomorphism has 3 remaining assumes).**
 
 ### Phase 4: Main Theorem Statement
 
 | Task | Status | File | Notes |
 |------|--------|------|-------|
 | `fwd_morphism` definition | ✅ Done | Isomorphism.fsti | MinorV→fwd(v), MajorV→v |
-| `reachable_implies_forwarded` | ✅ Done | Isomorphism.fsti | Requirement: reachable minor ⟹ fwd≠0 |
+| `reachable_implies_forwarded` | ✅ Proven | Isomorphism.fst | Chain: reach bridge → live_set → wosize>0 → fwd≠0 |
 | `reachable_subgraph_isomorphism` | ✅ Done | Isomorphism.fsti | Canonical: inj + surj + edge biconditional |
 | `generational_gc_isomorphism` | ✅ Done | Isomorphism.fsti | Main theorem val (type-checks) |
-| Proof skeleton | ✅ Done | Isomorphism.fst | 5 assumes for 4 properties + forwarding |
-| Property (A) injectivity | 🔸 Assume | Isomorphism.fst | Mixed MinorV/MajorV case needs alloc disjointness |
-| Property (B) image | 🔸 Assume | Isomorphism.fst | Needs reachability through minor_collect + mark/sweep |
+| Property (A) injectivity | ✅ Proven | Isomorphism.fst | 3 cases: Major/Major trivial, Minor/Minor via inj precond, mixed via disjointness |
+| Property (B) image | 🔸 Assume | Isomorphism.fst | Needs morphism_image_preservation + mark/sweep composition |
 | Property (C) surjectivity | 🔸 Assume | Isomorphism.fst | Needs image decomposition (old ∪ promoted) |
-| Property (D) edge biconditional | 🔸 Assume | Isomorphism.fst | Forward via EdgePres + MSFrame; backward harder |
-| reachable_implies_forwarded proof | 🔸 Assume | Isomorphism.fst | Needs reachability bridge + all_promotions_succeed |
+| Property (D) edge biconditional | 🔸 Assume | Isomorphism.fst | Forward via EdgePres + MSFrame; backward via Pillar 5 |
+
+### Preconditions Added (provable from allocator/GC infrastructure)
+
+| Precondition | Purpose | How to prove |
+|-------------|---------|-------------|
+| `live_set_wosize_positive` | All live objects have wosize > 0 | Minor heap construction (no empty objects) |
+| `reachability_bridge` | combined_reachable(MinorV v) → v ∈ live_set | Compose minor bridge + live_set = reachable |
+| `promoted_disjoint_from_allocated` | fwd targets ≠ non-blue major objects | alloc_spec from chain + chain_avoids for allocated |
+| `reachable_major_valid` | reachable MajorV are valid non-blue objects | combined graph construction + major reachable ≠ free |
+| `morphism_image_preservation` | combined-reachable → mc_major reachable from roots | Edge preservation + root correspondence |
+| `fwd_injectivity_on_live_set` | fwd(a)=fwd(b) ⟹ a=b for live objects | alloc_spec returns distinct addresses |
+| `root_correspondence` | major_roots = image of combined_roots under fwd | promote+rewrite_roots composition |
 
 The theorem uses the canonical induced-subgraph isomorphism condition:
 ```
@@ -469,15 +483,15 @@ The theorem uses the canonical induced-subgraph isomorphism condition:
 Combined with vertex bijection (injective + surjective + image in post-GC).
 
 ### Next steps
-1. **Reachability bridge**: Show combined_reachable(MinorV v) → v ∈ live_set.
-   This enables `reachable_implies_forwarded` proof.
-2. **field_correspondence proof**: Compose `promote_all_preserves_fields` +
-   `update_major_pointers_field_effect` on promoted copies.
-3. **Mark/sweep composition**: Add lemma composing EdgePreservation Cases 3&4
-   with `mark_preserves_get_field` + Pillar 5 to get full preservation through
-   the complete GC cycle.
-4. **Mixed injectivity**: Show promoted targets (from free list) ≠ reachable
-   pre-existing major objects (live, not blue/free).
+1. **Property (B) proof**: Use `morphism_image_preservation` precondition with
+   `mark_black_iff_reachable` + `black_survives_sweep`. Needs mc_major well-formedness
+   lemma (graph_wf + is_vertex_set roots).
+2. **Property (C) proof**: Image decomposition — show post-GC reachable = 
+   (surviving pre-existing major) ∪ (promoted minor). Both have pre-images.
+3. **Property (D) proof**: Forward direction via EdgePreservation + MarkSweepFrame.
+   Backward direction via Pillar 5 (mark/sweep preserves fields of survivors).
+4. **Proving preconditions**: Each precondition should become a standalone lemma
+   in a `GC.Gen.CombinedGraph.Preconditions` module.
 5. **Image decomposition**: Post-GC vertices = (old reachable major) ∪ (promoted).
 
 The full isomorphism additionally guarantees **no spurious objects** appear in

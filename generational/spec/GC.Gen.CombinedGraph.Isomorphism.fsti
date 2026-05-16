@@ -9,6 +9,11 @@
 ///   MinorV v ↦ fwd(v)   (promoted copies in major heap)
 ///   MajorV v ↦ v        (identity on major objects)
 ///
+/// Scope: This is an UNLABELED graph isomorphism — it preserves the pointer
+/// structure (edges) between objects. Header/tag/payload preservation is
+/// captured separately by field_correspondence and Pillar 5 of the mark-sweep
+/// correctness theorem.
+///
 /// This module states the theorem and supporting predicates.
 
 module GC.Gen.CombinedGraph.Isomorphism
