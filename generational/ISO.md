@@ -396,7 +396,19 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 | Injectivity of fwd on live_set | TODO | — | Follows from alloc distinctness |
 | Root mapping correctness | TODO | — | Compose rewrite_roots + classify_roots |
 
-**Verification stats**: All modules 0 admits. CombinedGraph 7.3s, Bridge 2.2s, ForwardMorphism <1s.
+### Phase 3: Edge Preservation (mostly done)
+
+| Task | Status | File | Notes |
+|------|--------|------|-------|
+| Case 4 (major→major: field unchanged) | ✅ Done | EdgePreservation.fst | promote_all_read_other + update_no_rewrite |
+| Case 3 (major→minor: field forwarded) | ✅ Done | EdgePreservation.fst | promote_all_read_other + update_rewrite |
+| Case 1 (minor→minor: promoted field fwd'd) | ✅ Done | EdgePreservation.fst | From field_correspondence (assumed) |
+| Case 2 (minor→major: promoted field preserved) | ✅ Done | EdgePreservation.fst | From field_correspondence (assumed) |
+| `major_object_is_pointer_field` helper | ✅ Done | EdgePreservation.fst | objects_addresses_gt_start bridge |
+| `field_correspondence` proof | TODO | — | Compose promote_all_preserves_fields + update_field_effect |
+| Mark/sweep frame composition | TODO | — | Compose with Pillar 5 (mark_preserves_get_field + sweep) |
+
+**Verification stats**: All modules 0 admits. EdgePreservation 2.5s (rlimit 20-30).
 
 ### Commits
 - `a02e9f8` — Fixed zero_addr abstraction (gen2 compatibility)
@@ -404,13 +416,38 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 - `135d887` — Edge intro + Bridge lemmas (minor_successor_edge, minor_reachable_implies_combined)
 - `2fe8d63` — Major edge intro + classify_major_field_major
 - `6088ba8` — gc_morphism characterization + ForwardMorphism module
+- `4f7253a` — ISO.md progress update
+- `286783d` — EdgePreservation: Case 4 (major→major field preserved)
+- `6a93482` — EdgePreservation: Case 3 (major→minor field forwarding)
+- `035e579` — EdgePreservation: Cases 1 & 2 (promoted copy field preservation)
+- (pending) — Isomorphism theorem statement (CombinedGraph.Isomorphism.fsti)
+
+### Phase 4: Main Theorem Statement
+
+| Task | Status | File | Notes |
+|------|--------|------|-------|
+| `fwd_morphism` definition | ✅ Done | Isomorphism.fsti | MinorV→fwd(v), MajorV→v |
+| `reachable_implies_forwarded` | ✅ Done | Isomorphism.fsti | Requirement: reachable minor ⟹ fwd≠0 |
+| `reachable_subgraph_isomorphism` | ✅ Done | Isomorphism.fsti | Canonical: inj + surj + edge biconditional |
+| `generational_gc_isomorphism` | ✅ Done | Isomorphism.fsti | Main theorem val (type-checks, no impl) |
+| Proof implementation | TODO | — | Compose all sub-lemmas |
+
+The theorem uses the canonical induced-subgraph isomorphism condition:
+```
+∀ u v. reachable(u) ∧ reachable(v) ⟹ (edge(u,v) ⟺ edge(φ(u),φ(v)))
+```
+Combined with vertex bijection (injective + surjective + image in post-GC).
 
 ### Next steps
 1. **Major→Combined bridge**: Connect HeapGraph's `get_pointer_fields` to
    `classify_major_field`. Show edges in `create_graph major` produce edges
    in `build_combined_graph ms major`. Then induction on `reach`.
-2. **Edge preservation** (Phase 3): The 4 cases using `field_correspondence`.
-3. **Backward morphism** (Phase 4): Injectivity + surjectivity.
+2. **field_correspondence proof**: Compose `promote_all_preserves_fields` +
+   `update_major_pointers_field_effect` on promoted copies.
+3. **Mark/sweep composition**: Add lemma composing EdgePreservation Cases 3&4
+   with `mark_preserves_get_field` + Pillar 5 to get full preservation through
+   the complete GC cycle.
+4. **Backward morphism** (Phase 4): Injectivity of fwd from alloc distinctness.
 
 The full isomorphism additionally guarantees **no spurious objects** appear in
 the post-GC state (every post-GC reachable object came from a pre-GC reachable
