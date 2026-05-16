@@ -178,6 +178,23 @@ val zero_promote_padding_preserves_objects
                     Seq.mem dst (objects zero_addr g))
           (ensures objects zero_addr (zero_promote_padding g dst wz) == objects zero_addr g)
 
+/// Generalized frame: either noop (actual_wz ≤ wz) or addr ≠ pad slot.
+val zero_promote_padding_frame'
+  (g: heap) (dst: obj_addr) (wz: nat) (addr: hp_addr)
+  : Lemma (requires U64.v (wosize_of_object dst g) <= wz \/
+                    U64.v addr <> U64.v dst + wz * U64.v mword)
+          (ensures read_word (zero_promote_padding g dst wz) addr == read_word g addr)
+
+/// Header-specific frame: for any distinct object, its header is unchanged.
+val zero_promote_padding_frame_obj_header
+  (g: heap) (dst src: obj_addr) (wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    Seq.mem dst (objects zero_addr g) /\
+                    Seq.mem src (objects zero_addr g) /\
+                    src <> dst)
+          (ensures read_word (zero_promote_padding g dst wz) (hd_address src)
+                == read_word g (hd_address src))
+
 /// zero_promote_padding preserves well_formed_heap_part1.
 val zero_promote_padding_preserves_wfh_part1
   (g: heap) (dst: obj_addr) (wz: nat)
@@ -233,6 +250,14 @@ val zero_promote_padding_preserves_alloc_invariants
                     AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword) /\
                     AllocLemmas.chain_avoids g' fp dst (heap_size / U64.v mword) = true))
+
+/// zero_promote_padding preserves well_formed_heap_part4 (no infix objects).
+val zero_promote_padding_preserves_wfh_part4
+  (g: heap) (dst: obj_addr) (wz: nat)
+  : Lemma (requires well_formed_heap_part1 g /\
+                    well_formed_heap_part4 g /\
+                    Seq.mem dst (objects zero_addr g))
+          (ensures well_formed_heap_part4 (zero_promote_padding g dst wz))
 
 /// promote_object preserves allocator invariants (wfh_part1, fl_valid, fl_chain_terminates).
 /// Combines alloc_spec, copy_fields, and set_promoted_tag preservation in one lemma.

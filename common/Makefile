@@ -26,6 +26,7 @@ FSTAR_IMPL_FLAGS = --cache_checked_modules --report_assumes warn \
 SPEC_CHECKED = \
   lib/GC.Lib.Header.fst.checked \
   lib/GC.Lib.Address.fst.checked \
+  spec/GC.Spec.ZeroAddr.fsti.checked \
   spec/GC.Spec.Base.fsti.checked \
   spec/GC.Spec.Base.fst.checked \
   spec/GC.Spec.Heap.fsti.checked \
@@ -67,10 +68,13 @@ lib/GC.Lib.Header.fst.checked: lib/GC.Lib.Header.fst
 lib/GC.Lib.Address.fst.checked: lib/GC.Lib.Address.fst \
 spec/GC.Spec.Base.fsti.checked
 
+spec/GC.Spec.ZeroAddr.fsti.checked: spec/GC.Spec.ZeroAddr.fsti
+
 spec/GC.Spec.Base.fsti.checked: spec/GC.Spec.Base.fsti
 
 spec/GC.Spec.Base.fst.checked: spec/GC.Spec.Base.fst \
-spec/GC.Spec.Base.fsti.checked
+spec/GC.Spec.Base.fsti.checked \
+spec/GC.Spec.ZeroAddr.fsti.checked
 
 spec/GC.Spec.Heap.fsti.checked: spec/GC.Spec.Heap.fsti \
 lib/GC.Lib.Header.fst.checked \

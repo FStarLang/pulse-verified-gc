@@ -28,7 +28,9 @@ let heap_size_u64 : n:U64.t{U64.v n == heap_size} = 1024UL
 /// Heap Base Address (implementation)
 /// ---------------------------------------------------------------------------
 
-let zero_addr : a:hp_addr{U64.v a + U64.v mword < heap_size} = 0UL
+let zero_addr : a:hp_addr{U64.v a + U64.v mword < heap_size} =
+  GC.Spec.ZeroAddr.zero_addr_ok ();
+  GC.Spec.ZeroAddr.zero_addr
 
 /// ---------------------------------------------------------------------------
 /// Address Predicates (implementations)
