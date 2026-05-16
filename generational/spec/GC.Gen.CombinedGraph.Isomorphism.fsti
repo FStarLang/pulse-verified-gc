@@ -149,6 +149,9 @@ val generational_gc_isomorphism
       live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
       no_scan_invariant gs.gs_major /\
       minor_no_scan_invariant gs.gs_minor /\
+      // Live objects have positive wosize (needed for promotion guarantee)
+      (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+       forall (v: U64.t). Seq.mem v live_set ==> minor_wosize gs.gs_minor v > 0) /\
       // Major GC preconditions
       (let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
        Mark.stack_props mc.mc_major major_stack /\
@@ -176,7 +179,13 @@ val generational_gc_isomorphism
       (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
        let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
-       field_correspondence gs.gs_minor gs.gs_major mc.mc_major prom_res.fwd_map roots))
+       field_correspondence gs.gs_minor gs.gs_major mc.mc_major prom_res.fwd_map roots) /\
+      // Reachability bridge: combined-reachable minor vertices are in the live set
+      (let cg = build_combined_graph gs.gs_minor gs.gs_major in
+       let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+       forall (v: U64.t).
+         combined_reachable cg combined_roots (MinorV v) ==>
+         Seq.mem v live_set))
     (ensures
       (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in

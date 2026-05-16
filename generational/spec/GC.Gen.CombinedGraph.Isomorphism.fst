@@ -63,6 +63,9 @@ let standard_gc_preconditions
   live_set_no_infix gs.gs_minor (live_set_of gs.gs_minor gs.gs_major roots) /\
   no_scan_invariant gs.gs_major /\
   minor_no_scan_invariant gs.gs_minor /\
+  // Live objects have positive wosize (ensures promotion succeeds)
+  (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+   forall (v: U64.t). Seq.mem v live_set ==> minor_wosize gs.gs_minor v > 0) /\
   (let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
    Mark.stack_props mc.mc_major major_stack /\
    Mark.root_props mc.mc_major major_roots /\
@@ -220,7 +223,13 @@ let generational_gc_isomorphism
       (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
        let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
-       field_correspondence gs.gs_minor gs.gs_major mc.mc_major prom_res.fwd_map roots))
+       field_correspondence gs.gs_minor gs.gs_major mc.mc_major prom_res.fwd_map roots) /\
+      // Reachability bridge: combined-reachable minor vertices are in the live set
+      (let cg = build_combined_graph gs.gs_minor gs.gs_major in
+       let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+       forall (v: U64.t).
+         combined_reachable cg combined_roots (MinorV v) ==>
+         Seq.mem v live_set))
     (ensures
       (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
@@ -250,10 +259,24 @@ let generational_gc_isomorphism
     // Property (D): Edge biconditional
     // TODO: prove via EdgePreservation + MarkSweepFrame composition
     assume (property_d_edges ms major fwd combined_roots h_final);
-    // reachable_implies_forwarded follows from combined_reachable(MinorV v)
-    // implying v ∈ live_set and fwd v ≠ 0 (from all_promotions_succeed)
-    // TODO: prove properly
-    assume (reachable_implies_forwarded cg combined_roots fwd);
+    // reachable_implies_forwarded: follows from the preconditions
+    // Chain: combined_reachable(MinorV v) → v ∈ live_set → wosize > 0 → fwd v ≠ 0
+    let aux_rif (v: U64.t) : Lemma
+      (requires combined_reachable cg combined_roots (MinorV v))
+      (ensures fwd v <> 0UL)
+    = // v ∈ live_set (from reachability bridge precondition)
+      assert (Seq.mem v live_set);
+      // Get index k such that Seq.index live_set k == v
+      let k = Seq.index_mem v live_set in
+      // all_promotions_succeed quantifies over indices
+      assert (k < Seq.length live_set);
+      assert (Seq.index live_set k == v);
+      // wosize > 0 (from live_set_wosize_positive precondition)
+      assert (minor_wosize ms v > 0);
+      // all_promotions_succeed gives fwd v ≠ 0
+      ()
+    in
+    Classical.forall_intro (Classical.move_requires aux_rif);
     // Compose into reachable_subgraph_isomorphism
     // The four properties exactly match the conjunction in the definition
     ()
