@@ -38,6 +38,11 @@ let classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
     else
       None
 
+let classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_minor_addr v /\ Seq.mem v (minor_objects ms))
+          (ensures classify_minor_field ms major v == Some (MinorV v))
+  = ()
+
 /// From a major object's field: a value is a minor pointer if it's in
 /// the minor heap, or a major pointer if it's a valid major object address.
 let classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
@@ -419,8 +424,116 @@ let build_combined_graph_wf (ms: minor_state) (major: heap)
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Reachability (inductive definition)
+/// Edge Introduction Lemmas
 /// ---------------------------------------------------------------------------
+
+/// If classify_minor_field produces a target at index i, the edge is in
+/// minor_field_edges from that index onward
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let minor_field_edge_at
+  (ms: minor_state) (major: heap) (src: U64.t) (wz: nat) (i: nat)
+  (dst: combined_vertex)
+  : Lemma (requires i < wz /\
+                    classify_minor_field ms major (minor_read_field ms src i) == Some dst)
+          (ensures Seq.mem (MinorV src, dst) (minor_field_edges ms major src wz i))
+  = let v = minor_read_field ms src i in
+    let rest = minor_field_edges ms major src wz (i + 1) in
+    // classify_minor_field ms major v == Some dst, so this field matches
+    Seq.mem_cons (MinorV src, dst) rest
+#pop-options
+
+/// If the edge is in minor_field_edges from a later index, it's also in
+/// minor_field_edges from an earlier index
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let rec minor_field_edge_later
+  (ms: minor_state) (major: heap) (src: U64.t) (wz: nat) (start: nat) (target_idx: nat)
+  (dst: combined_vertex)
+  : Lemma (requires start <= target_idx /\ target_idx < wz /\
+                    classify_minor_field ms major (minor_read_field ms src target_idx) == Some dst)
+          (ensures Seq.mem (MinorV src, dst) (minor_field_edges ms major src wz start))
+          (decreases (wz - start))
+  = if start >= wz then ()
+    else if start = target_idx then
+      minor_field_edge_at ms major src wz start dst
+    else begin
+      let v = minor_read_field ms src start in
+      let rest = minor_field_edges ms major src wz (start + 1) in
+      minor_field_edge_later ms major src wz (start + 1) target_idx dst;
+      match classify_minor_field ms major v with
+      | Some dst' -> Seq.mem_cons (MinorV src, dst') rest
+      | None -> ()
+    end
+#pop-options
+
+/// If src ∈ objs, then minor_object_edges of src are included in all_minor_edges
+/// Helper to find the first occurrence index
+private let rec find_index_from (objs: seq U64.t) (src: U64.t) (idx: nat)
+  : Ghost nat
+    (requires idx <= Seq.length objs /\ (exists (k:nat). idx <= k /\ k < Seq.length objs /\ Seq.index objs k == src))
+    (ensures fun r -> idx <= r /\ r < Seq.length objs /\ Seq.index objs r == src)
+    (decreases (Seq.length objs - idx))
+  = if Seq.index objs idx = src then idx
+    else find_index_from objs src (idx + 1)
+
+/// If e is in all_minor_edges from some index k, then e is in all_minor_edges from 0
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+private let rec all_minor_edges_suffix
+  (ms: minor_state) (major: heap) (objs: seq U64.t) (idx: nat) (e: combined_edge)
+  : Lemma (requires idx <= Seq.length objs /\
+                    Seq.mem e (all_minor_edges ms major objs idx))
+          (ensures Seq.mem e (all_minor_edges ms major objs 0))
+          (decreases idx)
+  = if idx = 0 then ()
+    else begin
+      let prev : nat = idx - 1 in
+      Seq.lemma_mem_append (minor_object_edges ms major (Seq.index objs prev))
+                           (all_minor_edges ms major objs idx);
+      all_minor_edges_suffix ms major objs prev e
+    end
+#pop-options
+
+/// Given that src appears at index k in objs, and e is in minor_object_edges of src,
+/// then e is in all_minor_edges from 0
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let all_minor_edges_includes_object
+  (ms: minor_state) (major: heap) (objs: seq U64.t) (src: U64.t) (k: nat)
+  (e: combined_edge)
+  : Lemma (requires k < Seq.length objs /\
+                    Seq.index objs k == src /\
+                    Seq.mem e (minor_object_edges ms major src))
+          (ensures Seq.mem e (all_minor_edges ms major objs 0))
+  = // e is in minor_object_edges of src = minor_object_edges of index objs k
+    // all_minor_edges from k = append (minor_object_edges obj[k]) (all_minor_edges from k+1)
+    Seq.lemma_mem_append (minor_object_edges ms major (Seq.index objs k))
+                         (all_minor_edges ms major objs (k + 1));
+    // So e is in all_minor_edges from k
+    all_minor_edges_suffix ms major objs k e
+#pop-options
+
+/// Main edge introduction lemma for minor fields
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+let minor_field_edge_intro (ms: minor_state) (major: heap)
+  (src: U64.t) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (minor_objects ms) /\
+                    i < minor_wosize ms src /\
+                    classify_minor_field ms major (minor_read_field ms src i) == Some dst)
+          (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major))
+  = let minor_objs = minor_objects ms in
+    let major_objs = objects zero_addr major in
+    let wz = minor_wosize ms src in
+    // Step 1: edge is in minor_field_edges from index 0
+    minor_field_edge_later ms major src wz 0 i dst;
+    // Step 2: minor_field_edges from 0 == minor_object_edges
+    assert (minor_object_edges ms major src == minor_field_edges ms major src wz 0);
+    // Step 3: find src's index in minor_objs
+    Classical.move_requires (Seq.mem_index src) minor_objs;
+    let k = find_index_from minor_objs src 0 in
+    // Step 4: edge is in all_minor_edges from 0
+    all_minor_edges_includes_object ms major minor_objs src k (MinorV src, dst);
+    // Step 5: all_minor_edges ⊆ cg_edges
+    Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
+                         (all_major_edges ms major major_objs 0)
+#pop-options
 
 /// Reachability as an inductive type
 noeq
@@ -432,6 +545,17 @@ type combined_reach (g: combined_graph) (roots: seq combined_vertex)
               combined_reach g roots u ->
               squash (mem_ce (u, v) g) ->
               combined_reach g roots v
+
+/// ---------------------------------------------------------------------------
+/// GC Morphism
+/// ---------------------------------------------------------------------------
+
+#push-options "--ifuel 1"
+let gc_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot combined_vertex =
+  match v with
+  | MinorV a -> if fwd a <> 0UL then MajorV (fwd a) else MinorV a
+  | MajorV a -> MajorV a
+#pop-options
 
 /// The prop-level predicate: exists a derivation
 let combined_reachable (g: combined_graph) (roots: seq combined_vertex)
@@ -486,3 +610,43 @@ let combined_reachable_ind (g: combined_graph) (roots: seq combined_vertex)
 let classify_roots_impl (roots: seq U64.t)
   : GTot (seq combined_vertex)
   = classify_roots roots
+
+/// ---------------------------------------------------------------------------
+/// classify_roots membership lemmas
+/// ---------------------------------------------------------------------------
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+let rec classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
+  : Lemma (requires Seq.mem r roots /\ is_minor_pointer r)
+          (ensures Seq.mem (MinorV r) (classify_roots roots))
+          (decreases Seq.length roots)
+  = if Seq.length roots = 0 then ()
+    else begin
+      let hd = Seq.head roots in
+      let tl = Seq.tail roots in
+      Seq.mem_cons (classify_root hd) (classify_roots tl);
+      if hd = r then ()
+      else begin
+        Seq.lemma_mem_append (Seq.create 1 hd) tl;
+        classify_roots_minor_mem tl r
+      end
+    end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+let rec classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
+  : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
+          (ensures Seq.mem (MajorV r) (classify_roots roots))
+          (decreases Seq.length roots)
+  = if Seq.length roots = 0 then ()
+    else begin
+      let hd = Seq.head roots in
+      let tl = Seq.tail roots in
+      Seq.mem_cons (classify_root hd) (classify_roots tl);
+      if hd = r then ()
+      else begin
+        Seq.lemma_mem_append (Seq.create 1 hd) tl;
+        classify_roots_major_mem tl r
+      end
+    end
+#pop-options

@@ -74,6 +74,11 @@ let combined_graph_wf (g: combined_graph) : prop =
 val classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
   : GTot (option combined_vertex)
 
+/// Characterization: classify_minor_field returns MinorV v when v is a minor object
+val classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_minor_addr v /\ Seq.mem v (minor_objects ms))
+          (ensures classify_minor_field ms major v == Some (MinorV v))
+
 /// Classify a field value read from a major-heap object.
 /// A field is a pointer if it refers to a major object or a minor object.
 val classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
@@ -118,15 +123,25 @@ val build_combined_graph_wf (ms: minor_state) (major: heap)
           (ensures combined_graph_wf (build_combined_graph ms major))
 
 /// ---------------------------------------------------------------------------
+/// Edge Introduction Lemmas
+/// ---------------------------------------------------------------------------
+
+/// If a field of minor object src is classified as a pointer, the
+/// corresponding edge exists in the combined graph.
+val minor_field_edge_intro (ms: minor_state) (major: heap)
+  (src: U64.t) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (minor_objects ms) /\
+                    i < minor_wosize ms src /\
+                    classify_minor_field ms major (minor_read_field ms src i) == Some dst)
+          (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major))
+
+/// ---------------------------------------------------------------------------
 /// GC Morphism (forwarding map as graph homomorphism)
 /// ---------------------------------------------------------------------------
 
 /// The morphism sends minor objects to their forwarded major addresses
 /// and leaves major objects unchanged.
-let gc_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot combined_vertex =
-  match v with
-  | MinorV a -> if fwd a <> 0UL then MajorV (fwd a) else MinorV a
-  | MajorV a -> MajorV a
+val gc_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot combined_vertex
 
 /// ---------------------------------------------------------------------------
 /// Reachability (inductive)
@@ -173,3 +188,15 @@ let rec classify_roots (roots: seq U64.t)
   : GTot (seq combined_vertex) (decreases Seq.length roots) =
   if Seq.length roots = 0 then Seq.empty
   else Seq.cons (classify_root (Seq.head roots)) (classify_roots (Seq.tail roots))
+
+/// Membership in classify_roots: if r ∈ roots and is_minor_pointer r,
+/// then MinorV r ∈ classify_roots roots.
+val classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
+  : Lemma (requires Seq.mem r roots /\ is_minor_pointer r)
+          (ensures Seq.mem (MinorV r) (classify_roots roots))
+
+/// Membership in classify_roots: if r ∈ roots and ¬(is_minor_pointer r),
+/// then MajorV r ∈ classify_roots roots.
+val classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
+  : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
+          (ensures Seq.mem (MajorV r) (classify_roots roots))

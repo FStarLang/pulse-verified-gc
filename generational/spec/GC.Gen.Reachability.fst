@@ -362,6 +362,43 @@ let minor_successors_length_bound (ms: minor_state) (obj: U64.t)
   // (minor_wosize ms obj + 1) * 8 <= minor_heap_size
   // so minor_wosize ms obj <= minor_heap_size / 8 - 1 < minor_heap_size
 
+/// Characterization of collect_minor_successors
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let rec collect_minor_successors_char
+  (ms: minor_state)
+  (obj: U64.t)
+  (idx: nat)
+  (wosize: nat)
+  (y: U64.t)
+  : Lemma
+    (ensures Seq.mem y (collect_minor_successors ms obj idx wosize) <==>
+             (exists (i:nat). idx <= i /\ i < wosize /\
+                              minor_read_field ms obj i == y /\
+                              is_minor_addr y /\
+                              Seq.mem y (minor_objects ms)))
+    (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then ()
+  else begin
+    let field_val = minor_read_field ms obj idx in
+    let rest = collect_minor_successors ms obj (idx + 1) wosize in
+    collect_minor_successors_char ms obj (idx + 1) wosize y;
+    if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
+    then Seq.mem_cons field_val rest
+    else ()
+  end
+#pop-options
+
+/// Characterization: y ∈ minor_successors ms x iff a field of x equals y
+/// and y is a valid minor-heap object
+let minor_successors_char (ms: minor_state) (x y: U64.t)
+  : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
+                   (exists (i:nat). i < minor_wosize ms x /\
+                                    minor_read_field ms x i == y /\
+                                    is_minor_addr y /\
+                                    Seq.mem y (minor_objects ms)))
+  = collect_minor_successors_char ms x 0 (minor_wosize ms x) y
+
 /// Count of elements in `objects` that are not in `visited`
 let rec count_not_mem (objects visited: seq U64.t) : GTot nat
   (decreases Seq.length objects) =
