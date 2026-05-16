@@ -384,7 +384,11 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 | Minor→Combined bridge (`minor_successor_edge`) | ✅ Done | Bridge.fst | 0 admits, 2.2s |
 | Minor→Combined bridge (`minor_reachable_implies_combined`) | ✅ Done | Bridge.fst | Induction via `minor_reachable_ind` |
 | gc_morphism characterization lemmas | ✅ Done | CombinedGraph.fst | minor_fwd/minor_stay/major |
-| Major→Combined bridge | TODO | — | Needs HeapGraph↔classify_major_field bridge |
+| Major→Combined bridge (`heapgraph_edge_implies_combined`) | ✅ Done | MajorBridge.fst | 0 admits, uses graph_edge_has_field_index |
+| Major→Combined bridge (`heapgraph_reachable_implies_combined`) | ✅ Done | MajorBridge.fst | 0 admits, induction on reach witness |
+| Major object not minor pointer | ✅ Done | MajorBridge.fst | Uses major_starts_after_minor |
+| Pointer field not minor | ✅ Done | MajorBridge.fst | From is_pointer_field definition |
+| HeapGraph reverse lemmas | ✅ Done | HeapGraph.fst | 7 lemmas, 0 admits |
 | Reachability bridge (combined↔live_set) | TODO | — | Compose minor+major bridges |
 
 ### Phase 2: Forward Morphism (started)
@@ -420,7 +424,28 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 - `286783d` — EdgePreservation: Case 4 (major→major field preserved)
 - `6a93482` — EdgePreservation: Case 3 (major→minor field forwarding)
 - `035e579` — EdgePreservation: Cases 1 & 2 (promoted copy field preservation)
-- (pending) — Isomorphism theorem statement (CombinedGraph.Isomorphism.fsti)
+- `0c9481a` — Isomorphism theorem: clean end-to-end statement
+- `8ee59d2` — MarkSweepFrame: bridge from end_to_end_correctness
+- `3d56b4c` — MajorBridge: HeapGraph ↔ CombinedGraph correspondence + disjointness
+- `4f54de8` — HeapGraph: fully-proven reverse lemmas (edge → field index)
+- `cb649ad` — MajorBridge: fully proven (0 admits), HeapGraph: coerce_mem_is_obj_addr
+- `bc43a7a` — Isomorphism: proof skeleton with 5 assumes for sub-properties
+
+### Proof Gap Summary
+
+| Module | File | Admits | Notes |
+|--------|------|--------|-------|
+| HeapGraph | common/spec/GC.Spec.HeapGraph.fst | 0 | 7 reverse lemmas, all proven |
+| CombinedGraph | CombinedGraph.fst | 0 | Core infrastructure |
+| Bridge | Bridge.fst | 0 | Minor→Combined reachability |
+| EdgePreservation | EdgePreservation.fst | 0 | All 4 cases |
+| ForwardMorphism | ForwardMorphism.fst | 0 | Vertex survival |
+| MarkSweepFrame | MarkSweepFrame.fst | 0 | Pillar composition |
+| MajorBridge | MajorBridge.fst | 0 | HeapGraph↔Combined bridge |
+| **Isomorphism** | **Isomorphism.fst** | **5** | **Proof skeleton** |
+| GC.Gen.Base | Base.fst | 1 | `major_starts_after_minor` axiom |
+
+**Total: 6 admits/assumes across 9 modules. 7 of 9 modules are fully proven.**
 
 ### Phase 4: Main Theorem Statement
 
@@ -429,8 +454,13 @@ the proof effort (~300-500 lines) and captures the essential safety property:
 | `fwd_morphism` definition | ✅ Done | Isomorphism.fsti | MinorV→fwd(v), MajorV→v |
 | `reachable_implies_forwarded` | ✅ Done | Isomorphism.fsti | Requirement: reachable minor ⟹ fwd≠0 |
 | `reachable_subgraph_isomorphism` | ✅ Done | Isomorphism.fsti | Canonical: inj + surj + edge biconditional |
-| `generational_gc_isomorphism` | ✅ Done | Isomorphism.fsti | Main theorem val (type-checks, no impl) |
-| Proof implementation | TODO | — | Compose all sub-lemmas |
+| `generational_gc_isomorphism` | ✅ Done | Isomorphism.fsti | Main theorem val (type-checks) |
+| Proof skeleton | ✅ Done | Isomorphism.fst | 5 assumes for 4 properties + forwarding |
+| Property (A) injectivity | 🔸 Assume | Isomorphism.fst | Mixed MinorV/MajorV case needs alloc disjointness |
+| Property (B) image | 🔸 Assume | Isomorphism.fst | Needs reachability through minor_collect + mark/sweep |
+| Property (C) surjectivity | 🔸 Assume | Isomorphism.fst | Needs image decomposition (old ∪ promoted) |
+| Property (D) edge biconditional | 🔸 Assume | Isomorphism.fst | Forward via EdgePres + MSFrame; backward harder |
+| reachable_implies_forwarded proof | 🔸 Assume | Isomorphism.fst | Needs reachability bridge + all_promotions_succeed |
 
 The theorem uses the canonical induced-subgraph isomorphism condition:
 ```
@@ -439,15 +469,16 @@ The theorem uses the canonical induced-subgraph isomorphism condition:
 Combined with vertex bijection (injective + surjective + image in post-GC).
 
 ### Next steps
-1. **Major→Combined bridge**: Connect HeapGraph's `get_pointer_fields` to
-   `classify_major_field`. Show edges in `create_graph major` produce edges
-   in `build_combined_graph ms major`. Then induction on `reach`.
+1. **Reachability bridge**: Show combined_reachable(MinorV v) → v ∈ live_set.
+   This enables `reachable_implies_forwarded` proof.
 2. **field_correspondence proof**: Compose `promote_all_preserves_fields` +
    `update_major_pointers_field_effect` on promoted copies.
 3. **Mark/sweep composition**: Add lemma composing EdgePreservation Cases 3&4
    with `mark_preserves_get_field` + Pillar 5 to get full preservation through
    the complete GC cycle.
-4. **Backward morphism** (Phase 4): Injectivity of fwd from alloc distinctness.
+4. **Mixed injectivity**: Show promoted targets (from free list) ≠ reachable
+   pre-existing major objects (live, not blue/free).
+5. **Image decomposition**: Post-GC vertices = (old reachable major) ∪ (promoted).
 
 The full isomorphism additionally guarantees **no spurious objects** appear in
 the post-GC state (every post-GC reachable object came from a pre-GC reachable
