@@ -178,3 +178,56 @@ let major_field_forwarded_by_minor_collect
     // So new_val == fwd (read_word major field_addr)
     ()
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Step 1c: Promoted object field preservation (Cases 1 & 2)
+/// ---------------------------------------------------------------------------
+
+/// The proof just instantiates the universally quantified field_correspondence
+/// predicate at the given object and field index.
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let promoted_field_through_minor_collect
+  (ms: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: U64.t) (j: nat)
+  : Lemma
+    (requires
+      (let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let mc = minor_collect_spec ms major fp roots in
+       Seq.mem obj live_set /\ prom_res.fwd_map obj <> 0UL /\
+       j < minor_wosize ms obj /\
+       U64.v (prom_res.fwd_map obj) + j * 8 + 8 <= heap_size /\
+       U64.v (prom_res.fwd_map obj) % 8 == 0 /\
+       GC.Gen.Correctness.field_correspondence ms major mc.mc_major prom_res.fwd_map roots))
+    (ensures
+      (let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let mc = minor_collect_spec ms major fp roots in
+       let new_addr = prom_res.fwd_map obj in
+       let minor_val = minor_read_field ms obj j in
+       let field_addr_v = U64.v new_addr + j * 8 in
+       field_addr_v + 8 <= heap_size /\ field_addr_v % 8 == 0 /\
+       (let major_val = read_word mc.mc_major (U64.uint_to_t field_addr_v <: hp_addr) in
+        (is_minor_pointer minor_val /\ prom_res.fwd_map minor_val <> 0UL ==>
+          major_val == prom_res.fwd_map minor_val) /\
+        (~(is_minor_pointer minor_val /\ prom_res.fwd_map minor_val <> 0UL) ==>
+          major_val == minor_val))))
+  = // Manually bind the relevant let-bindings to help Z3 see the connection
+    // between the precondition's field_correspondence and our specific obj/j.
+    let live_set = live_set_of ms major roots in
+    let prom_res = promote_all_spec ms major fp live_set in
+    let mc = minor_collect_spec ms major fp roots in
+    let fwd = prom_res.fwd_map in
+    let new_addr = fwd obj in
+    let wz = minor_wosize ms obj in
+    let minor_val = minor_read_field ms obj j in
+    let field_addr_v = U64.v new_addr + j * 8 in
+    // These assertions help Z3 see the antecedents of field_correspondence's forall:
+    assert (Seq.mem obj live_set);
+    assert (fwd obj <> 0UL);
+    assert (j < wz);
+    assert (field_addr_v + 8 <= heap_size);
+    // NL arithmetic: (a + j*8) % 8 == 0 when a % 8 == 0
+    FStar.Math.Lemmas.lemma_mod_plus (U64.v new_addr) j 8;
+    assert (field_addr_v % 8 == 0)
+#pop-options

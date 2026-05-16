@@ -139,3 +139,48 @@ val major_field_forwarded_by_minor_collect
        let field_addr = U64.uint_to_t (U64.v src + i * 8) in
        let old_val = read_word major field_addr in
        read_word minor_res.mc_major field_addr == prom_res.fwd_map old_val))
+
+/// ---------------------------------------------------------------------------
+/// Step 1c: Promoted object field preservation (Cases 1 & 2)
+/// ---------------------------------------------------------------------------
+
+/// For a promoted minor object `obj` (with `fwd obj <> 0UL`), field `j` of
+/// the promoted copy `fwd obj` in `mc_major` equals:
+/// - `fwd(minor_val)` if `minor_val` is a minor pointer with `fwd(minor_val) <> 0UL` (Case 1)
+/// - `minor_val` otherwise (Case 2: major pointer or un-promoted minor pointer)
+///
+/// This follows directly from field_correspondence (assumed as precondition).
+/// Proving field_correspondence holds is a separate concern — it requires
+/// composing promote_all_preserves_fields + update_major_pointers_field_effect
+/// on the promoted copy's fields.
+val promoted_field_through_minor_collect
+  (ms: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: U64.t) (j: nat)
+  : Lemma
+    (requires
+      (let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let mc = minor_collect_spec ms major fp roots in
+       // obj is in the live set and gets promoted
+       Seq.mem obj live_set /\ prom_res.fwd_map obj <> 0UL /\
+       // Field within bounds
+       j < minor_wosize ms obj /\
+       U64.v (prom_res.fwd_map obj) + j * 8 + 8 <= heap_size /\
+       U64.v (prom_res.fwd_map obj) % 8 == 0 /\
+       // field_correspondence holds (proven separately)
+       GC.Gen.Correctness.field_correspondence ms major mc.mc_major prom_res.fwd_map roots))
+    (ensures
+      (let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let mc = minor_collect_spec ms major fp roots in
+       let new_addr = prom_res.fwd_map obj in
+       let minor_val = minor_read_field ms obj j in
+       let field_addr_v = U64.v new_addr + j * 8 in
+       field_addr_v + 8 <= heap_size /\ field_addr_v % 8 == 0 /\
+       (let major_val = read_word mc.mc_major (U64.uint_to_t field_addr_v <: hp_addr) in
+        // Case 1: minor→minor → field becomes fwd(minor_val)
+        (is_minor_pointer minor_val /\ prom_res.fwd_map minor_val <> 0UL ==>
+          major_val == prom_res.fwd_map minor_val) /\
+        // Case 2: minor→major → field preserved
+        (~(is_minor_pointer minor_val /\ prom_res.fwd_map minor_val <> 0UL) ==>
+          major_val == minor_val))))
