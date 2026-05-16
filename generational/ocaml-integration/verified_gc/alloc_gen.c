@@ -52,7 +52,7 @@
 #include "../caml/address_class.h" /* for In_heap, caml_page_table_add */
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
-extern uint64_t zero_addr;
+#include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
 extern size_t queue_size_sz;
 extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 

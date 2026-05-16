@@ -58,10 +58,10 @@ build_verified_gc() {
     local dir="ocaml-4.14-verified-gen"
     clone_ocaml "$dir"
 
-    # Copy our verified GC into the runtime
-    echo "=== Copying verified GC into $dir/runtime/ ==="
+    # Symlink our verified GC into the runtime (VPATH resolves via realpath)
+    echo "=== Symlinking verified GC into $dir/runtime/ ==="
     rm -rf "$dir/runtime/verified_gc"
-    cp -r verified_gc "$dir/runtime/"
+    ln -sfn "$(cd verified_gc && pwd)" "$dir/runtime/verified_gc"
 
     # Apply runtime patch
     echo "=== Applying runtime patch ==="
