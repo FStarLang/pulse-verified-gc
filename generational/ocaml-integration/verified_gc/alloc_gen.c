@@ -121,9 +121,9 @@ static void ensure_heap(void) {
 
     /* --- Minor heap --- */
     /* Override the verified constant (2048B) with a production-sized minor heap.
-     * OCaml default is 256K words = 2MB.  We use 256KB (32K words) as a
-     * reasonable default, overridable via environment variable. */
-    size_t minor_words = 32 * 1024;  /* 256 KB / 8 */
+     * OCaml default is 256K words = 2MB.  We match that default, overridable
+     * via environment variable. */
+    size_t minor_words = 256 * 1024;  /* 2 MB / 8 = 256K words (matches OCaml default) */
     const char *minor_env = getenv("MINOR_HEAP_WORDS");
     if (minor_env) {
         size_t w = (size_t)atoll(minor_env);
@@ -404,8 +404,8 @@ static void do_minor_gc(void) {
     if (!in_full_gc) {
         uint64_t bump = *gc_gen_heap.minor.bump_ref;
         uint64_t major_size = heap_size_u64 - zero_addr;
-        /* Use 25% threshold — aggressive, but prevents fragmentation-induced failures */
-        uint64_t threshold = major_size / 4;
+        /* Use 50% threshold — balances sweep cost vs fragmentation */
+        uint64_t threshold = major_size / 2;
         if (bytes_promoted_since_major + bump > threshold) {
             do_full_gc();
             if (*gc_gen_heap.minor.bump_ref == 0) return;

@@ -21,3 +21,4 @@ dump
 mark-and-sweep/snapshot/gc_test
 _verify.log
 generational/ocaml-integration/ocaml-4.14-unchanged
+generational/ocaml-integration/tests/gmon.out
