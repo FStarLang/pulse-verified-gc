@@ -26,38 +26,6 @@ module SweepInv = GC.Spec.SweepInv
 /// Gray Stack Properties
 /// ---------------------------------------------------------------------------
 
-/// Stack contains valid object addresses
-let rec stack_elements_valid (g: heap) (st: seq obj_addr) 
-  : Tot prop (decreases Seq.length st)
-  =
-  if Seq.length st = 0 then True
-  else
-    let obj = Seq.head st in
-    Seq.mem obj (objects zero_addr g) /\
-    stack_elements_valid g (Seq.tail st)
-
-/// All gray objects are on the stack
-let gray_objects_on_stack (g: heap) (st: seq obj_addr) : prop =
-  forall (obj: obj_addr). 
-    Seq.mem obj (objects zero_addr g) /\ is_gray obj g ==> Seq.mem obj st
-
-/// Stack elements point to gray objects
-let stack_points_to_gray (g: heap) (st: seq obj_addr) : prop =
-  forall (obj: obj_addr). 
-    Seq.mem obj st ==> is_gray obj g
-
-/// Stack has no duplicate elements (follows from gray_objects_on_stack + stack_points_to_gray conceptually)
-let rec stack_no_dups (st: seq obj_addr)
-  : Tot prop (decreases Seq.length st)
-  = if Seq.length st = 0 then True
-    else ~ (Seq.mem (Seq.head st) (Seq.tail st)) /\ stack_no_dups (Seq.tail st)
-
-/// Complete stack properties
-let stack_props (g: heap) (st: seq obj_addr) : prop =
-  stack_elements_valid g st /\
-  gray_objects_on_stack g st /\
-  stack_points_to_gray g st /\
-  stack_no_dups st
 
 /// Helper: stack head is gray
 let stack_head_is_gray (g: heap) (st: seq obj_addr)
@@ -201,41 +169,9 @@ let stack_length_bound (g: heap) (st: seq obj_addr)
 /// Root Properties
 /// ---------------------------------------------------------------------------
 
-/// Roots are valid heap pointers to objects (gray or black)
-let root_props (g: heap) (roots: seq obj_addr) : prop =
-  forall (r: obj_addr). Seq.mem r roots ==>
-    (Seq.mem r (objects zero_addr g) /\
-     (is_gray r g \/ is_black r g))
-
 /// ---------------------------------------------------------------------------
 /// Mark Step: Process One Gray Object
 /// ---------------------------------------------------------------------------
-
-/// Push children of object onto stack (make white children gray)
-let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
-  : GTot (heap & seq obj_addr) (decreases (U64.v ws - U64.v i))
-  =
-  if U64.v i > U64.v ws then (g, st)
-  else
-    let v = HeapGraph.get_field g obj i in
-    let (g', st') =
-      if HeapGraph.is_pointer_field v then begin
-        HeapGraph.is_pointer_field_is_obj_addr v;
-        let child_raw : obj_addr = v in
-        let child = resolve_object child_raw g in
-        if is_white child g then
-          let g' = makeGray child g in
-          let st' = Seq.cons child st in
-          (g', st')
-        else
-          (g, st)
-      end else
-        (g, st)
-    in
-    if U64.v i < U64.v ws then
-      push_children g' st' obj (U64.add i 1UL) ws
-    else
-      (g', st')
 
 /// push_children only grows the stack (or leaves it unchanged)
 let rec push_children_stack_monotone (g: heap) (st: seq obj_addr) (obj: obj_addr)
@@ -473,25 +409,6 @@ let rec push_children_preserves_stack_props g st obj i ws
   end
 #pop-options
 
-/// Process one gray object: make it black and push children
-let mark_step (g: heap) (st: seq obj_addr) 
-  : GTot (heap & seq obj_addr)
-  =
-  if Seq.length st = 0 then (g, st)
-  else
-  let obj = Seq.head st in
-  let st' = Seq.tail st in
-  
-  // Make it black
-  let g' = makeBlack obj g in
-  
-  // Push white children
-  let ws = wosize_of_object obj g in
-  if is_no_scan obj g then
-    (g', st')
-  else
-    push_children g' st' obj 1UL ws
-
 /// Unfold what mark_step computes
 let mark_step_unfold (g: heap{well_formed_heap g}) (st: seq obj_addr{Seq.length st > 0})
   : Lemma (requires stack_elements_valid g st)
@@ -690,19 +607,6 @@ let mark_step_preserves_wf g st =
     push_children_preserves_wf g' (Seq.tail st) obj 1UL ws
 #pop-options
 
-let rec mark_aux (g: heap) (st: seq obj_addr) (fuel: nat)
-  : GTot heap (decreases fuel)
-  =
-  if Seq.length st = 0 then g
-  else if fuel = 0 then g
-  else begin
-    let (g', st') = mark_step g st in
-    mark_aux g' st' (fuel - 1)
-  end
-
-let mark (g: heap) (st: seq obj_addr) : GTot heap =
-  mark_aux g st (heap_size / U64.v mword)
-
 /// mark_aux unfolds one step: mark_aux g st (fuel+1) == mark_aux g' st' fuel
 /// where (g', st') = mark_step g st, when st is nonempty
 let mark_aux_unfold (g: heap) (st: seq obj_addr) (fuel: nat)
@@ -722,38 +626,6 @@ let mark_aux_empty (g: heap) (st: seq obj_addr) (fuel: nat)
 /// ---------------------------------------------------------------------------
 /// Mark Phase Invariants
 /// ---------------------------------------------------------------------------
-
-/// Tri-color invariant: no black object points to a white (resolved) object
-/// Uses resolve_object to handle infix objects (their parent must be non-white)
-let tri_color_invariant (g: heap) : prop =
-  let objs = objects zero_addr g in
-  forall (obj: obj_addr) (child: obj_addr). 
-    Seq.mem obj objs ==>
-    is_black obj g ==>
-    ~(is_no_scan obj g) ==>
-    points_to g obj child ==>
-    ~(is_white (resolve_object child g) g)
-
-/// After marking, no gray objects remain
-let noGreyObjects (g: heap) : prop =
-  let objs = objects zero_addr g in
-  forall (obj: obj_addr). Seq.mem obj objs ==>
-    not (is_gray obj g)
-
-/// No black objects initially (natural GC precondition: after sweep-reset, before mark)
-let no_black_objects (g: heap) : prop =
-  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_black obj g)
-
-/// No blue objects (GC operates only on white/gray/black; blue = free-list)
-let no_blue_objects (g: heap) : prop =
-  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_blue obj g)
-
-/// No non-blue object points to a blue object (allocator invariant).
-/// Blue→blue pointers are allowed (free-list internal links).
-let no_pointer_to_blue (g: heap) : prop =
-  forall (src dst: obj_addr).
-    Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\ points_to g src dst ==>
-    ~(is_blue dst g)
 
 /// Fuel must be positive when stack is non-empty and mark_aux converges
 let mark_aux_fuel_pos (g: heap) (st: seq obj_addr) (fuel: nat)

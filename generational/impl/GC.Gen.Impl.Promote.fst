@@ -93,6 +93,11 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
     // Source: minor_obj + iv * 8
     let src_off = U64.mul iv 8UL;
     let src_addr = U64.add src_obj src_off;
+    // NL arithmetic for minor_read precondition (Z3 4.13.3 needs help)
+    FStar.Math.Lemmas.lemma_mult_le_right 8 (U64.v iv) (U64.v wosize - 1);
+    FStar.Math.Lemmas.lemma_mod_plus (U64.v src_obj) (U64.v iv) 8;
+    assert (pure (U64.v src_addr + 8 <= minor_heap_size /\
+                  U64.v src_addr % 8 == 0));
     let field_val = minor_read minor src_addr;
     // Dest: major_obj + iv * 8
     let dst_off = U64.mul iv 8UL;

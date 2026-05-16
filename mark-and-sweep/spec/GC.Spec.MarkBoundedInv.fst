@@ -20,14 +20,6 @@ open GC.Spec.MarkBounded
 module U64 = FStar.UInt64
 module SweepInv = GC.Spec.SweepInv
 
-/// Abstract bounded mark invariant
-let bounded_mark_inv (g: heap) (st: seq obj_addr) (cap: nat) : prop =
-  well_formed_heap g /\ bounded_stack_props g st /\
-  Seq.length (objects zero_addr g) > 0 /\
-  SweepInv.heap_objects_dense g /\
-  Seq.length st <= cap /\
-  cap > 0
-
 /// ---------------------------------------------------------------------------
 /// Introduction
 /// ---------------------------------------------------------------------------

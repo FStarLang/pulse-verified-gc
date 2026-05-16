@@ -833,7 +833,7 @@ let copy_fields_all_correct
 
 /// After promote_object, if allocation succeeds AND the destination
 /// has valid bounds, all field data is preserved.
-#push-options "--z3rlimit 100 --fuel 2 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 2"
 let promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
@@ -866,7 +866,6 @@ let promote_preserves_fields
       in
       FStar.Classical.forall_intro (FStar.Classical.move_requires dfv_aux);
       assert (dst_fields_valid alloc_res.obj_out wosize);
-      copy_fields_all_correct minor alloc_res.heap_out obj alloc_res.obj_out wosize;
       // set_promoted_tag only modifies the header; field reads are preserved
       let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
       let tag = minor_tag minor obj in
@@ -885,20 +884,26 @@ let promote_preserves_fields
       assert (U64.v alloc_res.obj_out < heap_size);
       let dst_obj : obj_addr = alloc_res.obj_out in
       let padded = zero_promote_padding copied dst_obj wosize in
-      let field_frame (j: nat{j < wosize}) : Lemma
+      // Single combined per-field proof: each field read is preserved through
+      // zero_promote_padding and set_promoted_tag, and equals the minor field.
+      let combined (j: nat{j < wosize}) : Lemma
         (read_word (set_promoted_tag padded dst_obj tag) (U64.uint_to_t (U64.v dst_obj + j * 8))
-              == read_word copied (U64.uint_to_t (U64.v dst_obj + j * 8)))
-      = FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
+              == minor_read_field minor obj j)
+      = // NL arithmetic for field address bounds
+        FStar.Math.Lemmas.lemma_mult_le_right 8 j (wosize - 1);
         assert (U64.v dst_obj + j * 8 + 8 <= heap_size);
         let addr : hp_addr = U64.uint_to_t (U64.v dst_obj + j * 8) in
+        // Frame through zero_promote_padding: addr <> padding position
         hd_address_spec dst_obj;
-        // j < wosize → j*8 < wosize*8 → addr <> pad position
         assert (j * 8 < wosize * 8);
         assert (U64.v addr <> U64.v dst_obj + wosize * U64.v mword);
         zero_promote_padding_frame copied dst_obj wosize addr;
-        set_promoted_tag_read_frame padded dst_obj tag addr
+        // Frame through set_promoted_tag: addr disjoint from header
+        set_promoted_tag_read_frame padded dst_obj tag addr;
+        // Copy correctness: field data matches minor
+        copy_fields_preserves minor alloc_res.heap_out obj dst_obj 0 wosize j
       in
-      FStar.Classical.forall_intro field_frame
+      FStar.Classical.forall_intro combined
     end else ()
   end
 #pop-options

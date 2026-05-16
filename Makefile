@@ -144,6 +144,12 @@ generational/spec/GC.Gen.MinorHeap.fst.checked: generational/spec/GC.Gen.MinorHe
 generational/spec/GC.Gen.AllocProps.fst.checked: generational/spec/GC.Gen.AllocProps.fst
 	$(FSTAR) --query_stats $<
 
+generational/spec/GC.Gen.Cheney.Dense.fst.checked: generational/spec/GC.Gen.Cheney.Dense.fst
+	$(FSTAR) --z3rlimit 400 $<
+
+generational/spec/GC.Gen.PromoteUpdate.BlueProm.fst.checked: generational/spec/GC.Gen.PromoteUpdate.BlueProm.fst
+	$(FSTAR) --z3rlimit 200 $<
+
 generational/spec/%.checked: generational/spec/%
 	$(FSTAR) $<
 

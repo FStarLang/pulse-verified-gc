@@ -364,7 +364,7 @@ private let bfc_single_field_proof
     bfc_one_field minor major new_major obj fp wosize dst_obj src j
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 /// Pattern: inner bfc_proof has conclusion as implication (no requires).
 private let promote_object_preserves_bfc_close
   (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)

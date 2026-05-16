@@ -2770,7 +2770,7 @@ let rec chain_avoids_transfer_excl2_obj
     (requires chain_avoids g fp excl fuel = true /\
               chain_avoids g fp excl2 fuel = true /\
               fl_valid g fp fuel /\
-              (forall (a: obj_addr). Seq.mem a (objects 0UL g) /\
+              (forall (a: obj_addr). Seq.mem a (objects zero_addr g) /\
                 U64.v (wosize_of_object a g) >= 1 /\
                 U64.v (hd_address a) + 16 <= heap_size /\
                 (a <: U64.t) <> excl /\ (a <: U64.t) <> excl2 ==>

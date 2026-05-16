@@ -607,7 +607,7 @@ private let alloc_split_prev_mem
 
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
 
 /// When alloc_search finds a block (bwz >= wz) and prev ≠ 0, the result is
 /// write_word (alloc_from_block g obj wz next) prev new_fp. Prove density.
@@ -631,8 +631,10 @@ private let alloc_search_found_prev_dense
     let bwz_obj = U64.v (getWosize (read_word g (hd_address obj))) in
     if bwz_obj - wz < 2 then
       AllocProps.alloc_from_block_exact_objects_eq_part1 g obj wz next_fp
-    else
-      alloc_split_prev_mem g obj prev_fp wz next_fp;
+    else begin
+      assert (bwz_obj >= wz /\ bwz_obj - wz >= 2);
+      alloc_split_prev_mem g obj prev_fp wz next_fp
+    end;
     assert (Seq.mem prev_fp (objects zero_addr g_alloc));
     // prev ≠ obj, so hd_prev ≠ hd_obj
     hd_address_spec prev_fp;

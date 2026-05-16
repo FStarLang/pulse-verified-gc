@@ -35,10 +35,13 @@ let heap_size : n:pos{n % 8 == 0 /\ n >= 16 /\ n < pow2 57 /\ n < pow2 64} =
 /// GC.Spec.Base.fst refines this into hp_addr and proves the bounds.
 val zero_addr : U64.t
 
-/// Configuration axiom: zero_addr is word-aligned and fits within the heap
-/// with room for at least one object (header + field) after it.
-/// This is the ONLY assumption about the runtime configuration.
+/// Configuration axiom: zero_addr is the heap base at offset 0.
+/// The spec-level heap model uses offset addressing: init_heap_spec writes
+/// the first header at zero_addr and the first object field at mword (= 8).
+/// This requires zero_addr = 0.  Runtime bridges (e.g., compat.c) map
+/// these offsets to actual virtual addresses externally.
 val zero_addr_ok (_:unit)
-  : Lemma (U64.v zero_addr % 8 == 0 /\
+  : Lemma (U64.v zero_addr = 0 /\
+           U64.v zero_addr % 8 == 0 /\
            U64.v zero_addr + 8 < heap_size)
 
