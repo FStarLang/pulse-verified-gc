@@ -100,6 +100,7 @@ fn forward_if_minor
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
   (queue: array U64.t) (back: R.ref SZ.t)
+  (oom_ref: R.ref bool)
   (addr: U64.t)
   (#cs_pre: Ghost.erased CheneySpec.cheney_state)
   requires is_minor minor 'md 'mb **
@@ -108,6 +109,7 @@ fn forward_if_minor
            pts_to fwd_arr 'farr **
            pts_to queue 'q **
            R.pts_to back 'bk **
+           R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap_part1 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
@@ -120,13 +122,14 @@ fn forward_if_minor
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs_pre /\
                  SimOne.cheney_bfs_inv minor_st cs_pre)
-  ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2.
+  ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 oom_out.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
     pts_to fwd_arr farr2 **
     pts_to queue q2 **
     R.pts_to back bk2 **
+    R.pts_to oom_ref oom_out **
     pure (let minor_st : minor_state = {data='md; bump='mb} in
           let cs_post = CheneySpec.cheney_forward_one minor_st cs_pre addr in
           md2 == 'md /\ mb2 == 'mb /\
@@ -139,7 +142,8 @@ fn forward_if_minor
           SZ.v bk2 >= SZ.v 'bk /\
           SZ.v bk2 <= SZ.v 'bk + 1 /\
           Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs_post /\
-          SimOne.cheney_bfs_inv minor_st cs_post)
+          SimOne.cheney_bfs_inv minor_st cs_post /\
+          ('oom_in == true ==> oom_out == true))
 {
   // Check: is addr a valid minor object address?
   if U64.lt addr 8UL {
@@ -204,7 +208,9 @@ fn forward_if_minor
           Sim.minor_guards_sufficient ({data='md; bump='mb} <: minor_state) addr;
           // promote_object returns 0 → noop_oom applies
           CheneySpec.cheney_forward_one_noop_oom ({data='md; bump='mb} <: minor_state) cs_pre addr;
-          SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
+          SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
+          // Signal OOM to caller
+          oom_ref := true
         }
       } else {
         // Success: addr is a valid minor object, promote succeeded
@@ -257,6 +263,7 @@ fn forward_roots
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
   (queue: array U64.t) (back: R.ref SZ.t)
+  (oom_ref: R.ref bool)
   (roots: array U64.t) (nroots: SZ.t)
   (#cs0: Ghost.erased CheneySpec.cheney_state)
   requires is_minor minor 'md 'mb **
@@ -265,6 +272,7 @@ fn forward_roots
            pts_to fwd_arr 'farr **
            pts_to queue 'q **
            R.pts_to back 'bk **
+           R.pts_to oom_ref 'oom_in **
            pts_to roots 'rs **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap_part1 'ms /\
@@ -279,13 +287,14 @@ fn forward_roots
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs0 /\
                  SimOne.cheney_bfs_inv minor_st cs0)
-  ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 rs2.
+  ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 rs2 oom_out.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
     pts_to fwd_arr farr2 **
     pts_to queue q2 **
     R.pts_to back bk2 **
+    R.pts_to oom_ref oom_out **
     pts_to roots rs2 **
     pure (let minor_st : minor_state = {data='md; bump='mb} in
           let cs1 = CheneySpec.cheney_forward_roots minor_st cs0 'rs 0 in
@@ -298,19 +307,21 @@ fn forward_roots
           SZ.v bk2 <= queue_size /\
           rs2 == 'rs /\
           Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs1 /\
-          SimOne.cheney_bfs_inv minor_st cs1)
+          SimOne.cheney_bfs_inv minor_st cs1 /\
+          ('oom_in == true ==> oom_out == true))
 {
   // Ghost reference tracks the spec state through the loop
   let gcs = GR.alloc (Ghost.reveal cs0);
   let mut i = 0sz;
   while (SZ.lt !i nroots)
-    invariant exists* md_i mb_i ms_i fp_i farr_i q_i bk_i rs_i iv cs_i.
+    invariant exists* md_i mb_i ms_i fp_i farr_i q_i bk_i rs_i iv cs_i oom_i.
       is_minor minor md_i mb_i **
       is_heap major ms_i **
       R.pts_to fp_ref fp_i **
       pts_to fwd_arr farr_i **
       pts_to queue q_i **
       R.pts_to back bk_i **
+      R.pts_to oom_ref oom_i **
       pts_to roots rs_i **
       R.pts_to i iv **
       GR.pts_to gcs cs_i **
@@ -329,6 +340,7 @@ fn forward_roots
              minor_guards_complete minor_st /\
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_i /\
             SimOne.cheney_bfs_inv minor_st cs_i /\
+            ('oom_in == true ==> oom_i == true) /\
             CheneySpec.cheney_forward_roots minor_st cs_i 'rs (SZ.v iv) ==
               CheneySpec.cheney_forward_roots minor_st cs0 'rs 0)
   {
@@ -341,7 +353,7 @@ fn forward_roots
     CheneySpec.cheney_forward_roots_step ({data='md; bump='mb} <: minor_state)
       (reveal cs_cur) 'rs (SZ.v iv);
     // Forward this root — postcondition gives cs_post = cheney_forward_one minor_st cs_cur r
-    forward_if_minor minor major fp_ref fwd_arr queue back r #cs_cur;
+    forward_if_minor minor major fp_ref fwd_arr queue back oom_ref r #cs_cur;
     // Update ghost ref to the new spec state
     GR.op_Colon_Equals gcs
       (Ghost.hide (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state)
@@ -370,6 +382,7 @@ fn scan_loop
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
   (queue: array U64.t) (back: R.ref SZ.t)
+  (oom_ref: R.ref bool)
   (#cs1: Ghost.erased CheneySpec.cheney_state)
   requires is_minor minor 'md 'mb **
            is_heap major 'ms **
@@ -377,6 +390,7 @@ fn scan_loop
            pts_to fwd_arr 'farr **
            pts_to queue 'q **
            R.pts_to back 'bk **
+           R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap_part1 'ms /\
                  AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
@@ -389,13 +403,14 @@ fn scan_loop
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs1 /\
                  SimOne.cheney_bfs_inv minor_st cs1)
-  ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2.
+  ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 oom_out.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
     R.pts_to fp_ref fp2 **
     pts_to fwd_arr farr2 **
     pts_to queue q2 **
     R.pts_to back bk2 **
+    R.pts_to oom_ref oom_out **
     pure (let minor_st : minor_state = {data='md; bump='mb} in
           let cs_final = CheneySpec.cheney_scan minor_st cs1 0 (CheneySpec.cheney_fuel minor_st) in
           md2 == 'md /\ mb2 == 'mb /\
@@ -406,7 +421,8 @@ fn scan_loop
           Seq.length q2 == queue_size /\
           SZ.v bk2 <= queue_size /\
           Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs_final /\
-          SimOne.cheney_bfs_inv minor_st cs_final)
+          SimOne.cheney_bfs_inv minor_st cs_final /\
+          ('oom_in == true ==> oom_out == true))
 {
   let gcs = GR.alloc (Ghost.reveal cs1);
   let mut scan = 0sz;
@@ -415,13 +431,14 @@ fn scan_loop
     let b = R.op_Bang back;
     SZ.lt s b
   )
-    invariant exists* md_i mb_i ms_i fp_i farr_i q_i bk_i sv cs_s.
+    invariant exists* md_i mb_i ms_i fp_i farr_i q_i bk_i sv cs_s oom_s.
       is_minor minor md_i mb_i **
       is_heap major ms_i **
       R.pts_to fp_ref fp_i **
       pts_to fwd_arr farr_i **
       pts_to queue q_i **
       R.pts_to back bk_i **
+      R.pts_to oom_ref oom_s **
       R.pts_to scan sv **
       GR.pts_to gcs cs_s **
       pure (let minor_st : minor_state = {data='md; bump='mb} in
@@ -437,6 +454,7 @@ fn scan_loop
              minor_guards_complete minor_st /\
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_s /\
             SimOne.cheney_bfs_inv minor_st cs_s /\
+            ('oom_in == true ==> oom_s == true) /\
             SZ.v sv <= CheneySpec.cheney_fuel minor_st /\
             CheneySpec.cheney_scan minor_st cs_s (SZ.v sv)
               (CheneySpec.cheney_fuel minor_st - SZ.v sv) ==
@@ -493,13 +511,14 @@ fn scan_loop
       let gcs_f = GR.alloc (Ghost.reveal cs_cur);
       let mut field_idx = 0UL;
       while (U64.lt !field_idx wosize)
-        invariant exists* md_f mb_f ms_f fp_f farr_f q_f bk_f fi cs_f.
+        invariant exists* md_f mb_f ms_f fp_f farr_f q_f bk_f fi cs_f oom_f.
           is_minor minor md_f mb_f **
           is_heap major ms_f **
           R.pts_to fp_ref fp_f **
           pts_to fwd_arr farr_f **
           pts_to queue q_f **
           R.pts_to back bk_f **
+          R.pts_to oom_ref oom_f **
           R.pts_to field_idx fi **
           R.pts_to scan s **
           GR.pts_to gcs_f cs_f **
@@ -520,6 +539,7 @@ fn scan_loop
                  minor_guards_complete minor_st /\
                 Sim.impl_matches_spec ms_f fp_f farr_f q_f (SZ.v bk_f) cs_f /\
                 SimOne.cheney_bfs_inv minor_st cs_f /\
+                ('oom_in == true ==> oom_f == true) /\
                 CheneySpec.cheney_forward_fields minor_st cs_f obj (U64.v fi) (U64.v wosize) ==
                   CheneySpec.cheney_forward_fields minor_st (reveal cs_cur) obj 0 (U64.v wosize))
       {
@@ -541,7 +561,7 @@ fn scan_loop
         // Bridge: child == to_minor_offset (minor_read_field minor_st obj fi)
         assert (pure (child == to_minor_offset (minor_read_field ({data='md; bump='mb} <: minor_state) obj (U64.v fi))));
         // Forward this child — produces cs' = cheney_forward_one minor_st cs_fcur child
-        forward_if_minor minor major fp_ref fwd_arr queue back child #cs_fcur;
+        forward_if_minor minor major fp_ref fwd_arr queue back oom_ref child #cs_fcur;
         // Update inner ghost ref
         GR.op_Colon_Equals gcs_f
           (Ghost.hide (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state)
@@ -602,6 +622,7 @@ fn cheney_promote_phase
                  minor_wf minor_st /\
                   minor_guards_complete minor_st /\
                  Seq.length (SF.objects zero_addr 'ms) > 0)
+  returns ok: bool
   ensures exists* md2 mb2 ms2 fp2 farr2 rs2 qv2.
     is_minor minor md2 mb2 **
     is_heap major ms2 **
@@ -628,6 +649,9 @@ fn cheney_promote_phase
   PArr.fill queue_size_sz queue 0UL;
   let mut back = 0sz;
 
+  // OOM tracking flag
+  let mut oom = false;
+
   // Help SMT: well_formed_heap implies well_formed_heap_part1
   wfh_implies_part1 'ms;
 
@@ -643,7 +667,7 @@ fn cheney_promote_phase
   // Pre: impl_matches_spec 'ms 'fp 'farr q0 0 cs0, cheney_bfs_inv minor_st cs0
   // Establish: |minor_objects| <= queue_size (needed for BFS queue bound)
   minor_objects_count_bound ({data='md; bump='mb} <: minor_state);
-  forward_roots minor major fp_ref fwd_arr queue back roots nroots
+  forward_roots minor major fp_ref fwd_arr queue back oom roots nroots
     #(Ghost.hide ({ CheneySpec.cs_major = 'ms; CheneySpec.cs_fp = 'fp;
                     CheneySpec.cs_fwd = PromoteSpec.empty_forwarding;
                     CheneySpec.cs_queue = Seq.empty } <: CheneySpec.cheney_state));
@@ -653,7 +677,7 @@ fn cheney_promote_phase
 
   // Phase 2: BFS scan loop
   // Pre: impl_matches_spec ... cs1, cheney_bfs_inv minor_st cs1
-  scan_loop minor major fp_ref fwd_arr queue back
+  scan_loop minor major fp_ref fwd_arr queue back oom
     #(Ghost.hide (CheneySpec.cheney_forward_roots ({data='md; bump='mb} <: minor_state)
         ({ CheneySpec.cs_major = 'ms; CheneySpec.cs_fp = 'fp;
            CheneySpec.cs_fwd = PromoteSpec.empty_forwarding;
@@ -668,6 +692,10 @@ fn cheney_promote_phase
   // which is exactly cheney_promote's definition
   CheneySpec.cheney_promote_preserves_dense ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
   CheneySpec.cheney_promote_preserves_cob ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
-  CheneySpec.cheney_promote_preserves_wfh_part1 ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs
+  CheneySpec.cheney_promote_preserves_wfh_part1 ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs;
+
+  // Return success (no OOM detected)
+  let oom_val = !oom;
+  not oom_val
 }
 #pop-options

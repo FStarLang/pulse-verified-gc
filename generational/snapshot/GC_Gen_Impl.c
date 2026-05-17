@@ -334,7 +334,7 @@ uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag)
   }
 }
 
-void
+bool
 minor_collect(
   gen_heap_t gh,
   uint64_t *roots,
@@ -343,13 +343,14 @@ minor_collect(
   uint64_t *queue
 )
 {
-  cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
+  bool ok = cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
   update_all_objects(gh.major, fwd_arr);
   rewrite_roots_impl(roots, fwd_arr, nroots);
   minor_heap_reset(gh.minor);
+  return ok;
 }
 
-uint64_t
+K___uint64_t_bool
 gen_gc(
   gen_heap_t gh,
   uint64_t *roots,
@@ -359,11 +360,11 @@ gen_gc(
   gray_stack_rec st
 )
 {
-  minor_collect(gh, roots, nroots, fwd_arr, queue);
+  bool ok = minor_collect(gh, roots, nroots, fwd_arr, queue);
   uint64_t fp_val = *gh.fp_ref;
   uint64_t final_fp = collect(gh.major, st, fp_val);
   *gh.fp_ref = final_fp;
-  return final_fp;
+  return ((K___uint64_t_bool){ .fst = final_fp, .snd = ok });
 }
 
 size_t minor_heap_size_sz;
@@ -665,6 +666,7 @@ forward_if_minor(
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
+  bool *oom_ref,
   uint64_t addr
 )
 {
@@ -718,7 +720,12 @@ forward_if_minor(
                   new_addr = new_obj;
                 }
               }
-              if (!(new_addr == 0ULL))
+              if (new_addr == 0ULL)
+              {
+                if (!(wosize == 0ULL))
+                  *oom_ref = true;
+              }
+              else
               {
                 fwd_arr[idx] = new_addr;
                 size_t bk = *back;
@@ -741,6 +748,7 @@ forward_roots(
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
+  bool *oom_ref,
   uint64_t *roots,
   size_t nroots
 )
@@ -802,7 +810,12 @@ forward_roots(
                     new_addr = new_obj;
                   }
                 }
-                if (!(new_addr == 0ULL))
+                if (new_addr == 0ULL)
+                {
+                  if (!(wosize == 0ULL))
+                    *oom_ref = true;
+                }
+                else
                 {
                   fwd_arr[idx] = new_addr;
                   size_t bk = *back;
@@ -828,7 +841,8 @@ scan_loop(
   uint64_t *fp_ref,
   uint64_t *fwd_arr,
   uint64_t *queue,
-  size_t *back
+  size_t *back,
+  bool *oom_ref
 )
 {
   size_t scan = (size_t)0U;
@@ -920,7 +934,12 @@ scan_loop(
                           new_addr = new_obj;
                         }
                       }
-                      if (!(new_addr == 0ULL))
+                      if (new_addr == 0ULL)
+                      {
+                        if (!(wosize1 == 0ULL))
+                          *oom_ref = true;
+                      }
+                      else
                       {
                         fwd_arr[idx] = new_addr;
                         size_t bk = *back;
@@ -946,7 +965,7 @@ scan_loop(
   }
 }
 
-void
+bool
 cheney_promote_phase(
   minor_heap_t minor,
   heap_t major,
@@ -959,8 +978,11 @@ cheney_promote_phase(
 {
   Pulse_Lib_Array_fill(queue_size_sz, queue, 0ULL, (void *)0U);
   size_t back = (size_t)0U;
-  forward_roots(minor, major, fp_ref, fwd_arr, queue, &back, roots, nroots);
-  scan_loop(minor, major, fp_ref, fwd_arr, queue, &back);
+  bool oom = false;
+  forward_roots(minor, major, fp_ref, fwd_arr, queue, &back, &oom, roots, nroots);
+  scan_loop(minor, major, fp_ref, fwd_arr, queue, &back, &oom);
+  bool oom_val = oom;
+  return !oom_val;
 }
 
 void rewrite_roots_impl(uint64_t *roots, uint64_t *fwd_arr, size_t n)

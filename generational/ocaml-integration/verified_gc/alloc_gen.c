@@ -317,7 +317,7 @@ static void do_minor_gc_core(void) {
 
     /* 5a. Cheney BFS: promote reachable minor objects to major heap */
     PROF_START(cheney);
-    cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
+    bool promote_ok = cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
                          gc_gen_heap.fp_ref, gc_fwd_arr, gc_queue,
                          root_values, (size_t)root_count);
     PROF_END(cheney);
@@ -342,36 +342,24 @@ static void do_minor_gc_core(void) {
     rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
     PROF_END(rewrite_roots);
 
-    /* 5d.1 Count failed promotions.
+    /* 5d.1 Check for promotion failure (OOM).
      *
-     * After rewrite_roots_impl, any root that still looks like a minor offset
-     * (>= 8, < minor_heap_size, aligned) means that object was NOT promoted —
-     * cheney_promote_phase couldn't find a free block for it.  The object still
-     * exists in the minor heap at this point, but we have no way to keep it
-     * alive: the minor heap is about to be reset for the next allocation cycle.
+     * The verified cheney_promote_phase now returns a boolean flag indicating
+     * whether all promotions succeeded.  If any allocation failed during BFS
+     * (either during root forwarding or scan loop field forwarding), the flag
+     * is false.  In that case, some roots still point into the minor heap
+     * which is about to be reset — we must abort.
      *
-     * We MUST abort here.  If we continued (resetting the minor heap), those
-     * roots would dangle — there's no valid address to write back.  The old
-     * code wrote Val_unit as a "best effort", but that silently corrupts the
-     * program.  A fixed-size major heap that can't hold the live set is a
-     * fatal condition — tell the user to increase it. */
-    size_t failed = 0;
-    {
-        uint64_t minor_limit = minor_heap_size_u64;
-        for (size_t i = 0; i < root_count; i++) {
-            uint64_t rv = root_values[i];
-            if (rv >= 8 && rv < minor_limit && rv % 8 == 0)
-                failed++;
-        }
-    }
-    if (failed > 0) {
+     * This replaces the previous O(nroots) scan loop that checked each root
+     * for minor-heap-looking values.  The verified flag is both faster (O(1))
+     * and sound (proven by the spec: OOM ↔ forward_one returned 0). */
+    if (!promote_ok) {
         uint64_t major_size = heap_size_u64 - zero_addr;
         fprintf(stderr,
             "verified gen GC: promotion failed — major heap full (%lu MB)\n"
-            "  %zu roots could not be promoted (live set exceeds heap capacity).\n"
+            "  Some objects could not be promoted (live set exceeds heap capacity).\n"
             "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n",
             (unsigned long)(major_size / 1048576),
-            failed,
             (unsigned long)(major_size / 4));
         caml_fatal_error("verified gen GC: out of memory (major heap too small)");
     }

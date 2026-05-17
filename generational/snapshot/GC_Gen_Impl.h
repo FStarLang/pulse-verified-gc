@@ -50,7 +50,7 @@ gen_heap_t;
 
 uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag);
 
-void
+bool
 minor_collect(
   gen_heap_t gh,
   uint64_t *roots,
@@ -59,7 +59,14 @@ minor_collect(
   uint64_t *queue
 );
 
-uint64_t
+typedef struct K___uint64_t_bool_s
+{
+  uint64_t fst;
+  bool snd;
+}
+K___uint64_t_bool;
+
+K___uint64_t_bool
 gen_gc(
   gen_heap_t gh,
   uint64_t *roots,
@@ -95,6 +102,7 @@ forward_if_minor(
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
+  bool *oom_ref,
   uint64_t addr
 );
 
@@ -106,6 +114,7 @@ forward_roots(
   uint64_t *fwd_arr,
   uint64_t *queue,
   size_t *back,
+  bool *oom_ref,
   uint64_t *roots,
   size_t nroots
 );
@@ -117,10 +126,11 @@ scan_loop(
   uint64_t *fp_ref,
   uint64_t *fwd_arr,
   uint64_t *queue,
-  size_t *back
+  size_t *back,
+  bool *oom_ref
 );
 
-void
+bool
 cheney_promote_phase(
   minor_heap_t minor,
   heap_t major,

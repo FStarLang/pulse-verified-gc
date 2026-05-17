@@ -158,6 +158,7 @@ fn minor_collect (gh: gen_heap_t)
              // Major heap contains at least one object (the initial
              // free-list sentinel; needed for free-list operations)
              Seq.length (SpecFields.objects zero_addr 's) > 0)
+  returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
     pts_to roots rs2 **
@@ -302,16 +303,16 @@ fn gen_gc (gh: gen_heap_t)
              (let res = CheneySpec.cheney_collect_spec
                           ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
               MajorGC.gc_precondition res.mc_major 'st res.mc_fp (stack_capacity st)))
-  returns final_fp: U64.t
+  returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
-    is_gen_heap gh d2 b2 s2 final_fp **
+    is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
     is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
-      let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
 
       // --- Major GC correctness (applied to the post-minor heap) ---
@@ -330,15 +331,15 @@ fn gen_gc (gh: gen_heap_t)
       //   4. Color reset: all objects are white or blue after sweep
       //   5. Field data preservation: non-color header bits and object
       //      body data are unchanged by mark+sweep
-      // Here res.mc_major is the post-minor heap (input to mark-sweep),
+      // Here result.mc_major is the post-minor heap (input to mark-sweep),
       // s2 is the final post-sweep heap, and 'st is the gray stack
       // contents (roots for the major GC)
-      SpecGCPost.full_gc_correctness res.mc_major s2 'st /\
+      SpecGCPost.full_gc_correctness result.mc_major s2 'st /\
 
       // --- Minor collection properties ---
 
       // Roots match the Cheney spec's output
-      rs2 == res.mc_roots /\
+      rs2 == result.mc_roots /\
 
       // Roots have been pointwise rewritten through the forwarding map:
       // minor-heap pointers now point to promoted copies in major heap
@@ -352,13 +353,13 @@ fn gen_gc (gh: gen_heap_t)
       // Pre-existing major-heap objects survive minor collection
       // (promotion only adds, never removes)
       (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
-        Seq.mem x (SpecFields.objects zero_addr res.mc_major)) /\
+        Seq.mem x (SpecFields.objects zero_addr result.mc_major)) /\
 
       // Post-minor heap satisfies size-bounds invariant
-      SpecFields.well_formed_heap_part1 res.mc_major /\
+      SpecFields.well_formed_heap_part1 result.mc_major /\
 
       // Post-minor free-list is valid
-      AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid result.mc_major result.mc_fp (heap_size / U64.v mword) /\
 
       // Post-minor free-list terminates
-      AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword))
+      AllocLemmas.fl_chain_terminates result.mc_major result.mc_fp (heap_size / U64.v mword))
