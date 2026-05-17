@@ -541,6 +541,156 @@ scan of the minor heap.  The bridge skips them entirely when
 floats/strings were allocated).  In practice these take ~57ms each for
 binarytrees-14 (1.1% of GC time each).
 
+#### Comparison with OCaml's Stock GC (Demand-Driven Infix Handling)
+
+OCaml's stock minor GC handles infix pointers **on-demand** inside its
+unified copy-forward function `caml_oldify_one` (runtime/minor_gc.c):
+
+```c
+void caml_oldify_one (value v, value *p) {
+  ...
+  if (Is_block(v) && Is_young(v)) {
+    hd = Hd_val(v);
+    if (hd == 0) {           // Already forwarded
+      *p = Field(v, 0);
+    } else {
+      tag = Tag_hd(hd);
+      if (tag < Infix_tag) {
+        // Normal object: allocate in major, set forward pointer, enqueue fields
+        ...
+      } else if (tag == Infix_tag) {
+        // INFIX: back up to parent, forward the parent, adjust pointer
+        mlsize_t offset = Infix_offset_hd(hd);
+        caml_oldify_one(v - offset, p);  // Recurse on parent (depth ≤ 1)
+        *p += offset;                     // Adjust to infix position in copy
+      } else if (tag >= No_scan_tag) {
+        // No-scan: copy raw data
+        ...
+      }
+    }
+  }
+}
+```
+
+Key insight: when any pointer (root or object field) targets an infix
+sub-object, OCaml backs up to the parent (`v - offset`), forwards the
+parent closure as a whole, then adjusts the result pointer by `offset`.
+The comment "Cannot recurse deeper than 1" is because the parent has
+`Closure_tag` (< `Infix_tag`), so the recursive call takes the normal
+path — never hitting `Infix_tag` again.
+
+**Result**: Only reachable parent closures get promoted.  No pre-scan of
+the heap is needed.  Dead closures with infix sub-objects are never
+promoted.
+
+#### Why Our Current Design Differs
+
+Our verified Cheney BFS (`cheney_promote_phase`) separates concerns:
+
+1. **Root forwarding** (Phase 1): For each root, if it points to a minor
+   object, allocate space in major heap, record forwarding in `fwd_arr`,
+   enqueue the object for field scanning.
+
+2. **BFS scan** (Phase 2): Dequeue objects, forward their children
+   (recursively promoting referenced minor objects).
+
+The problem: when a root points to an infix sub-object at minor offset
+`X`, the BFS needs to:
+- Recognize that `X` is mid-object (has `Infix_tag`)
+- Back up to find the parent at `X - Infix_offset`
+- Promote the *entire* parent closure (not just the infix slice)
+- Record forwarding for *both* the parent AND the infix sub-object
+
+Our current workaround (pre-scan + synthesize) avoids modifying the BFS
+logic by ensuring all infix-bearing closures are already in the root set
+before BFS starts.  The cost: over-promotion of dead closures.
+
+#### Precise Alternative: Infix-Aware BFS (Proposed Optimization)
+
+The following design eliminates `find_infix_parents` and
+`synthesize_infix_forwarding` entirely, handling infix pointers inside
+the Cheney BFS itself:
+
+**Modified root forwarding (Phase 1):**
+```
+for each root r:
+  if r points to minor heap:
+    if Tag_at(r) == Infix_tag:
+      offset = Infix_offset_at(r)
+      parent_off = r - offset           // back up to parent
+      if fwd_arr[parent_off/8] != 0:
+        // Parent already promoted — derive infix fwd directly
+        fwd_arr[r/8] = fwd_arr[parent_off/8] + offset
+      else:
+        // Promote parent, then derive infix fwd
+        promote(parent_off)             // normal promote: alloc in major, set fwd_arr
+        fwd_arr[r/8] = fwd_arr[parent_off/8] + offset
+        enqueue(parent_off)             // BFS will scan parent's fields
+    else:
+      promote(r) as normal
+      enqueue(r)
+```
+
+**Modified BFS field scan (Phase 2):**
+```
+for each queued object obj:
+  for each field f of obj:
+    if f points to minor heap:
+      if Tag_at(f) == Infix_tag:
+        offset = Infix_offset_at(f)
+        parent_off = f - offset
+        if fwd_arr[parent_off/8] == 0:
+          promote(parent_off)
+          enqueue(parent_off)
+        fwd_arr[f/8] = fwd_arr[parent_off/8] + offset
+      else:
+        if fwd_arr[f/8] == 0:
+          promote(f)
+          enqueue(f)
+```
+
+**After BFS completes:**
+- `fwd_arr` already contains entries for both regular objects AND infix
+  sub-objects
+- `synthesize_infix_forwarding` is no longer needed
+- `rewrite_roots_impl` and `update_promoted_objects` work unchanged
+  (they use fwd_arr uniformly)
+
+**Advantages:**
+1. Only reachable parent closures are promoted (no over-approximation)
+2. Eliminates two O(minor_allocated) linear scans (~2.2% of GC time)
+3. No separate `find_infix_parents` or `synthesize_infix_forwarding` steps
+4. Simpler overall pipeline (fewer phases)
+
+**Verification impact:**
+- `cheney_promote_phase` spec needs extension: the forwarding invariant
+  must account for derived infix entries (`fwd_arr[infix_off/8] =
+  fwd_arr[parent_off/8] + delta`)
+- The `promote` helper must handle the "parent already promoted" case
+  (idempotent promotion)
+- Loop invariant needs: if an infix entry exists in fwd_arr, its parent
+  entry also exists and the relationship holds
+- The BFS termination argument is unchanged (each minor object is
+  promoted at most once; infix detection only triggers parent promotion,
+  which is bounded by the number of minor objects)
+
+**Implementation plan:**
+1. Add `is_infix_offset` helper to minor heap module (reads tag at offset)
+2. Add `derive_infix_fwd` spec function: given parent's fwd and offset,
+   computes the infix fwd entry
+3. Modify `forward_one_root` in Cheney impl to handle infix case
+4. Modify `forward_one_field` (BFS inner loop) similarly
+5. Remove `find_infix_parents` call from bridge
+6. Remove `synthesize_infix_forwarding` call from bridge
+7. Verify end-to-end: the fwd_arr invariant after BFS covers infix entries
+8. Test: ensure all benchmarks pass (especially closure-heavy workloads)
+
+**Risk:** The BFS loop invariant becomes more complex (must track infix
+entries as derived from parent entries).  The `fwd_arr` representation
+predicate (`represents_fwd`) may need strengthening to include infix
+coherence.  However, the actual runtime logic is simpler (fewer phases,
+no heap scans), and the per-object work is O(1) additional tag checks.
+
 ---
 
 ## Major GC (Mark-and-Sweep)
