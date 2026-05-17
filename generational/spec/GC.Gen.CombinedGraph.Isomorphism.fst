@@ -106,6 +106,103 @@ let property_a_injectivity
     combined_reachable cg combined_roots v /\
     fwd_morphism fwd u == fwd_morphism fwd v ==> u == v
 
+/// Standalone proof of Property (A).
+#push-options "--z3rlimit 50 --split_queries always"
+let prove_property_a
+  (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_roots: seq obj_addr) (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      standard_gc_preconditions gs roots fp major_stack major_roots major_fp /\
+      // Reachability bridge
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let cg = pre_gc_graph ms major in
+       let live_set = live_set_of ms major roots in
+       forall (v: U64.t).
+         combined_reachable cg combined_roots (MinorV v) ==> Seq.mem v live_set) /\
+      // Fwd injectivity on live_set
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       forall (i j: nat). i < Seq.length live_set /\ j < Seq.length live_set /\ i <> j ==>
+         (let oi = Seq.index live_set i in
+          let oj = Seq.index live_set j in
+          prom_res.fwd_map oi <> 0UL /\ prom_res.fwd_map oj <> 0UL ==>
+          prom_res.fwd_map oi <> prom_res.fwd_map oj)) /\
+      // Promoted targets disjoint from allocated major objects
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       forall (v: U64.t) (obj: obj_addr).
+         Seq.mem v live_set /\ prom_res.fwd_map v <> 0UL /\
+         Seq.mem obj (objects zero_addr major) /\ ~(is_blue obj major) ==>
+         prom_res.fwd_map v <> obj) /\
+      // Reachable major vertices are valid non-blue objects
+      (let cg = pre_gc_graph gs.gs_minor gs.gs_major in
+       forall (v: U64.t).
+         combined_reachable cg combined_roots (MajorV v) ==>
+         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+         Seq.mem (v <: obj_addr) (objects zero_addr gs.gs_major) /\
+         ~(is_blue (v <: obj_addr) gs.gs_major)))
+    (ensures
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let fwd = (promote_all_spec ms major fp (live_set_of ms major roots)).fwd_map in
+       property_a_injectivity ms major fwd combined_roots))
+  = let ms = gs.gs_minor in
+    let major = gs.gs_major in
+    let live_set = live_set_of ms major roots in
+    let prom_res = promote_all_spec ms major fp live_set in
+    let fwd = prom_res.fwd_map in
+    let cg = pre_gc_graph ms major in
+    let aux_inj (u v: combined_vertex) : Lemma
+      (requires
+        combined_reachable cg combined_roots u /\
+        combined_reachable cg combined_roots v /\
+        fwd_morphism fwd u == fwd_morphism fwd v)
+      (ensures u == v)
+    = match u, v with
+      | MajorV a, MajorV b -> ()
+      | MinorV a, MinorV b ->
+        assert (Seq.mem a live_set);
+        assert (Seq.mem b live_set);
+        let ia = Seq.index_mem a live_set in
+        let ib = Seq.index_mem b live_set in
+        assert (minor_wosize ms a > 0);
+        assert (minor_wosize ms b > 0);
+        assert (fwd a <> 0UL);
+        assert (fwd b <> 0UL);
+        if ia = ib then ()
+        else begin
+          assert (prom_res.fwd_map (Seq.index live_set ia) <> prom_res.fwd_map (Seq.index live_set ib));
+          ()
+        end
+      | MinorV a, MajorV b ->
+        assert (Seq.mem a live_set);
+        let _ka = Seq.index_mem a live_set in
+        assert (minor_wosize ms a > 0);
+        assert (fwd a <> 0UL);
+        assert (U64.v b >= U64.v mword);
+        assert (Seq.mem (b <: obj_addr) (objects zero_addr major));
+        assert (~(is_blue (b <: obj_addr) major));
+        ()
+      | MajorV b, MinorV a ->
+        assert (Seq.mem a live_set);
+        let _ka2 = Seq.index_mem a live_set in
+        assert (minor_wosize ms a > 0);
+        assert (fwd a <> 0UL);
+        assert (U64.v b >= U64.v mword);
+        assert (Seq.mem (b <: obj_addr) (objects zero_addr major));
+        assert (~(is_blue (b <: obj_addr) major));
+        ()
+    in
+    Classical.forall_intro_2 (fun u -> Classical.move_requires (aux_inj u))
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Property (B): Image in post-GC
 /// ---------------------------------------------------------------------------
@@ -298,8 +395,8 @@ let property_d_edges
 /// The main theorem composes all four properties.
 ///
 /// Proof status:
-///   Property (A): ✅ Fully proven (3 match cases)
-///   Property (B): assume — needs morphism_image_preservation + mark/sweep composition
+///   Property (A): ✅ Fully proven (prove_property_a — 4 match cases)
+///   Property (B): ✅ Fully proven (prove_property_b — mark/sweep composition)
 ///   Property (C): assume — needs image decomposition (old major ∪ promoted)
 ///   Property (D): assume — split into forward/backward; forward via EdgePres + MSFrame
 ///   reachable_implies_forwarded: ✅ Fully proven (Seq.index_mem chain)
@@ -381,92 +478,23 @@ let generational_gc_isomorphism
     let h_final = post_gc_heap ms major fp roots major_stack major_fp in
     let cg = pre_gc_graph ms major in
     let g_final = create_graph h_final in
-    // Property (A): Injectivity of fwd_morphism on reachable vertices
-    let aux_inj (u v: combined_vertex) : Lemma
-      (requires
-        combined_reachable cg combined_roots u /\
-        combined_reachable cg combined_roots v /\
-        fwd_morphism fwd u == fwd_morphism fwd v)
-      (ensures u == v)
-    = match u, v with
-      | MajorV a, MajorV b ->
-        // fwd_morphism(MajorV a) = a, fwd_morphism(MajorV b) = b, so a = b
-        ()
-      | MinorV a, MinorV b ->
-        // Both reachable → both in live_set
-        assert (Seq.mem a live_set);
-        assert (Seq.mem b live_set);
-        // Get indices
-        let ia = Seq.index_mem a live_set in
-        let ib = Seq.index_mem b live_set in
-        // fwd a = fwd b, both ≠ 0 (already have wosize > 0 → fwd ≠ 0)
-        assert (minor_wosize ms a > 0);
-        assert (minor_wosize ms b > 0);
-        assert (fwd a <> 0UL);
-        assert (fwd b <> 0UL);
-        // fwd a = fwd b with ia ≠ ib would contradict injectivity precondition
-        // If ia = ib then a = b directly from Seq.index
-        if ia = ib then ()
-        else begin
-          // ia ≠ ib, fwd(live_set[ia]) = fwd a ≠ 0 and fwd(live_set[ib]) = fwd b ≠ 0
-          // injectivity precondition says they must differ — contradiction with fwd a = fwd b
-          assert (prom_res.fwd_map (Seq.index live_set ia) <> prom_res.fwd_map (Seq.index live_set ib));
-          // But Seq.index live_set ia == a and Seq.index live_set ib == b
-          // and fwd a == fwd b, contradiction
-          ()
-        end
-      | MinorV a, MajorV b ->
-        // fwd a = b. a reachable → a ∈ live_set, fwd a ≠ 0.
-        // b reachable as MajorV → b ∈ objects major, ¬(is_blue b major)
-        // promoted_disjoint precondition: fwd a ≠ b — contradiction
-        assert (Seq.mem a live_set);
-        let _ka = Seq.index_mem a live_set in
-        assert (minor_wosize ms a > 0);
-        assert (fwd a <> 0UL);
-        // b is a valid obj_addr (from reachable_major_valid precondition)
-        assert (U64.v b >= U64.v mword);
-        assert (Seq.mem (b <: obj_addr) (objects zero_addr major));
-        assert (~(is_blue (b <: obj_addr) major));
-        // From promoted_disjoint: fwd a ≠ b
-        ()
-      | MajorV b, MinorV a ->
-        // Symmetric to above
-        assert (Seq.mem a live_set);
-        let _ka2 = Seq.index_mem a live_set in
-        assert (minor_wosize ms a > 0);
-        assert (fwd a <> 0UL);
-        assert (U64.v b >= U64.v mword);
-        assert (Seq.mem (b <: obj_addr) (objects zero_addr major));
-        assert (~(is_blue (b <: obj_addr) major));
-        ()
-    in
-    Classical.forall_intro_2 (fun u -> Classical.move_requires (aux_inj u));
+    // Property (A): Injectivity
+    prove_property_a gs roots fp combined_roots major_roots major_stack major_fp;
     // Property (B): Image in post-GC
     prove_property_b gs roots fp combined_roots major_roots major_stack major_fp;
     // Property (C): Surjectivity
-    // TODO: prove via image decomposition (old major ∪ promoted minor)
     assume (property_c_surjectivity ms major fwd combined_roots h_final major_roots);
     // Property (D): Edge biconditional
-    // TODO: prove via EdgePreservation + MarkSweepFrame composition
     assume (property_d_edges ms major fwd combined_roots h_final);
-    // reachable_implies_forwarded: follows from the preconditions
-    // Chain: combined_reachable(MinorV v) → v ∈ live_set → wosize > 0 → fwd v ≠ 0
+    // reachable_implies_forwarded: combined_reachable(MinorV v) → fwd v ≠ 0
     let aux_rif (v: U64.t) : Lemma
       (requires combined_reachable cg combined_roots (MinorV v))
       (ensures fwd v <> 0UL)
-    = // v ∈ live_set (from reachability bridge precondition)
-      assert (Seq.mem v live_set);
-      // Get index k such that Seq.index live_set k == v
+    = assert (Seq.mem v live_set);
       let k = Seq.index_mem v live_set in
-      // all_promotions_succeed quantifies over indices
       assert (k < Seq.length live_set);
-      assert (Seq.index live_set k == v);
-      // wosize > 0 (from live_set_wosize_positive precondition)
       assert (minor_wosize ms v > 0);
-      // all_promotions_succeed gives fwd v ≠ 0
       ()
     in
     Classical.forall_intro (Classical.move_requires aux_rif);
-    // Compose into reachable_subgraph_isomorphism
-    // The four properties exactly match the conjunction in the definition
     ()
