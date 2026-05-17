@@ -869,12 +869,61 @@ is detected at two points:
 ### 1. Promotion Failure (step 5d.1)
 
 After `rewrite_roots_impl`, any root still holding a minor offset
-means `cheney_promote_phase` couldn't find space.  We abort **before**
-resetting the minor heap:
+means `cheney_promote_phase` couldn't find space.  Currently the
+*bridge* scans `root_values[]` to count these:
 
+```c
+// alloc_gen.c step 5d.1 (UNVERIFIED)
+for (i = 0; i < root_count; i++) {
+    if (root_values[i] >= 8 && root_values[i] < minor_limit
+        && root_values[i] % 8 == 0)
+        failed++;
+}
+if (failed > 0) caml_fatal_error("major heap too small");
 ```
-if (failed > 0) → caml_fatal_error("major heap too small")
+
+#### Why the verified GC could detect this directly
+
+The spec already models OOM explicitly:
+- `cheney_forward_one_noop_oom`: when `promote_object` returns
+  `new_addr = 0UL`, the forward is a no-op (that minor object
+  gets no `fwd_map` entry)
+- `rewrite_root r fwd` (Promote.fsti:463): if `fwd r == 0UL`,
+  the root stays unchanged as its original minor offset
+
+So the information is already present in the verified code's output.
+To surface it, `rewrite_roots_impl` could be extended to **return a
+count of un-rewritten minor roots** (roots where `is_minor_pointer r
+&& fwd_arr[r/8] == 0`).  This is a trivial accumulator addition to
+the existing loop — no new proof complexity.
+
+Alternatively, `cheney_promote_phase` itself could track a "did any
+OOM occur" flag (set to true whenever `new_addr == 0UL` is returned
+by the allocator).  This is even cheaper — a single boolean, no
+post-hoc scan.
+
+**Proposed verified interface:**
+
+```fstar
+fn rewrite_roots_impl (roots: ...) (fwd_arr: ...) (n: SZ.t) ...
+returns failed: SZ.t
+ensures exists* rs2.
+  pts_to roots rs2 ** ... **
+  pure (rs2 == PromoteSpec.rewrite_roots 'rs fwd /\
+        SZ.v failed == count_unrewritten 'rs fwd)
 ```
+
+Or for the boolean-flag approach:
+
+```fstar
+fn cheney_promote_phase (...) 
+returns oom: bool
+ensures ... **
+  pure (oom == true <==> exists root in roots. fwd_map root == 0UL /\ is_minor_pointer root)
+```
+
+Either approach eliminates the unverified 5d.1 loop from the bridge,
+moving OOM detection inside the verified boundary.
 
 ### 2. Allocation Failure (gen\_alloc returns 0)
 
