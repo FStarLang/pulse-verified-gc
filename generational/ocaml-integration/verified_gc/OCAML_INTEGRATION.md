@@ -1006,8 +1006,7 @@ Each step of the minor GC is classified by whether it runs verified
 | 4.1 | `find_infix_parents()` | ✅ | Scans minor heap for infix closure parents |
 | 5a | `cheney_promote_phase()` | ✅ | BFS copy of reachable minor objects to major |
 | 5b | `synthesize_infix_forwarding()` | ✅ | Derive forwarding entries for infix sub-objects |
-| 5c outer | iterate `fwd_arr` slots | ❌ bridge | Selects promoted objects (performance optimization) |
-| 5c inner | `update_one_object()` | ✅ | Rewrites fields of one promoted object |
+| 5c | `update_promoted_objects()` | ✅ | Iterates fwd\_arr, rewrites fields of promoted objects |
 | 5d | `rewrite_roots_impl()` | ✅ | Rewrites root array using fwd\_arr |
 | 5d.1 | OOM failure check | ❌ bridge | Policy: abort if any roots unpromoted |
 | 5f | `minor_heap_reset()` | ✅ | Resets bump pointer to 0 |
@@ -1015,14 +1014,69 @@ Each step of the minor GC is classified by whether it runs verified
 | 6 | root writeback to OCaml | ❌ bridge | Writes major addrs back to OCaml stack/globals |
 | 7 | clear ref\_table | ❌ bridge | Reset `ref_table->ptr` |
 
-**The verified `update_all_objects`** does the same work as steps 5c
-(outer + inner) combined, but it walks the **entire major heap**
-linearly from `zero_addr` to end.  The bridge uses the selective
-`fwd_arr` iteration instead (O(promoted) vs O(heap\_size)) — a major
-performance win when the major heap is large and few objects are promoted.
+**`update_all_objects` vs `update_promoted_objects`:**
 
-A verified `update_promoted_objects` that iterates `fwd_arr` would
-close this gap, making the 5c outer loop verified too.
+The standalone verified `minor_collect` (in `GC.Gen.Impl.fst`) calls
+`update_all_objects`, which walks the **entire major heap** linearly
+from `zero_addr` to end.  This is O(major_heap_size) — correct but slow
+when the major heap is large and few objects were just promoted.
+
+The OCaml bridge instead calls `update_promoted_objects`, which iterates
+only the `fwd_arr` entries (O(minor_allocated)).  For each non-zero
+`fwd_arr[i]`, it reads the header at that major address and rewrites
+its pointer fields via `update_one_object`.  This is the same inner
+work as `update_all_objects`, but targeted only at freshly promoted
+objects.
+
+| | `update_all_objects` | `update_promoted_objects` |
+|---|---|---|
+| **Iteration** | Walk entire major heap | Iterate `fwd_arr` (minor_heap_size/8 entries) |
+| **Complexity** | O(major_heap_size) | O(minor_allocated) |
+| **Preconditions** | `well_formed_heap_part1`, `heap_objects_dense` | `valid_fwd_entries`, `represents_fwd` |
+| **Postcondition** | `ms2 == update_major_pointers ms fwd` | `ms2 == update_promoted_iter ms farr fwd 0` |
+| **Used by** | Standalone `minor_collect` | OCaml bridge (step 5c) |
+
+**Why the two are equivalent in practice:**
+
+The only major-heap objects that can contain stale minor pointers are
+freshly promoted objects (their fields were copied verbatim from the
+minor heap and not yet rewritten).  Pre-existing major objects cannot
+contain minor pointers because:
+- Mutations that create major→minor pointers are tracked by `ref_table`
+  and handled separately by `rewrite_heap_slots` (step 5.5)
+- The verified GC never creates dangling minor refs in major objects
+
+Therefore `update_all_objects` visits many objects unnecessarily — for
+non-promoted objects, `update_object_pointers` is a no-op (all their
+field values are already >= `minor_heap_size` or are immediates).
+
+**Path to unification (replacing `update_all_objects` with `update_promoted_objects`):**
+
+1. State the "no stale minor pointers" invariant formally:
+   ```
+   no_minor_ptrs_outside_promoted ms fwd ≜
+     ∀ obj ∈ objects(ms), obj ∉ range(fwd) →
+       ∀ field of obj: value < minor_heap_size → fwd[value/8] == 0
+   ```
+   (i.e., non-promoted objects don't reference minor addresses that have forwarding)
+
+2. Prove equivalence lemma:
+   ```
+   update_promoted_equiv: ms fwd farr →
+     Lemma (requires no_minor_ptrs_outside_promoted ms fwd ∧ represents_fwd farr fwd)
+           (ensures update_promoted_iter ms farr fwd 0 == update_major_pointers ms fwd)
+   ```
+
+3. Replace `update_all_objects` with `update_promoted_objects` in `GC.Gen.Impl.fst`'s
+   `minor_collect`, using the equivalence lemma to satisfy the existing postcondition.
+
+4. This also removes the `heap_objects_dense` precondition requirement — important
+   for the OCaml integration where the major heap has a free-list (blue objects
+   interspersed among live objects violate denseness).
+
+**Goal:** Once unified, `minor_collect` uses the efficient O(minor) iteration,
+and its postcondition still guarantees `update_major_pointers` — enabling the
+entire 4.1–5d sequence to eventually be a single call to a verified `minor_collect`.
 
 ---
 
