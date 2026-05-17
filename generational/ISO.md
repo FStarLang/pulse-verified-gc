@@ -495,16 +495,20 @@ Combined with vertex bijection (injective + surjective + image in post-GC).
 - Phase 2: Forward morphism infrastructure (ForwardMorphism, Bridge modules)
 - Phase 3: Edge preservation (EdgePreservation, 4 cases)
 - Phase 4: MarkSweepFrame (mark/sweep framing lemmas)
-- Phase 5: Isomorphism theorem skeleton
+- Phase 5: Isomorphism theorem — **FULLY PROVEN (0 admits)**
+- Phase 6: EdgeBridge — **ALL 4 CASES PROVEN (0 admits)**
+- Phase 7: Discharge module — **FULLY PROVEN (0 admits)**
+  - Bridges mc_major-level assumptions to g_final using MarkSweepFrame
+  - `final_reach_implies_mc_reachable`: reach induction bridging g_final → g_mc
+  - `surjectivity_mc_to_final`: existential elimination + reach extraction
+  - `edge_backward_mc_to_final`: MSFrame chain (black ↔ reachable + successor preservation)
 
 **Property Status:**
 - **(A) Injectivity**: ✅ Fully proven (`prove_property_a`)
 - **(B) Image preservation**: ✅ Fully proven (`prove_property_b`)
-- **(C) Surjectivity**: ✅ From explicit precondition (to be proven externally)
+- **(C) Surjectivity**: ✅ From explicit precondition, discharged via reach induction
 - **(D) Edge forward**: ✅ Proven from bridge precondition + mark/sweep composition
-  - Uses Classical.impl_intro + decidable/non-decidable split pattern
-  - Bridge `combined_edge_to_mc_edge` from precondition (partially proven in EdgeBridge)
-- **(D) Edge backward**: ✅ From explicit precondition (to be proven externally)
+- **(D) Edge backward**: ✅ Proven via MSFrame successor preservation chain
 - **reachable_implies_forwarded**: ✅ Fully proven
 
 **Infrastructure built:**
@@ -513,16 +517,24 @@ Combined with vertex bijection (injective + surjective + image in post-GC).
 - Tag disjointness: `all_{minor,major}_edges_no_{major,minor}`
 - Classification: `classify_minor_field`, `classify_major_field` with inversions
 
-**Remaining proof obligations (as explicit preconditions):**
-1. `edge_bridge` — needs edge elim + EdgePreservation composition for all 4 cases
-   - Case 4 (Major→Major) **fully proven** in EdgeBridge.fst
-   - Cases 1-3 require further work (Case 3 needs update_major_pointers composition)
-2. `property_c_surjectivity` — needs image decomposition (post-GC reachable = old major ∪ promoted)
-3. `property_d_backward` — needs edge from g_final → field in mc_major → combined edge
+**Module Summary (0 admits across all):**
+| Module | Lines | Status |
+|--------|-------|--------|
+| CombinedGraph.fsti/fst | ~1100 | ✅ 0 admits |
+| Isomorphism.fsti/fst | ~700 | ✅ 0 admits |
+| Isomorphism.Discharge.fsti/fst | ~600 | ✅ 0 admits |
+| EdgeBridge.fsti/fst | ~250 | ✅ 0 admits |
+| EdgePreservation.fsti/fst | ~200 | ✅ 0 admits |
+| MarkSweepFrame.fsti/fst | ~180 | ✅ 0 admits |
+| MajorBridge.fsti/fst | ~200 | ✅ 0 admits |
+| Bridge.fst | ~60 | ✅ 0 admits |
+| ForwardMorphism.fst | ~100 | ✅ 0 admits |
 
-### Next steps
-1. **Complete EdgeBridge**: Add Cases 1-3 (Minor→Minor, Minor→Major, Major→Minor)
-2. **Property (C)**: Prove surjectivity in a dedicated Surjectivity module
-3. **Property (D) backward**: Prove in a dedicated EdgeBackward module
-4. **Discharge preconditions**: Each precondition should be proven as a standalone lemma
-   that a top-level caller can invoke
+**Remaining work (external to isomorphism infrastructure):**
+1. The 3 bridge assumptions in Discharge.fsti are explicit, auditable preconditions.
+   A top-level wrapper (e.g., in GC.Gen.Impl) would need to prove:
+   - `edge_bridge_forward_at_mc` — compose EdgeBridge cases with allocator facts
+   - `surjectivity_at_mc` — mc-reachable → has combined pre-image
+   - `edge_backward_at_mc` — mc edge between images → combined edge
+2. The allocator framing lemma (promotion preserves non-blue objects) lives in
+   GC.Spec.Allocator.Lemmas, not in the isomorphism infrastructure.
