@@ -335,3 +335,24 @@ val cheney_promote_preserves_dense
           (ensures (let res = cheney_promote minor major fp roots in
                     heap_objects_dense res.major_final /\
                     Seq.length (objects zero_addr res.major_final) > 0))
+
+/// --- fwd_bounded: all forwarding targets are valid major addresses ---
+
+/// A forwarding map is bounded if every non-zero value is a valid object
+/// address (>= mword, < heap_size, mword-aligned).
+let fwd_bounded (fwd: forwarding_map) : prop =
+  forall (x: U64.t). fwd x <> 0UL ==>
+    (U64.v (fwd x) >= U64.v mword /\
+     U64.v (fwd x) < heap_size /\
+     U64.v (fwd x) % U64.v mword == 0)
+
+/// Cheney promote produces a bounded forwarding map.
+/// Proof: each successful cheney_forward_one extends fwd via alloc_spec,
+/// which (by alloc_spec_obj_valid) returns addresses >= mword, < heap_size,
+/// and mword-aligned.
+val cheney_promote_fwd_bounded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+          (ensures fwd_bounded (cheney_promote minor major fp roots).fwd_map)

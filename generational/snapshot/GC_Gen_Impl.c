@@ -344,7 +344,7 @@ minor_collect(
 )
 {
   bool ok = cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
-  update_all_objects(gh.major, fwd_arr);
+  update_promoted_objects(gh.major, fwd_arr);
   rewrite_roots_impl(roots, fwd_arr, nroots);
   minor_heap_reset(gh.minor);
   return ok;
@@ -360,7 +360,10 @@ gen_gc(
   gray_stack_rec st
 )
 {
-  bool ok = minor_collect(gh, roots, nroots, fwd_arr, queue);
+  bool ok = cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
+  update_all_objects(gh.major, fwd_arr);
+  rewrite_roots_impl(roots, fwd_arr, nroots);
+  minor_heap_reset(gh.minor);
   uint64_t fp_val = *gh.fp_ref;
   uint64_t final_fp = collect(gh.major, st, fp_val);
   *gh.fp_ref = final_fp;

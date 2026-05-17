@@ -86,18 +86,20 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// Trigger a minor collection using Cheney-style BFS:
 /// 1. Forward roots (promote reachable minor objects on discovery)
 /// 2. BFS scan: for each promoted object, forward its children
-/// 3. Update major-heap pointer fields (rewrite minor refs via fwd map)
+/// 3. Update promoted objects' pointer fields (via fwd_arr, efficient path)
 /// 4. Rewrite program roots
 /// 5. Reset minor heap (bump = 0)
 ///
-/// Postcondition: result matches cheney_collect_spec (promotes only reachable
-/// objects, not all objects — sound and precise).
+/// Postcondition: promoted objects' fields are updated; the heap state is
+/// update_promoted_iter applied to the post-promotion heap.
+/// The caller is responsible for updating any additional slots (e.g.,
+/// remembered-set entries) that may also contain minor pointers.
 ///
-/// Correctness properties (proven in GC.Gen.CheneyCorrectness):
-/// - All pre-existing major objects survive
-/// - Heap well-formedness (part 1) preserved
+/// Correctness properties:
+/// - Promotion preserves structural invariants (wfh_part1, fl_valid, dense)
 /// - Minor heap reset
 /// - Roots rewritten via forwarding map
+/// - Forwarding array and map exposed for caller's use
 fn minor_collect (gh: gen_heap_t)
                  (roots: array U64.t) (nroots: SZ.t)
                  (fwd_arr: array U64.t)
@@ -166,51 +168,43 @@ fn minor_collect (gh: gen_heap_t)
     pts_to queue qv2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
-      let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
 
       // --- Spec refinement ---
-      // Post-collection major heap is exactly the Cheney BFS spec output:
-      // BFS-promoted reachable minor objects, then pointer fields updated
-      // to reflect forwarding
-      s2 == res.mc_major /\
+      // Post-collection major heap has promoted objects' fields updated
+      // via the forwarding array. This is the efficient path that only
+      // visits promoted objects (not the entire major heap).
+      s2 == UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0 /\
 
       // Post-collection free pointer matches spec (free-list head
       // advanced past all newly promoted objects)
-      fp2 == res.mc_fp /\
+      fp2 == prom.fp_final /\
 
-      // Post-collection roots match spec output
-      rs2 == res.mc_roots /\
+      // Post-collection roots match spec output (rewritten via fwd map)
+      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
 
       // Minor heap has been fully reset (bump pointer = 0, ready for
       // new allocations)
       U64.v b2 == 0 /\
 
-      // --- Object survival ---
-      // Every object that existed in the major heap before collection
-      // still exists afterward; promotion only adds objects, never
-      // removes existing ones
-      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
-        Seq.mem x (SpecFields.objects zero_addr s2)) /\
+      // --- Forwarding array exposed for caller ---
+      // The forwarding array represents the spec-level forwarding map
+      UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
 
-      // --- Root rewriting ---
-      // Each root has been pointwise rewritten through the forwarding
-      // map: roots pointing into the minor heap now point to the
-      // promoted copy in the major heap; other roots are unchanged
-      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+      // All forwarding entries are valid addresses
+      UpdatePtrs.valid_fwd_entries farr2 /\
 
-      // --- Structural invariants preserved ---
-      // Post-collection heap satisfies size-bounds invariant: every
-      // object's header+body fits within the heap byte array
-      SpecFields.well_formed_heap_part1 s2 /\
+      // Forwarding array length preserved
+      Seq.length farr2 == UpdatePtrs.fwd_array_size /\
 
-      // Post-collection free-list is valid (each node is a blue object
-      // with wosize >= 1 and a valid next link)
-      AllocLemmas.fl_valid s2 fp2 (heap_size / U64.v mword) /\
-
-      // Post-collection free-list terminates (no cycles introduced
-      // by promotion)
-      AllocLemmas.fl_chain_terminates s2 fp2 (heap_size / U64.v mword))
+      // --- Structural invariants preserved by promotion ---
+      // (These hold on the post-promotion heap prom.major_final)
+      SpecFields.well_formed_heap_part1 prom.major_final /\
+      AllocLemmas.fl_valid prom.major_final fp2 (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates prom.major_final fp2 (heap_size / U64.v mword) /\
+      PromoteSpec.heap_objects_dense prom.major_final /\
+      PromoteSpec.chain_objects_blue prom.major_final fp2 /\
+      Seq.length (SpecFields.objects zero_addr prom.major_final) > 0)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
