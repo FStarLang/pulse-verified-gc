@@ -392,25 +392,26 @@ static void do_minor_gc_core(void) {
     minor_has_pointer_objects = 0;
     PROF_END(minor_reset);
 
-    /* 5.5. Ref_table-based pointer rewriting */
+    /* 5.5. Ref_table-based pointer rewriting.
+     *
+     * The ref_table contains addresses of major-heap fields that were
+     * assigned minor pointers (recorded by caml_modify's write barrier).
+     * After promotion, those fields still hold absolute minor addresses.
+     * rewrite_heap_slots reads each slot, translates minor→offset via
+     * minor_base_addr, looks up fwd_arr, and writes the major address.
+     *
+     * On LP64, value* (8 bytes) and uint64_t (8 bytes) have the same
+     * representation, so we cast the ref_table entries directly —
+     * no malloc/copy needed. */
     PROF_START(ref_table);
     {
         struct caml_ref_table *tbl = Caml_state->_ref_table;
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
         if (n_slots > 0) {
-            uint64_t *slot_addrs = (uint64_t *)malloc(n_slots * sizeof(uint64_t));
-            if (!slot_addrs)
-                caml_fatal_error("verified gen GC: cannot allocate slot_addrs");
-            size_t k = 0;
-            value **r;
-            for (r = tbl->base; r < tbl->ptr; r++) {
-                uint64_t addr = (uint64_t)(uintptr_t)(*r);
-                if (addr < heap_size_u64 && addr % 8 == 0)
-                    slot_addrs[k++] = addr;
-            }
-            if (k > 0)
-                rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, slot_addrs, k);
-            free(slot_addrs);
+            _Static_assert(sizeof(value *) == sizeof(uint64_t),
+                "ref_table optimization requires LP64 (sizeof(value*)==8)");
+            rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr,
+                               (uint64_t *)tbl->base, n_slots);
         }
     }
     PROF_END(ref_table);

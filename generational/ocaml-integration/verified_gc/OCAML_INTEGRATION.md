@@ -492,52 +492,32 @@ struct caml_ref_table {
 ### Our Handling (Step 5.5)
 
 After promotion, major-heap fields recorded in the ref\_table still
-hold stale minor addresses.  We must rewrite them:
+hold stale minor addresses.  We must rewrite them using `fwd_arr`:
 
 ```c
-// Step 5.5: Ref_table-based pointer rewriting
+// Step 5.5: Ref_table-based pointer rewriting (zero-copy)
 struct caml_ref_table *tbl = Caml_state->_ref_table;
 size_t n_slots = (size_t)(tbl->ptr - tbl->base);
 if (n_slots > 0) {
-    uint64_t *slot_addrs = (uint64_t *)malloc(n_slots * sizeof(uint64_t));
-    size_t k = 0;
-    for (r = tbl->base; r < tbl->ptr; r++) {
-        uint64_t addr = (uint64_t)(uintptr_t)(*r);
-        if (addr < heap_size_u64 && addr % 8 == 0)
-            slot_addrs[k++] = addr;
-    }
-    if (k > 0)
-        rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, slot_addrs, k);
-    free(slot_addrs);
+    // On LP64, value* (8 bytes) == uint64_t (8 bytes) in representation.
+    // The ref_table entries ARE the slot addresses we need — just cast.
+    rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr,
+                       (uint64_t *)tbl->base, n_slots);
 }
 ```
 
-### Why the malloc/free?
+**No malloc needed!**  On LP64, each `value*` in the ref\_table is 8
+bytes — the same as `uint64_t`.  The numeric value of the pointer IS
+the slot address.  We cast `tbl->base` directly and pass it to the
+verified function.  This is safe because:
 
-The ref\_table stores `value**` (pointers to slots), but the verified
-`rewrite_heap_slots` expects a `uint64_t*` array of slot **addresses**
-(since the verified code uses uint64\_t for all addresses).
-
-We could avoid the malloc by:
-
-1. **Rewriting in-place** in the ref\_table (treating `value**` as
-   `uint64_t*` via cast) — but the ref\_table holds pointers-to-slots,
-   not the slot addresses themselves.  We'd need to dereference each
-   `value**` to get the address.
-
-2. **Using a pre-allocated buffer** (like root\_values[]) — the
-   ref\_table can grow unboundedly, so we'd need MAX\_REF\_SLOTS or
-   dynamic resizing.
-
-3. **Processing one-at-a-time** without buffering — call a single-slot
-   rewrite function per entry.  This avoids malloc but has per-call
-   overhead from the verified function.
-
-**In practice, the cost is negligible**: profiling shows ref\_table
-rewriting takes **0.2ms** total across 1635 minor GCs in binarytrees-14
-(~0.1μs per GC cycle).  The malloc is small (typically a few KB) and
-amortized over the entire ref\_table.  If this ever becomes a bottleneck
-(very unlikely), option 2 (pre-allocated buffer) is the simplest fix.
+1. `caml_modify` only adds entries when `Is_in_heap(fp)` — all
+   entries are valid major-heap addresses.
+2. `rewrite_heap_slots` treats each entry as an address to read/write
+   via `read_word(major, slot_addr)` — with `major.data = NULL`, this
+   dereferences the raw address, which is correct.
+3. A `_Static_assert` verifies `sizeof(value*) == sizeof(uint64_t)`
+   at compile time.
 
 ---
 
