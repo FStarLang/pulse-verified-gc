@@ -344,7 +344,7 @@ minor_collect(
 )
 {
   bool ok = cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
-  update_promoted_objects(gh.major, fwd_arr);
+  update_all_objects(gh.major, fwd_arr);
   rewrite_roots_impl(roots, fwd_arr, nroots);
   minor_heap_reset(gh.minor);
   return ok;
