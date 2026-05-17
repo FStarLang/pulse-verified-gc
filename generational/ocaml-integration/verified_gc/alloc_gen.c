@@ -256,7 +256,7 @@ static void do_full_gc(void);       /* forward decl */
 
 /* Core minor GC implementation.  If major heap space is insufficient,
  * promotion will partially fail.  The caller must handle this. */
-static int do_minor_gc_core(void) {
+static void do_minor_gc_core(void) {
 
     PROF_INC(minor_gc_count);
     PROF_START(minor_gc_total);
@@ -352,7 +352,19 @@ static int do_minor_gc_core(void) {
     rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
     PROF_END(rewrite_roots);
 
-    /* 5d.1 Count failed promotions */
+    /* 5d.1 Count failed promotions.
+     *
+     * After rewrite_roots_impl, any root that still looks like a minor offset
+     * (>= 8, < minor_heap_size, aligned) means that object was NOT promoted —
+     * cheney_promote_phase couldn't find a free block for it.  The object still
+     * exists in the minor heap at this point, but we have no way to keep it
+     * alive: the minor heap is about to be reset for the next allocation cycle.
+     *
+     * We MUST abort here.  If we continued (resetting the minor heap), those
+     * roots would dangle — there's no valid address to write back.  The old
+     * code wrote Val_unit as a "best effort", but that silently corrupts the
+     * program.  A fixed-size major heap that can't hold the live set is a
+     * fatal condition — tell the user to increase it. */
     size_t failed = 0;
     {
         uint64_t minor_limit = minor_heap_size_u64;
@@ -361,6 +373,17 @@ static int do_minor_gc_core(void) {
             if (rv >= 8 && rv < minor_limit && rv % 8 == 0)
                 failed++;
         }
+    }
+    if (failed > 0) {
+        uint64_t major_size = heap_size_u64 - zero_addr;
+        fprintf(stderr,
+            "verified gen GC: promotion failed — major heap full (%lu MB)\n"
+            "  %zu roots could not be promoted (live set exceeds heap capacity).\n"
+            "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n",
+            (unsigned long)(major_size / 1048576),
+            failed,
+            (unsigned long)(major_size / 4));
+        caml_fatal_error("verified gen GC: out of memory (major heap too small)");
     }
 
     /* 5f. Reset minor heap */
@@ -392,7 +415,12 @@ static int do_minor_gc_core(void) {
     }
     PROF_END(ref_table);
 
-    /* 6. Write back rewritten roots */
+    /* 6. Write back rewritten roots to OCaml stack/globals.
+     *
+     * At this point all roots have been successfully rewritten to major
+     * addresses by rewrite_roots_impl (we fatal-errored above if any
+     * weren't).  Write the new major addresses back to the actual OCaml
+     * root slots so the mutator sees promoted objects. */
     PROF_START(writeback);
     {
         uint64_t minor_limit = minor_heap_size_u64;
@@ -401,11 +429,13 @@ static int do_minor_gc_core(void) {
             if (root_locs[i] != NULL) {
                 uint64_t rewritten = root_values[i];
                 if (rewritten == 0) continue;
+                /* Should never happen — we aborted above if any roots
+                 * remained as minor offsets.  Defensive check. */
                 if (rewritten < minor_limit) {
-                    *root_locs[i] = Val_unit;
-                } else {
-                    *root_locs[i] = (value)(uintptr_t)rewritten;
+                    caml_fatal_error(
+                        "verified gen GC: internal error — unpromoted root after check");
                 }
+                *root_locs[i] = (value)(uintptr_t)rewritten;
             }
         }
     }
@@ -415,7 +445,7 @@ static int do_minor_gc_core(void) {
     Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 
     PROF_END(minor_gc_total);
-    return (failed > 0) ? 1 : 0;
+    /* If we reach here, all promotions succeeded (we abort in 5d.1 otherwise) */
 }
 
 static void do_minor_gc(void) {
@@ -424,8 +454,8 @@ static void do_minor_gc(void) {
     Caml_state->_stat_minor_collections++;
 
     /* Proactive major GC: run a full GC periodically to prevent the major
-     * heap from filling up.  Without this, promotion failures during minor
-     * GC corrupt program data by losing live objects.
+     * heap from filling up.  Without this, the heap fills with dead objects
+     * and the next minor GC will abort with an OOM error.
      *
      * Trigger when cumulative promoted data exceeds 50% of major heap.
      * Using bump_before as a conservative upper bound on promoted bytes. */
@@ -443,43 +473,10 @@ static void do_minor_gc(void) {
     uint64_t fp_before = *gc_gen_heap.fp_ref;
     uint64_t bump_before = *gc_gen_heap.minor.bump_ref;
 
-    int had_failures = do_minor_gc_core();
+    do_minor_gc_core();
 
     /* Track promoted bytes (approximate by the minor bump value) */
     bytes_promoted_since_major += bump_before;
-
-    if (had_failures) {
-        /* Promotion failed: the major heap is full and some minor objects
-         * could not be promoted.  The unverified bridge (step 6 above)
-         * replaced those roots with Val_unit — a lossy fallback in this
-         * orchestration layer, NOT in the verified GC code.  Run a major
-         * GC to try to recover space; if that fails, abort cleanly. */
-        do_major_gc_only();
-
-        /* Check if we freed any significant space */
-        uint64_t free_after = 0;
-        {
-            uint64_t fp2 = *gc_gen_heap.fp_ref;
-            while (fp2 != 0) {
-                uint64_t hdr = *(uint64_t *)((uintptr_t)fp2 - 8);
-                free_after += ((hdr >> 10) + 1) * 8;
-                fp2 = *(uint64_t *)((uintptr_t)fp2);
-            }
-        }
-        uint64_t major_size = heap_size_u64 - zero_addr;
-        if (free_after < major_size / 8) {
-            /* Less than 12.5% free after major GC — heap is genuinely too small */
-            fprintf(stderr,
-                "verified gen GC: major heap exhausted (%lu MB used of %lu MB)\n"
-                "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n"
-                "  Example: MIN_EXPANSION_WORDSIZE=%lu ./ocamlrun program.byte\n",
-                (unsigned long)((major_size - free_after) / 1048576),
-                (unsigned long)(major_size / 1048576),
-                (unsigned long)(major_size / 4),  /* double current in words */
-                (unsigned long)(major_size / 4));
-            caml_fatal_error("verified gen GC: out of memory (major heap too small)");
-        }
-    }
 }
 
 /* --- Full GC (minor + major) --- */
