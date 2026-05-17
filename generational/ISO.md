@@ -517,12 +517,13 @@ Combined with vertex bijection (injective + surjective + image in post-GC).
 - Tag disjointness: `all_{minor,major}_edges_no_{major,minor}`
 - Classification: `classify_minor_field`, `classify_major_field` with inversions
 
-**Module Summary (0 admits across all):**
+**Module Summary (1 admit in TopLevel only):**
 | Module | Lines | Status |
 |--------|-------|--------|
 | CombinedGraph.fsti/fst | ~1100 | ✅ 0 admits |
 | Isomorphism.fsti/fst | ~700 | ✅ 0 admits |
 | Isomorphism.Discharge.fsti/fst | ~600 | ✅ 0 admits |
+| Isomorphism.TopLevel.fsti/fst | ~375 | 1 admit (cheney≡promote axiom) |
 | EdgeBridge.fsti/fst | ~250 | ✅ 0 admits |
 | EdgePreservation.fsti/fst | ~200 | ✅ 0 admits |
 | MarkSweepFrame.fsti/fst | ~180 | ✅ 0 admits |
@@ -530,11 +531,22 @@ Combined with vertex bijection (injective + surjective + image in post-GC).
 | Bridge.fst | ~60 | ✅ 0 admits |
 | ForwardMorphism.fst | ~100 | ✅ 0 admits |
 
+**Connection to GC.Gen.Impl.fsti:**
+The TopLevel module bridges gen_gc's cheney_collect_spec postcondition to the
+isomorphism theorem. `gen_gc_isomorphism` can be called as a ghost step after
+gen_gc to derive `isomorphism_postcondition`. The single remaining axiom
+(`cheney_minor_collect_equiv`) states that BFS-based and set-based promotion
+produce equivalent results — a well-motivated mathematical assumption about
+allocation-order independence that would require a non-trivial proof about
+free-list consumption.
+
 **Remaining work (external to isomorphism infrastructure):**
-1. The 3 bridge assumptions in Discharge.fsti are explicit, auditable preconditions.
-   A top-level wrapper (e.g., in GC.Gen.Impl) would need to prove:
-   - `edge_bridge_forward_at_mc` — compose EdgeBridge cases with allocator facts
-   - `surjectivity_at_mc` — mc-reachable → has combined pre-image
-   - `edge_backward_at_mc` — mc edge between images → combined edge
+1. The 4 iso_* preconditions in TopLevel.fsti are explicit, auditable:
+   - `iso_structural_preconditions` — root correspondence, fwd injectivity, etc.
+   - `iso_edge_bridge_forward` — combined edge → mc_major edge
+   - `iso_surjectivity` — mc-reachable → has combined pre-image
+   - `iso_edge_backward` — mc edge between images → combined edge
 2. The allocator framing lemma (promotion preserves non-blue objects) lives in
    GC.Spec.Allocator.Lemmas, not in the isomorphism infrastructure.
+3. `cheney_minor_collect_equiv` — would need a new module proving BFS traversal
+   order doesn't affect the final promotion result.
