@@ -43,6 +43,35 @@ val max_young_wosize : n:pos{n >= 1 /\ (n + 1) * 8 <= minor_heap_size}
 val max_young_wosize_u64 : n:U64.t{U64.v n == max_young_wosize}
 
 /// ---------------------------------------------------------------------------
+/// Minor Heap Base Address (abstract)
+/// ---------------------------------------------------------------------------
+
+/// Base address of the minor heap buffer in the process address space.
+/// Field values that point to minor objects are stored as absolute addresses
+/// (minor_base_addr + offset). to_minor_offset converts these to offsets.
+val minor_base_addr : U64.t
+
+/// minor_base_addr is word-aligned and minor range doesn't overflow U64.
+val minor_base_ok (_:unit)
+  : Lemma (U64.v minor_base_addr % 8 == 0 /\
+           U64.v minor_base_addr + minor_heap_size <= pow2 64)
+
+/// Convert a value from absolute minor address to minor offset.
+/// If v is in [minor_base_addr, minor_base_addr + minor_heap_size) and word-aligned,
+/// returns v - minor_base_addr. Otherwise returns v unchanged.
+let to_minor_offset (v: U64.t) : GTot U64.t =
+  if U64.v v >= U64.v minor_base_addr &&
+     U64.v v - U64.v minor_base_addr < minor_heap_size &&
+     U64.v v % 8 = 0
+  then U64.uint_to_t (U64.v v - U64.v minor_base_addr)
+  else v
+
+/// Computable version of to_minor_offset for extraction.
+/// Uses modular subtraction; equivalent to to_minor_offset for all inputs.
+inline_for_extraction
+val to_minor_offset_u64 (v: U64.t) : Tot (r:U64.t{r == to_minor_offset v})
+
+/// ---------------------------------------------------------------------------
 /// Minor Heap Type
 /// ---------------------------------------------------------------------------
 

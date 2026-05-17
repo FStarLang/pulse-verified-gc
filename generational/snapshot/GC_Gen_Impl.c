@@ -863,7 +863,13 @@ scan_loop(
         {
           uint64_t fi = field_idx;
           uint64_t field_addr = obj + fi * 8ULL;
-          uint64_t child = minor_read(minor, field_addr);
+          uint64_t child_raw = minor_read(minor, field_addr);
+          uint64_t off = child_raw - minor_base_addr;
+          uint64_t child;
+          if (off < minor_heap_size_u64 && child_raw % 8ULL == 0ULL)
+            child = off;
+          else
+            child = child_raw;
           if (!(child < 8ULL))
             if (!(child >= minor_heap_size_u64))
               if (!!(child % 8ULL == 0ULL))
@@ -998,7 +1004,13 @@ void update_one_object(heap_t major, uint64_t *fwd_arr, uint64_t obj, uint64_t w
   {
     uint64_t iv = i;
     uint64_t field_addr_u64 = obj + iv * 8ULL;
-    uint64_t field_val = read_word(major, field_addr_u64);
+    uint64_t field_val_raw = read_word(major, field_addr_u64);
+    uint64_t off = field_val_raw - minor_base_addr;
+    uint64_t field_val;
+    if (off < minor_heap_size_u64 && field_val_raw % 8ULL == 0ULL)
+      field_val = off;
+    else
+      field_val = field_val_raw;
     if (field_val >= 8ULL)
       if (field_val < minor_heap_size_u64)
         if (field_val % 8ULL == 0ULL)
@@ -1058,7 +1070,13 @@ void update_all_objects(heap_t major, uint64_t *fwd_arr)
         {
           uint64_t iv = i;
           uint64_t field_addr_u64 = obj + iv * 8ULL;
-          uint64_t field_val = read_word(major, field_addr_u64);
+          uint64_t field_val_raw = read_word(major, field_addr_u64);
+          uint64_t off = field_val_raw - minor_base_addr;
+          uint64_t field_val;
+          if (off < minor_heap_size_u64 && field_val_raw % 8ULL == 0ULL)
+            field_val = off;
+          else
+            field_val = field_val_raw;
           if (field_val >= 8ULL)
             if (field_val < minor_heap_size_u64)
               if (field_val % 8ULL == 0ULL)
@@ -1090,7 +1108,13 @@ void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t
   {
     size_t iv = i;
     uint64_t slot_addr = slots[iv];
-    uint64_t field_val = read_word(major, slot_addr);
+    uint64_t field_val_raw = read_word(major, slot_addr);
+    uint64_t off = field_val_raw - minor_base_addr;
+    uint64_t field_val;
+    if (off < minor_heap_size_u64 && field_val_raw % 8ULL == 0ULL)
+      field_val = off;
+    else
+      field_val = field_val_raw;
     if (field_val >= 8ULL)
       if (field_val < minor_heap_size_u64)
         if (field_val % 8ULL == 0ULL)

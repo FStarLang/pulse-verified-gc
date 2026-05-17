@@ -390,7 +390,7 @@ let rec update_object_pointers (major: heap) (obj: U64.t) (wosize: nat)
     let field_offset = U64.v obj + i * 8 in
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then major
     else
-      let field_val = read_word major (U64.uint_to_t field_offset) in
+      let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
       if is_minor_pointer field_val then
         let new_val = fwd field_val in
         if new_val <> 0UL then
@@ -408,7 +408,7 @@ val update_object_pointers_step (major: heap) (obj: U64.t) (wosize: nat)
                     U64.v obj + i * 8 + 8 <= heap_size /\
                     (U64.v obj + i * 8) % 8 = 0)
           (ensures (let field_offset = U64.v obj + i * 8 in
-                    let field_val = read_word major (U64.uint_to_t field_offset) in
+                    let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
                     update_object_pointers major obj wosize fwd i ==
                     (if is_minor_pointer field_val then
                        let new_val = fwd field_val in
@@ -782,7 +782,8 @@ let pointer_closure_modulo_fwd (major: heap) (fwd: forwarding_map) : prop =
     j < U64.v (wosize_of_object src major) /\
     U64.v src + j * 8 + 8 <= heap_size ==>
     (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-     is_pointer v /\ ~(is_minor_pointer v /\ fwd v <> 0UL) ==>
+     let minor_v = to_minor_offset v in
+     is_pointer v /\ ~(is_minor_pointer minor_v /\ fwd minor_v <> 0UL) ==>
      Seq.mem (v <: obj_addr) (objects zero_addr major))
 
 /// Blue fields closed: for blue (free-list) objects, all pointer fields

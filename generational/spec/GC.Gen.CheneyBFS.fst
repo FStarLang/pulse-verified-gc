@@ -97,7 +97,7 @@ let rec forward_fields_fwd_monotone
     CheneySpec.cheney_forward_fields_base minor cs parent idx wosize
   else begin
     CheneySpec.cheney_forward_fields_step minor cs parent idx wosize;
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = CheneySpec.cheney_forward_one minor cs field_val in
     forward_one_fwd_monotone minor cs field_val x;
     forward_fields_fwd_monotone minor cs' parent (idx + 1) wosize x

@@ -31,10 +31,11 @@ val update_major_pointers_field_effect
     (ensures
       (let updated = update_major_pointers major fwd in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       let old_val = read_word major field_addr in
+       let old_raw = read_word major field_addr in
+       let old_val = to_minor_offset old_raw in
        let new_val = read_word updated field_addr in
        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
-       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_val)))
+       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw)))
 
 val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\

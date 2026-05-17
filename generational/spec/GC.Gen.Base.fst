@@ -30,6 +30,21 @@ let max_young_wosize : n:pos{n >= 1 /\ (n + 1) * 8 <= minor_heap_size} = 128
 let max_young_wosize_u64 : n:U64.t{U64.v n == max_young_wosize} = 128UL
 
 /// ---------------------------------------------------------------------------
+/// Minor heap base address
+/// ---------------------------------------------------------------------------
+
+let minor_base_addr : U64.t = 0UL
+
+let minor_base_ok () = ()
+
+inline_for_extraction
+let to_minor_offset_u64 (v: U64.t) : Tot (r:U64.t{r == to_minor_offset v}) =
+  let off = U64.sub_mod v minor_base_addr in
+  if U64.lt off minor_heap_size_u64 && U64.eq (U64.rem v 8UL) 0UL
+  then off
+  else v
+
+/// ---------------------------------------------------------------------------
 /// Address classification
 /// ---------------------------------------------------------------------------
 

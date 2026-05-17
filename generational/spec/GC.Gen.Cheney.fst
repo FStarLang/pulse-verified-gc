@@ -117,7 +117,7 @@ let rec cheney_forward_fields (minor: minor_state) (cs: cheney_state)
   =
   if idx >= wosize then cs
   else
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = cheney_forward_one minor cs field_val in
     cheney_forward_fields minor cs' parent (idx + 1) wosize
 
@@ -131,7 +131,7 @@ let cheney_forward_fields_step
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
   : Lemma (requires idx < wosize)
           (ensures cheney_forward_fields minor cs parent idx wosize ==
-                   (let field_val = minor_read_field minor parent idx in
+                   (let field_val = to_minor_offset (minor_read_field minor parent idx) in
                     let cs' = cheney_forward_one minor cs field_val in
                     cheney_forward_fields minor cs' parent (idx + 1) wosize))
   = ()
@@ -265,7 +265,7 @@ let rec cheney_forward_fields_preserves_wfh_part1
   =
   if idx >= wosize then ()
   else begin
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = cheney_forward_one minor cs field_val in
     cheney_forward_one_preserves_wfh_part1 minor cs field_val;
     cheney_forward_fields_preserves_wfh_part1 minor cs' parent (idx + 1) wosize
@@ -393,7 +393,7 @@ private let rec cheney_forward_fields_preserves_cob
   =
   if idx >= wosize then ()
   else begin
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = cheney_forward_one minor cs field_val in
     cheney_forward_one_preserves_wfh_part1 minor cs field_val;
     cheney_forward_one_preserves_cob minor cs field_val;
@@ -552,7 +552,7 @@ private let rec cheney_forward_fields_preserves_objects
   =
   if idx >= wosize then ()
   else begin
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     cheney_forward_one_preserves_wfh_part1 minor cs field_val;
     cheney_forward_one_preserves_objects minor cs field_val;
     let cs' = cheney_forward_one minor cs field_val in
@@ -849,7 +849,7 @@ private let rec cheney_forward_fields_preserves_dense
   =
   if idx >= wosize then ()
   else begin
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = cheney_forward_one minor cs field_val in
     cheney_forward_one_preserves_wfh_part1 minor cs field_val;
     cheney_forward_one_preserves_dense minor cs field_val;

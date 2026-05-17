@@ -117,7 +117,7 @@ let cheney_forward_one_queue_bound
 /// definitions one step at a time.
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 
 private let rec forward_fields_qv_aux
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
@@ -130,7 +130,7 @@ private let rec forward_fields_qv_aux
     CheneySpec.cheney_forward_fields_base minor cs parent idx wosize
   else begin
     CheneySpec.cheney_forward_fields_step minor cs parent idx wosize;
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = CheneySpec.cheney_forward_one minor cs field_val in
     fwd_one_preserves_queue_valid minor cs field_val;
     forward_fields_qv_aux minor cs' parent (idx + 1) wosize
@@ -428,7 +428,7 @@ private let rec forward_fields_bfs_inv_aux
       CheneySpec.cheney_forward_fields_base minor cs parent idx wosize
     else begin
       CheneySpec.cheney_forward_fields_step minor cs parent idx wosize;
-      let field_val = minor_read_field minor parent idx in
+      let field_val = to_minor_offset (minor_read_field minor parent idx) in
       let cs' = CheneySpec.cheney_forward_one minor cs field_val in
       fwd_one_preserves_bfs_inv minor cs field_val;
       forward_fields_bfs_inv_aux minor cs' parent (idx + 1) wosize

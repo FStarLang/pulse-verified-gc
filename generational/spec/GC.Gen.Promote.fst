@@ -691,7 +691,7 @@ let update_object_pointers_step (major: heap) (obj: U64.t) (wosize: nat)
                     U64.v obj + i * 8 + 8 <= heap_size /\
                     (U64.v obj + i * 8) % 8 = 0)
           (ensures (let field_offset = U64.v obj + i * 8 in
-                    let field_val = read_word major (U64.uint_to_t field_offset) in
+                    let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
                     update_object_pointers major obj wosize fwd i ==
                     (if is_minor_pointer field_val then
                        let new_val = fwd field_val in

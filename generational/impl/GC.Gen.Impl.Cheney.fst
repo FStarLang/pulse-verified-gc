@@ -533,9 +533,13 @@ fn scan_loop
           (reveal cs_fcur) obj (U64.v fi) (U64.v wosize);
         // Read field[fi] from minor heap
         let field_addr = U64.add obj (U64.mul fi 8UL);
-        let child = minor_read minor field_addr;
+        let child_raw = minor_read minor field_addr;
         // Bridge: minor_read at impl level == minor_read_field at spec level
         Sim.minor_read_eq_field ({data='md; bump='mb} <: minor_state) obj (U64.v fi);
+        // Translate absolute minor address to offset
+        let child = to_minor_offset_u64 child_raw;
+        // Bridge: child == to_minor_offset (minor_read_field minor_st obj fi)
+        assert (pure (child == to_minor_offset (minor_read_field ({data='md; bump='mb} <: minor_state) obj (U64.v fi))));
         // Forward this child — produces cs' = cheney_forward_one minor_st cs_fcur child
         forward_if_minor minor major fp_ref fwd_arr queue back child #cs_fcur;
         // Update inner ghost ref

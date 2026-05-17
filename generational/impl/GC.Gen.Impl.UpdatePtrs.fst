@@ -188,7 +188,8 @@ fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
           PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd (U64.v iv))
 {
   let field_addr_u64 = U64.add obj (U64.mul iv 8UL);
-  let field_val = read_word major field_addr_u64;
+  let field_val_raw = read_word major field_addr_u64;
+  let field_val = to_minor_offset_u64 field_val_raw;
   // Invoke the unfold lemma to establish the one-step equality
   PromoteSpec.update_object_pointers_step 'ms obj (U64.v wosize) fwd (U64.v iv);
   if U64.gte field_val 8UL {
@@ -517,7 +518,8 @@ fn rewrite_one_heap_slot
     is_heap major ms2 **
     pts_to fwd_arr 'farr
 {
-  let field_val = read_word major slot_addr;
+  let field_val_raw = read_word major slot_addr;
+  let field_val = to_minor_offset_u64 field_val_raw;
   if U64.gte field_val 8UL {
     if U64.lt field_val minor_heap_size_u64 {
       if U64.eq (U64.rem field_val 8UL) 0UL {

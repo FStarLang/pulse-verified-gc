@@ -29,6 +29,8 @@ extern uint64_t minor_heap_size_u64;
 
 extern uint64_t max_young_wosize_u64;
 
+extern uint64_t minor_base_addr;
+
 
 #define internal_GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address_H_DEFINED
 #endif /* internal_GC_Gen_Base_GC_Spec_GC_Lib_Header_GC_Lib_Address_H */

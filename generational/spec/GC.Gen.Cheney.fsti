@@ -114,7 +114,7 @@ val cheney_forward_fields_step
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
   : Lemma (requires idx < wosize)
           (ensures cheney_forward_fields minor cs parent idx wosize ==
-                   (let field_val = minor_read_field minor parent idx in
+                   (let field_val = to_minor_offset (minor_read_field minor parent idx) in
                     let cs' = cheney_forward_one minor cs field_val in
                     cheney_forward_fields minor cs' parent (idx + 1) wosize))
 

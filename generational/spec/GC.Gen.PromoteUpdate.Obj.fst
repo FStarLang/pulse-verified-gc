@@ -46,7 +46,7 @@ let rec update_object_pointers_preserves_objects
     let field_offset = U64.v obj + i * 8 in
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
     else
-      let field_val = read_word major (U64.uint_to_t field_offset) in
+      let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
       if is_minor_pointer field_val then
         let new_val = fwd field_val in
         if new_val <> 0UL then begin
@@ -90,7 +90,7 @@ let rec update_object_pointers_preserves_other_header
     let field_offset = U64.v obj + i * 8 in
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
     else
-      let field_val = read_word major (U64.uint_to_t field_offset) in
+      let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
       if is_minor_pointer field_val then
         let new_val = fwd field_val in
         if new_val <> 0UL then begin
@@ -136,7 +136,7 @@ let rec update_object_pointers_preserves_self_header
     let field_offset = U64.v obj + i * 8 in
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
     else
-      let field_val = read_word major (U64.uint_to_t field_offset) in
+      let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
       if is_minor_pointer field_val then
         let new_val = fwd field_val in
         if new_val <> 0UL then begin
@@ -178,7 +178,7 @@ let rec update_object_pointers_preserves_addr_below
     let field_offset = U64.v obj + i * 8 in
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
     else
-      let field_val = read_word major (U64.uint_to_t field_offset) in
+      let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
       if is_minor_pointer field_val then
         let new_val = fwd field_val in
         if new_val <> 0UL then begin
@@ -222,7 +222,7 @@ let rec update_object_pointers_preserves_addr_above
     let field_offset = U64.v obj + i * 8 in
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
     else
-      let field_val = read_word major (U64.uint_to_t field_offset) in
+      let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
       if is_minor_pointer field_val then
         let new_val = fwd field_val in
         if new_val <> 0UL then begin
@@ -262,17 +262,18 @@ let rec update_object_pointers_field_self
     (ensures
       (let updated = update_object_pointers major obj wosize fwd i in
        let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       let old_val = read_word major field_addr in
+       let old_raw = read_word major field_addr in
+       let old_val = to_minor_offset old_raw in
        let new_val = read_word updated field_addr in
        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
-       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_val)))
+       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw)))
     (decreases (wosize - i)) =
   if i >= wosize then ()
   else
     let field_offset = U64.v obj + i * 8 in
     assert (field_offset + 8 <= heap_size);
     assert (field_offset % 8 == 0);
-    let field_val = read_word major (U64.uint_to_t field_offset) in
+    let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
     if i = j then begin
       // This iteration processes field j directly
       if is_minor_pointer field_val then
@@ -346,7 +347,7 @@ and update_obj_ptrs_preserves_earlier_field
     let field_offset = U64.v obj + i * 8 in
     assert (field_offset + 8 <= heap_size);
     assert (field_offset % 8 == 0);
-    let field_val = read_word major (U64.uint_to_t field_offset) in
+    let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
     if is_minor_pointer field_val then
       let new_val = fwd field_val in
       if new_val <> 0UL then begin

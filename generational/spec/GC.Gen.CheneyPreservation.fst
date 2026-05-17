@@ -259,7 +259,7 @@ private let rec cheney_forward_fields_preserves_no_black
     cheney_forward_fields_base minor cs parent idx wosize
   else begin
     cheney_forward_fields_step minor cs parent idx wosize;
-    let field_val = minor_read_field minor parent idx in
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = cheney_forward_one minor cs field_val in
     cheney_forward_one_preserves_wfh_part1 minor cs field_val;
     cheney_forward_one_preserves_no_black minor cs field_val;

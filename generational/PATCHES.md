@@ -29,7 +29,7 @@ F\*/Pulse source so the extraction is usable directly.
 | 3,4 | Scan range / HWM | ✅ **ELIMINATED** | Bridge now walks fwd_arr + calls `update_one_object`; `update_all_objects` reverted to clean extraction |
 | 9  | Infix forwarding | ✅ **DONE** | Phased calls + infix fwd fixup in bridge |
 
-### Extern Configuration (GC.Spec.ZeroAddr)
+### Extern Configuration (GC.Spec.ZeroAddr + GC.Gen.Base)
 
 `GC.Spec.ZeroAddr.fsti` is an interface-only module declaring two extern
 constants:
@@ -38,6 +38,42 @@ constants:
 extern uint64_t zero_addr;       /* heap base address */
 extern uint64_t heap_size_u64;   /* heap upper bound (= base + size) */
 ```
+
+`GC.Gen.Base.fsti` declares `minor_base_addr` as an abstract constant
+(concrete value `0UL` in the `.fst`, hidden by the interface).  KaRaMeL
+extracts it as a global variable:
+
+```c
+uint64_t minor_base_addr = 0ULL;   /* set at runtime to minor heap base */
+```
+
+The bridge (`alloc_gen.c`) sets `minor_base_addr` at runtime:
+```c
+minor_base_addr = (uint64_t)(uintptr_t)minor_data;
+```
+
+The verified `to_minor_offset_u64` function translates absolute minor
+addresses to 0-based offsets inline, using modular subtraction:
+```c
+uint64_t off = v - minor_base_addr;
+if (off < minor_heap_size_u64 && v % 8 == 0) return off; else return v;
+```
+This is called in `scan_loop`, `update_one_object`, and `rewrite_heap_slots`,
+eliminating the need for a separate `translate_minor_fields` pass.
+
+### Phase 4 Optimization: Inline Address Translation
+
+**BRIDGE PATCH B7 (`translate_minor_fields`):** ✅ **ELIMINATED** by Phase 4.
+Previously, a separate O(minor_heap_size) `translate_minor_fields` pass
+converted all absolute minor addresses to offsets before Cheney promotion.
+Now the verified `to_minor_offset_u64` performs this translation inline in
+`cheney_forward_fields` (scan_loop), `update_object_pointers`, and
+`rewrite_heap_slots`.  The `translate_minor_fields` function still exists
+in the extracted code but is dead (never called).
+
+**Performance impact:** binarytrees 14: 3.71s → 3.37s (9% improvement).
+Eliminates 11.4% of GC time spent in the translate pass, with additional
+cache efficiency gains in the Cheney phase.
 
 KaRaMeL extracts these as extern declarations (no `static`, no initial value).
 `compat.c` provides the storage, and the bridge (`alloc_gen.c`) sets them to
@@ -67,11 +103,11 @@ infix parent relationship in the formal heap model.
 | # | Bridge | Status | Notes |
 |---|--------|--------|-------|
 | B1  | Heap init | — Keep as-is | OCaml mmap integration, inherently unverified |
-| B2,4,5 | Address translation | — Keep as-is | Minor 0-based → absolute offsets |
+| B2,4,5 | Address translation | — Simplified | Phase 4: no longer pre-translates ref_table values; `to_minor_offset_u64` handles inline |
 | B3,10 | Root scan/writeback | — Keep as-is | OCaml stack layout, inherently specific |
 | B6  | Infix parent injection | ✅ **DONE** | Verified `find_infix_parents` replaces 43-line C loop |
 | B6b | Infix fwd synthesis | ✅ **DONE** | Verified `synthesize_infix_forwarding` replaces 57-line C loop |
-| B7  | Minor field abs→offset | ✅ **DONE** | Verified `translate_minor_fields` replaces 35-line C loop |
+| B7  | Minor field abs→offset | ✅ **ELIMINATED** | Phase 4: verified `to_minor_offset_u64` handles inline; `translate_minor_fields` no longer called |
 | B8  | Scan base setup | ✅ **ELIMINATED** | Removed with PATCHES 3,4; fwd_arr walk replaces scan-range |
 | B9  | Ref_table fwd rewriting | ✅ **DONE** | Verified `rewrite_heap_slots` replaces manual loop |
 | B11 | Full GC wrapper | — Keep as-is | 46 lines, orchestrates major GC |

@@ -53,6 +53,7 @@
 
 /* --- Patched externs from GC_Gen_Impl.c --- */
 #include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
+#include "profiling_counters.h"
 extern size_t queue_size_sz;
 extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
@@ -80,16 +81,22 @@ static uint64_t   bytes_promoted_since_major = 0;
 static int        in_full_gc = 0;  /* re-entrancy guard */
 
 /* Fast-path tracking: when only non-pointer objects (tag >= no_scan_tag) are
- * allocated in the minor heap, we can skip translate_minor_fields,
- * find_infix_parents, synthesize_infix_forwarding, and the field-rewrite
- * pass since no object fields contain heap pointers. */
+ * allocated in the minor heap, we can skip find_infix_parents,
+ * synthesize_infix_forwarding, and the field-rewrite pass since no object
+ * fields contain heap pointers. */
 static int        minor_has_pointer_objects = 0;
+
+/* minor_base_addr is defined in the extracted GC_Gen_Base module.
+ * We set it at runtime to the actual minor heap buffer address so that
+ * the verified to_minor_offset_u64 can translate absolute→offset inline. */
+extern uint64_t minor_base_addr;
 
 /* --- Heap initialization --- */
 
 static void ensure_heap(void) {
     if (heap_initialized) return;
     heap_initialized = 1;
+    atexit(gc_print_profile);
 
     /* --- Major heap --- */
     size_t major_words = 32 * 1024 * 1024;  /* 256 MB / 8 = 32M words */
@@ -158,6 +165,10 @@ static void ensure_heap(void) {
     vergc_minor_bump_ref = bump_ref;
     vergc_minor_base     = minor_data;
     vergc_minor_size     = (uint64_t)minor_sz;
+
+    /* Set minor_base_addr so the verified to_minor_offset_u64 can
+     * translate absolute minor addresses to offsets inline. */
+    minor_base_addr = (uint64_t)(uintptr_t)minor_data;
 
     /* --- Forwarding array --- */
     gc_fwd_arr = (uint64_t *)calloc((size_t)queue_size_sz, sizeof(uint64_t));
@@ -247,21 +258,18 @@ static void do_full_gc(void);       /* forward decl */
  * promotion will partially fail.  The caller must handle this. */
 static int do_minor_gc_core(void) {
 
+    PROF_INC(minor_gc_count);
+    PROF_START(minor_gc_total);
+
     /* 1. Collect roots */
+    PROF_START(root_scan);
     root_count = 0;
     caml_do_roots(scan_minor_root, 1);
 
-    /* 2. Translate inter-generational pointers (ref_table entries). */
-    {
-        struct caml_ref_table *tbl = Caml_state->_ref_table;
-        value **r;
-        for (r = tbl->base; r < tbl->ptr; r++) {
-            value v = **r;
-            if (Is_block(v) && is_minor_absolute(v)) {
-                **r = (value)(uintptr_t)abs_to_minor_offset(v);
-            }
-        }
-    }
+    /* 2. Inter-generational pointers (ref_table entries) are absolute
+     * addresses.  The verified to_minor_offset_u64 handles translation
+     * inline during cheney_promote_phase and update_one_object, so no
+     * pre-translation is needed. */
 
     /* 3. Also add ref_table entries as roots */
     {
@@ -270,76 +278,81 @@ static int do_minor_gc_core(void) {
         for (r = tbl->base; r < tbl->ptr; r++) {
             value v = (value)(uintptr_t)(**r);
             uint64_t v64 = (uint64_t)(uintptr_t)v;
-            if (v64 >= 8 && v64 < minor_heap_size_u64 && v64 % 8 == 0) {
+            /* ref_table values are absolute addresses; translate to offset */
+            if (is_minor_absolute((value)v64)) {
+                uint64_t off = v64 - (uint64_t)(uintptr_t)minor_base;
                 if (root_count >= MAX_ROOTS)
                     caml_fatal_error("verified gen GC: root overflow (ref_table)");
-                root_values[root_count] = v64;
+                root_values[root_count] = off;
                 root_locs[root_count] = NULL;
                 root_count++;
             }
         }
     }
+    PROF_END(root_scan);
 
     /* 4. Zero forwarding array */
+    PROF_START(fwd_arr_zero);
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
+    PROF_END(fwd_arr_zero);
 
-    /* 4.1. Infix closure fixup: find closures with embedded infix headers
-     * and add their parent addresses as additional roots for Cheney. */
+    /* 4.1. Infix closure fixup */
+    PROF_START(infix_find);
     if (minor_has_pointer_objects) {
         size_t infix_parents_added = find_infix_parents(
             gc_gen_heap.minor, root_values, root_count, MAX_ROOTS);
         root_count += infix_parents_added;
-        /* root_locs for infix parents are unused (NULL) — fill them */
         for (size_t k = root_count - infix_parents_added; k < root_count; k++)
             root_locs[k] = NULL;
     }
+    PROF_END(infix_find);
 
-    /* 4.5. Translate minor heap fields: absolute → offset.
-     * Skip when all minor objects are non-pointer (tag >= no_scan_tag). */
-    if (minor_has_pointer_objects)
-        translate_minor_fields(gc_gen_heap.minor,
-                               (uint64_t)(uintptr_t)minor_base);
-
-    /* 4.6. We will update promoted objects individually via fwd_arr walk,
-     * and old inter-gen pointers via ref_table (step 5.5).  No need for
-     * update_all_objects' full-heap scan. */
+    /* 4.5. translate_minor_fields is no longer needed — the verified
+     * to_minor_offset_u64 handles absolute→offset translation inline
+     * in cheney_promote_phase and update_one_object. */
+    PROF_START(translate);
+    PROF_END(translate);
 
     /* 5. Phased minor collection */
 
     /* 5a. Cheney BFS: promote reachable minor objects to major heap */
+    PROF_START(cheney);
     cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
                          gc_gen_heap.fp_ref, gc_fwd_arr, gc_queue,
                          root_values, (size_t)root_count);
+    PROF_END(cheney);
 
-    /* 5b. Infix forwarding fixup — only needed for closure objects */
+    /* 5b. Infix forwarding fixup */
+    PROF_START(infix_synth);
     if (minor_has_pointer_objects)
         synthesize_infix_forwarding(gc_gen_heap.minor, gc_fwd_arr);
+    PROF_END(infix_synth);
 
-    /* 5c. Rewrite fields of PROMOTED objects only.
-     * Walk fwd_arr: any non-zero entry maps minor offset → major address.
-     * For each promoted object, read its header to get wosize, then call
-     * update_one_object to replace minor offsets in its fields.
-     * Skip when no pointer-bearing objects were allocated (tag >= no_scan_tag
-     * means no fields contain pointers). */
+    /* 5c. Rewrite fields of PROMOTED objects only. */
+    PROF_START(update_fields);
     if (minor_has_pointer_objects) {
         size_t fwd_slots = (size_t)(minor_heap_size_u64 / 8);
         for (size_t i = 0; i < fwd_slots; i++) {
             uint64_t major_addr = gc_fwd_arr[i];
             if (major_addr == 0) continue;
-            /* major_addr is the object address (first field).  Header is at major_addr - 8. */
+            PROF_INC(objects_promoted);
             uint64_t hdr = *(uint64_t*)(uintptr_t)(major_addr - 8);
             uint64_t wosize = hdr >> 10;
             uint64_t tag = hdr & 0xFF;
             if (wosize > 0 && tag < 251) {
+                PROF_ADD(fields_updated, wosize);
                 update_one_object(gc_gen_heap.major, gc_fwd_arr, major_addr, wosize);
             }
         }
     }
+    PROF_END(update_fields);
 
     /* 5d. Rewrite root array */
+    PROF_START(rewrite_roots);
     rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
+    PROF_END(rewrite_roots);
 
-    /* 5d.1 Count failed promotions (roots still containing minor offsets) */
+    /* 5d.1 Count failed promotions */
     size_t failed = 0;
     {
         uint64_t minor_limit = minor_heap_size_u64;
@@ -351,10 +364,13 @@ static int do_minor_gc_core(void) {
     }
 
     /* 5f. Reset minor heap */
+    PROF_START(minor_reset);
     minor_heap_reset(gc_gen_heap.minor);
-    minor_has_pointer_objects = 0;  /* reset for next cycle */
+    minor_has_pointer_objects = 0;
+    PROF_END(minor_reset);
 
     /* 5.5. Ref_table-based pointer rewriting */
+    PROF_START(ref_table);
     {
         struct caml_ref_table *tbl = Caml_state->_ref_table;
         size_t n_slots = (size_t)(tbl->ptr - tbl->base);
@@ -374,18 +390,10 @@ static int do_minor_gc_core(void) {
             free(slot_addrs);
         }
     }
+    PROF_END(ref_table);
 
-    /* 6. Write back rewritten roots to OCaml locations.
-     *
-     * After rewrite_roots_impl, root_values[i] contains either:
-     *  - A major heap absolute address (promoted object) — write back
-     *  - A non-heap absolute address (not in minor range) — write back
-     *  - A minor heap OFFSET (failed promotion, fwd_val was 0) — INVALID
-     *  - 0 — skip (non-block root)
-     *
-     * Minor offsets must NOT be written back as they are no longer valid
-     * (minor heap has been reset).  Replace with Val_unit so the next GC
-     * cycle's Is_block() check skips them safely. */
+    /* 6. Write back rewritten roots */
+    PROF_START(writeback);
     {
         uint64_t minor_limit = minor_heap_size_u64;
         size_t i;
@@ -401,10 +409,12 @@ static int do_minor_gc_core(void) {
             }
         }
     }
+    PROF_END(writeback);
 
     /* 7. Clear ref_table */
     Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 
+    PROF_END(minor_gc_total);
     return (failed > 0) ? 1 : 0;
 }
 
@@ -450,6 +460,8 @@ static int full_gc_count = 0;
 /* Run major mark-and-sweep only (no minor collection).
  * Assumes minor heap is empty (already collected). */
 static void do_major_gc_only(void) {
+    PROF_INC(major_gc_count);
+    PROF_START(major_gc);
     Caml_state->_stat_major_collections++;
     full_gc_count++;
 
@@ -491,6 +503,7 @@ static void do_major_gc_only(void) {
     bytes_promoted_since_major = 0;
 
     free(gray_storage);
+    PROF_END(major_gc);
 }
 
 static void do_full_gc(void) {
@@ -520,28 +533,37 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
         }
     }
 
+    PROF_START(minor_alloc);
     uint64_t result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
+    PROF_END(minor_alloc);
 
     if (result == 0) {
-        /* gen_alloc failed — collect and retry. */
         do_minor_gc();
+        PROF_START(minor_alloc);
         result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
+        PROF_END(minor_alloc);
     }
 
     if (result == 0) {
-        /* Major heap also full — full GC and retry */
         do_full_gc();
+        PROF_START(minor_alloc);
         result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
+        PROF_END(minor_alloc);
     }
 
     if (result == 0) {
         caml_fatal_error("verified gen GC: out of memory after collection");
-        return NULL;  /* unreachable */
+        return NULL;
     }
 
     /* Track if any pointer-bearing objects are in the minor heap */
-    if (result < minor_heap_size_u64 && tag < 251)
-        minor_has_pointer_objects = 1;
+    if (result < minor_heap_size_u64) {
+        PROF_INC(minor_alloc_count);
+        if (tag < 251)
+            minor_has_pointer_objects = 1;
+    } else {
+        PROF_INC(major_alloc_count);
+    }
 
     /* gen_alloc returns the object address (first field = header + 8).
      * OCaml's Alloc_small_aux expects an HP (header pointer).
