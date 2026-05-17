@@ -159,12 +159,17 @@ val generational_gc_isomorphism
        forall (v: U64.t). Seq.mem v live_set ==> minor_wosize gs.gs_minor v > 0) /\
       // Major GC preconditions
       (let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+       well_formed_heap mc.mc_major /\
        Mark.stack_props mc.mc_major major_stack /\
        Mark.root_props mc.mc_major major_roots /\
        Sweep.fp_in_heap major_fp mc.mc_major /\
        Mark.no_black_objects mc.mc_major /\
        Mark.no_pointer_to_blue mc.mc_major /\
-       (forall (r: obj_addr). Seq.mem r major_roots <==> Seq.mem r major_stack)) /\
+       (forall (r: obj_addr). Seq.mem r major_roots <==> Seq.mem r major_stack) /\
+       // Graph well-formedness of mc_major (needed for mark/sweep composition)
+       (let g_mc = create_graph mc.mc_major in
+        let mc_roots = HeapGraph.coerce_to_vertex_list major_roots in
+        graph_wf g_mc /\ is_vertex_set mc_roots /\ subset_vertices mc_roots g_mc.vertices)) /\
       // Root correspondence
       (forall (r: obj_addr). Seq.mem r major_roots <==>
         Seq.mem (MajorV r) combined_roots \/ 

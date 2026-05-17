@@ -67,12 +67,17 @@ let standard_gc_preconditions
   (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
    forall (v: U64.t). Seq.mem v live_set ==> minor_wosize gs.gs_minor v > 0) /\
   (let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+   well_formed_heap mc.mc_major /\
    Mark.stack_props mc.mc_major major_stack /\
    Mark.root_props mc.mc_major major_roots /\
    Sweep.fp_in_heap major_fp mc.mc_major /\
    Mark.no_black_objects mc.mc_major /\
    Mark.no_pointer_to_blue mc.mc_major /\
-   (forall (r: obj_addr). Seq.mem r major_roots <==> Seq.mem r major_stack))
+   (forall (r: obj_addr). Seq.mem r major_roots <==> Seq.mem r major_stack) /\
+   // Graph well-formedness of mc_major (needed for mark/sweep composition)
+   (let g_mc = create_graph mc.mc_major in
+    let mc_roots = HeapGraph.coerce_to_vertex_list major_roots in
+    graph_wf g_mc /\ is_vertex_set mc_roots /\ subset_vertices mc_roots g_mc.vertices))
 
 /// ---------------------------------------------------------------------------
 /// Property (A): Injectivity
@@ -125,6 +130,82 @@ let property_b_image
     (let w = fwd_morphism fwd v in
      U64.v w >= 0 /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
      Seq.mem (w <: hp_addr) g_final.vertices)
+
+/// Standalone proof of Property (B).
+/// Uses the mark/sweep composition: morphism_image_preservation gives
+/// reachability in g_mc, reachable_set_correct converts to DFS membership,
+/// mark_black_iff_reachable gives is_black, black_survives_sweep gives survival.
+#push-options "--z3rlimit 50 --split_queries always"
+let prove_property_b
+  (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_roots: seq obj_addr) (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      standard_gc_preconditions gs roots fp major_stack major_roots major_fp /\
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let cg = pre_gc_graph ms major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let mc = minor_collect_spec ms major fp roots in
+       let g_mc = create_graph mc.mc_major in
+       // morphism_image_preservation
+       (forall (v: combined_vertex).
+         combined_reachable cg combined_roots v ==>
+         (let w = fwd_morphism prom_res.fwd_map v in
+          U64.v w >= U64.v mword /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+          mem_graph_vertex g_mc (w <: obj_addr) /\
+          (exists (r: obj_addr). Seq.mem r major_roots /\
+                                 mem_graph_vertex g_mc r /\
+                                 reachable g_mc r (w <: obj_addr))))))
+    (ensures
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let fwd = (promote_all_spec ms major fp (live_set_of ms major roots)).fwd_map in
+       let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+       property_b_image ms major fwd combined_roots h_final))
+  = let ms = gs.gs_minor in
+    let major = gs.gs_major in
+    let live_set = live_set_of ms major roots in
+    let prom_res = promote_all_spec ms major fp live_set in
+    let fwd = prom_res.fwd_map in
+    let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+    let cg = pre_gc_graph ms major in
+    let g_final = create_graph h_final in
+    let mc = minor_collect_spec ms major fp roots in
+    let h_mc = mc.mc_major in
+    let g_mc = create_graph h_mc in
+    let mc_roots_v = HeapGraph.coerce_to_vertex_list major_roots in
+    let aux_image (v: combined_vertex) : Lemma
+      (requires combined_reachable cg combined_roots v)
+      (ensures
+        (let w = fwd_morphism fwd v in
+         U64.v w >= 0 /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+         Seq.mem (w <: hp_addr) g_final.vertices))
+    = let w : U64.t = fwd_morphism fwd v in
+      let w_oa : obj_addr = w in
+      assert (mem_graph_vertex g_mc w_oa);
+      // Eliminate the existential root witness from morphism_image_preservation
+      let elim_root (r: obj_addr) : Lemma
+        (requires Seq.mem r major_roots /\ mem_graph_vertex g_mc r /\ reachable g_mc r w_oa)
+        (ensures Seq.mem w_oa (DFS.reachable_set g_mc mc_roots_v))
+      = HeapGraph.coerce_mem_lemma major_roots r;
+        DFS.reachable_set_correct g_mc mc_roots_v
+      in
+      Classical.exists_elim
+        (Seq.mem w_oa (DFS.reachable_set g_mc mc_roots_v))
+        #obj_addr
+        #(fun r -> Seq.mem r major_roots /\ mem_graph_vertex g_mc r /\ reachable g_mc r w_oa)
+        ()
+        (fun (r: obj_addr{Seq.mem r major_roots /\ mem_graph_vertex g_mc r /\ reachable g_mc r w_oa}) ->
+          elim_root r);
+      MSFrame.mark_black_iff_reachable h_mc major_stack major_roots major_fp w_oa;
+      MSFrame.black_survives_sweep h_mc major_stack major_roots major_fp w_oa;
+      ()
+    in
+    Classical.forall_intro (Classical.move_requires aux_image)
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Property (C): Surjectivity on reachable
@@ -360,11 +441,8 @@ let generational_gc_isomorphism
         ()
     in
     Classical.forall_intro_2 (fun u -> Classical.move_requires (aux_inj u));
-    // Property (B): Image in post-GC — every reachable vertex maps to a post-GC vertex
-    // Proof sketch: morphism_image_preservation gives reachable in g_mc,
-    // mark_black_iff_reachable converts to is_black, black_survives_sweep gives survival.
-    // Requires additional well-formedness of mc_major (graph_wf, is_vertex_set roots).
-    assume (property_b_image ms major fwd combined_roots h_final);
+    // Property (B): Image in post-GC
+    prove_property_b gs roots fp combined_roots major_roots major_stack major_fp;
     // Property (C): Surjectivity
     // TODO: prove via image decomposition (old major ∪ promoted minor)
     assume (property_c_surjectivity ms major fwd combined_roots h_final major_roots);
