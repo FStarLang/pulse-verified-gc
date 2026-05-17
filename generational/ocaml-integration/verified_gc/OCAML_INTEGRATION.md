@@ -661,8 +661,9 @@ Per minor alloc                      30 ns
 Per minor GC                       1.34 ms
 ```
 
-The malloc/free in step 5.5 (ref\_table) is **unmeasurably small** —
-0.2ms total across 1635 GC cycles = ~120ns per cycle.  Not a bottleneck.
+The ref\_table rewriting (step 5.5) uses a zero-copy cast on LP64 —
+no allocation overhead.  The 0.2ms total is dominated by the verified
+`rewrite_heap_slots` function itself, not any bridge overhead.
 
 ---
 
@@ -693,6 +694,39 @@ void krmlinit_globals(void) {
 
 **Must be called after setting `zero_addr`, `heap_size_u64`, and
 `minor_heap_size_u64`** — see `ensure_heap()` line 151.
+
+---
+
+## Verification Boundary
+
+Each step of the minor GC is classified by whether it runs verified
+(machine-checked F\*/Pulse) code or unverified bridge logic:
+
+| Step | Function | Verified? | Notes |
+|------|----------|:---------:|-------|
+| 1 | `caml_do_roots` → `scan_minor_root` | ❌ bridge | OCaml root iteration + address translation |
+| 3 | ref\_table → root\_values | ❌ bridge | Translate ref\_table entries to offsets |
+| 4 | `memset(gc_fwd_arr, 0, …)` | ❌ bridge | Array zeroing (could use verified fill) |
+| 4.1 | `find_infix_parents()` | ✅ | Scans minor heap for infix closure parents |
+| 5a | `cheney_promote_phase()` | ✅ | BFS copy of reachable minor objects to major |
+| 5b | `synthesize_infix_forwarding()` | ✅ | Derive forwarding entries for infix sub-objects |
+| 5c outer | iterate `fwd_arr` slots | ❌ bridge | Selects promoted objects (performance optimization) |
+| 5c inner | `update_one_object()` | ✅ | Rewrites fields of one promoted object |
+| 5d | `rewrite_roots_impl()` | ✅ | Rewrites root array using fwd\_arr |
+| 5d.1 | OOM failure check | ❌ bridge | Policy: abort if any roots unpromoted |
+| 5f | `minor_heap_reset()` | ✅ | Resets bump pointer to 0 |
+| 5.5 | `rewrite_heap_slots()` | ✅ | Rewrites major fields from ref\_table |
+| 6 | root writeback to OCaml | ❌ bridge | Writes major addrs back to OCaml stack/globals |
+| 7 | clear ref\_table | ❌ bridge | Reset `ref_table->ptr` |
+
+**The verified `update_all_objects`** does the same work as steps 5c
+(outer + inner) combined, but it walks the **entire major heap**
+linearly from `zero_addr` to end.  The bridge uses the selective
+`fwd_arr` iteration instead (O(promoted) vs O(heap\_size)) — a major
+performance win when the major heap is large and few objects are promoted.
+
+A verified `update_promoted_objects` that iterates `fwd_arr` would
+close this gap, making the 5c outer loop verified too.
 
 ---
 
