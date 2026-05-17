@@ -36,31 +36,12 @@ module Iso = GC.Gen.CombinedGraph.Isomorphism
 
 
 /// ---------------------------------------------------------------------------
-/// reachable_major_promotion_frame (placeholder — allocator lemma composition)
+/// NOTE: The allocator framing lemma (showing that promotion preserves
+/// existing non-blue major objects — membership, wosize, color, no_scan)
+/// is needed for the full end-to-end wrapper but lives in the Allocator
+/// infrastructure, not here. See GC.Spec.Allocator.Lemmas for the building
+/// blocks: fl_valid_preserved, chain_avoids, promote_preserves_objects, etc.
 /// ---------------------------------------------------------------------------
-
-let reachable_major_promotion_frame
-  (gs: gen_state) (roots: seq U64.t) (fp: U64.t) (src: obj_addr)
-  : Lemma
-    (requires
-      gen_wf gs /\
-      well_formed_heap gs.gs_major /\
-      AllocLemmas.fl_valid gs.gs_major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates gs.gs_major fp (heap_size / U64.v mword) /\
-      allocated_objects_avoid_chain gs.gs_major fp /\
-      no_scan_invariant gs.gs_major /\
-      Seq.mem src (objects zero_addr gs.gs_major) /\
-      ~(is_blue src gs.gs_major) /\
-      ~(is_no_scan src gs.gs_major))
-    (ensures
-      (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
-       let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
-       Seq.mem src (objects zero_addr prom_res.major_final) /\
-       wosize_of_object src prom_res.major_final == wosize_of_object src gs.gs_major /\
-       is_blue src prom_res.major_final = false /\
-       is_no_scan src prom_res.major_final = false /\
-       AllocLemmas.chain_avoids gs.gs_major fp src (heap_size / U64.v mword) = true))
-  = admit ()   // Requires allocator framing lemma composition — TODO
 
 
 /// ---------------------------------------------------------------------------
