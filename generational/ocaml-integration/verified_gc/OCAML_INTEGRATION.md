@@ -478,6 +478,17 @@ This ensures `cheney_promote_phase` will promote the parent closure
 (which transitively covers all its infix sub-objects, since they're
 part of the same allocation block).
 
+**Conservative over-approximation:** This adds ALL infix-bearing closures
+in the minor heap as roots, not just those reachable from the program's
+actual roots.  This means some dead closures may be promoted unnecessarily.
+The alternative — only adding parents whose infix sub-objects are actually
+reachable — creates a chicken-and-egg problem: we need reachability info to
+know which parents matter, but we need parents as roots to compute
+reachability (Cheney BFS).  A two-pass approach (BFS to discover reachable
+infix addresses, add their parents, BFS again) would be correct but doubles
+the promotion cost.  In practice, multi-entry-point closures with infix
+sub-objects are rare, so the over-promotion cost is negligible.
+
 The added roots have `root_locs[k] = NULL` — they don't need
 writeback because they're synthetic (the real roots pointing to the
 infix sub-objects will be rewritten via `fwd_arr` in step 5d).
