@@ -420,6 +420,116 @@ fwd_arr[minor_offset / 8] = major_address_of_promoted_copy
 Size: `minor_heap_size / 8` entries (one per possible word-aligned slot).
 Pre-allocated at init time.
 
+### Infix Pointers (Closure Sub-Objects)
+
+#### The Problem
+
+OCaml closures (tag = 247 = `Closure_tag`) can contain **infix headers**
+— sub-objects embedded *inside* the parent closure's body.  An infix
+header (tag = 249 = `Infix_tag`) marks a point within the closure that
+can be pointed to directly, as if it were a standalone object:
+
+```
+Closure object (tag=247, wosize=6):
+┌────────────────────────────────────────────────────────────────┐
+│ hdr₀ │ code₀ │ env₀ │ infix_hdr₁ │ code₁ │ env₁ │ env₂     │
+└────────────────────────────────────────────────────────────────┘
+ ↑ offset 0             ↑ offset 24
+ obj_addr               infix_val_addr (pointed to directly!)
+```
+
+A root or field might point to `infix_val_addr` (offset 24) rather
+than to the parent object at offset 0.  This is how OCaml represents
+mutually-recursive closures and partial applications that share an
+environment.
+
+The infix header's `wosize` field encodes the **byte offset from the
+infix val to the parent object's val** (i.e., `Infix_offset_val`).
+
+#### Why This Is a Problem for Copying GC
+
+`cheney_promote_phase` promotes objects by their header address.  If a
+root points to an infix sub-object, the BFS doesn't see the parent's
+header — it sees the infix header, which isn't a standalone allocatable
+object.  We need to:
+
+1. **Find the parent** — given an infix root, locate the enclosing
+   closure so it gets promoted as a whole.
+2. **Derive the infix forwarding** — after the parent is promoted to
+   a new major address, compute where the infix sub-object landed in
+   the copy.
+
+#### Step 4.1: `find_infix_parents()` (Verified)
+
+Scans the entire minor heap linearly looking for `Closure_tag` objects.
+For each closure, checks whether any of its fields has `Infix_tag`.
+If so, adds the **parent closure's object address** to the root array:
+
+```
+Algorithm:
+  for each object in minor heap (linear scan):
+    if tag == 247 (Closure_tag):
+      for each field:
+        if field looks like an infix header (tag == 249):
+          roots[count++] = parent_obj_addr
+```
+
+This ensures `cheney_promote_phase` will promote the parent closure
+(which transitively covers all its infix sub-objects, since they're
+part of the same allocation block).
+
+The added roots have `root_locs[k] = NULL` — they don't need
+writeback because they're synthetic (the real roots pointing to the
+infix sub-objects will be rewritten via `fwd_arr` in step 5d).
+
+#### Step 5b: `synthesize_infix_forwarding()` (Verified)
+
+After `cheney_promote_phase` has set `fwd_arr[parent_offset/8]` to the
+parent's new major address, this function computes forwarding entries
+for each infix sub-object:
+
+```
+Algorithm:
+  for each object in minor heap:
+    if tag == 247 (Closure_tag):
+      parent_fwd = fwd_arr[obj_addr / 8]
+      if parent_fwd != 0 (i.e., parent was promoted):
+        for each field at offset j:
+          if field has tag == 249 (Infix_tag):
+            infix_val_off = field_off + 8   // val is one word past infix header
+            delta = infix_val_off - obj_addr
+            fwd_arr[infix_val_off / 8] = parent_fwd + delta
+```
+
+After this step, `fwd_arr` maps both regular objects AND infix
+sub-objects to their new major addresses.  `rewrite_roots_impl` (step
+5d) and `update_one_object` (step 5c) can then rewrite pointers to
+infix sub-objects using the same uniform `fwd_arr` lookup.
+
+#### Example
+
+```
+Minor heap before promotion:
+  offset 0:  [hdr: wz=6,tag=247] [code0] [env0] [infix_hdr: wz=3,tag=249] [code1] [env1] [env2]
+  offset 56: [hdr: wz=2,tag=0]   [field0] [field1]
+
+Root: points to offset 32 (infix val addr = infix_hdr + 8 = 24 + 8)
+
+Step 4.1: find_infix_parents adds offset 8 (parent obj addr) as a root
+Step 5a:  cheney promotes parent → fwd_arr[8/8] = 0x7f0000100008 (major addr)
+Step 5b:  synthesize: delta = 32 - 8 = 24
+          fwd_arr[32/8] = 0x7f0000100008 + 24 = 0x7f0000100020
+Step 5d:  rewrite_roots: root pointing to offset 32 → 0x7f0000100020 ✓
+```
+
+#### Performance Note
+
+Both `find_infix_parents` and `synthesize_infix_forwarding` do a linear
+scan of the minor heap.  The bridge skips them entirely when
+`minor_has_pointer_objects == 0` (i.e., only non-pointer objects like
+floats/strings were allocated).  In practice these take ~57ms each for
+binarytrees-14 (1.1% of GC time each).
+
 ---
 
 ## Major GC (Mark-and-Sweep)
