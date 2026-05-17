@@ -449,7 +449,36 @@ static void do_minor_gc(void) {
     bytes_promoted_since_major += bump_before;
 
     if (had_failures) {
+        /* Promotion failed: the major heap is full and some minor objects
+         * could not be promoted.  The unverified bridge (step 6 above)
+         * replaced those roots with Val_unit — a lossy fallback in this
+         * orchestration layer, NOT in the verified GC code.  Run a major
+         * GC to try to recover space; if that fails, abort cleanly. */
         do_major_gc_only();
+
+        /* Check if we freed any significant space */
+        uint64_t free_after = 0;
+        {
+            uint64_t fp2 = *gc_gen_heap.fp_ref;
+            while (fp2 != 0) {
+                uint64_t hdr = *(uint64_t *)((uintptr_t)fp2 - 8);
+                free_after += ((hdr >> 10) + 1) * 8;
+                fp2 = *(uint64_t *)((uintptr_t)fp2);
+            }
+        }
+        uint64_t major_size = heap_size_u64 - zero_addr;
+        if (free_after < major_size / 8) {
+            /* Less than 12.5% free after major GC — heap is genuinely too small */
+            fprintf(stderr,
+                "verified gen GC: major heap exhausted (%lu MB used of %lu MB)\n"
+                "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n"
+                "  Example: MIN_EXPANSION_WORDSIZE=%lu ./ocamlrun program.byte\n",
+                (unsigned long)((major_size - free_after) / 1048576),
+                (unsigned long)(major_size / 1048576),
+                (unsigned long)(major_size / 4),  /* double current in words */
+                (unsigned long)(major_size / 4));
+            caml_fatal_error("verified gen GC: out of memory (major heap too small)");
+        }
     }
 }
 
