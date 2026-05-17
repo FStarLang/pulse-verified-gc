@@ -144,10 +144,59 @@ private let edge_backward_mc_to_final
        Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_final.edges))
     (ensures
       mem_ce (u, v) (build_combined_graph gs.gs_minor gs.gs_major))
-  = // Chain: morphism image preservation → fu mc-reachable → fu black
-    //   → mark_sweep_preserves_successors → g_final edge = g_mc edge
-    //   → edge_backward_at_mc → combined edge
-    admit ()   // TODO: compose MSFrame.mark_sweep_preserves_successors
+  = // Unpack
+    let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+    let h_mc = mc.mc_major in
+    let h_mark = Mark.mark h_mc major_stack in
+    let h_sweep = fst (Sweep.sweep h_mark major_fp) in
+    let g_mc = create_graph h_mc in
+    let g_final = create_graph h_sweep in
+    let mc_roots_v = HeapGraph.coerce_to_vertex_list major_roots in
+    let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+    let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
+    let fu = Iso.fwd_morphism prom_res.fwd_map u in
+    let fv = Iso.fwd_morphism prom_res.fwd_map v in
+
+    // Step 1: From structural_preconditions, morphism image preservation gives
+    // fu reachable from major_roots in g_mc
+    assert (mem_graph_vertex g_mc (fu <: obj_addr));
+
+    // Step 2: reachable from root → in DFS.reachable_set
+    DFS.reachable_set_correct g_mc mc_roots_v;
+    // Bridge: existential root in major_roots → root in mc_roots_v
+    let bridge_reachable (r: obj_addr) : Lemma
+      (requires
+        Seq.mem r major_roots /\
+        mem_graph_vertex g_mc r /\
+        reachable g_mc r (fu <: obj_addr))
+      (ensures Seq.mem (fu <: obj_addr) (DFS.reachable_set g_mc mc_roots_v))
+    = HeapGraph.coerce_mem_lemma major_roots r
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires bridge_reachable);
+    assert (Seq.mem (fu <: obj_addr) (DFS.reachable_set g_mc mc_roots_v));
+
+    // Step 3: mark_black_iff_reachable → fu black after mark
+    MSFrame.mark_black_iff_reachable h_mc major_stack major_roots major_fp (fu <: obj_addr);
+    assert (is_black (fu <: obj_addr) h_mark);
+
+    // Step 4: black_survives_sweep → fu in g_final.vertices
+    MSFrame.black_survives_sweep h_mc major_stack major_roots major_fp (fu <: obj_addr);
+    assert (Seq.mem (fu <: obj_addr) g_final.vertices);
+
+    // Step 5: mark_sweep_preserves_successors → successors preserved
+    MSFrame.mark_sweep_preserves_successors h_mc major_stack major_roots major_fp (fu <: obj_addr);
+    assert (successors g_mc (fu <: obj_addr) == successors g_final (fu <: obj_addr));
+
+    // Step 6: g_final edge → fv ∈ successors g_final fu → fv ∈ successors g_mc fu
+    // → (fu, fv) edge in g_mc
+    edge_mem_successors g_final (fu <: hp_addr) (fv <: hp_addr);
+    assert (Seq.mem (fv <: hp_addr) (successors g_final (fu <: hp_addr)));
+    assert (Seq.mem (fv <: hp_addr) (successors g_mc (fu <: hp_addr)));
+    successors_mem_edge g_mc (fu <: hp_addr) (fv <: hp_addr);
+    assert (Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges);
+
+    // Step 7: edge_backward_at_mc → combined edge
+    ()
 
 
 /// ---------------------------------------------------------------------------
@@ -200,25 +249,21 @@ let isomorphism_from_gc
     );
 
     // Step 3: Derive edge backward at g_final from edge backward at mc
-    let derive_edge_backward (u v: combined_vertex) : Lemma
-      (requires
-        combined_reachable (build_combined_graph gs.gs_minor gs.gs_major) combined_roots u /\
-        combined_reachable (build_combined_graph gs.gs_minor gs.gs_major) combined_roots v /\
-        (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
-         let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
-         let fwd = prom_res.fwd_map in
-         let fu = Iso.fwd_morphism fwd u in
-         let fv = Iso.fwd_morphism fwd v in
-         U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
-         U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
-         Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_final.edges))
-      (ensures
-        mem_ce (u, v) (build_combined_graph gs.gs_minor gs.gs_major))
-    = edge_backward_mc_to_final gs roots fp combined_roots major_roots major_stack major_fp u v
-    in
-    FStar.Classical.forall_intro_2 (
-      fun u v -> FStar.Classical.move_requires (derive_edge_backward u) v
-    );
+    // We introduce the universally quantified fact by calling the admitted helper
+    // for each pair, using introduce/forall/with syntax.
+    introduce forall (u: combined_vertex) (v: combined_vertex).
+      combined_reachable (build_combined_graph gs.gs_minor gs.gs_major) combined_roots u /\
+      combined_reachable (build_combined_graph gs.gs_minor gs.gs_major) combined_roots v /\
+      (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+       let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
+       let fu = Iso.fwd_morphism prom_res.fwd_map u in
+       let fv = Iso.fwd_morphism prom_res.fwd_map v in
+       U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+       U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+       Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_final.edges)
+      ==> mem_ce (u, v) (build_combined_graph gs.gs_minor gs.gs_major)
+    with introduce _ ==> _
+    with _. edge_backward_mc_to_final gs roots fp combined_roots major_roots major_stack major_fp u v;
 
     // Step 4: Now all 3 preconditions of the main theorem are satisfied.
     // Call it to get the isomorphism.

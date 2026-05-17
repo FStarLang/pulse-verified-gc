@@ -200,8 +200,11 @@ let edge_backward_at_mc
     forall (u v: combined_vertex).
       combined_reachable cg combined_roots u /\
       combined_reachable cg combined_roots v /\
-      Seq.mem ((Iso.fwd_morphism prom_res.fwd_map u <: hp_addr),
-               (Iso.fwd_morphism prom_res.fwd_map v <: hp_addr)) g_mc.edges ==>
+      (let fu = Iso.fwd_morphism prom_res.fwd_map u in
+       let fv = Iso.fwd_morphism prom_res.fwd_map v in
+       U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+       U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+       Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges) ==>
       mem_ce (u, v) cg
 
 
