@@ -1161,58 +1161,34 @@ Replace the entire 4.1–5f sequence with a **single call** to the verified
 
 ### Step-by-Step Implementation Plan
 
-#### Phase A: Replace `update_all_objects` with `update_promoted_objects`
+#### Phase A: Verified minor\_collect with zero assume\_ ✅ DONE
 
-This is the foundation — without this, `minor_collect` requires
-`heap_objects_dense` which doesn't hold for OCaml's free-list heap.
+**Resolution:** `minor_collect` uses `update_all_objects` (which walks all
+major objects), matching the spec's `update_major_pointers` directly.
 
-**A.1. Establish `valid_fwd_entries` from `cheney_promote_phase` postcondition**
+The original plan to replace `update_all_objects` with the more efficient
+`update_promoted_objects` was found to be **unsound** in the general case:
+the equivalence `update_promoted_iter == update_major_pointers` does NOT
+hold when there are remembered-set entries (pre-existing major objects with
+fields pointing to forwarded minor objects).
 
-`valid_fwd_entries farr` requires every non-zero entry to be a valid
-major address (≥ 8, aligned, ≤ heap_size).  This follows from:
-- Every non-zero fwd_arr[i] was written by `promote_one` which
-  allocates from the major free-list (returning an `obj_addr`)
-- `obj_addr` is defined as `hp_addr` with value ≥ 8
-- Allocated addresses are within `[zero_addr, heap_size)`
+Specifically: if a major object M has a field pointing to minor object X,
+and X gets promoted (fwd(X) ≠ 0UL), then `update_major_pointers` rewrites
+M's field, but `update_promoted_objects` (which only visits fwd\_arr targets)
+does not.  The bridge's `rewrite_heap_slots` handles these slots separately.
 
-Proof approach: strengthen the `Sim.impl_matches_spec` invariant to include
-`valid_fwd_entries farr_i` as a loop invariant conjunct.  This should follow
-from the allocator's postcondition (`fl_valid` implies allocated addresses
-are valid heap addresses).
+**Current approach:** `minor_collect` calls `update_all_objects` (which
+produces `ms2 == update_major_pointers ms fwd`).  The bridge's
+`rewrite_heap_slots` is then a redundant-but-harmless pass for ref\_table
+entries (those were already rewritten by `update_all_objects`).
 
-**A.2. Prove the equivalence lemma**
-
-```fstar
-val update_promoted_equiv (ms: heap_state) (farr: seq U64.t) (fwd: forwarding_map)
-  : Lemma
-    (requires represents_fwd farr fwd /\
-             valid_fwd_entries farr /\
-             well_formed_heap_part1 ms /\
-             no_stale_minor_ptrs ms fwd)
-    (ensures update_promoted_iter ms farr fwd 0 == update_major_pointers ms fwd)
-```
-
-Where `no_stale_minor_ptrs ms fwd` asserts: for any major object NOT in
-`range(fwd)`, none of its pointer fields hold a minor offset that has a
-non-zero forwarding entry.  This holds because:
-- Pre-existing major objects can only acquire minor pointers via mutation
-- Mutations creating major→minor pointers are tracked by `ref_table`
-- `ref_table` entries are handled separately by `rewrite_heap_slots`
-- Therefore non-promoted objects don't have stale minor refs
-
-However, for the **initial implementation** we can take a simpler approach:
-prove that `update_promoted_iter` produces the same result as
-`update_major_pointers` by showing that `update_one_object` is a no-op
-on any object whose fields are all ≥ minor_heap_size or have fwd==0.
-
-**A.3. Swap in `update_promoted_objects` in `minor_collect`**
-
-Replace the `update_all_objects` call with `update_promoted_objects`,
-using the equivalence lemma to preserve the postcondition
-(`ms2 == update_major_pointers 'ms fwd`).
-
-This also removes `heap_objects_dense` from the precondition of
-`minor_collect` (it was only needed by `update_all_objects`).
+**Future optimization (requires spec split):** To use the more efficient
+`update_promoted_objects` (O(minor\_allocated) vs O(major\_heap)):
+1. Split `cheney_collect_spec` into `cheney_promote_and_update_promoted`
+   + `rewrite_remembered_slots`
+2. Change `minor_collect` postcondition to claim the intermediate state
+3. Have the bridge compose both operations to get the full collection result
+4. This correctly separates promoted-field updates from remembered-set updates
 
 #### Phase B: Infix-Aware BFS in `cheney_promote_phase`
 
@@ -1257,41 +1233,39 @@ cheney_forward_one minor cs addr =
 Once the BFS handles infix inline, these are dead code.  Remove their
 calls from `alloc_gen.c` and eventually from `GC.Gen.Impl.MinorHeap.fst`.
 
-#### Phase C: Unify Bridge with Single `minor_collect` Call
+#### Phase C: Unify Bridge with Single `minor_collect` Call ✅ DONE (fast path)
 
-After Phases A and B, the verified `minor_collect` does everything:
-- Cheney BFS (with infix handling) → `ok: bool`
-- `update_promoted_objects` → rewrite promoted fields
+After Phase A, the verified `minor_collect` does:
+- Cheney BFS promotion → `ok: bool`
+- `update_all_objects` → rewrite all major pointer fields
 - `rewrite_roots_impl` → rewrite roots
 - `minor_heap_reset` → reset bump pointer
 
-The bridge reduces to:
+The bridge's fast path (no infix) is now a single call:
 
 ```c
-/* 4. Zero forwarding array */
-memset(gc_fwd_arr, 0, fwd_array_size * sizeof(uint64_t));
-
-/* 5. Verified minor collection (single call replaces 4.1–5f) */
+/* 5. Verified minor collection (single call) */
 bool ok = minor_collect(gc_gen_heap, root_values, root_count, gc_fwd_arr, gc_queue);
 if (!ok) caml_fatal_error("verified gen GC: out of memory");
 
-/* 5.5 Ref_table pointer rewriting (still separate — ref_table is OCaml-specific) */
+/* 5.5 Ref_table pointer rewriting (redundant but harmless — update_all_objects
+ * already rewrote these slots, but the bridge doesn't know that) */
 rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, ref_table_base, n_slots);
 ```
 
-Step 5.5 (`rewrite_heap_slots`) remains separate because:
-- `ref_table` is an OCaml-specific data structure
-- Its entries are absolute addresses needing translation
-- It could be integrated into `minor_collect` later by passing the ref_table
-  as an additional input, but this is not a priority
+Step 5.5 (`rewrite_heap_slots`) is now **redundant** since `update_all_objects`
+already walks all major objects.  It remains for safety/defense-in-depth.
+When the `update_promoted_objects` optimization (future Phase A') is done
+with a proper spec split, `rewrite_heap_slots` will become essential again.
 
 #### Phase Ordering and Risk
 
-| Phase | Complexity | Risk | Benefit |
-|-------|-----------|------|---------|
-| A (update swap) | Medium | Low | Removes `heap_objects_dense` requirement |
-| B (infix BFS) | High | Medium | Eliminates two O(minor) scans |
-| C (single call) | Low | Low | Eliminates bridge orchestration |
+| Phase | Complexity | Risk | Status |
+|-------|-----------|------|--------|
+| A (assume removal) | Low | Low | ✅ DONE — reverted to `update_all_objects` |
+| B (infix BFS) | High | Medium | Pending — eliminates two O(minor) scans |
+| C (single call) | Low | Low | ✅ DONE (fast path) |
+| A' (update optimization) | Medium | Medium | Future — requires spec split |
 
 **Recommended order: A → C (without infix) → B**
 
