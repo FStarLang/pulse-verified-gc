@@ -79,6 +79,70 @@ let reachable_major_promotion_frame
 ///     → (x, w) edge in g_mc → w mc-reachable
 ///     → surjectivity_at_mc: w has pre-image
 
+/// Helper: given reach g_final r w, prove w ∈ DFS.reachable_set g_mc mc_roots_v
+/// by induction on the reach derivation.
+///
+/// At each step:
+///   - IH gives source is in mc reachable set
+///   - mark_black_iff_reachable → source is black after mark
+///   - mark_sweep_preserves_successors → edge preserved from g_mc
+///   - reachable_successor_closed → target also in mc reachable set
+private let rec final_reach_implies_mc_reachable
+  (h_mc: heap) (major_stack: seq obj_addr) (major_roots: seq obj_addr) (major_fp: U64.t)
+  (g_mc: graph_state) (g_final: graph_state) (mc_roots_v: vertex_set)
+  (r: vertex_id{mem_graph_vertex g_final r})
+  (w: vertex_id{mem_graph_vertex g_final w})
+  (p: reach g_final r w)
+  : Lemma
+    (requires
+      g_mc == create_graph h_mc /\
+      g_final == create_graph (fst (Sweep.sweep (Mark.mark h_mc major_stack) major_fp)) /\
+      mc_roots_v == HeapGraph.coerce_to_vertex_list major_roots /\
+      well_formed_heap h_mc /\
+      Mark.stack_props h_mc major_stack /\
+      Mark.root_props h_mc major_roots /\
+      Sweep.fp_in_heap major_fp h_mc /\
+      Mark.no_black_objects h_mc /\
+      Mark.no_pointer_to_blue h_mc /\
+      (forall (r: obj_addr). Seq.mem r major_roots <==> Seq.mem r major_stack) /\
+      graph_wf g_mc /\ is_vertex_set mc_roots_v /\ subset_vertices mc_roots_v g_mc.vertices /\
+      // Root is in mc reachable set
+      Seq.mem r (DFS.reachable_set g_mc mc_roots_v))
+    (ensures Seq.mem w (DFS.reachable_set g_mc mc_roots_v))
+    (decreases p)
+  = match p with
+    | ReachRefl _ -> ()
+    | ReachTrans _ y z p' ->
+      // IH: y is in mc reachable set
+      final_reach_implies_mc_reachable h_mc major_stack major_roots major_fp
+        g_mc g_final mc_roots_v r y p';
+      // y is a graph vertex of g_final = create_graph h_sweep
+      // Since vertices = coerce_to_vertex_list (objects zero_addr h_sweep),
+      // y ∈ coerce_to_vertex_list → U64.v y >= U64.v mword
+      let h_sweep = fst (Sweep.sweep (Mark.mark h_mc major_stack) major_fp) in
+      HeapGraph.coerce_mem_is_obj_addr (objects zero_addr h_sweep) y;
+      let y_obj : obj_addr = y in
+      // y is mc-reachable → y ∈ g_mc.vertices
+      // (reachable_set only contains graph vertices)
+      DFS.reachable_set_correct g_mc mc_roots_v;
+      assert (mem_graph_vertex g_mc y_obj);
+      // y is mc-reachable → y is black after mark
+      MSFrame.mark_black_iff_reachable h_mc major_stack major_roots major_fp y_obj;
+      // y black → y survives sweep
+      MSFrame.black_survives_sweep h_mc major_stack major_roots major_fp y_obj;
+      // mark_sweep_preserves_successors → edges preserved
+      MSFrame.mark_sweep_preserves_successors h_mc major_stack major_roots major_fp y_obj;
+      // (y, z) is an edge in g_final → z ∈ successors g_final y = successors g_mc y
+      edge_mem_successors g_final y z;
+      successors_mem_edge g_mc y z;
+      // z is also a vertex in g_final → z is an obj_addr
+      HeapGraph.coerce_mem_is_obj_addr (objects zero_addr h_sweep) z;
+      let z_obj : obj_addr = z in
+      // (y, z) edge in g_mc + graph_wf → z is a vertex of g_mc
+      assert (mem_graph_vertex g_mc z_obj);
+      // z ∈ g_mc edges → z ∈ mc reachable set (successor closure)
+      DFS.reachable_successor_closed g_mc mc_roots_v y_obj z_obj
+
 private let surjectivity_mc_to_final
   (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
   (combined_roots: seq combined_vertex)
@@ -101,11 +165,50 @@ private let surjectivity_mc_to_final
        exists (v: combined_vertex).
          combined_reachable cg combined_roots v /\
          Iso.fwd_morphism prom_res.fwd_map v == (w <: U64.t)))
-  = // Key insight: reachable in g_final from major_roots → reachable in g_mc
-    // This follows by induction on the reachability path using
-    // mark_sweep_preserves_successors at each step.
-    // Then surjectivity_at_mc gives the combined pre-image.
-    admit ()   // TODO: prove final_reachable_implies_mc_reachable
+  = let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+    let h_mc = mc.mc_major in
+    let h_mark = Mark.mark h_mc major_stack in
+    let h_sweep = fst (Sweep.sweep h_mark major_fp) in
+    let g_mc = create_graph h_mc in
+    let g_final = create_graph h_sweep in
+    let mc_roots_v = HeapGraph.coerce_to_vertex_list major_roots in
+
+    // First: need the root r to be in DFS.reachable_set g_mc
+    DFS.reachable_set_correct g_mc mc_roots_v;
+
+    // Helper: given a specific root r with the right refinements,
+    // prove w ∈ reachable_set g_mc mc_roots_v
+    let prove_w_mc_reachable (r: obj_addr)
+      : Lemma
+        (requires
+          Seq.mem r major_roots /\
+          mem_graph_vertex g_final r /\
+          reachable g_final r w)
+        (ensures Seq.mem w (DFS.reachable_set g_mc mc_roots_v))
+      = // Extract reach witness from reachable g_final r w
+        let p_witness : reach g_final r w =
+          FStar.IndefiniteDescription.indefinite_description_ghost
+            (reach g_final r w) (fun _ -> True)
+        in
+        // r ∈ major_roots → r ∈ mc_roots_v → r ∈ reachable_set g_mc
+        HeapGraph.coerce_mem_lemma major_roots r;
+        // Call recursive helper
+        final_reach_implies_mc_reachable h_mc major_stack major_roots major_fp
+          g_mc g_final mc_roots_v r w p_witness
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires prove_w_mc_reachable);
+
+    // Now we know: for all r, if r is a root with reachable g_final r w,
+    // then w ∈ reachable_set g_mc. From our precondition, such r exists.
+    assert (Seq.mem w (DFS.reachable_set g_mc mc_roots_v));
+
+    // w is a vertex of g_final → w is an obj_addr
+    HeapGraph.coerce_mem_is_obj_addr (objects zero_addr h_sweep) w;
+    let w_obj : obj_addr = w in
+
+    // w ∈ reachable_set g_mc + surjectivity_at_mc → pre-image
+    assert (mem_graph_vertex g_mc w_obj);
+    assert (surjectivity_at_mc gs roots fp combined_roots major_roots major_stack major_fp)
 
 
 /// ---------------------------------------------------------------------------
