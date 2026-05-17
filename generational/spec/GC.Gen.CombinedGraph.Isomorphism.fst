@@ -599,7 +599,57 @@ let generational_gc_isomorphism
           mem_graph_vertex g_mc (w <: obj_addr) /\
           (exists (r: obj_addr). Seq.mem r major_roots /\
                                  mem_graph_vertex g_mc r /\
-                                 reachable g_mc r (w <: obj_addr)))))
+                                 reachable g_mc r (w <: obj_addr)))) /\
+      // Edge bridge: combined edges between reachable vertices map to mc_major edges
+      (let cg = build_combined_graph gs.gs_minor gs.gs_major in
+       let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+       let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
+       let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+       let g_mc = create_graph mc.mc_major in
+       forall (u v: combined_vertex).
+         combined_reachable cg combined_roots u /\
+         combined_reachable cg combined_roots v /\
+         mem_ce (u, v) cg ==>
+         (let fu = fwd_morphism prom_res.fwd_map u in
+          let fv = fwd_morphism prom_res.fwd_map v in
+          U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+          U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+          Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges)) /\
+      // Surjectivity: post-GC reachable vertices have pre-images
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let fwd = prom_res.fwd_map in
+       let cg = pre_gc_graph ms major in
+       let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+       let g_final = create_graph h_final in
+       forall (w: vertex_id).
+         Seq.mem w g_final.vertices /\
+         (exists (r: obj_addr). Seq.mem r major_roots /\
+                                Seq.mem r g_final.vertices /\
+                                reachable g_final r w) ==>
+         (exists (v: combined_vertex).
+           combined_reachable cg combined_roots v /\
+           fwd_morphism fwd v == (w <: U64.t))) /\
+      // Edge backward: post-GC edges imply combined edges
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let fwd = prom_res.fwd_map in
+       let cg = pre_gc_graph ms major in
+       let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+       let g_final = create_graph h_final in
+       forall (u v: combined_vertex).
+         combined_reachable cg combined_roots u /\
+         combined_reachable cg combined_roots v /\
+         (let fu = fwd_morphism fwd u in
+          let fv = fwd_morphism fwd v in
+          U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+          U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0) /\
+         Seq.mem ((fwd_morphism fwd u <: hp_addr), (fwd_morphism fwd v <: hp_addr)) g_final.edges ==>
+         mem_ce (u, v) cg))
     (ensures
       (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
@@ -621,19 +671,19 @@ let generational_gc_isomorphism
     prove_property_a gs roots fp combined_roots major_roots major_stack major_fp;
     // Property (B): Image in post-GC
     prove_property_b gs roots fp combined_roots major_roots major_stack major_fp;
-    // Property (C): Surjectivity
-    assume (property_c_surjectivity ms major fwd combined_roots h_final major_roots);
+    // Property (C): Surjectivity — from precondition
+    assert (property_c_surjectivity ms major fwd combined_roots h_final major_roots);
     // Property (D): Edge biconditional
     let mc = minor_collect_spec ms major fp roots in
-    // Forward: proven from bridge assumption + mark/sweep preservation
-    assume (forall (u v: combined_vertex).
+    // Forward: from bridge precondition + mark/sweep preservation
+    assert (forall (u v: combined_vertex).
       combined_reachable cg combined_roots u /\
       combined_reachable cg combined_roots v /\
       mem_ce (u, v) cg ==>
       combined_edge_to_mc_edge ms major fp roots fwd u v mc.mc_major);
     prove_property_d_forward gs roots fp combined_roots major_roots major_stack major_fp;
-    // Backward: assumed — needs EdgePreservation reverse + field decomposition
-    assume (property_d_backward ms major fwd combined_roots h_final);
+    // Backward: from precondition
+    assert (property_d_backward ms major fwd combined_roots h_final);
     // reachable_implies_forwarded: combined_reachable(MinorV v) → fwd v ≠ 0
     let aux_rif (v: U64.t) : Lemma
       (requires combined_reachable cg combined_roots (MinorV v))

@@ -92,6 +92,32 @@ val classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
           (ensures classify_major_field ms major v == Some (MajorV v))
 
 /// ---------------------------------------------------------------------------
+/// Classification Inversion Lemmas
+/// ---------------------------------------------------------------------------
+
+/// Inversion: classify_minor_field == Some (MinorV x) implies v == x and v is minor
+val classify_minor_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires classify_minor_field ms major v == Some (MinorV x))
+          (ensures v == x /\ is_minor_addr v /\ Seq.mem v (minor_objects ms))
+
+/// Inversion: classify_minor_field == Some (MajorV x) implies v == x and v is major
+val classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires classify_minor_field ms major v == Some (MajorV x))
+          (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
+                   ~(is_minor_addr v /\ Seq.mem v (minor_objects ms)))
+
+/// Inversion: classify_major_field == Some (MinorV x) implies v == x and v is minor
+val classify_major_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires classify_major_field ms major v == Some (MinorV x))
+          (ensures v == x /\ is_minor_pointer v /\ Seq.mem v (minor_objects ms))
+
+/// Inversion: classify_major_field == Some (MajorV x) implies v == x and v is major
+val classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires classify_major_field ms major v == Some (MajorV x))
+          (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
+                   ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
+
+/// ---------------------------------------------------------------------------
 /// Graph Construction
 /// ---------------------------------------------------------------------------
 

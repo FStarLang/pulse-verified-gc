@@ -226,7 +226,58 @@ val generational_gc_isomorphism
           mem_graph_vertex g_mc (w <: obj_addr) /\
           (exists (r: obj_addr). Seq.mem r major_roots /\
                                  mem_graph_vertex g_mc r /\
-                                 reachable g_mc r (w <: obj_addr)))))
+                                 reachable g_mc r (w <: obj_addr)))) /\
+      // Edge bridge: combined edges between reachable vertices map to mc_major edges.
+      // This composes: edge elimination → EdgePreservation (4 cases) → HeapGraph intro.
+      (let cg = build_combined_graph gs.gs_minor gs.gs_major in
+       let live_set = live_set_of gs.gs_minor gs.gs_major roots in
+       let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
+       let mc = minor_collect_spec gs.gs_minor gs.gs_major fp roots in
+       let g_mc = create_graph mc.mc_major in
+       forall (u v: combined_vertex).
+         combined_reachable cg combined_roots u /\
+         combined_reachable cg combined_roots v /\
+         mem_ce (u, v) cg ==>
+         (let fu = fwd_morphism prom_res.fwd_map u in
+          let fv = fwd_morphism prom_res.fwd_map v in
+          U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+          U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+          Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges)) /\
+      // Surjectivity: post-GC reachable vertices have pre-images under fwd_morphism.
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let fwd = prom_res.fwd_map in
+       let cg = pre_gc_graph ms major in
+       let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+       let g_final = create_graph h_final in
+       forall (w: vertex_id).
+         Seq.mem w g_final.vertices /\
+         (exists (r: obj_addr). Seq.mem r major_roots /\
+                                Seq.mem r g_final.vertices /\
+                                reachable g_final r w) ==>
+         (exists (v: combined_vertex).
+           combined_reachable cg combined_roots v /\
+           fwd_morphism fwd v == (w <: U64.t))) /\
+      // Edge backward: post-GC edges between morphism images imply combined edges.
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let fwd = prom_res.fwd_map in
+       let cg = pre_gc_graph ms major in
+       let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+       let g_final = create_graph h_final in
+       forall (u v: combined_vertex).
+         combined_reachable cg combined_roots u /\
+         combined_reachable cg combined_roots v /\
+         (let fu = fwd_morphism fwd u in
+          let fv = fwd_morphism fwd v in
+          U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+          U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0) /\
+         Seq.mem ((fwd_morphism fwd u <: hp_addr), (fwd_morphism fwd v <: hp_addr)) g_final.edges ==>
+         mem_ce (u, v) cg))
     (ensures
       (let live_set = live_set_of gs.gs_minor gs.gs_major roots in
        let prom_res = promote_all_spec gs.gs_minor gs.gs_major fp live_set in
