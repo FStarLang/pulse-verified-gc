@@ -512,10 +512,35 @@ Algorithm:
             fwd_arr[infix_val_off / 8] = parent_fwd + delta
 ```
 
+**Verified implementation call chain** (in `GC.Gen.Impl.MinorHeap.fst`):
+
+| Function | Role |
+|----------|------|
+| `synthesize_infix_forwarding` | Outer loop: walks all objects in minor heap |
+| → `maybe_synthesize_closure` | Filter: if `tag == 247` AND `fwd_arr[parent] != 0`, delegate |
+| → → `synthesize_one_closure_infix` | Inner loop: iterates all fields of the closure |
+| → → → `maybe_synthesize_infix_field` | Leaf: if field has `tag == 249`, computes `fwd_arr[infix] = parent_fwd + delta` |
+
+The key arithmetic in the leaf function:
+```
+delta = infix_val_off - parent_val_off
+      = (field_off + 8) - (hdr_pos + 8)
+      = field_off - hdr_pos
+fwd_arr[infix_val_off / 8] = parent_fwd + delta
+```
+
+This is safe because `parent_fwd < 2^63` (checked before entry) and
+`delta < minor_heap_size` (bounded by object layout in the minor heap).
+
 After this step, `fwd_arr` maps both regular objects AND infix
 sub-objects to their new major addresses.  `rewrite_roots_impl` (step
 5d) and `update_one_object` (step 5c) can then rewrite pointers to
 infix sub-objects using the same uniform `fwd_arr` lookup.
+
+**With the proposed infix-aware BFS optimization (below), this entire
+step is eliminated.**  The BFS itself derives infix forwarding entries
+on-demand when it encounters infix pointers during root forwarding or
+field scanning, so no post-hoc synthesis pass is needed.
 
 #### Example
 
