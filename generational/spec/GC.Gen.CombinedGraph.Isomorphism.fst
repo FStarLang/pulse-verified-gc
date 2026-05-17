@@ -389,6 +389,144 @@ let property_d_edges
   property_d_backward ms major fwd combined_roots h_final
 
 /// ---------------------------------------------------------------------------
+/// Property (D) Forward: Proof via bridge + mark/sweep
+/// ---------------------------------------------------------------------------
+
+/// Bridge assumption: combined edge → mc_major edge.
+/// This composes the 4 cases of EdgePreservation:
+///   Case 1 (minor→minor): promoted field becomes fwd(minor_val)
+///   Case 2 (minor→major): promoted field preserved verbatim
+///   Case 3 (major→minor): field rewritten to fwd(dst) by update_major_pointers
+///   Case 4 (major→major): field unchanged through promotion
+///
+/// Proving this requires combined-edge elimination lemmas (decomposing
+/// mem_ce into a field index + classification) and classification inversion.
+/// These are not yet implemented in CombinedGraph.fsti.
+let combined_edge_to_mc_edge
+  (ms: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (fwd: forwarding_map)
+  (u v: combined_vertex) (mc_major: heap) : prop =
+  let g_mc = create_graph mc_major in
+  let fu : U64.t = fwd_morphism fwd u in
+  let fv : U64.t = fwd_morphism fwd v in
+  U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+  U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+  Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges
+
+/// Property D forward proof.
+/// Given the bridge assumption (combined edge → mc_major edge) and
+/// morphism_image_preservation, chains:
+///   1. combined edge → mc_major edge (bridge)
+///   2. φ(u) is black after mark (reachable → DFS → mark_black_iff_reachable)
+///   3. successors g_mc φ(u) == successors g_final φ(u) (mark_sweep_preserves_successors)
+///   4. φ(v) ∈ successors g_mc φ(u) → φ(v) ∈ successors g_final φ(u) → edge in g_final
+#push-options "--z3rlimit 100"
+let prove_property_d_forward
+  (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_roots: seq obj_addr) (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      standard_gc_preconditions gs roots fp major_stack major_roots major_fp /\
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let cg = pre_gc_graph ms major in
+       let live_set = live_set_of ms major roots in
+       let prom_res = promote_all_spec ms major fp live_set in
+       let mc = minor_collect_spec ms major fp roots in
+       let g_mc = create_graph mc.mc_major in
+       // morphism_image_preservation
+       (forall (v: combined_vertex).
+         combined_reachable cg combined_roots v ==>
+         (let w = fwd_morphism prom_res.fwd_map v in
+          U64.v w >= U64.v mword /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+          mem_graph_vertex g_mc (w <: obj_addr) /\
+          (exists (r: obj_addr). Seq.mem r major_roots /\
+                                 mem_graph_vertex g_mc r /\
+                                 reachable g_mc r (w <: obj_addr)))) /\
+       // Bridge: combined edges map to mc_major edges
+       (forall (u v: combined_vertex).
+         combined_reachable cg combined_roots u /\
+         combined_reachable cg combined_roots v /\
+         mem_ce (u, v) cg ==>
+         combined_edge_to_mc_edge ms major fp roots prom_res.fwd_map u v mc.mc_major)))
+    (ensures
+      (let ms = gs.gs_minor in
+       let major = gs.gs_major in
+       let fwd = (promote_all_spec ms major fp (live_set_of ms major roots)).fwd_map in
+       let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+       property_d_forward ms major fwd combined_roots h_final))
+  = let ms = gs.gs_minor in
+    let major = gs.gs_major in
+    let live_set = live_set_of ms major roots in
+    let prom_res = promote_all_spec ms major fp live_set in
+    let fwd = prom_res.fwd_map in
+    let h_final = post_gc_heap ms major fp roots major_stack major_fp in
+    let cg = pre_gc_graph ms major in
+    let g_final = create_graph h_final in
+    let mc = minor_collect_spec ms major fp roots in
+    let h_mc = mc.mc_major in
+    let g_mc = create_graph h_mc in
+    let mc_roots_v = HeapGraph.coerce_to_vertex_list major_roots in
+    let aux_fwd (u v: combined_vertex) : Lemma
+      (ensures
+        (combined_reachable cg combined_roots u /\
+         combined_reachable cg combined_roots v /\
+         mem_ce (u, v) cg /\
+         (let fu = fwd_morphism fwd u in
+          let fv = fwd_morphism fwd v in
+          U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+          U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0) ==>
+         Seq.mem ((fwd_morphism fwd u <: hp_addr), (fwd_morphism fwd v <: hp_addr)) g_final.edges))
+    = let fu : U64.t = fwd_morphism fwd u in
+      let fv : U64.t = fwd_morphism fwd v in
+      // Branch on decidable bounds/alignment — after this, fu/fv are hp_addr
+      if not (U64.v fu < heap_size && U64.v fu % U64.v mword = 0 &&
+              U64.v fv < heap_size && U64.v fv % U64.v mword = 0) then ()
+      else begin
+        let fu_hp : hp_addr = fu in
+        let fv_hp : hp_addr = fv in
+        // Use impl_intro for the non-decidable prop parts only
+        let inner (_: squash (combined_reachable cg combined_roots u /\
+                              combined_reachable cg combined_roots v /\
+                              mem_ce (u, v) cg))
+          : Lemma (Seq.mem (fu_hp, fv_hp) g_final.edges) =
+          // From morphism_image_preservation: reachable vertex → image is obj_addr
+          assert (U64.v fu >= U64.v mword);
+          assert (U64.v fv >= U64.v mword);
+          let fu_oa : obj_addr = fu in
+          // Step 1: bridge gives mc_major edge
+          assert (Seq.mem (fu_hp, fv_hp) g_mc.edges);
+          // Step 2: φ(u) is reachable → black after mark
+          assert (mem_graph_vertex g_mc fu_oa);
+          let elim_root (r: obj_addr) : Lemma
+            (requires Seq.mem r major_roots /\ mem_graph_vertex g_mc r /\ reachable g_mc r fu_oa)
+            (ensures Seq.mem fu_oa (DFS.reachable_set g_mc mc_roots_v))
+          = HeapGraph.coerce_mem_lemma major_roots r;
+            DFS.reachable_set_correct g_mc mc_roots_v
+          in
+          Classical.exists_elim
+            (Seq.mem fu_oa (DFS.reachable_set g_mc mc_roots_v))
+            #obj_addr
+            #(fun r -> Seq.mem r major_roots /\ mem_graph_vertex g_mc r /\ reachable g_mc r fu_oa)
+            ()
+            (fun (r: obj_addr{Seq.mem r major_roots /\ mem_graph_vertex g_mc r /\ reachable g_mc r fu_oa}) ->
+              elim_root r);
+          MSFrame.mark_black_iff_reachable h_mc major_stack major_roots major_fp fu_oa;
+          MSFrame.black_survives_sweep h_mc major_stack major_roots major_fp fu_oa;
+          // Step 3: successors preserved
+          MSFrame.mark_sweep_preserves_successors h_mc major_stack major_roots major_fp fu_oa;
+          // Step 4: edge in g_mc → successor → same successor in g_final → edge
+          edge_mem_successors g_mc fu_hp fv_hp;
+          successors_mem_edge g_final fu_hp fv_hp
+        in
+        Classical.impl_intro inner
+      end
+    in
+    Classical.forall_intro_2 aux_fwd
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Main theorem proof
 /// ---------------------------------------------------------------------------
 
@@ -400,6 +538,7 @@ let property_d_edges
 ///   Property (C): assume — needs image decomposition (old major ∪ promoted)
 ///   Property (D): assume — split into forward/backward; forward via EdgePres + MSFrame
 ///   reachable_implies_forwarded: ✅ Fully proven (Seq.index_mem chain)
+#push-options "--z3rlimit 100 --split_queries always"
 let generational_gc_isomorphism
   (gs: gen_state) (roots: seq U64.t) (fp: U64.t)
   (combined_roots: seq combined_vertex)
@@ -485,7 +624,16 @@ let generational_gc_isomorphism
     // Property (C): Surjectivity
     assume (property_c_surjectivity ms major fwd combined_roots h_final major_roots);
     // Property (D): Edge biconditional
-    assume (property_d_edges ms major fwd combined_roots h_final);
+    let mc = minor_collect_spec ms major fp roots in
+    // Forward: proven from bridge assumption + mark/sweep preservation
+    assume (forall (u v: combined_vertex).
+      combined_reachable cg combined_roots u /\
+      combined_reachable cg combined_roots v /\
+      mem_ce (u, v) cg ==>
+      combined_edge_to_mc_edge ms major fp roots fwd u v mc.mc_major);
+    prove_property_d_forward gs roots fp combined_roots major_roots major_stack major_fp;
+    // Backward: assumed — needs EdgePreservation reverse + field decomposition
+    assume (property_d_backward ms major fwd combined_roots h_final);
     // reachable_implies_forwarded: combined_reachable(MinorV v) → fwd v ≠ 0
     let aux_rif (v: U64.t) : Lemma
       (requires combined_reachable cg combined_roots (MinorV v))
@@ -497,4 +645,9 @@ let generational_gc_isomorphism
       ()
     in
     Classical.forall_intro (Classical.move_requires aux_rif);
+    // Help Z3 compose the individual properties into the postcondition
+    assert (property_d_forward ms major fwd combined_roots h_final);
+    assert (property_d_backward ms major fwd combined_roots h_final);
+    assert (property_d_edges ms major fwd combined_roots h_final);
     ()
+#pop-options
