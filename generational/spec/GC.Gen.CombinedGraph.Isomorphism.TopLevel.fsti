@@ -205,6 +205,16 @@ val gen_gc_isomorphism
       chain_objects_blue major fp /\
       Mark.no_black_objects major /\
       minor_wf minor /\
+      // --- Promotion/allocation preconditions ---
+      minor_fields_well_formed minor major roots /\
+      all_promotions_succeed minor major fp roots /\
+      allocated_objects_avoid_chain major fp /\
+      post_promote_pointer_closure minor major fp roots /\
+      live_set_no_infix minor (live_set_of minor major roots) /\
+      no_scan_invariant major /\
+      minor_no_scan_invariant minor /\
+      (let live_set = live_set_of minor major roots in
+       forall (v: U64.t). Seq.mem v live_set ==> minor_wosize minor v > 0) /\
       // Post-Cheney preconditions
       (let res = cheney_collect_spec minor major fp roots in
        well_formed_heap res.mc_major /\

@@ -104,6 +104,17 @@ let gen_gc_isomorphism
       chain_objects_blue major fp /\
       Mark.no_black_objects major /\
       minor_wf minor /\
+      // --- Additional standard_gc_preconditions ---
+      minor_fields_well_formed minor major roots /\
+      all_promotions_succeed minor major fp roots /\
+      allocated_objects_avoid_chain major fp /\
+      post_promote_pointer_closure minor major fp roots /\
+      live_set_no_infix minor (live_set_of minor major roots) /\
+      no_scan_invariant major /\
+      minor_no_scan_invariant minor /\
+      (let live_set = live_set_of minor major roots in
+       forall (v: U64.t). Seq.mem v live_set ==> minor_wosize minor v > 0) /\
+      // --- Post-Cheney major GC preconditions ---
       (let res = cheney_collect_spec minor major fp roots in
        well_formed_heap res.mc_major /\
        Mark.no_pointer_to_blue res.mc_major /\
@@ -115,6 +126,7 @@ let gen_gc_isomorphism
        (let g = create_graph res.mc_major in
         let rs = HeapGraph.coerce_to_vertex_list major_stack in
         graph_wf g /\ is_vertex_set rs /\ subset_vertices rs g.vertices)) /\
+      // --- Isomorphism-specific assumptions ---
       iso_structural_preconditions minor major fp roots combined_roots major_stack /\
       iso_edge_bridge_forward minor major fp roots combined_roots major_stack /\
       iso_surjectivity minor major fp roots combined_roots major_stack /\
@@ -127,23 +139,9 @@ let gen_gc_isomorphism
     // Step 2: Build gen_state for Discharge
     let gs : gen_state = { gs_minor = minor; gs_major = major; gs_fp = fp } in
 
-    // Step 3: The Discharge module's preconditions are now satisfied
-    // (cheney_collect_spec == minor_collect_spec by Step 1, so all
-    //  properties transfer directly)
-
-    // Step 4: Call Discharge.isomorphism_from_gc
-    // The preconditions match because:
-    //   - standard_gc_preconditions: from gen_gc preconditions + equivalence
-    //   - structural_preconditions: from iso_structural_preconditions + equivalence
-    //   - edge_bridge_forward_at_mc: from iso_edge_bridge_forward + equivalence
-    //   - surjectivity_at_mc: from iso_surjectivity + equivalence
-    //   - edge_backward_at_mc: from iso_edge_backward + equivalence
-    //
-    // NOTE: The full precondition bridge requires showing that our TopLevel
-    // preconditions (stated over cheney_collect_spec) imply Discharge's
-    // standard_gc_preconditions (stated over minor_collect_spec).
-    // After cheney_minor_collect_equiv, this is straightforward but mechanical:
-    // each sub-property of standard_gc_preconditions is either directly in
-    // our requires or follows from the equivalence.
-    admit ()
-    // Discharge.isomorphism_from_gc gs roots fp combined_roots major_stack major_stack major_fp
+    // Step 3: After the equivalence, cheney_collect_spec == minor_collect_spec.
+    // All preconditions transfer: Discharge's standard_gc_preconditions,
+    // structural_preconditions, and bridge assumptions follow directly
+    // from our requires clause with the substitution mc_fwd = prom_res.fwd_map.
+    assert (gen_wf gs);
+    Discharge.isomorphism_from_gc gs roots fp combined_roots major_stack major_stack major_fp
