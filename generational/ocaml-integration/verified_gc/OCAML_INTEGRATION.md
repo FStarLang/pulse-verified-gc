@@ -1163,32 +1163,28 @@ Replace the entire 4.1–5f sequence with a **single call** to the verified
 
 #### Phase A: Verified minor\_collect with zero assume\_ ✅ DONE
 
-**Resolution:** `minor_collect` uses `update_all_objects` (which walks all
-major objects), matching the spec's `update_major_pointers` directly.
+**Resolution:** `minor_collect` uses `update_promoted_objects` (the efficient
+path that only visits promoted objects' fields), with the postcondition
+exposing `s2 == update_promoted_iter prom.major_final farr2 prom.fwd_map 0`.
 
-The original plan to replace `update_all_objects` with the more efficient
-`update_promoted_objects` was found to be **unsound** in the general case:
-the equivalence `update_promoted_iter == update_major_pointers` does NOT
-hold when there are remembered-set entries (pre-existing major objects with
-fields pointing to forwarded minor objects).
+The caller (bridge) is responsible for updating remembered-set slots via
+`rewrite_heap_slots`, which handles pre-existing major objects that have
+fields pointing to forwarded minor objects.
 
-Specifically: if a major object M has a field pointing to minor object X,
-and X gets promoted (fwd(X) ≠ 0UL), then `update_major_pointers` rewrites
-M's field, but `update_promoted_objects` (which only visits fwd\_arr targets)
-does not.  The bridge's `rewrite_heap_slots` handles these slots separately.
+**Key lemmas proved:**
+- `cheney_promote_fwd_bounded`: Every forwarding target is a valid major
+  address (>= mword, < heap\_size, mword-aligned)
+- `fwd_bounded_implies_valid_fwd_entries`: Bridges the spec predicate to
+  the impl-level `valid_fwd_entries` required by `update_promoted_objects`
 
-**Current approach:** `minor_collect` calls `update_all_objects` (which
-produces `ms2 == update_major_pointers ms fwd`).  The bridge's
-`rewrite_heap_slots` is then a redundant-but-harmless pass for ref\_table
-entries (those were already rewritten by `update_all_objects`).
+**Soundness note:** The equivalence `update_promoted_iter == update_major_pointers`
+does NOT hold when there are remembered-set entries (pre-existing major objects
+with fields pointing to forwarded minor objects). This is handled correctly by
+the two-phase design: `minor_collect` does the efficient update, then the bridge
+rewrites remembered-set slots.
 
-**Future optimization (requires spec split):** To use the more efficient
-`update_promoted_objects` (O(minor\_allocated) vs O(major\_heap)):
-1. Split `cheney_collect_spec` into `cheney_promote_and_update_promoted`
-   + `rewrite_remembered_slots`
-2. Change `minor_collect` postcondition to claim the intermediate state
-3. Have the bridge compose both operations to get the full collection result
-4. This correctly separates promoted-field updates from remembered-set updates
+The standalone `gen_gc` function (not used by bridge) inlines the phases
+directly with `update_all_objects` for full `cheney_collect_spec` correctness.
 
 #### Phase B: Infix-Aware BFS in `cheney_promote_phase`
 
@@ -1237,7 +1233,7 @@ calls from `alloc_gen.c` and eventually from `GC.Gen.Impl.MinorHeap.fst`.
 
 After Phase A, the verified `minor_collect` does:
 - Cheney BFS promotion → `ok: bool`
-- `update_all_objects` → rewrite all major pointer fields
+- `update_promoted_objects` → rewrite only promoted objects' fields (efficient)
 - `rewrite_roots_impl` → rewrite roots
 - `minor_heap_reset` → reset bump pointer
 
@@ -1248,24 +1244,28 @@ The bridge's fast path (no infix) is now a single call:
 bool ok = minor_collect(gc_gen_heap, root_values, root_count, gc_fwd_arr, gc_queue);
 if (!ok) caml_fatal_error("verified gen GC: out of memory");
 
-/* 5.5 Ref_table pointer rewriting (redundant but harmless — update_all_objects
- * already rewrote these slots, but the bridge doesn't know that) */
+/* 5.5 Ref_table pointer rewriting — ESSENTIAL: minor_collect only updates
+ * promoted objects' fields, not pre-existing major objects. The bridge must
+ * rewrite remembered-set slots that point to forwarded minor objects. */
 rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, ref_table_base, n_slots);
 ```
 
-Step 5.5 (`rewrite_heap_slots`) is now **redundant** since `update_all_objects`
-already walks all major objects.  It remains for safety/defense-in-depth.
-When the `update_promoted_objects` optimization (future Phase A') is done
-with a proper spec split, `rewrite_heap_slots` will become essential again.
+Step 5.5 (`rewrite_heap_slots`) is now **essential** since `update_promoted_objects`
+only visits newly promoted objects.  Pre-existing major objects with fields
+pointing to forwarded minor objects (tracked in the ref_table) must be
+rewritten by the caller.
+
+The standalone `gen_gc` function (used in main.c tests) inlines the phases
+directly with `update_all_objects` for full `cheney_collect_spec` correctness,
+since it has no remembered set to manage.
 
 #### Phase Ordering and Risk
 
 | Phase | Complexity | Risk | Status |
 |-------|-----------|------|--------|
-| A (assume removal) | Low | Low | ✅ DONE — reverted to `update_all_objects` |
+| A (assume removal) | Low | Low | ✅ DONE — `update_promoted_objects` + fwd\_bounded |
 | B (infix BFS) | High | Medium | Pending — eliminates two O(minor) scans |
 | C (single call) | Low | Low | ✅ DONE (fast path) |
-| A' (update optimization) | Medium | Medium | Future — requires spec split |
 
 **Recommended order: A → C (without infix) → B**
 
@@ -1277,11 +1277,16 @@ recursive forwarding) and can be deferred.
 
 ### Interim Approach (A + C without full infix)
 
-After Phase A, modify `minor_collect` to call `update_promoted_objects`.
+`minor_collect` uses `update_promoted_objects` — the efficient path that
+only visits promoted objects.  The postcondition exposes:
+- `s2 == update_promoted_iter prom.major_final farr2 prom.fwd_map 0`
+- `represents_fwd farr2 prom.fwd_map` (for caller to do additional rewrites)
+- `valid_fwd_entries farr2` (addresses are valid)
+
 Then in the bridge:
 - If `minor_has_pointer_objects && has_infix`:
   fall back to phased approach (4.1, 5a, 5b, 5c, 5d, 5f individually)
-- Otherwise: call `minor_collect` directly
+- Otherwise: call `minor_collect` directly + `rewrite_heap_slots` for ref_table
 
 This gives us the single-call path for the common case (no infix) while
 maintaining correctness for closure-heavy programs.
