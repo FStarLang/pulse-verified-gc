@@ -40,6 +40,22 @@ open GC.Spec.HeapGraph
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
+/// Helper: destination target info predicate (avoids inline match exhaustiveness issues)
+let dst_target_info (dst: combined_vertex) (live_set: seq U64.t)
+    (prom_res: promote_all_result) (mc_major: heap) : prop =
+  (MinorV? dst ==>
+    (let d = MinorV?.addr dst in
+     Seq.mem d live_set /\ prom_res.fwd_map d <> 0UL /\
+     U64.v (prom_res.fwd_map d) >= U64.v mword /\
+     U64.v (prom_res.fwd_map d) < heap_size /\
+     U64.v (prom_res.fwd_map d) % U64.v mword == 0 /\
+     Seq.mem (prom_res.fwd_map d <: obj_addr) (objects zero_addr mc_major))) /\
+  (MajorV? dst ==>
+    (let d = MajorV?.addr dst in
+     U64.v d >= U64.v mword /\ U64.v d < heap_size /\
+     U64.v d % U64.v mword == 0 /\
+     Seq.mem (d <: obj_addr) (objects zero_addr mc_major)))
+
 /// ---------------------------------------------------------------------------
 /// 0-based → 1-based field index bridge
 /// ---------------------------------------------------------------------------
@@ -95,6 +111,10 @@ val bridge_case_major_major
        // mc_major graph well-formedness
        (let mc = minor_collect_spec ms major fp roots in
         well_formed_heap mc.mc_major /\
+        // src survives into mc_major with same header
+        Seq.mem src (objects zero_addr mc.mc_major) /\
+        wosize_of_object src mc.mc_major == wosize_of_object src major /\
+        is_no_scan src mc.mc_major = false /\
         graph_wf (create_graph mc.mc_major))))
     (ensures
       (let mc = minor_collect_spec ms major fp roots in
@@ -141,6 +161,10 @@ val bridge_case_major_minor
         U64.v fwd_dst % U64.v mword == 0 /\
         Seq.mem (fwd_dst <: obj_addr) (objects zero_addr mc.mc_major) /\
         well_formed_heap mc.mc_major /\
+        // src survives into mc_major with same header
+        Seq.mem src (objects zero_addr mc.mc_major) /\
+        wosize_of_object src mc.mc_major == wosize_of_object src major /\
+        is_no_scan src mc.mc_major = false /\
         graph_wf (create_graph mc.mc_major))))
     (ensures
       (let live_set = live_set_of ms major roots in
@@ -178,18 +202,11 @@ val bridge_case_minor
         U64.v fwd_src % U64.v mword == 0 /\
         Seq.mem (fwd_src <: obj_addr) (objects zero_addr mc.mc_major) /\
         object_fits_in_heap (fwd_src <: obj_addr) mc.mc_major /\
+        is_no_scan (fwd_src <: obj_addr) mc.mc_major = false /\
         // wosize of promoted copy matches minor wosize
         U64.v (wosize_of_object (fwd_src <: obj_addr) mc.mc_major) == minor_wosize ms src) /\
        // dst target info
-       (match dst with
-        | MinorV d -> Seq.mem d live_set /\ prom_res.fwd_map d <> 0UL /\
-                      U64.v (prom_res.fwd_map d) >= U64.v mword /\
-                      U64.v (prom_res.fwd_map d) < heap_size /\
-                      U64.v (prom_res.fwd_map d) % U64.v mword == 0 /\
-                      Seq.mem (prom_res.fwd_map d <: obj_addr) (objects zero_addr mc.mc_major)
-        | MajorV d -> U64.v d >= U64.v mword /\ U64.v d < heap_size /\
-                      U64.v d % U64.v mword == 0 /\
-                      Seq.mem (d <: obj_addr) (objects zero_addr mc.mc_major)) /\
+       dst_target_info dst live_set prom_res mc.mc_major /\
        well_formed_heap mc.mc_major /\
        graph_wf (create_graph mc.mc_major)))
     (ensures
@@ -197,7 +214,9 @@ val bridge_case_minor
        let prom_res = promote_all_spec ms major fp live_set in
        let mc = minor_collect_spec ms major fp roots in
        let fwd_src : hp_addr = prom_res.fwd_map src in
-       let fwd_dst : hp_addr = (match dst with
-                                | MinorV d -> prom_res.fwd_map d
-                                | MajorV d -> d) in
-       Seq.mem (fwd_src, fwd_dst) (create_graph mc.mc_major).edges))
+       (MinorV? dst ==>
+         Seq.mem (fwd_src, (prom_res.fwd_map (MinorV?.addr dst) <: hp_addr))
+                 (create_graph mc.mc_major).edges) /\
+       (MajorV? dst ==>
+         Seq.mem (fwd_src, (MajorV?.addr dst <: hp_addr))
+                 (create_graph mc.mc_major).edges)))

@@ -10,8 +10,11 @@
 ///   2. A lemma `gen_gc_isomorphism` that derives it from gen_gc's existing
 ///      postcondition plus structural/bridge assumptions
 ///
-/// The bridge assumptions are stated at the mc_major level (easier to prove)
-/// and composed with MarkSweepFrame internally via the Discharge module.
+/// The proof bridges directly from cheney_collect_spec to the isomorphism
+/// using MarkSweepFrame, without requiring equivalence to promote_all_spec.
+/// This is possible because fwd_morphism and reachable_subgraph_isomorphism
+/// are parametric in the forwarding map — they don't care HOW it was computed,
+/// only that it satisfies the stated properties.
 
 module GC.Gen.CombinedGraph.Isomorphism.TopLevel
 
@@ -37,7 +40,6 @@ module Mark = GC.Spec.Mark
 module Sweep = GC.Spec.Sweep
 module DFS = GC.Spec.DFS
 module Iso = GC.Gen.CombinedGraph.Isomorphism
-module Discharge = GC.Gen.CombinedGraph.Isomorphism.Discharge
 
 
 /// ---------------------------------------------------------------------------
@@ -87,13 +89,14 @@ let iso_structural_preconditions
     Seq.mem (MajorV r) combined_roots \/
     (exists (m: U64.t). Seq.mem (MinorV m) combined_roots /\
       prom.fwd_map m == r)) /\
-  // Fwd injectivity
+  // Fwd nonzero on live_set: all live objects are successfully forwarded
   (let live_set = live_set_of minor major roots in
-   forall (i j: nat). i < Seq.length live_set /\ j < Seq.length live_set /\ i <> j ==>
-     (let oi = Seq.index live_set i in
-      let oj = Seq.index live_set j in
-      prom.fwd_map oi <> 0UL /\ prom.fwd_map oj <> 0UL ==>
-      prom.fwd_map oi <> prom.fwd_map oj)) /\
+   forall (v: U64.t). Seq.mem v live_set ==> prom.fwd_map v <> 0UL) /\
+  // Fwd injectivity (element-based): distinct live objects get distinct targets
+  (let live_set = live_set_of minor major roots in
+   forall (a b: U64.t).
+     Seq.mem a live_set /\ Seq.mem b live_set /\
+     prom.fwd_map a == prom.fwd_map b ==> a == b) /\
   // Field correspondence
   (field_correspondence minor major res.mc_major prom.fwd_map roots) /\
   // Reachability bridge: combined-reachable minor → live set
@@ -141,24 +144,25 @@ let iso_edge_bridge_forward
      U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
      Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges)
 
-/// Surjectivity at mc_major level: mc-reachable → has combined pre-image
+/// Surjectivity at g_final level: post-GC reachable → has combined pre-image
+/// This directly states property (C) of reachable_subgraph_isomorphism.
 let iso_surjectivity
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (combined_roots: seq combined_vertex)
-  (major_stack: seq obj_addr) : prop =
+  (major_stack: seq obj_addr) (major_fp: U64.t) : prop =
   let cg = build_combined_graph minor major in
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec minor major fp roots in
-  let g_mc = create_graph res.mc_major in
-  let mc_roots_v = HeapGraph.coerce_to_vertex_list major_stack in
-  graph_wf g_mc /\ is_vertex_set mc_roots_v /\
-  subset_vertices mc_roots_v g_mc.vertices /\
-  (forall (w: obj_addr).
-    mem_graph_vertex g_mc w /\
-    Seq.mem w (DFS.reachable_set g_mc mc_roots_v) ==>
+  let h_final = fst (Sweep.sweep (Mark.mark res.mc_major major_stack) major_fp) in
+  let g_final = create_graph h_final in
+  forall (w: vertex_id).
+    Seq.mem w g_final.vertices /\
+    (exists (r: obj_addr). Seq.mem r major_stack /\
+                           Seq.mem r g_final.vertices /\
+                           reachable g_final r w) ==>
     (exists (v: combined_vertex).
       combined_reachable cg combined_roots v /\
-      Iso.fwd_morphism prom.fwd_map v == (w <: U64.t)))
+      Iso.fwd_morphism prom.fwd_map v == (w <: U64.t))
 
 /// Edge backward at mc_major: mc edge between images → combined edge
 let iso_edge_backward
@@ -230,7 +234,7 @@ val gen_gc_isomorphism
       // --- Isomorphism-specific assumptions ---
       iso_structural_preconditions minor major fp roots combined_roots major_stack /\
       iso_edge_bridge_forward minor major fp roots combined_roots major_stack /\
-      iso_surjectivity minor major fp roots combined_roots major_stack /\
+      iso_surjectivity minor major fp roots combined_roots major_stack major_fp /\
       iso_edge_backward minor major fp roots combined_roots)
     (ensures
       isomorphism_postcondition minor major fp roots combined_roots major_stack major_fp)

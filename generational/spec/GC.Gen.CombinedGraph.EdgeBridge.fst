@@ -104,6 +104,9 @@ let bridge_case_major_major
     EdgePres.major_object_is_pointer_field major dst;
     let g_mc = create_graph mc.mc_major in
     let objs_mc = objects zero_addr mc.mc_major in
+    // src ∈ objects(mc_major) and wosize/no_scan from precondition
+    wf_object_bound mc.mc_major src;
+    wosize_of_object_bound src mc.mc_major;
     // Bridge 0-based index i to 1-based index j = i+1
     HeapGraph.object_fits_from_bound src mc.mc_major;
     field_index_bridge mc.mc_major src i;
@@ -150,8 +153,11 @@ let bridge_case_major_minor
     EdgePres.major_object_is_pointer_field mc.mc_major (fwd_dst <: obj_addr);
     let g_mc = create_graph mc.mc_major in
     let objs_mc = objects zero_addr mc.mc_major in
+    // src ∈ objects(mc_major) and wosize/no_scan from precondition
+    wf_object_bound mc.mc_major src;
+    wosize_of_object_bound src mc.mc_major;
     // Bridge 0-based index i to 1-based index j = i+1
-    object_fits_from_bound src mc.mc_major;
+    HeapGraph.object_fits_from_bound src mc.mc_major;
     field_index_bridge mc.mc_major src i;
     let j = U64.uint_to_t (i + 1) in
     assert (get_field mc.mc_major src j == fwd_dst);
@@ -163,6 +169,11 @@ let bridge_case_major_minor
 /// ---------------------------------------------------------------------------
 /// Cases 1 & 2: Minor source (promoted copy field)
 /// ---------------------------------------------------------------------------
+
+/// Helper: combined_vertex has exactly 2 constructors
+private let cv_not_minor_is_major (v: combined_vertex)
+  : Lemma (requires ~(MinorV? v)) (ensures MajorV? v)
+  = ()
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 40"
 let bridge_case_minor
@@ -182,31 +193,44 @@ let bridge_case_minor
     let fwd_src : U64.t = prom_res.fwd_map src in
     let fwd_src_oa : obj_addr = fwd_src in
     // Step 3: Use field_correspondence to get the value in mc_major
+    HeapGraph.object_fits_to_bound fwd_src_oa mc.mc_major;
     EdgePres.promoted_field_through_minor_collect ms major fp roots src i;
     let field_addr_v = U64.v fwd_src + i * 8 in
     let mc_field_val = read_word mc.mc_major (U64.uint_to_t field_addr_v <: hp_addr) in
-    // Step 4: Determine the morphism target
-    let target : U64.t = match dst with
-      | MinorV d ->
-        classify_minor_field_inv_minor ms major minor_val d;
-        assert (is_minor_pointer minor_val);
-        assert (prom_res.fwd_map d <> 0UL);
-        assert (mc_field_val == prom_res.fwd_map d);
-        prom_res.fwd_map d
-      | MajorV d ->
-        classify_minor_field_inv_major ms major minor_val d;
-        assert (~(is_minor_pointer minor_val /\ prom_res.fwd_map minor_val <> 0UL));
-        assert (mc_field_val == minor_val);
-        assert (minor_val == (d <: U64.t));
-        (d <: U64.t)
-    in
-    // Step 5: Bridge 0-based → 1-based and apply pointer_field_is_graph_edge
+    // Step 4: Classify the destination and prove edge membership
     let g_mc = create_graph mc.mc_major in
     let objs_mc = objects zero_addr mc.mc_major in
+    wosize_of_object_bound fwd_src_oa mc.mc_major;
     field_index_bridge mc.mc_major fwd_src_oa i;
     let j = U64.uint_to_t (i + 1) in
-    assert (get_field mc.mc_major fwd_src_oa j == target);
-    EdgePres.major_object_is_pointer_field mc.mc_major (target <: obj_addr);
-    objects_is_vertex_set mc.mc_major;
-    pointer_field_is_graph_edge mc.mc_major objs_mc fwd_src_oa j
+    assert (get_field mc.mc_major fwd_src_oa j == mc_field_val);
+    if MinorV? dst then begin
+      let d = MinorV?.addr dst in
+      classify_minor_field_inv_minor ms major minor_val d;
+      // minor_val == d, is_minor_addr minor_val, Seq.mem minor_val (minor_objects ms)
+      minor_objects_valid ms minor_val;
+      // Now: is_minor_pointer minor_val (U64.v minor_val >= 8)
+      assert (is_minor_pointer minor_val);
+      // From dst_target_info: prom_res.fwd_map d <> 0UL, and minor_val == d
+      assert (prom_res.fwd_map minor_val <> 0UL);
+      // promoted_field_through_minor_collect Case 1 fires:
+      let target : hp_addr = prom_res.fwd_map d in
+      assert (mc_field_val == target);
+      EdgePres.major_object_is_pointer_field mc.mc_major (target <: obj_addr);
+      objects_is_vertex_set mc.mc_major;
+      pointer_field_is_graph_edge mc.mc_major objs_mc fwd_src_oa j
+    end else begin
+      cv_not_minor_is_major dst;
+      let d = MajorV?.addr dst in
+      classify_minor_field_inv_major ms major minor_val d;
+      // minor_val == d, Seq.mem (minor_val <: obj_addr) (objects zero_addr major)
+      GC.Gen.CombinedGraph.MajorBridge.major_object_not_minor_pointer major (minor_val <: obj_addr);
+      // ~(is_minor_pointer minor_val) → Case 2 fires
+      assert (~(is_minor_pointer minor_val));
+      let target : hp_addr = d in
+      assert (mc_field_val == target);
+      EdgePres.major_object_is_pointer_field mc.mc_major (target <: obj_addr);
+      objects_is_vertex_set mc.mc_major;
+      pointer_field_is_graph_edge mc.mc_major objs_mc fwd_src_oa j
+    end
 #pop-options
