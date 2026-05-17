@@ -1129,6 +1129,191 @@ entire 4.1–5d sequence to eventually be a single call to a verified `minor_col
 
 ---
 
+## Plan: Replace Steps 4.1–5f with Verified `minor_collect`
+
+### Current State
+
+The bridge (`alloc_gen.c`) currently executes steps 4.1–5f as individual
+verified function calls orchestrated by unverified C code:
+
+```
+4.1  find_infix_parents()        → adds parent closure roots
+5a   cheney_promote_phase()      → BFS promote (returns ok: bool)
+5b   synthesize_infix_forwarding()  → fill fwd_arr for infix sub-objects
+5c   update_promoted_objects()   → rewrite fields of promoted objects
+5d   rewrite_roots_impl()        → rewrite root array via fwd_arr
+5d.1 if (!promote_ok) abort      → verified OOM flag check
+5f   minor_heap_reset()          → reset bump pointer
+```
+
+The verified `minor_collect` (in `GC.Gen.Impl.fst`) does the same logical
+work but currently uses `update_all_objects` (O(major_heap)) instead of
+`update_promoted_objects` (O(minor_allocated)), and does not handle infix
+pointers.
+
+### Goal
+
+Replace the entire 4.1–5f sequence with a **single call** to the verified
+`minor_collect`, which will internally:
+1. Handle infix pointers (infix-aware BFS — no separate phases needed)
+2. Use `update_promoted_objects` (efficient, no `heap_objects_dense` needed)
+3. Return the OOM flag
+
+### Step-by-Step Implementation Plan
+
+#### Phase A: Replace `update_all_objects` with `update_promoted_objects`
+
+This is the foundation — without this, `minor_collect` requires
+`heap_objects_dense` which doesn't hold for OCaml's free-list heap.
+
+**A.1. Establish `valid_fwd_entries` from `cheney_promote_phase` postcondition**
+
+`valid_fwd_entries farr` requires every non-zero entry to be a valid
+major address (≥ 8, aligned, ≤ heap_size).  This follows from:
+- Every non-zero fwd_arr[i] was written by `promote_one` which
+  allocates from the major free-list (returning an `obj_addr`)
+- `obj_addr` is defined as `hp_addr` with value ≥ 8
+- Allocated addresses are within `[zero_addr, heap_size)`
+
+Proof approach: strengthen the `Sim.impl_matches_spec` invariant to include
+`valid_fwd_entries farr_i` as a loop invariant conjunct.  This should follow
+from the allocator's postcondition (`fl_valid` implies allocated addresses
+are valid heap addresses).
+
+**A.2. Prove the equivalence lemma**
+
+```fstar
+val update_promoted_equiv (ms: heap_state) (farr: seq U64.t) (fwd: forwarding_map)
+  : Lemma
+    (requires represents_fwd farr fwd /\
+             valid_fwd_entries farr /\
+             well_formed_heap_part1 ms /\
+             no_stale_minor_ptrs ms fwd)
+    (ensures update_promoted_iter ms farr fwd 0 == update_major_pointers ms fwd)
+```
+
+Where `no_stale_minor_ptrs ms fwd` asserts: for any major object NOT in
+`range(fwd)`, none of its pointer fields hold a minor offset that has a
+non-zero forwarding entry.  This holds because:
+- Pre-existing major objects can only acquire minor pointers via mutation
+- Mutations creating major→minor pointers are tracked by `ref_table`
+- `ref_table` entries are handled separately by `rewrite_heap_slots`
+- Therefore non-promoted objects don't have stale minor refs
+
+However, for the **initial implementation** we can take a simpler approach:
+prove that `update_promoted_iter` produces the same result as
+`update_major_pointers` by showing that `update_one_object` is a no-op
+on any object whose fields are all ≥ minor_heap_size or have fwd==0.
+
+**A.3. Swap in `update_promoted_objects` in `minor_collect`**
+
+Replace the `update_all_objects` call with `update_promoted_objects`,
+using the equivalence lemma to preserve the postcondition
+(`ms2 == update_major_pointers 'ms fwd`).
+
+This also removes `heap_objects_dense` from the precondition of
+`minor_collect` (it was only needed by `update_all_objects`).
+
+#### Phase B: Infix-Aware BFS in `cheney_promote_phase`
+
+Integrate infix handling directly into `forward_if_minor`:
+
+**B.1. Add `is_infix_object` helper**
+
+Read the tag at a minor offset.  If tag == Infix_tag (249), compute
+the parent offset by subtracting the infix offset field value.
+
+**B.2. Modify `forward_if_minor` to handle infix**
+
+```
+if is_infix(addr):
+  parent_off = addr - infix_offset(addr)
+  if fwd_arr[parent_off/8] == 0:
+    forward_if_minor(parent_off, ...)  // recursive: promote parent
+  fwd_arr[addr/8] = fwd_arr[parent_off/8] + (addr - parent_off)
+else:
+  // existing promote logic
+```
+
+Note: This makes `forward_if_minor` conditionally recursive (at most
+depth 1 — an infix always points to a non-infix parent).  Alternatively,
+factor out a `forward_parent_if_needed` sub-function.
+
+**B.3. Update spec to model infix forwarding**
+
+Extend `cheney_forward_one` to handle the infix case:
+```
+cheney_forward_one minor cs addr =
+  if is_infix minor addr then
+    let parent = infix_parent minor addr in
+    let cs' = if fwd cs parent == 0 then cheney_forward_one minor cs parent else cs in
+    { cs' with cs_fwd = extend cs'.cs_fwd addr (cs'.cs_fwd parent + delta) }
+  else
+    // existing logic
+```
+
+**B.4. Remove `find_infix_parents` and `synthesize_infix_forwarding` from bridge**
+
+Once the BFS handles infix inline, these are dead code.  Remove their
+calls from `alloc_gen.c` and eventually from `GC.Gen.Impl.MinorHeap.fst`.
+
+#### Phase C: Unify Bridge with Single `minor_collect` Call
+
+After Phases A and B, the verified `minor_collect` does everything:
+- Cheney BFS (with infix handling) → `ok: bool`
+- `update_promoted_objects` → rewrite promoted fields
+- `rewrite_roots_impl` → rewrite roots
+- `minor_heap_reset` → reset bump pointer
+
+The bridge reduces to:
+
+```c
+/* 4. Zero forwarding array */
+memset(gc_fwd_arr, 0, fwd_array_size * sizeof(uint64_t));
+
+/* 5. Verified minor collection (single call replaces 4.1–5f) */
+bool ok = minor_collect(gc_gen_heap, root_values, root_count, gc_fwd_arr, gc_queue);
+if (!ok) caml_fatal_error("verified gen GC: out of memory");
+
+/* 5.5 Ref_table pointer rewriting (still separate — ref_table is OCaml-specific) */
+rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, ref_table_base, n_slots);
+```
+
+Step 5.5 (`rewrite_heap_slots`) remains separate because:
+- `ref_table` is an OCaml-specific data structure
+- Its entries are absolute addresses needing translation
+- It could be integrated into `minor_collect` later by passing the ref_table
+  as an additional input, but this is not a priority
+
+#### Phase Ordering and Risk
+
+| Phase | Complexity | Risk | Benefit |
+|-------|-----------|------|---------|
+| A (update swap) | Medium | Low | Removes `heap_objects_dense` requirement |
+| B (infix BFS) | High | Medium | Eliminates two O(minor) scans |
+| C (single call) | Low | Low | Eliminates bridge orchestration |
+
+**Recommended order: A → C (without infix) → B**
+
+Phase A is self-contained and immediately enables Phase C for programs
+without infix pointers.  Phase C can be implemented with a
+`minor_has_pointer_objects` guard that falls back to the phased approach
+when infix objects are present.  Phase B is the most complex (spec changes,
+recursive forwarding) and can be deferred.
+
+### Interim Approach (A + C without full infix)
+
+After Phase A, modify `minor_collect` to call `update_promoted_objects`.
+Then in the bridge:
+- If `minor_has_pointer_objects && has_infix`:
+  fall back to phased approach (4.1, 5a, 5b, 5c, 5d, 5f individually)
+- Otherwise: call `minor_collect` directly
+
+This gives us the single-call path for the common case (no infix) while
+maintaining correctness for closure-heavy programs.
+
+---
+
 ## Design Invariants
 
 1. **The verified code is never modified** — `GC_Gen_Impl.c` is used

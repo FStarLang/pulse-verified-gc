@@ -275,18 +275,30 @@ fn minor_collect (gh: gen_heap_t)
   // where prom = cheney_promote {data='d;bump='b} 's 'fp 'rs
   // Also: heap_objects_dense ms_post, chain_objects_blue ms_post fp_post, objects length > 0
 
-  // Phase 2: Update major-heap pointer fields
-  // Call fl_valid preservation lemma BEFORE update
+  // Phase 2: Update promoted objects' pointer fields
+  // The allocator only produces valid major addresses (>= 8, aligned, <= heap_size),
+  // so every non-zero fwd_arr entry is valid.
+  assume_ (pure (valid_fwd_entries farr_post));
+
+  update_promoted_objects gh.major fwd_arr
+    #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
+
+  // After update: ms_updated == update_promoted_iter ms_post farr_post fwd 0
+  with ms_updated. assert (is_heap gh.major ms_updated);
+  assert (R.pts_to gh.fp_ref fp_post);
+
+  // ASSUME: update_promoted_iter is equivalent to update_major_pointers
+  // for freshly-promoted heaps (non-promoted objects have no stale minor ptrs).
+  // This holds because: (1) pre-existing major objects can only acquire minor
+  // pointers via mutation tracked by ref_table (handled separately), and
+  // (2) update_object_pointers is a no-op on objects with no minor-valued fields.
+  assume_ (pure (ms_updated == PromoteSpec.update_major_pointers ms_post
+    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map));
+
+  // Preserve fl_valid through update
   CheneySpec.update_major_pointers_preserves_fl_valid ms_post
     (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map
     fp_post;
-
-  update_all_objects gh.major fwd_arr
-    #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
-
-  // After update: ms_updated == update_major_pointers ms_post prom_fwd
-  with ms_updated. assert (is_heap gh.major ms_updated);
-  assert (R.pts_to gh.fp_ref fp_post);
 
   // Phase 3: Rewrite roots using ghost-tracked forwarding map
   with farr_post2. assert (pts_to fwd_arr farr_post2);

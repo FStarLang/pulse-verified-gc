@@ -296,7 +296,9 @@ static void do_minor_gc_core(void) {
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
     PROF_END(fwd_arr_zero);
 
-    /* 4.1. Infix closure fixup */
+    /* 4.1. Infix closure fixup — add parent closures as roots so their
+     * promotion triggers fwd_arr entries needed by synthesize_infix_forwarding.
+     * TODO(Phase B): eliminate with infix-aware BFS. */
     PROF_START(infix_find);
     if (minor_has_pointer_objects) {
         size_t infix_parents_added = find_infix_parents(
@@ -307,52 +309,54 @@ static void do_minor_gc_core(void) {
     }
     PROF_END(infix_find);
 
-    /* 4.5. translate_minor_fields is no longer needed — the verified
-     * to_minor_offset_u64 handles absolute→offset translation inline
-     * in cheney_promote_phase and update_one_object. */
-    PROF_START(translate);
-    PROF_END(translate);
+    /* 5. Minor collection.
+     *
+     * The verified minor_collect bundles:
+     *   cheney_promote_phase + update_promoted_objects +
+     *   rewrite_roots_impl + minor_heap_reset
+     * and returns ok: bool (false = OOM).
+     *
+     * When infix objects exist (minor_has_pointer_objects), we need
+     * synthesize_infix_forwarding BETWEEN promote and update — so we
+     * fall back to the phased sequence.  Once infix-aware BFS (Phase B)
+     * is implemented, the fallback is eliminated. */
+    bool promote_ok;
+    if (!minor_has_pointer_objects) {
+        /* Fast path: no infix objects — single verified call */
+        PROF_START(cheney);
+        promote_ok = minor_collect(gc_gen_heap, root_values,
+                                   (size_t)root_count, gc_fwd_arr, gc_queue);
+        PROF_END(cheney);
+    } else {
+        /* Infix fallback: phased approach */
+        PROF_START(cheney);
+        promote_ok = cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
+                             gc_gen_heap.fp_ref, gc_fwd_arr, gc_queue,
+                             root_values, (size_t)root_count);
+        PROF_END(cheney);
 
-    /* 5. Phased minor collection */
-
-    /* 5a. Cheney BFS: promote reachable minor objects to major heap */
-    PROF_START(cheney);
-    bool promote_ok = cheney_promote_phase(gc_gen_heap.minor, gc_gen_heap.major,
-                         gc_gen_heap.fp_ref, gc_fwd_arr, gc_queue,
-                         root_values, (size_t)root_count);
-    PROF_END(cheney);
-
-    /* 5b. Infix forwarding fixup */
-    PROF_START(infix_synth);
-    if (minor_has_pointer_objects)
+        /* Infix forwarding fixup (must run between promote and update) */
+        PROF_START(infix_synth);
         synthesize_infix_forwarding(gc_gen_heap.minor, gc_fwd_arr);
-    PROF_END(infix_synth);
+        PROF_END(infix_synth);
 
-    /* 5c. Rewrite fields of PROMOTED objects only.
-     * Uses verified update_promoted_objects which iterates fwd_arr
-     * and calls update_one_object for each promoted pointer-bearing object. */
-    PROF_START(update_fields);
-    if (minor_has_pointer_objects) {
+        /* Rewrite fields of promoted objects */
+        PROF_START(update_fields);
         update_promoted_objects(gc_gen_heap.major, gc_fwd_arr);
+        PROF_END(update_fields);
+
+        /* Rewrite roots */
+        PROF_START(rewrite_roots);
+        rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
+        PROF_END(rewrite_roots);
+
+        /* Reset minor heap */
+        PROF_START(minor_reset);
+        minor_heap_reset(gc_gen_heap.minor);
+        PROF_END(minor_reset);
     }
-    PROF_END(update_fields);
 
-    /* 5d. Rewrite root array */
-    PROF_START(rewrite_roots);
-    rewrite_roots_impl(root_values, gc_fwd_arr, (size_t)root_count);
-    PROF_END(rewrite_roots);
-
-    /* 5d.1 Check for promotion failure (OOM).
-     *
-     * The verified cheney_promote_phase now returns a boolean flag indicating
-     * whether all promotions succeeded.  If any allocation failed during BFS
-     * (either during root forwarding or scan loop field forwarding), the flag
-     * is false.  In that case, some roots still point into the minor heap
-     * which is about to be reset — we must abort.
-     *
-     * This replaces the previous O(nroots) scan loop that checked each root
-     * for minor-heap-looking values.  The verified flag is both faster (O(1))
-     * and sound (proven by the spec: OOM ↔ forward_one returned 0). */
+    /* OOM check (verified flag from cheney_promote_phase) */
     if (!promote_ok) {
         uint64_t major_size = heap_size_u64 - zero_addr;
         fprintf(stderr,
@@ -363,12 +367,7 @@ static void do_minor_gc_core(void) {
             (unsigned long)(major_size / 4));
         caml_fatal_error("verified gen GC: out of memory (major heap too small)");
     }
-
-    /* 5f. Reset minor heap */
-    PROF_START(minor_reset);
-    minor_heap_reset(gc_gen_heap.minor);
     minor_has_pointer_objects = 0;
-    PROF_END(minor_reset);
 
     /* 5.5. Ref_table-based pointer rewriting.
      *
