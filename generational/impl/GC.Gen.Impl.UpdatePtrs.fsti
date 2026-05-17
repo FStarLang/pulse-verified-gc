@@ -20,6 +20,8 @@ open GC.Spec.Base
 open GC.Gen.Base
 open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
+module SpecObj = GC.Spec.Object
+module SpecHeap = GC.Spec.Heap
 
 /// ---------------------------------------------------------------------------
 /// Forwarding array representation
@@ -142,3 +144,118 @@ fn rewrite_heap_slots
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pts_to slots 'sl
+
+/// ---------------------------------------------------------------------------
+/// Update promoted objects (fwd_arr iteration)
+/// ---------------------------------------------------------------------------
+
+/// Spec: iterate fwd_arr[idx..fwd_array_size) and for each non-zero entry,
+/// if the promoted object has wosize > 0 and tag < no_scan_tag, apply
+/// update_object_pointers.
+let rec update_promoted_iter (major: heap) (farr: Seq.seq U64.t)
+                             (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : GTot heap (decreases (fwd_array_size - idx)) =
+  if idx >= fwd_array_size then major
+  else if Seq.length farr <> fwd_array_size then major
+  else
+    let major_addr = Seq.index farr idx in
+    if major_addr = 0UL then
+      update_promoted_iter major farr fwd (idx + 1)
+    else
+      let hdr_addr = U64.v major_addr - 8 in
+      if hdr_addr + 8 > heap_size || hdr_addr % 8 <> 0 then
+        update_promoted_iter major farr fwd (idx + 1)
+      else
+        let hdr = SpecHeap.read_word major (U64.uint_to_t hdr_addr) in
+        let wosize = U64.v (SpecObj.getWosize hdr) in
+        let tag = SpecObj.getTag hdr in
+        if wosize > 0 && U64.lt tag SpecObj.no_scan_tag then
+          if U64.v major_addr + wosize * 8 <= heap_size then
+            let major' = PromoteSpec.update_object_pointers major major_addr wosize fwd 0 in
+            update_promoted_iter major' farr fwd (idx + 1)
+          else
+            update_promoted_iter major farr fwd (idx + 1)
+        else
+          update_promoted_iter major farr fwd (idx + 1)
+
+/// Unfold lemma for update_promoted_iter at a zero entry
+val update_promoted_iter_zero (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx < fwd_array_size /\
+                    Seq.length farr == fwd_array_size /\
+                    Seq.index farr idx == 0UL)
+          (ensures update_promoted_iter major farr fwd idx ==
+                   update_promoted_iter major farr fwd (idx + 1))
+
+/// Unfold lemma for update_promoted_iter at a non-zero scannable entry
+val update_promoted_iter_scan (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx < fwd_array_size /\
+                    Seq.length farr == fwd_array_size /\
+                    (let major_addr = Seq.index farr idx in
+                     major_addr <> 0UL /\
+                     U64.v major_addr >= 8 /\ U64.v major_addr % 8 == 0 /\
+                     (let hdr_addr = U64.v major_addr - 8 in
+                      hdr_addr + 8 <= heap_size /\ hdr_addr % 8 == 0 /\
+                      (let hdr = SpecHeap.read_word major (U64.uint_to_t hdr_addr) in
+                       let wosize = U64.v (SpecObj.getWosize hdr) in
+                       let tag = SpecObj.getTag hdr in
+                       wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\
+                       U64.v major_addr + wosize * 8 <= heap_size))))
+          (ensures (let major_addr = Seq.index farr idx in
+                    let hdr_addr = U64.v major_addr - 8 in
+                    let hdr = SpecHeap.read_word major (U64.uint_to_t hdr_addr) in
+                    let wosize = U64.v (SpecObj.getWosize hdr) in
+                    let major' = PromoteSpec.update_object_pointers major major_addr wosize fwd 0 in
+                    update_promoted_iter major farr fwd idx ==
+                    update_promoted_iter major' farr fwd (idx + 1)))
+
+/// Unfold lemma for update_promoted_iter at a non-scannable entry
+val update_promoted_iter_skip (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx < fwd_array_size /\
+                    Seq.length farr == fwd_array_size /\
+                    (let major_addr = Seq.index farr idx in
+                     major_addr <> 0UL /\
+                     (let hdr_addr = U64.v major_addr - 8 in
+                      hdr_addr + 8 > heap_size \/ hdr_addr % 8 <> 0 \/
+                      (hdr_addr + 8 <= heap_size /\ hdr_addr % 8 == 0 /\
+                       (let hdr = SpecHeap.read_word major (U64.uint_to_t hdr_addr) in
+                        let wosize = U64.v (SpecObj.getWosize hdr) in
+                        let tag = SpecObj.getTag hdr in
+                        ~(wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag) \/
+                        U64.v major_addr + wosize * 8 > heap_size)))))
+          (ensures update_promoted_iter major farr fwd idx ==
+                   update_promoted_iter major farr fwd (idx + 1))
+
+/// Base case: update_promoted_iter at idx >= fwd_array_size is identity
+val update_promoted_iter_done (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx >= fwd_array_size)
+          (ensures update_promoted_iter major farr fwd idx == major)
+
+/// Precondition for valid fwd_arr entries: every non-zero entry points to
+/// a valid major-heap object (address >= 8, aligned, header accessible,
+/// body fits in heap).
+let valid_fwd_entries (farr: Seq.seq U64.t) : prop =
+  Seq.length farr == fwd_array_size /\
+  (forall (i: nat). i < fwd_array_size ==>
+    (let addr = Seq.index farr i in
+     addr == 0UL \/
+     (U64.v addr >= 8 /\ U64.v addr % 8 == 0 /\
+      U64.v addr <= heap_size)))
+
+/// Update only the promoted objects' fields by iterating fwd_arr.
+/// For each non-zero fwd_arr[i], reads the header at (fwd_arr[i] - 8),
+/// and if wosize > 0 and tag < no_scan_tag, rewrites pointer fields.
+fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
+                           (#fwd: erased PromoteSpec.forwarding_map)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd /\
+                 valid_fwd_entries 'farr)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pure (ms2 == update_promoted_iter 'ms 'farr fwd 0)

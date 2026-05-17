@@ -143,6 +143,10 @@ void update_all_objects(heap_t major, uint64_t *fwd_arr);
 
 void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t n);
 
+typedef void *valid_fwd_entries;
+
+void update_promoted_objects(heap_t major, uint64_t *fwd_arr);
+
 typedef void *gc_precondition;
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);

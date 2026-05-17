@@ -1130,6 +1130,72 @@ void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t
   }
 }
 
+void update_promoted_objects(heap_t major, uint64_t *fwd_arr)
+{
+  size_t fwd_size = (size_t)(minor_heap_size_u64 / 8ULL);
+  size_t i = (size_t)0U;
+  size_t __anf00 = i;
+  bool cond = __anf00 < fwd_size;
+  while (cond)
+  {
+    size_t iv = i;
+    uint64_t major_addr = fwd_arr[iv];
+    if (major_addr == 0ULL)
+      i = iv + (size_t)1U;
+    else
+    {
+      uint64_t hdr_pos = major_addr - 8ULL;
+      uint64_t hdr = read_word(major, hdr_pos);
+      uint64_t wosize = hdr >> 10U;
+      uint64_t tag = hdr & 0xFFULL;
+      if (wosize > 0ULL)
+        if (tag < 251ULL)
+        {
+          uint64_t body_end = major_addr + wosize * 8ULL;
+          if (body_end <= heap_size_u640)
+          {
+            uint64_t i1 = 0ULL;
+            uint64_t __anf0 = i1;
+            bool cond = __anf0 < wosize;
+            while (cond)
+            {
+              uint64_t iv1 = i1;
+              uint64_t field_addr_u64 = major_addr + iv1 * 8ULL;
+              uint64_t field_val_raw = read_word(major, field_addr_u64);
+              uint64_t off = field_val_raw - minor_base_addr;
+              uint64_t field_val;
+              if (off < minor_heap_size_u64 && field_val_raw % 8ULL == 0ULL)
+                field_val = off;
+              else
+                field_val = field_val_raw;
+              if (field_val >= 8ULL)
+                if (field_val < minor_heap_size_u64)
+                  if (field_val % 8ULL == 0ULL)
+                  {
+                    size_t idx = (size_t)(field_val / 8ULL);
+                    uint64_t fwd_val = fwd_arr[idx];
+                    if (!(fwd_val == 0ULL))
+                      write_word(major, field_addr_u64, fwd_val);
+                  }
+              i1 = iv1 + 1ULL;
+              uint64_t __anf0 = i1;
+              cond = __anf0 < wosize;
+            }
+            i = iv + (size_t)1U;
+          }
+          else
+            i = iv + (size_t)1U;
+        }
+        else
+          i = iv + (size_t)1U;
+      else
+        i = iv + (size_t)1U;
+    }
+    size_t __anf0 = i;
+    cond = __anf0 < fwd_size;
+  }
+}
+
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);

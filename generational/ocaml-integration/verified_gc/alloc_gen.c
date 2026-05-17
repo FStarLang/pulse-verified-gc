@@ -328,22 +328,12 @@ static void do_minor_gc_core(void) {
         synthesize_infix_forwarding(gc_gen_heap.minor, gc_fwd_arr);
     PROF_END(infix_synth);
 
-    /* 5c. Rewrite fields of PROMOTED objects only. */
+    /* 5c. Rewrite fields of PROMOTED objects only.
+     * Uses verified update_promoted_objects which iterates fwd_arr
+     * and calls update_one_object for each promoted pointer-bearing object. */
     PROF_START(update_fields);
     if (minor_has_pointer_objects) {
-        size_t fwd_slots = (size_t)(minor_heap_size_u64 / 8);
-        for (size_t i = 0; i < fwd_slots; i++) {
-            uint64_t major_addr = gc_fwd_arr[i];
-            if (major_addr == 0) continue;
-            PROF_INC(objects_promoted);
-            uint64_t hdr = *(uint64_t*)(uintptr_t)(major_addr - 8);
-            uint64_t wosize = hdr >> 10;
-            uint64_t tag = hdr & 0xFF;
-            if (wosize > 0 && tag < 251) {
-                PROF_ADD(fields_updated, wosize);
-                update_one_object(gc_gen_heap.major, gc_fwd_arr, major_addr, wosize);
-            }
-        }
+        update_promoted_objects(gc_gen_heap.major, gc_fwd_arr);
     }
     PROF_END(update_fields);
 

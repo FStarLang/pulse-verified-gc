@@ -571,3 +571,169 @@ fn rewrite_heap_slots
   }
 }
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Update promoted objects (fwd_arr iteration) — lemma proofs and implementation
+/// ---------------------------------------------------------------------------
+
+module SpecObj = GC.Spec.Object
+module SpecHeapM = GC.Spec.Heap
+
+/// Unfold lemma proofs — these are trivial by computation
+let update_promoted_iter_zero (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx < fwd_array_size /\
+                    Seq.length farr == fwd_array_size /\
+                    Seq.index farr idx == 0UL)
+          (ensures update_promoted_iter major farr fwd idx ==
+                   update_promoted_iter major farr fwd (idx + 1))
+  = ()
+
+let update_promoted_iter_scan (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx < fwd_array_size /\
+                    Seq.length farr == fwd_array_size /\
+                    (let major_addr = Seq.index farr idx in
+                     major_addr <> 0UL /\
+                     U64.v major_addr >= 8 /\ U64.v major_addr % 8 == 0 /\
+                     (let hdr_addr = U64.v major_addr - 8 in
+                      hdr_addr + 8 <= heap_size /\ hdr_addr % 8 == 0 /\
+                      (let hdr = SpecHeapM.read_word major (U64.uint_to_t hdr_addr) in
+                       let wosize = U64.v (SpecObj.getWosize hdr) in
+                       let tag = SpecObj.getTag hdr in
+                       wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\
+                       U64.v major_addr + wosize * 8 <= heap_size))))
+          (ensures (let major_addr = Seq.index farr idx in
+                    let hdr_addr = U64.v major_addr - 8 in
+                    let hdr = SpecHeapM.read_word major (U64.uint_to_t hdr_addr) in
+                    let wosize = U64.v (SpecObj.getWosize hdr) in
+                    let major' = PromoteSpec.update_object_pointers major major_addr wosize fwd 0 in
+                    update_promoted_iter major farr fwd idx ==
+                    update_promoted_iter major' farr fwd (idx + 1)))
+  = ()
+
+let update_promoted_iter_skip (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx < fwd_array_size /\
+                    Seq.length farr == fwd_array_size /\
+                    (let major_addr = Seq.index farr idx in
+                     major_addr <> 0UL /\
+                     (let hdr_addr = U64.v major_addr - 8 in
+                      hdr_addr + 8 > heap_size \/ hdr_addr % 8 <> 0 \/
+                      (hdr_addr + 8 <= heap_size /\ hdr_addr % 8 == 0 /\
+                       (let hdr = SpecHeapM.read_word major (U64.uint_to_t hdr_addr) in
+                        let wosize = U64.v (SpecObj.getWosize hdr) in
+                        let tag = SpecObj.getTag hdr in
+                        ~(wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag) \/
+                        U64.v major_addr + wosize * 8 > heap_size)))))
+          (ensures update_promoted_iter major farr fwd idx ==
+                   update_promoted_iter major farr fwd (idx + 1))
+  = ()
+
+let update_promoted_iter_done (major: heap) (farr: Seq.seq U64.t)
+                              (fwd: PromoteSpec.forwarding_map) (idx: nat)
+  : Lemma (requires idx >= fwd_array_size)
+          (ensures update_promoted_iter major farr fwd idx == major)
+  = ()
+
+/// Helper: header address from object address (obj - 8) is well-formed
+let hdr_addr_wf (obj: U64.t)
+  : Lemma (requires U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\ U64.v obj <= heap_size)
+          (ensures (U64.v obj - 8) % 8 == 0 /\ U64.v obj - 8 + 8 <= heap_size)
+  = ()
+
+/// The main loop implementation
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0 --split_queries always"
+fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
+                           (#fwd: erased PromoteSpec.forwarding_map)
+  requires is_heap major 'ms **
+           pts_to fwd_arr 'farr **
+           pure (Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd /\
+                 valid_fwd_entries 'farr)
+  ensures exists* ms2.
+    is_heap major ms2 **
+    pts_to fwd_arr 'farr **
+    pure (ms2 == update_promoted_iter 'ms 'farr fwd 0)
+{
+  let fwd_size = SZ.uint64_to_sizet (U64.div minor_heap_size_u64 8UL);
+  let mut i = 0sz;
+  while (SZ.lt !i fwd_size)
+    invariant exists* ms_i iv.
+      is_heap major ms_i **
+      pts_to fwd_arr 'farr **
+      R.pts_to i iv **
+      pure (SZ.v iv <= fwd_array_size /\
+            Seq.length 'farr == fwd_array_size /\
+            represents_fwd 'farr fwd /\
+            valid_fwd_entries 'farr /\
+            update_promoted_iter ms_i 'farr fwd (SZ.v iv) ==
+            update_promoted_iter 'ms 'farr fwd 0)
+  {
+    let iv = !i;
+    let major_addr = fwd_arr.(iv);
+    with ms_cur. assert (is_heap major ms_cur);
+    if U64.eq major_addr 0UL {
+      // Zero entry — skip
+      update_promoted_iter_zero ms_cur 'farr fwd (SZ.v iv);
+      i := SZ.add iv 1sz
+    } else {
+      // Non-zero: read header
+      let hdr_pos = U64.sub major_addr 8UL;
+      hdr_addr_wf major_addr;
+      let hdr = read_word major hdr_pos;
+      let wosize = U64.shift_right hdr 10ul;
+      SpecObj.getWosize_spec hdr;
+      let tag = U64.logand hdr 0xFFUL;
+      SpecObj.getTag_spec hdr;
+      SpecObj.getTag_bound hdr;
+      SpecObj.no_scan_tag_val ();
+      if U64.gt wosize 0UL {
+        if U64.lt tag 251UL {
+          // Scannable promoted object with wosize > 0
+          // Prove wosize * 8 doesn't overflow: wosize < 2^54, so wosize * 8 < 2^57 < 2^64
+          SpecObj.getWosize_bound hdr;
+          assert (pure (U64.v wosize < pow2 54));
+          assert_norm (pow2 54 * 8 < pow2 64);
+          FStar.Math.Lemmas.lemma_mult_le_right 8 (U64.v wosize) (pow2 54 - 1);
+          // And major_addr + wosize*8 fits: major_addr <= heap_size < 2^57
+          assert_norm (pow2 57 + pow2 54 * 8 < pow2 64);
+          let body_end = U64.add major_addr (U64.mul wosize 8UL);
+          if U64.lte body_end heap_size_u64 {
+            // Body fits — call update_one_object
+            // Help Z3 connect runtime values to spec preconditions
+            assert (pure (U64.v major_addr >= 8 /\ U64.v major_addr % 8 == 0));
+            assert (pure ((U64.v major_addr - 8) + 8 <= heap_size));
+            assert (pure ((U64.v major_addr - 8) % 8 == 0));
+            assert (pure (hdr == SpecHeapM.read_word ms_cur (U64.uint_to_t (U64.v major_addr - 8))));
+            assert (pure (wosize == SpecObj.getWosize hdr));
+            assert (pure (tag == SpecObj.getTag hdr));
+            assert (pure (U64.v wosize > 0));
+            assert (pure (U64.lt tag SpecObj.no_scan_tag));
+            assert (pure (U64.v major_addr + U64.v wosize * 8 <= heap_size));
+            update_promoted_iter_scan ms_cur 'farr fwd (SZ.v iv);
+            update_one_object major fwd_arr major_addr wosize #fwd;
+            i := SZ.add iv 1sz
+          } else {
+            // Body overflow — skip (defensive)
+            update_promoted_iter_skip ms_cur 'farr fwd (SZ.v iv);
+            i := SZ.add iv 1sz
+          }
+        } else {
+          // tag >= no_scan_tag — skip
+          update_promoted_iter_skip ms_cur 'farr fwd (SZ.v iv);
+          i := SZ.add iv 1sz
+        }
+      } else {
+        // wosize == 0 — skip
+        update_promoted_iter_skip ms_cur 'farr fwd (SZ.v iv);
+        i := SZ.add iv 1sz
+      }
+    }
+  };
+  // After loop: iv == fwd_array_size
+  with ms_final. assert (is_heap major ms_final);
+  with iv_final. assert (R.pts_to i iv_final);
+  update_promoted_iter_done ms_final 'farr fwd (SZ.v iv_final)
+}
+#pop-options
