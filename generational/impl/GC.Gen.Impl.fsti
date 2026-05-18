@@ -33,6 +33,9 @@ module PromoteSpec = GC.Gen.Promote
 module MajorGC = GC.Impl
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
+module TopLevel = GC.Gen.CombinedGraph.Isomorphism.TopLevel
+module CombinedGraph = GC.Gen.CombinedGraph
+module GenCorrectness = GC.Gen.Correctness
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -355,3 +358,91 @@ fn gen_gc (gh: gen_heap_t)
 
       // Post-minor free-list terminates
       AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword))
+
+/// ---------------------------------------------------------------------------
+/// gen_gc with isomorphism postcondition
+/// ---------------------------------------------------------------------------
+///
+/// Strengthened variant of gen_gc that additionally proves:
+///   The pre-GC combined graph (minor + major) is isomorphic to
+///   the post-GC major graph, restricted to reachable vertices.
+///
+/// The isomorphism is witnessed by fwd_morphism:
+///   MinorV v → fwd(v)  (promoted copy in major heap)
+///   MajorV v → v       (identity on major objects)
+///
+/// The 4 iso_* preconditions are explicit, auditable assumptions about the
+/// forwarding map's structural properties. They are individually dischargeable
+/// from the Cheney BFS algorithm's correctness properties.
+///
+/// NOTE: The isomorphism is stated about the spec-level sweep heap
+/// (fst (Sweep.sweep (Mark.mark mc_major stack) fp)), not the coalesced
+/// runtime heap. Since coalescing only merges free (blue) blocks without
+/// affecting surviving objects' fields, the reachable subgraph is identical.
+fn gen_gc_iso (gh: gen_heap_t)
+              (roots: array U64.t) (nroots: SZ.t)
+              (fwd_arr: array U64.t)
+              (st: gray_stack)
+              (#combined_roots: Ghost.erased (Seq.seq CombinedGraph.combined_vertex))
+  requires is_gen_heap gh 'd 'b 's 'fp **
+           pts_to roots 'rs **
+           pts_to fwd_arr 'farr **
+           is_gray_stack st 'st **
+           pure (
+             // Standard gen_gc preconditions
+             SpecFields.well_formed_heap 's /\
+             AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
+             PromoteSpec.heap_objects_dense 's /\
+             PromoteSpec.chain_objects_blue 's 'fp /\
+             SZ.v nroots == Seq.length 'rs /\
+             Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+             (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+             minor_wf ({ data = 'd; bump = 'b }) /\
+             minor_guards_complete ({ data = 'd; bump = 'b }) /\
+             Seq.length (SpecFields.objects zero_addr 's) > 0 /\
+             Mark.no_black_objects 's /\
+             (let res = CheneySpec.cheney_collect_spec
+                          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
+              MajorGC.gc_precondition res.mc_major 'st res.mc_fp (stack_capacity st)) /\
+             // Isomorphism preconditions (opaque bundle avoids Pulse slprop issues)
+             (let minor_st : minor_state = { data = 'd; bump = 'b } in
+              GenCorrectness.minor_fields_well_formed minor_st 's 'rs /\
+              GenCorrectness.all_promotions_succeed minor_st 's 'fp 'rs /\
+              GenCorrectness.allocated_objects_avoid_chain 's 'fp /\
+              GenCorrectness.post_promote_pointer_closure minor_st 's 'fp 'rs /\
+              PromoteSpec.live_set_no_infix minor_st (PromoteSpec.live_set_of minor_st 's 'rs) /\
+              SpecFields.no_scan_invariant 's /\
+              PromoteSpec.minor_no_scan_invariant minor_st /\
+              (let live_set = PromoteSpec.live_set_of minor_st 's 'rs in
+               forall (v: U64.t). Seq.mem v live_set ==> GC.Gen.MinorHeap.minor_wosize minor_st v > 0) /\
+              (let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+               TopLevel.iso_preconditions_bundle minor_st 's 'fp 'rs combined_roots 'st res.mc_fp)))
+  returns final_fp: U64.t
+  ensures exists* d2 b2 s2 rs2 farr2 st2.
+    is_gen_heap gh d2 b2 s2 final_fp **
+    pts_to roots rs2 **
+    pts_to fwd_arr farr2 **
+    is_gray_stack st st2 **
+    pure (
+      let minor_st : minor_state = { data = 'd; bump = 'b } in
+      let res = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
+
+      // --- Standard gen_gc postcondition ---
+      SpecGCPost.gc_postcondition s2 /\
+      SpecGCPost.full_gc_correctness res.mc_major s2 'st /\
+      rs2 == res.mc_roots /\
+      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+      U64.v b2 == 0 /\
+      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
+        Seq.mem x (SpecFields.objects zero_addr res.mc_major)) /\
+      SpecFields.well_formed_heap_part1 res.mc_major /\
+      AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+
+      // --- Isomorphism postcondition ---
+      // The pre-GC combined graph (minor + major, restricted to reachable
+      // vertices from combined_roots) is isomorphic to the post-GC major
+      // graph (after mark+sweep, restricted to reachable vertices).
+      TopLevel.isomorphism_postcondition minor_st 's 'fp 'rs combined_roots 'st res.mc_fp)

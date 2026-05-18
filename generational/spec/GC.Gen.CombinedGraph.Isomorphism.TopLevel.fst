@@ -40,6 +40,39 @@ module DFS = GC.Spec.DFS
 module Iso = GC.Gen.CombinedGraph.Isomorphism
 module MSFrame = GC.Gen.CombinedGraph.MarkSweepFrame
 
+/// Definition of isomorphism_postcondition (opaque in .fsti for Pulse compatibility)
+let isomorphism_postcondition
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_stack: seq obj_addr) (major_fp: U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  let fwd = prom.fwd_map in
+  let res = cheney_collect_spec minor major fp roots in
+  let h_final = fst (Sweep.sweep (Mark.mark res.mc_major major_stack) major_fp) in
+  Iso.reachable_implies_forwarded
+    (build_combined_graph minor major)
+    combined_roots fwd /\
+  Iso.reachable_subgraph_isomorphism minor major fwd
+    combined_roots h_final major_stack
+
+let isomorphism_postcondition_elim
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires isomorphism_postcondition minor major fp roots combined_roots major_stack major_fp)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let fwd = prom.fwd_map in
+      let res = cheney_collect_spec minor major fp roots in
+      let h_final = fst (Sweep.sweep (Mark.mark res.mc_major major_stack) major_fp) in
+      Iso.reachable_implies_forwarded
+        (build_combined_graph minor major)
+        combined_roots fwd /\
+      Iso.reachable_subgraph_isomorphism minor major fwd
+        combined_roots h_final major_stack))
+  = ()
+
 /// Helper: if successors are equal, edges are equivalent
 private let successors_eq_implies_edge_equiv (g1 g2: graph_state) (u v: vertex_id)
   : Lemma (requires successors g1 u == successors g2 u)
@@ -334,6 +367,48 @@ let prove_edge_biconditional
 
 
 /// ---------------------------------------------------------------------------
+/// Opaque bundle implementation
+/// ---------------------------------------------------------------------------
+
+let iso_preconditions_bundle
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_stack: seq obj_addr) (major_fp: U64.t) : prop =
+  iso_structural_preconditions minor major fp roots combined_roots major_stack /\
+  iso_edge_bridge_forward minor major fp roots combined_roots major_stack /\
+  iso_surjectivity minor major fp roots combined_roots major_stack major_fp /\
+  iso_edge_backward minor major fp roots combined_roots
+
+let iso_preconditions_bundle_intro
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      iso_structural_preconditions minor major fp roots combined_roots major_stack /\
+      iso_edge_bridge_forward minor major fp roots combined_roots major_stack /\
+      iso_surjectivity minor major fp roots combined_roots major_stack major_fp /\
+      iso_edge_backward minor major fp roots combined_roots)
+    (ensures
+      iso_preconditions_bundle minor major fp roots combined_roots major_stack major_fp)
+  = ()
+
+let iso_preconditions_bundle_elim
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      iso_preconditions_bundle minor major fp roots combined_roots major_stack major_fp)
+    (ensures
+      iso_structural_preconditions minor major fp roots combined_roots major_stack /\
+      iso_edge_bridge_forward minor major fp roots combined_roots major_stack /\
+      iso_surjectivity minor major fp roots combined_roots major_stack major_fp /\
+      iso_edge_backward minor major fp roots combined_roots)
+  = ()
+
+
+/// ---------------------------------------------------------------------------
 /// Main theorem: 0 admits
 /// ---------------------------------------------------------------------------
 
@@ -399,3 +474,46 @@ let gen_gc_isomorphism
     in
     Classical.forall_intro (Classical.move_requires aux_rif)
 #pop-options
+
+
+/// ---------------------------------------------------------------------------
+/// Pulse-safe bridge: opaque bundle → opaque postcondition
+/// ---------------------------------------------------------------------------
+
+let gen_gc_isomorphism_opaque
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (combined_roots: seq combined_vertex)
+  (major_stack: seq obj_addr) (major_fp: U64.t)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Mark.no_black_objects major /\
+      minor_wf minor /\
+      minor_fields_well_formed minor major roots /\
+      all_promotions_succeed minor major fp roots /\
+      allocated_objects_avoid_chain major fp /\
+      post_promote_pointer_closure minor major fp roots /\
+      live_set_no_infix minor (live_set_of minor major roots) /\
+      no_scan_invariant major /\
+      minor_no_scan_invariant minor /\
+      (let live_set = live_set_of minor major roots in
+       forall (v: U64.t). Seq.mem v live_set ==> minor_wosize minor v > 0) /\
+      (let res = cheney_collect_spec minor major fp roots in
+       well_formed_heap res.mc_major /\
+       Mark.no_pointer_to_blue res.mc_major /\
+       Mark.stack_props res.mc_major major_stack /\
+       Mark.root_props res.mc_major major_stack /\
+       Sweep.fp_in_heap major_fp res.mc_major /\
+       Mark.no_black_objects res.mc_major /\
+       no_scan_invariant res.mc_major /\
+       (let g = create_graph res.mc_major in
+        let rs = HeapGraph.coerce_to_vertex_list major_stack in
+        graph_wf g /\ is_vertex_set rs /\ subset_vertices rs g.vertices)) /\
+      iso_preconditions_bundle minor major fp roots combined_roots major_stack major_fp)
+    (ensures
+      isomorphism_postcondition minor major fp roots combined_roots major_stack major_fp)
+  = iso_preconditions_bundle_elim minor major fp roots combined_roots major_stack major_fp;
+    gen_gc_isomorphism minor major fp roots combined_roots major_stack major_fp

@@ -540,13 +540,72 @@ produce equivalent results — a well-motivated mathematical assumption about
 allocation-order independence that would require a non-trivial proof about
 free-list consumption.
 
-**Remaining work (external to isomorphism infrastructure):**
-1. The 4 iso_* preconditions in TopLevel.fsti are explicit, auditable:
-   - `iso_structural_preconditions` — root correspondence, fwd injectivity, etc.
-   - `iso_edge_bridge_forward` — combined edge → mc_major edge
-   - `iso_surjectivity` — mc-reachable → has combined pre-image
-   - `iso_edge_backward` — mc edge between images → combined edge
-2. The allocator framing lemma (promotion preserves non-blue objects) lives in
-   GC.Spec.Allocator.Lemmas, not in the isomorphism infrastructure.
-3. `cheney_minor_collect_equiv` — would need a new module proving BFS traversal
-   order doesn't affect the final promotion result.
+**Remaining work: Connect isomorphism to GC.Gen.Impl.fsti postcondition**
+
+### Phase 8: Impl Integration
+
+Goal: Add `isomorphism_postcondition` to `gen_gc`'s ensures clause (or a wrapper).
+
+#### Architecture
+
+```
+GC.Gen.Impl.fsti (gen_gc_iso)
+   | calls gen_gc, then ghost lemma:
+GC.Gen.CombinedGraph.Isomorphism.TopLevel (gen_gc_isomorphism)
+   | requires 4 preconditions:
+   +-- iso_structural_preconditions (7 sub-properties)
+   +-- iso_edge_bridge_forward     (compose EdgeBridge 4 cases)
+   +-- iso_surjectivity            (mc-reachable -> pre-image)
+   +-- iso_edge_backward           (mc edge -> combined edge)
+```
+
+#### Approach: Explicit Preconditions in Wrapper
+
+Rather than proving all bridge assumptions from scratch (which requires
+substantial new proofs about Cheney BFS internals), we create a wrapper
+`gen_gc_iso` that:
+
+1. Takes the standard `gen_gc` preconditions PLUS the 4 iso preconditions
+   as ghost parameters
+2. Calls `gen_gc` (runtime)
+3. Calls `gen_gc_isomorphism` as a ghost lemma (zero cost)
+4. Returns with ensures including `isomorphism_postcondition`
+
+This gives callers a clean end-to-end spec. The 4 iso preconditions are:
+- Auditable (explicitly stated in the interface)
+- Individually dischargeable (each is a standalone lemma about the algorithm)
+- No axioms (the main theorem itself is assume-free)
+
+#### Checklist
+
+| # | Task | Status | File |
+|---|------|--------|------|
+| 1 | Create Wrapper.fsti: lemma deriving iso postcondition from gen_gc post | TODO | spec/...Wrapper.fsti |
+| 2 | Create Wrapper.fst: call gen_gc_isomorphism from preconditions | TODO | spec/...Wrapper.fst |
+| 3 | Add gen_gc_iso to GC.Gen.Impl.fsti with ghost combined_roots/major_stack params | TODO | impl/GC.Gen.Impl.fsti |
+| 4 | Implement gen_gc_iso in GC.Gen.Impl.fst (call gen_gc + ghost wrapper lemma) | TODO | impl/GC.Gen.Impl.fst |
+| 5 | Verify Wrapper.fsti, Wrapper.fst | TODO | -- |
+| 6 | Verify GC.Gen.Impl.fsti, GC.Gen.Impl.fst | TODO | -- |
+| 7 | Full clean build (make -j128) | TODO | -- |
+
+#### Future: Discharging the 4 preconditions
+
+Each bridge assumption is independently provable from existing infrastructure:
+
+| Precondition | Proof strategy | Difficulty |
+|-------------|----------------|-----------|
+| iso_structural_preconditions (7 parts) | | |
+|   Root correspondence | From combined_roots definition + cheney BFS root forwarding | Medium |
+|   Fwd nonzero on live_set | From cheney_promotes_all_reachable + all_promotions_succeed | Easy |
+|   Fwd injectivity | From allocator distinctness (free-list nodes are unique) | Medium |
+|   Field correspondence | From EdgePreservation + update_major_pointers composition | Done |
+|   Reachability bridge | From Bridge.fst minor_reachable -> combined_reachable inverse | Medium |
+|   Promoted disjoint | From allocated_objects_avoid_chain + alloc targets on chain | Easy |
+|   Reachable major valid | From combined graph construction (major edges -> valid objects) | Easy |
+|   Morphism image preservation | Compose vertex survival + edge bridge forward + reachability | Hard |
+| iso_edge_bridge_forward | Compose EdgeBridge 4 cases with case analysis on (u,v) | Medium |
+| iso_surjectivity | mc objects = pre-existing U promoted; both have pre-images | Medium |
+| iso_edge_backward | Reverse of EdgePreservation: mc field -> original field | Hard |
+
+Total estimated effort: ~500-800 lines across 2-3 new modules.
+These are NOT needed for the wrapper -- the wrapper works with explicit preconditions.
