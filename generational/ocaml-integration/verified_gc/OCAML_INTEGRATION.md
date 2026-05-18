@@ -1264,16 +1264,22 @@ since it has no remembered set to manage.
 | Phase | Complexity | Risk | Status |
 |-------|-----------|------|--------|
 | A (assume removal) | Low | Low | ✅ DONE — `update_promoted_objects` + fwd\_bounded |
-| B (infix BFS) | High | Medium | Pending — eliminates two O(minor) scans |
+| B (infix BFS) | High | Medium | ✅ SPEC DONE, IMPL IN PROGRESS — tag check verified, infix path deferred |
 | C (single call) | Low | Low | ✅ DONE (fast path) |
 
-**Recommended order: A → C (without infix) → B**
+**Phase B detailed status (commit 5a9cdd5, fa2338d, 03c3a3b):**
+- ✅ B.1: `is_infix_in_minor`, `infix_parent`, `minor_infix_wf` in MinorHeap.fsti
+- ✅ B.2: `cheney_forward_one` dispatches infix/normal in spec; tag check in impl eliminates 4 assumes
+- ⬜ B.3: Full infix impl (promote parent, compute delta, write fwd_arr) — 1 assume_ remaining
+- ⬜ B.4: Remove `find_infix_parents`/`synthesize_infix_forwarding` from bridge
+- ⬜ 3 spec assumes for infix preservation proofs (fwd_bounded, bfs_inv, fwd_monotone)
 
-Phase A is self-contained and immediately enables Phase C for programs
-without infix pointers.  Phase C can be implemented with a
-`minor_has_pointer_objects` guard that falls back to the phased approach
-when infix objects are present.  Phase B is the most complex (spec changes,
-recursive forwarding) and can be deferred.
+**Remaining assume inventory (5 total):**
+1. `GC.Gen.Cheney.fst:1115` — infix fwd_bounded preservation (spec)
+2. `GC.Gen.Cheney.SimOne.fst:447` — infix bfs_inv preservation (spec)
+3. `GC.Gen.CheneyBFS.fst:76` — infix fwd_monotone (spec)
+4. `GC.Gen.Impl.Cheney.fst:192` — infix impl_matches_spec correspondence (impl)
+5. `GC.Gen.Impl.MinorHeap.fst:26` — platform_fits_u64 (TCB, always present)
 
 ### Interim Approach (A + C without full infix)
 
