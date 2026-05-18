@@ -580,13 +580,19 @@ This gives callers a clean end-to-end spec. The 4 iso preconditions are:
 
 | # | Task | Status | File |
 |---|------|--------|------|
-| 1 | Create Wrapper.fsti: lemma deriving iso postcondition from gen_gc post | TODO | spec/...Wrapper.fsti |
-| 2 | Create Wrapper.fst: call gen_gc_isomorphism from preconditions | TODO | spec/...Wrapper.fst |
-| 3 | Add gen_gc_iso to GC.Gen.Impl.fsti with ghost combined_roots/major_stack params | TODO | impl/GC.Gen.Impl.fsti |
-| 4 | Implement gen_gc_iso in GC.Gen.Impl.fst (call gen_gc + ghost wrapper lemma) | TODO | impl/GC.Gen.Impl.fst |
-| 5 | Verify Wrapper.fsti, Wrapper.fst | TODO | -- |
-| 6 | Verify GC.Gen.Impl.fsti, GC.Gen.Impl.fst | TODO | -- |
-| 7 | Full clean build (make -j128) | TODO | -- |
+| 1 | Create opaque bridge lemma (bundle → postcondition) | ✅ DONE | spec/...TopLevel.fsti/fst |
+| 2 | Add gen_gc_iso to GC.Gen.Impl.fsti with ghost combined_roots param | ✅ DONE | impl/GC.Gen.Impl.fsti |
+| 3 | Implement gen_gc_iso in GC.Gen.Impl.fst (gen_gc + ghost lemma call) | ✅ DONE | impl/GC.Gen.Impl.fst |
+| 4 | Verify TopLevel.fsti, TopLevel.fst (with opaque bridge) | ✅ DONE | -- |
+| 5 | Verify GC.Gen.Impl.fsti, GC.Gen.Impl.fst | ✅ DONE | -- |
+| 6 | Full clean build (make -j128) | ✅ DONE | -- |
+
+**Key design decision:** Pulse's slprop elaborator cannot handle complex quantified
+predicates (involving `DFS.reachable`) in `pure(...)` blocks when a real body is
+being checked. The workaround is `gen_gc_isomorphism_opaque` which bridges from
+`iso_preconditions_bundle` (opaque) to `isomorphism_postcondition` (opaque),
+never exposing the complex internals to Pulse. The `_elim` lemmas exist for
+callers who need to inspect the contents in pure F* code.
 
 #### Future: Discharging the 4 preconditions
 
