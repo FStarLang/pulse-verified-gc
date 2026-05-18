@@ -598,6 +598,20 @@ private let promote_object_wosize_self_full
     set_promoted_tag_preserves_wosize_self padded dst_obj mtag
 #pop-options
 
+/// Public version: wosize of promoted object in post-promote heap >= wz
+let promote_object_new_addr_wosize
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wz: nat{wz > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (promote_object minor major obj fp wz).new_addr <> 0UL)
+    (ensures (let res = promote_object minor major obj fp wz in
+              is_val_addr res.new_addr /\
+              U64.v (wosize_of_object (res.new_addr <: obj_addr) res.major_out) >= wz))
+  = promote_object_wosize_self_full minor major obj fp wz
+
 /// Single-k proof for chain_all_inv_intro: proves the body of the forall
 /// for a specific index k. TOP-LEVEL to avoid context pollution.
 #restart-solver

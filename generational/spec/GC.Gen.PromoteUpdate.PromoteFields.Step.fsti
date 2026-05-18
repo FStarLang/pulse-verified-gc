@@ -31,6 +31,19 @@ val promote_object_wosize_preserved
       wosize_of_object other (promote_object minor major obj fp wz).major_out ==
       wosize_of_object other major)
 
+/// Wosize of the promoted object itself on the post-promote heap >= wz
+val promote_object_new_addr_wosize
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wz: nat{wz > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (promote_object minor major obj fp wz).new_addr <> 0UL)
+    (ensures (let res = promote_object minor major obj fp wz in
+              is_val_addr res.new_addr /\
+              U64.v (wosize_of_object (res.new_addr <: obj_addr) res.major_out) >= wz))
+
 val promote_step_preserves_invariant
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)

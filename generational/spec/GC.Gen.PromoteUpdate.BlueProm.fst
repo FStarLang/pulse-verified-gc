@@ -755,6 +755,60 @@ let promote_object_preserves_chain_objects_blue
     reveal_opaque (`%chain_objects_blue) chain_objects_blue
 #pop-options
 
+/// The promoted object avoids the post-promote free chain.
+/// Proof: alloc_spec gives chain_avoids on alloc heap, then transfer through
+/// copy_fields + padding + set_promoted_tag.
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --z3refresh"
+let promote_object_new_addr_chain_avoids
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+    (ensures (let res = promote_object minor major obj fp wosize in
+              AllocLemmas.chain_avoids res.major_out res.fp_out res.new_addr
+                (heap_size / U64.v mword) = true))
+  = let fuel = heap_size / U64.v mword in
+    let res = promote_object minor major obj fp wosize in
+    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+    let new_major = alloc_res.heap_out in
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
+    let dst_obj : obj_addr = alloc_res.obj_out in
+    promote_object_success minor major obj fp wosize;
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let padded = zero_promote_padding copied dst_obj wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    // Key properties of alloc (mirrors promote_object_preserves_chain_objects_blue)
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
+    AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
+    AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize;
+    AllocLemmas.alloc_spec_preserves_objects_part1 major fp wosize;
+    AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
+    // copy_fields preserves objects
+    copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
+    // Establish not_in_fl_chain from chain_avoids
+    chain_avoids_implies_not_in_fl_chain new_major alloc_res.fp_out dst_obj fuel;
+    // fl_valid and fl_chain_terminates preserved through copy_fields
+    copy_fields_preserves_fl_valid_aux minor new_major obj dst_obj 0 wosize alloc_res.fp_out fuel;
+    copy_fields_preserves_fl_chain_terminates minor new_major obj dst_obj 0 wosize alloc_res.fp_out fuel;
+    // chain_avoids preserved through copy_fields
+    copy_fields_preserves_chain_avoids_self minor new_major obj dst_obj 0 wosize alloc_res.fp_out fuel;
+    copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
+    // Transfer through zero_promote_padding
+    zero_promote_padding_preserves_alloc_invariants copied dst_obj wosize alloc_res.fp_out;
+    // Transfer through set_promoted_tag
+    set_promoted_tag_preserves_alloc_invariants padded dst_obj tag alloc_res.fp_out;
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires (set_tag_preserves_read_at_obj padded dst_obj tag));
+    AllocLemmas.chain_avoids_transfer padded (set_promoted_tag padded dst_obj tag)
+      alloc_res.fp_out dst_obj fuel
+#pop-options
+
 /// Inductive proof: promote_all_aux preserves blue_fields_closed.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let rec promote_all_aux_preserves_bfc

@@ -31,6 +31,19 @@ val promote_object_preserves_chain_objects_blue
       chain_objects_blue (promote_object minor major obj fp wosize).major_out
                          (promote_object minor major obj fp wosize).fp_out)
 
+/// The promoted object avoids the post-promote free chain.
+val promote_object_new_addr_chain_avoids
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+    (ensures (let res = promote_object minor major obj fp wosize in
+              AllocLemmas.chain_avoids res.major_out res.fp_out res.new_addr
+                (heap_size / U64.v mword) = true))
+
 /// After promote_all_spec, blue objects' pointer fields still target valid objects.
 val promote_all_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
