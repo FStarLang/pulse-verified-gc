@@ -13,6 +13,216 @@ in a single graph-theoretic predicate.
 
 ---
 
+## Critical Review (2025-05-17)
+
+### Problem Statement
+
+The current `gen_gc_iso` in `GC.Gen.Impl.fsti` is **almost trivially correct**
+because it pushes all the hard work onto the caller as preconditions:
+
+1. **Conjunct (13)**: Requires the CALLER to prove `gc_precondition` on the
+   post-Cheney heap (`res.mc_major`). But this should be an INTERNAL obligation:
+   `minor_collect` should establish that the post-Cheney heap satisfies the
+   major GC's preconditions. We already have `gen_gc_correct_full` proving
+   `well_formed_heap res.mc_major`, `cheney_collect_no_black` proving
+   `no_black_objects res.mc_major`, and `cheney_collect_preserves_fl_valid`.
+   The remaining parts (stack_props, root_props, fp_in_heap, no_pointer_to_blue,
+   graph_wf) relate to how the caller constructs the gray stack — but these
+   are about the STACK, not about the heap state after minor collection.
+
+   **Resolution**: Split into two parts:
+   - Properties about the post-Cheney heap itself (well_formed, no_black,
+     no_pointer_to_blue, no_scan_invariant) → prove internally
+   - Properties about the gray stack argument (stack_props, root_props,
+     fp_in_heap, graph_wf/is_vertex_set) → legitimate caller obligations
+
+2. **Conjunct (15) all_promotions_succeed**: This is NOT something a caller can
+   control — it depends on free-list capacity. The correct design:
+   - Either: make it a conditional postcondition (if promotions succeed → iso)
+   - Or: prove it follows from a simple space-sufficiency precondition
+     (e.g., `free_list_capacity >= live_set_size * max_wosize`)
+
+   **Resolution**: Keep as precondition but rename/reframe as a space-sufficiency
+   condition. The real question: does the Cheney BFS (which allocates lazily)
+   guarantee this? YES — if we assume the free list has enough total space.
+   This is a legitimate precondition but should be stated more naturally.
+
+3. **Conjunct (16) allocated_objects_avoid_chain**: This states that non-blue
+   objects are not on the free list. This follows DIRECTLY from
+   `chain_objects_blue` (conjunct 5): if all chain objects are blue,
+   then non-blue objects are not on the chain. QED.
+
+   **Resolution**: Remove entirely — derive internally from chain_objects_blue.
+
+4. **Conjunct (17) post_promote_pointer_closure**: States that after promotion,
+   all pointer fields either target valid objects or can be resolved via fwd.
+   This SHOULD be provable from:
+   - `minor_fields_well_formed` (all minor fields point to live_set or major)
+   - `all_promotions_succeed` (all live_set objects get promoted)
+   - `well_formed_heap major` (part2: existing major fields point to valid objs)
+   - Allocator frame properties (promotion doesn't corrupt existing fields)
+
+   The existing `gen_gc_correct_full` already assumes this as a precondition,
+   suggesting it hasn't been proven yet.
+
+   **Resolution**: Prove as a lemma from (minor_fields_wf + all_promotions_succeed
+   + well_formed_heap + allocator frame). This is the hardest proof in the plan.
+
+5. **Conjunct (22) iso_preconditions_bundle**: This bundles 4 predicates:
+   - `iso_structural_preconditions` (root correspondence, fwd injectivity,
+     field correspondence, reachability bridge, disjointness, morphism image)
+   - `iso_edge_bridge_forward` (combined edge → mc_major edge)
+   - `iso_surjectivity` (mc-reachable → has combined pre-image)
+   - `iso_edge_backward` (mc edge → combined edge)
+
+   **This is the fatal flaw.** We are asking the caller to prove that the
+   forwarding map is an isomorphism — which IS the conclusion we claim to prove!
+   The current proof structure is:
+   ```
+   Caller proves: fwd is an isomorphism (disguised as "preconditions")
+   gen_gc_iso proves: fwd is an isomorphism
+   ```
+   This is circular — the "theorem" is trivially true.
+
+   **Resolution**: Each of these 4 predicates must be PROVEN as lemmas from
+   the Cheney BFS algorithm's correctness properties:
+   
+   - **Fwd injectivity**: The allocator returns distinct addresses for distinct
+     allocations. Each `promote_object` call allocates from the free list, and
+     the free list advances. Prove in GC.Gen.Allocator or GC.Gen.CheneyInjectivity.
+   
+   - **Edge bridge forward**: If (u,v) is an edge in the combined graph and
+     both are reachable, then (fwd(u), fwd(v)) is an edge in mc_major.
+     Proof: field_correspondence gives that promoted fields are rewritten.
+     For major→major edges: preserved by update_major_pointers.
+     For minor→minor edges: promoted with correct fields, then rewritten.
+     For major→minor edges: rewritten by update_major_pointers.
+   
+   - **Surjectivity**: Every mc_major-reachable object has a pre-image.
+     Proof: mc_major objects are either (a) pre-existing major objects
+     (mapped by MajorV) or (b) promoted minor objects (mapped by MinorV).
+     No other objects exist in mc_major.
+   
+   - **Edge backward**: If (fwd(u), fwd(v)) is an edge in mc_major, then
+     (u,v) is an edge in the combined graph. This is the converse of edge
+     forward. Proof: field_correspondence is pointwise, so edges in mc_major
+     between morphism images correspond to original edges.
+
+### What's Actually Proven vs. Assumed
+
+| Property | Status | Module |
+|----------|--------|--------|
+| wfh_part1 after Cheney | PROVEN | CheneyCorrectness |
+| fl_valid/terminates after Cheney | PROVEN | CheneyCorrectness |
+| no_black after Cheney | PROVEN | CheneyEnd2End |
+| objects_survive | PROVEN | CheneyCorrectness |
+| root_rewriting | PROVEN | CheneyCorrectness |
+| minor_reset | PROVEN | CheneyCorrectness |
+| chain_objects_blue after promote | PROVEN | GC.Gen.Cheney |
+| density after promote | PROVEN | GC.Gen.Cheney |
+| full well_formed_heap after collect | PROVEN (conditional) | gen_gc_correct_full |
+| no_pointer_to_blue after collect | PROVEN | CheneyEnd2End |
+| fwd injectivity | **ASSUMED** | iso_structural_preconditions |
+| field_correspondence | **ASSUMED** | iso_structural_preconditions |
+| edge bridge forward | **ASSUMED** | iso_edge_bridge_forward |
+| surjectivity | **ASSUMED** | iso_surjectivity |
+| edge backward | **ASSUMED** | iso_edge_backward |
+| root correspondence | **ASSUMED** | iso_structural_preconditions |
+| morphism image preservation | **ASSUMED** | iso_structural_preconditions |
+| post_promote_pointer_closure | **ASSUMED** | precondition (17) |
+| allocated_objects_avoid_chain | **ASSUMED** (derivable) | precondition (16) |
+
+### Plan: From Trivial to Meaningful
+
+**Phase A: Eliminate redundant/derivable preconditions (16, parts of 13)**
+- Remove `allocated_objects_avoid_chain` — derive from `chain_objects_blue`
+- Move internally-provable parts of gc_precondition out of the REQUIRES
+
+**Phase B: Prove post_promote_pointer_closure (17)**
+- Factor into: allocator frame + minor_fields_wf + promotions_succeed
+- New module: GC.Gen.PointerClosure with the composition proof
+
+**Phase C: Prove fwd_injectivity**
+- The allocator advances the free-list pointer monotonically
+- Each allocation returns the current fp, then advances fp
+- Distinct allocations → distinct addresses
+- New module or extension of GC.Gen.Allocator
+
+**Phase D: Prove field_correspondence**
+- Partially proven in GC.Gen.PromoteUpdate (update_major_pointers_field_effect)
+- Need: promote_preserves_existing_fields (alloc frame) + copy_fields_correct
+- Compose with update_major_pointers_field_effect
+
+**Phase E: Prove edge_bridge_forward**
+- From field_correspondence: if (u,v) is a combined edge, then after
+  promotion+update, the field of fwd(u) pointing to v is rewritten to fwd(v)
+- This means (fwd(u), fwd(v)) is an edge in mc_major
+
+**Phase F: Prove surjectivity**
+- Every object in mc_major is either pre-existing major or newly promoted
+- Pre-existing: MajorV v maps to it
+- Newly promoted: MinorV v maps to it (and v is in live_set → reachable)
+
+**Phase G: Prove edge_backward**
+- Converse of edge_forward using field_correspondence bijectivity
+- If (fwd(u), fwd(v)) is in mc_major edges, then fwd(u) has a field = fwd(v)
+- By field_correspondence, this field came from u having a field = v (or fwd⁻¹(fwd(v)))
+- By fwd injectivity, fwd⁻¹ is well-defined
+
+**Phase H: Prove root_correspondence and morphism_image**
+- Root correspondence: definition of how we construct the gray stack
+  from combined_roots (this is about the relationship between combined_roots
+  and major_stack — a DEFINITION, not something to prove)
+- Morphism image preservation: follows from fwd injectivity +
+  reachability bridge + fwd_targets_in_objects
+
+### Minimal Ideal Preconditions
+
+The ideal `gen_gc_iso` should require ONLY:
+1. `well_formed_heap major` — heap structure valid
+2. `fl_valid + fl_chain_terminates` — free list valid  
+3. `chain_objects_blue` — free list nodes are blue
+4. `minor_wf + minor_guards_complete` — minor heap valid
+5. `no_black_objects` — clean tri-color state
+6. `minor_fields_well_formed` — minor fields point to valid objects
+7. `no_scan_invariant + minor_no_scan_invariant` — no-scan objects are opaque
+8. `heap_objects_dense` — object layout is contiguous
+9. `all_promotions_succeed` (or space_sufficient) — enough free space
+10. `nroots == length rs` — trivial length agreement
+11. `fwd_arr` size/zeroed — implementation detail
+12. `objects > 0` — non-empty heap
+13. Gray stack properties (stack_props, root_props on post-Cheney) — about
+    the stack argument, not derivable from heap alone
+14. `combined_roots` definition — how combined roots relate to program roots
+    (this is a PARAMETER SPECIFICATION, not a proof obligation)
+
+Everything else (fwd injectivity, edge bridge, surjectivity, pointer closure,
+allocated_objects_avoid_chain) should be PROVEN internally.
+
+### Feasibility Assessment
+
+- **Phase A** (redundant removal): Easy, ~1 day
+- **Phase B** (pointer closure): Medium, depends on allocator frame lemma status
+- **Phase C** (fwd injectivity): Medium, allocator properties exist partially
+- **Phase D** (field correspondence): Hard, most complex composition
+- **Phase E** (edge forward): Medium, follows from field correspondence
+- **Phase F** (surjectivity): Medium, structural argument about mc_major objects
+- **Phase G** (edge backward): Medium, converse of forward + injectivity
+- **Phase H** (root/image): Easy, mostly definitional
+
+Total: Significant effort. The hardest gap is field_correspondence and
+pointer_closure. These depend on an "allocator frame" lemma showing that
+`alloc_spec` doesn't modify fields of previously-allocated objects — which
+is noted in the code as not yet bridged (see GC.Gen.Correctness line 134).
+
+### Recommended Approach
+
+Start with Phase A (immediate cleanup) and Phase C (fwd injectivity — this
+unlocks many downstream proofs). Then attack Phase F (surjectivity — relatively
+standalone). Defer D/E/G until the allocator frame lemma is proven.
+
+---
+
 ## 1. Defining the Pre-GC Graph
 
 ### The "combined" graph
