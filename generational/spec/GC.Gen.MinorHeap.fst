@@ -374,6 +374,30 @@ private let rec minor_objects_aux_wosize_bound_raw
   end
 #pop-options
 
+/// infix_parent_value: unfolds infix_parent definition and proves the value
+let infix_parent_value (ms: minor_state) (addr: U64.t)
+  : Lemma (requires is_infix_in_minor ms addr /\ minor_infix_wf ms)
+          (ensures U64.v (infix_parent ms addr) == U64.v addr - minor_wosize ms addr * 8) =
+  reveal_opaque (`%minor_infix_wf) (minor_infix_wf ms);
+  let wz = minor_wosize ms addr in
+  let off = wz * 8 in
+  // From minor_infix_wf: wz * 8 <= U64.v addr - 8, hence off <= U64.v addr
+  assert (off <= U64.v addr);
+  // infix_parent takes the `then` branch, returning uint_to_t (v addr - off)
+  assert (infix_parent ms addr == U64.uint_to_t (U64.v addr - off));
+  // The value is in range [0, 2^64), so the roundtrip works
+  assert (U64.v addr - off >= 0);
+  assert (U64.v addr - off < pow2 64)
+
+/// Infix sub-objects (tag=249) are never in minor_objects.
+/// This holds because minor_objects_aux walks header-by-header, jumping
+/// over entire object bodies. Infix headers reside WITHIN a parent
+/// closure's body, so the walk never lands on them.
+let minor_objects_not_infix (ms: minor_state) (addr: U64.t)
+  : Lemma (requires Seq.mem addr (minor_objects ms))
+          (ensures minor_tag ms addr <> 249) =
+  admit ()
+
 let minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)
   : Lemma (requires Seq.mem obj (minor_objects ms))
           (ensures (minor_wosize ms obj + 1) * 8 <= minor_heap_size) =

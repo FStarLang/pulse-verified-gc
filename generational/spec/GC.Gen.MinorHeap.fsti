@@ -261,15 +261,29 @@ let minor_infix_wf (ms: minor_state) : prop =
   forall (addr: U64.t).
     is_infix_in_minor ms addr ==>
     (let wz = minor_wosize ms addr in
+     let parent = infix_parent ms addr in
      wz > 0 /\
      wz * 8 <= U64.v addr - 8 /\
-     U64.v (infix_parent ms addr) >= 8 /\
-     U64.v (infix_parent ms addr) % 8 == 0 /\
-     Seq.mem (infix_parent ms addr) (minor_objects ms))
+     U64.v parent >= 8 /\
+     U64.v parent % 8 == 0 /\
+     Seq.mem parent (minor_objects ms) /\
+     // The infix lies within the parent's body:
+     U64.v addr - U64.v parent < minor_wosize ms parent * 8)
 
 /// ---------------------------------------------------------------------------
 /// Properties
 /// ---------------------------------------------------------------------------
+
+/// Infix sub-objects (tag=249) are never in minor_objects
+/// When addr is an infix sub-object and minor_infix_wf holds,
+/// the parent's value is addr minus the encoded offset (wosize*8).
+val infix_parent_value (ms: minor_state) (addr: U64.t)
+  : Lemma (requires is_infix_in_minor ms addr /\ minor_infix_wf ms)
+          (ensures U64.v (infix_parent ms addr) == U64.v addr - minor_wosize ms addr * 8)
+
+val minor_objects_not_infix (ms: minor_state) (addr: U64.t)
+  : Lemma (requires Seq.mem addr (minor_objects ms))
+          (ensures minor_tag ms addr <> 249)
 
 /// Every object in minor_objects has wosize that fits in the heap
 val minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)

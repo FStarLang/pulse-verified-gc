@@ -80,7 +80,7 @@ let cheney_forward_one (minor: minor_state) (cs: cheney_state) (addr: U64.t)
     let cs' = cheney_forward_normal minor cs parent in
     if cs'.cs_fwd parent <> 0UL &&
        U64.v addr >= U64.v parent &&
-       U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < pow2 64
+       U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
     then
       let delta = U64.v addr - U64.v parent in
       { cs' with cs_fwd = extend_forwarding cs'.cs_fwd addr
@@ -128,6 +128,12 @@ let cheney_forward_normal_success (minor: minor_state) (cs: cheney_state) (addr:
                       cs_queue = Seq.append cs.cs_queue (Seq.create 1 addr) }))
   = ()
 
+/// For any y <> addr, cheney_forward_normal on addr leaves cs_fwd y unchanged
+let cheney_forward_normal_other_fwd (minor: minor_state) (cs: cheney_state) (addr: U64.t) (y: U64.t)
+  : Lemma (requires y <> addr)
+          (ensures (cheney_forward_normal minor cs addr).cs_fwd y == cs.cs_fwd y)
+  = ()
+
 /// Unfold lemmas for cheney_forward_one (infix-aware)
 
 let cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
@@ -151,6 +157,26 @@ let cheney_forward_one_infix (minor: minor_state) (cs: cheney_state) (addr: U64.
                     r.cs_major == cs'.cs_major /\
                     r.cs_fp == cs'.cs_fp /\
                     r.cs_queue == cs'.cs_queue))
+  = ()
+
+/// For any y <> addr, the infix case preserves cs_fwd y from the parent forwarding
+let cheney_forward_one_infix_fwd (minor: minor_state) (cs: cheney_state) (addr: U64.t) (y: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr /\ y <> addr)
+          (ensures (let parent = infix_parent minor addr in
+                    let cs' = cheney_forward_normal minor cs parent in
+                    (cheney_forward_one minor cs addr).cs_fwd y == cs'.cs_fwd y))
+  = ()
+
+/// In the infix case, if the guard passes, the stored value for addr is parent_fwd + delta < heap_size
+let cheney_forward_one_infix_bounded (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr)
+          (ensures (let r = cheney_forward_one minor cs addr in
+                    r.cs_fwd addr <> 0UL ==>
+                    (let parent = infix_parent minor addr in
+                     let cs' = cheney_forward_normal minor cs parent in
+                     let delta = U64.v addr - U64.v parent in
+                     U64.v (r.cs_fwd addr) == U64.v (cs'.cs_fwd parent) + delta /\
+                     U64.v (r.cs_fwd addr) < heap_size)))
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -1066,7 +1092,7 @@ let cheney_promote_preserves_dense
 /// ---------------------------------------------------------------------------
 
 /// cheney_forward_normal preserves fwd_bounded.
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 
 private let cheney_forward_normal_preserves_fwd_bounded
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
@@ -1108,11 +1134,48 @@ private let cheney_forward_one_preserves_fwd_bounded
     cheney_forward_normal_preserves_wfh_part1 minor cs parent;
     let cs' = cheney_forward_normal minor cs parent in
     if cs'.cs_fwd parent <> 0UL then begin
-      // parent_fwd is bounded: >= mword, < heap_size, % mword == 0
-      // delta = addr - parent, and infix lies within parent's body
-      // so parent_fwd + delta < heap_size (admitted for now)
       reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
-      assume (fwd_bounded (cheney_forward_one minor cs addr).cs_fwd)
+      let r = cheney_forward_one minor cs addr in
+      // Use infix_bounded: if r.cs_fwd addr <> 0, it's < heap_size
+      cheney_forward_one_infix_bounded minor cs addr;
+      // Use infix_fwd for all y <> addr: r.cs_fwd y == cs'.cs_fwd y (bounded)
+      // For y = addr: either 0 (trivially bounded) or < heap_size (by infix_bounded)
+      // Also: parent_fwd >= mword, parent % 8 == 0, addr % 8 == 0, so result % 8 == 0
+      // and parent_fwd + delta >= parent_fwd >= mword
+      let aux (x: U64.t) : Lemma (requires r.cs_fwd x <> 0UL)
+                                  (ensures U64.v (r.cs_fwd x) >= U64.v mword /\
+                                           U64.v (r.cs_fwd x) < heap_size /\
+                                           U64.v (r.cs_fwd x) % U64.v mword == 0) =
+        if x = addr then begin
+          // r.cs_fwd addr <> 0 → infix_bounded gives value and bound
+          let parent_fwd_v = U64.v (cs'.cs_fwd parent) in
+          let delta = U64.v addr - U64.v parent in
+          assert (U64.v (r.cs_fwd addr) == parent_fwd_v + delta);
+          assert (U64.v (r.cs_fwd addr) < heap_size);
+          // parent_fwd >= mword from fwd_bounded cs'
+          assert (parent_fwd_v >= U64.v mword);
+          // delta >= 0, so sum >= mword
+          assert (U64.v (r.cs_fwd addr) >= U64.v mword);
+          // alignment: parent_fwd % 8 == 0, and delta = wz*8
+          assert (parent_fwd_v % U64.v mword == 0);
+          // Use the unfold lemma to get U64.v parent == U64.v addr - wz*8
+          infix_parent_value minor addr;
+          let wz_infix = minor_wosize minor addr in
+          assert (U64.v parent == U64.v addr - wz_infix * 8);
+          assert (delta == wz_infix * 8);
+          FStar.Math.Lemmas.multiple_modulo_lemma wz_infix 8;
+          assert (delta % 8 == 0);
+          assert (delta % U64.v mword == 0);
+          // parent_fwd % 8 == 0, delta = wz_infix * 8, so (parent_fwd + delta) % 8 == 0
+          FStar.Math.Lemmas.lemma_mod_plus parent_fwd_v wz_infix 8;
+          assert ((parent_fwd_v + delta) % U64.v mword == 0);
+          assert (U64.v (r.cs_fwd addr) % U64.v mword == 0)
+        end else begin
+          cheney_forward_one_infix_fwd minor cs addr x
+          // r.cs_fwd x == cs'.cs_fwd x, bounded by fwd_bounded cs'
+        end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
     end else ()
   end
   else

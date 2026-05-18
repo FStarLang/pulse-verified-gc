@@ -102,6 +102,11 @@ val cheney_forward_normal_success (minor: minor_state) (cs: cheney_state) (addr:
                       cs_fwd   = extend_forwarding cs.cs_fwd addr res.new_addr;
                       cs_queue = Seq.append cs.cs_queue (Seq.create 1 addr) }))
 
+/// For any y <> addr, cheney_forward_normal on addr leaves cs_fwd y unchanged
+val cheney_forward_normal_other_fwd (minor: minor_state) (cs: cheney_state) (addr: U64.t) (y: U64.t)
+  : Lemma (requires y <> addr)
+          (ensures (cheney_forward_normal minor cs addr).cs_fwd y == cs.cs_fwd y)
+
 /// --- Unfold lemmas for cheney_forward_one (infix-aware) ---
 
 /// Unfold: when addr is already forwarded, or not in minor and not infix
@@ -128,6 +133,24 @@ val cheney_forward_one_infix (minor: minor_state) (cs: cheney_state) (addr: U64.
                     r.cs_major == cs'.cs_major /\
                     r.cs_fp == cs'.cs_fp /\
                     r.cs_queue == cs'.cs_queue))
+
+/// For any y <> addr, the infix case preserves cs_fwd y from the parent forwarding
+val cheney_forward_one_infix_fwd (minor: minor_state) (cs: cheney_state) (addr: U64.t) (y: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr /\ y <> addr)
+          (ensures (let parent = infix_parent minor addr in
+                    let cs' = cheney_forward_normal minor cs parent in
+                    (cheney_forward_one minor cs addr).cs_fwd y == cs'.cs_fwd y))
+
+/// In the infix case, if the result's fwd at addr is non-zero, it's bounded by heap_size
+val cheney_forward_one_infix_bounded (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr)
+          (ensures (let r = cheney_forward_one minor cs addr in
+                    r.cs_fwd addr <> 0UL ==>
+                    (let parent = infix_parent minor addr in
+                     let cs' = cheney_forward_normal minor cs parent in
+                     let delta = U64.v addr - U64.v parent in
+                     U64.v (r.cs_fwd addr) == U64.v (cs'.cs_fwd parent) + delta /\
+                     U64.v (r.cs_fwd addr) < heap_size)))
 
 /// ---------------------------------------------------------------------------
 /// Forward children: iterate an object's fields and forward each child

@@ -324,6 +324,16 @@ and count_unforwarded_monotone
       count_unforwarded_monotone objs fwd addr new_addr (i + 1)
     end
 
+/// If two forwarding maps agree on all elements of objs, count_unforwarded is the same
+private let rec count_unforwarded_ext
+  (objs: seq U64.t) (fwd1 fwd2: forwarding_map) (i: nat)
+  : Lemma (requires (forall (k:nat). k >= i /\ k < Seq.length objs ==>
+                      fwd1 (Seq.index objs k) == fwd2 (Seq.index objs k)))
+          (ensures count_unforwarded objs fwd1 i == count_unforwarded objs fwd2 i)
+          (decreases (if i < Seq.length objs then Seq.length objs - i else 0))
+  = if i >= Seq.length objs then ()
+    else count_unforwarded_ext objs fwd1 fwd2 (i + 1)
+
 /// ---------------------------------------------------------------------------
 /// Compound BFS invariant definition and lemmas
 /// ---------------------------------------------------------------------------
@@ -440,11 +450,47 @@ let fwd_one_preserves_bfs_inv
   else if is_infix_in_minor minor addr then begin
     reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
     assert (U64.v addr >= U64.v (infix_parent minor addr));
-    CheneySpec.cheney_forward_one_infix minor cs addr;
     let parent = infix_parent minor addr in
-    let cs' = CheneySpec.cheney_forward_normal minor cs parent in
+    // parent < addr since wosize > 0 implies delta > 0
+    assert (parent <> addr);
+    // Forward parent preserves bfs_inv
     fwd_normal_preserves_bfs_inv minor cs parent;
-    assume (cheney_bfs_inv minor (CheneySpec.cheney_forward_one minor cs addr))
+    let cs' = CheneySpec.cheney_forward_normal minor cs parent in
+    assert (cheney_bfs_inv minor cs');
+    // cs'.cs_fwd addr = 0UL (forward_normal on parent doesn't touch addr)
+    CheneySpec.cheney_forward_normal_other_fwd minor cs parent addr;
+    assert (cs'.cs_fwd addr == cs.cs_fwd addr);
+    assert (cs'.cs_fwd addr = 0UL);
+    // r = cheney_forward_one minor cs addr
+    let r = CheneySpec.cheney_forward_one minor cs addr in
+    CheneySpec.cheney_forward_one_infix minor cs addr;
+    // r.cs_queue == cs'.cs_queue
+    assert (r.cs_queue == cs'.cs_queue);
+    // For all queue members y: cs'.cs_fwd y <> 0UL, hence y <> addr, hence r.cs_fwd y == cs'.cs_fwd y <> 0UL
+    let aux_queue (j: nat{j < Seq.length r.cs_queue})
+      : Lemma (r.cs_fwd (Seq.index r.cs_queue j) <> 0UL)
+      = let y = Seq.index r.cs_queue j in
+        assert (cs'.cs_fwd y <> 0UL); // from bfs_inv of cs'
+        assert (y <> addr); // since cs'.cs_fwd addr = 0UL but cs'.cs_fwd y <> 0UL
+        CheneySpec.cheney_forward_one_infix_fwd minor cs addr y
+    in
+    FStar.Classical.forall_intro aux_queue;
+    // count_unforwarded is the same because all minor_objects members have tag <> 249 (hence <> addr)
+    let objs = minor_objects minor in
+    let aux_ext (k: nat{k >= 0 /\ k < Seq.length objs})
+      : Lemma (r.cs_fwd (Seq.index objs k) == cs'.cs_fwd (Seq.index objs k))
+      = let y = Seq.index objs k in
+        minor_objects_not_infix minor y;
+        // y has tag <> 249, addr has tag == 249 (is_infix_in_minor), hence y <> addr
+        assert (minor_tag minor y <> 249);
+        assert (minor_tag minor addr = 249);
+        assert (y <> addr);
+        CheneySpec.cheney_forward_one_infix_fwd minor cs addr y
+    in
+    FStar.Classical.forall_intro aux_ext;
+    count_unforwarded_ext objs r.cs_fwd cs'.cs_fwd 0;
+    // queue_valid is same since queues are equal
+    assert (queue_valid minor r.cs_queue)
   end
   else begin
     CheneySpec.cheney_forward_one_normal minor cs addr;
