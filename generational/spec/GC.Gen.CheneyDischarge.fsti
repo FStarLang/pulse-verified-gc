@@ -55,6 +55,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 
 /// The remaining 3 conjuncts of iso_structural_preconditions that are
 /// NOT yet proven internally. Conjuncts (2), (3), (5), (6), (7) are now discharged.
+/// Conjunct (8) is split: validity/membership proven internally, reachability remains.
 let iso_remaining_preconditions
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (combined_roots: seq combined_vertex)
@@ -71,6 +72,10 @@ let iso_remaining_preconditions
   // (4) Field correspondence
   (field_correspondence minor major res.mc_major prom.fwd_map roots) /\
   // (8) Morphism image preservation
+  // Note: validity and mem_graph_vertex are provable from other preconditions
+  // (cheney_collect_preserves_objects + cheney_fwd_targets_in_mc_major),
+  // but kept here for type coercion. The meaningful caller obligation is the
+  // reachability existential.
   (forall (v: combined_vertex).
     combined_reachable cg combined_roots v ==>
     (let w = Iso.fwd_morphism prom.fwd_map v in

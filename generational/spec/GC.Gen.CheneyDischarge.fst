@@ -158,5 +158,10 @@ let discharge_structural_preconditions
     live_set_subset_reachable minor major roots;
     // Step 2: cheney_promotes_all_reachable gives fwd v <> 0 for reachable with wosize > 0
     CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
+    // Derive conjunct (8) validity/membership parts
+    // For MajorV: objects survive collection (conjunct 7 gives membership in major)
+    CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
+    // For MinorV: fwd targets are valid in mc_major
+    cheney_fwd_targets_in_mc_major minor major fp roots;
     ()
 #pop-options
