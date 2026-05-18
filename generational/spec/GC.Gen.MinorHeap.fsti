@@ -200,6 +200,28 @@ val minor_tag_bound (ms: minor_state) (obj: U64.t)
   : Lemma (minor_tag ms obj < 256)
 
 /// ---------------------------------------------------------------------------
+/// Infix Object Detection
+/// ---------------------------------------------------------------------------
+
+/// An address in the minor heap points to an infix sub-object if its
+/// header tag is Infix_tag (249). Infix headers reside WITHIN the body of
+/// a parent closure (tag=247) and encode the byte offset back to the parent
+/// in the wosize field.
+let is_infix_in_minor (ms: minor_state) (addr: U64.t) : GTot bool =
+  U64.v addr >= 8 && U64.v addr < minor_heap_size && U64.v addr % 8 = 0 &&
+  minor_tag ms addr = 249
+
+/// Compute the parent closure's val-address from an infix val-address.
+/// The infix header's wosize field encodes the word offset from infix val
+/// to parent val: parent = infix_val - wosize * 8.
+/// Returns 0 if the offset would underflow (defensive; minor_infix_wf prevents this).
+let infix_parent (ms: minor_state) (addr: U64.t) : GTot U64.t =
+  let off = minor_wosize ms addr * 8 in
+  if off <= U64.v addr
+  then U64.uint_to_t (U64.v addr - off)
+  else 0UL
+
+/// ---------------------------------------------------------------------------
 /// Guard Completeness (trust assumption on the mutator)
 /// ---------------------------------------------------------------------------
 
@@ -213,6 +235,9 @@ val minor_tag_bound (ms: minor_state) (obj: U64.t)
 /// mistaken for an object header. In practice OCaml tagged values (odd integers,
 /// aligned pointers) do not produce such confusion.
 ///
+/// Note: addresses with tag = 249 (Infix_tag) are excluded — they are
+/// infix sub-objects within closures, not standalone objects.
+///
 /// This predicate is expected at GC entry and preserved by the collector
 /// (which only reads the minor heap) and by minor_reset (bump → 0).
 [@@"opaque_to_smt"]
@@ -220,8 +245,27 @@ let minor_guards_complete (ms: minor_state) : prop =
   forall (addr: U64.t).
     U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
     minor_wosize ms addr > 0 /\
-    U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size ==>
+    U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size /\
+    minor_tag ms addr <> 249 ==>
     Seq.mem addr (minor_objects ms)
+
+/// ---------------------------------------------------------------------------
+/// Infix Well-Formedness (trust assumption on the mutator)
+/// ---------------------------------------------------------------------------
+
+/// When an infix sub-object exists in the minor heap, its encoded parent
+/// must be a valid minor object (a closure). This guarantees that the
+/// infix-aware BFS can safely forward the parent and derive infix forwarding.
+[@@"opaque_to_smt"]
+let minor_infix_wf (ms: minor_state) : prop =
+  forall (addr: U64.t).
+    is_infix_in_minor ms addr ==>
+    (let wz = minor_wosize ms addr in
+     wz > 0 /\
+     wz * 8 <= U64.v addr - 8 /\
+     U64.v (infix_parent ms addr) >= 8 /\
+     U64.v (infix_parent ms addr) % 8 == 0 /\
+     Seq.mem (infix_parent ms addr) (minor_objects ms))
 
 /// ---------------------------------------------------------------------------
 /// Properties

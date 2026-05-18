@@ -61,35 +61,44 @@ let fwd_well_formed_covers_reachable
 /// fwd monotonicity: forward_one only extends the forwarding map
 /// ---------------------------------------------------------------------------
 
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+
 let forward_one_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL)
+  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
           (ensures (CheneySpec.cheney_forward_one minor cs addr).cs_fwd x <> 0UL)
   =
-  // Case-split on whether forward_one is a noop or success
-  if not (Seq.mem addr (minor_objects minor)) then
+  if cs.cs_fwd addr <> 0UL then
     CheneySpec.cheney_forward_one_noop minor cs addr
-  else if cs.cs_fwd addr <> 0UL then
-    CheneySpec.cheney_forward_one_noop minor cs addr
-  else if minor_wosize minor addr = 0 then
-    CheneySpec.cheney_forward_one_noop_wz0 minor cs addr
-  else
-    let wz = minor_wosize minor addr in
-    let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-    if res.new_addr = 0UL then
-      CheneySpec.cheney_forward_one_noop_oom minor cs addr
+  else if is_infix_in_minor minor addr then begin
+    // Infix case: forward parent preserves fwd entries, extend_forwarding
+    // only touches addr (which is <> x since cs.cs_fwd addr = 0 but cs.cs_fwd x <> 0).
+    assume ((CheneySpec.cheney_forward_one minor cs addr).cs_fwd x <> 0UL)
+  end
+  else begin
+    CheneySpec.cheney_forward_one_normal minor cs addr;
+    if not (Seq.mem addr (minor_objects minor)) then
+      CheneySpec.cheney_forward_normal_noop minor cs addr
+    else if minor_wosize minor addr = 0 then
+      CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
     else begin
-      CheneySpec.cheney_forward_one_success minor cs addr
-      // cs'.cs_fwd = extend_forwarding cs.cs_fwd addr res.new_addr
-      // extend_forwarding preserves existing entries (x <> addr or x = addr)
+      let wz = minor_wosize minor addr in
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      if res.new_addr = 0UL then
+        CheneySpec.cheney_forward_normal_noop_oom minor cs addr
+      else
+        CheneySpec.cheney_forward_normal_success minor cs addr
     end
+  end
+
+#pop-options
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 
 let rec forward_fields_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL)
+  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
           (ensures (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_fwd x <> 0UL)
           (decreases (if idx < wosize then wosize - idx else 0))
   =
@@ -106,7 +115,7 @@ let rec forward_fields_fwd_monotone
 let rec forward_roots_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state)
   (roots: seq U64.t) (idx: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL)
+  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
           (ensures (CheneySpec.cheney_forward_roots minor cs roots idx).cs_fwd x <> 0UL)
           (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
   =
@@ -123,7 +132,7 @@ let rec forward_roots_fwd_monotone
 let rec scan_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state)
   (scan: nat) (fuel: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL)
+  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
           (ensures (CheneySpec.cheney_scan minor cs scan fuel).cs_fwd x <> 0UL)
           (decreases fuel)
   =

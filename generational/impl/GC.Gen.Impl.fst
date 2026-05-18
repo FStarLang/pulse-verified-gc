@@ -265,6 +265,7 @@ fn minor_collect (gh: gen_heap_t)
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                  minor_wf ({ data = 'd; bump = 'b }) /\
                   minor_guards_complete ({ data = 'd; bump = 'b }) /\
+                  minor_infix_wf ({ data = 'd; bump = 'b }) /\
                  Seq.length (SpecFields.objects zero_addr 's) > 0)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
@@ -363,6 +364,7 @@ fn gen_gc (gh: gen_heap_t)
              (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
              minor_wf ({ data = 'd; bump = 'b }) /\
              minor_guards_complete ({ data = 'd; bump = 'b }) /\
+             minor_infix_wf ({ data = 'd; bump = 'b }) /\
              Seq.length (SpecFields.objects zero_addr 's) > 0 /\
              Mark.no_black_objects 's /\
              (let res = CheneySpec.cheney_collect_spec

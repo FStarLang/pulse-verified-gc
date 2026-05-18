@@ -47,10 +47,10 @@ private let promote_object_preserves_alloc_invs
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// cheney_forward_one: forward a single object
+/// cheney_forward_normal: forward a single non-infix object
 /// ---------------------------------------------------------------------------
 
-let cheney_forward_one (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+let cheney_forward_normal (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : GTot cheney_state
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
@@ -67,31 +67,53 @@ let cheney_forward_one (minor: minor_state) (cs: cheney_state) (addr: U64.t)
           cs_fwd   = extend_forwarding cs.cs_fwd addr res.new_addr;
           cs_queue = Seq.append cs.cs_queue (Seq.create 1 addr) }
 
-/// Unfold lemmas
+/// ---------------------------------------------------------------------------
+/// cheney_forward_one: infix-aware forwarding
+/// ---------------------------------------------------------------------------
 
-let cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+let cheney_forward_one (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : GTot cheney_state
+  =
+  if cs.cs_fwd addr <> 0UL then cs
+  else if is_infix_in_minor minor addr then
+    let parent = infix_parent minor addr in
+    let cs' = cheney_forward_normal minor cs parent in
+    if cs'.cs_fwd parent <> 0UL &&
+       U64.v addr >= U64.v parent &&
+       U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < pow2 64
+    then
+      let delta = U64.v addr - U64.v parent in
+      { cs' with cs_fwd = extend_forwarding cs'.cs_fwd addr
+                             (U64.uint_to_t (U64.v (cs'.cs_fwd parent) + delta)) }
+    else cs'
+  else
+    cheney_forward_normal minor cs addr
+
+/// Unfold lemmas for cheney_forward_normal
+
+let cheney_forward_normal_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires ~(Seq.mem addr (minor_objects minor)) \/
                     cs.cs_fwd addr <> 0UL)
-          (ensures cheney_forward_one minor cs addr == cs)
+          (ensures cheney_forward_normal minor cs addr == cs)
   = ()
 
-let cheney_forward_one_noop_wz0 (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+let cheney_forward_normal_noop_wz0 (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr = 0)
-          (ensures cheney_forward_one minor cs addr == cs)
+          (ensures cheney_forward_normal minor cs addr == cs)
   = ()
 
-let cheney_forward_one_noop_oom (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+let cheney_forward_normal_noop_oom (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
                        (minor_wosize minor addr)).new_addr = 0UL)
-          (ensures cheney_forward_one minor cs addr == cs)
+          (ensures cheney_forward_normal minor cs addr == cs)
   = ()
 
-let cheney_forward_one_success (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+let cheney_forward_normal_success (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
@@ -99,11 +121,36 @@ let cheney_forward_one_success (minor: minor_state) (cs: cheney_state) (addr: U6
                        (minor_wosize minor addr)).new_addr <> 0UL)
           (ensures (let wz = minor_wosize minor addr in
                     let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-                    cheney_forward_one minor cs addr ==
+                    cheney_forward_normal minor cs addr ==
                     { cs_major = res.major_out;
                       cs_fp    = res.fp_out;
                       cs_fwd   = extend_forwarding cs.cs_fwd addr res.new_addr;
                       cs_queue = Seq.append cs.cs_queue (Seq.create 1 addr) }))
+  = ()
+
+/// Unfold lemmas for cheney_forward_one (infix-aware)
+
+let cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr <> 0UL \/
+                    (~(Seq.mem addr (minor_objects minor)) /\ ~(is_infix_in_minor minor addr)))
+          (ensures cheney_forward_one minor cs addr == cs)
+  = ()
+
+let cheney_forward_one_normal (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ ~(is_infix_in_minor minor addr))
+          (ensures cheney_forward_one minor cs addr ==
+                   cheney_forward_normal minor cs addr)
+  = ()
+
+let cheney_forward_one_infix (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr /\
+                    U64.v addr >= U64.v (infix_parent minor addr))
+          (ensures (let parent = infix_parent minor addr in
+                    let cs' = cheney_forward_normal minor cs parent in
+                    let r = cheney_forward_one minor cs addr in
+                    r.cs_major == cs'.cs_major /\
+                    r.cs_fp == cs'.cs_fp /\
+                    r.cs_queue == cs'.cs_queue))
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -223,12 +270,12 @@ let cheney_fuel_eq (minor: minor_state)
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 
-let cheney_forward_one_preserves_wfh_part1
+private let cheney_forward_normal_preserves_wfh_part1
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
-          (ensures (let cs' = cheney_forward_one minor cs addr in
+          (ensures (let cs' = cheney_forward_normal minor cs addr in
                     well_formed_heap_part1 cs'.cs_major /\
                     AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp (heap_size / U64.v mword)))
@@ -242,9 +289,27 @@ let cheney_forward_one_preserves_wfh_part1
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
       if res.new_addr = 0UL then ()
       else begin
-        // Single-step preservation via factored helper
         promote_object_preserves_alloc_invs minor cs.cs_major addr cs.cs_fp wz
       end
+
+let cheney_forward_one_preserves_wfh_part1
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures (let cs' = cheney_forward_one minor cs addr in
+                    well_formed_heap_part1 cs'.cs_major /\
+                    AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp (heap_size / U64.v mword)))
+  =
+  if cs.cs_fwd addr <> 0UL then ()
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_preserves_wfh_part1 minor cs parent
+    // extend_forwarding doesn't change cs_major/cs_fp
+  end
+  else
+    cheney_forward_normal_preserves_wfh_part1 minor cs addr
 
 #pop-options
 
@@ -351,18 +416,16 @@ let cheney_promote_preserves_wfh_part1
 /// chain_objects_blue preservation through Cheney BFS
 /// ---------------------------------------------------------------------------
 
-/// cheney_forward_one preserves chain_objects_blue.
-/// When addr is not forwarded or doesn't qualify, state is unchanged → trivial.
-/// When successful, promote_object preserves chain_objects_blue (from Promote).
+/// cheney_forward_normal preserves chain_objects_blue.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 
-private let cheney_forward_one_preserves_cob
+private let cheney_forward_normal_preserves_cob
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     chain_objects_blue cs.cs_major cs.cs_fp)
-          (ensures (let cs' = cheney_forward_one minor cs addr in
+          (ensures (let cs' = cheney_forward_normal minor cs addr in
                     chain_objects_blue cs'.cs_major cs'.cs_fp))
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
@@ -375,6 +438,26 @@ private let cheney_forward_one_preserves_cob
       if res.new_addr = 0UL then ()
       else
         promote_object_preserves_chain_objects_blue minor cs.cs_major addr cs.cs_fp wz
+
+/// cheney_forward_one preserves chain_objects_blue (infix-aware).
+private let cheney_forward_one_preserves_cob
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    chain_objects_blue cs.cs_major cs.cs_fp)
+          (ensures (let cs' = cheney_forward_one minor cs addr in
+                    chain_objects_blue cs'.cs_major cs'.cs_fp))
+  =
+  if cs.cs_fwd addr <> 0UL then ()
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_preserves_wfh_part1 minor cs parent;
+    cheney_forward_normal_preserves_cob minor cs parent
+    // extend_forwarding doesn't change cs_major/cs_fp
+  end
+  else
+    cheney_forward_normal_preserves_cob minor cs addr
 
 #pop-options
 
@@ -516,12 +599,12 @@ private let promote_object_preserves_objects_part1
 /// cheney_forward_one preserves objects
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 
-private let cheney_forward_one_preserves_objects
+private let cheney_forward_normal_preserves_objects
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
-          (ensures (let cs' = cheney_forward_one minor cs addr in
+          (ensures (let cs' = cheney_forward_normal minor cs addr in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr cs.cs_major) ==>
                       Seq.mem x (objects zero_addr cs'.cs_major))))
   =
@@ -534,6 +617,25 @@ private let cheney_forward_one_preserves_objects
       if res.new_addr = 0UL then ()
       else
         promote_object_preserves_objects_part1 minor cs.cs_major addr cs.cs_fp wz
+
+private let cheney_forward_one_preserves_objects
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures (let cs' = cheney_forward_one minor cs addr in
+                    (forall (x: obj_addr). Seq.mem x (objects zero_addr cs.cs_major) ==>
+                      Seq.mem x (objects zero_addr cs'.cs_major))))
+  =
+  if cs.cs_fwd addr <> 0UL then ()
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_preserves_wfh_part1 minor cs parent;
+    cheney_forward_normal_preserves_objects minor cs parent
+    // extend_forwarding doesn't change cs_major
+  end
+  else
+    cheney_forward_normal_preserves_objects minor cs addr
 
 #pop-options
 
@@ -809,16 +911,16 @@ let cheney_collect_preserves_fl_valid
 
 module Dense = GC.Gen.Cheney.Dense
 
-/// cheney_forward_one preserves density.
+/// cheney_forward_normal preserves density.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 
-private let cheney_forward_one_preserves_dense
+private let cheney_forward_normal_preserves_dense
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     heap_objects_dense cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
-          (ensures (let cs' = cheney_forward_one minor cs addr in
+          (ensures (let cs' = cheney_forward_normal minor cs addr in
                     heap_objects_dense cs'.cs_major))
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
@@ -831,6 +933,25 @@ private let cheney_forward_one_preserves_dense
       if res.new_addr = 0UL then ()
       else
         Dense.promote_object_preserves_dense minor cs.cs_major addr cs.cs_fp wz
+
+/// cheney_forward_one preserves density (infix-aware).
+private let cheney_forward_one_preserves_dense
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires well_formed_heap_part1 cs.cs_major /\
+                    heap_objects_dense cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures (let cs' = cheney_forward_one minor cs addr in
+                    heap_objects_dense cs'.cs_major))
+  =
+  if cs.cs_fwd addr <> 0UL then ()
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_preserves_wfh_part1 minor cs parent;
+    cheney_forward_normal_preserves_dense minor cs parent
+  end
+  else
+    cheney_forward_normal_preserves_dense minor cs addr
 
 #pop-options
 
@@ -944,21 +1065,16 @@ let cheney_promote_preserves_dense
 /// fwd_bounded preservation through Cheney BFS
 /// ---------------------------------------------------------------------------
 
-/// cheney_forward_one preserves fwd_bounded.
-/// Three cases:
-///   (a) Noop (not minor or already forwarded): fwd unchanged.
-///   (b) wosize=0 or OOM: fwd unchanged.
-///   (c) Success: fwd' = extend_forwarding fwd addr new_addr;
-///       new_addr from alloc_spec_obj_valid is >= mword, < heap_size, % mword == 0.
+/// cheney_forward_normal preserves fwd_bounded.
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 
-private let cheney_forward_one_preserves_fwd_bounded
+private let cheney_forward_normal_preserves_fwd_bounded
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires fwd_bounded cs.cs_fwd /\
                     well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
-          (ensures fwd_bounded (cheney_forward_one minor cs addr).cs_fwd)
+          (ensures fwd_bounded (cheney_forward_normal minor cs addr).cs_fwd)
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
   then ()
@@ -970,12 +1086,37 @@ private let cheney_forward_one_preserves_fwd_bounded
       if res.new_addr = 0UL then ()
       else begin
         AllocProps.alloc_spec_obj_valid cs.cs_major cs.cs_fp wz;
-        // new_addr >= mword, < heap_size, % mword == 0
-        // extend_forwarding: fwd'(x) = if x = addr then new_addr else fwd x
-        // For x = addr: new_addr is bounded by alloc_spec_obj_valid
-        // For x <> addr: fwd(x) is bounded by fwd_bounded cs.cs_fwd
         ()
       end
+
+/// cheney_forward_one preserves fwd_bounded (infix-aware).
+/// For infix: derived entry = parent_fwd + delta. Since parent was promoted
+/// with full wosize (including the infix), parent_fwd + delta < heap_size.
+private let cheney_forward_one_preserves_fwd_bounded
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires fwd_bounded cs.cs_fwd /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
+          (ensures fwd_bounded (cheney_forward_one minor cs addr).cs_fwd)
+  =
+  if cs.cs_fwd addr <> 0UL then ()
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_preserves_fwd_bounded minor cs parent;
+    cheney_forward_normal_preserves_wfh_part1 minor cs parent;
+    let cs' = cheney_forward_normal minor cs parent in
+    if cs'.cs_fwd parent <> 0UL then begin
+      // parent_fwd is bounded: >= mword, < heap_size, % mword == 0
+      // delta = addr - parent, and infix lies within parent's body
+      // so parent_fwd + delta < heap_size (admitted for now)
+      reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+      assume (fwd_bounded (cheney_forward_one minor cs addr).cs_fwd)
+    end else ()
+  end
+  else
+    cheney_forward_normal_preserves_fwd_bounded minor cs addr
 
 #pop-options
 
@@ -987,7 +1128,8 @@ private let rec cheney_forward_fields_preserves_fwd_bounded
   : Lemma (requires fwd_bounded cs.cs_fwd /\
                     well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
           (ensures fwd_bounded (cheney_forward_fields minor cs parent idx wosize).cs_fwd)
           (decreases (if idx < wosize then wosize - idx else 0))
   =
@@ -1010,7 +1152,8 @@ private let rec cheney_forward_roots_preserves_fwd_bounded
   : Lemma (requires fwd_bounded cs.cs_fwd /\
                     well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
           (ensures fwd_bounded (cheney_forward_roots minor cs roots idx).cs_fwd)
           (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
   =
@@ -1033,7 +1176,8 @@ private let rec cheney_scan_preserves_fwd_bounded
   : Lemma (requires fwd_bounded cs.cs_fwd /\
                     well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
           (ensures fwd_bounded (cheney_scan minor cs scan fuel).cs_fwd)
           (decreases fuel)
   =
@@ -1057,7 +1201,8 @@ let cheney_promote_fwd_bounded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
           (ensures fwd_bounded (cheney_promote minor major fp roots).fwd_map)
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;

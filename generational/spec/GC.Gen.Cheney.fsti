@@ -50,36 +50,45 @@ type cheney_state = {
 /// Forward one object (promote if valid, unforwarded, wosize > 0)
 /// ---------------------------------------------------------------------------
 
-/// Try to forward `addr`: if it's a valid unforwarded minor object with
-/// wosize > 0, promote it to the major heap and enqueue it.
-/// Otherwise, return the state unchanged.
+/// Forward a normal (non-infix) minor object. This is the core promote logic:
+/// if addr is a valid unforwarded minor object with wosize > 0, promote it
+/// to the major heap and enqueue it. Otherwise, return state unchanged.
+val cheney_forward_normal (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : GTot cheney_state
+
+/// Try to forward `addr`: handles both infix and normal cases.
+/// - If addr is already forwarded: noop
+/// - If addr is an infix sub-object: forward parent, derive infix fwd
+/// - Otherwise: forward as normal object (delegate to cheney_forward_normal)
 val cheney_forward_one (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : GTot cheney_state
 
+/// --- Unfold lemmas for cheney_forward_normal ---
+
 /// Unfold: when addr is not in minor_objects or already forwarded
-val cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+val cheney_forward_normal_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires ~(Seq.mem addr (minor_objects minor)) \/
                     cs.cs_fwd addr <> 0UL)
-          (ensures cheney_forward_one minor cs addr == cs)
+          (ensures cheney_forward_normal minor cs addr == cs)
 
 /// Unfold: when wosize is 0
-val cheney_forward_one_noop_wz0 (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+val cheney_forward_normal_noop_wz0 (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr = 0)
-          (ensures cheney_forward_one minor cs addr == cs)
+          (ensures cheney_forward_normal minor cs addr == cs)
 
 /// Unfold: when promotion fails (OOM)
-val cheney_forward_one_noop_oom (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+val cheney_forward_normal_noop_oom (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
                     (promote_object minor cs.cs_major addr cs.cs_fp
                        (minor_wosize minor addr)).new_addr = 0UL)
-          (ensures cheney_forward_one minor cs addr == cs)
+          (ensures cheney_forward_normal minor cs addr == cs)
 
 /// Unfold: when addr is valid and successfully forwarded
-val cheney_forward_one_success (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+val cheney_forward_normal_success (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires Seq.mem addr (minor_objects minor) /\
                     cs.cs_fwd addr = 0UL /\
                     minor_wosize minor addr > 0 /\
@@ -87,11 +96,38 @@ val cheney_forward_one_success (minor: minor_state) (cs: cheney_state) (addr: U6
                        (minor_wosize minor addr)).new_addr <> 0UL)
           (ensures (let wz = minor_wosize minor addr in
                     let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-                    cheney_forward_one minor cs addr ==
+                    cheney_forward_normal minor cs addr ==
                     { cs_major = res.major_out;
                       cs_fp    = res.fp_out;
                       cs_fwd   = extend_forwarding cs.cs_fwd addr res.new_addr;
                       cs_queue = Seq.append cs.cs_queue (Seq.create 1 addr) }))
+
+/// --- Unfold lemmas for cheney_forward_one (infix-aware) ---
+
+/// Unfold: when addr is already forwarded, or not in minor and not infix
+val cheney_forward_one_noop (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr <> 0UL \/
+                    (~(Seq.mem addr (minor_objects minor)) /\ ~(is_infix_in_minor minor addr)))
+          (ensures cheney_forward_one minor cs addr == cs)
+
+/// Unfold: non-infix falls through to cheney_forward_normal
+val cheney_forward_one_normal (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ ~(is_infix_in_minor minor addr))
+          (ensures cheney_forward_one minor cs addr ==
+                   cheney_forward_normal minor cs addr)
+
+/// Unfold: infix case — forward parent then derive infix fwd.
+/// The result's major/fp/queue match those of forwarding the parent;
+/// only the fwd map may get an extra entry for the infix addr.
+val cheney_forward_one_infix (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr /\
+                    U64.v addr >= U64.v (infix_parent minor addr))
+          (ensures (let parent = infix_parent minor addr in
+                    let cs' = cheney_forward_normal minor cs parent in
+                    let r = cheney_forward_one minor cs addr in
+                    r.cs_major == cs'.cs_major /\
+                    r.cs_fp == cs'.cs_fp /\
+                    r.cs_queue == cs'.cs_queue))
 
 /// ---------------------------------------------------------------------------
 /// Forward children: iterate an object's fields and forward each child
@@ -349,10 +385,11 @@ let fwd_bounded (fwd: forwarding_map) : prop =
 /// Cheney promote produces a bounded forwarding map.
 /// Proof: each successful cheney_forward_one extends fwd via alloc_spec,
 /// which (by alloc_spec_obj_valid) returns addresses >= mword, < heap_size,
-/// and mword-aligned.
+/// and mword-aligned. Infix-derived entries are offset within the parent.
 val cheney_promote_fwd_bounded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
           (ensures fwd_bounded (cheney_promote minor major fp roots).fwd_map)

@@ -192,6 +192,7 @@ val cheney_scan_queue_valid
 val cheney_forward_roots_queue_bound
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
+                    minor_infix_wf minor /\
                     Seq.length (minor_objects minor) <= queue_size)
           (ensures (let cs' = CheneySpec.cheney_forward_roots minor cs roots idx in
                     SimOne.cheney_bfs_inv minor cs' /\
@@ -201,6 +202,7 @@ val cheney_forward_roots_queue_bound
 val cheney_scan_queue_bound
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
+                    minor_infix_wf minor /\
                     Seq.length (minor_objects minor) <= queue_size)
           (ensures (let cs' = CheneySpec.cheney_scan minor cs scan fuel in
                     SimOne.cheney_bfs_inv minor cs' /\
@@ -238,12 +240,13 @@ val cheney_bfs_inv_strict_room
 /// ---------------------------------------------------------------------------
 
 /// Under minor_guards_complete, the implementation's runtime guards (range,
-/// alignment, wosize > 0, body within bounds) are sufficient to identify valid
-/// minor objects. This is the sole trust assumption on the mutator —
-/// see minor_guards_complete in GC.Gen.MinorHeap for documentation.
+/// alignment, wosize > 0, body within bounds, tag ≠ Infix_tag) are sufficient
+/// to identify valid minor objects. This is the sole trust assumption on the
+/// mutator — see minor_guards_complete in GC.Gen.MinorHeap for documentation.
 val minor_guards_sufficient (ms: minor_state) (addr: U64.t)
   : Lemma (requires minor_guards_complete ms /\
                     U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
                     minor_wosize ms addr > 0 /\
-                    U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size)
+                    U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size /\
+                    minor_tag ms addr <> 249)
           (ensures Seq.mem addr (minor_objects ms))

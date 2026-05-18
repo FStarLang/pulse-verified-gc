@@ -50,7 +50,8 @@ val cheney_collect_no_black
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-                    Mark.no_black_objects major)
+                    Mark.no_black_objects major /\
+                    minor_infix_wf minor)
           (ensures Mark.no_black_objects (cheney_collect_spec minor major fp roots).mc_major)
 
 /// ---------------------------------------------------------------------------
@@ -78,6 +79,7 @@ val cheney_gc_end_to_end
       AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
       chain_objects_blue major fp /\
       Mark.no_black_objects major /\
+      minor_infix_wf minor /\
       // Post-Cheney wfh and invariants (caller must establish these)
       well_formed_heap (cheney_collect_spec minor major fp roots).mc_major /\
       Mark.no_pointer_to_blue (cheney_collect_spec minor major fp roots).mc_major /\

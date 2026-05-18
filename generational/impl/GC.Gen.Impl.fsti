@@ -156,6 +156,7 @@ fn minor_collect (gh: gen_heap_t)
              // wosize, fits before bump) is genuinely in the minor
              // object list — no false negatives when scanning
              minor_guards_complete ({ data = 'd; bump = 'b }) /\
+             minor_infix_wf ({ data = 'd; bump = 'b }) /\
 
              // Major heap contains at least one object (the initial
              // free-list sentinel; needed for free-list operations)
@@ -272,6 +273,7 @@ fn gen_gc (gh: gen_heap_t)
              // Guard completeness for minor heap object recognition
              // (see minor_collect for details)
              minor_guards_complete ({ data = 'd; bump = 'b }) /\
+             minor_infix_wf ({ data = 'd; bump = 'b }) /\
 
              // Major heap has at least one object (free-list sentinel)
              Seq.length (SpecFields.objects zero_addr 's) > 0 /\

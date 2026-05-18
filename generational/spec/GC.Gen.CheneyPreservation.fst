@@ -217,25 +217,51 @@ private let cheney_forward_one_preserves_no_black
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    Mark.no_black_objects cs.cs_major)
+                    Mark.no_black_objects cs.cs_major /\
+                    minor_infix_wf minor)
           (ensures (let cs' = cheney_forward_one minor cs addr in
                     Mark.no_black_objects cs'.cs_major))
   =
-  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
-  then
+  if cs.cs_fwd addr <> 0UL then
     cheney_forward_one_noop minor cs addr
-  else
-    let wz = minor_wosize minor addr in
-    if wz = 0 then
-      cheney_forward_one_noop_wz0 minor cs addr
-    else
+  else if is_infix_in_minor minor addr then begin
+    // Use infix unfold lemma: result.cs_major == (forward_normal parent).cs_major
+    reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+    cheney_forward_one_infix minor cs addr;
+    let parent = infix_parent minor addr in
+    // Now prove cheney_forward_normal minor cs parent preserves no_black
+    if not (Seq.mem parent (minor_objects minor)) || cs.cs_fwd parent <> 0UL then
+      cheney_forward_normal_noop minor cs parent
+    else if minor_wosize minor parent = 0 then
+      cheney_forward_normal_noop_wz0 minor cs parent
+    else begin
+      let wz = minor_wosize minor parent in
+      let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
+      if res.new_addr = 0UL then
+        cheney_forward_normal_noop_oom minor cs parent
+      else begin
+        cheney_forward_normal_success minor cs parent;
+        promote_object_preserves_no_black minor cs.cs_major parent cs.cs_fp wz
+      end
+    end
+  end
+  else begin
+    cheney_forward_one_normal minor cs addr;
+    if not (Seq.mem addr (minor_objects minor)) then
+      cheney_forward_normal_noop minor cs addr
+    else if minor_wosize minor addr = 0 then
+      cheney_forward_normal_noop_wz0 minor cs addr
+    else begin
+      let wz = minor_wosize minor addr in
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
       if res.new_addr = 0UL then
-        cheney_forward_one_noop_oom minor cs addr
+        cheney_forward_normal_noop_oom minor cs addr
       else begin
-        cheney_forward_one_success minor cs addr;
+        cheney_forward_normal_success minor cs addr;
         promote_object_preserves_no_black minor cs.cs_major addr cs.cs_fp wz
       end
+    end
+  end
 
 #pop-options
 
@@ -250,7 +276,8 @@ private let rec cheney_forward_fields_preserves_no_black
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    Mark.no_black_objects cs.cs_major)
+                    Mark.no_black_objects cs.cs_major /\
+                    minor_infix_wf minor)
           (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in
                     Mark.no_black_objects cs'.cs_major))
           (decreases (if idx < wosize then wosize - idx else 0))
@@ -308,7 +335,8 @@ private let rec cheney_forward_roots_preserves_no_black
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    Mark.no_black_objects cs.cs_major)
+                    Mark.no_black_objects cs.cs_major /\
+                    minor_infix_wf minor)
           (ensures (let cs' = cheney_forward_roots minor cs roots idx in
                     Mark.no_black_objects cs'.cs_major))
           (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
@@ -337,7 +365,8 @@ private let rec cheney_scan_preserves_no_black
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    Mark.no_black_objects cs.cs_major)
+                    Mark.no_black_objects cs.cs_major /\
+                    minor_infix_wf minor)
           (ensures (let cs' = cheney_scan minor cs scan fuel in
                     Mark.no_black_objects cs'.cs_major))
           (decreases fuel)
@@ -367,7 +396,8 @@ let cheney_promote_preserves_no_black
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-                    Mark.no_black_objects major)
+                    Mark.no_black_objects major /\
+                    minor_infix_wf minor)
           (ensures (let res = cheney_promote minor major fp roots in
                     Mark.no_black_objects res.major_final))
   =

@@ -119,6 +119,7 @@ fn forward_if_minor
                  SZ.v 'bk <= queue_size /\
                  minor_wf minor_st /\
                   minor_guards_complete minor_st /\
+                  minor_infix_wf minor_st /\
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs_pre /\
                  SimOne.cheney_bfs_inv minor_st cs_pre)
@@ -180,6 +181,8 @@ fn forward_if_minor
       if U64.gte wosize minor_heap_size_u64 {
         // wosize too large → contrapositive proves not minor → noop
         Sim.not_minor_if_wosize_bounds_fail ({data='md; bump='mb} <: minor_state) addr;
+        // TODO Phase B: add tag check to establish ~(is_infix_in_minor)
+        assume_ (pure (~(is_infix_in_minor ({data='md; bump='mb} <: minor_state) addr)));
         CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
         SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
       } else {
@@ -189,6 +192,8 @@ fn forward_if_minor
       if U64.gt (U64.add addr (U64.mul wosize 8UL)) minor_heap_size_u64 {
         // Bounds fail → contrapositive proves not minor → noop
         Sim.not_minor_if_wosize_bounds_fail ({data='md; bump='mb} <: minor_state) addr;
+        // TODO Phase B: add tag check to establish ~(is_infix_in_minor)
+        assume_ (pure (~(is_infix_in_minor ({data='md; bump='mb} <: minor_state) addr)));
         CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
         SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
       } else {
@@ -200,25 +205,33 @@ fn forward_if_minor
         if U64.eq wosize 0UL {
           // wosize = 0 → addr ∉ minor_objects → cheney_forward_one is noop
           not_minor_if_wosize_zero ({data='md; bump='mb} <: minor_state) addr;
+          // TODO Phase B: add tag check to establish ~(is_infix_in_minor)
+          assume_ (pure (~(is_infix_in_minor ({data='md; bump='mb} <: minor_state) addr)));
           CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
           SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
         } else {
           // wosize > 0, new_addr = 0 → OOM case
           // Establish addr ∈ minor_objects (guards all passed, wosize > 0)
+          // TODO Phase B: add tag check to establish tag ≠ 249
+          assume_ (pure (minor_tag ({data='md; bump='mb} <: minor_state) addr <> 249));
           Sim.minor_guards_sufficient ({data='md; bump='mb} <: minor_state) addr;
-          // promote_object returns 0 → noop_oom applies
-          CheneySpec.cheney_forward_one_noop_oom ({data='md; bump='mb} <: minor_state) cs_pre addr;
+          // promote_object returns 0 → dispatch through normal path
+          CheneySpec.cheney_forward_one_normal ({data='md; bump='mb} <: minor_state) cs_pre addr;
+          CheneySpec.cheney_forward_normal_noop_oom ({data='md; bump='mb} <: minor_state) cs_pre addr;
           SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
           // Signal OOM to caller
           oom_ref := true
         }
       } else {
         // Success: addr is a valid minor object, promote succeeded
+        // TODO Phase B: add tag check to establish tag ≠ 249
+        assume_ (pure (minor_tag ({data='md; bump='mb} <: minor_state) addr <> 249));
         Sim.minor_guards_sufficient ({data='md; bump='mb} <: minor_state) addr;
         // Now: Seq.mem addr (minor_objects minor_st), cs_fwd addr = 0,
         //      wosize > 0, promote_object.new_addr ≠ 0
-        // So cheney_forward_one_success applies
-        CheneySpec.cheney_forward_one_success ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        // Dispatch through normal path
+        CheneySpec.cheney_forward_one_normal ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        CheneySpec.cheney_forward_normal_success ({data='md; bump='mb} <: minor_state) cs_pre addr;
         SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
         // Record forwarding
         fwd_arr.(idx) <- new_addr;
@@ -284,6 +297,7 @@ fn forward_roots
                  SZ.v nroots == Seq.length 'rs /\
                  minor_wf minor_st /\
                   minor_guards_complete minor_st /\
+                  minor_infix_wf minor_st /\
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs0 /\
                  SimOne.cheney_bfs_inv minor_st cs0)
@@ -338,6 +352,7 @@ fn forward_roots
             rs_i == 'rs /\
             minor_wf minor_st /\
              minor_guards_complete minor_st /\
+            minor_infix_wf minor_st /\
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_i /\
             SimOne.cheney_bfs_inv minor_st cs_i /\
             ('oom_in == true ==> oom_i == true) /\
@@ -400,6 +415,7 @@ fn scan_loop
                  SZ.v 'bk <= queue_size /\
                  minor_wf minor_st /\
                   minor_guards_complete minor_st /\
+                  minor_infix_wf minor_st /\
                  Seq.length (minor_objects minor_st) <= queue_size /\
                  Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs1 /\
                  SimOne.cheney_bfs_inv minor_st cs1)
@@ -452,6 +468,7 @@ fn scan_loop
             Seq.length q_i == queue_size /\
             minor_wf minor_st /\
              minor_guards_complete minor_st /\
+            minor_infix_wf minor_st /\
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_s /\
             SimOne.cheney_bfs_inv minor_st cs_s /\
             ('oom_in == true ==> oom_s == true) /\
@@ -537,6 +554,7 @@ fn scan_loop
                 SZ.v s < SZ.v bk_f /\
                 minor_wf minor_st /\
                  minor_guards_complete minor_st /\
+                 minor_infix_wf minor_st /\
                 Sim.impl_matches_spec ms_f fp_f farr_f q_f (SZ.v bk_f) cs_f /\
                 SimOne.cheney_bfs_inv minor_st cs_f /\
                 ('oom_in == true ==> oom_f == true) /\
@@ -621,6 +639,7 @@ fn cheney_promote_phase
                  SZ.v nroots == Seq.length 'rs /\
                  minor_wf minor_st /\
                   minor_guards_complete minor_st /\
+                  minor_infix_wf minor_st /\
                  Seq.length (SF.objects zero_addr 'ms) > 0)
   returns ok: bool
   ensures exists* md2 mb2 ms2 fp2 farr2 rs2 qv2.

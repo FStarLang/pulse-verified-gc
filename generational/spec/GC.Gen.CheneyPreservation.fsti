@@ -34,6 +34,7 @@ val cheney_promote_preserves_no_black
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-                    Mark.no_black_objects major)
+                    Mark.no_black_objects major /\
+                    minor_infix_wf minor)
           (ensures (let res = cheney_promote minor major fp roots in
                     Mark.no_black_objects res.major_final))
