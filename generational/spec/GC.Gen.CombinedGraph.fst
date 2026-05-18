@@ -274,6 +274,41 @@ let major_vertex_char (ms: minor_state) (major: heap) (a: obj_addr)
     Classical.move_requires (Seq.mem_index a) major_objs
 #pop-options
 
+/// major_vertex_valid: if MajorV v is a vertex, extract obj_addr refinement.
+/// The proof uses graph well-formedness + edge structure to derive that v
+/// equals some obj_addr in the objects sequence.
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let rec tag_major_valid (objs: seq obj_addr) (idx: nat) (v: U64.t)
+  : Lemma (requires Seq.mem (MajorV v) (tag_major objs idx))
+          (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+                   Seq.mem (v <: obj_addr) objs)
+          (decreases (Seq.length objs - idx))
+  = if idx >= Seq.length objs then ()
+    else begin
+      Seq.mem_cons (MajorV (Seq.index objs idx)) (tag_major objs (idx + 1));
+      if MajorV (Seq.index objs idx) = MajorV v then begin
+        // v == Seq.index objs idx, which is obj_addr
+        let a : obj_addr = Seq.index objs idx in
+        assert (v == a);
+        Seq.mem_index a objs
+      end
+      else
+        tag_major_valid objs (idx + 1) v
+    end
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 15"
+let major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires mem_cv (MajorV v) (build_combined_graph ms major))
+          (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+                   Seq.mem (v <: obj_addr) (objects zero_addr major))
+  = let minor_objs = minor_objects ms in
+    let major_objs = objects zero_addr major in
+    tag_minor_no_major minor_objs 0 v;
+    Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0);
+    tag_major_valid major_objs 0 v
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Well-Formedness Helpers
 /// ---------------------------------------------------------------------------
@@ -1153,6 +1188,42 @@ let rec classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
       else begin
         Seq.lemma_mem_append (Seq.create 1 hd) tl;
         classify_roots_major_mem tl r
+      end
+    end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+let rec classify_roots_inv_minor (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MinorV v) (classify_roots roots))
+          (ensures Seq.mem v roots /\ is_minor_pointer v)
+          (decreases Seq.length roots)
+  = if Seq.length roots = 0 then ()
+    else begin
+      let hd = Seq.head roots in
+      let tl = Seq.tail roots in
+      Seq.mem_cons (classify_root hd) (classify_roots tl);
+      if classify_root hd = MinorV v then ()
+      else begin
+        Seq.lemma_mem_append (Seq.create 1 hd) tl;
+        classify_roots_inv_minor tl v
+      end
+    end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+let rec classify_roots_inv_major (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MajorV v) (classify_roots roots))
+          (ensures Seq.mem v roots /\ ~(is_minor_pointer v))
+          (decreases Seq.length roots)
+  = if Seq.length roots = 0 then ()
+    else begin
+      let hd = Seq.head roots in
+      let tl = Seq.tail roots in
+      Seq.mem_cons (classify_root hd) (classify_roots tl);
+      if classify_root hd = MajorV v then ()
+      else begin
+        Seq.lemma_mem_append (Seq.create 1 hd) tl;
+        classify_roots_inv_major tl v
       end
     end
 #pop-options

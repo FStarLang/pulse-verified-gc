@@ -80,6 +80,13 @@ let cheney_disjoint_invariant (cs: cheney_state) (major_orig: heap) : prop =
 /// Main theorem
 /// ---------------------------------------------------------------------------
 
+/// All non-blue objects have positive wosize (standard OCaml invariant:
+/// every allocated object has at least one field).
+let nonblue_wosize_positive (major: heap) : prop =
+  forall (obj: obj_addr).
+    Seq.mem obj (objects zero_addr major) /\ ~(is_blue obj major) ==>
+    U64.v (wosize_of_object obj major) >= 1
+
 /// After cheney_promote, all forwarding targets are disjoint from non-blue
 /// objects of the initial major heap.
 val cheney_promote_fwd_disjoint_nonblue
@@ -89,7 +96,8 @@ val cheney_promote_fwd_disjoint_nonblue
       well_formed_heap major /\
       AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-      chain_objects_blue major fp)
+      chain_objects_blue major fp /\
+      nonblue_wosize_positive major)
     (ensures
       (let prom = cheney_promote minor major fp roots in
        fwd_map_disjoint_nonblue prom.fwd_map major))

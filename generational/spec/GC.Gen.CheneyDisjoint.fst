@@ -231,7 +231,8 @@ let cheney_promote_fwd_disjoint_nonblue
       well_formed_heap major /\
       AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-      chain_objects_blue major fp)
+      chain_objects_blue major fp /\
+      nonblue_wosize_positive major)
     (ensures
       (let prom = cheney_promote minor major fp roots in
        fwd_map_disjoint_nonblue prom.fwd_map major))
@@ -242,7 +243,7 @@ let cheney_promote_fwd_disjoint_nonblue
     // Base case: establish cheney_disjoint_invariant for cs0
     // fwd_disjoint_nonblue: vacuously true (empty_forwarding = fun _ -> 0UL)
     assert (fwd_disjoint_nonblue cs0 major);
-    // orig_nonblue_props: from chain_objects_blue(major, fp) which IS the definition
+    // orig_nonblue_props: from chain_objects_blue + nonblue_wosize_positive
     reveal_opaque (`%chain_objects_blue) chain_objects_blue;
     reveal_opaque (`%well_formed_heap) well_formed_heap;
     assert (well_formed_heap_part1 cs0.cs_major);

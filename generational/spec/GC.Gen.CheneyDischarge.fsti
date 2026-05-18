@@ -40,6 +40,7 @@ open GC.Gen.Correctness
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Iso = GC.Gen.CombinedGraph.Isomorphism
 module TopLevel = GC.Gen.CombinedGraph.Isomorphism.TopLevel
+module CheneyDisj = GC.Gen.CheneyDisjoint
 
 /// ---------------------------------------------------------------------------
 /// Reduced precondition: iso_structural without injectivity and disjoint
@@ -141,6 +142,7 @@ val discharge_structural_preconditions
       AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
       chain_objects_blue major fp /\
+      CheneyDisj.nonblue_wosize_positive major /\
       // Reduced preconditions (the remaining 6 conjuncts)
       iso_remaining_preconditions minor major fp roots combined_roots major_stack)
     (ensures

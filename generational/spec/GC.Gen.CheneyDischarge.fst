@@ -83,6 +83,7 @@ let discharge_structural_preconditions
       AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
       chain_objects_blue major fp /\
+      CheneyDisj.nonblue_wosize_positive major /\
       iso_remaining_preconditions minor major fp roots combined_roots major_stack)
     (ensures
       TopLevel.iso_structural_preconditions minor major fp roots combined_roots major_stack)

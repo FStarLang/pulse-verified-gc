@@ -146,6 +146,13 @@ val major_vertex_char (ms: minor_state) (major: heap) (a: obj_addr)
       mem_cv (MajorV a) (build_combined_graph ms major) <==>
       Seq.mem a (objects zero_addr major))
 
+/// Validity from vertex membership: if MajorV v is a vertex, then v satisfies
+/// the obj_addr refinement (>= mword, < heap_size, word-aligned).
+val major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires mem_cv (MajorV v) (build_combined_graph ms major))
+          (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+                   Seq.mem (v <: obj_addr) (objects zero_addr major))
+
 /// ---------------------------------------------------------------------------
 /// Well-Formedness of Construction
 /// ---------------------------------------------------------------------------
@@ -296,3 +303,13 @@ val classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
 val classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
   : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
           (ensures Seq.mem (MajorV r) (classify_roots roots))
+
+/// Inversion: if MinorV v ∈ classify_roots roots, then v ∈ roots and is_minor_pointer v.
+val classify_roots_inv_minor (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MinorV v) (classify_roots roots))
+          (ensures Seq.mem v roots /\ is_minor_pointer v)
+
+/// Inversion: if MajorV v ∈ classify_roots roots, then v ∈ roots and ¬(is_minor_pointer v).
+val classify_roots_inv_major (roots: seq U64.t) (v: U64.t)
+  : Lemma (requires Seq.mem (MajorV v) (classify_roots roots))
+          (ensures Seq.mem v roots /\ ~(is_minor_pointer v))
