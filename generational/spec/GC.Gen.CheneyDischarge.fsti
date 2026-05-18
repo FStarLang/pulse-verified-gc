@@ -36,6 +36,7 @@ open GC.Spec.HeapModel
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
+open GC.Gen.Remembered
 open GC.Gen.CombinedGraph
 open GC.Gen.Cheney
 open GC.Gen.Correctness
@@ -44,6 +45,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Iso = GC.Gen.CombinedGraph.Isomorphism
 module TopLevel = GC.Gen.CombinedGraph.Isomorphism.TopLevel
 module CheneyDisj = GC.Gen.CheneyDisjoint
+module CheneyBFS = GC.Gen.CheneyBFS
 module Mark = GC.Spec.Mark
 module RBridge = GC.Gen.ReachabilityBridge
 
@@ -51,8 +53,8 @@ module RBridge = GC.Gen.ReachabilityBridge
 /// Reduced precondition: iso_structural without injectivity and disjoint
 /// ---------------------------------------------------------------------------
 
-/// The remaining 4 conjuncts of iso_structural_preconditions that are
-/// NOT yet proven internally. Conjuncts (3), (5), (6), (7) are now discharged.
+/// The remaining 3 conjuncts of iso_structural_preconditions that are
+/// NOT yet proven internally. Conjuncts (2), (3), (5), (6), (7) are now discharged.
 let iso_remaining_preconditions
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (combined_roots: seq combined_vertex)
@@ -66,9 +68,6 @@ let iso_remaining_preconditions
     Seq.mem (MajorV r) combined_roots \/
     (exists (m: U64.t). Seq.mem (MinorV m) combined_roots /\
       prom.fwd_map m == r)) /\
-  // (2) Fwd nonzero on live_set
-  (let live_set = live_set_of minor major roots in
-   forall (v: U64.t). Seq.mem v live_set ==> prom.fwd_map v <> 0UL) /\
   // (4) Field correspondence
   (field_correspondence minor major res.mc_major prom.fwd_map roots) /\
   // (8) Morphism image preservation
@@ -122,11 +121,12 @@ val cheney_fwd_targets_in_mc_major
 /// Derives the full iso_structural_preconditions from:
 ///   - Standard GC preconditions (well_formed_heap, fl_valid, chain_objects_blue)
 ///   - Reachability preconditions (no_pointer_to_blue, roots_valid_nonblue, etc.)
-///   - The reduced preconditions (4 remaining conjuncts)
+///   - Cheney BFS completeness (cheney_no_oom + remembered ⊆ roots + wosize > 0)
+///   - The reduced preconditions (3 remaining conjuncts)
 ///
-/// The injectivity, disjoint, reachability bridge, and major non-blue conjuncts
-/// are discharged internally by calling CheneyInjectivity, CheneyDisjoint, and
-/// ReachabilityBridge.
+/// The injectivity, disjoint, reachability bridge, major non-blue, and fwd-nonzero
+/// conjuncts are discharged internally by calling CheneyInjectivity, CheneyDisjoint,
+/// ReachabilityBridge, and CheneyBFS.cheney_promotes_all_reachable.
 val discharge_structural_preconditions
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (combined_roots: seq combined_vertex)
@@ -148,7 +148,12 @@ val discharge_structural_preconditions
       RBridge.roots_valid_nonblue roots major /\
       RBridge.major_field_one_plus_in_remembered minor major /\
       RBridge.major_field_zero_no_minor minor major /\
-      // Reduced preconditions (the remaining 4 conjuncts)
+      // BFS completeness (for conjunct 2: fwd nonzero)
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      (forall (m: U64.t). Seq.mem m (minor_roots_from_major major) ==> Seq.mem m roots) /\
+      (let live_set = live_set_of minor major roots in
+       forall (v: U64.t). Seq.mem v live_set ==> minor_wosize minor v > 0) /\
+      // Reduced preconditions (the remaining 3 conjuncts)
       iso_remaining_preconditions minor major fp roots combined_roots major_stack)
     (ensures
       TopLevel.iso_structural_preconditions minor major fp roots combined_roots major_stack)
