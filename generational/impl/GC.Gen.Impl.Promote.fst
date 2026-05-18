@@ -45,6 +45,21 @@ fn read_minor_wosize (minor: minor_heap_t) (obj: U64.t)
   U64.shift_right hdr 10ul
 }
 
+/// Read the tag from a minor object's header (low 8 bits)
+inline_for_extraction
+fn read_minor_tag (minor: minor_heap_t) (obj: U64.t)
+  requires is_minor minor 'md 'mb **
+           pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0)
+  returns tag: U64.t
+  ensures is_minor minor 'md 'mb **
+          pure (U64.v tag == minor_tag {data='md; bump='mb} obj)
+{
+  let hdr_addr = U64.sub obj 8UL;
+  let hdr = minor_read minor hdr_addr;
+  // tag is bits 0-7 of header
+  U64.logand hdr 0xFFUL
+}
+
 /// Copy wosize fields from minor[src_obj + 0..] to major[dst_obj + 0..]
 /// Copies fields at indices 0..(wosize-1), matching spec copy_fields.
 ///
@@ -54,7 +69,7 @@ module PromoteSpec = GC.Gen.Promote
 module WBL = GC.Gen.WriteBodyLemmas
 
 inline_for_extraction
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
                     (src_obj: U64.t) (dst_obj: U64.t)
                     (wosize: U64.t)
@@ -93,6 +108,11 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
     // Source: minor_obj + iv * 8
     let src_off = U64.mul iv 8UL;
     let src_addr = U64.add src_obj src_off;
+    // Prove minor_read precondition
+    assert (pure (U64.v iv < U64.v wosize));
+    assert (pure (U64.v src_addr == U64.v src_obj + U64.v iv * 8));
+    assert (pure (U64.v src_addr + 8 <= U64.v src_obj + U64.v wosize * 8));
+    assert (pure (U64.v src_addr + 8 <= minor_heap_size /\ U64.v src_addr % 8 == 0));
     let field_val = minor_read minor src_addr;
     // Dest: major_obj + iv * 8
     let dst_off = U64.mul iv 8UL;

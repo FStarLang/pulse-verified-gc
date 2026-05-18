@@ -35,6 +35,14 @@ fn read_minor_wosize (minor: minor_heap_t) (obj: U64.t)
   ensures is_minor minor 'md 'mb **
           pure (U64.v wosize == minor_wosize {data='md; bump='mb} obj)
 
+inline_for_extraction
+fn read_minor_tag (minor: minor_heap_t) (obj: U64.t)
+  requires is_minor minor 'md 'mb **
+           pure (U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0)
+  returns tag: U64.t
+  ensures is_minor minor 'md 'mb **
+          pure (U64.v tag == minor_tag {data='md; bump='mb} obj)
+
 /// ---------------------------------------------------------------------------
 /// Promote a single object from minor heap to major heap.
 ///
