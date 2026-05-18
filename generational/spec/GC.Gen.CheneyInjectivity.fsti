@@ -123,3 +123,25 @@ val cheney_promote_fwd_injective
       chain_objects_blue major fp)
     (ensures
       fwd_injective (cheney_promote minor major fp roots).fwd_map)
+
+/// ---------------------------------------------------------------------------
+/// Top-level theorem: fwd targets are valid obj_addrs in the post-promote heap
+/// ---------------------------------------------------------------------------
+
+/// All non-zero forwarding targets are valid object addresses in the
+/// post-promote major heap. This is a direct corollary of fwd_targets_avoid_chain.
+val cheney_promote_fwd_targets_valid
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      forall (a: U64.t). prom.fwd_map a <> 0UL ==>
+        (U64.v (prom.fwd_map a) >= U64.v mword /\
+         U64.v (prom.fwd_map a) < heap_size /\
+         U64.v (prom.fwd_map a) % U64.v mword == 0 /\
+         Seq.mem ((prom.fwd_map a) <: obj_addr) (objects zero_addr prom.major_final))))

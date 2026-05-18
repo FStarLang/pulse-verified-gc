@@ -318,3 +318,31 @@ let cheney_promote_fwd_injective
     let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
     // Extract injectivity from final invariant
     assert (fwd_injective cs2.cs_fwd)
+
+/// The fwd_targets_avoid_chain invariant gives us target validity as a corollary.
+let cheney_promote_fwd_targets_valid
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      forall (a: U64.t). prom.fwd_map a <> 0UL ==>
+        (U64.v (prom.fwd_map a) >= U64.v mword /\
+         U64.v (prom.fwd_map a) < heap_size /\
+         U64.v (prom.fwd_map a) % U64.v mword == 0 /\
+         Seq.mem ((prom.fwd_map a) <: obj_addr) (objects zero_addr prom.major_final))))
+  = let cs0 : cheney_state =
+      { cs_major = major; cs_fp = fp;
+        cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+    assert (fwd_targets_avoid_chain cs0);
+    reveal_opaque (`%well_formed_heap) well_formed_heap;
+    assert (cheney_inj_invariant cs0);
+    cheney_forward_roots_preserves_inj_invariant minor cs0 roots 0;
+    let cs1 = cheney_forward_roots minor cs0 roots 0 in
+    cheney_scan_preserves_inj_invariant minor cs1 0 (cheney_fuel minor);
+    let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
+    assert (fwd_targets_avoid_chain cs2)

@@ -87,6 +87,17 @@ let iso_remaining_preconditions
                             reachable g_mc r (w <: obj_addr))))
 
 /// ---------------------------------------------------------------------------
+/// Phase A: allocated_objects_avoid_chain derived from chain_objects_blue
+/// ---------------------------------------------------------------------------
+
+/// chain_objects_blue (conjunct 5 of gen_gc_iso preconditions) is definitionally
+/// identical to allocated_objects_avoid_chain (conjunct 16). This lemma
+/// eliminates (16) as a redundant precondition.
+val chain_blue_implies_alloc_avoids (major: heap) (fp: U64.t)
+  : Lemma (requires chain_objects_blue major fp)
+          (ensures allocated_objects_avoid_chain major fp)
+
+/// ---------------------------------------------------------------------------
 /// Main discharge lemma
 /// ---------------------------------------------------------------------------
 

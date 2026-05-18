@@ -27,6 +27,18 @@ module CheneyInj = GC.Gen.CheneyInjectivity
 module CheneyDisj = GC.Gen.CheneyDisjoint
 
 /// ---------------------------------------------------------------------------
+/// Phase A: allocated_objects_avoid_chain from chain_objects_blue
+/// ---------------------------------------------------------------------------
+
+/// chain_objects_blue and allocated_objects_avoid_chain are definitionally
+/// identical (same quantifier body). chain_objects_blue is opaque_to_smt,
+/// so we must normalize to reveal its definition.
+let chain_blue_implies_alloc_avoids (major: heap) (fp: U64.t)
+  : Lemma (requires chain_objects_blue major fp)
+          (ensures allocated_objects_avoid_chain major fp)
+  = norm_spec [delta_only [`%chain_objects_blue]] (chain_objects_blue major fp)
+
+/// ---------------------------------------------------------------------------
 /// Main discharge lemma
 /// ---------------------------------------------------------------------------
 
