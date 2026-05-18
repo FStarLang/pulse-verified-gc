@@ -528,6 +528,15 @@ let infix_parent_value (ms: minor_state) (addr: U64.t)
   assert (U64.v addr - off >= 0);
   assert (U64.v addr - off < pow2 64)
 
+let infix_parent_in_minor_objects (ms: minor_state) (addr: U64.t)
+  : Lemma (requires is_infix_in_minor ms addr /\ minor_infix_wf ms)
+          (ensures (let parent = infix_parent ms addr in
+                    Seq.mem parent (minor_objects ms) /\
+                    U64.v parent >= 8 /\
+                    U64.v parent % 8 == 0 /\
+                    U64.v addr - U64.v parent < minor_wosize ms parent * 8)) =
+  reveal_opaque (`%minor_infix_wf) (minor_infix_wf ms)
+
 /// Infix sub-objects (tag=249) are never in minor_objects (when minor_wf holds).
 /// Proved by induction on minor_objects_aux using minor_chain_no_infix.
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"

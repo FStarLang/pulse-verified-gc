@@ -152,6 +152,36 @@ val cheney_forward_one_infix_bounded (minor: minor_state) (cs: cheney_state) (ad
                      U64.v (r.cs_fwd addr) == U64.v (cs'.cs_fwd parent) + delta /\
                      U64.v (r.cs_fwd addr) < heap_size)))
 
+/// In the infix case, when the bounded guard fails, cheney_forward_one returns cs'
+val cheney_forward_one_infix_guard_fail (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr /\
+                    (let parent = infix_parent minor addr in
+                     let cs' = cheney_forward_normal minor cs parent in
+                     ~(cs'.cs_fwd parent <> 0UL &&
+                       U64.v addr >= U64.v parent &&
+                       U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size)))
+          (ensures cheney_forward_one minor cs addr ==
+                   cheney_forward_normal minor cs (infix_parent minor addr))
+
+/// In the infix case, when the bounded guard passes, the result's cs_fwd is
+/// extend_forwarding cs'.cs_fwd addr val, where val = parent_fwd + delta
+val cheney_forward_one_infix_guard_pass (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires cs.cs_fwd addr = 0UL /\ is_infix_in_minor minor addr /\
+                    (let parent = infix_parent minor addr in
+                     let cs' = cheney_forward_normal minor cs parent in
+                     cs'.cs_fwd parent <> 0UL /\
+                     U64.v addr >= U64.v parent /\
+                     U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size))
+          (ensures (let parent = infix_parent minor addr in
+                    let cs' = cheney_forward_normal minor cs parent in
+                    let delta = U64.v addr - U64.v parent in
+                    let sum = U64.uint_to_t (U64.v (cs'.cs_fwd parent) + delta) in
+                    let r = cheney_forward_one minor cs addr in
+                    r.cs_fwd == extend_forwarding cs'.cs_fwd addr sum /\
+                    r.cs_major == cs'.cs_major /\
+                    r.cs_fp == cs'.cs_fp /\
+                    r.cs_queue == cs'.cs_queue))
+
 /// ---------------------------------------------------------------------------
 /// Forward children: iterate an object's fields and forward each child
 /// ---------------------------------------------------------------------------

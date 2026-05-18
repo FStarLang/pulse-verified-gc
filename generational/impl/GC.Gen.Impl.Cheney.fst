@@ -41,6 +41,7 @@ module CheneySpec = GC.Gen.Cheney
 module Sim = GC.Gen.Cheney.Sim
 module SimOne = GC.Gen.Cheney.SimOne
 module GR = Pulse.Lib.GhostReference
+module AllocProps = GC.Gen.AllocProps
 
 /// Max queue size = max minor objects = fwd_array_size
 /// Spec-only: used in ghost assertions. Not extracted.
@@ -81,6 +82,20 @@ let promote_one_oom_unchanged (ms: minor_state) (major: heap) (addr: U64.t) (fp:
                    (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).fp_out == fp)
   = Sim.promote_object_zero_noop ms major addr fp (minor_wosize ms addr)
 
+/// Helper: infix fwd addition doesn't overflow: parent_fwd < heap_size < pow2 57
+/// and delta < minor_heap_size < pow2 57, so sum < pow2 58 < pow2 64
+let infix_fwd_no_overflow (parent_fwd delta: nat)
+  : Lemma (requires parent_fwd < heap_size /\ delta < minor_heap_size)
+          (ensures parent_fwd + delta < pow2 64)
+  = assert_norm (pow2 57 + pow2 57 == pow2 58);
+    assert_norm (pow2 58 < pow2 64)
+
+/// Helper: promote_object.new_addr, when non-zero, is < heap_size
+let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  : Lemma (ensures (let res = PromoteSpec.promote_object ms major obj fp wz in
+                    res.new_addr <> 0UL ==> U64.v res.new_addr < heap_size))
+  = AllocProps.alloc_spec_obj_valid major fp wz
+
 /// ---------------------------------------------------------------------------
 /// forward_if_minor: forward a single potential minor pointer
 /// ---------------------------------------------------------------------------
@@ -94,7 +109,168 @@ let promote_one_oom_unchanged (ms: minor_state) (major: heap) (addr: U64.t) (fp:
 ///
 /// Ghost: proves output matches cheney_forward_one applied to ghost pre-state.
 
-#push-options "--z3rlimit 160 --fuel 0 --ifuel 0 --split_queries no"
+/// ---------------------------------------------------------------------------
+/// forward_if_minor_infix: handle the infix sub-case of forward_if_minor
+/// ---------------------------------------------------------------------------
+/// Called when: addr >= 8, addr < minor_heap_size, addr % 8 == 0,
+///              cs_pre.cs_fwd addr == 0, tag == 249 (infix sub-object)
+///
+/// Strategy: forward the parent closure (promote if needed), then record
+/// infix forwarding as parent_fwd + (addr - parent).
+
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+inline_for_extraction
+fn forward_if_minor_infix
+  (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
+  (fwd_arr: array U64.t)
+  (queue: array U64.t) (back: R.ref SZ.t)
+  (oom_ref: R.ref bool)
+  (addr: U64.t)
+  (#cs_pre: Ghost.erased CheneySpec.cheney_state)
+  requires is_minor minor 'md 'mb **
+           is_heap major 'ms **
+           R.pts_to fp_ref 'fp **
+           pts_to fwd_arr 'farr **
+           pts_to queue 'q **
+           R.pts_to back 'bk **
+           R.pts_to oom_ref 'oom_in **
+           pure (let minor_st : minor_state = {data='md; bump='mb} in
+                 SF.well_formed_heap_part1 'ms /\
+                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 Seq.length 'farr == fwd_array_size /\
+                 Seq.length 'q == queue_size /\
+                 SZ.v 'bk <= queue_size /\
+                 minor_wf minor_st /\
+                 minor_guards_complete minor_st /\
+                 minor_infix_wf minor_st /\
+                 Seq.length (minor_objects minor_st) <= queue_size /\
+                 Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs_pre /\
+                 SimOne.cheney_bfs_inv minor_st cs_pre /\
+                 // addr is a valid aligned minor addr with fwd=0 and tag=249
+                 U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
+                 (cs_pre.CheneySpec.cs_fwd) addr == 0UL /\
+                 minor_tag minor_st addr == 249)
+  ensures exists* md2 mb2 ms2 fp2 farr2 q2 bk2 oom_out.
+    is_minor minor md2 mb2 **
+    is_heap major ms2 **
+    R.pts_to fp_ref fp2 **
+    pts_to fwd_arr farr2 **
+    pts_to queue q2 **
+    R.pts_to back bk2 **
+    R.pts_to oom_ref oom_out **
+    pure (let minor_st : minor_state = {data='md; bump='mb} in
+          let cs_post = CheneySpec.cheney_forward_one minor_st cs_pre addr in
+          md2 == 'md /\ mb2 == 'mb /\
+          SF.well_formed_heap_part1 ms2 /\
+          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          Seq.length farr2 == fwd_array_size /\
+          Seq.length q2 == queue_size /\
+          SZ.v bk2 <= queue_size /\
+          SZ.v bk2 >= SZ.v 'bk /\
+          SZ.v bk2 <= SZ.v 'bk + 1 /\
+          Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs_post /\
+          SimOne.cheney_bfs_inv minor_st cs_post /\
+          ('oom_in == true ==> oom_out == true))
+{
+  // Establish is_infix_in_minor and extract parent info from minor_infix_wf
+  infix_parent_in_minor_objects ({data='md; bump='mb} <: minor_state) addr;
+  infix_parent_value ({data='md; bump='mb} <: minor_state) addr;
+  // Read wosize (encodes offset to parent for infix objects)
+  let wosize = read_minor_wosize minor addr;
+  // Compute parent = addr - wosize * 8
+  minor_arith_no_overflow (U64.v addr) (U64.v wosize);
+  let parent = U64.sub addr (U64.mul wosize 8UL);
+  // parent == infix_parent ms addr — establish validity and body bounds
+  minor_objects_valid ({data='md; bump='mb} <: minor_state) parent;
+  minor_objects_body_bound ({data='md; bump='mb} <: minor_state) parent;
+  // Check if parent already forwarded
+  let parent_idx = SZ.uint64_to_sizet (U64.div parent 8UL);
+  let parent_fwd_val = fwd_arr.(parent_idx);
+  Sim.represents_fwd_read 'farr (cs_pre.CheneySpec.cs_fwd) parent;
+  let idx = SZ.uint64_to_sizet (U64.div addr 8UL);
+  if not (U64.eq parent_fwd_val 0UL) {
+    // Parent already forwarded: cheney_forward_normal(parent) is noop
+    CheneySpec.cheney_forward_normal_noop ({data='md; bump='mb} <: minor_state) cs_pre parent;
+    CheneySpec.cheney_forward_one_infix ({data='md; bump='mb} <: minor_state) cs_pre addr;
+    SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
+    // Compute infix forwarding: parent_fwd + delta
+    let delta = U64.sub addr parent;
+    if U64.gte parent_fwd_val heap_size_u64 {
+      // Guard fails: parent_fwd >= heap_size
+      CheneySpec.cheney_forward_one_infix_guard_fail ({data='md; bump='mb} <: minor_state) cs_pre addr;
+      ()
+    } else {
+      infix_fwd_no_overflow (U64.v parent_fwd_val) (U64.v delta);
+      let sum = U64.add parent_fwd_val delta;
+      if U64.lt sum heap_size_u64 {
+        // Guard passes: record infix forwarding
+        CheneySpec.cheney_forward_one_infix_guard_pass ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        fwd_arr.(idx) <- sum;
+        Sim.represents_fwd_update 'farr (cs_pre.CheneySpec.cs_fwd) addr sum
+      } else {
+        // Guard failed: sum >= heap_size
+        CheneySpec.cheney_forward_one_infix_guard_fail ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        ()
+      }
+    }
+  } else {
+    // Parent not yet forwarded: need to promote it
+    let new_parent_addr = promote_one minor major fp_ref parent;
+    if U64.eq new_parent_addr 0UL {
+      // OOM: promote failed
+      CheneySpec.cheney_forward_normal_noop_oom ({data='md; bump='mb} <: minor_state) cs_pre parent;
+      CheneySpec.cheney_forward_one_infix_guard_fail ({data='md; bump='mb} <: minor_state) cs_pre addr;
+      SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
+      oom_ref := true
+    } else {
+      // Parent promoted successfully
+      promote_new_addr_bound ({data='md; bump='mb} <: minor_state) 'ms parent 'fp
+        (minor_wosize ({data='md; bump='mb} <: minor_state) parent);
+      CheneySpec.cheney_forward_normal_success ({data='md; bump='mb} <: minor_state) cs_pre parent;
+      // Record parent forwarding in fwd_arr
+      fwd_arr.(parent_idx) <- new_parent_addr;
+      Sim.represents_fwd_update 'farr (cs_pre.CheneySpec.cs_fwd) parent new_parent_addr;
+      // Enqueue parent for scanning
+      let bk = R.op_Bang back;
+      Sim.cheney_bfs_inv_strict_room ({data='md; bump='mb} <: minor_state) cs_pre parent;
+      minor_objects_count_bound ({data='md; bump='mb} <: minor_state);
+      if SZ.lt bk queue_size_sz {
+        queue.(bk) <- parent;
+        R.op_Colon_Equals back (SZ.add bk 1sz);
+        Sim.queue_update_correspondence 'q (cs_pre.CheneySpec.cs_queue) (SZ.v 'bk) parent;
+        // impl_matches_spec now holds against cs' = cheney_forward_normal minor cs_pre parent
+        CheneySpec.cheney_forward_one_infix ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        // Compute infix fwd
+        let delta = U64.sub addr parent;
+        infix_fwd_no_overflow (U64.v new_parent_addr) (U64.v delta);
+        let sum = U64.add new_parent_addr delta;
+        if U64.lt sum heap_size_u64 {
+          // Guard passes
+          CheneySpec.cheney_forward_one_infix_guard_pass ({data='md; bump='mb} <: minor_state) cs_pre addr;
+          let cs'_fwd : Ghost.erased PromoteSpec.forwarding_map =
+            PromoteSpec.extend_forwarding (cs_pre.CheneySpec.cs_fwd) parent new_parent_addr;
+          Sim.represents_fwd_update
+            (Seq.upd 'farr (U64.v parent / 8) new_parent_addr)
+            (reveal cs'_fwd) addr sum;
+          fwd_arr.(idx) <- sum
+        } else {
+          // Guard failed
+          CheneySpec.cheney_forward_one_infix_guard_fail ({data='md; bump='mb} <: minor_state) cs_pre addr;
+          ()
+        }
+      } else {
+        // Queue full — prove unreachable via BFS invariant
+        assert (pure False)
+      }
+    }
+  }
+}
+#pop-options
+
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn forward_if_minor
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
@@ -178,24 +354,8 @@ fn forward_if_minor
       // Read tag to distinguish infix (tag=249) from normal objects
       let tag = read_minor_tag minor addr;
       if U64.eq tag 249UL {
-        // INFIX CASE: addr is an infix sub-object within a closure.
-        // Spec correspondence for the infix path: the spec's cheney_forward_one
-        // calls cheney_forward_normal on the parent, then extends cs_fwd.
-        // The impl would need to: promote parent, record parent fwd, enqueue parent,
-        // compute infix fwd. Full implementation deferred (Phase B.3).
-        //
-        // For now, leave impl state unchanged and assume postcondition.
-        // This is sound for correctness (infix objects are rare in practice)
-        // and will be replaced by actual operations in Phase B.3.
-        CheneySpec.cheney_forward_one_infix ({data='md; bump='mb} <: minor_state) cs_pre addr;
-        SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr;
-        assume_ (pure (
-          let minor_st : minor_state = {data='md; bump='mb} in
-          let cs_post = CheneySpec.cheney_forward_one minor_st (reveal cs_pre) addr in
-          SF.well_formed_heap_part1 'ms /\
-          AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
-          Sim.impl_matches_spec 'ms 'fp 'farr 'q (SZ.v 'bk) cs_post))
+        // INFIX CASE: delegate to helper
+        forward_if_minor_infix minor major fp_ref fwd_arr queue back oom_ref addr #cs_pre
       } else {
       // NORMAL CASE: tag != 249, read wosize and proceed with existing logic
       let wosize = read_minor_wosize minor addr;
