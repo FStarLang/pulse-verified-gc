@@ -55,7 +55,7 @@ type gen_alloc_result = {
 /// - If wosize <= max_young_wosize AND minor has room → bump-allocate in minor
 /// - If wosize <= max_young_wosize AND minor full → trigger minor collection, then retry
 /// - If wosize > max_young_wosize → allocate directly in major heap
-val gen_alloc_spec (gs: gen_state) (wosize: nat{wosize > 0}) (tag: nat{tag < 256})
+val gen_alloc_spec (gs: gen_state) (wosize: nat{wosize > 0}) (tag: nat{tag < 256 /\ tag <> 249})
                    (roots: seq U64.t)  // needed for minor collection if triggered
   : GTot gen_alloc_result
 
@@ -65,7 +65,7 @@ val gen_alloc_spec (gs: gen_state) (wosize: nat{wosize > 0}) (tag: nat{tag < 256
 
 /// Small objects go to the minor heap (when there's room)
 val small_alloc_goes_to_minor (gs: gen_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                              (tag: nat{tag < 256}) (roots: seq U64.t)
+                              (tag: nat{tag < 256 /\ tag <> 249}) (roots: seq U64.t)
   : Lemma (requires gen_wf gs /\ minor_can_alloc gs.gs_minor wosize)
           (ensures (let res = gen_alloc_spec gs wosize tag roots in
                     res.ga_in_minor == true /\
@@ -73,7 +73,7 @@ val small_alloc_goes_to_minor (gs: gen_state) (wosize: nat{wosize > 0 /\ wosize 
 
 /// Large objects go directly to the major heap
 val large_alloc_goes_to_major (gs: gen_state) (wosize: nat{wosize > max_young_wosize})
-                              (tag: nat{tag < 256}) (roots: seq U64.t)
+                              (tag: nat{tag < 256 /\ tag <> 249}) (roots: seq U64.t)
   : Lemma (requires gen_wf gs)
           (ensures (let res = gen_alloc_spec gs wosize tag roots in
                     res.ga_in_minor == false))

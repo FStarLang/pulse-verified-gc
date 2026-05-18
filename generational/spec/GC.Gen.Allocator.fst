@@ -19,7 +19,7 @@ module MajorAlloc = GC.Spec.Allocator
 /// Allocation routing
 /// ---------------------------------------------------------------------------
 
-let gen_alloc_spec (gs: gen_state) (wosize: nat{wosize > 0}) (tag: nat{tag < 256})
+let gen_alloc_spec (gs: gen_state) (wosize: nat{wosize > 0}) (tag: nat{tag < 256 /\ tag <> 249})
                    (roots: seq U64.t)
   : GTot gen_alloc_result =
   if wosize > max_young_wosize then
@@ -55,7 +55,7 @@ let gen_alloc_spec (gs: gen_state) (wosize: nat{wosize > 0}) (tag: nat{tag < 256
 /// ---------------------------------------------------------------------------
 
 let small_alloc_goes_to_minor (gs: gen_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                              (tag: nat{tag < 256}) (roots: seq U64.t)
+                              (tag: nat{tag < 256 /\ tag <> 249}) (roots: seq U64.t)
   : Lemma (requires gen_wf gs /\ minor_can_alloc gs.gs_minor wosize)
           (ensures (let res = gen_alloc_spec gs wosize tag roots in
                     res.ga_in_minor == true /\
@@ -63,7 +63,7 @@ let small_alloc_goes_to_minor (gs: gen_state) (wosize: nat{wosize > 0 /\ wosize 
   minor_alloc_adds_object gs.gs_minor wosize tag
 
 let large_alloc_goes_to_major (gs: gen_state) (wosize: nat{wosize > max_young_wosize})
-                              (tag: nat{tag < 256}) (roots: seq U64.t)
+                              (tag: nat{tag < 256 /\ tag <> 249}) (roots: seq U64.t)
   : Lemma (requires gen_wf gs)
           (ensures (let res = gen_alloc_spec gs wosize tag roots in
                     res.ga_in_minor == false)) =

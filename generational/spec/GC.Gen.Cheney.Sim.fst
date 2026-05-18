@@ -225,7 +225,7 @@ let cheney_scan_queue_valid
 let cheney_forward_roots_queue_bound
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    minor_infix_wf minor /\
+                    minor_infix_wf minor /\ minor_wf minor /\
                     Seq.length (minor_objects minor) <= queue_size)
           (ensures (let cs' = CheneySpec.cheney_forward_roots minor cs roots idx in
                     SimOne.cheney_bfs_inv minor cs' /\
@@ -237,7 +237,7 @@ let cheney_forward_roots_queue_bound
 let cheney_scan_queue_bound
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    minor_infix_wf minor /\
+                    minor_infix_wf minor /\ minor_wf minor /\
                     Seq.length (minor_objects minor) <= queue_size)
           (ensures (let cs' = CheneySpec.cheney_scan minor cs scan fuel in
                     SimOne.cheney_bfs_inv minor cs' /\

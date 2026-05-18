@@ -38,6 +38,26 @@ let rec minor_chain_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat
   end
 #pop-options
 
+/// Chain no-infix: same walk structure, checks tag <> 249 at each header position.
+/// Where chain_valid returns false (wz=0 or overflow), no_infix is vacuously true.
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 40"
+let rec minor_chain_no_infix (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : GTot bool (decreases (bump - pos)) =
+  if pos + 8 > bump then true
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    let tag = U64.v (U64.logand hdr 0xFFUL) in
+    if wz = 0 then true
+    else
+      let next_pos = pos + (wz + 1) * 8 in
+      next_pos_mod8 pos wz;
+      if next_pos > bump then true
+      else tag <> 249 && minor_chain_no_infix data next_pos bump
+  end
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Initial state
 /// ---------------------------------------------------------------------------
@@ -62,7 +82,7 @@ let make_minor_header (wosize: nat{wosize > 0 /\ wosize < pow2 54})
 
 #push-options "--z3rlimit 40"
 let minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                     (tag: nat{tag < 256})
+                     (tag: nat{tag < 256 /\ tag <> 249})
   : Tot minor_alloc_result =
   if not (minor_can_alloc ms wosize) || U64.v ms.bump % 8 <> 0 then
     { ms_out = ms; obj_addr = 0UL }
@@ -157,6 +177,28 @@ let make_header_wosize (wosize: nat{wosize > 0 /\ wosize < pow2 54})
   FStar.UInt.logor_disjoint #64 (U64.v (U64.shift_left wz 10ul)) (U64.v t) 10;
   FStar.Math.Lemmas.lemma_div_plus tag wosize 1024;
   FStar.Math.Lemmas.small_div tag 1024
+#pop-options
+
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+let make_header_tag (wosize: nat{wosize > 0 /\ wosize < pow2 54})
+                    (tag: nat{tag < 256})
+  : Lemma (U64.v (U64.logand (make_minor_header wosize tag) 0xFFUL) == tag) =
+  assert_norm (pow2 54 < pow2 64);
+  assert_norm (pow2 10 == 1024);
+  let wz = U64.uint_to_t wosize in
+  let t = U64.uint_to_t tag in
+  assert_norm (pow2 54 * pow2 10 == pow2 64);
+  // wosize << 10 has low 10 bits = 0, so low 8 bits = 0
+  // logor with t (< 256) gives low 8 bits = t
+  FStar.UInt.logor_disjoint #64 (U64.v (U64.shift_left wz 10ul)) (U64.v t) 10;
+  // logand with 0xFF extracts low 8 bits
+  FStar.UInt.logand_le #64 (U64.v (make_minor_header wosize tag)) 255;
+  // (wosize * 1024 + tag) % 256 == tag since tag < 256
+  FStar.Math.Lemmas.lemma_mod_plus tag wosize 1024;
+  assert_norm (1024 % 256 == 0);
+  FStar.Math.Lemmas.modulo_division_lemma tag 256 4;
+  assert (U64.v (make_minor_header wosize tag) % 256 == tag);
+  FStar.UInt.logand_mask #64 (U64.v (make_minor_header wosize tag)) 8
 #pop-options
 
 /// ---------------------------------------------------------------------------
@@ -271,6 +313,103 @@ let minor_chain_valid_extend
                      minor_read_word data (U64.uint_to_t old_bump) == hdr))
           (ensures minor_chain_valid data 0 new_bump == true) =
   minor_chain_valid_extend_aux data 0 old_bump new_bump hdr
+
+/// ---------------------------------------------------------------------------
+/// Chain no-infix helpers (parallel to chain_valid helpers)
+/// ---------------------------------------------------------------------------
+
+/// If data1 and data2 agree below bump, no_infix transfers
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+let rec minor_chain_no_infix_read_eq
+  (data1 data2: minor_heap)
+  (pos: nat{pos % 8 == 0})
+  (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : Lemma (requires (forall (i:nat). i < bump ==> Seq.index data1 i == Seq.index data2 i) /\
+                    minor_chain_no_infix data1 pos bump == true)
+          (ensures minor_chain_no_infix data2 pos bump == true)
+          (decreases (bump - pos)) =
+  if pos + 8 > bump then ()
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr1 = minor_read_word data1 (U64.uint_to_t pos) in
+    let hdr2 = minor_read_word data2 (U64.uint_to_t pos) in
+    assert (hdr1 == hdr2);
+    let wz = U64.v (U64.shift_right hdr1 10ul) in
+    if wz = 0 then ()
+    else begin
+      let next_pos = pos + (wz + 1) * 8 in
+      FStar.Math.Lemmas.modulo_addition_lemma pos 8 (wz + 1);
+      if next_pos > bump then ()
+      else minor_chain_no_infix_read_eq data1 data2 next_pos bump
+    end
+  end
+#pop-options
+
+/// Writing at old_bump preserves no_infix from 0 to old_bump
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 60"
+let minor_chain_no_infix_write_preserved
+  (data: minor_heap)
+  (old_bump: nat{old_bump <= minor_heap_size /\ old_bump % 8 == 0})
+  (addr: U64.t{U64.v addr == old_bump /\ U64.v addr + 8 <= minor_heap_size})
+  (v: U64.t)
+  : Lemma (requires minor_chain_no_infix data 0 old_bump == true)
+          (ensures minor_chain_no_infix (minor_write_word data addr v) 0 old_bump == true) =
+  let data' = minor_write_word data addr v in
+  assert (forall (i:nat). i < old_bump ==> Seq.index data' i == Seq.index data i);
+  minor_chain_no_infix_read_eq data data' 0 old_bump
+#pop-options
+
+/// Extend no_infix: if no_infix from pos to old_bump, and the header at old_bump
+/// has tag <> 249, then no_infix extends to new_bump.
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+let rec minor_chain_no_infix_extend_aux
+  (data: minor_heap)
+  (pos: nat{pos % 8 == 0})
+  (old_bump: nat{old_bump <= minor_heap_size /\ old_bump % 8 == 0})
+  (new_bump: nat{new_bump <= minor_heap_size /\ new_bump % 8 == 0 /\ new_bump > old_bump})
+  (hdr: U64.t)
+  : Lemma (requires (let wz = U64.v (U64.shift_right hdr 10ul) in
+                     let tag = U64.v (U64.logand hdr 0xFFUL) in
+                     wz > 0 /\ old_bump + (wz + 1) * 8 == new_bump /\
+                     old_bump + 8 <= minor_heap_size /\
+                     pos <= old_bump /\
+                     tag <> 249 /\
+                     minor_chain_valid data pos old_bump == true /\
+                     minor_chain_no_infix data pos old_bump == true /\
+                     minor_read_word data (U64.uint_to_t old_bump) == hdr))
+          (ensures minor_chain_no_infix data pos new_bump == true)
+          (decreases (old_bump - pos)) =
+  assert_norm (pow2 57 < pow2 64);
+  if pos = old_bump then ()
+  else begin
+    assert (pos < old_bump);
+    assert (pos + 8 <= old_bump);
+    let hdr_at_pos = minor_read_word data (U64.uint_to_t pos) in
+    let wz_pos = U64.v (U64.shift_right hdr_at_pos 10ul) in
+    let next_pos = pos + (wz_pos + 1) * 8 in
+    assert (wz_pos > 0);
+    assert (next_pos <= old_bump);
+    FStar.Math.Lemmas.modulo_addition_lemma pos 8 (wz_pos + 1);
+    assert (next_pos % 8 == 0);
+    minor_chain_no_infix_extend_aux data next_pos old_bump new_bump hdr
+  end
+#pop-options
+
+let minor_chain_no_infix_extend
+  (data: minor_heap)
+  (old_bump: nat{old_bump <= minor_heap_size /\ old_bump % 8 == 0})
+  (new_bump: nat{new_bump <= minor_heap_size /\ new_bump % 8 == 0 /\ new_bump > old_bump})
+  (hdr: U64.t)
+  : Lemma (requires (let wz = U64.v (U64.shift_right hdr 10ul) in
+                     let tag = U64.v (U64.logand hdr 0xFFUL) in
+                     wz > 0 /\ old_bump + (wz + 1) * 8 == new_bump /\
+                     old_bump + 8 <= minor_heap_size /\
+                     tag <> 249 /\
+                     minor_chain_valid data 0 old_bump == true /\
+                     minor_chain_no_infix data 0 old_bump == true /\
+                     minor_read_word data (U64.uint_to_t old_bump) == hdr))
+          (ensures minor_chain_no_infix data 0 new_bump == true) =
+  minor_chain_no_infix_extend_aux data 0 old_bump new_bump hdr
 
 /// ---------------------------------------------------------------------------
 /// Object walk structural lemmas
@@ -389,14 +528,63 @@ let infix_parent_value (ms: minor_state) (addr: U64.t)
   assert (U64.v addr - off >= 0);
   assert (U64.v addr - off < pow2 64)
 
-/// Infix sub-objects (tag=249) are never in minor_objects.
-/// This holds because minor_objects_aux walks header-by-header, jumping
-/// over entire object bodies. Infix headers reside WITHIN a parent
-/// closure's body, so the walk never lands on them.
+/// Infix sub-objects (tag=249) are never in minor_objects (when minor_wf holds).
+/// Proved by induction on minor_objects_aux using minor_chain_no_infix.
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+private let rec minor_objects_aux_no_infix
+  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  (x: U64.t)
+  : Lemma (requires Seq.mem x (minor_objects_aux data pos bump) /\
+                    minor_chain_valid data pos bump == true /\
+                    minor_chain_no_infix data pos bump == true)
+          (ensures (let xv = U64.v x in
+                    xv >= 8 /\ xv < minor_heap_size /\
+                    (let hdr_pos = xv - 8 in
+                     hdr_pos + 8 <= minor_heap_size /\ hdr_pos % 8 == 0 /\
+                     U64.v (U64.logand (minor_read_word data (U64.uint_to_t hdr_pos)) 0xFFUL) <> 249)))
+          (decreases (bump - pos)) =
+  if pos + 8 > bump then ()
+  else begin
+    assert_norm (pow2 57 < pow2 64);
+    let hdr = minor_read_word data (U64.uint_to_t pos) in
+    let wz = U64.v (U64.shift_right hdr 10ul) in
+    let tag = U64.v (U64.logand hdr 0xFFUL) in
+    // From chain_valid: wz > 0
+    assert (wz > 0);
+    let next_pos = pos + (wz + 1) * 8 in
+    next_pos_mod8 pos wz;
+    // From chain_valid: next_pos <= bump
+    assert (next_pos <= bump);
+    // From no_infix: tag <> 249
+    assert (tag <> 249);
+    let obj_addr = U64.uint_to_t (pos + 8) in
+    let tail = minor_objects_aux data next_pos bump in
+    FStar.Seq.Properties.mem_cons obj_addr tail;
+    if x = obj_addr then begin
+      // x = pos + 8, so hdr_pos = pos
+      FStar.Math.Lemmas.lemma_mult_le_right 8 2 (wz + 1);
+      FStar.Math.Lemmas.modulo_addition_lemma pos 8 1;
+      assert (U64.v x == pos + 8);
+      assert (U64.v x - 8 == pos);
+      assert (U64.v (U64.logand (minor_read_word data (U64.uint_to_t pos)) 0xFFUL) <> 249)
+    end else begin
+      // x is in the tail
+      minor_objects_aux_no_infix data next_pos bump x
+    end
+  end
+#pop-options
+
 let minor_objects_not_infix (ms: minor_state) (addr: U64.t)
-  : Lemma (requires Seq.mem addr (minor_objects ms))
+  : Lemma (requires minor_wf ms /\ Seq.mem addr (minor_objects ms))
           (ensures minor_tag ms addr <> 249) =
-  admit ()
+  if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
+  else begin
+    minor_objects_aux_no_infix ms.data 0 (U64.v ms.bump) addr;
+    minor_objects_aux_valid ms.data 0 (U64.v ms.bump) addr;
+    // minor_tag reads the header at addr - 8 and extracts tag via logand 0xFF
+    // minor_objects_aux_no_infix proves that tag <> 249 at that position
+    ()
+  end
 
 let minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)
   : Lemma (requires Seq.mem obj (minor_objects ms))
@@ -577,7 +765,7 @@ let minor_objects_body_bound (ms: minor_state) (obj: U64.t)
 
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 150 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                            (tag: nat{tag < 256})
+                            (tag: nat{tag < 256 /\ tag <> 249})
   : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
           (ensures (let res = minor_alloc_spec ms wosize tag in
                     minor_wf res.ms_out /\
@@ -596,6 +784,7 @@ let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
   minor_chain_valid_write_preserved ms.data old_bump ms.bump hdr;
   minor_read_write_same ms.data ms.bump hdr;
   make_header_wosize wosize tag;
+  make_header_tag wosize tag;
   next_pos_mod8 old_bump wosize;
   assert (new_bump % 8 == 0);
   // Now: minor_read_word data' ms.bump == hdr
@@ -606,6 +795,13 @@ let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
   assert (new_bump > old_bump);
   minor_chain_valid_extend data' old_bump new_bump hdr;
   // Now: minor_chain_valid data' 0 new_bump == true
+  
+  // Show chain_no_infix for new state
+  minor_chain_no_infix_write_preserved ms.data old_bump ms.bump hdr;
+  assert (U64.v (U64.logand hdr 0xFFUL) == tag);
+  assert (tag <> 249);
+  minor_chain_no_infix_extend data' old_bump new_bump hdr;
+  // Now: minor_chain_no_infix data' 0 new_bump == true
   
   // obj_addr <> 0UL
   assert (old_bump + 8 >= 8);
@@ -619,7 +815,7 @@ let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 150 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_alloc_preserves_existing (ms: minor_state) 
                                     (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                                    (tag: nat{tag < 256})
+                                    (tag: nat{tag < 256 /\ tag <> 249})
                                     (x: U64.t)
   : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\
                     Seq.mem x (minor_objects ms))

@@ -105,12 +105,18 @@ type minor_state = {
 val minor_chain_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
   : GTot bool
 
-/// Well-formed minor state: bump pointer is word-aligned, in bounds, and
-/// the chain from 0 to bump is valid (walk reaches all allocated objects).
+/// Chain no-infix: walking the same chain, no header has tag = 249 (Infix_tag).
+/// This is a separate invariant from structural validity to minimize proof impact.
+val minor_chain_no_infix (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
+  : GTot bool
+
+/// Well-formed minor state: bump pointer is word-aligned, in bounds,
+/// the chain from 0 to bump is valid, and no chain position has Infix_tag.
 let minor_wf (ms: minor_state) : prop =
   U64.v ms.bump % 8 == 0 /\
   U64.v ms.bump <= minor_heap_size /\
-  minor_chain_valid ms.data 0 (U64.v ms.bump) == true
+  minor_chain_valid ms.data 0 (U64.v ms.bump) == true /\
+  minor_chain_no_infix ms.data 0 (U64.v ms.bump) == true
 
 /// Initial (empty) minor heap state
 val minor_init (data: minor_heap) : Tot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0})
@@ -138,7 +144,7 @@ let minor_can_alloc (ms: minor_state) (wosize: nat) : bool =
 ///
 /// The header is written as: wosize in bits 10-63, white color (0), tag.
 val minor_alloc_spec (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                     (tag: nat{tag < 256})
+                     (tag: nat{tag < 256 /\ tag <> 249})
   : Tot minor_alloc_result
 
 /// ---------------------------------------------------------------------------
@@ -282,7 +288,7 @@ val infix_parent_value (ms: minor_state) (addr: U64.t)
           (ensures U64.v (infix_parent ms addr) == U64.v addr - minor_wosize ms addr * 8)
 
 val minor_objects_not_infix (ms: minor_state) (addr: U64.t)
-  : Lemma (requires Seq.mem addr (minor_objects ms))
+  : Lemma (requires minor_wf ms /\ Seq.mem addr (minor_objects ms))
           (ensures minor_tag ms addr <> 249)
 
 /// Every object in minor_objects has wosize that fits in the heap
@@ -300,7 +306,7 @@ val minor_objects_body_bound (ms: minor_state) (obj: U64.t)
 
 /// After allocation, the new object appears in minor_objects
 val minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                            (tag: nat{tag < 256})
+                            (tag: nat{tag < 256 /\ tag <> 249})
   : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
           (ensures (let res = minor_alloc_spec ms wosize tag in
                     minor_wf res.ms_out /\
@@ -310,7 +316,7 @@ val minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
 /// Allocation preserves existing objects' data
 val minor_alloc_preserves_existing (ms: minor_state) 
                                     (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
-                                    (tag: nat{tag < 256})
+                                    (tag: nat{tag < 256 /\ tag <> 249})
                                     (x: U64.t)
   : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\
                     Seq.mem x (minor_objects ms))

@@ -442,7 +442,7 @@ private let fwd_normal_preserves_bfs_inv
 
 let fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_one minor cs addr))
   =
   if cs.cs_fwd addr <> 0UL then
@@ -507,7 +507,7 @@ let fwd_one_preserves_bfs_inv
 
 private let rec forward_fields_bfs_inv_aux
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_fields minor cs parent idx wosize))
           (decreases (if idx < wosize then wosize - idx else 0))
   = if idx >= wosize then
@@ -522,13 +522,13 @@ private let rec forward_fields_bfs_inv_aux
 
 let forward_fields_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_fields minor cs parent idx wosize))
   = forward_fields_bfs_inv_aux minor cs parent idx wosize
 
 private let rec forward_roots_bfs_inv_aux
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_roots minor cs roots idx))
           (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
   = if idx >= Seq.length roots then
@@ -543,13 +543,13 @@ private let rec forward_roots_bfs_inv_aux
 
 let forward_roots_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_roots minor cs roots idx))
   = forward_roots_bfs_inv_aux minor cs roots idx
 
 private let rec scan_bfs_inv_aux
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_scan minor cs scan fuel))
           (decreases fuel)
   = if fuel = 0 || scan >= Seq.length cs.cs_queue then
@@ -565,7 +565,7 @@ private let rec scan_bfs_inv_aux
 
 let scan_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor)
+  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
           (ensures cheney_bfs_inv minor (CheneySpec.cheney_scan minor cs scan fuel))
   = scan_bfs_inv_aux minor cs scan fuel
 
