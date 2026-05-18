@@ -25,6 +25,7 @@ module Iso = GC.Gen.CombinedGraph.Isomorphism
 module TopLevel = GC.Gen.CombinedGraph.Isomorphism.TopLevel
 module CheneyInj = GC.Gen.CheneyInjectivity
 module CheneyDisj = GC.Gen.CheneyDisjoint
+module PromUpdate = GC.Gen.PromoteUpdate
 
 /// ---------------------------------------------------------------------------
 /// Phase A: allocated_objects_avoid_chain from chain_objects_blue
@@ -37,6 +38,35 @@ let chain_blue_implies_alloc_avoids (major: heap) (fp: U64.t)
   : Lemma (requires chain_objects_blue major fp)
           (ensures allocated_objects_avoid_chain major fp)
   = norm_spec [delta_only [`%chain_objects_blue]] (chain_objects_blue major fp)
+
+/// ---------------------------------------------------------------------------
+/// Fwd targets in mc_major: bridges promote-phase validity to post-collect
+/// ---------------------------------------------------------------------------
+
+/// All nonzero forwarding targets are valid objects in the post-collection
+/// major heap (mc_major). Combines:
+///   - cheney_promote_fwd_targets_valid (targets in prom.major_final)
+///   - update_major_pointers_preserves_objects (objects unchanged by update)
+let cheney_fwd_targets_in_mc_major
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      forall (a: U64.t). prom.fwd_map a <> 0UL ==>
+        (U64.v (prom.fwd_map a) >= U64.v mword /\
+         U64.v (prom.fwd_map a) < heap_size /\
+         U64.v (prom.fwd_map a) % U64.v mword == 0 /\
+         Seq.mem ((prom.fwd_map a) <: obj_addr) (objects zero_addr res.mc_major))))
+  = CheneyInj.cheney_promote_fwd_targets_valid minor major fp roots;
+    let prom = cheney_promote minor major fp roots in
+    cheney_promote_preserves_wfh_part1 minor major fp roots;
+    PromUpdate.update_major_pointers_preserves_objects prom.major_final prom.fwd_map
 
 /// ---------------------------------------------------------------------------
 /// Main discharge lemma

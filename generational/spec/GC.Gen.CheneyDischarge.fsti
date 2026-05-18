@@ -98,6 +98,29 @@ val chain_blue_implies_alloc_avoids (major: heap) (fp: U64.t)
           (ensures allocated_objects_avoid_chain major fp)
 
 /// ---------------------------------------------------------------------------
+/// Fwd targets in mc_major
+/// ---------------------------------------------------------------------------
+
+/// All nonzero forwarding targets are valid object addresses in mc_major
+/// (the post-collection major heap). Useful for morphism image preservation.
+val cheney_fwd_targets_in_mc_major
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      forall (a: U64.t). prom.fwd_map a <> 0UL ==>
+        (U64.v (prom.fwd_map a) >= U64.v mword /\
+         U64.v (prom.fwd_map a) < heap_size /\
+         U64.v (prom.fwd_map a) % U64.v mword == 0 /\
+         Seq.mem ((prom.fwd_map a) <: obj_addr) (objects zero_addr res.mc_major))))
+
+/// ---------------------------------------------------------------------------
 /// Main discharge lemma
 /// ---------------------------------------------------------------------------
 
