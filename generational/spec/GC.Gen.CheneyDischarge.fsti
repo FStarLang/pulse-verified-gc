@@ -2,21 +2,24 @@
 /// GC.Gen.CheneyDischarge — Partial discharge of iso_structural_preconditions
 /// ---------------------------------------------------------------------------
 ///
-/// Assembles proven Cheney BFS properties (injectivity, disjointness) to
-/// eliminate 2 out of 8 conjuncts from iso_structural_preconditions.
+/// Assembles proven Cheney BFS properties (injectivity, disjointness) and
+/// reachability bridge to eliminate 4 out of 8 conjuncts from
+/// iso_structural_preconditions.
 ///
 /// Proven internally (no caller obligation):
 ///   - Fwd injectivity: cheney_promote produces injective fwd_map
 ///     (from CheneyInjectivity.cheney_promote_fwd_injective)
 ///   - Promoted disjoint from non-blue: fwd targets ≠ allocated major objects
 ///     (from CheneyDisjoint.cheney_promote_fwd_disjoint_nonblue)
+///   - Reachability bridge: combined-reachable MinorV → live_set
+///     (from ReachabilityBridge.reachability_bridge)
+///   - Reachable major valid/non-blue: MajorV reachable → in objects, non-blue
+///     (from ReachabilityBridge.reachable_major_valid_nonblue)
 ///
 /// Remaining (still required from caller):
 ///   - Root correspondence
 ///   - Fwd nonzero on live_set
 ///   - Field correspondence
-///   - Reachability bridge
-///   - Reachable major vertices valid/non-blue
 ///   - Morphism image preservation
 
 module GC.Gen.CheneyDischarge
@@ -41,14 +44,15 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Iso = GC.Gen.CombinedGraph.Isomorphism
 module TopLevel = GC.Gen.CombinedGraph.Isomorphism.TopLevel
 module CheneyDisj = GC.Gen.CheneyDisjoint
+module Mark = GC.Spec.Mark
+module RBridge = GC.Gen.ReachabilityBridge
 
 /// ---------------------------------------------------------------------------
 /// Reduced precondition: iso_structural without injectivity and disjoint
 /// ---------------------------------------------------------------------------
 
-/// The remaining 6 conjuncts of iso_structural_preconditions that are
-/// NOT yet proven internally. Once field_correspondence, surjectivity,
-/// and the remaining properties are proven, this predicate will shrink further.
+/// The remaining 4 conjuncts of iso_structural_preconditions that are
+/// NOT yet proven internally. Conjuncts (3), (5), (6), (7) are now discharged.
 let iso_remaining_preconditions
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (combined_roots: seq combined_vertex)
@@ -67,16 +71,6 @@ let iso_remaining_preconditions
    forall (v: U64.t). Seq.mem v live_set ==> prom.fwd_map v <> 0UL) /\
   // (4) Field correspondence
   (field_correspondence minor major res.mc_major prom.fwd_map roots) /\
-  // (5) Reachability bridge
-  (forall (v: U64.t).
-    combined_reachable cg combined_roots (MinorV v) ==>
-    Seq.mem v (live_set_of minor major roots)) /\
-  // (7) Reachable major vertices valid and non-blue
-  (forall (v: U64.t).
-    combined_reachable cg combined_roots (MajorV v) ==>
-    U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-    Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-    ~(is_blue (v <: obj_addr) major)) /\
   // (8) Morphism image preservation
   (forall (v: combined_vertex).
     combined_reachable cg combined_roots v ==>
@@ -127,10 +121,12 @@ val cheney_fwd_targets_in_mc_major
 
 /// Derives the full iso_structural_preconditions from:
 ///   - Standard GC preconditions (well_formed_heap, fl_valid, chain_objects_blue)
-///   - The reduced preconditions (6 remaining conjuncts)
+///   - Reachability preconditions (no_pointer_to_blue, roots_valid_nonblue, etc.)
+///   - The reduced preconditions (4 remaining conjuncts)
 ///
-/// The injectivity and disjoint conjuncts are discharged by calling
-/// CheneyInjectivity and CheneyDisjoint internally.
+/// The injectivity, disjoint, reachability bridge, and major non-blue conjuncts
+/// are discharged internally by calling CheneyInjectivity, CheneyDisjoint, and
+/// ReachabilityBridge.
 val discharge_structural_preconditions
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (combined_roots: seq combined_vertex)
@@ -139,11 +135,20 @@ val discharge_structural_preconditions
     (requires
       // Standard GC preconditions needed by Cheney theorems
       well_formed_heap major /\
+      minor_wf minor /\
       AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
       chain_objects_blue major fp /\
       CheneyDisj.nonblue_wosize_positive major /\
-      // Reduced preconditions (the remaining 6 conjuncts)
+      // Root classification link
+      combined_roots == classify_roots roots /\
+      // Reachability preconditions (for conjuncts 5 and 7)
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      RBridge.major_field_one_plus_in_remembered minor major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      // Reduced preconditions (the remaining 4 conjuncts)
       iso_remaining_preconditions minor major fp roots combined_roots major_stack)
     (ensures
       TopLevel.iso_structural_preconditions minor major fp roots combined_roots major_stack)

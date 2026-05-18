@@ -26,6 +26,7 @@ module TopLevel = GC.Gen.CombinedGraph.Isomorphism.TopLevel
 module CheneyInj = GC.Gen.CheneyInjectivity
 module CheneyDisj = GC.Gen.CheneyDisjoint
 module PromUpdate = GC.Gen.PromoteUpdate
+module RBridge = GC.Gen.ReachabilityBridge
 
 /// ---------------------------------------------------------------------------
 /// Phase A: allocated_objects_avoid_chain from chain_objects_blue
@@ -72,7 +73,7 @@ let cheney_fwd_targets_in_mc_major
 /// Main discharge lemma
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
 let discharge_structural_preconditions
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (combined_roots: seq combined_vertex)
@@ -80,23 +81,25 @@ let discharge_structural_preconditions
   : Lemma
     (requires
       well_formed_heap major /\
+      minor_wf minor /\
       AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
       AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
       chain_objects_blue major fp /\
       CheneyDisj.nonblue_wosize_positive major /\
+      combined_roots == classify_roots roots /\
+      GC.Spec.Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      RBridge.major_field_one_plus_in_remembered minor major /\
+      RBridge.major_field_zero_no_minor minor major /\
       iso_remaining_preconditions minor major fp roots combined_roots major_stack)
     (ensures
       TopLevel.iso_structural_preconditions minor major fp roots combined_roots major_stack)
   = // Invoke the proven Cheney BFS theorems
     CheneyInj.cheney_promote_fwd_injective minor major fp roots;
     CheneyDisj.cheney_promote_fwd_disjoint_nonblue minor major fp roots;
-    // The remaining conjuncts come from iso_remaining_preconditions.
-    // Conjunct (3) — fwd injectivity on live_set:
-    //   From iso_remaining we have fwd_nonzero: forall v in live_set. fwd v <> 0.
-    //   From CheneyInj: fwd_injective = forall a b. fwd a <> 0 /\ fwd b <> 0 /\ fwd a == fwd b ==> a == b.
-    //   Combining: forall a b in live_set. fwd a == fwd b ==> (fwd a <> 0 /\ fwd b <> 0) ==> a == b.
-    // Conjunct (6) — promoted disjoint from non-blue:
-    //   CheneyDisj gives: forall a obj. fwd a <> 0 /\ mem obj ... ==> fwd a <> obj.
-    //   The iso conjunct adds `mem v live_set` which is weaker.
+    // Invoke ReachabilityBridge for conjuncts (5) and (7)
+    RBridge.reachability_bridge minor major roots;
+    RBridge.reachable_major_valid_nonblue minor major roots;
     ()
 #pop-options
