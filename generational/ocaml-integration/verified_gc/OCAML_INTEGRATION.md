@@ -201,8 +201,7 @@ that lets the same verified code work with any heap placement.
 | `rewrite_roots_impl(roots, fwd_arr, n)` | Rewrite root array: minor offset → major addr |
 | `rewrite_heap_slots(major, fwd_arr, slots, n)` | Rewrite slots in major objects (ref_table) |
 | `collect(major, gray_stack, fp)` | Mark-and-sweep: returns new free-list head |
-| `find_infix_parents(minor, roots, nroots, cap)` | Find parent closures of infix objects |
-| `synthesize_infix_forwarding(minor, fwd_arr)` | Derive forwarding for infix sub-objects |
+| `minor_collect_full(minor, major, fp, fwd_arr, queue, roots, n, slots, nslots)` | Full minor GC: promote + update + rewrite (handles infix on-demand) |
 | `minor_heap_reset(minor)` | Zero the bump pointer |
 | `darken_if_white_bounded(major, stack, hdr_addr)` | Push root onto gray stack for marking |
 
@@ -405,7 +404,7 @@ Pre-allocated at init time.
 
 ### Infix Pointers (Closure Sub-Objects)
 
-#### The Problem
+#### What Are Infix Objects?
 
 OCaml closures (tag = 247 = `Closure_tag`) can contain **infix headers**
 — sub-objects embedded *inside* the parent closure's body.  An infix
@@ -414,290 +413,310 @@ can be pointed to directly, as if it were a standalone object:
 
 ```
 Closure object (tag=247, wosize=6):
-┌────────────────────────────────────────────────────────────────┐
-│ hdr₀ │ code₀ │ env₀ │ infix_hdr₁ │ code₁ │ env₁ │ env₂     │
-└────────────────────────────────────────────────────────────────┘
- ↑ offset 0             ↑ offset 24
- obj_addr               infix_val_addr (pointed to directly!)
+byte offset: 0        8        16       24         32       40       48       56
+           ┌────────┬────────┬────────┬──────────┬────────┬────────┬────────┐
+           │ hdr₀   │ code₀  │ env₀   │infix_hdr₁│ code₁  │ env₁   │ env₂   │
+           └────────┴────────┴────────┴──────────┴────────┴────────┴────────┘
+            ↑         ↑                  ↑          ↑
+            hdr_addr  parent_val         infix_hdr  infix_val
+            offset 0  offset 8           offset 24  offset 32
 ```
 
-A root or field might point to `infix_val_addr` (offset 24) rather
-than to the parent object at offset 0.  This is how OCaml represents
-mutually-recursive closures and partial applications that share an
-environment.
+- `parent_val` (offset 8) is the closure's "object address" — what roots point to
+- `infix_val` (offset 32) is the infix sub-object's address — what OTHER roots may point to
+- `delta = infix_val - parent_val = 32 - 8 = 24 bytes`
 
-The infix header's `wosize` field encodes the **byte offset from the
-infix val to the parent object's val** (i.e., `Infix_offset_val`).
+A root or field might point to `infix_val` (offset 32) rather than to
+`parent_val` (offset 8).  This is how OCaml represents mutually-recursive
+closures and partial applications that share an environment.
 
-#### Why This Is a Problem for Copying GC
+The infix header's `wosize` field encodes the **word offset from the
+infix val back to the parent object's val** (NOT the sub-object's
+field count).  For the example above: `wosize = (32 - 8) / 8 = 3` words.
 
-`cheney_promote_phase` promotes objects by their header address.  If a
-root points to an infix sub-object, the BFS doesn't see the parent's
-header — it sees the infix header, which isn't a standalone allocatable
-object.  We need to:
+#### Memory Layout Details
 
-1. **Find the parent** — given an infix root, locate the enclosing
-   closure so it gets promoted as a whole.
-2. **Derive the infix forwarding** — after the parent is promoted to
-   a new major address, compute where the infix sub-object landed in
-   the copy.
-
-#### Step 4.1: `find_infix_parents()` (Verified)
-
-Scans the entire minor heap linearly looking for `Closure_tag` objects.
-For each closure, checks whether any of its fields has `Infix_tag`.
-If so, adds the **parent closure's object address** to the root array:
-
+An infix header word has the same bit layout as any OCaml header:
 ```
-Algorithm:
-  for each object in minor heap (linear scan):
-    if tag == 247 (Closure_tag):
-      for each field:
-        if field looks like an infix header (tag == 249):
-          roots[count++] = parent_obj_addr
+| wosize (54 bits) | color (2 bits) | tag (8 bits) |
+  = offset/8         (ignored)        = 249
 ```
 
-This ensures `cheney_promote_phase` will promote the parent closure
-(which transitively covers all its infix sub-objects, since they're
-part of the same allocation block).
-
-**Conservative over-approximation:** This adds ALL infix-bearing closures
-in the minor heap as roots, not just those reachable from the program's
-actual roots.  This means some dead closures may be promoted unnecessarily.
-The alternative — only adding parents whose infix sub-objects are actually
-reachable — creates a chicken-and-egg problem: we need reachability info to
-know which parents matter, but we need parents as roots to compute
-reachability (Cheney BFS).  A two-pass approach (BFS to discover reachable
-infix addresses, add their parents, BFS again) would be correct but doubles
-the promotion cost.  In practice, multi-entry-point closures with infix
-sub-objects are rare, so the over-promotion cost is negligible.
-
-The added roots have `root_locs[k] = NULL` — they don't need
-writeback because they're synthetic (the real roots pointing to the
-infix sub-objects will be rewritten via `fwd_arr` in step 5d).
-
-#### Step 5b: `synthesize_infix_forwarding()` (Verified)
-
-After `cheney_promote_phase` has set `fwd_arr[parent_offset/8]` to the
-parent's new major address, this function computes forwarding entries
-for each infix sub-object:
-
+The infix "val address" (what other values point to) is one word PAST
+the infix header, just like normal objects:
 ```
-Algorithm:
-  for each object in minor heap:
-    if tag == 247 (Closure_tag):
-      parent_fwd = fwd_arr[obj_addr / 8]
-      if parent_fwd != 0 (i.e., parent was promoted):
-        for each field at offset j:
-          if field has tag == 249 (Infix_tag):
-            infix_val_off = field_off + 8   // val is one word past infix header
-            delta = infix_val_off - obj_addr
-            fwd_arr[infix_val_off / 8] = parent_fwd + delta
+infix_val_addr = infix_hdr_addr + 8       (e.g., 24 + 8 = 32)
+parent_val_addr = infix_val_addr - wosize * 8  (e.g., 32 - 3*8 = 8)
 ```
 
-**Verified implementation call chain** (in `GC.Gen.Impl.MinorHeap.fst`):
-
-| Function | Role |
-|----------|------|
-| `synthesize_infix_forwarding` | Outer loop: walks all objects in minor heap |
-| → `maybe_synthesize_closure` | Filter: if `tag == 247` AND `fwd_arr[parent] != 0`, delegate |
-| → → `synthesize_one_closure_infix` | Inner loop: iterates all fields of the closure |
-| → → → `maybe_synthesize_infix_field` | Leaf: if field has `tag == 249`, computes `fwd_arr[infix] = parent_fwd + delta` |
-
-The key arithmetic in the leaf function:
+Key invariant (`minor_infix_wf`): the infix lies within the parent's body:
 ```
-delta = infix_val_off - parent_val_off
-      = (field_off + 8) - (hdr_pos + 8)
-      = field_off - hdr_pos
-fwd_arr[infix_val_off / 8] = parent_fwd + delta
+addr - parent < minor_wosize(parent) * 8
 ```
 
-This is safe because `parent_fwd < 2^63` (checked before entry) and
-`delta < minor_heap_size` (bounded by object layout in the minor heap).
+#### Why Infix Is a Problem for Copying GC
 
-After this step, `fwd_arr` maps both regular objects AND infix
-sub-objects to their new major addresses.  `rewrite_roots_impl` (step
-5d) and `update_one_object` (step 5c) can then rewrite pointers to
-infix sub-objects using the same uniform `fwd_arr` lookup.
+When the Cheney BFS encounters a field value pointing to an infix
+sub-object, it cannot simply allocate and copy that "object" — because:
 
-**With the proposed infix-aware BFS optimization (below), this entire
-step is eliminated.**  The BFS itself derives infix forwarding entries
-on-demand when it encounters infix pointers during root forwarding or
-field scanning, so no post-hoc synthesis pass is needed.
+1. **Infix is not a standalone object** — it has no real wosize (the
+   wosize field stores the offset, not a size).  Copying just the infix
+   would copy garbage or overflow.
 
-#### Example
+2. **The parent must be promoted as a whole** — all infix sub-objects
+   share the same allocation block.  If you promote the parent, ALL its
+   infix sub-objects come along for free (they're part of the body).
 
+3. **The infix forwarding is derived, not allocated** — after the parent
+   lands at `parent_fwd` in the major heap, the infix's new address is
+   simply `parent_fwd + delta` (where `delta = infix_addr - parent_addr`).
+
+#### How Our Infix-Aware Cheney BFS Works
+
+The verified `cheney_forward_one` (in `GC.Gen.Cheney.fst`) handles infix
+on-demand during the BFS, matching OCaml's stock GC strategy.  No
+pre-scanning of the minor heap is needed.
+
+**Algorithm** (for forwarding a single address `addr`):
 ```
-Minor heap before promotion:
-  offset 0:  [hdr: wz=6,tag=247] [code0] [env0] [infix_hdr: wz=3,tag=249] [code1] [env1] [env2]
-  offset 56: [hdr: wz=2,tag=0]   [field0] [field1]
+cheney_forward_one(minor, cs, addr):
+  if cs.fwd[addr] != 0:
+    return cs                          // Already forwarded — nothing to do
 
-Root: points to offset 32 (infix val addr = infix_hdr + 8 = 24 + 8)
+  if is_infix_in_minor(minor, addr):   // tag at (addr-8) == 249?
+    parent = infix_parent(minor, addr) // = addr - wosize*8
+    cs' = cheney_forward_normal(minor, cs, parent)  // promote parent
+    if cs'.fwd[parent] != 0 && parent_fwd + delta < heap_size:
+      cs'.fwd[addr] = cs'.fwd[parent] + (addr - parent)  // derive infix fwd
+    return cs'
 
-Step 4.1: find_infix_parents adds offset 8 (parent obj addr) as a root
-Step 5a:  cheney promotes parent → fwd_arr[8/8] = 0x7f0000100008 (major addr)
-Step 5b:  synthesize: delta = 32 - 8 = 24
-          fwd_arr[32/8] = 0x7f0000100008 + 24 = 0x7f0000100020
-Step 5d:  rewrite_roots: root pointing to offset 32 → 0x7f0000100020 ✓
-```
+  else if mem addr (minor_objects minor):
+    cs' = cheney_forward_normal(minor, cs, addr)  // normal promote
+    return cs'
 
-#### Performance Note
-
-Both `find_infix_parents` and `synthesize_infix_forwarding` do a linear
-scan of the minor heap.  The bridge skips them entirely when
-`minor_has_pointer_objects == 0` (i.e., only non-pointer objects like
-floats/strings were allocated).  In practice these take ~57ms each for
-binarytrees-14 (1.1% of GC time each).
-
-#### Comparison with OCaml's Stock GC (Demand-Driven Infix Handling)
-
-OCaml's stock minor GC handles infix pointers **on-demand** inside its
-unified copy-forward function `caml_oldify_one` (runtime/minor_gc.c):
-
-```c
-void caml_oldify_one (value v, value *p) {
-  ...
-  if (Is_block(v) && Is_young(v)) {
-    hd = Hd_val(v);
-    if (hd == 0) {           // Already forwarded
-      *p = Field(v, 0);
-    } else {
-      tag = Tag_hd(hd);
-      if (tag < Infix_tag) {
-        // Normal object: allocate in major, set forward pointer, enqueue fields
-        ...
-      } else if (tag == Infix_tag) {
-        // INFIX: back up to parent, forward the parent, adjust pointer
-        mlsize_t offset = Infix_offset_hd(hd);
-        caml_oldify_one(v - offset, p);  // Recurse on parent (depth ≤ 1)
-        *p += offset;                     // Adjust to infix position in copy
-      } else if (tag >= No_scan_tag) {
-        // No-scan: copy raw data
-        ...
-      }
-    }
-  }
-}
+  else:
+    return cs                          // Not a minor object — nothing to do
 ```
 
-Key insight: when any pointer (root or object field) targets an infix
-sub-object, OCaml backs up to the parent (`v - offset`), forwards the
-parent closure as a whole, then adjusts the result pointer by `offset`.
-The comment "Cannot recurse deeper than 1" is because the parent has
-`Closure_tag` (< `Infix_tag`), so the recursive call takes the normal
-path — never hitting `Infix_tag` again.
+**Key properties:**
+- The parent is promoted at most once (idempotent: if `fwd[parent] != 0`
+  on re-entry, `cheney_forward_normal` is a no-op)
+- Infix forwarding is always `parent_fwd + delta` — a simple arithmetic
+  derivation, no allocation
+- The recursion depth is exactly 1: `cheney_forward_one(infix)` calls
+  `cheney_forward_normal(parent)`, which never recurses further
 
-**Result**: Only reachable parent closures get promoted.  No pre-scan of
-the heap is needed.  Dead closures with infix sub-objects are never
-promoted.
+**Verified in:** `GC.Gen.Cheney.fsti` exposes:
+- `cheney_forward_one_infix`: postcondition on major/fp/queue
+- `cheney_forward_one_infix_bounded`: target < heap_size
+- `cheney_forward_one_infix_guard_pass`: fwd map extension
 
-#### Why Our Current Design Differs
+**OOM/failure:** If parent promotion fails (major heap full) or the
+derived address exceeds `heap_size`, the infix forwarding entry is NOT
+installed.  The collection signals OOM via the `ok` flag, same as for
+normal promotion failure.
 
-Our verified Cheney BFS (`cheney_promote_phase`) separates concerns:
+#### How Infix Works in the Cheney Scan Phase
 
-1. **Root forwarding** (Phase 1): For each root, if it points to a minor
-   object, allocate space in major heap, record forwarding in `fwd_arr`,
-   enqueue the object for field scanning.
+During the Cheney BFS scan phase (`cheney_scan`), objects are dequeued
+from the BFS queue and their fields are scanned.  For each field value
+`f` of a queued object:
 
-2. **BFS scan** (Phase 2): Dequeue objects, forward their children
-   (recursively promoting referenced minor objects).
-
-The problem: when a root points to an infix sub-object at minor offset
-`X`, the BFS needs to:
-- Recognize that `X` is mid-object (has `Infix_tag`)
-- Back up to find the parent at `X - Infix_offset`
-- Promote the *entire* parent closure (not just the infix slice)
-- Record forwarding for *both* the parent AND the infix sub-object
-
-Our current workaround (pre-scan + synthesize) avoids modifying the BFS
-logic by ensuring all infix-bearing closures are already in the root set
-before BFS starts.  The cost: over-promotion of dead closures.
-
-#### Precise Alternative: Infix-Aware BFS (Proposed Optimization)
-
-The following design eliminates `find_infix_parents` and
-`synthesize_infix_forwarding` entirely, handling infix pointers inside
-the Cheney BFS itself:
-
-**Modified root forwarding (Phase 1):**
 ```
-for each root r:
-  if r points to minor heap:
-    if Tag_at(r) == Infix_tag:
-      offset = Infix_offset_at(r)
-      parent_off = r - offset           // back up to parent
-      if fwd_arr[parent_off/8] != 0:
-        // Parent already promoted — derive infix fwd directly
-        fwd_arr[r/8] = fwd_arr[parent_off/8] + offset
-      else:
-        // Promote parent, then derive infix fwd
-        promote(parent_off)             // normal promote: alloc in major, set fwd_arr
-        fwd_arr[r/8] = fwd_arr[parent_off/8] + offset
-        enqueue(parent_off)             // BFS will scan parent's fields
+cheney_forward_fields(minor, cs, parent, idx, wosize):
+  for idx in [0, wosize):
+    field_val = to_minor_offset(minor_read_field(minor, parent, idx))
+    cs = cheney_forward_one(minor, cs, field_val)
+```
+
+When `field_val` points to an infix sub-object:
+1. `cheney_forward_one` detects tag=249 at `field_val - 8`
+2. Computes `parent = field_val - wosize_at(field_val) * 8`
+3. Promotes the parent closure (if not already promoted)
+4. Derives `fwd[field_val] = fwd[parent] + delta`
+5. The parent is enqueued for scanning (its OWN fields get forwarded later)
+
+**Important:** The parent closure's body is scanned uniformly: the loop
+visits every word in `[parent_fwd, parent_fwd + wosize*8)`.  Words that
+are not valid minor-heap pointers (code pointers, tag bits, infix header
+words) pass through the forwarding lookup unchanged (`fwd[x] == 0` →
+no rewrite).  Only words that map to a non-zero `fwd` entry are rewritten.
+The infix sub-object's actual pointer fields (env slots) ARE within this
+range and ARE rewritten — so no separate infix scan is needed.
+
+#### How Infix Works in the Promotion (Copy) Phase
+
+`promote_object` copies the ENTIRE parent closure body verbatim:
+```
+promote_object(minor, major, parent_addr, fp, wosize):
+  alloc_res = alloc_spec(major, fp, wosize)      // allocate wosize words
+  copy_fields(minor, major, parent, new_addr, 0, wosize)  // copy ALL fields
+  set_promoted_tag(major, new_addr, parent_tag)  // set outer header tag
+```
+
+The `copy_fields` step copies the raw body INCLUDING:
+- Code pointers and environment slots (the closure's real data)
+- Infix headers (tag=249 words that happen to be body fields)
+- Fields belonging to infix sub-objects
+
+After `promote_object`, the major heap at `new_addr` contains an exact
+copy of the closure body.  The infix header at `new_addr + delta - 8`
+still has tag=249 and the same wosize (offset encoding).  This means:
+- `fwd[infix_addr] = new_addr + delta` correctly points to the infix
+  sub-object's location in the major copy
+- Anyone following this pointer finds a valid infix header
+
+#### Infix and `update_promoted_iter` (Pointer Rewriting)
+
+After promotion, `update_promoted_iter` rewrites minor pointers in
+promoted objects' bodies.  It iterates `fwd_arr[0..fwd_array_size)`:
+
+```
+update_promoted_iter(major, farr, fwd, idx):
+  for idx in [0, fwd_array_size):
+    major_addr = farr[idx]
+    if major_addr == 0: continue
+    hdr = read_word(major, major_addr - 8)
+    wosize = getWosize(hdr)
+    tag = getTag(hdr)
+    if wosize > 0 && tag < no_scan_tag && tag != infix_tag:
+      update_object_pointers(major, major_addr, wosize, fwd, 0)
     else:
-      promote(r) as normal
-      enqueue(r)
+      continue  // skip: no-scan, infix, or empty
 ```
 
-**Modified BFS field scan (Phase 2):**
+**Critical: infix entries are SKIPPED** (`tag != infix_tag`).  This is
+both correct and necessary:
+
+> **Implementation note:** The `tag != infix_tag` guard is the *intended*
+> behavior.  The current spec (`GC.Gen.Impl.UpdatePtrs.fsti`) uses
+> `tag < no_scan_tag` without the infix exclusion — a latent bug that
+> happens to be masked because infix wosize values are small enough that
+> out-of-bounds reads don't occur in practice.  The fix (adding the
+> `tag != infix_tag` check) is pending implementation.
+
+1. **Correctness:** The infix entry's "wosize" is the offset-to-parent
+   (e.g., 3 for an infix 24 bytes into a closure), NOT the number of
+   fields to scan.  Scanning "wosize" fields starting at the infix would
+   read PAST the parent's body — a soundness violation.
+
+2. **No loss of coverage:** The parent's entry `farr[parent/8]` has the
+   real tag=247 and real wosize covering the ENTIRE closure body.  When
+   `update_promoted_iter` processes the parent, it rewrites ALL fields in
+   `[parent_fwd, parent_fwd + wosize*8)` — including those belonging to
+   infix sub-objects.  So infix fields are already handled.
+
+3. **Coverage invariant:** For every infix entry `farr[i]` with tag=249,
+   there exists a parent entry `farr[j]` (j < i) with tag=247 whose body
+   range `[parent_fwd, parent_fwd + wosize*8)` covers the infix region.
+   The parent is scanned as a real object; the infix is a proper subset
+   of the parent's body.  (The ordering j < i follows from `parent_addr <
+   infix_addr`, but correctness depends on coverage, not ordering.)
+
+#### Infix and the TwoPassEquiv Theorem
+
+The two-pass equivalence theorem proves:
 ```
-for each queued object obj:
-  for each field f of obj:
-    if f points to minor heap:
-      if Tag_at(f) == Infix_tag:
-        offset = Infix_offset_at(f)
-        parent_off = f - offset
-        if fwd_arr[parent_off/8] == 0:
-          promote(parent_off)
-          enqueue(parent_off)
-        fwd_arr[f/8] = fwd_arr[parent_off/8] + offset
-      else:
-        if fwd_arr[f/8] == 0:
-          promote(f)
-          enqueue(f)
+update_promoted_iter + rewrite_slots_iter == update_major_pointers
 ```
 
-**After BFS completes:**
-- `fwd_arr` already contains entries for both regular objects AND infix
-  sub-objects
-- `synthesize_infix_forwarding` is no longer needed
-- `rewrite_roots_impl` and `update_promoted_objects` work unchanged
-  (they use fwd_arr uniformly)
+For this equivalence, infix entries are transparent:
+- **LHS (two-pass):** `update_promoted_iter` skips infix entries; the
+  parent scan covers infix fields.  `rewrite_slots_iter` handles
+  pre-existing ref_table slots.
+- **RHS (single-pass):** `update_major_pointers` iterates `objects`
+  (the linked object chain).  Infix sub-objects are NOT in `objects`
+  (they're interior pointers).  So the single-pass also only scans
+  parent closures.
 
-**Advantages:**
-1. Only reachable parent closures are promoted (no over-approximation)
-2. Eliminates two O(minor_allocated) linear scans (~2.2% of GC time)
-3. No separate `find_infix_parents` or `synthesize_infix_forwarding` steps
-4. Simpler overall pipeline (fewer phases)
+Both sides scan the parent's full body (which includes infix regions)
+and skip the infix pseudo-objects.  The equivalence holds naturally.
 
-**Verification impact:**
-- `cheney_promote_phase` spec needs extension: the forwarding invariant
-  must account for derived infix entries (`fwd_arr[infix_off/8] =
-  fwd_arr[parent_off/8] + delta`)
-- The `promote` helper must handle the "parent already promoted" case
-  (idempotent promotion)
-- Loop invariant needs: if an infix entry exists in fwd_arr, its parent
-  entry also exists and the relationship holds
-- The BFS termination argument is unchanged (each minor object is
-  promoted at most once; infix detection only triggers parent promotion,
-  which is bounded by the number of minor objects)
+#### Infix Entry Classification in `farr`
 
-**Implementation plan:**
-1. Add `is_infix_offset` helper to minor heap module (reads tag at offset)
-2. Add `derive_infix_fwd` spec function: given parent's fwd and offset,
-   computes the infix fwd entry
-3. Modify `forward_one_root` in Cheney impl to handle infix case
-4. Modify `forward_one_field` (BFS inner loop) similarly
-5. Remove `find_infix_parents` call from bridge
-6. Remove `synthesize_infix_forwarding` call from bridge
-7. Verify end-to-end: the fwd_arr invariant after BFS covers infix entries
-8. Test: ensure all benchmarks pass (especially closure-heavy workloads)
+The forwarding array contains two kinds of non-zero entries:
 
-**Risk:** The BFS loop invariant becomes more complex (must track infix
-entries as derived from parent entries).  The `fwd_arr` representation
-predicate (`represents_fwd`) may need strengthening to include infix
-coherence.  However, the actual runtime logic is simpler (fewer phases,
-no heap scans), and the per-object work is O(1) additional tag checks.
+| Entry type | Header tag | In `objects`? | Scanned by `update_promoted_iter`? |
+|-----------|-----------|--------------|-----------------------------------|
+| Normal promoted object | ≠ 249 | Yes | Yes (if tag < no_scan_tag) |
+| Infix sub-object | = 249 | No (interior ptr) | No (skipped) |
+
+For the TwoPassEquiv preconditions, `promoted_entries_valid_from` only
+needs to hold for non-infix entries (tag ≠ 249).  Infix entries are
+classified as "covered by parent" — their containing parent entry exists
+at a lower index in `farr`.
+
+> **Implementation note:** The current `promoted_entries_valid_from`
+> definition in `GC.Gen.Impl.UpdatePtrs.fsti` does not yet distinguish
+> infix vs real entries.  The planned fix partitions `farr` entries into
+> "real" (in `objects`, valid for scanning) and "infix" (interior pointer,
+> covered by a parent real entry), with the TwoPassEquiv preconditions
+> applying only to real entries.
+
+#### Example (End-to-End)
+
+```
+Minor heap layout:
+  offset 0:  [hdr: wz=6,tag=247] [code0] [env0] [infix_hdr: wz=3,tag=249] [code1] [env1] [env2]
+  offset 56: [hdr: wz=2,tag=0]   [ptr_to_offset_32] [other_field]
+
+  minor_objects = [8, 64]  (two objects at offsets 8 and 64)
+  is_infix_in_minor(32) = true  (tag at offset 24 == 249)
+  infix_parent(32) = 32 - 3*8 = 8  (the closure at offset 8)
+
+Root: 32 (points to infix sub-object within closure)
+
+Cheney BFS:
+  1. Forward root 32:
+     - is_infix_in_minor(32) → true
+     - parent = infix_parent(32) = 8
+     - cheney_forward_normal(8): allocate 6 words in major → parent_fwd = 0x10008
+     - copy_fields: copy all 6 words of closure body to major
+     - fwd[8] = 0x10008, enqueue 8
+     - derive: fwd[32] = 0x10008 + (32-8) = 0x10008 + 24 = 0x10020
+     - farr[1] = 0x10008 (parent), farr[4] = 0x10020 (infix)
+
+  2. Scan queued object at offset 8 (the closure):
+     - wosize=6, tag=247 (< no_scan_tag)
+     - Field 0 (code0): not a minor ptr → skip
+     - Field 1 (env0): maybe a minor ptr → cheney_forward_one
+     - Field 2 (infix_hdr word): the raw infix header bits → not a minor ptr → skip
+     - Field 3 (code1): not a minor ptr → skip
+     - Field 4 (env1): maybe a minor ptr → cheney_forward_one
+     - Field 5 (env2): maybe a minor ptr → cheney_forward_one
+     (If env0 = 64, promote offset 64 too, etc.)
+
+  3. Forward field ptr_to_offset_32 in object at offset 64:
+     - When scanning object at 64, field 0 = 32 (points to infix)
+     - fwd[32] already set → nothing to do
+
+update_promoted_iter:
+  - farr[1] = 0x10008: tag=247 (< 251, ≠ 249), wosize=6 → SCAN all 6 fields
+    → rewrites minor pointers in the closure body (including infix region)
+  - farr[4] = 0x10020: tag=249 → SKIP (infix — already covered by parent)
+  - farr[8] = (object at 64, if promoted): tag=0, wosize=2 → SCAN
+    → rewrites ptr_to_offset_32 field via fwd[32] = 0x10020
+
+rewrite_roots:
+  - root 32 → fwd[32] = 0x10020 ✓ (caller gets the infix major address)
+```
+
+#### Comparison with OCaml's Stock GC
+
+Our infix-aware BFS matches OCaml's `caml_oldify_one` strategy:
+
+| Aspect | OCaml stock GC | Our verified GC |
+|--------|---------------|-----------------|
+| Detection | `Tag_hd(hd) == Infix_tag` | `is_infix_in_minor(minor, addr)` |
+| Parent lookup | `v - Infix_offset_hd(hd)` | `infix_parent(ms, addr) = addr - wosize*8` |
+| Parent promotion | Recurse on parent (depth=1) | `cheney_forward_normal(minor, cs, parent)` |
+| Infix fwd derivation | `*p += offset` after parent copy | `fwd[addr] = fwd[parent] + delta` |
+| Re-entry handling | Forward pointer check (`hd == 0`) | `fwd[addr] != 0` → already done |
+| Scan | Parent scanned as whole | Parent scanned via queue (same body) |
+
+Both approaches: only reachable parent closures are promoted; infix
+forwarding is derived (not allocated); the parent's body scan covers
+all infix sub-object fields.
 
 ---
 
@@ -976,15 +995,13 @@ major GC (mark + sweep)           2562 ms     51.7%
 update_one_object loop (5c)        797 ms     16.1%
 gen_alloc (allocation)             194 ms      3.9%
 fwd_arr zero (memset)               68 ms      1.4%
-find_infix_parents                   57 ms      1.2%
-synth_infix_fwd                      57 ms      1.1%
 ref_table rewrite (step 5.5)        0.2 ms      0.0%  ← negligible
 root scan                           1.1 ms      0.0%
 rewrite_roots                       0.2 ms      0.0%
 root writeback                      0.1 ms      0.0%
 minor_heap_reset                    0.0 ms      0.0%
 ─────────────────────────────────────────────────────
-TOTAL GC overhead                  4950 ms
+TOTAL GC overhead                  4836 ms
 Per minor alloc                      30 ns
 Per minor GC                       1.34 ms
 ```
@@ -1111,23 +1128,25 @@ entire 4.1–5d sequence to eventually be a single call to a verified `minor_col
 
 ### Current State
 
-The bridge (`alloc_gen.c`) currently executes steps 4.1–5f as individual
-verified function calls orchestrated by unverified C code:
+The bridge (`alloc_gen.c`) uses a single verified call `minor_collect_full`
+that handles everything: infix-aware BFS, pointer rewriting, ref_table
+slot rewriting, and root rewriting.  The previous multi-step approach
+(find_infix_parents → cheney_promote → synthesize_infix → update → rewrite)
+has been replaced.
 
 ```
-4.1  find_infix_parents()        → adds parent closure roots
-5a   cheney_promote_phase()      → BFS promote (returns ok: bool)
-5b   synthesize_infix_forwarding()  → fill fwd_arr for infix sub-objects
-5c   update_promoted_objects()   → rewrite fields of promoted objects
-5d   rewrite_roots_impl()        → rewrite root array via fwd_arr
-5d.1 if (!promote_ok) abort      → verified OOM flag check
-5f   minor_heap_reset()          → reset bump pointer
-```
+Old pipeline (eliminated):
+4.1  find_infix_parents()           → REMOVED (infix handled in BFS)
+5a   cheney_promote_phase()         → integrated into minor_collect_full
+5b   synthesize_infix_forwarding()  → REMOVED (infix handled in BFS)
+5c   update_promoted_objects()      → integrated into minor_collect_full
+5d   rewrite_roots_impl()           → integrated into minor_collect_full
+5f   minor_heap_reset()             → integrated into minor_collect_full
 
-The verified `minor_collect` (in `GC.Gen.Impl.fst`) does the same logical
-work but currently uses `update_all_objects` (O(major_heap)) instead of
-`update_promoted_objects` (O(minor_allocated)), and does not handle infix
-pointers.
+New pipeline:
+4.   minor_collect_full()           → single verified call (all steps)
+5.   rewrite_heap_slots()           → ref_table slot rewriting
+```
 
 ### Goal
 
