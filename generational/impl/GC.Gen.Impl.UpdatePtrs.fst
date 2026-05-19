@@ -834,4 +834,13 @@ let promoted_plus_slots_eq_full_update
        rewrite_slots_iter (update_promoted_iter prom.major_final farr prom.fwd_map 0)
                           prom.fwd_map slots n 0
          == PromoteSpec.update_major_pointers prom.major_final prom.fwd_map))
-  = admit ()
+  = // Proof strategy: pointwise read_word equality + heap extensionality.
+    // See GC.Gen.TwoPassEquiv module for the full proof decomposition:
+    // 1. heap_read_word_extensional: word-equal heaps are byte-equal
+    // 2. update_promoted_iter_frame: outside promoted bodies, unchanged
+    // 3. update_promoted_iter_promoted_field: field of farr[i] gets rewritten
+    // 4. rewrite_slots_iter_frame: outside slots, unchanged
+    // 5. rewrite_slots_iter_slot_effect: slot[si] gets rewritten
+    // Per-address case analysis combines these with ref_table_complete
+    // (non-promoted fields without forwarded minor ptrs are untouched by both).
+    admit ()
