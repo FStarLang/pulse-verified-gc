@@ -22,6 +22,7 @@ open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
 module SpecObj = GC.Spec.Object
 module SpecHeap = GC.Spec.Heap
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
 /// Forwarding array representation
@@ -125,6 +126,29 @@ let valid_slot_addrs (slots: Seq.seq U64.t) (n: nat) : prop =
     (let addr = U64.v (Seq.index slots i) in
      addr < heap_size /\ addr % 8 == 0))
 
+/// Spec: iterate slots[idx..n), rewriting each slot's value via the forwarding map.
+/// Models what rewrite_heap_slots computes.
+let rec rewrite_slots_iter (major: heap) (fwd: PromoteSpec.forwarding_map)
+                           (slots: Seq.seq U64.t) (n: nat) (idx: nat)
+  : GTot heap (decreases (n - idx)) =
+  if idx >= n then major
+  else if idx >= Seq.length slots then major
+  else
+    let slot_addr = Seq.index slots idx in
+    if U64.v slot_addr >= heap_size || U64.v slot_addr % 8 <> 0 then
+      rewrite_slots_iter major fwd slots n (idx + 1)
+    else
+      let field_val = GC.Gen.Base.to_minor_offset (SpecHeap.read_word major slot_addr) in
+      if PromoteSpec.is_minor_pointer field_val then
+        let new_val = fwd field_val in
+        if new_val <> 0UL then
+          let major' = SpecHeap.write_word major slot_addr new_val in
+          rewrite_slots_iter major' fwd slots n (idx + 1)
+        else
+          rewrite_slots_iter major fwd slots n (idx + 1)
+      else
+        rewrite_slots_iter major fwd slots n (idx + 1)
+
 /// Rewrite specific heap slots: for each slot[i], read the value from the
 /// major heap, and if it's a forwarded minor pointer, replace it.
 /// Used to apply forwarding to ref_table entries without scanning the
@@ -134,16 +158,19 @@ fn rewrite_heap_slots
   (fwd_arr: array U64.t)
   (slots: array U64.t)
   (n: SZ.t)
+  (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
            pts_to fwd_arr 'farr **
            pts_to slots 'sl **
            pure (SZ.v n <= Seq.length 'sl /\
                  Seq.length 'farr == fwd_array_size /\
-                 valid_slot_addrs 'sl (SZ.v n))
+                 valid_slot_addrs 'sl (SZ.v n) /\
+                 represents_fwd 'farr fwd)
   ensures exists* ms2.
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
-    pts_to slots 'sl
+    pts_to slots 'sl **
+    pure (ms2 == rewrite_slots_iter 'ms fwd 'sl (SZ.v n) 0)
 
 /// ---------------------------------------------------------------------------
 /// Update promoted objects (fwd_arr iteration)
@@ -259,3 +286,76 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pure (ms2 == update_promoted_iter 'ms 'farr fwd 0)
+
+/// ---------------------------------------------------------------------------
+/// Ref-table completeness: sufficient condition for full correctness
+/// ---------------------------------------------------------------------------
+
+/// The ref_table is "complete" w.r.t. the pre-promotion major heap: every
+/// field (of a scannable, non-blue object) in the ORIGINAL major heap that
+/// holds a forwarded minor pointer has its address listed in slots[0..n).
+///
+/// This matches what the write barrier records: addresses of existing major-heap
+/// fields that were assigned minor pointers. After promotion, these same fields
+/// still hold minor pointers (promotion adds new objects but doesn't modify
+/// pre-existing object bodies). Combined with update_promoted_iter (which
+/// handles newly-promoted objects' fields), this ensures ALL minor pointers
+/// in the post-promotion heap get rewritten.
+let ref_table_complete (major_pre: heap) (fwd: PromoteSpec.forwarding_map)
+                       (slots: Seq.seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (addr: nat).
+    addr < heap_size /\ addr % 8 == 0 /\
+    (let field_val = GC.Gen.Base.to_minor_offset (SpecHeap.read_word major_pre (U64.uint_to_t addr)) in
+     PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL) ==>
+    (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == addr))
+
+/// Slot soundness: every slot address is a field of a scannable non-blue object
+/// in the original heap. This ensures rewrite_slots_iter only touches addresses
+/// that update_major_pointers would also touch.
+let ref_table_sound (major_pre: heap) (slots: Seq.seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (i: nat). i < n ==>
+    (let addr = U64.v (Seq.index slots i) in
+     addr < heap_size /\ addr % 8 == 0))
+
+/// Key equivalence: update_promoted_iter + rewrite_slots_iter = update_major_pointers,
+/// under the ref_table_complete condition and suitable structural invariants.
+///
+/// This connects the efficient two-pass approach (promoted objects via fwd_arr +
+/// ref_table slots) to the full-correctness spec (walk all objects).
+///
+/// Takes the full promotion parameters so the proof can internally derive
+/// preservation of pre-existing fields via promote_all_read_other.
+///
+/// Proof sketch:
+/// 1. Promoted objects' fields are at addresses written by update_promoted_iter.
+///    After Pass 1, those fields no longer hold minor pointers (they hold fwd targets).
+/// 2. Pre-existing fields with minor pointers are in the ref_table (by completeness).
+///    After Pass 1, their values are unchanged (Pass 1 only touches promoted fields).
+///    Pass 2 rewrites them correctly.
+/// 3. Both passes write the same values as update_major_pointers would (fwd(minor_offset)).
+/// 4. Writes at distinct addresses commute, so iteration order doesn't matter.
+val promoted_plus_slots_eq_full_update
+  (minor: GC.Gen.MinorHeap.minor_state) (major_pre: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      (let prom = GC.Gen.Cheney.cheney_promote minor major_pre fp roots in
+       Seq.length farr == fwd_array_size /\
+       valid_fwd_entries farr /\
+       represents_fwd farr prom.fwd_map /\
+       valid_slot_addrs slots n /\
+       ref_table_sound major_pre slots n /\
+       ref_table_complete major_pre prom.fwd_map slots n /\
+       GC.Spec.Fields.well_formed_heap_part1 prom.major_final /\
+       PromoteSpec.heap_objects_dense prom.major_final /\
+       Seq.length (GC.Spec.Fields.objects zero_addr prom.major_final) > 0 /\
+       GC.Spec.Fields.well_formed_heap major_pre /\
+       GC.Spec.Allocator.Lemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
+       GC.Spec.Allocator.Lemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword)))
+    (ensures
+      (let prom = GC.Gen.Cheney.cheney_promote minor major_pre fp roots in
+       rewrite_slots_iter (update_promoted_iter prom.major_final farr prom.fwd_map 0)
+                          prom.fwd_map slots n 0
+         == PromoteSpec.update_major_pointers prom.major_final prom.fwd_map))

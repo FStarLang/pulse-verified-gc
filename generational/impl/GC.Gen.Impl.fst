@@ -336,6 +336,124 @@ fn minor_collect (gh: gen_heap_t)
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// minor_collect_full: includes ref_table rewriting for full correctness
+/// ---------------------------------------------------------------------------
+
+/// Compose all phases into a single verified call that achieves full
+/// cheney_collect_spec correctness.  Takes a ref_table (slots array) that
+/// covers all major-heap fields holding minor pointers (not belonging to
+/// promoted objects — those are handled by update_promoted_objects).
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+fn minor_collect_full (gh: gen_heap_t)
+                      (roots: array U64.t) (nroots: SZ.t)
+                      (fwd_arr: array U64.t)
+                      (queue: larray U64.t Cheney.queue_size)
+                      (slots: array U64.t) (nslots: SZ.t)
+  requires is_gen_heap gh 'd 'b 's 'fp **
+           pts_to roots 'rs **
+           pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
+           pts_to slots 'sl **
+           pure (SpecFields.well_formed_heap 's /\
+                 AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
+                 PromoteSpec.heap_objects_dense 's /\
+                 PromoteSpec.chain_objects_blue 's 'fp /\
+                 SZ.v nroots == Seq.length 'rs /\
+                 Seq.length 'farr == fwd_array_size /\
+                 (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+                 minor_wf ({ data = 'd; bump = 'b }) /\
+                 minor_guards_complete ({ data = 'd; bump = 'b }) /\
+                 minor_infix_wf ({ data = 'd; bump = 'b }) /\
+                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
+                 SZ.v nslots <= Seq.length 'sl /\
+                 valid_slot_addrs 'sl (SZ.v nslots) /\
+                 ref_table_sound 's 'sl (SZ.v nslots) /\
+                 // Completeness: ref_table covers all pre-existing minor pointers.
+                 // Stated over the ORIGINAL major heap (what the write barrier records).
+                 (let prom = CheneySpec.cheney_promote
+                              ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs in
+                  ref_table_complete 's prom.fwd_map 'sl (SZ.v nslots)))
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    is_gen_heap gh d2 b2 s2 fp2 **
+    pts_to roots rs2 **
+    pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
+    pts_to slots 'sl **
+    pure (
+      let minor_st : minor_state = { data = 'd; bump = 'b } in
+      let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
+      // FULL CORRECTNESS: final heap equals cheney_collect_spec result
+      s2 == result.mc_major /\
+      // Free pointer from promotion phase
+      fp2 == prom.fp_final /\
+      fp2 == result.mc_fp /\
+      // Roots rewritten via forwarding map
+      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+      rs2 == result.mc_roots /\
+      // Minor heap fully reset
+      U64.v b2 == 0 /\
+      // Forwarding array represents the spec-level forwarding map
+      represents_fwd farr2 prom.fwd_map /\
+      // Forwarding entries are valid
+      valid_fwd_entries farr2 /\
+      Seq.length farr2 == fwd_array_size)
+{
+  unfold is_gen_heap;
+
+  // Phase 1: Cheney BFS promotion (forward roots + scan)
+  let ok = cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr queue roots nroots;
+
+  // Extract ghost state from promote phase
+  with ms_post. assert (is_heap gh.major ms_post);
+  with farr_post. assert (pts_to fwd_arr farr_post);
+  with fp_post. assert (R.pts_to gh.fp_ref fp_post);
+
+  // Phase 2: Update promoted objects' fields only (efficient path)
+  CheneySpec.cheney_promote_fwd_bounded
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  fwd_bounded_implies_valid_fwd_entries farr_post
+    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
+
+  update_promoted_objects gh.major fwd_arr
+    #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
+
+  // After update: ms_updated == update_promoted_iter ms_post farr_post prom_fwd 0
+  with ms_updated. assert (is_heap gh.major ms_updated);
+  with farr_post2. assert (pts_to fwd_arr farr_post2);
+
+  // Phase 2b: Rewrite ref_table slots for full correctness
+  rewrite_heap_slots gh.major fwd_arr slots nslots
+    #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
+
+  // After slot rewrite: apply equivalence lemma
+  with ms_final. assert (is_heap gh.major ms_final);
+  promoted_plus_slots_eq_full_update
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
+    farr_post2 'sl (SZ.v nslots);
+
+  // Connect to cheney_collect_spec
+  cheney_collect_spec_unfold ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  CheneySpec.update_major_pointers_preserves_fl_valid ms_post
+    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map
+    fp_post;
+
+  // Phase 3: Rewrite roots using ghost-tracked forwarding map
+  with farr_post3. assert (pts_to fwd_arr farr_post3);
+  rewrite_roots_impl roots fwd_arr nroots
+    #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
+
+  // Phase 4: Reset minor heap
+  minor_heap_reset gh.minor;
+
+  fold (is_gen_heap gh _ 0UL _ _);
+  ok
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
 /// ---------------------------------------------------------------------------
 

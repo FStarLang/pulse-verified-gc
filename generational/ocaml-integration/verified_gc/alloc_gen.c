@@ -6,9 +6,9 @@
  *   caml_trigger_verified_gc(unit)    — OCaml-callable full GC trigger
  *
  * Uses:
- *   gen_alloc()       from GC_Gen_Impl.c — bump alloc (minor) or free-list (major)
- *   minor_collect()   from GC_Gen_Impl.c — Cheney BFS promotion
- *   collect()         from GC_Gen_Impl.c — mark-and-sweep on major heap
+ *   gen_alloc()            from GC_Gen_Impl.c — bump alloc (minor) or free-list (major)
+ *   minor_collect_full()   from GC_Gen_Impl.c — Cheney BFS + ref_table rewrite (full correctness)
+ *   collect()              from GC_Gen_Impl.c — mark-and-sweep on major heap
  *
  * NULL-base trick (major heap only):
  *   major.data = NULL so that byte offsets become absolute virtual addresses.
@@ -294,21 +294,34 @@ static void do_minor_gc_core(void) {
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
     PROF_END(fwd_arr_zero);
 
-    /* 5. Minor collection via verified minor_collect.
+    /* 5. Minor collection via verified minor_collect_full.
      *
-     * The verified minor_collect bundles:
+     * The verified minor_collect_full bundles:
      *   cheney_promote_phase (with infix-aware BFS) +
-     *   update_promoted_objects + rewrite_roots_impl + minor_heap_reset
+     *   update_promoted_objects +
+     *   rewrite_heap_slots (ref_table entries) +
+     *   rewrite_roots_impl + minor_heap_reset
      * and returns ok: bool (false = OOM).
+     *
+     * Full correctness: the post-collection major heap equals
+     * cheney_collect_spec — both promoted objects' fields AND the
+     * ref_table slots are rewritten in one verified call.
      *
      * The BFS handles infix sub-objects (tag=249) natively: when it
      * encounters an infix address, it promotes the parent closure and
-     * derives the infix forwarding inline.  No separate find_infix_parents
-     * or synthesize_infix_forwarding pass is needed. */
+     * derives the infix forwarding inline. */
     bool promote_ok;
     PROF_START(cheney);
-    promote_ok = minor_collect(gc_gen_heap, root_values,
-                               (size_t)root_count, gc_fwd_arr, gc_queue);
+    {
+        struct caml_ref_table *tbl = Caml_state->_ref_table;
+        size_t n_slots = (size_t)(tbl->ptr - tbl->base);
+        _Static_assert(sizeof(value *) == sizeof(uint64_t),
+            "ref_table optimization requires LP64 (sizeof(value*)==8)");
+        promote_ok = minor_collect_full(gc_gen_heap, root_values,
+                                        (size_t)root_count, gc_fwd_arr,
+                                        gc_queue,
+                                        (uint64_t *)tbl->base, n_slots);
+    }
     PROF_END(cheney);
 
     /* OOM check (verified flag from cheney_promote_phase) */
@@ -322,30 +335,6 @@ static void do_minor_gc_core(void) {
             (unsigned long)(major_size / 4));
         caml_fatal_error("verified gen GC: out of memory (major heap too small)");
     }
-
-    /* 5.5. Ref_table-based pointer rewriting.
-     *
-     * The ref_table contains addresses of major-heap fields that were
-     * assigned minor pointers (recorded by caml_modify's write barrier).
-     * After promotion, those fields still hold absolute minor addresses.
-     * rewrite_heap_slots reads each slot, translates minor→offset via
-     * minor_base_addr, looks up fwd_arr, and writes the major address.
-     *
-     * On LP64, value* (8 bytes) and uint64_t (8 bytes) have the same
-     * representation, so we cast the ref_table entries directly —
-     * no malloc/copy needed. */
-    PROF_START(ref_table);
-    {
-        struct caml_ref_table *tbl = Caml_state->_ref_table;
-        size_t n_slots = (size_t)(tbl->ptr - tbl->base);
-        if (n_slots > 0) {
-            _Static_assert(sizeof(value *) == sizeof(uint64_t),
-                "ref_table optimization requires LP64 (sizeof(value*)==8)");
-            rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr,
-                               (uint64_t *)tbl->base, n_slots);
-        }
-    }
-    PROF_END(ref_table);
 
     /* 6. Write back rewritten roots to OCaml stack/globals.
      *

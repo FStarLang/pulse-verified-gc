@@ -59,6 +59,17 @@ minor_collect(
   uint64_t *queue
 );
 
+bool
+minor_collect_full(
+  gen_heap_t gh,
+  uint64_t *roots,
+  size_t nroots,
+  uint64_t *fwd_arr,
+  uint64_t *queue,
+  uint64_t *slots,
+  size_t nslots
+);
+
 typedef struct K___uint64_t_bool_s
 {
   uint64_t fst;
@@ -166,6 +177,10 @@ void update_all_objects(heap_t major, uint64_t *fwd_arr);
 void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t n);
 
 typedef void *valid_fwd_entries;
+
+typedef void *ref_table_complete;
+
+typedef void *ref_table_sound;
 
 void update_promoted_objects(heap_t major, uint64_t *fwd_arr);
 

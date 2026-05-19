@@ -32,12 +32,12 @@ static uint64_t prof_t_fwd_arr_zero = 0;   /* memset gc_fwd_arr */
 static uint64_t prof_t_translate = 0;      /* translate_minor_fields (legacy, unused) */
 static uint64_t prof_t_infix_find = 0;     /* find_infix_parents (legacy, unused) */
 static uint64_t prof_t_queue_zero = 0;     /* Pulse_Lib_Array_fill (inside cheney_promote_phase) */
-static uint64_t prof_t_cheney = 0;         /* minor_collect total */
+static uint64_t prof_t_cheney = 0;         /* minor_collect_full total (promote + ref_table + roots) */
 static uint64_t prof_t_infix_synth = 0;    /* synthesize_infix_forwarding (legacy, unused) */
-static uint64_t prof_t_update_fields = 0;  /* update_one_object loop (inside minor_collect) */
-static uint64_t prof_t_rewrite_roots = 0;  /* rewrite_roots_impl (inside minor_collect) */
+static uint64_t prof_t_update_fields = 0;  /* update_one_object loop (inside minor_collect_full) */
+static uint64_t prof_t_rewrite_roots = 0;  /* rewrite_roots_impl (inside minor_collect_full) */
 static uint64_t prof_t_writeback = 0;      /* root writeback (step 6) */
-static uint64_t prof_t_ref_table = 0;      /* ref_table rewriting (5.5) */
+static uint64_t prof_t_ref_table = 0;      /* (legacy: now included in cheney) */
 static uint64_t prof_t_minor_reset = 0;    /* minor_heap_reset */
 static uint64_t prof_t_major_gc = 0;       /* collect() (mark + sweep) */
 static uint64_t prof_t_minor_gc_total = 0; /* total do_minor_gc_core time */
@@ -72,7 +72,7 @@ static void gc_print_profile(void) {
         prof_t_translate/1e6, 100.0*prof_t_translate/total);
     fprintf(stderr, "  find_infix_parents:        %8.1f ms (%5.1f%%)\n",
         prof_t_infix_find/1e6, 100.0*prof_t_infix_find/total);
-    fprintf(stderr, "  minor_collect:             %8.1f ms (%5.1f%%)\n",
+    fprintf(stderr, "  minor_collect_full:        %8.1f ms (%5.1f%%)\n",
         prof_t_cheney/1e6, 100.0*prof_t_cheney/total);
     fprintf(stderr, "    (includes queue zero):   %8.1f ms\n",
         prof_t_queue_zero/1e6);
@@ -84,7 +84,7 @@ static void gc_print_profile(void) {
         prof_t_update_fields/1e6, 100.0*prof_t_update_fields/total);
     fprintf(stderr, "  rewrite_roots:             %8.1f ms (%5.1f%%)\n",
         prof_t_rewrite_roots/1e6, 100.0*prof_t_rewrite_roots/total);
-    fprintf(stderr, "  ref_table rewrite:         %8.1f ms (%5.1f%%)\n",
+    fprintf(stderr, "  [legacy] ref_table:        %8.1f ms (%5.1f%%)\n",
         prof_t_ref_table/1e6, 100.0*prof_t_ref_table/total);
     fprintf(stderr, "  root writeback:            %8.1f ms (%5.1f%%)\n",
         prof_t_writeback/1e6, 100.0*prof_t_writeback/total);

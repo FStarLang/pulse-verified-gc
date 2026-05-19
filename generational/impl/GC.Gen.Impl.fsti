@@ -208,6 +208,69 @@ fn minor_collect (gh: gen_heap_t)
       Seq.length (SpecFields.objects zero_addr prom.major_final) > 0)
 
 /// ---------------------------------------------------------------------------
+/// Full minor collection with ref_table (full correctness)
+/// ---------------------------------------------------------------------------
+
+/// Like minor_collect but also takes a ref_table of major-heap field addresses
+/// holding minor pointers and rewrites them. Proves full cheney_collect_spec
+/// correctness (s2 == cheney_collect_spec result) rather than the weaker
+/// update_promoted_iter spec of minor_collect.
+///
+/// The ref_table comes from the write barrier: it records addresses of existing
+/// major-heap fields that were assigned minor-heap pointers. Combined with
+/// update_promoted_objects (which handles newly promoted objects), this covers
+/// all minor pointers in the major heap.
+fn minor_collect_full (gh: gen_heap_t)
+                      (roots: array U64.t) (nroots: SZ.t)
+                      (fwd_arr: array U64.t)
+                      (queue: larray U64.t Cheney.queue_size)
+                      (slots: array U64.t) (nslots: SZ.t)
+  requires is_gen_heap gh 'd 'b 's 'fp **
+           pts_to roots 'rs **
+           pts_to fwd_arr 'farr **
+           pts_to queue 'qv **
+           pts_to slots 'sl **
+           pure (SpecFields.well_formed_heap 's /\
+                 AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
+                 PromoteSpec.heap_objects_dense 's /\
+                 PromoteSpec.chain_objects_blue 's 'fp /\
+                 SZ.v nroots == Seq.length 'rs /\
+                 Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+                 (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+                 minor_wf ({ data = 'd; bump = 'b }) /\
+                 minor_guards_complete ({ data = 'd; bump = 'b }) /\
+                 minor_infix_wf ({ data = 'd; bump = 'b }) /\
+                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
+                 SZ.v nslots <= Seq.length 'sl /\
+                 UpdatePtrs.valid_slot_addrs 'sl (SZ.v nslots) /\
+                 UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
+                 (let prom = CheneySpec.cheney_promote
+                              ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs in
+                  UpdatePtrs.ref_table_complete 's prom.fwd_map 'sl (SZ.v nslots)))
+  returns ok: bool
+  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
+    is_gen_heap gh d2 b2 s2 fp2 **
+    pts_to roots rs2 **
+    pts_to fwd_arr farr2 **
+    pts_to queue qv2 **
+    pts_to slots 'sl **
+    pure (
+      let minor_st : minor_state = { data = 'd; bump = 'b } in
+      let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
+      // FULL CORRECTNESS: final heap equals cheney_collect_spec result
+      s2 == result.mc_major /\
+      fp2 == prom.fp_final /\
+      fp2 == result.mc_fp /\
+      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+      rs2 == result.mc_roots /\
+      U64.v b2 == 0 /\
+      UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
+      UpdatePtrs.valid_fwd_entries farr2 /\
+      Seq.length farr2 == UpdatePtrs.fwd_array_size)
+
+/// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
 /// ---------------------------------------------------------------------------
 

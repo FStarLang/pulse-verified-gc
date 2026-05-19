@@ -350,6 +350,25 @@ minor_collect(
   return ok;
 }
 
+bool
+minor_collect_full(
+  gen_heap_t gh,
+  uint64_t *roots,
+  size_t nroots,
+  uint64_t *fwd_arr,
+  uint64_t *queue,
+  uint64_t *slots,
+  size_t nslots
+)
+{
+  bool ok = cheney_promote_phase(gh.minor, gh.major, gh.fp_ref, fwd_arr, queue, roots, nroots);
+  update_promoted_objects(gh.major, fwd_arr);
+  rewrite_heap_slots(gh.major, fwd_arr, slots, nslots);
+  rewrite_roots_impl(roots, fwd_arr, nroots);
+  minor_heap_reset(gh.minor);
+  return ok;
+}
+
 K___uint64_t_bool
 gen_gc(
   gen_heap_t gh,

@@ -500,6 +500,20 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
 /// Rewrite heap slots (ref_table entries)
 /// ---------------------------------------------------------------------------
 
+/// Spec for one slot rewrite: given a heap and slot address, compute the
+/// result of reading the value, checking minor pointer + forwarding, writing if needed.
+let rewrite_one_slot_spec (major: heap) (fwd: PromoteSpec.forwarding_map) (slot_addr: U64.t)
+  : GTot heap =
+  if U64.v slot_addr >= heap_size || U64.v slot_addr % 8 <> 0 then major
+  else
+    let field_val = GC.Gen.Base.to_minor_offset (SpecHeap.read_word major slot_addr) in
+    if PromoteSpec.is_minor_pointer field_val then
+      let new_val = fwd field_val in
+      if new_val <> 0UL then
+        SpecHeap.write_word major slot_addr new_val
+      else major
+    else major
+
 /// Factored-out helper: handle one heap slot.
 /// Reads from heap at the given address, checks if it's a forwarded minor
 /// pointer, and rewrites if so.
@@ -509,14 +523,17 @@ fn rewrite_one_heap_slot
   (major: heap_t)
   (fwd_arr: array U64.t)
   (slot_addr: U64.t)
+  (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
            pts_to fwd_arr 'farr **
            pure (U64.v slot_addr < heap_size /\
                  U64.v slot_addr % 8 == 0 /\
-                 Seq.length 'farr == fwd_array_size)
+                 Seq.length 'farr == fwd_array_size /\
+                 represents_fwd 'farr fwd)
   ensures exists* ms2.
     is_heap major ms2 **
-    pts_to fwd_arr 'farr
+    pts_to fwd_arr 'farr **
+    pure (ms2 == rewrite_one_slot_spec 'ms fwd slot_addr)
 {
   let field_val_raw = read_word major slot_addr;
   let field_val = to_minor_offset_u64 field_val_raw;
@@ -534,6 +551,42 @@ fn rewrite_one_heap_slot
 }
 #pop-options
 
+/// Unfold lemma: rewrite_slots_iter at idx >= n is identity
+let rewrite_slots_iter_done (major: heap) (fwd: PromoteSpec.forwarding_map)
+                            (slots: Seq.seq U64.t) (n: nat) (idx: nat)
+  : Lemma (requires idx >= n)
+          (ensures rewrite_slots_iter major fwd slots n idx == major)
+  = ()
+
+/// Unfold lemma: one step of rewrite_slots_iter
+let rewrite_slots_iter_step (major: heap) (fwd: PromoteSpec.forwarding_map)
+                            (slots: Seq.seq U64.t) (n: nat) (idx: nat)
+  : Lemma (requires idx < n /\ idx < Seq.length slots /\
+                    valid_slot_addrs slots n)
+          (ensures rewrite_slots_iter major fwd slots n idx ==
+                   rewrite_slots_iter (rewrite_one_slot_spec major fwd (Seq.index slots idx))
+                                     fwd slots n (idx + 1))
+  = ()
+
+/// "Snoc" lemma: processing n+1 slots from 'ms equals processing n slots
+/// then processing one more step on the result.
+/// rewrite_slots_iter ms fwd sl (n+1) 0 ==
+///   rewrite_one_slot_spec (rewrite_slots_iter ms fwd sl n 0) fwd sl[n]
+let rec rewrite_slots_iter_snoc (major: heap) (fwd: PromoteSpec.forwarding_map)
+                                (slots: Seq.seq U64.t) (n: nat) (idx: nat)
+  : Lemma (requires n < Seq.length slots /\ valid_slot_addrs slots (n + 1) /\ idx <= n)
+          (ensures rewrite_slots_iter major fwd slots (n + 1) idx ==
+                   rewrite_one_slot_spec (rewrite_slots_iter major fwd slots n idx)
+                                        fwd (Seq.index slots n))
+          (decreases (n - idx))
+  = if idx >= n then ()
+    else begin
+      rewrite_slots_iter_step major fwd slots (n + 1) idx;
+      rewrite_slots_iter_step major fwd slots n idx;
+      rewrite_slots_iter_snoc (rewrite_one_slot_spec major fwd (Seq.index slots idx))
+                              fwd slots n (idx + 1)
+    end
+
 /// Rewrite heap slots loop
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 fn rewrite_heap_slots
@@ -541,17 +594,21 @@ fn rewrite_heap_slots
   (fwd_arr: array U64.t)
   (slots: array U64.t)
   (n: SZ.t)
+  (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
            pts_to fwd_arr 'farr **
            pts_to slots 'sl **
            pure (SZ.v n <= Seq.length 'sl /\
                  Seq.length 'farr == fwd_array_size /\
-                 valid_slot_addrs 'sl (SZ.v n))
+                 valid_slot_addrs 'sl (SZ.v n) /\
+                 represents_fwd 'farr fwd)
   ensures exists* ms2.
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
-    pts_to slots 'sl
+    pts_to slots 'sl **
+    pure (ms2 == rewrite_slots_iter 'ms fwd 'sl (SZ.v n) 0)
 {
+  rewrite_slots_iter_done 'ms fwd 'sl 0 0;
   let mut i = 0sz;
   while (SZ.lt !i n)
     invariant exists* ms_i iv.
@@ -562,11 +619,21 @@ fn rewrite_heap_slots
       pure (SZ.v iv <= SZ.v n /\
             SZ.v n <= Seq.length 'sl /\
             Seq.length 'farr == fwd_array_size /\
-            valid_slot_addrs 'sl (SZ.v n))
+            valid_slot_addrs 'sl (SZ.v n) /\
+            represents_fwd 'farr fwd /\
+            ms_i == rewrite_slots_iter 'ms fwd 'sl (SZ.v iv) 0)
   {
     let iv = !i;
     let slot_addr = slots.(iv);
-    rewrite_one_heap_slot major fwd_arr slot_addr;
+    with ms_cur. assert (is_heap major ms_cur);
+    rewrite_one_heap_slot major fwd_arr slot_addr #fwd;
+    with ms_new. assert (is_heap major ms_new);
+    // ms_new == rewrite_one_slot_spec ms_cur fwd slot_addr
+    // ms_cur == rewrite_slots_iter 'ms fwd 'sl iv 0
+    // By snoc lemma: rewrite_slots_iter 'ms fwd 'sl (iv+1) 0
+    //   == rewrite_one_slot_spec (rewrite_slots_iter 'ms fwd 'sl iv 0) fwd 'sl[iv]
+    //   == rewrite_one_slot_spec ms_cur fwd slot_addr == ms_new
+    rewrite_slots_iter_snoc 'ms fwd 'sl (SZ.v iv) 0;
     i := SZ.add iv 1sz
   }
 }
@@ -737,3 +804,34 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
   update_promoted_iter_done ms_final 'farr fwd (SZ.v iv_final)
 }
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Equivalence: update_promoted_iter + rewrite_slots_iter = update_major_pointers
+/// ---------------------------------------------------------------------------
+
+/// The key theorem: when the ref_table is complete (covers all non-promoted
+/// fields with minor pointers), the two-pass approach equals the full update.
+let promoted_plus_slots_eq_full_update
+  (minor: GC.Gen.MinorHeap.minor_state) (major_pre: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      (let prom = GC.Gen.Cheney.cheney_promote minor major_pre fp roots in
+       Seq.length farr == fwd_array_size /\
+       valid_fwd_entries farr /\
+       represents_fwd farr prom.fwd_map /\
+       valid_slot_addrs slots n /\
+       ref_table_sound major_pre slots n /\
+       ref_table_complete major_pre prom.fwd_map slots n /\
+       GC.Spec.Fields.well_formed_heap_part1 prom.major_final /\
+       PromoteSpec.heap_objects_dense prom.major_final /\
+       Seq.length (GC.Spec.Fields.objects zero_addr prom.major_final) > 0 /\
+       GC.Spec.Fields.well_formed_heap major_pre /\
+       GC.Spec.Allocator.Lemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
+       GC.Spec.Allocator.Lemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword)))
+    (ensures
+      (let prom = GC.Gen.Cheney.cheney_promote minor major_pre fp roots in
+       rewrite_slots_iter (update_promoted_iter prom.major_final farr prom.fwd_map 0)
+                          prom.fwd_map slots n 0
+         == PromoteSpec.update_major_pointers prom.major_final prom.fwd_map))
+  = admit ()
