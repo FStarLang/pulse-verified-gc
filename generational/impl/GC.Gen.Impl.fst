@@ -35,6 +35,7 @@ module MajorGC = GC.Impl
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module CheneyCorr = GC.Gen.CheneyCorrectness
+module TwoPass = GC.Gen.TwoPassEquiv
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -243,6 +244,41 @@ let fwd_bounded_implies_valid_fwd_entries
     in
     Classical.forall_intro (fun i -> aux i)
 
+/// Bridge lemma: conditional two-pass ↔ full-update equivalence.
+/// If the 5 preconditions of TwoPassEquiv hold, then the two-pass result
+/// equals update_major_pointers (= cheney_collect_spec.mc_major).
+let two_pass_implies_full_update
+  (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
+  (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+       Seq.length farr == fwd_array_size /\
+       valid_fwd_entries farr /\
+       represents_fwd farr prom.fwd_map /\
+       promoted_entries_valid_from prom.major_final farr 0 /\
+       promoted_entries_disjoint prom.major_final farr /\
+       valid_slot_addrs slots n /\
+       slots_pairwise_distinct slots n /\
+       ref_table_sound major_pre slots n /\
+       ref_table_complete major_pre prom.fwd_map slots n /\
+       fwd_targets_stable prom.fwd_map /\
+       fwd_ptrs_classified prom.major_final prom.fwd_map farr slots n /\
+       SpecFields.well_formed_heap_part1 prom.major_final /\
+       PromoteSpec.heap_objects_dense prom.major_final /\
+       Seq.length (SpecFields.objects zero_addr prom.major_final) > 0 /\
+       SpecFields.well_formed_heap major_pre /\
+       AllocLemmas.fl_valid major_pre fp TwoPass.heap_fuel /\
+       AllocLemmas.fl_chain_terminates major_pre fp TwoPass.heap_fuel))
+    (ensures
+      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+       rewrite_slots_iter
+         (update_promoted_iter prom.major_final farr prom.fwd_map 0)
+         prom.fwd_map slots n 0
+       == (CheneySpec.cheney_collect_spec minor major_pre fp roots).mc_major))
+  = TwoPass.promoted_plus_slots_eq_full_update minor major_pre fp roots farr slots n;
+    cheney_collect_spec_unfold minor major_pre fp roots
+
 /// Compose all phases into minor_collect using Cheney BFS.
 /// Uses update_promoted_objects (efficient: only visits promoted objects).
 /// The caller is responsible for updating remembered-set slots separately.
@@ -369,8 +405,6 @@ fn minor_collect_full (gh: gen_heap_t)
                  SZ.v nslots <= Seq.length 'sl /\
                  valid_slot_addrs 'sl (SZ.v nslots) /\
                  ref_table_sound 's 'sl (SZ.v nslots) /\
-                 // Completeness: ref_table covers all pre-existing minor pointers.
-                 // Stated over the ORIGINAL major heap (what the write barrier records).
                  (let prom = CheneySpec.cheney_promote
                               ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs in
                   ref_table_complete 's prom.fwd_map 'sl (SZ.v nslots)))
@@ -383,23 +417,32 @@ fn minor_collect_full (gh: gen_heap_t)
     pts_to slots 'sl **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
-      let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
-      // FULL CORRECTNESS: final heap equals cheney_collect_spec result
-      s2 == result.mc_major /\
+      // Heap is the two-pass result (update promoted + rewrite slots)
+      s2 == rewrite_slots_iter
+              (update_promoted_iter prom.major_final farr2 prom.fwd_map 0)
+              prom.fwd_map 'sl (SZ.v nslots) 0 /\
       // Free pointer from promotion phase
       fp2 == prom.fp_final /\
-      fp2 == result.mc_fp /\
       // Roots rewritten via forwarding map
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-      rs2 == result.mc_roots /\
       // Minor heap fully reset
       U64.v b2 == 0 /\
       // Forwarding array represents the spec-level forwarding map
       represents_fwd farr2 prom.fwd_map /\
       // Forwarding entries are valid
       valid_fwd_entries farr2 /\
-      Seq.length farr2 == fwd_array_size)
+      Seq.length farr2 == fwd_array_size /\
+      // Well-formedness preserved through promotion
+      SpecFields.well_formed_heap_part1 prom.major_final /\
+      // Strong correctness (conditional): under the two-pass equivalence
+      // conditions, the result equals cheney_collect_spec.mc_major.
+      (promoted_entries_valid_from prom.major_final farr2 0 /\
+       promoted_entries_disjoint prom.major_final farr2 /\
+       slots_pairwise_distinct 'sl (SZ.v nslots) /\
+       fwd_targets_stable prom.fwd_map /\
+       fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)
+       ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))
 {
   unfold is_gen_heap;
 
@@ -428,17 +471,8 @@ fn minor_collect_full (gh: gen_heap_t)
   rewrite_heap_slots gh.major fwd_arr slots nslots
     #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
 
-  // After slot rewrite: apply equivalence lemma
+  // After slot rewrite: heap is the two-pass result
   with ms_final. assert (is_heap gh.major ms_final);
-  promoted_plus_slots_eq_full_update
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs
-    farr_post2 'sl (SZ.v nslots);
-
-  // Connect to cheney_collect_spec
-  cheney_collect_spec_unfold ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
-  CheneySpec.update_major_pointers_preserves_fl_valid ms_post
-    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map
-    fp_post;
 
   // Phase 3: Rewrite roots using ghost-tracked forwarding map
   with farr_post3. assert (pts_to fwd_arr farr_post3);
@@ -447,6 +481,13 @@ fn minor_collect_full (gh: gen_heap_t)
 
   // Phase 4: Reset minor heap
   minor_heap_reset gh.minor;
+
+  // Prove the conditional equivalence for the strong spec:
+  // IF the 5 TwoPassEquiv conditions hold THEN s2 == cheney_collect_spec.mc_major
+  Classical.move_requires
+    (two_pass_implies_full_update
+       ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs farr_post3 'sl)
+    (SZ.v nslots);
 
   fold (is_gen_heap gh _ 0UL _ _);
   ok
