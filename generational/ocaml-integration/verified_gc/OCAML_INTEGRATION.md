@@ -1177,26 +1177,30 @@ object, it:
 No separate `find_infix_parents` or `synthesize_infix_forwarding` is needed.
 Zero assumes in the implementation.
 
-#### Phase C: Unify Bridge with Single `minor_collect` Call ✅ DONE
+#### Phase C: Unify Bridge with Single `minor_collect_full` Call ✅ DONE
 
 After Phases A and B, the bridge (`alloc_gen.c`) uses a single verified call
-for ALL minor collections — no fallback path, no infix handling:
+for ALL minor collections — no fallback path, no infix handling, no separate
+ref_table rewriting:
 
 ```c
-/* 4. Verified minor collection (single call — handles all objects including infix) */
-bool ok = minor_collect(gc_gen_heap, root_values, root_count, gc_fwd_arr, gc_queue);
+/* 4. Verified minor collection (single call — handles all, including ref_table) */
+bool ok = minor_collect_full(gc_gen_heap, root_values, root_count,
+                             gc_fwd_arr, gc_queue,
+                             ref_table_base, n_slots);
 if (!ok) caml_fatal_error("verified gen GC: out of memory");
-
-/* 5. Ref_table pointer rewriting — ESSENTIAL: minor_collect only updates
- * promoted objects' fields, not pre-existing major objects. The bridge must
- * rewrite remembered-set slots that point to forwarded minor objects. */
-rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, ref_table_base, n_slots);
 ```
 
-Step 5 (`rewrite_heap_slots`) is **essential** since `update_promoted_objects`
-only visits newly promoted objects.  Pre-existing major objects with fields
-pointing to forwarded minor objects (tracked in the ref_table) must be
-rewritten by the caller.
+`minor_collect_full` integrates `rewrite_heap_slots` inside the verified
+function.  Its postcondition proves full correctness:
+`s2 == cheney_collect_spec(minor, major_pre, fp, roots).mc_major`
+(not just the weaker `update_promoted_iter` spec).
+
+The correctness relies on two preconditions about the ref_table:
+- `ref_table_complete`: every major-heap field containing a minor pointer is
+  either in a promoted object (handled by `update_promoted_objects`) or in
+  the ref_table (handled by `rewrite_heap_slots`)
+- `ref_table_sound`: every slot address is 8-byte aligned and in-bounds
 
 The standalone `gen_gc` function (used in main.c tests) inlines the phases
 directly with `update_all_objects` for full `cheney_collect_spec` correctness,
@@ -1208,7 +1212,7 @@ since it has no remembered set to manage.
 |-------|-----------|------|--------|
 | A (assume removal) | Low | Low | ✅ DONE — `update_promoted_objects` + fwd\_bounded |
 | B (infix BFS) | High | Medium | ✅ DONE — infix-aware `forward_if_minor_infix`, zero assumes |
-| C (single call) | Low | Low | ✅ DONE — bridge always calls `minor_collect`, no fallback |
+| C (single call) | Low | Low | ✅ DONE — `minor_collect_full` handles promote+update+slots+roots |
 
 **All phases complete.  No assumes remain in spec or impl (except platform TCB).**
 
