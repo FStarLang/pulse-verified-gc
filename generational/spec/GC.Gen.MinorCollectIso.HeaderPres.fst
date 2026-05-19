@@ -57,3 +57,42 @@ let minor_collect_preserves_wosize
     wosize_of_object_spec obj prom.major_final;
     wosize_of_object_spec obj (update_major_pointers prom.major_final prom.fwd_map)
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Full header word preservation through minor_collect
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+let minor_collect_preserves_read_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  = // Step 1: cheney_promote preserves the full header word
+    CheneyDischarge.chain_blue_implies_alloc_avoids major fp;
+    GC.Gen.Cheney.cheney_promote_preserves_read_header minor major fp roots obj;
+    let prom = cheney_promote minor major fp roots in
+    assert (read_word prom.major_final (hd_address obj) == read_word major (hd_address obj));
+    // Step 2: establish prom.major_final well-formedness + obj membership
+    cheney_promote_preserves_wfh_part1 minor major fp roots;
+    cheney_promote_preserves_objects minor major fp roots;
+    assert (well_formed_heap_part1 prom.major_final);
+    assert (Seq.mem obj (objects zero_addr prom.major_final));
+    // Step 3: update_major_pointers preserves the header word
+    PromHeader.update_major_pointers_preserves_header prom.major_final prom.fwd_map obj
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// is_no_scan preservation: corollary of header word preservation
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+let minor_collect_preserves_is_no_scan
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  = minor_collect_preserves_read_header minor major fp roots obj;
+    let res = cheney_collect_spec minor major fp roots in
+    // is_no_scan reads tag from header word; same header word → same is_no_scan
+    is_no_scan_spec obj major;
+    is_no_scan_spec obj res.mc_major;
+    tag_of_object_spec obj major;
+    tag_of_object_spec obj res.mc_major
+#pop-options

@@ -80,3 +80,44 @@ val minor_collect_preserves_wosize
     (ensures
       wosize_of_object obj (cheney_collect_spec minor major fp roots).mc_major ==
       wosize_of_object obj major)
+
+/// ---------------------------------------------------------------------------
+/// Full header word preservation through minor_collect
+/// ---------------------------------------------------------------------------
+
+/// After the full cheney_collect_spec (cheney_promote + update_major_pointers),
+/// non-blue pre-existing objects retain their exact header word.
+/// This subsumes wosize preservation and also gives tag/color/is_no_scan/is_blue.
+val minor_collect_preserves_read_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Seq.mem obj (objects zero_addr major) /\
+      ~(is_blue obj major) /\
+      U64.v (wosize_of_object obj major) >= 1)
+    (ensures (
+      let res = cheney_collect_spec minor major fp roots in
+      GC.Spec.Heap.read_word res.mc_major (GC.Spec.Heap.hd_address obj) ==
+      GC.Spec.Heap.read_word major (GC.Spec.Heap.hd_address obj)))
+
+/// is_no_scan preservation: corollary of header word preservation
+val minor_collect_preserves_is_no_scan
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Seq.mem obj (objects zero_addr major) /\
+      ~(is_blue obj major) /\
+      U64.v (wosize_of_object obj major) >= 1)
+    (ensures
+      is_no_scan obj (cheney_collect_spec minor major fp roots).mc_major ==
+      is_no_scan obj major)

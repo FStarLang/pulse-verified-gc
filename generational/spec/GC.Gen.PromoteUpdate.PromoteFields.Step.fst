@@ -357,6 +357,94 @@ let promote_object_wosize_preserved
     wosize_of_object_spec other (promote_object minor major obj fp wz).major_out
 #pop-options
 
+/// Full header word preservation: same proof structure as wosize_preserved
+/// but concludes with read_word equality at hd_address rather than wosize.
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+let promote_object_read_header_preserved
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wz: nat{wz > 0}) (other: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (promote_object minor major obj fp wz).new_addr <> 0UL /\
+      Seq.mem other (objects zero_addr major) /\
+      AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true)
+    (ensures
+      read_word (promote_object minor major obj fp wz).major_out (hd_address other) ==
+      read_word major (hd_address other))
+  = let fuel : nat = heap_size / U64.v mword in
+    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+    let new_major = alloc_res.heap_out in
+    let new_addr = alloc_res.obj_out in
+    assert (new_addr <> 0UL);
+    GC.Gen.AllocProps.alloc_spec_obj_ne_excl major fp wz other;
+    GC.Gen.AllocProps.alloc_spec_read_header_other_part1 major fp wz other;
+    assert (read_word new_major (hd_address other) == read_word major (hd_address other));
+    GC.Gen.AllocProps.alloc_search_obj_in_objects_pre_part1 major fp zero_addr fp
+      (if wz = 0 then 1 else wz) fuel;
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
+    assert (U64.v new_addr >= U64.v mword);
+    let dst_obj : obj_addr = new_addr in
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_pre_part1 major fp wz;
+    assert (U64.v (wosize_of_object dst_obj major) >= wz);
+    hd_address_spec other;
+    hd_address_spec dst_obj;
+    let a = hd_address other in
+    assert (Seq.mem dst_obj (objects zero_addr major));
+    wfh_part1_obj_bound major dst_obj;
+    assert (U64.v dst_obj + wz * 8 <= heap_size);
+    if U64.v other < U64.v new_addr then begin
+      objects_separated zero_addr major other dst_obj;
+      assert (U64.v a + 8 = U64.v other);
+      assert (U64.v other <= U64.v dst_obj);
+      copy_fields_preserves_other minor new_major obj dst_obj 0 wz a;
+      assert (U64.v a < U64.v dst_obj + wz * 8)
+    end else begin
+      objects_separated zero_addr major dst_obj other;
+      wosize_of_object_spec dst_obj major;
+      let ws = U64.v (wosize_of_object dst_obj major) in
+      assert (U64.v other > U64.v dst_obj + ws * 8);
+      assert (ws >= wz);
+      assert (U64.v other % 8 == 0);
+      assert (U64.v dst_obj % 8 == 0);
+      assert ((U64.v other - (U64.v dst_obj + ws * 8)) % 8 == 0);
+      assert (U64.v other >= U64.v dst_obj + ws * 8 + 8);
+      assert (U64.v other >= U64.v dst_obj + wz * 8 + 8);
+      assert (U64.v a = U64.v other - 8);
+      assert (U64.v a >= U64.v dst_obj + wz * 8);
+      copy_fields_preserves_other minor new_major obj dst_obj 0 wz a
+    end;
+    promote_object_success minor major obj fp wz;
+    let copied = copy_fields minor new_major obj dst_obj 0 wz in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    hd_address_injective other dst_obj;
+    dst_fields_valid_from_bounds dst_obj wz;
+    copy_fields_frame minor new_major obj dst_obj 0 wz (hd_address dst_obj);
+    wosize_of_object_spec dst_obj new_major;
+    wosize_of_object_spec dst_obj copied;
+    let actual_wz = U64.v (wosize_of_object dst_obj copied) in
+    if actual_wz <= wz then
+      zero_promote_padding_noop copied dst_obj wz
+    else begin
+      if U64.v other < U64.v dst_obj then
+        assert (U64.v a < U64.v dst_obj + wz * 8)
+      else begin
+        AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz;
+        GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wz;
+        objects_separated zero_addr new_major dst_obj other;
+        wosize_of_object_spec dst_obj new_major;
+        assert (U64.v other > U64.v dst_obj + actual_wz * 8);
+        assert (U64.v a > U64.v dst_obj + wz * 8)
+      end;
+      zero_promote_padding_frame copied dst_obj wz a
+    end;
+    let padded = zero_promote_padding copied dst_obj wz in
+    set_promoted_tag_read_frame padded dst_obj tag a
+#pop-options
+
 /// Wosize of the newly allocated dst_obj is preserved through copy_fields
 #restart-solver
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"

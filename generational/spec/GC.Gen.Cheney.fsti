@@ -353,3 +353,41 @@ val cheney_promote_preserves_wosize
       U64.v (GC.Spec.Object.wosize_of_object obj major) >= 1)
     (ensures (let res = cheney_promote minor major fp roots in
               GC.Spec.Object.wosize_of_object obj res.major_final == GC.Spec.Object.wosize_of_object obj major))
+
+/// Full header word preservation through cheney_promote for non-blue pre-existing
+/// objects. Since the header encodes wosize, tag, AND color, this subsumes
+/// wosize preservation and also gives is_no_scan / is_blue preservation.
+val cheney_promote_preserves_read_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  : Lemma (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Seq.mem obj (objects zero_addr major) /\
+      AllocLemmas.chain_avoids major fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (GC.Spec.Object.wosize_of_object obj major) >= 1)
+    (ensures (let res = cheney_promote minor major fp roots in
+              GC.Spec.Heap.read_word res.major_final (GC.Spec.Heap.hd_address obj) ==
+              GC.Spec.Heap.read_word major (GC.Spec.Heap.hd_address obj)))
+
+/// Body field preservation: cheney_promote preserves all body word reads for
+/// non-blue objects that avoid the free chain. The address must be within
+/// [obj, obj + wosize*8).
+val cheney_promote_preserves_read_body
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr) (addr: hp_addr)
+  : Lemma (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Seq.mem obj (objects zero_addr major) /\
+      AllocLemmas.chain_avoids major fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (GC.Spec.Object.wosize_of_object obj major) >= 1 /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr + 8 <= U64.v obj + U64.v (GC.Spec.Object.wosize_of_object obj major) * 8)
+    (ensures (let res = cheney_promote minor major fp roots in
+              GC.Spec.Heap.read_word res.major_final addr ==
+              GC.Spec.Heap.read_word major addr))

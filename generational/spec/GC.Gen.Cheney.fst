@@ -913,6 +913,7 @@ private let rec cheney_scan_preserves_dense
 #pop-options
 
 /// Full cheney_promote preserves density + objects nonempty.
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let cheney_promote_preserves_dense
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -941,6 +942,7 @@ let cheney_promote_preserves_dense
   let witness : obj_addr = Seq.head (objects zero_addr major) in
   assert (Seq.mem witness (objects zero_addr major));
   assert (Seq.mem witness (objects zero_addr res.major_final))
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Wosize preservation through Cheney promotion
@@ -1099,3 +1101,343 @@ let cheney_promote_preserves_wosize
   cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_wosize minor cs1 0 (cheney_fuel minor) obj
+
+/// ---------------------------------------------------------------------------
+/// Full header word preservation through cheney_promote
+/// ---------------------------------------------------------------------------
+///
+/// Same inductive structure as wosize preservation, but tracks
+/// read_word prom.major_final (Heap.hd_address obj) == Heap.read_word major (Heap.hd_address obj).
+/// This subsumes wosize preservation and also gives is_no_scan/is_blue preservation.
+
+/// Step: one cheney_forward_one preserves header word
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let cheney_forward_one_preserves_read_header
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (obj: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1)
+    (ensures (let cs' = cheney_forward_one minor cs addr in
+              Heap.read_word cs'.cs_major (Heap.hd_address obj) == Heap.read_word cs.cs_major (Heap.hd_address obj) /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1))
+  =
+  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then ()
+  else
+    let wz = minor_wosize minor addr in
+    if wz = 0 then ()
+    else
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      if res.new_addr = 0UL then ()
+      else begin
+        PromStep.promote_object_read_header_preserved minor cs.cs_major addr cs.cs_fp wz obj;
+        PromStep.promote_object_wosize_preserved minor cs.cs_major addr cs.cs_fp wz obj;
+        promote_object_preserves_objects_part1 minor cs.cs_major addr cs.cs_fp wz;
+        ReadOther.promote_object_preserves_chain_avoids minor cs.cs_major addr cs.cs_fp wz (obj <: U64.t)
+      end
+
+#pop-options
+
+/// Forward fields: induction over field index (header word version)
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_fields_preserves_read_header
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  (obj: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1)
+    (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in
+              Heap.read_word cs'.cs_major (Heap.hd_address obj) == Heap.read_word cs.cs_major (Heap.hd_address obj) /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1))
+    (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then ()
+  else begin
+    let field_val = minor_read_field minor parent idx in
+    cheney_forward_one_preserves_read_header minor cs field_val obj;
+    cheney_forward_one_preserves_wfh_part1 minor cs field_val;
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_fields_preserves_read_header minor cs' parent (idx + 1) wosize obj
+  end
+
+#pop-options
+
+/// Forward roots: induction over root index (header word version)
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_roots_preserves_read_header
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  (obj: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1)
+    (ensures (let cs' = cheney_forward_roots minor cs roots idx in
+              Heap.read_word cs'.cs_major (Heap.hd_address obj) == Heap.read_word cs.cs_major (Heap.hd_address obj) /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1))
+    (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then ()
+  else begin
+    let r = Seq.index roots idx in
+    cheney_forward_one_preserves_read_header minor cs r obj;
+    cheney_forward_one_preserves_wfh_part1 minor cs r;
+    let cs' = cheney_forward_one minor cs r in
+    cheney_forward_roots_preserves_read_header minor cs' roots (idx + 1) obj
+  end
+
+#pop-options
+
+/// Scan: induction on fuel (header word version)
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+
+private let rec cheney_scan_preserves_read_header
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  (obj: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1)
+    (ensures (let cs' = cheney_scan minor cs scan fuel in
+              Heap.read_word cs'.cs_major (Heap.hd_address obj) == Heap.read_word cs.cs_major (Heap.hd_address obj) /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1))
+    (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if scan >= Seq.length cs.cs_queue then ()
+  else begin
+    let parent = Seq.index cs.cs_queue scan in
+    let wz = minor_wosize minor parent in
+    cheney_forward_fields_preserves_read_header minor cs parent 0 wz obj;
+    cheney_forward_fields_preserves_wfh_part1 minor cs parent 0 wz;
+    let cs' = cheney_forward_fields minor cs parent 0 wz in
+    assert (fuel > 0);
+    cheney_scan_preserves_read_header minor cs' (scan + 1) (fuel - 1) obj
+  end
+
+#pop-options
+
+/// Top-level: cheney_promote preserves the full header word
+let cheney_promote_preserves_read_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  : Lemma (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Seq.mem obj (objects zero_addr major) /\
+      AllocLemmas.chain_avoids major fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj major) >= 1)
+    (ensures (let res = cheney_promote minor major fp roots in
+              Heap.read_word res.major_final (Heap.hd_address obj) == Heap.read_word major (Heap.hd_address obj)))
+  =
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  cheney_forward_roots_preserves_read_header minor cs0 roots 0 obj;
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_scan_preserves_read_header minor cs1 0 (cheney_fuel minor) obj
+
+/// ---------------------------------------------------------------------------
+/// Body field preservation through cheney_promote
+/// ---------------------------------------------------------------------------
+///
+/// Same inductive structure as header preservation, but tracks
+/// read_word at body offsets [obj, obj + wosize*8).
+/// Uses promote_object_read_other at each step.
+
+/// Step: one cheney_forward_one preserves body field
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let cheney_forward_one_preserves_read_body
+  (minor: minor_state) (cs: cheney_state) (root: U64.t)
+  (obj: obj_addr) (addr: hp_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1 /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr + 8 <= U64.v obj + U64.v (Object.wosize_of_object obj cs.cs_major) * 8)
+    (ensures (let cs' = cheney_forward_one minor cs root in
+              Heap.read_word cs'.cs_major addr == Heap.read_word cs.cs_major addr /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1 /\
+              Object.wosize_of_object obj cs'.cs_major == Object.wosize_of_object obj cs.cs_major))
+  =
+  if not (Seq.mem root (minor_objects minor)) || cs.cs_fwd root <> 0UL then ()
+  else
+    let wz = minor_wosize minor root in
+    if wz = 0 then ()
+    else
+      let res = promote_object minor cs.cs_major root cs.cs_fp wz in
+      if res.new_addr = 0UL then ()
+      else begin
+        ReadOther.promote_object_read_other minor cs.cs_major root cs.cs_fp wz obj addr;
+        PromStep.promote_object_wosize_preserved minor cs.cs_major root cs.cs_fp wz obj;
+        promote_object_preserves_objects_part1 minor cs.cs_major root cs.cs_fp wz;
+        ReadOther.promote_object_preserves_chain_avoids minor cs.cs_major root cs.cs_fp wz (obj <: U64.t)
+      end
+
+#pop-options
+
+/// Forward fields: induction over field index (body field version)
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_fields_preserves_read_body
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  (obj: obj_addr) (addr: hp_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1 /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr + 8 <= U64.v obj + U64.v (Object.wosize_of_object obj cs.cs_major) * 8)
+    (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in
+              Heap.read_word cs'.cs_major addr == Heap.read_word cs.cs_major addr /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1 /\
+              Object.wosize_of_object obj cs'.cs_major == Object.wosize_of_object obj cs.cs_major))
+    (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then ()
+  else begin
+    let field_val = minor_read_field minor parent idx in
+    cheney_forward_one_preserves_read_body minor cs field_val obj addr;
+    cheney_forward_one_preserves_wfh_part1 minor cs field_val;
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_fields_preserves_read_body minor cs' parent (idx + 1) wosize obj addr
+  end
+
+#pop-options
+
+/// Forward roots: induction over root index (body field version)
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_roots_preserves_read_body
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  (obj: obj_addr) (addr: hp_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1 /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr + 8 <= U64.v obj + U64.v (Object.wosize_of_object obj cs.cs_major) * 8)
+    (ensures (let cs' = cheney_forward_roots minor cs roots idx in
+              Heap.read_word cs'.cs_major addr == Heap.read_word cs.cs_major addr /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1 /\
+              Object.wosize_of_object obj cs'.cs_major == Object.wosize_of_object obj cs.cs_major))
+    (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then ()
+  else begin
+    let r = Seq.index roots idx in
+    cheney_forward_one_preserves_read_body minor cs r obj addr;
+    cheney_forward_one_preserves_wfh_part1 minor cs r;
+    let cs' = cheney_forward_one minor cs r in
+    cheney_forward_roots_preserves_read_body minor cs' roots (idx + 1) obj addr
+  end
+
+#pop-options
+
+/// Scan: induction on fuel (body field version)
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+
+private let rec cheney_scan_preserves_read_body
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  (obj: obj_addr) (addr: hp_addr)
+  : Lemma (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      Seq.mem obj (objects zero_addr cs.cs_major) /\
+      AllocLemmas.chain_avoids cs.cs_major cs.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj cs.cs_major) >= 1 /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr + 8 <= U64.v obj + U64.v (Object.wosize_of_object obj cs.cs_major) * 8)
+    (ensures (let cs' = cheney_scan minor cs scan fuel in
+              Heap.read_word cs'.cs_major addr == Heap.read_word cs.cs_major addr /\
+              Seq.mem obj (objects zero_addr cs'.cs_major) /\
+              AllocLemmas.chain_avoids cs'.cs_major cs'.cs_fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+              U64.v (Object.wosize_of_object obj cs'.cs_major) >= 1 /\
+              Object.wosize_of_object obj cs'.cs_major == Object.wosize_of_object obj cs.cs_major))
+    (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if scan >= Seq.length cs.cs_queue then ()
+  else begin
+    let parent = Seq.index cs.cs_queue scan in
+    let wz = minor_wosize minor parent in
+    cheney_forward_fields_preserves_read_body minor cs parent 0 wz obj addr;
+    cheney_forward_fields_preserves_wfh_part1 minor cs parent 0 wz;
+    let cs' = cheney_forward_fields minor cs parent 0 wz in
+    assert (fuel > 0);
+    cheney_scan_preserves_read_body minor cs' (scan + 1) (fuel - 1) obj addr
+  end
+
+#pop-options
+
+/// Top-level: cheney_promote preserves body field reads
+let cheney_promote_preserves_read_body
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr) (addr: hp_addr)
+  : Lemma (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Seq.mem obj (objects zero_addr major) /\
+      AllocLemmas.chain_avoids major fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (Object.wosize_of_object obj major) >= 1 /\
+      U64.v addr >= U64.v obj /\
+      U64.v addr + 8 <= U64.v obj + U64.v (Object.wosize_of_object obj major) * 8)
+    (ensures (let res = cheney_promote minor major fp roots in
+              Heap.read_word res.major_final addr == Heap.read_word major addr))
+  =
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  cheney_forward_roots_preserves_read_body minor cs0 roots 0 obj addr;
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_scan_preserves_read_body minor cs1 0 (cheney_fuel minor) obj addr

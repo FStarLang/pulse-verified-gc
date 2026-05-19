@@ -5,8 +5,8 @@
 /// Proves that the Cheney BFS forwarding map produces targets that are disjoint
 /// from all non-blue (allocated, non-free-list) objects in the initial major heap.
 ///
-/// This discharges the "Promoted disjoint from non-blue major" conjunct of
-/// iso_structural_preconditions in CombinedGraph.Isomorphism.TopLevel.
+/// This discharges the "Promoted disjoint from non-blue major" conjunct needed
+/// by the MinorCollectIso injectivity proof.
 ///
 /// Key insight: at each allocation step, the new object is taken FROM the free
 /// chain. Non-blue objects avoid the chain (by chain_objects_blue). Therefore,

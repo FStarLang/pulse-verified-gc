@@ -31,6 +31,23 @@ val promote_object_wosize_preserved
       wosize_of_object other (promote_object minor major obj fp wz).major_out ==
       wosize_of_object other major)
 
+/// promote_object preserves the full header word (read_word at hd_address) for
+/// any other object that avoids the free chain. This is strictly stronger than
+/// wosize preservation (the header encodes wosize, tag, AND color).
+val promote_object_read_header_preserved
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wz: nat{wz > 0}) (other: obj_addr)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (promote_object minor major obj fp wz).new_addr <> 0UL /\
+      Seq.mem other (objects zero_addr major) /\
+      AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true)
+    (ensures
+      read_word (promote_object minor major obj fp wz).major_out (hd_address other) ==
+      read_word major (hd_address other))
+
 /// Wosize of the promoted object itself on the post-promote heap >= wz
 val promote_object_new_addr_wosize
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)

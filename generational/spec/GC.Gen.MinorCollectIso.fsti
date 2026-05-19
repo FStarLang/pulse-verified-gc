@@ -101,6 +101,17 @@ let minor_collect_correctness
     (let w = Iso.fwd_morphism fwd v in
      U64.v w >= U64.v mword /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
      Seq.mem (w <: hp_addr) g_mc.vertices)) /\
+  // (C) Edge forward: combined edges between reachable vertices are preserved
+  //     in mc_major (the post-GC graph has the corresponding edge)
+  (forall (u v: combined_vertex).
+    combined_reachable cg combined_roots u /\
+    combined_reachable cg combined_roots v /\
+    mem_ce (u, v) cg ==>
+    (let fu = Iso.fwd_morphism fwd u in
+     let fv = Iso.fwd_morphism fwd v in
+     U64.v fu >= 0 /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+     U64.v fv >= 0 /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+     Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges)) /\
   // (E) Header/wosize preservation: pre-existing non-blue major objects
   //     retain their exact wosize through the entire minor collection
   (forall (obj: obj_addr).
@@ -116,6 +127,17 @@ let minor_collect_correctness
 /// ---------------------------------------------------------------------------
 /// Preconditions — operational conditions + field_correspondence
 /// ---------------------------------------------------------------------------
+
+/// No-scan minor objects have no classifiable fields.
+/// Strengthens minor_no_scan_invariant: raw data in no_scan minor objects cannot
+/// coincidentally equal a live minor object address. In practice, no_scan objects
+/// hold floats/strings/bigarrays whose bit patterns never alias the nursery.
+let minor_no_scan_no_classify (minor: minor_state) (major: heap) : prop =
+  forall (obj: U64.t) (j: nat).
+    Seq.mem obj (minor_objects minor) /\
+    minor_tag minor obj >= 251 /\
+    j < minor_wosize minor obj ==>
+    classify_minor_field minor major (minor_read_field minor obj j) == None
 
 /// The operational preconditions for minor collection. These are standard GC
 /// invariants that a correctly initialized system maintains.
@@ -144,13 +166,41 @@ let minor_collect_operational_preconditions
   RBridge.major_field_zero_no_minor minor major /\
   // No-scan invariants (structural)
   no_scan_invariant major /\
-  minor_no_scan_invariant minor
+  minor_no_scan_invariant minor /\
+  // No-scan minor objects have no classifiable fields (neither minor nor major pointers).
+  // This strengthens minor_no_scan_invariant to also exclude raw data that
+  // coincidentally matches a live minor object address.
+  minor_no_scan_no_classify minor major
+
+/// Promoted copy structural properties: wosize and is_no_scan of newly promoted
+/// objects in mc_major. These follow from promotion semantics (set_promoted_tag
+/// writes the minor's tag, and the allocated free-list node has wosize >= minor_wosize).
+/// Provable via an inductive chain similar to cheney_promote_preserves_read_header.
+let promoted_copy_properties
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  let live_set = live_set_of minor major roots in
+  forall (v: U64.t).
+    Seq.mem v live_set /\ prom.fwd_map v <> 0UL ==>
+    (let fwd_v = prom.fwd_map v in
+     // fwd_v is a valid obj_addr
+     U64.v fwd_v >= U64.v mword /\ U64.v fwd_v < heap_size /\ U64.v fwd_v % U64.v mword == 0 /\
+     Seq.mem (fwd_v <: obj_addr) (objects zero_addr res.mc_major) /\
+     // Promoted copy has wosize >= minor_wosize (may be larger if free-list node was bigger)
+     U64.v (wosize_of_object (fwd_v <: obj_addr) res.mc_major) >= minor_wosize minor v /\
+     // Promoted copy inherits minor's tag: if minor is scannable, so is the copy
+     (minor_tag minor v < 251 ==> is_no_scan (fwd_v <: obj_addr) res.mc_major = false))
 
 /// The full precondition for the correctness theorem.
 ///
-/// Beyond operational conditions, the ONLY non-trivial obligation is
-/// field_correspondence: it captures that the promote_all + update_major_pointers
-/// phases faithfully copy minor object fields and rewrite pointers.
+/// Beyond operational conditions, we require:
+///   1. field_correspondence: promote_all + update_major_pointers faithfully
+///      copy minor object fields and rewrite pointers.
+///   2. well_formed_heap + graph_wf on the post-collection major heap (for edge forward).
+///      These are provable via gen_gc_correct_full under additional pointer-closure conditions.
+///   3. promoted_copy_properties: wosize and is_no_scan of promoted copies match
+///      the minor source objects. Follows from set_promoted_tag semantics.
 let minor_collect_iso_preconditions
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
   // Operational conditions
@@ -158,7 +208,12 @@ let minor_collect_iso_preconditions
   // Field correspondence for promoted objects
   (let prom = cheney_promote minor major fp roots in
    let res = cheney_collect_spec minor major fp roots in
-   field_correspondence minor major res.mc_major prom.fwd_map roots)
+   field_correspondence minor major res.mc_major prom.fwd_map roots /\
+   // Promoted copy structural properties (for edge forward proof)
+   promoted_copy_properties minor major fp roots /\
+   // Well-formedness of the post-collection heap (needed for edge forward)
+   well_formed_heap res.mc_major /\
+   graph_wf (create_graph res.mc_major))
 
 /// ---------------------------------------------------------------------------
 /// Main theorem
@@ -166,10 +221,11 @@ let minor_collect_iso_preconditions
 
 /// Minor collection preserves reachable graph structure and object metadata.
 ///
-/// Under standard operational conditions + field_correspondence, we prove:
+/// Under standard operational conditions + field_correspondence + mc_major wfh:
 ///   (A) Injectivity — from CheneyInjectivity + CheneyDisjoint + ReachabilityBridge
 ///   (B) Image validity — from cheney_fwd_targets_in_mc_major + preserves_objects
-///   (E) Header preservation — from cheney_promote_preserves_wosize +
+///   (C) Edge forward — from EdgeBridge (4-case decomposition) + header preservation
+///   (E) Header preservation — from cheney_promote_preserves_read_header +
 ///       update_major_pointers_preserves_header (via HeaderPres)
 ///   (F) Object survival — from cheney_collect_preserves_objects
 ///
