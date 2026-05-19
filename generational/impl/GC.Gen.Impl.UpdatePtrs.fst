@@ -808,39 +808,4 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
 /// ---------------------------------------------------------------------------
 /// Equivalence: update_promoted_iter + rewrite_slots_iter = update_major_pointers
 /// ---------------------------------------------------------------------------
-
-/// The key theorem: when the ref_table is complete (covers all non-promoted
-/// fields with minor pointers), the two-pass approach equals the full update.
-let promoted_plus_slots_eq_full_update
-  (minor: GC.Gen.MinorHeap.minor_state) (major_pre: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
-  : Lemma
-    (requires
-      (let prom = GC.Gen.Cheney.cheney_promote minor major_pre fp roots in
-       Seq.length farr == fwd_array_size /\
-       valid_fwd_entries farr /\
-       represents_fwd farr prom.fwd_map /\
-       valid_slot_addrs slots n /\
-       ref_table_sound major_pre slots n /\
-       ref_table_complete major_pre prom.fwd_map slots n /\
-       GC.Spec.Fields.well_formed_heap_part1 prom.major_final /\
-       PromoteSpec.heap_objects_dense prom.major_final /\
-       Seq.length (GC.Spec.Fields.objects zero_addr prom.major_final) > 0 /\
-       GC.Spec.Fields.well_formed_heap major_pre /\
-       GC.Spec.Allocator.Lemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
-       GC.Spec.Allocator.Lemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword)))
-    (ensures
-      (let prom = GC.Gen.Cheney.cheney_promote minor major_pre fp roots in
-       rewrite_slots_iter (update_promoted_iter prom.major_final farr prom.fwd_map 0)
-                          prom.fwd_map slots n 0
-         == PromoteSpec.update_major_pointers prom.major_final prom.fwd_map))
-  = // Proof strategy: pointwise read_word equality + heap extensionality.
-    // See GC.Gen.TwoPassEquiv module for the full proof decomposition:
-    // 1. heap_read_word_extensional: word-equal heaps are byte-equal
-    // 2. update_promoted_iter_frame: outside promoted bodies, unchanged
-    // 3. update_promoted_iter_promoted_field: field of farr[i] gets rewritten
-    // 4. rewrite_slots_iter_frame: outside slots, unchanged
-    // 5. rewrite_slots_iter_slot_effect: slot[si] gets rewritten
-    // Per-address case analysis combines these with ref_table_complete
-    // (non-promoted fields without forwarded minor ptrs are untouched by both).
-    admit ()
+/// The key theorem is proved in GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_full_update.

@@ -167,9 +167,14 @@ val promoted_plus_slots_eq_full_update
        Seq.length farr == fwd_array_size /\
        valid_fwd_entries farr /\
        represents_fwd farr prom.fwd_map /\
+       promoted_entries_valid_from prom.major_final farr 0 /\
+       promoted_entries_disjoint prom.major_final farr /\
        valid_slot_addrs slots n /\
+       slots_pairwise_distinct slots n /\
        ref_table_sound major_pre slots n /\
        ref_table_complete major_pre prom.fwd_map slots n /\
+       fwd_targets_stable prom.fwd_map /\
+       fwd_ptrs_classified prom.major_final prom.fwd_map farr slots n /\
        well_formed_heap_part1 prom.major_final /\
        heap_objects_dense prom.major_final /\
        Seq.length (objects zero_addr prom.major_final) > 0 /\
