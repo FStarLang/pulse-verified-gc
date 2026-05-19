@@ -42,3 +42,9 @@ val zero_addr_ok (_:unit)
   : Lemma (U64.v zero_addr % 8 == 0 /\
            U64.v zero_addr + 8 < heap_size)
 
+/// Configuration axiom: the major heap base is above the minor heap size (2048).
+/// This ensures forwarding targets (major addresses) cannot be confused with
+/// minor-heap offsets. Provided at link time by compat.c.
+val zero_addr_above_minor_size (_:unit)
+  : Lemma (U64.v zero_addr >= 2048)
+

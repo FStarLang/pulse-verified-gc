@@ -158,7 +158,7 @@ let rec update_promoted_iter_frame
           let hdr = read_word major (U64.uint_to_t hdr_addr_v) in
           let wosize = U64.v (getWosize hdr) in
           let tag = getTag hdr in
-          if wosize > 0 && U64.lt tag no_scan_tag then begin
+          if wosize > 0 && U64.lt tag no_scan_tag && (tag <> infix_tag) then begin
             if U64.v major_addr + wosize * 8 <= heap_size then begin
               wosize_of_object_spec major_addr major;
               hd_address_spec major_addr;
@@ -256,7 +256,7 @@ private let update_object_pointers_preserves_promoted_field_pre
        Seq.mem obj (objects zero_addr major) /\
        (let wz = U64.v (wosize_of_object obj major) in
         let tag = getTag (read_word major (hd_address obj)) in
-        wz > 0 /\ U64.lt tag no_scan_tag /\
+        wz > 0 /\ U64.lt tag no_scan_tag /\ tag <> infix_tag /\
         U64.v obj + wz * 8 <= heap_size /\
         j < wz /\
         (forall (k:nat). k < wz ==>
@@ -412,7 +412,7 @@ private let rec update_promoted_iter_promoted_field_aux
        Seq.mem obj (objects zero_addr major) /\
        (let wz = U64.v (wosize_of_object obj major) in
         let tag = getTag (read_word major (hd_address obj)) in
-        wz > 0 /\ U64.lt tag no_scan_tag /\
+        wz > 0 /\ U64.lt tag no_scan_tag /\ tag <> infix_tag /\
         U64.v obj + wz * 8 <= heap_size /\
         j < wz /\
         (forall (k:nat). k < wz ==>
@@ -524,7 +524,7 @@ private let rec update_promoted_iter_promoted_field_aux
         wosize_of_object_spec entry major;
         let wz_e = U64.v (wosize_of_object entry major) in
         let tag_e = getTag (read_word major (hd_address entry)) in
-        if wz_e > 0 && U64.lt tag_e no_scan_tag && U64.v entry + wz_e * 8 <= heap_size then begin
+        if wz_e > 0 && U64.lt tag_e no_scan_tag && (tag_e <> infix_tag) && U64.v entry + wz_e * 8 <= heap_size then begin
           update_promoted_iter_scan major farr fwd idx;
           // Establish recursive precondition via helper
           update_object_pointers_preserves_promoted_field_pre major farr fwd pi j idx;
@@ -554,7 +554,7 @@ let update_promoted_iter_promoted_field
        Seq.mem obj (objects zero_addr major) /\
        (let wz = U64.v (wosize_of_object obj major) in
         let tag = getTag (read_word major (hd_address obj)) in
-        wz > 0 /\ U64.lt tag no_scan_tag /\
+        wz > 0 /\ U64.lt tag no_scan_tag /\ tag <> infix_tag /\
         U64.v obj + wz * 8 <= heap_size /\
         j < wz /\
         (forall (k:nat). k < wz ==>
@@ -823,7 +823,7 @@ private let update_obj_ptrs_preserves_entries_valid
        Seq.mem obj (objects zero_addr major) /\
        (let wz = U64.v (wosize_of_object obj major) in
         let tag = getTag (read_word major (hd_address obj)) in
-        wz > 0 /\ U64.lt tag no_scan_tag /\
+        wz > 0 /\ U64.lt tag no_scan_tag /\ tag <> infix_tag /\
         U64.v obj + wz * 8 <= heap_size /\
         (forall (k:nat). k < wz ==>
           (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)))))
@@ -916,7 +916,7 @@ let rec update_promoted_iter_preserves_non_fwd
           let hdr = read_word major (U64.uint_to_t hdr_addr_v) in
           let wosize = U64.v (getWosize hdr) in
           let tag = getTag hdr in
-          if wosize > 0 && U64.lt tag no_scan_tag then begin
+          if wosize > 0 && U64.lt tag no_scan_tag && (tag <> infix_tag) then begin
             if U64.v obj + wosize * 8 <= heap_size then begin
               wosize_of_object_spec obj major;
               hd_address_spec obj;
@@ -1210,6 +1210,7 @@ let if_branch_lhs_promoted
       (let obj_pi = Seq.index farr pi in
        obj_pi <> 0UL /\
        is_no_scan obj_pi major = false /\
+       is_infix obj_pi major = false /\
        U64.v addr >= U64.v obj_pi /\
        U64.v addr < U64.v obj_pi + U64.v (wosize_of_object obj_pi major) * 8) /\
       (let old_val = to_minor_offset (read_word major addr) in
@@ -1234,10 +1235,12 @@ let if_branch_lhs_promoted
     // Derive U64.lt tag no_scan_tag from is_no_scan = false
     is_no_scan_spec obj_pi major;
     tag_of_object_spec obj_pi major;
+    is_infix_spec obj_pi major;
     let tag = getTag (read_word major (hd_address obj_pi)) in
     assert (tag == tag_of_object obj_pi major);
     assert (U64.gte tag no_scan_tag = false);
     assert (U64.lt tag no_scan_tag);
+    assert (tag <> infix_tag);
     // Assert field_addr matches addr
     assert (U64.v obj_pi + j_pi * 8 == U64.v addr);
     // Call the main lemma
@@ -1413,6 +1416,7 @@ let if_branch_addr_eq
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_disjoint major farr /\
+      promoted_entries_no_infix major farr /\
       valid_slot_addrs slots n /\
       slots_pairwise_distinct slots n /\
       fwd_targets_stable fwd /\
@@ -1498,6 +1502,7 @@ let promoted_plus_slots_eq_full_update
        represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
+       promoted_entries_no_infix prom.major_final farr /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
        ref_table_sound major_pre slots n /\

@@ -60,6 +60,10 @@ let hp_addr_32 = a:FStar.UInt32.t{
 /// Must have room for at least one object header after it.
 val zero_addr : a:hp_addr{U64.v a + U64.v mword < heap_size}
 
+/// Configuration lemma: zero_addr >= 2048 (the minor heap size constant).
+/// This ensures major-heap addresses cannot be confused with minor offsets.
+val zero_addr_above_2048 (_:unit) : Lemma (U64.v zero_addr >= 2048)
+
 /// Object address: hp_addr with room for header before it (>= 8)
 /// Used for all operations that access object headers via hd_address
 type obj_addr = a:hp_addr{U64.v a >= U64.v mword}

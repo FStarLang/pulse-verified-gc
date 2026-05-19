@@ -204,7 +204,7 @@ let rec update_promoted_iter (major: heap) (farr: Seq.seq U64.t)
         let hdr = SpecHeap.read_word major (U64.uint_to_t hdr_addr) in
         let wosize = U64.v (SpecObj.getWosize hdr) in
         let tag = SpecObj.getTag hdr in
-        if wosize > 0 && U64.lt tag SpecObj.no_scan_tag then
+        if wosize > 0 && U64.lt tag SpecObj.no_scan_tag && not (tag = SpecObj.infix_tag) then
           if U64.v major_addr + wosize * 8 <= heap_size then
             let major' = PromoteSpec.update_object_pointers major major_addr wosize fwd 0 in
             update_promoted_iter major' farr fwd (idx + 1)
@@ -236,6 +236,7 @@ val update_promoted_iter_scan (major: heap) (farr: Seq.seq U64.t)
                        let wosize = U64.v (SpecObj.getWosize hdr) in
                        let tag = SpecObj.getTag hdr in
                        wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\
+                       tag <> SpecObj.infix_tag /\
                        U64.v major_addr + wosize * 8 <= heap_size))))
           (ensures (let major_addr = Seq.index farr idx in
                     let hdr_addr = U64.v major_addr - 8 in
@@ -246,6 +247,7 @@ val update_promoted_iter_scan (major: heap) (farr: Seq.seq U64.t)
                     update_promoted_iter major' farr fwd (idx + 1)))
 
 /// Unfold lemma for update_promoted_iter at a non-scannable entry
+/// (no-scan, infix, wosize=0, or out-of-bounds)
 val update_promoted_iter_skip (major: heap) (farr: Seq.seq U64.t)
                               (fwd: PromoteSpec.forwarding_map) (idx: nat)
   : Lemma (requires idx < fwd_array_size /\
@@ -258,7 +260,7 @@ val update_promoted_iter_skip (major: heap) (farr: Seq.seq U64.t)
                        (let hdr = SpecHeap.read_word major (U64.uint_to_t hdr_addr) in
                         let wosize = U64.v (SpecObj.getWosize hdr) in
                         let tag = SpecObj.getTag hdr in
-                        ~(wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag) \/
+                        ~(wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\ tag <> SpecObj.infix_tag) \/
                         U64.v major_addr + wosize * 8 > heap_size)))))
           (ensures update_promoted_iter major farr fwd idx ==
                    update_promoted_iter major farr fwd (idx + 1))
@@ -309,6 +311,17 @@ let promoted_entries_disjoint (major: heap) (farr: Seq.seq U64.t) : prop =
      U64.v o1 < heap_size /\ U64.v o2 < heap_size ==>
      (U64.v o1 + U64.v (SpecObj.wosize_of_object o1 major) * 8 <= U64.v o2 \/
       U64.v o2 + U64.v (SpecObj.wosize_of_object o2 major) * 8 <= U64.v o1)))
+
+/// No infix entries: non-zero entries in farr are not infix objects.
+/// Needed for two-pass equivalence since update_promoted_iter skips infix entries
+/// (their wosize is an offset-to-parent, not a field count) while the parent
+/// closure's scan covers the infix body.
+let promoted_entries_no_infix (major: heap) (farr: Seq.seq U64.t) : prop =
+  Seq.length farr == fwd_array_size /\
+  (forall (i: nat). i < fwd_array_size ==>
+    (let obj = Seq.index farr i in
+     obj <> 0UL /\ U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size ==>
+     SpecObj.is_infix obj major = false))
 
 /// Update only the promoted objects' fields by iterating fwd_arr.
 /// For each non-zero fwd_arr[i], reads the header at (fwd_arr[i] - 8),

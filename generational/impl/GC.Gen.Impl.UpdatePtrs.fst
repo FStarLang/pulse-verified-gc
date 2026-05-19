@@ -669,6 +669,7 @@ let update_promoted_iter_scan (major: heap) (farr: Seq.seq U64.t)
                        let wosize = U64.v (SpecObj.getWosize hdr) in
                        let tag = SpecObj.getTag hdr in
                        wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\
+                       tag <> SpecObj.infix_tag /\
                        U64.v major_addr + wosize * 8 <= heap_size))))
           (ensures (let major_addr = Seq.index farr idx in
                     let hdr_addr = U64.v major_addr - 8 in
@@ -691,7 +692,7 @@ let update_promoted_iter_skip (major: heap) (farr: Seq.seq U64.t)
                        (let hdr = SpecHeapM.read_word major (U64.uint_to_t hdr_addr) in
                         let wosize = U64.v (SpecObj.getWosize hdr) in
                         let tag = SpecObj.getTag hdr in
-                        ~(wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag) \/
+                        ~(wosize > 0 /\ U64.lt tag SpecObj.no_scan_tag /\ tag <> SpecObj.infix_tag) \/
                         U64.v major_addr + wosize * 8 > heap_size)))))
           (ensures update_promoted_iter major farr fwd idx ==
                    update_promoted_iter major farr fwd (idx + 1))
@@ -755,9 +756,11 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
       SpecObj.getTag_spec hdr;
       SpecObj.getTag_bound hdr;
       SpecObj.no_scan_tag_val ();
+      SpecObj.infix_tag_val ();
       if U64.gt wosize 0UL {
-        if U64.lt tag 251UL {
-          // Scannable promoted object with wosize > 0
+        let is_scannable = U64.lt tag 251UL && Prims.op_Negation (U64.eq tag 249UL);
+        if is_scannable {
+          // Scannable non-infix promoted object with wosize > 0
           // Prove wosize * 8 doesn't overflow: wosize < 2^54, so wosize * 8 < 2^57 < 2^64
           SpecObj.getWosize_bound hdr;
           assert (pure (U64.v wosize < pow2 54));
@@ -777,6 +780,8 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
             assert (pure (tag == SpecObj.getTag hdr));
             assert (pure (U64.v wosize > 0));
             assert (pure (U64.lt tag SpecObj.no_scan_tag));
+            // Connect boolean U64.eq to propositional inequality
+            assert (pure (U64.v tag <> U64.v SpecObj.infix_tag));
             assert (pure (U64.v major_addr + U64.v wosize * 8 <= heap_size));
             update_promoted_iter_scan ms_cur 'farr fwd (SZ.v iv);
             update_one_object major fwd_arr major_addr wosize #fwd;
@@ -787,7 +792,7 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
             i := SZ.add iv 1sz
           }
         } else {
-          // tag >= no_scan_tag — skip
+          // tag >= no_scan_tag OR tag == infix_tag — skip
           update_promoted_iter_skip ms_cur 'farr fwd (SZ.v iv);
           i := SZ.add iv 1sz
         }

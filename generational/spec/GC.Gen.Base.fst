@@ -59,3 +59,6 @@ let is_minor_addr (a: U64.t) : bool =
 let max_young_object_fits () : Lemma (ensures (max_young_wosize + 1) * 8 <= minor_heap_size) = ()
 
 let minor_major_disjoint () : Lemma (ensures minor_heap_size > 0 /\ heap_size > 0) = ()
+
+let zero_addr_above_minor () : Lemma (ensures U64.v zero_addr >= minor_heap_size) =
+  GC.Spec.Base.zero_addr_above_2048 ()

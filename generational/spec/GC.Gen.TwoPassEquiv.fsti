@@ -85,7 +85,7 @@ val update_promoted_iter_promoted_field
        Seq.mem obj (objects zero_addr major) /\
        (let wz = U64.v (wosize_of_object obj major) in
         let tag = getTag (read_word major (hd_address obj)) in
-        wz > 0 /\ U64.lt tag no_scan_tag /\
+        wz > 0 /\ U64.lt tag no_scan_tag /\ tag <> infix_tag /\
         U64.v obj + wz * 8 <= heap_size /\
         j < wz /\
         (forall (k:nat). k < wz ==>
@@ -169,6 +169,7 @@ val promoted_plus_slots_eq_full_update
        represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
+       promoted_entries_no_infix prom.major_final farr /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
        ref_table_sound major_pre slots n /\

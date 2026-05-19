@@ -121,3 +121,10 @@ val max_young_object_fits : unit ->
 /// (We model them as separate arrays, so this is structural)
 val minor_major_disjoint : unit ->
   Lemma (ensures minor_heap_size > 0 /\ heap_size > 0)
+
+/// Major heap base is above the minor heap address range.
+/// This ensures forwarding targets (major addresses >= zero_addr + mword)
+/// cannot be confused with minor offsets (which are < minor_heap_size).
+/// Provided at link time by compat.c.
+val zero_addr_above_minor : unit ->
+  Lemma (ensures U64.v zero_addr >= minor_heap_size)

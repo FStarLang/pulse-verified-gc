@@ -34,6 +34,9 @@ let zero_addr : a:hp_addr{U64.v a + U64.v mword < heap_size} =
   GC.Spec.ZeroAddr.zero_addr_ok ();
   GC.Spec.ZeroAddr.zero_addr
 
+let zero_addr_above_2048 () : Lemma (U64.v zero_addr >= 2048) =
+  GC.Spec.ZeroAddr.zero_addr_above_minor_size ()
+
 /// ---------------------------------------------------------------------------
 /// Address Predicates (implementations)
 /// ---------------------------------------------------------------------------
