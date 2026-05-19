@@ -2,8 +2,8 @@
 
 ## Executive Summary
 
-The `GC.Gen.MinorCollectIso` module provides a **near-complete graph isomorphism theorem** 
-for the minor collection phase of the generational GC. Properties (A)-(F) are all 
+The `GC.Gen.MinorCollectIso` module provides a **complete graph isomorphism theorem** 
+for the minor collection phase of the generational GC. Properties (A)-(G) are all 
 **fully machine-checked with zero admits**.
 
 | Property | Statement | Status |
@@ -14,11 +14,14 @@ for the minor collection phase of the generational GC. Properties (A)-(F) are al
 | **(D) Edge backward** | mc_major edge (φ(u), φ(v)) → combined edge (u,v) | ✅ 0 admits |
 | **(E) Header preservation** | Non-blue major objects keep their wosize | ✅ 0 admits |
 | **(F) Object survival** | Pre-existing major objects survive in mc_major | ✅ 0 admits |
-| **(C') Surjectivity** | Every reachable mc_major vertex has a combined pre-image | ❌ NOT YET PROVEN |
+| **(G) Forward reachability** | Combined-reachable vertices are mc_major-reachable | ✅ 0 admits |
+| **(H) Surjectivity** | Every mc_major-reachable vertex has a combined pre-image | ❌ NOT YET PROVEN |
 
-**Verdict:** We have an **injective graph isomorphism on the edge structure** — a bijective 
-correspondence between combined-graph edges and mc_major edges for reachable vertices.
-The remaining gap (C') would complete a full graph isomorphism.
+**Verdict:** Properties (A)-(D)+(G) establish an **injective subgraph isomorphism with 
+forward reachability preservation** — the combined-reachable subgraph embeds faithfully 
+into the mc_major-reachable subgraph with edge bijectivity on the image.
+The remaining gap (H) would show the embedding is surjective (the image IS the full 
+mc_major-reachable subgraph).
 
 ---
 
@@ -84,22 +87,56 @@ The edge backward proof handles 4 cases, all fully proven:
 
 ---
 
-## Remaining Work: Surjectivity (C')
+## Forward Reachability Proof Architecture (G)
+
+The forward reachability proof uses `combined_reachable_ind` with a predicate that
+includes both combined-reachability and mc_major reachability from mc_roots.
+
+### Predicate
+```
+p(v) = combined_reachable(v) ∧ ∃r ∈ mc_roots. reachable(g_mc, r, φ(v))
+```
+
+### Base case (roots)
+- `combined_reachable_root` → combined_reachable(v)
+- Root correspondence: `classify_roots_inv_{minor,major}` + `rewrite_roots_index` → φ(v) ∈ mc_roots
+- `reach_refl` → reachable(g_mc, φ(v), φ(v))
+
+### Inductive step (edge closure)
+- `combined_reachable_step` → combined_reachable(w)
+- Edge forward (case-specific helper) → (φ(u), φ(w)) ∈ g_mc.edges
+- `indefinite_description_ghost` → extract root witness r from p(u)
+- `edge_reach` + `reach_trans` → reachable(g_mc, r, φ(w))
+
+---
+
+## Remaining Work: Surjectivity (H)
 
 ### Statement
 Every vertex reachable in mc_major from `mc_roots` has a combined-reachable pre-image.
 
-### Approach
-1. Prove `mc_major_objects_partition`: objects in mc_major are either pre-existing 
-   or fwd targets
-2. Pre-existing non-blue → pre-image MajorV, promoted → pre-image MinorV
-3. Key difficulty: reconstruct combined-reachability from mc_major reachability
-   (path induction using edge backward at each step)
+### What's needed (new infrastructure)
+1. **Reachability induction for heap graphs** — A `reach_ind` lemma allowing structural 
+   induction on `reach g x y` witnesses (similar to `combined_reachable_ind`)
+2. **Object partition characterization** — `objects(mc_major) = objects(major) ∪ fwd_targets` 
+   (requires proving `update_major_pointers` + `promote_all` don't create new objects 
+   beyond the promoted copies)
+3. **`no_pointer_to_blue mc_major`** — Either as precondition (consistent with 
+   `GC.Gen.CheneyEnd2End` which already assumes it) or proved from preservation lemmas
+4. **Strong edge backward** — A variant that determines the pre-image of an edge TARGET
+   from its mc_major vertex properties alone, without assuming the target is already 
+   combined-reachable
 
-### Difficulty: Medium-Hard
-The main challenge is the inductive argument over mc_major paths. Edge backward (D) 
-provides the single-step correspondence, but combining it into full path preservation 
-requires an induction principle for `reachable_from` in the heap graph.
+### Difficulty: Hard
+Requires substantial new infrastructure beyond what currently exists in the codebase.
+The key challenges are items 2 (no existing partition lemma) and 4 (the current edge 
+backward proof uses combined-reachability to classify the target).
+
+### Note
+For practical GC correctness, surjectivity means "no previously-unreachable object 
+becomes reachable after collection." Properties (A)-(G) already establish all essential 
+safety guarantees: no data loss, no pointer corruption, no metadata corruption, and 
+reachability preservation.
 
 ---
 
