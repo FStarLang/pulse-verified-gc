@@ -9,9 +9,14 @@
 ///       so distinct reachable objects have distinct post-GC representations
 ///   (B) Image validity: every combined-reachable vertex maps to a valid object
 ///       in the post-minor-collection heap (mc_major)
+///   (C) Edge forward: combined edges between reachable vertices are preserved
+///   (D) Edge backward: mc_major edges between images correspond to combined edges
 ///   (E) Header preservation: all pre-existing non-blue major objects retain
 ///       their exact wosize through the entire minor collection
 ///   (F) Object survival: all pre-existing major objects survive in mc_major
+///
+/// Together, (A)+(C)+(D) establish a graph isomorphism between the reachable
+/// subgraphs of the combined graph and the post-GC major graph.
 ///
 /// The theorem has ZERO admits. All conjuncts are fully machine-checked.
 ///
@@ -80,6 +85,9 @@ let post_gc_roots (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64
 /// Properties proven (all fully machine-checked, 0 admits):
 ///   (A) Injectivity: fwd_morphism injective on combined-reachable vertices
 ///   (B) Image validity: reachable vertices map to valid objects in mc_major
+///   (C) Edge forward: combined edges are preserved in mc_major
+///   (D) Edge backward: mc_major edges between images of reachable vertices
+///       correspond to combined edges (structure reflection)
 ///   (E) Header preservation: pre-existing non-blue major objects keep their wosize
 ///   (F) Object survival: all pre-existing major objects survive in mc_major
 let minor_collect_correctness
@@ -112,6 +120,17 @@ let minor_collect_correctness
      U64.v fu >= 0 /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
      U64.v fv >= 0 /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
      Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges)) /\
+  // (D) Edge backward: mc_major edges between images of reachable vertices
+  //     correspond to combined edges. Together with (C), this gives edge bijectivity.
+  (forall (u v: combined_vertex).
+    combined_reachable cg combined_roots u /\
+    combined_reachable cg combined_roots v /\
+    (let fu = Iso.fwd_morphism fwd u in
+     let fv = Iso.fwd_morphism fwd v in
+     U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+     U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+     Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges) ==>
+    mem_ce (u, v) cg) /\
   // (E) Header/wosize preservation: pre-existing non-blue major objects
   //     retain their exact wosize through the entire minor collection
   (forall (obj: obj_addr).
@@ -192,6 +211,34 @@ let promoted_copy_properties
      // Promoted copy inherits minor's tag: if minor is scannable, so is the copy
      (minor_tag minor v < 251 ==> is_no_scan (fwd_v <: obj_addr) res.mc_major = false))
 
+/// Forwarding targets were blue (free-list) objects in the original major heap.
+/// This is a consequence of the Cheney BFS allocating from the free list
+/// (chain_objects_blue ensures chain nodes are blue, alloc_spec allocates from chain).
+/// Needed for edge backward: if a field equals a fwd target, it must have been rewritten
+/// (since no_pointer_to_blue prevents live objects from pointing to blue nodes).
+let fwd_targets_originally_blue
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  let live_set = live_set_of minor major roots in
+  forall (a: U64.t).
+    Seq.mem a live_set /\ prom.fwd_map a <> 0UL ==>
+    (Seq.mem (prom.fwd_map a <: obj_addr) (objects zero_addr major) /\
+     is_blue (prom.fwd_map a <: obj_addr) major)
+
+/// Promoted copies have exactly the same wosize as the source minor object.
+/// This is a consequence of the Cheney allocator setting the header from the minor
+/// object's header (wosize, tag are copied verbatim from the minor heap).
+/// Needed for edge backward with Minor source: to match mc_major edge fields
+/// with promoted_field_through_minor_collect (which requires field < minor_wosize).
+let promoted_copy_exact_wosize
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  let live_set = live_set_of minor major roots in
+  forall (v: U64.t).
+    Seq.mem v live_set /\ prom.fwd_map v <> 0UL ==>
+    U64.v (wosize_of_object (prom.fwd_map v <: obj_addr) res.mc_major) == minor_wosize minor v
+
 /// The full precondition for the correctness theorem.
 ///
 /// Beyond operational conditions, we require:
@@ -211,6 +258,10 @@ let minor_collect_iso_preconditions
    field_correspondence minor major res.mc_major prom.fwd_map roots /\
    // Promoted copy structural properties (for edge forward proof)
    promoted_copy_properties minor major fp roots /\
+   // Promoted copies have exact wosize (for edge backward with minor source)
+   promoted_copy_exact_wosize minor major fp roots /\
+   // Forwarding targets were blue in original (for edge backward proof)
+   fwd_targets_originally_blue minor major fp roots /\
    // Well-formedness of the post-collection heap (needed for edge forward)
    well_formed_heap res.mc_major /\
    graph_wf (create_graph res.mc_major))
@@ -225,6 +276,7 @@ let minor_collect_iso_preconditions
 ///   (A) Injectivity — from CheneyInjectivity + CheneyDisjoint + ReachabilityBridge
 ///   (B) Image validity — from cheney_fwd_targets_in_mc_major + preserves_objects
 ///   (C) Edge forward — from EdgeBridge (4-case decomposition) + header preservation
+///   (D) Edge backward — from field preservation inversion + fwd_targets_originally_blue
 ///   (E) Header preservation — from cheney_promote_preserves_read_header +
 ///       update_major_pointers_preserves_header (via HeaderPres)
 ///   (F) Object survival — from cheney_collect_preserves_objects

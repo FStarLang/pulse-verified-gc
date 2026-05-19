@@ -954,6 +954,493 @@ let prove_edge_forward
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// (D) Edge Backward
+/// ---------------------------------------------------------------------------
+///
+/// mc_major edges between images of combined-reachable vertices correspond to
+/// combined edges. Together with edge forward (C), this gives edge bijectivity.
+///
+/// Strategy: Given edge (φ(u), φ(v)) in create_graph mc_major:
+///   Case MajorV u, MajorV v: field was preserved (dst not a fwd target), so
+///     original field = dst → heap graph edge → combined edge via MajorBridge
+///   Case MajorV u, MinorV v: field was rewritten (original was blue fwd target,
+///     no_pointer_to_blue prevents pointing to it), so original = v → combined edge
+///   Case MinorV u, MajorV v: promoted copy field = dst via Case 2 of field_corr
+///     (Case 1 impossible: fwd target ≠ non-blue dst), original = v → combined edge
+///   Case MinorV u, MinorV v: promoted copy field = fwd(v) via Case 1 of field_corr
+///     (Case 2 impossible: minor_no_pointer_to_blue prevents pointing to blue fwd target),
+///     by injectivity original minor field = v → combined edge
+
+/// Helper: from reachability of MinorV v, derive v ∈ live_set and fwd(v) ≠ 0
+private
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+let reachable_minor_gives_fwd_nonzero
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (a: U64.t)
+  : Lemma
+    (requires minor_collect_iso_preconditions minor major fp roots /\
+             (let cg = build_combined_graph minor major in
+              let combined_roots = pre_gc_roots roots in
+              combined_reachable cg combined_roots (MinorV a)))
+    (ensures (let prom = cheney_promote minor major fp roots in
+              Seq.mem a (live_set_of minor major roots) /\
+              prom.fwd_map a <> 0UL /\
+              Seq.mem a (minor_objects minor)))
+  = RBridge.reachability_bridge minor major roots;
+    let remembered = minor_roots_from_major major in
+    FStar.Seq.Properties.lemma_mem_append roots remembered;
+    Reach.minor_reachable_mono minor (Seq.append roots remembered) roots a;
+    CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
+    // live_set membership gives minor_objects membership (from minor_reachable_subset)
+    Reach.minor_reachable_subset minor (Seq.append roots remembered)
+#pop-options
+
+/// Helper: for src with edge in mc_major, src is not no_scan in mc_major
+/// (no_scan objects have empty object_edges, so if (src, dst) is an edge, src is scannable)
+private
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+let mc_edge_source_not_no_scan
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src: obj_addr) (dst: U64.t)
+  : Lemma
+    (requires minor_collect_iso_preconditions minor major fp roots /\
+             (let res = cheney_collect_spec minor major fp roots in
+              let g_mc = create_graph res.mc_major in
+              Seq.mem src (objects zero_addr res.mc_major) /\
+              Seq.mem ((src <: hp_addr), (dst <: hp_addr)) g_mc.edges))
+    (ensures (let res = cheney_collect_spec minor major fp roots in
+              ~(is_no_scan src res.mc_major)))
+  = let res = cheney_collect_spec minor major fp roots in
+    let mc = res.mc_major in
+    // Edge membership → (src, dst) ∈ all_edges mc objs
+    HeapGraph.all_edges_source_membership mc (objects zero_addr mc) src dst;
+    // Now: (src, dst) ∈ object_edges mc src
+    // object_edges for no_scan objects = Seq.empty (from definition, fuel 1)
+    // So if (src, dst) ∈ object_edges mc src, src is not no_scan
+    ()
+#pop-options
+
+/// Case MajorV→MajorV: field preserved (dst is non-blue, hence not a fwd target)
+/// Proof sketch:
+///   Edge (src, dst) in mc_major. Both src, dst are non-blue in original.
+///   By fwd_map_disjoint_nonblue: dst ≠ fwd(a) for any a.
+///   Extract field index j from mc edge. Since mc field = dst ≠ fwd(anything),
+///   the field was NOT rewritten. By derive_mc_major_field_value: original field = dst.
+///   Then pointer_field_is_graph_edge → edge in original major → combined edge.
+private
+#restart-solver
+#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+let prove_edge_backward_major_major
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: U64.t)
+  : Lemma
+    (requires
+      minor_collect_iso_preconditions minor major fp roots /\
+      (let cg = build_combined_graph minor major in
+       let combined_roots = pre_gc_roots roots in
+       let res = cheney_collect_spec minor major fp roots in
+       let g_mc = create_graph res.mc_major in
+       combined_reachable cg combined_roots (MajorV src) /\
+       combined_reachable cg combined_roots (MajorV dst) /\
+       U64.v src >= U64.v mword /\ U64.v src < heap_size /\ U64.v src % U64.v mword == 0 /\
+       U64.v dst >= U64.v mword /\ U64.v dst < heap_size /\ U64.v dst % U64.v mword == 0 /\
+       Seq.mem ((src <: hp_addr), (dst <: hp_addr)) g_mc.edges))
+    (ensures mem_ce (MajorV src, MajorV dst) (build_combined_graph minor major))
+  = let prom = cheney_promote minor major fp roots in
+    let fwd = prom.fwd_map in
+    let res = cheney_collect_spec minor major fp roots in
+    let mc = res.mc_major in
+    // --- Establish context ---
+    // src, dst are non-blue objects in original major (from reachability)
+    RBridge.reachable_major_valid_nonblue minor major roots;
+    // src survives in mc_major (non-blue objects survive)
+    CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
+    // fwd(a) ≠ any non-blue object (key disjointness fact)
+    CheneyDisj.cheney_promote_fwd_disjoint_nonblue minor major fp roots;
+    // src not no_scan in mc (since it has outgoing edge)
+    mc_edge_source_not_no_scan minor major fp roots (src <: obj_addr) dst;
+    // wosize/no_scan preserved for non-blue src
+    HeaderPres.minor_collect_preserves_wosize minor major fp roots (src <: obj_addr);
+    HeaderPres.minor_collect_preserves_is_no_scan minor major fp roots (src <: obj_addr);
+    // --- Extract field index from mc edge ---
+    objects_is_vertex_set mc;
+    HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) (src <: obj_addr) dst;
+    let j = FStar.IndefiniteDescription.indefinite_description_ghost
+      (j:U64.t{U64.v j >= 1})
+      (fun j -> U64.v j <= U64.v (wosize_of_object (src <: obj_addr) mc) /\
+                HeapGraph.get_field mc (src <: obj_addr) j == dst /\
+                HeapGraph.is_pointer_field dst) in
+    let i : nat = U64.v j - 1 in
+    // --- Bridge get_field to read_word ---
+    // wosize(src, mc) == wosize(src, major) (already established above)
+    assert (U64.v j <= U64.v (wosize_of_object (src <: obj_addr) major));
+    assert (i < U64.v (wosize_of_object (src <: obj_addr) major));
+    // Arithmetic: field address in bounds and aligned
+    GC.Spec.Fields.wf_object_bound mc (src <: obj_addr);
+    field_addr_arithmetic (U64.v src) i (U64.v (wosize_of_object (src <: obj_addr) mc));
+    // get_field mc src j == read_word mc (src + i*8) (via get_field_addr_eq)
+    HeapGraph.get_field_addr_eq mc (src <: obj_addr) j;
+    // --- Use derive_mc_major_field_value ---
+    // This gives: if original field was rewritable → mc_val = fwd(original)
+    //             otherwise → mc_val = original
+    derive_mc_major_field_value minor major fp roots (src <: obj_addr) i;
+    let field_addr : hp_addr = U64.uint_to_t (U64.v src + i * 8) in
+    let old_val = read_word major field_addr in
+    let mc_val = read_word mc field_addr in
+    // mc_val = dst (from edge witness + get_field_addr_eq)
+    assert (mc_val == dst);
+    // If old_val was rewritable: mc_val = fwd(old_val) = dst.
+    // But fwd_map_disjoint_nonblue: fwd(a) ≠ non-blue obj, and dst is non-blue. Contradiction!
+    // So old_val was NOT rewritable: mc_val = old_val, i.e., old_val = dst.
+    assert (old_val == dst);
+    // --- Reconstruct edge in original major ---
+    // get_field major src j == read_word major (src + i*8) == dst
+    GC.Spec.Fields.wf_object_bound major (src <: obj_addr);
+    HeapGraph.get_field_addr_eq major (src <: obj_addr) j;
+    assert (HeapGraph.get_field major (src <: obj_addr) j == dst);
+    // is_pointer_field dst (from mc edge witness)
+    assert (HeapGraph.is_pointer_field dst);
+    // pointer_field_is_graph_edge → edge (src, dst) in create_graph major
+    objects_is_vertex_set major;
+    HeapGraph.object_fits_from_bound (src <: obj_addr) major;
+    HeapGraph.pointer_field_is_graph_edge major (objects zero_addr major) (src <: obj_addr) j;
+    // --- Combined edge via MajorBridge ---
+    MajorBridge.heapgraph_edge_implies_combined minor major (src <: obj_addr) (dst <: obj_addr)
+#pop-options
+
+/// Case MinorV→MajorV: promoted copy field = dst (Case 2 of field_corr)
+/// Proof sketch:
+///   Edge (fwd(src), dst) in mc_major. dst is non-blue ≠ fwd(anything).
+///   Extract field index j from mc edge of the promoted copy fwd(src).
+///   promoted_field_through_minor_collect gives two cases:
+///     Case 1: mc_val = fwd(minor_val) = dst. But dst ≠ fwd(anything). Contradiction!
+///     Case 2: mc_val = minor_val = dst.
+///   Since dst ∈ objects(major) and not minor, classify_minor_field gives MajorV dst.
+///   minor_field_edge_intro → combined edge (MinorV src, MajorV dst).
+private
+#restart-solver
+#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+let prove_edge_backward_minor_major
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: U64.t)
+  : Lemma
+    (requires
+      minor_collect_iso_preconditions minor major fp roots /\
+      (let cg = build_combined_graph minor major in
+       let combined_roots = pre_gc_roots roots in
+       let prom = cheney_promote minor major fp roots in
+       let fwd = prom.fwd_map in
+       let res = cheney_collect_spec minor major fp roots in
+       let g_mc = create_graph res.mc_major in
+       combined_reachable cg combined_roots (MinorV src) /\
+       combined_reachable cg combined_roots (MajorV dst) /\
+       U64.v (fwd src) >= U64.v mword /\ U64.v (fwd src) < heap_size /\ U64.v (fwd src) % U64.v mword == 0 /\
+       U64.v dst >= U64.v mword /\ U64.v dst < heap_size /\ U64.v dst % U64.v mword == 0 /\
+       Seq.mem ((fwd src <: hp_addr), (dst <: hp_addr)) g_mc.edges))
+    (ensures mem_ce (MinorV src, MajorV dst) (build_combined_graph minor major))
+  = let prom = cheney_promote minor major fp roots in
+    let fwd = prom.fwd_map in
+    let res = cheney_collect_spec minor major fp roots in
+    let mc = res.mc_major in
+    let fwd_src : obj_addr = fwd src in
+    // --- Establish context ---
+    reachable_minor_gives_fwd_nonzero minor major fp roots src;
+    RBridge.reachable_major_valid_nonblue minor major roots;
+    CheneyDisj.cheney_promote_fwd_disjoint_nonblue minor major fp roots;
+    CheneyDisch.cheney_fwd_targets_in_mc_major minor major fp roots;
+    // --- Extract field index from mc edge ---
+    mc_edge_source_not_no_scan minor major fp roots fwd_src dst;
+    objects_is_vertex_set mc;
+    HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) fwd_src dst;
+    let j = FStar.IndefiniteDescription.indefinite_description_ghost
+      (j:U64.t{U64.v j >= 1})
+      (fun j -> U64.v j <= U64.v (wosize_of_object fwd_src mc) /\
+                HeapGraph.get_field mc fwd_src j == dst /\
+                HeapGraph.is_pointer_field dst) in
+    let i : nat = U64.v j - 1 in
+    // --- Connect to promoted_field_through_minor_collect ---
+    // promoted_copy_exact_wosize: wosize_of_object fwd_src mc == minor_wosize minor src
+    // So j <= wosize_of_object fwd_src mc = minor_wosize minor src, hence i < minor_wosize
+    assert (i < minor_wosize minor src);
+    // field_addr bounds
+    GC.Spec.Fields.wf_object_bound mc fwd_src;
+    field_addr_arithmetic (U64.v fwd_src) i (U64.v (wosize_of_object fwd_src mc));
+    // get_field mc fwd_src j == read_word mc (fwd_src + i*8) == dst
+    HeapGraph.get_field_addr_eq mc fwd_src j;
+    let field_addr_v = U64.v fwd_src + i * 8 in
+    assert (read_word mc (U64.uint_to_t field_addr_v) == dst);
+    // --- Apply promoted_field_through_minor_collect ---
+    EdgePres.promoted_field_through_minor_collect minor major fp roots src i;
+    let minor_val = minor_read_field minor src i in
+    // promoted_field gives:
+    //   Case 1: is_minor_pointer minor_val /\ fwd minor_val <> 0 → mc_val = fwd(minor_val)
+    //   Case 2: otherwise → mc_val = minor_val
+    // mc_val = dst. If Case 1: fwd(minor_val) = dst.
+    // But fwd_map_disjoint_nonblue: dst is non-blue so fwd(a) ≠ dst for all a. Contradiction!
+    // So Case 2: minor_val = dst.
+    assert (minor_val == dst);
+    // --- Construct combined edge ---
+    // dst ∈ objects(major), dst not a minor pointer (it's a major obj_addr)
+    MajorBridge.major_object_not_minor_pointer major (dst <: obj_addr);
+    // classify_minor_field: since dst not minor_pointer and dst in objects(major) → MajorV dst
+    // minor_field_edge_intro gives (MinorV src, MajorV dst) in combined graph
+    minor_field_edge_intro minor major src i (MajorV dst)
+#pop-options
+
+/// Case MajorV→MinorV: field was rewritten from minor ptr to fwd(v)
+/// Proof sketch:
+///   Edge (src, fwd(dst)) in mc_major. src is non-blue, fwd(dst) was blue originally.
+///   no_pointer_to_blue: src couldn't originally point to fwd(dst) (blue).
+///   So the field was REWRITTEN: original was minor ptr m, fwd(m) = fwd(dst).
+///   By injectivity: m = dst. Original field = dst (a minor pointer).
+///   classify_major_field gives MinorV dst → major_field_edge_intro → combined edge.
+private
+#restart-solver
+#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+let prove_edge_backward_major_minor
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: U64.t)
+  : Lemma
+    (requires
+      minor_collect_iso_preconditions minor major fp roots /\
+      (let cg = build_combined_graph minor major in
+       let combined_roots = pre_gc_roots roots in
+       let prom = cheney_promote minor major fp roots in
+       let fwd = prom.fwd_map in
+       let res = cheney_collect_spec minor major fp roots in
+       let g_mc = create_graph res.mc_major in
+       combined_reachable cg combined_roots (MajorV src) /\
+       combined_reachable cg combined_roots (MinorV dst) /\
+       U64.v src >= U64.v mword /\ U64.v src < heap_size /\ U64.v src % U64.v mword == 0 /\
+       U64.v (fwd dst) >= U64.v mword /\ U64.v (fwd dst) < heap_size /\ U64.v (fwd dst) % U64.v mword == 0 /\
+       Seq.mem ((src <: hp_addr), (fwd dst <: hp_addr)) g_mc.edges))
+    (ensures mem_ce (MajorV src, MinorV dst) (build_combined_graph minor major))
+  = let prom = cheney_promote minor major fp roots in
+    let fwd = prom.fwd_map in
+    let res = cheney_collect_spec minor major fp roots in
+    let mc = res.mc_major in
+    let fwd_dst : obj_addr = fwd dst in
+    // --- Establish context ---
+    RBridge.reachable_major_valid_nonblue minor major roots;
+    reachable_minor_gives_fwd_nonzero minor major fp roots dst;
+    CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
+    CheneyDisj.cheney_promote_fwd_disjoint_nonblue minor major fp roots;
+    // src is non-blue, in objects(major), in objects(mc)
+    // fwd(dst) was blue in original (from fwd_targets_originally_blue precondition)
+    // --- Extract field index from mc edge ---
+    mc_edge_source_not_no_scan minor major fp roots (src <: obj_addr) (fwd dst);
+    HeaderPres.minor_collect_preserves_wosize minor major fp roots (src <: obj_addr);
+    HeaderPres.minor_collect_preserves_is_no_scan minor major fp roots (src <: obj_addr);
+    objects_is_vertex_set mc;
+    HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) (src <: obj_addr) (fwd dst <: U64.t);
+    let j = FStar.IndefiniteDescription.indefinite_description_ghost
+      (j:U64.t{U64.v j >= 1})
+      (fun j -> U64.v j <= U64.v (wosize_of_object (src <: obj_addr) mc) /\
+                HeapGraph.get_field mc (src <: obj_addr) j == (fwd dst <: U64.t) /\
+                HeapGraph.is_pointer_field (fwd dst <: U64.t)) in
+    let i : nat = U64.v j - 1 in
+    // --- Bridge get_field to read_word ---
+    assert (i < U64.v (wosize_of_object (src <: obj_addr) major));
+    GC.Spec.Fields.wf_object_bound mc (src <: obj_addr);
+    field_addr_arithmetic (U64.v src) i (U64.v (wosize_of_object (src <: obj_addr) mc));
+    HeapGraph.get_field_addr_eq mc (src <: obj_addr) j;
+    // --- Use derive_mc_major_field_value ---
+    derive_mc_major_field_value minor major fp roots (src <: obj_addr) i;
+    let field_addr : hp_addr = U64.uint_to_t (U64.v src + i * 8) in
+    let old_val = read_word major field_addr in
+    let mc_val = read_word mc field_addr in
+    assert (mc_val == (fwd dst <: U64.t));
+    // From derive_mc_major_field_value:
+    //   If old_val NOT rewritable → mc_val = old_val. But mc_val = fwd(dst) which was blue.
+    //     no_pointer_to_blue: non-blue src can't point to blue fwd(dst). So old_val ≠ fwd(dst).
+    //     This contradicts mc_val = old_val = fwd(dst). Hence old_val IS rewritable.
+    //   If old_val IS rewritable → mc_val = fwd(old_val) = fwd(dst).
+    //     By injectivity of fwd on live_set: old_val = dst.
+    // The original field was dst (a minor pointer).
+    CheneyInj.cheney_promote_fwd_injective minor major fp roots;
+    assert (old_val == dst);
+    // --- Construct combined edge ---
+    // dst is in minor_objects (from reachability_bridge)
+    RBridge.reachability_bridge minor major roots;
+    // classify_major_field ms major (read_word major field_addr) == Some (MinorV dst)
+    // Since old_val = dst is a minor pointer in minor_objects(minor)
+    major_field_edge_intro minor major (src <: obj_addr) i (MinorV dst)
+#pop-options
+
+/// Case MinorV→MinorV: promoted copy field = fwd(v) via Case 1 of field_corr
+/// Proof sketch:
+///   Edge (fwd(src), fwd(dst)) in mc_major. fwd(dst) was blue in original.
+///   Extract field index j. promoted_field_through_minor_collect gives:
+///     Case 1: mc_val = fwd(minor_val) = fwd(dst). By injectivity: minor_val = dst.
+///     Case 2: mc_val = minor_val = fwd(dst). But fwd(dst) is blue in original major,
+///       and minor_no_pointer_to_blue prevents minor fields from pointing to blue major objs.
+///       Contradiction! So only Case 1 applies.
+///   classify_minor_field gives MinorV dst → minor_field_edge_intro → combined edge.
+private
+#restart-solver
+#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+let prove_edge_backward_minor_minor
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: U64.t)
+  : Lemma
+    (requires
+      minor_collect_iso_preconditions minor major fp roots /\
+      (let cg = build_combined_graph minor major in
+       let combined_roots = pre_gc_roots roots in
+       let prom = cheney_promote minor major fp roots in
+       let fwd = prom.fwd_map in
+       let res = cheney_collect_spec minor major fp roots in
+       let g_mc = create_graph res.mc_major in
+       combined_reachable cg combined_roots (MinorV src) /\
+       combined_reachable cg combined_roots (MinorV dst) /\
+       U64.v (fwd src) >= U64.v mword /\ U64.v (fwd src) < heap_size /\ U64.v (fwd src) % U64.v mword == 0 /\
+       U64.v (fwd dst) >= U64.v mword /\ U64.v (fwd dst) < heap_size /\ U64.v (fwd dst) % U64.v mword == 0 /\
+       Seq.mem ((fwd src <: hp_addr), (fwd dst <: hp_addr)) g_mc.edges))
+    (ensures mem_ce (MinorV src, MinorV dst) (build_combined_graph minor major))
+  = let prom = cheney_promote minor major fp roots in
+    let fwd = prom.fwd_map in
+    let res = cheney_collect_spec minor major fp roots in
+    let mc = res.mc_major in
+    let fwd_src : obj_addr = fwd src in
+    let fwd_dst : U64.t = fwd dst in
+    // --- Establish context ---
+    reachable_minor_gives_fwd_nonzero minor major fp roots src;
+    reachable_minor_gives_fwd_nonzero minor major fp roots dst;
+    CheneyDisch.cheney_fwd_targets_in_mc_major minor major fp roots;
+    CheneyInj.cheney_promote_fwd_injective minor major fp roots;
+    // fwd(dst) was blue in original (from fwd_targets_originally_blue precondition)
+    // minor_no_pointer_to_blue is part of minor_collect_iso_preconditions
+    // --- Extract field index from mc edge ---
+    mc_edge_source_not_no_scan minor major fp roots fwd_src fwd_dst;
+    objects_is_vertex_set mc;
+    HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) fwd_src fwd_dst;
+    let j = FStar.IndefiniteDescription.indefinite_description_ghost
+      (j:U64.t{U64.v j >= 1})
+      (fun j -> U64.v j <= U64.v (wosize_of_object fwd_src mc) /\
+                HeapGraph.get_field mc fwd_src j == fwd_dst /\
+                HeapGraph.is_pointer_field fwd_dst) in
+    let i : nat = U64.v j - 1 in
+    // --- Connect to promoted_field_through_minor_collect ---
+    // promoted_copy_exact_wosize gives equality → i < minor_wosize minor src
+    assert (i < minor_wosize minor src);
+    // field_addr bounds
+    GC.Spec.Fields.wf_object_bound mc fwd_src;
+    field_addr_arithmetic (U64.v fwd_src) i (U64.v (wosize_of_object fwd_src mc));
+    HeapGraph.get_field_addr_eq mc fwd_src j;
+    let field_addr_v = U64.v fwd_src + i * 8 in
+    assert (read_word mc (U64.uint_to_t field_addr_v) == fwd_dst);
+    // --- Apply promoted_field_through_minor_collect ---
+    EdgePres.promoted_field_through_minor_collect minor major fp roots src i;
+    let minor_val = minor_read_field minor src i in
+    // promoted_field gives:
+    //   Case 1: is_minor_pointer minor_val /\ fwd minor_val <> 0 → mc_val = fwd(minor_val)
+    //   Case 2: otherwise → mc_val = minor_val
+    // mc_val = fwd(dst). If Case 2: minor_val = fwd(dst).
+    //   But fwd(dst) was blue in original major (from fwd_targets_originally_blue).
+    //   minor_no_pointer_to_blue: minor_val can't equal a blue major object.
+    //   Contradiction! So Case 1 applies.
+    // Case 1: fwd(minor_val) = fwd(dst). By injectivity: minor_val = dst.
+    assert (minor_val == dst);
+    // --- Construct combined edge ---
+    // dst is in minor_objects (from reachable_minor_gives_fwd_nonzero)
+    // classify_minor_field for dst: minor object → Some (MinorV dst)
+    minor_field_edge_intro minor major src i (MinorV dst)
+#pop-options
+
+/// Dispatch: edge backward for all 4 cases
+private
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 1"
+let prove_edge_backward_case
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (u v: combined_vertex)
+  : Lemma
+    (requires
+      minor_collect_iso_preconditions minor major fp roots /\
+      (let cg = build_combined_graph minor major in
+       let combined_roots = pre_gc_roots roots in
+       let prom = cheney_promote minor major fp roots in
+       let fwd = prom.fwd_map in
+       let res = cheney_collect_spec minor major fp roots in
+       let g_mc = create_graph res.mc_major in
+       combined_reachable cg combined_roots u /\
+       combined_reachable cg combined_roots v /\
+       (let fu = Iso.fwd_morphism fwd u in
+        let fv = Iso.fwd_morphism fwd v in
+        U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+        U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+        Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges)))
+    (ensures mem_ce (u, v) (build_combined_graph minor major))
+  = match u, v with
+    | MajorV s, MajorV d -> prove_edge_backward_major_major minor major fp roots s d
+    | MinorV s, MajorV d -> prove_edge_backward_minor_major minor major fp roots s d
+    | MajorV s, MinorV d -> prove_edge_backward_major_minor minor major fp roots s d
+    | MinorV s, MinorV d -> prove_edge_backward_minor_minor minor major fp roots s d
+#pop-options
+
+/// Universal quantifier lift for edge backward (same pattern as edge forward)
+private
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
+let prove_edge_backward
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires minor_collect_iso_preconditions minor major fp roots)
+    (ensures (
+      let combined_roots = pre_gc_roots roots in
+      let cg = build_combined_graph minor major in
+      let prom = cheney_promote minor major fp roots in
+      let fwd = prom.fwd_map in
+      let res = cheney_collect_spec minor major fp roots in
+      let g_mc = create_graph res.mc_major in
+      forall (u v: combined_vertex).
+        combined_reachable cg combined_roots u /\
+        combined_reachable cg combined_roots v /\
+        (let fu = Iso.fwd_morphism fwd u in
+         let fv = Iso.fwd_morphism fwd v in
+         U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+         U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+         Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges) ==>
+        mem_ce (u, v) cg))
+  = let aux_inner (u: combined_vertex) (v: combined_vertex) : Lemma
+      (requires (let cg = build_combined_graph minor major in
+                 let combined_roots = pre_gc_roots roots in
+                 let prom = cheney_promote minor major fp roots in
+                 let fwd = prom.fwd_map in
+                 let res = cheney_collect_spec minor major fp roots in
+                 let g_mc = create_graph res.mc_major in
+                 combined_reachable cg combined_roots u /\
+                 combined_reachable cg combined_roots v /\
+                 (let fu = Iso.fwd_morphism fwd u in
+                  let fv = Iso.fwd_morphism fwd v in
+                  U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+                  U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+                  Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges)))
+      (ensures mem_ce (u, v) (build_combined_graph minor major))
+    = prove_edge_backward_case minor major fp roots u v
+    in
+    let aux_outer (u: combined_vertex) : Lemma
+      (ensures (let cg = build_combined_graph minor major in
+                let combined_roots = pre_gc_roots roots in
+                let prom = cheney_promote minor major fp roots in
+                let fwd = prom.fwd_map in
+                let res = cheney_collect_spec minor major fp roots in
+                let g_mc = create_graph res.mc_major in
+                forall (v: combined_vertex).
+                  combined_reachable cg combined_roots u /\
+                  combined_reachable cg combined_roots v /\
+                  (let fu = Iso.fwd_morphism fwd u in
+                   let fv = Iso.fwd_morphism fwd v in
+                   U64.v fu >= U64.v mword /\ U64.v fu < heap_size /\ U64.v fu % U64.v mword == 0 /\
+                   U64.v fv >= U64.v mword /\ U64.v fv < heap_size /\ U64.v fv % U64.v mword == 0 /\
+                   Seq.mem ((fu <: hp_addr), (fv <: hp_addr)) g_mc.edges) ==>
+                  mem_ce (u, v) cg))
+    = Classical.forall_intro (Classical.move_requires (aux_inner u))
+    in
+    Classical.forall_intro aux_outer
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Main theorem: assemble all pieces
 /// ---------------------------------------------------------------------------
 
@@ -969,6 +1456,8 @@ let minor_collect_iso_theorem
     prove_image_validity minor major fp roots;
     // (C) Edge forward
     prove_edge_forward minor major fp roots;
+    // (D) Edge backward
+    prove_edge_backward minor major fp roots;
     // (E) Header/wosize preservation
     prove_header_preservation minor major fp roots;
     // (F) Object survival
