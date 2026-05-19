@@ -678,3 +678,20 @@ let minor_reachable_ind (ms: minor_state) (roots: seq U64.t) (p: U64.t -> prop) 
           (ensures p x)
   =
   minor_reachable_aux_ind ms roots Seq.empty (minor_reachable_fuel ms roots) p x
+
+let minor_reachable_mono (ms: minor_state) (roots1 roots2: seq U64.t) (x: U64.t)
+  : Lemma (requires Seq.mem x (minor_reachable ms roots1) /\
+                    (forall r. Seq.mem r roots1 ==> Seq.mem r roots2))
+          (ensures Seq.mem x (minor_reachable ms roots2))
+  = // Use induction: predicate p a = mem a (minor_reachable ms roots2)
+    let p (a: U64.t) : prop = Seq.mem a (minor_reachable ms roots2) in
+    // Base: r ∈ roots1 ∧ r ∈ minor_objects → r ∈ roots2 → p r
+    minor_reachable_roots ms roots2;
+    // Step: p a ∧ b ∈ successors a → p b (from minor_reachable_closed)
+    let step_aux (a: U64.t) (b: U64.t)
+      : Lemma (requires p a /\ Seq.mem b (minor_successors ms a))
+              (ensures p b)
+      = minor_reachable_closed ms roots2 a b
+    in
+    Classical.forall_intro_2 (fun a -> Classical.move_requires (step_aux a));
+    minor_reachable_ind ms roots1 p x

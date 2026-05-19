@@ -335,3 +335,21 @@ val cheney_promote_preserves_dense
           (ensures (let res = cheney_promote minor major fp roots in
                     heap_objects_dense res.major_final /\
                     Seq.length (objects zero_addr res.major_final) > 0))
+
+/// --- Wosize preservation ---
+
+/// For any original non-free-list object on the major heap, its wosize
+/// is preserved unchanged through the entire cheney_promote process.
+val cheney_promote_preserves_wosize
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  : Lemma (requires
+      well_formed_heap major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      chain_objects_blue major fp /\
+      Seq.mem obj (objects zero_addr major) /\
+      AllocLemmas.chain_avoids major fp (obj <: U64.t) (heap_size / U64.v mword) = true /\
+      U64.v (GC.Spec.Object.wosize_of_object obj major) >= 1)
+    (ensures (let res = cheney_promote minor major fp roots in
+              GC.Spec.Object.wosize_of_object obj res.major_final == GC.Spec.Object.wosize_of_object obj major))

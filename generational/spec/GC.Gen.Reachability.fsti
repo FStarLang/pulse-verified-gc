@@ -91,3 +91,10 @@ val minor_reachable_ind (ms: minor_state) (roots: seq U64.t) (p: U64.t -> prop) 
              (forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==> p r) /\
              (forall a b. p a /\ Seq.mem b (minor_successors ms a) ==> p b))
           (ensures p x)
+
+/// Monotonicity: if every seed in roots1 is also in roots2 then
+/// minor_reachable ms roots1 ⊆ minor_reachable ms roots2.
+val minor_reachable_mono (ms: minor_state) (roots1 roots2: seq U64.t) (x: U64.t)
+  : Lemma (requires Seq.mem x (minor_reachable ms roots1) /\
+                    (forall r. Seq.mem r roots1 ==> Seq.mem r roots2))
+          (ensures Seq.mem x (minor_reachable ms roots2))
