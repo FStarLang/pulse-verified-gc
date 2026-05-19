@@ -47,13 +47,94 @@ let heap_read_word_extensional (h1 h2: heap)
 /// update_promoted_iter frame lemma
 /// ---------------------------------------------------------------------------
 
+/// Helper: update_object_pointers preserves promoted_iter_frame_pre for idx+1
+/// when applied to the entry at idx.
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
+private let update_object_pointers_preserves_frame_pre
+  (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
+  (addr: hp_addr)
+  : Lemma
+    (requires
+      promoted_iter_frame_pre major farr idx addr /\
+      idx < fwd_array_size /\
+      (let obj = Seq.index farr idx in
+       obj <> 0UL /\
+       U64.v obj >= U64.v mword /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size /\
+       Seq.mem obj (objects zero_addr major) /\
+       (let wz = U64.v (wosize_of_object obj major) in
+        wz > 0 /\ U64.v obj + wz * 8 <= heap_size /\
+        (forall (k:nat). k < wz ==>
+          (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)))))
+    (ensures
+      (let obj = Seq.index farr idx in
+       let wz = U64.v (wosize_of_object obj major) in
+       let major' = update_object_pointers major obj wz fwd 0 in
+       promoted_iter_frame_pre major' farr (idx + 1) addr))
+  = let obj = Seq.index farr idx in
+    let wz = U64.v (wosize_of_object obj major) in
+    let major' = update_object_pointers major obj wz fwd 0 in
+    // 1. objects list is preserved
+    PromObj.update_object_pointers_preserves_objects major obj wz fwd 0;
+    assert (objects zero_addr major' == objects zero_addr major);
+    // 2. well_formed_heap_part1 major'
+    //    Same argument as in PromoteUpdate.Aux: all headers preserved
+    let aux_wfh (h: obj_addr) : Lemma
+      (requires Seq.mem h (objects zero_addr major'))
+      (ensures U64.v (hd_address h) + 8 + (U64.v (wosize_of_object h major') * 8) <= Seq.length major')
+    = hd_address_spec h;
+      if h = obj then begin
+        PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0;
+        wosize_of_object_spec h major';
+        wosize_of_object_spec h major
+      end else if U64.v h > U64.v obj then begin
+        PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 h;
+        wosize_of_object_spec h major';
+        wosize_of_object_spec h major
+      end else begin
+        PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address h);
+        wosize_of_object_spec h major;
+        wosize_of_object_spec h major'
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
+    assert (well_formed_heap_part1 major');
+    // 3. For each i > idx with non-zero farr[i]:
+    //    - Seq.mem (farr[i]) (objects zero_addr major') — from (1)
+    //    - wosize_of_object (farr[i]) major' == wosize_of_object (farr[i]) major — from header pres
+    //    - addr is outside body — same bounds since wosize unchanged
+    assert (Seq.length farr == fwd_array_size);
+    let aux_entry (i: nat{i < Seq.length farr}) : Lemma
+      (requires i > idx /\
+               (let o = Seq.index farr i in o <> 0UL))
+      (ensures
+        (let o = Seq.index farr i in
+         U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+         Seq.mem o (objects zero_addr major') /\
+         (let wz' = U64.v (wosize_of_object o major') in
+          U64.v o + wz' * 8 <= heap_size /\
+          (forall (k:nat). k < wz' ==>
+            (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)) /\
+          (U64.v addr < U64.v o \/ U64.v addr >= U64.v o + wz' * 8))))
+    = let o = Seq.index farr i in
+      // From original precondition on major:
+      assert (Seq.mem o (objects zero_addr major));
+      assert (Seq.mem o (objects zero_addr major'));
+      // Show wosize_of_object o major' == wosize_of_object o major
+      hd_address_spec o;
+      wosize_of_object_spec o major;
+      wosize_of_object_spec o major';
+      if U64.v o > U64.v obj then
+        PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
+      else if o = obj then
+        PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
+      else
+        PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_entry)
+#pop-options
+
 /// Frame: addresses outside all promoted object bodies are unchanged.
 /// Proof: induction on idx, mirroring the recursive structure of update_promoted_iter.
-/// At each non-zero scannable entry, update_object_pointers only modifies the
-/// object's body fields — the frame lemmas give preservation outside.
-/// The tricky part: the recursive call operates on major' = update_object_pointers(...),
-/// and needs promoted_iter_frame_pre to hold on major'. This requires showing that
-/// wfh_part1 and wosize_of_object are preserved through the single-object update.
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 let rec update_promoted_iter_frame
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -69,12 +150,10 @@ let rec update_promoted_iter_frame
     else begin
       let major_addr = Seq.index farr idx in
       if major_addr = 0UL then
-        // Zero entry: heap unchanged, recurse on idx+1
         update_promoted_iter_frame major farr fwd (idx + 1) addr
       else begin
         let hdr_addr_v = U64.v major_addr - 8 in
         if hdr_addr_v + 8 > heap_size || hdr_addr_v % 8 <> 0 then
-          // Invalid header: skip, recurse
           update_promoted_iter_frame major farr fwd (idx + 1) addr
         else begin
           let hdr = read_word major (U64.uint_to_t hdr_addr_v) in
@@ -82,32 +161,21 @@ let rec update_promoted_iter_frame
           let tag = getTag hdr in
           if wosize > 0 && U64.lt tag no_scan_tag then begin
             if U64.v major_addr + wosize * 8 <= heap_size then begin
-              // Scannable entry: update_object_pointers modifies body of major_addr
-              // By precondition, addr is outside this body:
-              //   promoted_iter_frame_pre gives us that for i=idx,
-              //   U64.v addr < U64.v (Seq.index farr idx) \/ ...
-              // Need to connect wosize to wosize_of_object:
               wosize_of_object_spec major_addr major;
               hd_address_spec major_addr;
-              // Now: wosize == U64.v (wosize_of_object major_addr major)
-              // And precondition gives: addr outside body of major_addr
-              assert (U64.v addr < U64.v major_addr \/ U64.v addr >= U64.v major_addr + wosize * 8);
+              assert (U64.v addr < U64.v major_addr \/
+                      U64.v addr >= U64.v major_addr + wosize * 8);
               let major' = update_object_pointers major major_addr wosize fwd 0 in
-              // Frame: read at addr is preserved
               (if U64.v addr < U64.v major_addr then
                 PromObj.update_object_pointers_preserves_addr_below
                   major major_addr wosize fwd 0 addr
               else
                 PromObj.update_object_pointers_preserves_addr_above
                   major major_addr wosize fwd 0 addr);
-              assert (read_word major' addr == read_word major addr);
-              // For the recursive call, we need promoted_iter_frame_pre on major'.
-              // Key: update_object_pointers preserves objects and headers of OTHER objects.
-              // So wosize_of_object for entries farr[i] with i > idx is preserved.
-              // And well_formed_heap_part1 major' holds (same argument as Aux module).
-              // This is complex to prove inline; use admit for the recursion precondition.
-              admit () // TODO: establish promoted_iter_frame_pre major' farr (idx+1) addr
-                       // then: update_promoted_iter_frame major' farr fwd (idx+1) addr
+              // Establish recursive precondition
+              update_object_pointers_preserves_frame_pre major farr fwd idx addr;
+              // Recurse
+              update_promoted_iter_frame major' farr fwd (idx + 1) addr
             end else
               update_promoted_iter_frame major farr fwd (idx + 1) addr
           end else
