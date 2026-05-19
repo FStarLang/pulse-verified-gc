@@ -95,6 +95,18 @@ size_t find_infix_parents(minor_heap_t mh, uint64_t *roots, size_t nroots, size_
 extern size_t queue_size_sz;
 
 void
+forward_if_minor_infix(
+  minor_heap_t minor,
+  heap_t major,
+  uint64_t *fp_ref,
+  uint64_t *fwd_arr,
+  uint64_t *queue,
+  size_t *back,
+  bool *oom_ref,
+  uint64_t addr
+);
+
+void
 forward_if_minor(
   minor_heap_t minor,
   heap_t major,

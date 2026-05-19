@@ -367,37 +367,20 @@ Step                  (bridge logic)                     (verified)
 
 3. Zero fwd_arr      memset(gc_fwd_arr, 0, ...)         (prep)
 
-4.1 Infix parents    ─────────────────────────────────► find_infix_parents()
-                                                         (adds parent roots)
+4. minor_collect     ─────────────────────────────────► minor_collect()
+                                                         Single verified call:
+                                                         a) cheney_promote_phase
+                                                            (infix-aware BFS)
+                                                         b) update_promoted_objects
+                                                         c) rewrite_roots_impl
+                                                         d) minor_heap_reset
+                                                         Returns: ok (bool)
 
-5a. Cheney promote   ─────────────────────────────────► cheney_promote_phase()
-                                                         BFS from roots,
-                                                         copies each reachable
-                                                         minor object to major.
-                                                         fwd_arr[minor_slot] =
-                                                           new_major_addr
+   OOM check          If !ok → fatal error
 
-5b. Infix fixup      ─────────────────────────────────► synthesize_infix_forwarding()
-
-5c. Field rewrite    for each slot in fwd_arr:
-                       if promoted (fwd_arr[i] != 0):
-                         ─────────────────────────────► update_one_object()
-                                                         rewrites fields from
-                                                         minor offsets to major
-                                                         addrs using fwd_arr
-
-5d. Root rewrite     ─────────────────────────────────► rewrite_roots_impl()
-                                                         root_values[i] =
-                                                           fwd_arr[root/8]
-
-5d.1 Failure check   Count roots still in minor range
-                     If any → fatal OOM error
-
-5f. Reset minor      ─────────────────────────────────► minor_heap_reset()
-                                                         (*bump_ref = 0)
-
-5.5 Ref_table slots  rewrite_heap_slots() ────────────► rewrite major fields
-                     (for major→minor pointers          that were in ref_table)
+5. Ref_table slots    rewrite_heap_slots() ────────────► rewrite major fields
+                      (for major→minor pointers          that were in ref_table)
+                       recorded by caml_modify)
                       recorded by caml_modify)
 
 6. Writeback         for each root_locs[i] != NULL:
@@ -1052,14 +1035,9 @@ Each step of the minor GC is classified by whether it runs verified
 | 1 | `caml_do_roots` → `scan_minor_root` | ❌ bridge | OCaml root iteration + address translation |
 | 3 | ref\_table → root\_values | ❌ bridge | Translate ref\_table entries to offsets |
 | 4 | `memset(gc_fwd_arr, 0, …)` | ❌ bridge | Array zeroing (could use verified fill) |
-| 4.1 | `find_infix_parents()` | ✅ | Scans minor heap for infix closure parents |
-| 5a | `cheney_promote_phase()` | ✅ | BFS copy of reachable minor objects to major |
-| 5b | `synthesize_infix_forwarding()` | ✅ | Derive forwarding entries for infix sub-objects |
-| 5c | `update_promoted_objects()` | ✅ | Iterates fwd\_arr, rewrites fields of promoted objects |
-| 5d | `rewrite_roots_impl()` | ✅ | Rewrites root array using fwd\_arr |
-| 5d.1 | OOM failure check | ❌ bridge | Policy: abort if any roots unpromoted |
-| 5f | `minor_heap_reset()` | ✅ | Resets bump pointer to 0 |
-| 5.5 | `rewrite_heap_slots()` | ✅ | Rewrites major fields from ref\_table |
+| 4 | `minor_collect()` | ✅ | Single verified call: BFS promote (infix-aware) + update + rewrite roots + reset |
+| 4.OOM | OOM failure check | ❌ bridge | Policy: abort if promotion fails (`!ok`) |
+| 5 | `rewrite_heap_slots()` | ✅ | Rewrites major fields from ref\_table |
 | 6 | root writeback to OCaml | ❌ bridge | Writes major addrs back to OCaml stack/globals |
 | 7 | clear ref\_table | ❌ bridge | Reset `ref_table->ptr` |
 
@@ -1186,71 +1164,36 @@ rewrites remembered-set slots.
 The standalone `gen_gc` function (not used by bridge) inlines the phases
 directly with `update_all_objects` for full `cheney_collect_spec` correctness.
 
-#### Phase B: Infix-Aware BFS in `cheney_promote_phase`
+#### Phase B: Infix-Aware BFS in `cheney_promote_phase` ✅ DONE
 
-Integrate infix handling directly into `forward_if_minor`:
+The infix-aware BFS is fully implemented and verified in `forward_if_minor_infix`
+(GC.Gen.Impl.Cheney.fst).  When `forward_if_minor` encounters a tag=249 (Infix)
+object, it:
+1. Computes parent offset = addr - wosize*8
+2. Promotes parent if not already forwarded
+3. Derives infix forwarding = parent_fwd + (addr - parent)
+4. Records in fwd_arr
 
-**B.1. Add `is_infix_object` helper**
+No separate `find_infix_parents` or `synthesize_infix_forwarding` is needed.
+Zero assumes in the implementation.
 
-Read the tag at a minor offset.  If tag == Infix_tag (249), compute
-the parent offset by subtracting the infix offset field value.
+#### Phase C: Unify Bridge with Single `minor_collect` Call ✅ DONE
 
-**B.2. Modify `forward_if_minor` to handle infix**
-
-```
-if is_infix(addr):
-  parent_off = addr - infix_offset(addr)
-  if fwd_arr[parent_off/8] == 0:
-    forward_if_minor(parent_off, ...)  // recursive: promote parent
-  fwd_arr[addr/8] = fwd_arr[parent_off/8] + (addr - parent_off)
-else:
-  // existing promote logic
-```
-
-Note: This makes `forward_if_minor` conditionally recursive (at most
-depth 1 — an infix always points to a non-infix parent).  Alternatively,
-factor out a `forward_parent_if_needed` sub-function.
-
-**B.3. Update spec to model infix forwarding**
-
-Extend `cheney_forward_one` to handle the infix case:
-```
-cheney_forward_one minor cs addr =
-  if is_infix minor addr then
-    let parent = infix_parent minor addr in
-    let cs' = if fwd cs parent == 0 then cheney_forward_one minor cs parent else cs in
-    { cs' with cs_fwd = extend cs'.cs_fwd addr (cs'.cs_fwd parent + delta) }
-  else
-    // existing logic
-```
-
-**B.4. Remove `find_infix_parents` and `synthesize_infix_forwarding` from bridge**
-
-Once the BFS handles infix inline, these are dead code.  Remove their
-calls from `alloc_gen.c` and eventually from `GC.Gen.Impl.MinorHeap.fst`.
-
-#### Phase C: Unify Bridge with Single `minor_collect` Call ✅ DONE (fast path)
-
-After Phase A, the verified `minor_collect` does:
-- Cheney BFS promotion → `ok: bool`
-- `update_promoted_objects` → rewrite only promoted objects' fields (efficient)
-- `rewrite_roots_impl` → rewrite roots
-- `minor_heap_reset` → reset bump pointer
-
-The bridge's fast path (no infix) is now a single call:
+After Phases A and B, the bridge (`alloc_gen.c`) uses a single verified call
+for ALL minor collections — no fallback path, no infix handling:
 
 ```c
-/* 5. Verified minor collection (single call) */
+/* 4. Verified minor collection (single call — handles all objects including infix) */
 bool ok = minor_collect(gc_gen_heap, root_values, root_count, gc_fwd_arr, gc_queue);
 if (!ok) caml_fatal_error("verified gen GC: out of memory");
 
-/* 5.5 Ref_table pointer rewriting — ESSENTIAL: minor_collect only updates
+/* 5. Ref_table pointer rewriting — ESSENTIAL: minor_collect only updates
  * promoted objects' fields, not pre-existing major objects. The bridge must
  * rewrite remembered-set slots that point to forwarded minor objects. */
 rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr, ref_table_base, n_slots);
 ```
 
-Step 5.5 (`rewrite_heap_slots`) is now **essential** since `update_promoted_objects`
+Step 5 (`rewrite_heap_slots`) is **essential** since `update_promoted_objects`
 only visits newly promoted objects.  Pre-existing major objects with fields
 pointing to forwarded minor objects (tracked in the ref_table) must be
 rewritten by the caller.
@@ -1264,38 +1207,12 @@ since it has no remembered set to manage.
 | Phase | Complexity | Risk | Status |
 |-------|-----------|------|--------|
 | A (assume removal) | Low | Low | ✅ DONE — `update_promoted_objects` + fwd\_bounded |
-| B (infix BFS) | High | Medium | ✅ SPEC DONE, IMPL IN PROGRESS — tag check verified, infix path deferred |
-| C (single call) | Low | Low | ✅ DONE (fast path) |
+| B (infix BFS) | High | Medium | ✅ DONE — infix-aware `forward_if_minor_infix`, zero assumes |
+| C (single call) | Low | Low | ✅ DONE — bridge always calls `minor_collect`, no fallback |
 
-**Phase B detailed status (commit 5a9cdd5, fa2338d, 03c3a3b):**
-- ✅ B.1: `is_infix_in_minor`, `infix_parent`, `minor_infix_wf` in MinorHeap.fsti
-- ✅ B.2: `cheney_forward_one` dispatches infix/normal in spec; tag check in impl eliminates 4 assumes
-- ⬜ B.3: Full infix impl (promote parent, compute delta, write fwd_arr) — 1 assume_ remaining
-- ⬜ B.4: Remove `find_infix_parents`/`synthesize_infix_forwarding` from bridge
-- ⬜ 3 spec assumes for infix preservation proofs (fwd_bounded, bfs_inv, fwd_monotone)
+**All phases complete.  No assumes remain in spec or impl (except platform TCB).**
 
-**Remaining assume inventory (5 total):**
-1. `GC.Gen.Cheney.fst:1115` — infix fwd_bounded preservation (spec)
-2. `GC.Gen.Cheney.SimOne.fst:447` — infix bfs_inv preservation (spec)
-3. `GC.Gen.CheneyBFS.fst:76` — infix fwd_monotone (spec)
-4. `GC.Gen.Impl.Cheney.fst:192` — infix impl_matches_spec correspondence (impl)
-5. `GC.Gen.Impl.MinorHeap.fst:26` — platform_fits_u64 (TCB, always present)
-
-### Interim Approach (A + C without full infix)
-
-`minor_collect` uses `update_promoted_objects` — the efficient path that
-only visits promoted objects.  The postcondition exposes:
-- `s2 == update_promoted_iter prom.major_final farr2 prom.fwd_map 0`
-- `represents_fwd farr2 prom.fwd_map` (for caller to do additional rewrites)
-- `valid_fwd_entries farr2` (addresses are valid)
-
-Then in the bridge:
-- If `minor_has_pointer_objects && has_infix`:
-  fall back to phased approach (4.1, 5a, 5b, 5c, 5d, 5f individually)
-- Otherwise: call `minor_collect` directly + `rewrite_heap_slots` for ref_table
-
-This gives us the single-call path for the common case (no infix) while
-maintaining correctness for closure-heavy programs.
+Only `GC.Gen.Impl.MinorHeap.fst:26` — `platform_fits_u64` (TCB, always present).
 
 ---
 

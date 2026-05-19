@@ -29,13 +29,13 @@ static uint64_t prof_t_minor_alloc = 0;    /* gen_alloc for minor */
 static uint64_t prof_t_major_alloc = 0;    /* gen_alloc for major (free-list) */
 static uint64_t prof_t_root_scan = 0;      /* caml_do_roots + root processing */
 static uint64_t prof_t_fwd_arr_zero = 0;   /* memset gc_fwd_arr */
-static uint64_t prof_t_translate = 0;      /* translate_minor_fields */
-static uint64_t prof_t_infix_find = 0;     /* find_infix_parents */
+static uint64_t prof_t_translate = 0;      /* translate_minor_fields (legacy, unused) */
+static uint64_t prof_t_infix_find = 0;     /* find_infix_parents (legacy, unused) */
 static uint64_t prof_t_queue_zero = 0;     /* Pulse_Lib_Array_fill (inside cheney_promote_phase) */
-static uint64_t prof_t_cheney = 0;         /* cheney_promote_phase total */
-static uint64_t prof_t_infix_synth = 0;    /* synthesize_infix_forwarding */
-static uint64_t prof_t_update_fields = 0;  /* update_one_object loop (5c) */
-static uint64_t prof_t_rewrite_roots = 0;  /* rewrite_roots_impl */
+static uint64_t prof_t_cheney = 0;         /* minor_collect total */
+static uint64_t prof_t_infix_synth = 0;    /* synthesize_infix_forwarding (legacy, unused) */
+static uint64_t prof_t_update_fields = 0;  /* update_one_object loop (inside minor_collect) */
+static uint64_t prof_t_rewrite_roots = 0;  /* rewrite_roots_impl (inside minor_collect) */
 static uint64_t prof_t_writeback = 0;      /* root writeback (step 6) */
 static uint64_t prof_t_ref_table = 0;      /* ref_table rewriting (5.5) */
 static uint64_t prof_t_minor_reset = 0;    /* minor_heap_reset */
@@ -72,11 +72,13 @@ static void gc_print_profile(void) {
         prof_t_translate/1e6, 100.0*prof_t_translate/total);
     fprintf(stderr, "  find_infix_parents:        %8.1f ms (%5.1f%%)\n",
         prof_t_infix_find/1e6, 100.0*prof_t_infix_find/total);
-    fprintf(stderr, "  cheney_promote_phase:      %8.1f ms (%5.1f%%)\n",
+    fprintf(stderr, "  minor_collect:             %8.1f ms (%5.1f%%)\n",
         prof_t_cheney/1e6, 100.0*prof_t_cheney/total);
     fprintf(stderr, "    (includes queue zero):   %8.1f ms\n",
         prof_t_queue_zero/1e6);
-    fprintf(stderr, "  synth_infix_fwd:           %8.1f ms (%5.1f%%)\n",
+    fprintf(stderr, "  [legacy] find_infix:       %8.1f ms (%5.1f%%)\n",
+        prof_t_infix_find/1e6, 100.0*prof_t_infix_find/total);
+    fprintf(stderr, "  [legacy] synth_infix:      %8.1f ms (%5.1f%%)\n",
         prof_t_infix_synth/1e6, 100.0*prof_t_infix_synth/total);
     fprintf(stderr, "  update_one_object loop:    %8.1f ms (%5.1f%%)\n",
         prof_t_update_fields/1e6, 100.0*prof_t_update_fields/total);
