@@ -1441,6 +1441,177 @@ let prove_edge_backward
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// (G) Forward reachability
+/// ---------------------------------------------------------------------------
+///
+/// Proof by combined_reachable_ind: define predicate p(v) that includes both
+/// combined_reachable(v) and mc_major reachability. The base case shows roots
+/// map to mc_roots (self-reachable), the step extends reachability via edge_forward.
+
+/// Helper: for a combined root v, show fwd_morphism(v) is in mc_roots
+private
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+let root_morphism_in_mc_roots
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (v: combined_vertex)
+  : Lemma
+    (requires minor_collect_iso_preconditions minor major fp roots /\
+             (let cg = build_combined_graph minor major in
+              let combined_roots = pre_gc_roots roots in
+              Seq.mem v combined_roots /\ mem_cv v cg /\
+              combined_reachable cg combined_roots v))
+    (ensures (let prom = cheney_promote minor major fp roots in
+              let fwd = prom.fwd_map in
+              let res = cheney_collect_spec minor major fp roots in
+              let mc_roots = res.mc_roots in
+              Seq.mem (Iso.fwd_morphism fwd v) mc_roots))
+  = let prom = cheney_promote minor major fp roots in
+    let fwd = prom.fwd_map in
+    let res = cheney_collect_spec minor major fp roots in
+    let mc_roots = res.mc_roots in
+    match v with
+    | MinorV a ->
+      // classify_roots_inv_minor: a ∈ roots, is_minor_pointer a
+      classify_roots_inv_minor roots a;
+      // fwd a ≠ 0 (from reachable_minor_gives_fwd_nonzero)
+      reachable_minor_gives_fwd_nonzero minor major fp roots a;
+      // rewrite_root a fwd = fwd a (since is_minor_pointer a ∧ fwd a ≠ 0)
+      assert (rewrite_root a fwd == fwd a);
+      // a ∈ roots → ∃i. Seq.index roots i = a → Seq.index mc_roots i = fwd a
+      let i = FStar.Seq.Properties.index_mem a roots in
+      rewrite_roots_length roots fwd;
+      rewrite_roots_index roots fwd i;
+      assert (Seq.index mc_roots i == fwd a);
+      assert (Seq.mem (fwd a) mc_roots)
+    | MajorV a ->
+      // classify_roots_inv_major: a ∈ roots, ¬is_minor_pointer a
+      classify_roots_inv_major roots a;
+      // rewrite_root a fwd = a (since ¬is_minor_pointer a)
+      assert (rewrite_root a fwd == a);
+      // a ∈ roots → ∃i. Seq.index mc_roots i = a
+      let i = FStar.Seq.Properties.index_mem a roots in
+      rewrite_roots_length roots fwd;
+      rewrite_roots_index roots fwd i;
+      assert (Seq.index mc_roots i == a);
+      assert (Seq.mem a mc_roots)
+#pop-options
+
+/// Main forward reachability proof
+private
+#restart-solver
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 1 --split_queries always"
+let prove_forward_reachability
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires minor_collect_iso_preconditions minor major fp roots)
+    (ensures (
+      let combined_roots = pre_gc_roots roots in
+      let cg = build_combined_graph minor major in
+      let prom = cheney_promote minor major fp roots in
+      let fwd = prom.fwd_map in
+      let res = cheney_collect_spec minor major fp roots in
+      let g_mc = create_graph res.mc_major in
+      let mc_roots = res.mc_roots in
+      forall (v: combined_vertex).
+        combined_reachable cg combined_roots v ==>
+        (let w = Iso.fwd_morphism fwd v in
+         U64.v w >= U64.v mword /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+         Seq.mem (w <: hp_addr) g_mc.vertices /\
+         (exists (r: U64.t).
+           Seq.mem r mc_roots /\
+           U64.v r >= U64.v mword /\ U64.v r < heap_size /\ U64.v r % U64.v mword == 0 /\
+           Seq.mem (r <: hp_addr) g_mc.vertices /\
+           reachable g_mc (r <: hp_addr) (w <: hp_addr)))))
+  = let cg = build_combined_graph minor major in
+    let combined_roots = pre_gc_roots roots in
+    let prom = cheney_promote minor major fp roots in
+    let fwd = prom.fwd_map in
+    let res = cheney_collect_spec minor major fp roots in
+    let g_mc = create_graph res.mc_major in
+    let mc_roots = res.mc_roots in
+    // The predicate for combined_reachable_ind
+    let p (v: combined_vertex) : prop =
+      combined_reachable cg combined_roots v /\
+      (let w = Iso.fwd_morphism fwd v in
+       U64.v w >= U64.v mword /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+       Seq.mem (w <: hp_addr) g_mc.vertices /\
+       (exists (r: U64.t).
+         Seq.mem r mc_roots /\
+         U64.v r >= U64.v mword /\ U64.v r < heap_size /\ U64.v r % U64.v mword == 0 /\
+         Seq.mem (r <: hp_addr) g_mc.vertices /\
+         reachable g_mc (r <: hp_addr) (w <: hp_addr)))
+    in
+    // Base case: roots satisfy p
+    let base_lemma (v: combined_vertex) : Lemma
+      (requires Seq.mem v combined_roots /\ mem_cv v cg)
+      (ensures p v)
+    = // 1. combined_reachable(v) from root
+      combined_reachable_root cg combined_roots v;
+      // 2. Image validity: φ(v) aligned and in g_mc.vertices
+      (match v with
+       | MinorV a -> prove_image_validity_minor minor major fp roots a
+       | MajorV a -> prove_image_validity_major minor major fp roots a);
+      // 3. φ(v) ∈ mc_roots
+      root_morphism_in_mc_roots minor major fp roots v;
+      // 4. reach_refl: reachable(g_mc, φ(v), φ(v))
+      let w = Iso.fwd_morphism fwd v in
+      reach_refl g_mc (w <: hp_addr)
+    in
+    // Step case: p(u) ∧ edge(u,w) → p(w)
+    let step_lemma (u: combined_vertex) (w: combined_vertex) : Lemma
+      (requires p u /\ mem_ce (u, w) cg)
+      (ensures p w)
+    = // 1. combined_reachable(w) from step
+      combined_reachable_step cg combined_roots u w;
+      // 2. Image validity for w
+      (match w with
+       | MinorV a -> prove_image_validity_minor minor major fp roots a
+       | MajorV a -> prove_image_validity_major minor major fp roots a);
+      // 3. Edge forward: (φ(u), φ(w)) is a g_mc edge
+      let fu = Iso.fwd_morphism fwd u in
+      let fw = Iso.fwd_morphism fwd w in
+      (match u, w with
+       | MajorV s, MajorV d -> prove_edge_forward_major_major_u minor major fp roots s d
+       | MajorV s, MinorV d -> prove_edge_forward_major_minor_u minor major fp roots s d
+       | MinorV s, _ -> prove_edge_forward_minor minor major fp roots s w);
+      assert (Seq.mem ((fu <: hp_addr), (fw <: hp_addr)) g_mc.edges);
+      // 4. edge_reach: reachable(g_mc, φ(u), φ(w))
+      edge_reach g_mc (fu <: hp_addr) (fw <: hp_addr);
+      // 5. Extract root witness from p(u) and extend via reach_trans
+      let r = FStar.IndefiniteDescription.indefinite_description_ghost U64.t
+        (fun r -> Seq.mem r mc_roots /\
+                  U64.v r >= U64.v mword /\ U64.v r < heap_size /\ U64.v r % U64.v mword == 0 /\
+                  Seq.mem (r <: hp_addr) g_mc.vertices /\
+                  reachable g_mc (r <: hp_addr) (fu <: hp_addr)) in
+      // 6. reach_trans: reachable(g_mc, r, φ(w))
+      reach_trans g_mc (r <: hp_addr) (fu <: hp_addr) (fw <: hp_addr)
+    in
+    // Apply combined_reachable_ind for each v
+    let aux (v: combined_vertex) : Lemma
+      (requires combined_reachable cg combined_roots v)
+      (ensures (let w = Iso.fwd_morphism fwd v in
+                U64.v w >= U64.v mword /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+                Seq.mem (w <: hp_addr) g_mc.vertices /\
+                (exists (r: U64.t).
+                  Seq.mem r mc_roots /\
+                  U64.v r >= U64.v mword /\ U64.v r < heap_size /\ U64.v r % U64.v mword == 0 /\
+                  Seq.mem (r <: hp_addr) g_mc.vertices /\
+                  reachable g_mc (r <: hp_addr) (w <: hp_addr))))
+    = // Establish base universal
+      Classical.forall_intro (Classical.move_requires base_lemma);
+      // Establish step universal
+      let step_outer (u': combined_vertex) : Lemma
+        (ensures forall (w': combined_vertex). p u' /\ mem_ce (u', w') cg ==> p w')
+      = Classical.forall_intro (Classical.move_requires (step_lemma u'))
+      in
+      Classical.forall_intro step_outer;
+      // Apply induction
+      combined_reachable_ind cg combined_roots p v
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Main theorem: assemble all pieces
 /// ---------------------------------------------------------------------------
 
@@ -1461,5 +1632,7 @@ let minor_collect_iso_theorem
     // (E) Header/wosize preservation
     prove_header_preservation minor major fp roots;
     // (F) Object survival
-    prove_object_survival minor major fp roots
+    prove_object_survival minor major fp roots;
+    // (G) Forward reachability
+    prove_forward_reachability minor major fp roots
 #pop-options

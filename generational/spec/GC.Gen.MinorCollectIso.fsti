@@ -14,6 +14,8 @@
 ///   (E) Header preservation: all pre-existing non-blue major objects retain
 ///       their exact wosize through the entire minor collection
 ///   (F) Object survival: all pre-existing major objects survive in mc_major
+///   (G) Forward reachability: combined-reachable vertices are reachable from
+///       mc_roots in the post-GC graph
 ///
 /// Together, (A)+(C)+(D) establish a graph isomorphism between the reachable
 /// subgraphs of the combined graph and the post-GC major graph.
@@ -141,7 +143,21 @@ let minor_collect_correctness
   // (F) Object survival: all pre-existing major objects survive in mc_major
   (forall (obj: obj_addr).
     Seq.mem obj (objects zero_addr major) ==>
-    Seq.mem obj (objects zero_addr res.mc_major))
+    Seq.mem obj (objects zero_addr res.mc_major)) /\
+  // (G) Forward reachability: combined-reachable vertices are reachable from
+  //     mc_roots in g_mc. Together with (A)+(C)+(D), this shows the morphism
+  //     image is exactly the mc_major-reachable subgraph (modulo surjectivity).
+  (let mc_roots = res.mc_roots in
+   forall (v: combined_vertex).
+     combined_reachable cg combined_roots v ==>
+     (let w = Iso.fwd_morphism fwd v in
+      U64.v w >= U64.v mword /\ U64.v w < heap_size /\ U64.v w % U64.v mword == 0 /\
+      Seq.mem (w <: hp_addr) g_mc.vertices /\
+      (exists (r: U64.t).
+        Seq.mem r mc_roots /\
+        U64.v r >= U64.v mword /\ U64.v r < heap_size /\ U64.v r % U64.v mword == 0 /\
+        Seq.mem (r <: hp_addr) g_mc.vertices /\
+        reachable g_mc (r <: hp_addr) (w <: hp_addr))))
 
 /// ---------------------------------------------------------------------------
 /// Preconditions — operational conditions + field_correspondence
@@ -280,6 +296,7 @@ let minor_collect_iso_preconditions
 ///   (E) Header preservation — from cheney_promote_preserves_read_header +
 ///       update_major_pointers_preserves_header (via HeaderPres)
 ///   (F) Object survival — from cheney_collect_preserves_objects
+///   (G) Forward reachability — induction via combined_reachable_ind + edge_forward
 ///
 /// ZERO admits. All conjuncts fully machine-checked.
 val minor_collect_iso_theorem
