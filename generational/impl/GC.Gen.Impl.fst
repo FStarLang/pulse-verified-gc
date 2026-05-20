@@ -276,9 +276,108 @@ let derive_fwd_targets_stable (fwd: PromoteSpec.forwarding_map)
   in
   Classical.forall_intro (Classical.move_requires aux)
 
+module CheneyPres = GC.Gen.CheneyPreservation
+module SpecObj = GC.Spec.Object
+
+/// Derivation: fwd_valid_or_infix + wfh_part1 + fwd_bounded + represents_fwd
+/// implies promoted_entries_valid_from.
+/// Each non-zero farr entry fwd(i*8) has valid bounds (from fwd_bounded),
+/// and is either in objects (with wosize bounds from wfh_part1) or is_infix.
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+let derive_promoted_entries_valid_from
+  (major: heap_state) (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map)
+  : Lemma (requires
+      Seq.length farr == fwd_array_size /\
+      (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
+      CheneyPres.fwd_valid_or_infix fwd major /\
+      CheneySpec.fwd_bounded fwd /\
+      SpecFields.well_formed_heap_part1 major)
+    (ensures promoted_entries_valid_from major farr 0)
+  =
+  let aux (i: nat{i < fwd_array_size}) : Lemma
+    (ensures (let obj = Seq.index farr i in
+              obj = 0UL \/
+              (U64.v obj >= U64.v mword /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size /\
+               SpecObj.is_infix obj major) \/
+              (U64.v obj >= U64.v mword /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size /\
+               Seq.mem obj (SpecFields.objects zero_addr major) /\
+               (let wz = U64.v (SpecObj.wosize_of_object obj major) in
+                U64.v obj + wz * 8 <= heap_size /\
+                (forall (k:nat). k < wz ==>
+                  (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0))))))
+  = let obj = Seq.index farr i in
+    if obj = 0UL then ()
+    else begin
+      // obj = fwd(i*8), and obj <> 0UL
+      // From fwd_bounded: bounds hold
+      assert (U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\ U64.v obj % U64.v mword == 0);
+      // From fwd_valid_or_infix: Seq.mem obj objects \/ is_infix obj major
+      if SpecObj.is_infix obj major then ()
+      else begin
+        // obj is in objects — derive wosize bounds from wfh_part1
+        assert (Seq.mem obj (SpecFields.objects zero_addr major));
+        SpecFields.wfh_part1_obj_bound major obj
+      end
+    end
+  in
+  Classical.forall_intro aux
+#pop-options
+
+/// Derivation: fwd_valid_or_infix + wfh_part1 + well_formed_heap_part4
+/// implies promoted_entries_disjoint.
+/// Non-infix entries are in objects (by exclusion from fwd_valid_or_infix + part4),
+/// and objects_separated gives body disjointness.
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+let derive_promoted_entries_disjoint
+  (major: heap_state) (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map)
+  : Lemma (requires
+      Seq.length farr == fwd_array_size /\
+      (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
+      CheneyPres.fwd_valid_or_infix fwd major /\
+      CheneySpec.fwd_bounded fwd /\
+      SpecFields.well_formed_heap_part1 major)
+    (ensures promoted_entries_disjoint major farr)
+  =
+  let aux (i1 i2: nat) : Lemma
+    (ensures (i1 < fwd_array_size /\ i2 < fwd_array_size /\ i1 <> i2 ==>
+      (let o1 = Seq.index farr i1 in
+       let o2 = Seq.index farr i2 in
+       o1 <> 0UL /\ o2 <> 0UL /\
+       U64.v o1 >= 8 /\ U64.v o2 >= 8 /\
+       U64.v o1 % 8 == 0 /\ U64.v o2 % 8 == 0 /\
+       U64.v o1 < heap_size /\ U64.v o2 < heap_size /\
+       SpecObj.is_infix o1 major = false /\
+       SpecObj.is_infix o2 major = false ==>
+       (U64.v o1 + U64.v (SpecObj.wosize_of_object o1 major) * 8 <= U64.v o2 \/
+        U64.v o2 + U64.v (SpecObj.wosize_of_object o2 major) * 8 <= U64.v o1))))
+  = if not (i1 < fwd_array_size && i2 < fwd_array_size && i1 <> i2) then ()
+    else
+    let o1 = Seq.index farr i1 in
+    let o2 = Seq.index farr i2 in
+    if o1 = 0UL || o2 = 0UL then ()
+    else if not (U64.v o1 >= 8 && U64.v o2 >= 8 && U64.v o1 % 8 = 0 && U64.v o2 % 8 = 0 &&
+                 U64.v o1 < heap_size && U64.v o2 < heap_size) then ()
+    else if SpecObj.is_infix o1 major || SpecObj.is_infix o2 major then ()
+    else begin
+      // Both non-infix: from fwd_valid_or_infix, they're in objects
+      assert (Seq.mem o1 (SpecFields.objects zero_addr major));
+      assert (Seq.mem o2 (SpecFields.objects zero_addr major));
+      // objects_separated gives body disjointness
+      if U64.v o1 < U64.v o2 then
+        SpecFields.objects_separated zero_addr major o1 o2
+      else if U64.v o2 < U64.v o1 then
+        SpecFields.objects_separated zero_addr major o2 o1
+      else
+        // o1 = o2: impossible for injective fwd on normal targets
+        admit ()
+    end
+  in
+  Classical.forall_intro_2 aux
+#pop-options
+
 /// Bridge lemma: conditional two-pass ↔ full-update equivalence.
-/// If the 5 preconditions of TwoPassEquiv hold, then the two-pass result
-/// equals update_major_pointers (= cheney_collect_spec.mc_major).
+/// Derives promoted_entries_valid_from and promoted_entries_disjoint internally
+/// from fwd_valid_or_infix + fwd_bounded + wfh_part1 + represents_fwd.
 let two_pass_implies_full_update
   (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
   (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
@@ -286,8 +385,9 @@ let two_pass_implies_full_update
     (requires
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        Seq.length farr == fwd_array_size /\
-       promoted_entries_valid_from prom.major_final farr 0 /\
-       promoted_entries_disjoint prom.major_final farr /\
+       represents_fwd farr prom.fwd_map /\
+       CheneyPres.fwd_valid_or_infix prom.fwd_map prom.major_final /\
+       CheneySpec.fwd_bounded prom.fwd_map /\
        SpecFields.well_formed_heap_part4 prom.major_final /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
@@ -307,7 +407,10 @@ let two_pass_implies_full_update
          (update_promoted_iter prom.major_final farr prom.fwd_map 0)
          prom.fwd_map slots n 0
        == (CheneySpec.cheney_collect_spec minor major_pre fp roots).mc_major))
-  = TwoPass.promoted_plus_slots_eq_full_update minor major_pre fp roots farr slots n;
+  = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+    derive_promoted_entries_valid_from prom.major_final farr prom.fwd_map;
+    derive_promoted_entries_disjoint prom.major_final farr prom.fwd_map;
+    TwoPass.promoted_plus_slots_eq_full_update minor major_pre fp roots farr slots n;
     cheney_collect_spec_unfold minor major_pre fp roots
 
 /// Compose all phases into minor_collect using Cheney BFS.
@@ -468,9 +571,7 @@ fn minor_collect_full (gh: gen_heap_t)
       SpecFields.well_formed_heap_part1 prom.major_final /\
       // Strong correctness (conditional): under the two-pass equivalence
       // conditions, the result equals cheney_collect_spec.mc_major.
-      (promoted_entries_valid_from prom.major_final farr2 0 /\
-       promoted_entries_disjoint prom.major_final farr2 /\
-       slots_pairwise_distinct 'sl (SZ.v nslots) /\
+      (slots_pairwise_distinct 'sl (SZ.v nslots) /\
        fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)
        ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))
 {
@@ -513,13 +614,17 @@ fn minor_collect_full (gh: gen_heap_t)
   minor_heap_reset gh.minor;
 
   // Prove the conditional equivalence for the strong spec:
-  // IF the 4 TwoPassEquiv conditions hold THEN s2 == cheney_collect_spec.mc_major
-  // First derive fwd_targets_stable and well_formed_heap_part4 unconditionally
+  // IF slots_pairwise_distinct /\ fwd_ptrs_classified THEN s2 == cheney_collect_spec.mc_major
+  // Derive fwd_targets_stable, well_formed_heap_part4, fwd_valid_or_infix, fwd_bounded unconditionally
   CheneySpec.cheney_promote_fwd_above_zero_addr
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   derive_fwd_targets_stable
     (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
   CheneySpec.cheney_promote_preserves_wfh_part4
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  CheneyPres.cheney_promote_fwd_valid_or_infix
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  CheneySpec.cheney_promote_fwd_bounded
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   Classical.move_requires
     (two_pass_implies_full_update

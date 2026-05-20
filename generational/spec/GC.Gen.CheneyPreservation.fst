@@ -411,3 +411,31 @@ let cheney_promote_preserves_no_black
   // Phase 2: scan preserves no_black
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_no_black minor cs1 0 (cheney_fuel minor)
+
+
+/// ---------------------------------------------------------------------------
+/// Forwarding targets classification: in objects or infix
+/// ---------------------------------------------------------------------------
+///
+/// PROOF OBLIGATION: Full BFS induction through forward_roots + scan.
+/// Each cheney_forward_one step either:
+///   (a) Normal: alloc puts target in objects (alloc_spec_obj_in_objects_part1)
+///   (b) Infix: promote_preserves_fields + minor_tag = infix_tag gives is_infix
+/// Frame: subsequent allocs preserve both object membership
+/// (cheney_forward_one_preserves_objects) and interior reads
+/// (promote_object_frame_old_field separates from new alloc).
+///
+/// TODO: Fill in the full BFS induction proof following the pattern of
+/// cheney_promote_fwd_above_zero_addr in GC.Gen.Cheney.fst.
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+let cheney_promote_fwd_valid_or_infix
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_valid_or_infix (cheney_promote minor major fp roots).fwd_map
+                                      (cheney_promote minor major fp roots).major_final)
+  = admit ()
+#pop-options

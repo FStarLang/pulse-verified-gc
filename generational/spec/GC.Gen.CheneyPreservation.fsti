@@ -38,3 +38,37 @@ val cheney_promote_preserves_no_black
                     minor_infix_wf minor)
           (ensures (let res = cheney_promote minor major fp roots in
                     Mark.no_black_objects res.major_final))
+
+/// ---------------------------------------------------------------------------
+/// Forwarding targets classification: in objects or infix
+/// ---------------------------------------------------------------------------
+
+/// Every non-zero forwarding target produced by cheney_promote is either
+/// an object in the objects list (normal forwarding) or an infix sub-object
+/// in the major heap (interior pointer with tag=249).
+///
+/// Proof sketch (BFS induction):
+///   - Normal forwarding via cheney_forward_normal: alloc_spec puts the target
+///     in objects (alloc_spec_obj_in_objects_part1). Subsequent allocs preserve
+///     membership (cheney_forward_one_preserves_objects).
+///   - Infix forwarding: target = parent_fwd + delta. After promote_object
+///     copies parent's fields, the infix header at (parent_fwd + delta - 8)
+///     has tag=249. Frame: subsequent allocs write to disjoint memory
+///     (promote_object_frame_old_field), preserving the infix header.
+let fwd_valid_or_infix (fwd: forwarding_map) (g: heap) : prop =
+  forall (x: U64.t). fwd x <> 0UL ==>
+    (U64.v (fwd x) >= U64.v mword /\
+     U64.v (fwd x) < heap_size /\
+     U64.v (fwd x) % U64.v mword == 0 /\
+     (Seq.mem ((fwd x) <: obj_addr) (objects zero_addr g) \/
+      is_infix (fwd x) g))
+
+val cheney_promote_fwd_valid_or_infix
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_valid_or_infix (cheney_promote minor major fp roots).fwd_map
+                                      (cheney_promote minor major fp roots).major_final)
