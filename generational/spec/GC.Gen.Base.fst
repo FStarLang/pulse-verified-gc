@@ -62,3 +62,10 @@ let minor_major_disjoint () : Lemma (ensures minor_heap_size > 0 /\ heap_size > 
 
 let zero_addr_above_minor () : Lemma (ensures U64.v zero_addr >= minor_heap_size) =
   GC.Spec.Base.zero_addr_above_2048 ()
+
+let to_minor_offset_stable_above_minor (v: U64.t)
+  : Lemma (requires U64.v v >= minor_heap_size /\ U64.v v % 8 == 0)
+          (ensures to_minor_offset v == v)
+  = // minor_base_addr = 0, so condition becomes: v >= 0 && v - 0 < minor_heap_size && aligned
+    // Since v >= minor_heap_size, the condition v - 0 < minor_heap_size is false.
+    ()

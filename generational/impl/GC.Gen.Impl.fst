@@ -244,6 +244,38 @@ let fwd_bounded_implies_valid_fwd_entries
     in
     Classical.forall_intro (fun i -> aux i)
 
+/// Derivation: fwd_above_zero_addr + fwd_bounded implies fwd_targets_stable.
+/// Since targets > zero_addr >= minor_heap_size and aligned, to_minor_offset is identity
+/// and is_minor_pointer is false — so the fwd_targets_stable condition holds.
+let derive_fwd_targets_stable (fwd: PromoteSpec.forwarding_map)
+  : Lemma (requires CheneySpec.fwd_above_zero_addr fwd /\ CheneySpec.fwd_bounded fwd)
+          (ensures fwd_targets_stable fwd)
+  =
+  reveal_opaque (`%fwd_targets_stable) (fwd_targets_stable fwd);
+  // For all x: fwd x <> 0 ==> U64.v(fwd x) > U64.v zero_addr >= minor_heap_size
+  // to_minor_offset(fwd x) = fwd x (since target >= minor_heap_size, condition v < minor_heap_size fails)
+  // is_minor_pointer(fwd x) = false (requires U64.v < minor_heap_size)
+  // Hence ~(is_minor_pointer(...) /\ ...) trivially
+  let aux (x: U64.t)
+    : Lemma (requires fwd x <> 0UL)
+            (ensures (let target = fwd x in
+                      let target_as_minor = to_minor_offset target in
+                      ~(PromoteSpec.is_minor_pointer target_as_minor /\ fwd target_as_minor <> 0UL)))
+    = let target = fwd x in
+      zero_addr_above_minor ();
+      // From fwd_above_zero_addr: U64.v target > U64.v zero_addr >= minor_heap_size
+      assert (U64.v target > U64.v zero_addr);
+      assert (U64.v target >= minor_heap_size);
+      // From fwd_bounded: target % 8 == 0
+      assert (U64.v target % 8 == 0);
+      // to_minor_offset_stable: target >= minor_heap_size /\ target % 8 == 0 ==> to_minor_offset target = target
+      to_minor_offset_stable_above_minor target;
+      assert (to_minor_offset target == target);
+      // is_minor_pointer target requires U64.v target < minor_heap_size — contradiction
+      assert (~(PromoteSpec.is_minor_pointer target))
+  in
+  Classical.forall_intro (Classical.move_requires aux)
+
 /// Bridge lemma: conditional two-pass ↔ full-update equivalence.
 /// If the 5 preconditions of TwoPassEquiv hold, then the two-pass result
 /// equals update_major_pointers (= cheney_collect_spec.mc_major).
@@ -442,7 +474,6 @@ fn minor_collect_full (gh: gen_heap_t)
        promoted_entries_disjoint prom.major_final farr2 /\
        SpecFields.well_formed_heap_part4 prom.major_final /\
        slots_pairwise_distinct 'sl (SZ.v nslots) /\
-       fwd_targets_stable prom.fwd_map /\
        fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)
        ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))
 {
@@ -486,6 +517,11 @@ fn minor_collect_full (gh: gen_heap_t)
 
   // Prove the conditional equivalence for the strong spec:
   // IF the 5 TwoPassEquiv conditions hold THEN s2 == cheney_collect_spec.mc_major
+  // First derive fwd_targets_stable unconditionally (targets > zero_addr >= minor_heap_size)
+  CheneySpec.cheney_promote_fwd_above_zero_addr
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  derive_fwd_targets_stable
+    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
   Classical.move_requires
     (two_pass_implies_full_update
        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs farr_post3 'sl)

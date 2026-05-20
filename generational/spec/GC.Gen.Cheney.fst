@@ -1310,3 +1310,180 @@ let cheney_promote_fwd_bounded
   cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_fwd_bounded minor cs1 0 (cheney_fuel minor)
+
+/// ---------------------------------------------------------------------------
+/// fwd_above_zero_addr preservation through Cheney BFS
+/// ---------------------------------------------------------------------------
+
+/// cheney_forward_normal preserves fwd_above_zero_addr.
+/// New entry comes from alloc_spec, whose result is in objects zero_addr major,
+/// hence has value > zero_addr.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+
+private let cheney_forward_normal_preserves_fwd_above_zero
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires fwd_above_zero_addr cs.cs_fwd /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+          (ensures fwd_above_zero_addr (cheney_forward_normal minor cs addr).cs_fwd)
+  =
+  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL
+  then ()
+  else
+    let wz = minor_wosize minor addr in
+    if wz = 0 then ()
+    else
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      if res.new_addr = 0UL then ()
+      else begin
+        AllocProps.alloc_spec_obj_in_objects_part1 cs.cs_major cs.cs_fp wz;
+        let alloc_res = Allocator.alloc_spec cs.cs_major cs.cs_fp wz in
+        objects_addresses_gt_start zero_addr alloc_res.heap_out alloc_res.obj_out;
+        assert (U64.v res.new_addr > U64.v zero_addr);
+        ()
+      end
+
+#pop-options
+
+/// cheney_forward_one preserves fwd_above_zero_addr (infix-aware).
+/// For infix: value = parent_fwd + delta, where parent_fwd > zero_addr (from IH)
+/// and delta >= 0, so sum > zero_addr.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+
+private let cheney_forward_one_preserves_fwd_above_zero
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma (requires fwd_above_zero_addr cs.cs_fwd /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
+          (ensures fwd_above_zero_addr (cheney_forward_one minor cs addr).cs_fwd)
+  =
+  if cs.cs_fwd addr <> 0UL then ()
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_preserves_fwd_above_zero minor cs parent;
+    cheney_forward_normal_preserves_wfh_part1 minor cs parent;
+    let cs' = cheney_forward_normal minor cs parent in
+    if cs'.cs_fwd parent <> 0UL then begin
+      reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
+      let r = cheney_forward_one minor cs addr in
+      cheney_forward_one_infix_bounded minor cs addr;
+      // parent_fwd > zero_addr from fwd_above_zero_addr cs'.cs_fwd
+      // delta = addr - parent >= 0, so sum = parent_fwd + delta > zero_addr
+      let aux (x: U64.t) : Lemma (requires r.cs_fwd x <> 0UL)
+                                  (ensures U64.v (r.cs_fwd x) > U64.v zero_addr) =
+        if x = addr then begin
+          let parent_fwd_v = U64.v (cs'.cs_fwd parent) in
+          let delta = U64.v addr - U64.v parent in
+          assert (U64.v (r.cs_fwd addr) == parent_fwd_v + delta);
+          assert (parent_fwd_v > U64.v zero_addr);
+          assert (U64.v (r.cs_fwd addr) > U64.v zero_addr)
+        end else begin
+          cheney_forward_one_infix_fwd minor cs addr x
+          // r.cs_fwd x == cs'.cs_fwd x, above zero from fwd_above_zero_addr cs'
+        end
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+    end else ()
+  end
+  else
+    cheney_forward_normal_preserves_fwd_above_zero minor cs addr
+
+#pop-options
+
+/// Forward fields preserves fwd_above_zero_addr
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_fields_preserves_fwd_above_zero
+  (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma (requires fwd_above_zero_addr cs.cs_fwd /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
+          (ensures fwd_above_zero_addr (cheney_forward_fields minor cs parent idx wosize).cs_fwd)
+          (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then ()
+  else begin
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    cheney_forward_one_preserves_fwd_above_zero minor cs field_val;
+    cheney_forward_one_preserves_wfh_part1 minor cs field_val;
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_fields_preserves_fwd_above_zero minor cs' parent (idx + 1) wosize
+  end
+
+#pop-options
+
+/// Forward roots preserves fwd_above_zero_addr
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+
+private let rec cheney_forward_roots_preserves_fwd_above_zero
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  : Lemma (requires fwd_above_zero_addr cs.cs_fwd /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
+          (ensures fwd_above_zero_addr (cheney_forward_roots minor cs roots idx).cs_fwd)
+          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then ()
+  else begin
+    let r = Seq.index roots idx in
+    cheney_forward_one_preserves_fwd_above_zero minor cs r;
+    cheney_forward_one_preserves_wfh_part1 minor cs r;
+    let cs' = cheney_forward_one minor cs r in
+    cheney_forward_roots_preserves_fwd_above_zero minor cs' roots (idx + 1)
+  end
+
+#pop-options
+
+/// Scan loop preserves fwd_above_zero_addr
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+
+private let rec cheney_scan_preserves_fwd_above_zero
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma (requires fwd_above_zero_addr cs.cs_fwd /\
+                    well_formed_heap_part1 cs.cs_major /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
+          (ensures fwd_above_zero_addr (cheney_scan minor cs scan fuel).cs_fwd)
+          (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if scan >= Seq.length cs.cs_queue then ()
+  else begin
+    let obj = Seq.index cs.cs_queue scan in
+    let wz = minor_wosize minor obj in
+    let cs' = cheney_forward_fields minor cs obj 0 wz in
+    cheney_forward_fields_preserves_fwd_above_zero minor cs obj 0 wz;
+    cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
+    assert (fuel > 0);
+    let fuel' : nat = fuel - 1 in
+    cheney_scan_preserves_fwd_above_zero minor cs' (scan + 1) fuel'
+  end
+
+#pop-options
+
+/// Full cheney_promote produces a forwarding map with targets above zero_addr
+let cheney_promote_fwd_above_zero_addr
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
+          (ensures fwd_above_zero_addr (cheney_promote minor major fp roots).fwd_map)
+  =
+  reveal_opaque (`%well_formed_heap) well_formed_heap;
+  assert (fwd_above_zero_addr empty_forwarding);
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  cheney_forward_roots_preserves_fwd_above_zero minor cs0 roots 0;
+  cheney_forward_roots_preserves_wfh_part1 minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_scan_preserves_fwd_above_zero minor cs1 0 (cheney_fuel minor)

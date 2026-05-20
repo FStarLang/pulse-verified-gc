@@ -128,3 +128,9 @@ val minor_major_disjoint : unit ->
 /// Provided at link time by compat.c.
 val zero_addr_above_minor : unit ->
   Lemma (ensures U64.v zero_addr >= minor_heap_size)
+
+/// Values at or above minor_heap_size are unchanged by to_minor_offset.
+/// This is a consequence of minor_base_addr configuration.
+val to_minor_offset_stable_above_minor : (v: U64.t) ->
+  Lemma (requires U64.v v >= minor_heap_size /\ U64.v v % 8 == 0)
+        (ensures to_minor_offset v == v)

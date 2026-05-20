@@ -446,3 +446,24 @@ val cheney_promote_fwd_bounded
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
                     minor_infix_wf minor)
           (ensures fwd_bounded (cheney_promote minor major fp roots).fwd_map)
+
+/// --- fwd_above_zero_addr: all forwarding targets are above zero_addr ---
+
+/// A forwarding map has targets above zero_addr if every non-zero value
+/// satisfies U64.v > U64.v zero_addr. Since zero_addr >= minor_heap_size,
+/// this ensures targets cannot be confused with minor pointers.
+let fwd_above_zero_addr (fwd: forwarding_map) : prop =
+  forall (x: U64.t). fwd x <> 0UL ==>
+    U64.v (fwd x) > U64.v zero_addr
+
+/// Cheney promote produces a forwarding map with targets above zero_addr.
+/// Proof: normal entries come from alloc_spec, which returns addresses in
+/// objects zero_addr major (hence > zero_addr). Infix entries are
+/// parent_fwd + delta where parent_fwd > zero_addr and delta >= 0.
+val cheney_promote_fwd_above_zero_addr
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    minor_infix_wf minor)
+          (ensures fwd_above_zero_addr (cheney_promote minor major fp roots).fwd_map)
