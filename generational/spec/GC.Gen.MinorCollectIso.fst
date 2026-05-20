@@ -998,16 +998,16 @@ let reachable_minor_gives_fwd_nonzero
 /// Helper: for src with edge in mc_major, src is not no_scan in mc_major
 /// (no_scan objects have empty object_edges, so if (src, dst) is an edge, src is scannable)
 private
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
 let mc_edge_source_not_no_scan
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (src: obj_addr) (dst: U64.t)
+  (src: obj_addr) (dst: hp_addr)
   : Lemma
     (requires minor_collect_iso_preconditions minor major fp roots /\
              (let res = cheney_collect_spec minor major fp roots in
               let g_mc = create_graph res.mc_major in
               Seq.mem src (objects zero_addr res.mc_major) /\
-              Seq.mem ((src <: hp_addr), (dst <: hp_addr)) g_mc.edges))
+              Seq.mem ((src <: hp_addr), dst) g_mc.edges))
     (ensures (let res = cheney_collect_spec minor major fp roots in
               ~(is_no_scan src res.mc_major)))
   = let res = cheney_collect_spec minor major fp roots in

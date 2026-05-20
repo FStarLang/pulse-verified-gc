@@ -255,8 +255,10 @@ let fwd_targets_originally_blue
   let live_set = live_set_of minor major roots in
   forall (a: U64.t).
     Seq.mem a live_set /\ prom.fwd_map a <> 0UL ==>
-    (Seq.mem (prom.fwd_map a <: obj_addr) (objects zero_addr major) /\
-     is_blue (prom.fwd_map a <: obj_addr) major)
+    (let fwd_a = prom.fwd_map a in
+     U64.v fwd_a >= U64.v mword /\ U64.v fwd_a < heap_size /\ U64.v fwd_a % U64.v mword == 0 /\
+     Seq.mem (fwd_a <: obj_addr) (objects zero_addr major) /\
+     is_blue (fwd_a <: obj_addr) major)
 
 /// Promoted copies have exactly the same wosize as the source minor object.
 /// This is a consequence of the Cheney allocator setting the header from the minor
@@ -270,7 +272,9 @@ let promoted_copy_exact_wosize
   let live_set = live_set_of minor major roots in
   forall (v: U64.t).
     Seq.mem v live_set /\ prom.fwd_map v <> 0UL ==>
-    U64.v (wosize_of_object (prom.fwd_map v <: obj_addr) res.mc_major) == minor_wosize minor v
+    (let fwd_v = prom.fwd_map v in
+     U64.v fwd_v >= U64.v mword /\ U64.v fwd_v < heap_size /\ U64.v fwd_v % U64.v mword == 0 /\
+     U64.v (wosize_of_object (fwd_v <: obj_addr) res.mc_major) == minor_wosize minor v)
 
 /// The mc_major heap has no pointers from non-blue objects to blue objects.
 /// This is a standard OCaml GC invariant preserved through minor collection:
