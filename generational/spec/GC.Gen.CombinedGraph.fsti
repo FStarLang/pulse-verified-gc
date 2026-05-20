@@ -79,6 +79,13 @@ val classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_minor_addr v /\ Seq.mem v (minor_objects ms))
           (ensures classify_minor_field ms major v == Some (MinorV v))
 
+/// Characterization: classify_minor_field returns MajorV v when v is a major object
+/// and not a minor object (used by edge backward proofs)
+val classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
+                    ~(is_minor_pointer v))
+          (ensures classify_minor_field ms major v == Some (MajorV v))
+
 /// Classify a field value read from a major-heap object.
 /// A field is a pointer if it refers to a major object or a minor object.
 val classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
@@ -90,6 +97,12 @@ val classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
                     ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
           (ensures classify_major_field ms major v == Some (MajorV v))
+
+/// Characterization: classify_major_field returns MinorV v when v is a minor pointer
+/// in the minor objects set (used by edge backward proofs)
+val classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_minor_pointer v /\ Seq.mem v (minor_objects ms))
+          (ensures classify_major_field ms major v == Some (MinorV v))
 
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas

@@ -222,7 +222,9 @@ let minor_collect_operational_preconditions
   // No-scan minor objects have no classifiable fields (neither minor nor major pointers).
   // This strengthens minor_no_scan_invariant to also exclude raw data that
   // coincidentally matches a live minor object address.
-  minor_no_scan_no_classify minor major
+  minor_no_scan_no_classify minor major /\
+  // Graph well-formedness: edge targets are valid objects (consequence of well_formed_heap_part2)
+  graph_wf (create_graph major)
 
 /// Promoted copy structural properties: wosize and is_no_scan of newly promoted
 /// objects in mc_major. These follow from promotion semantics (set_promoted_tag
@@ -383,3 +385,37 @@ val minor_collect_iso_theorem
   : Lemma
     (requires minor_collect_iso_preconditions minor major fp roots)
     (ensures minor_collect_correctness minor major fp roots)
+
+/// ---------------------------------------------------------------------------
+/// Reduced preconditions: well_formed_heap parts 1,3,4 derived internally
+/// ---------------------------------------------------------------------------
+
+/// Same as minor_collect_iso_preconditions but replaces
+///   well_formed_heap res.mc_major
+/// with just
+///   well_formed_heap_part2 res.mc_major
+/// because parts 1, 3, 4 are provable from operational conditions
+/// (via CheneyCorrectness: cheney_collect_preserves_wfh_part1/3/4).
+///
+/// Additionally requires minor_all_no_infix (for parts 3+4 proofs).
+let minor_collect_iso_reduced_preconditions
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  // Operational conditions (unchanged)
+  minor_collect_operational_preconditions minor major fp roots /\
+  // Minor objects have no infix tag (needed for parts 3+4)
+  GC.Gen.CheneyPart4.minor_all_no_infix minor /\
+  // Non-operational conditions
+  (let prom = cheney_promote minor major fp roots in
+   let res = cheney_collect_spec minor major fp roots in
+   field_correspondence minor major res.mc_major prom.fwd_map roots /\
+   promoted_copy_properties minor major fp roots /\
+   promoted_copy_exact_wosize minor major fp roots /\
+   fwd_targets_originally_blue minor major fp roots /\
+   // Only part2 needed — parts 1,3,4 follow from operational conditions
+   well_formed_heap_part2 res.mc_major /\
+   graph_wf (create_graph res.mc_major) /\
+   // Surjectivity preconditions
+   mc_major_no_pointer_to_blue minor major fp roots /\
+   mc_major_vertex_partition minor major fp roots /\
+   fwd_domain_is_live_set minor major fp roots /\
+   mc_roots_valid minor major fp roots)

@@ -50,3 +50,8 @@ let minor_major_disjoint () : Lemma (ensures minor_heap_size > 0 /\ heap_size > 
 /// It cannot be proved from ZeroAddr's axioms alone (zero_addr is extern).
 let major_starts_after_minor () : Lemma (ensures U64.v zero_addr >= minor_heap_size) =
   assume (U64.v zero_addr >= minor_heap_size)
+
+let is_minor_addr_intro (a: U64.t)
+  : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+          (ensures is_minor_addr a)
+  = ()

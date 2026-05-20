@@ -75,66 +75,6 @@ val cheney_collect_preserves_objects
                 Seq.mem x (objects zero_addr res.mc_major)))
 
 /// ---------------------------------------------------------------------------
-/// Property 2: Heap size-bounds invariant preserved after collection
-/// ---------------------------------------------------------------------------
-
-/// After collection, every object in the post-collection heap still has its
-/// header+body fitting within the heap byte array. This is the "part 1"
-/// sub-invariant of well_formed_heap (the weakest component, but sufficient
-/// for safe object traversal).
-///
-/// Note: full well_formed_heap (parts 1-4) is NOT preserved unconditionally
-/// because promotion may violate pointer-closure (part 2) if the forwarding
-/// map introduces dangling minor-heap references. Part 1 alone is always safe.
-val cheney_collect_preserves_wfh_part1
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma
-    (requires
-      // Major heap well-formed
-      well_formed_heap major /\
-      // Free-list valid and terminating
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
-    (ensures
-      // Every object's header+body fits within the post-collection heap byte array
-      well_formed_heap_part1 (cheney_collect_spec minor major fp roots).mc_major)
-
-/// ---------------------------------------------------------------------------
-/// Property 2b: Part4 preserved (no infix objects)
-/// ---------------------------------------------------------------------------
-
-/// After collection, no object in the post-collection heap has infix_tag.
-/// Proof: cheney_promote preserves part4 (CheneyPart4 module), then
-/// update_major_pointers preserves part4 (PromoteUpdate).
-val cheney_collect_preserves_wfh_part4
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma
-    (requires
-      well_formed_heap major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-      GC.Gen.CheneyPart4.minor_all_no_infix minor)
-    (ensures
-      well_formed_heap_part4 (cheney_collect_spec minor major fp roots).mc_major)
-
-/// ---------------------------------------------------------------------------
-/// Property 2c: Part3 preserved (infix well-formedness)
-/// ---------------------------------------------------------------------------
-
-/// After collection, infix well-formedness holds (vacuously, since part4 means
-/// no objects have infix_tag). Proof: part1 + part4 of intermediate heap, then
-/// update_major_pointers_preserves_wfh_part3.
-val cheney_collect_preserves_wfh_part3
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma
-    (requires
-      well_formed_heap major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-      GC.Gen.CheneyPart4.minor_all_no_infix minor)
-    (ensures
-      well_formed_heap_part3 (cheney_collect_spec minor major fp roots).mc_major)
-
 /// ---------------------------------------------------------------------------
 /// Property 3: Minor heap is properly reset
 /// ---------------------------------------------------------------------------

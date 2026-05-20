@@ -998,22 +998,25 @@ let reachable_minor_gives_fwd_nonzero
 /// Helper: for src with edge in mc_major, src is not no_scan in mc_major
 /// (no_scan objects have empty object_edges, so if (src, dst) is an edge, src is scannable)
 private
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#restart-solver
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let mc_edge_source_not_no_scan
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (src: obj_addr) (dst: hp_addr)
+  (src: obj_addr) (dst: U64.t)
   : Lemma
     (requires minor_collect_iso_preconditions minor major fp roots /\
+             U64.v dst < heap_size /\ U64.v dst % U64.v mword == 0 /\
              (let res = cheney_collect_spec minor major fp roots in
               let g_mc = create_graph res.mc_major in
               Seq.mem src (objects zero_addr res.mc_major) /\
-              Seq.mem ((src <: hp_addr), dst) g_mc.edges))
+              Seq.mem ((src <: hp_addr), (dst <: hp_addr)) g_mc.edges))
     (ensures (let res = cheney_collect_spec minor major fp roots in
               ~(is_no_scan src res.mc_major)))
   = let res = cheney_collect_spec minor major fp roots in
     let mc = res.mc_major in
+    let dst_hp : hp_addr = dst in
     // Edge membership → (src, dst) ∈ all_edges mc objs
-    HeapGraph.all_edges_source_membership mc (objects zero_addr mc) src dst;
+    HeapGraph.all_edges_source_membership mc (objects zero_addr mc) src dst_hp;
     // Now: (src, dst) ∈ object_edges mc src
     // object_edges for no_scan objects = Seq.empty (from definition, fuel 1)
     // So if (src, dst) ∈ object_edges mc src, src is not no_scan
@@ -1029,7 +1032,7 @@ let mc_edge_source_not_no_scan
 ///   Then pointer_field_is_graph_edge → edge in original major → combined edge.
 private
 #restart-solver
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
 let prove_edge_backward_major_major
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t)
@@ -1062,6 +1065,11 @@ let prove_edge_backward_major_major
     // wosize/no_scan preserved for non-blue src
     HeaderPres.minor_collect_preserves_wosize minor major fp roots (src <: obj_addr);
     HeaderPres.minor_collect_preserves_is_no_scan minor major fp roots (src <: obj_addr);
+    // --- Establish src in objects(mc) and object_fits ---
+    assert (Seq.mem (src <: obj_addr) (objects zero_addr mc));
+    GC.Spec.Fields.wf_object_bound mc (src <: obj_addr);
+    HeapGraph.object_fits_from_bound (src <: obj_addr) mc;
+    assert (~(is_no_scan (src <: obj_addr) mc));
     // --- Extract field index from mc edge ---
     objects_is_vertex_set mc;
     HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) (src <: obj_addr) dst;
@@ -1078,6 +1086,12 @@ let prove_edge_backward_major_major
     // Arithmetic: field address in bounds and aligned
     GC.Spec.Fields.wf_object_bound mc (src <: obj_addr);
     field_addr_arithmetic (U64.v src) i (U64.v (wosize_of_object (src <: obj_addr) mc));
+    assert (U64.v j <= U64.v (wosize_of_object (src <: obj_addr) mc));
+    assert (U64.v src + U64.v (wosize_of_object (src <: obj_addr) mc) * 8 <= heap_size);
+    hd_address_spec (src <: obj_addr);
+    assert (U64.v (hd_address (src <: obj_addr)) + U64.v mword * U64.v j + U64.v mword <= heap_size);
+    wosize_of_object_bound (src <: obj_addr) mc;
+    assert (U64.v j < pow2 54);
     // get_field mc src j == read_word mc (src + i*8) (via get_field_addr_eq)
     HeapGraph.get_field_addr_eq mc (src <: obj_addr) j;
     // --- Use derive_mc_major_field_value ---
@@ -1096,6 +1110,8 @@ let prove_edge_backward_major_major
     // --- Reconstruct edge in original major ---
     // get_field major src j == read_word major (src + i*8) == dst
     GC.Spec.Fields.wf_object_bound major (src <: obj_addr);
+    hd_address_spec (src <: obj_addr);
+    wosize_of_object_bound (src <: obj_addr) major;
     HeapGraph.get_field_addr_eq major (src <: obj_addr) j;
     assert (HeapGraph.get_field major (src <: obj_addr) j == dst);
     // is_pointer_field dst (from mc edge witness)
@@ -1119,7 +1135,7 @@ let prove_edge_backward_major_major
 ///   minor_field_edge_intro → combined edge (MinorV src, MajorV dst).
 private
 #restart-solver
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1 --split_queries always"
 let prove_edge_backward_minor_major
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t)
@@ -1151,6 +1167,9 @@ let prove_edge_backward_minor_major
     // --- Extract field index from mc edge ---
     mc_edge_source_not_no_scan minor major fp roots fwd_src dst;
     objects_is_vertex_set mc;
+    // object_fits for fwd_src in mc (needed by graph_edge_has_field_index)
+    GC.Spec.Fields.wf_object_bound mc fwd_src;
+    HeapGraph.object_fits_from_bound fwd_src mc;
     HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) fwd_src dst;
     let j = FStar.IndefiniteDescription.indefinite_description_ghost
       (j:U64.t{U64.v j >= 1})
@@ -1166,13 +1185,16 @@ let prove_edge_backward_minor_major
     GC.Spec.Fields.wf_object_bound mc fwd_src;
     field_addr_arithmetic (U64.v fwd_src) i (U64.v (wosize_of_object fwd_src mc));
     // get_field mc fwd_src j == read_word mc (fwd_src + i*8) == dst
+    hd_address_spec fwd_src;
+    wosize_of_object_bound fwd_src mc;
     HeapGraph.get_field_addr_eq mc fwd_src j;
     let field_addr_v = U64.v fwd_src + i * 8 in
     assert (read_word mc (U64.uint_to_t field_addr_v) == dst);
-    // --- Apply promoted_field_through_minor_collect ---
-    EdgePres.promoted_field_through_minor_collect minor major fp roots src i;
+    // --- Use field_correspondence directly (avoids promote_all_spec unification) ---
+    // field_correspondence is part of minor_collect_iso_preconditions with cheney_promote's fwd
+    field_correspondence_instance minor major mc fwd roots src i;
     let minor_val = minor_read_field minor src i in
-    // promoted_field gives:
+    // field_correspondence gives:
     //   Case 1: is_minor_pointer minor_val /\ fwd minor_val <> 0 → mc_val = fwd(minor_val)
     //   Case 2: otherwise → mc_val = minor_val
     // mc_val = dst. If Case 1: fwd(minor_val) = dst.
@@ -1182,7 +1204,8 @@ let prove_edge_backward_minor_major
     // --- Construct combined edge ---
     // dst ∈ objects(major), dst not a minor pointer (it's a major obj_addr)
     MajorBridge.major_object_not_minor_pointer major (dst <: obj_addr);
-    // classify_minor_field: since dst not minor_pointer and dst in objects(major) → MajorV dst
+    // Establish classify_minor_field minor major dst == Some (MajorV dst)
+    classify_minor_field_major minor major dst;
     // minor_field_edge_intro gives (MinorV src, MajorV dst) in combined graph
     minor_field_edge_intro minor major src i (MajorV dst)
 #pop-options
@@ -1194,9 +1217,46 @@ let prove_edge_backward_minor_major
 ///   So the field was REWRITTEN: original was minor ptr m, fwd(m) = fwd(dst).
 ///   By injectivity: m = dst. Original field = dst (a minor pointer).
 ///   classify_major_field gives MinorV dst → major_field_edge_intro → combined edge.
+
+/// Helper: In a heap with no_pointer_to_blue, a non-blue object's field value
+/// cannot equal a blue target address. Used to eliminate the "not rewritten" case.
 private
 #restart-solver
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 0"
+let major_field_not_equal_blue
+  (major: heap) (src: obj_addr) (i: nat) (target: obj_addr)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      Mark.no_pointer_to_blue major /\
+      Seq.mem src (objects zero_addr major) /\ ~(is_blue src major) /\
+      Seq.mem target (objects zero_addr major) /\ is_blue target major /\
+      i < U64.v (wosize_of_object src major) /\
+      U64.v src + i * 8 + 8 <= heap_size /\ (U64.v src + i * 8) % 8 == 0)
+    (ensures read_word major (U64.uint_to_t (U64.v src + i * 8)) <> (target <: U64.t))
+  = let field_addr : hp_addr = U64.uint_to_t (U64.v src + i * 8) in
+    let fv = read_word major field_addr in
+    if fv = (target <: U64.t) then begin
+      // target ∈ objects(zero_addr, major) → U64.v target > U64.v zero_addr
+      // Combined with alignment: target >= zero_addr + mword → is_pointer target
+      objects_addresses_gt_start zero_addr major target;
+      assert (is_pointer_field fv);
+      assert (is_pointer_to fv target);
+      // Establish points_to via field_read_implies_exists_pointing
+      let k = U64.uint_to_t i in
+      let wz = wosize_of_object src major in
+      wf_object_size_bound major src;
+      wosize_of_object_bound src major;
+      FStar.Math.Lemmas.pow2_lt_compat 61 54;
+      field_read_implies_exists_pointing major src wz k target;
+      assert (points_to major src target)
+      // no_pointer_to_blue: src non-blue, points_to → ~(is_blue target major). Contradiction!
+    end
+#pop-options
+
+private
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1 --split_queries always"
 let prove_edge_backward_major_minor
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t)
@@ -1228,10 +1288,12 @@ let prove_edge_backward_major_minor
     // src is non-blue, in objects(major), in objects(mc)
     // fwd(dst) was blue in original (from fwd_targets_originally_blue precondition)
     // --- Extract field index from mc edge ---
-    mc_edge_source_not_no_scan minor major fp roots (src <: obj_addr) (fwd dst);
+    mc_edge_source_not_no_scan minor major fp roots (src <: obj_addr) fwd_dst;
     HeaderPres.minor_collect_preserves_wosize minor major fp roots (src <: obj_addr);
     HeaderPres.minor_collect_preserves_is_no_scan minor major fp roots (src <: obj_addr);
     objects_is_vertex_set mc;
+    GC.Spec.Fields.wf_object_bound mc (src <: obj_addr);
+    HeapGraph.object_fits_from_bound (src <: obj_addr) mc;
     HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) (src <: obj_addr) (fwd dst <: U64.t);
     let j = FStar.IndefiniteDescription.indefinite_description_ghost
       (j:U64.t{U64.v j >= 1})
@@ -1243,6 +1305,8 @@ let prove_edge_backward_major_minor
     assert (i < U64.v (wosize_of_object (src <: obj_addr) major));
     GC.Spec.Fields.wf_object_bound mc (src <: obj_addr);
     field_addr_arithmetic (U64.v src) i (U64.v (wosize_of_object (src <: obj_addr) mc));
+    hd_address_spec (src <: obj_addr);
+    wosize_of_object_bound (src <: obj_addr) mc;
     HeapGraph.get_field_addr_eq mc (src <: obj_addr) j;
     // --- Use derive_mc_major_field_value ---
     derive_mc_major_field_value minor major fp roots (src <: obj_addr) i;
@@ -1250,20 +1314,27 @@ let prove_edge_backward_major_minor
     let old_val = read_word major field_addr in
     let mc_val = read_word mc field_addr in
     assert (mc_val == (fwd dst <: U64.t));
-    // From derive_mc_major_field_value:
-    //   If old_val NOT rewritable → mc_val = old_val. But mc_val = fwd(dst) which was blue.
-    //     no_pointer_to_blue: non-blue src can't point to blue fwd(dst). So old_val ≠ fwd(dst).
-    //     This contradicts mc_val = old_val = fwd(dst). Hence old_val IS rewritable.
-    //   If old_val IS rewritable → mc_val = fwd(old_val) = fwd(dst).
-    //     By injectivity of fwd on live_set: old_val = dst.
-    // The original field was dst (a minor pointer).
+    // --- Establish that fwd(dst) is blue in major ---
+    // dst is in live_set (from combined_reachable_minor → minor_objects → live_set)
+    assert (fwd dst <> 0UL); // from reachable_minor_gives_fwd_nonzero above
+    // fwd_targets_originally_blue: for a in live_set with fwd(a) <> 0 → fwd(a) blue in major
+    assert (is_blue (fwd dst <: obj_addr) major);
+    // --- Contradiction eliminates the not-rewritable case ---
+    // derive_mc_major_field_value gives two cases:
+    //   Case NOT rewritable → mc_val == old_val == fwd(dst). But fwd(dst) is blue in major.
+    //     major_field_not_equal_blue: field value ≠ blue target. Contradiction.
+    //   Case rewritable → mc_val == fwd(old_val) == fwd(dst). By injectivity: old_val == dst.
+    major_field_not_equal_blue major (src <: obj_addr) i (fwd dst <: obj_addr);
     CheneyInj.cheney_promote_fwd_injective minor major fp roots;
+    // Not-rewritable case impossible (old_val ≠ fwd dst), so rewritable case holds
+    assert (is_minor_pointer old_val /\ fwd old_val <> 0UL);
+    // fwd(old_val) == mc_val == fwd(dst), by injectivity: old_val == dst
     assert (old_val == dst);
     // --- Construct combined edge ---
-    // dst is in minor_objects (from reachability_bridge)
-    RBridge.reachability_bridge minor major roots;
-    // classify_major_field ms major (read_word major field_addr) == Some (MinorV dst)
-    // Since old_val = dst is a minor pointer in minor_objects(minor)
+    // dst is in minor_objects (from reachability_bridge → reachable_minor_gives_fwd_nonzero)
+    // classify_major_field: dst is minor_pointer ∧ in minor_objects → Some (MinorV dst)
+    GC.Gen.MinorHeap.minor_objects_valid minor dst;
+    classify_major_field_is_minor minor major dst;
     major_field_edge_intro minor major (src <: obj_addr) i (MinorV dst)
 #pop-options
 
@@ -1278,7 +1349,7 @@ let prove_edge_backward_major_minor
 ///   classify_minor_field gives MinorV dst → minor_field_edge_intro → combined edge.
 private
 #restart-solver
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1 --split_queries always"
 let prove_edge_backward_minor_minor
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t)
@@ -1313,6 +1384,8 @@ let prove_edge_backward_minor_minor
     // --- Extract field index from mc edge ---
     mc_edge_source_not_no_scan minor major fp roots fwd_src fwd_dst;
     objects_is_vertex_set mc;
+    GC.Spec.Fields.wf_object_bound mc fwd_src;
+    HeapGraph.object_fits_from_bound fwd_src mc;
     HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) fwd_src fwd_dst;
     let j = FStar.IndefiniteDescription.indefinite_description_ghost
       (j:U64.t{U64.v j >= 1})
@@ -1325,14 +1398,16 @@ let prove_edge_backward_minor_minor
     assert (i < minor_wosize minor src);
     // field_addr bounds
     GC.Spec.Fields.wf_object_bound mc fwd_src;
+    hd_address_spec fwd_src;
+    wosize_of_object_bound fwd_src mc;
     field_addr_arithmetic (U64.v fwd_src) i (U64.v (wosize_of_object fwd_src mc));
     HeapGraph.get_field_addr_eq mc fwd_src j;
     let field_addr_v = U64.v fwd_src + i * 8 in
     assert (read_word mc (U64.uint_to_t field_addr_v) == fwd_dst);
-    // --- Apply promoted_field_through_minor_collect ---
-    EdgePres.promoted_field_through_minor_collect minor major fp roots src i;
+    // --- Use field_correspondence directly (avoids promote_all_spec unification) ---
+    field_correspondence_instance minor major mc fwd roots src i;
     let minor_val = minor_read_field minor src i in
-    // promoted_field gives:
+    // field_correspondence gives:
     //   Case 1: is_minor_pointer minor_val /\ fwd minor_val <> 0 → mc_val = fwd(minor_val)
     //   Case 2: otherwise → mc_val = minor_val
     // mc_val = fwd(dst). If Case 2: minor_val = fwd(dst).
@@ -1344,6 +1419,9 @@ let prove_edge_backward_minor_minor
     // --- Construct combined edge ---
     // dst is in minor_objects (from reachable_minor_gives_fwd_nonzero)
     // classify_minor_field for dst: minor object → Some (MinorV dst)
+    GC.Gen.MinorHeap.minor_objects_valid minor dst;
+    GC.Gen.Base.is_minor_addr_intro dst;
+    classify_minor_field_minor minor major dst;
     minor_field_edge_intro minor major src i (MinorV dst)
 #pop-options
 
@@ -1638,8 +1716,9 @@ let rec rewrite_roots_mem_inv (roots: seq U64.t) (fwd: forwarding_map) (y: U64.t
       let tl = Seq.tail roots in
       if rewrite_root hd fwd = y then ()
       else begin
-        // y ∈ rewrite_roots roots fwd = cons (rewrite_root hd fwd) (rewrite_roots tl fwd)
-        // y ≠ rewrite_root hd fwd → y ∈ rewrite_roots tl fwd
+        // rewrite_roots unfolds to Seq.cons (rewrite_root hd fwd) (rewrite_roots tl fwd)
+        assert (rewrite_roots roots fwd == Seq.cons (rewrite_root hd fwd) (rewrite_roots tl fwd));
+        FStar.Seq.Properties.mem_cons (rewrite_root hd fwd) (rewrite_roots tl fwd);
         assert (Seq.mem y (rewrite_roots tl fwd));
         rewrite_roots_mem_inv tl fwd y
         // IH gives ∃x. x ∈ tl ∧ rewrite_root x fwd == y
@@ -1651,7 +1730,7 @@ let rec rewrite_roots_mem_inv (roots: seq U64.t) (fwd: forwarding_map) (y: U64.t
 /// Helper: graph edge implies points_to.
 /// Bridges from mem_graph_edge to the points_to predicate needed by no_pointer_to_blue.
 private
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let graph_edge_implies_points_to (g: heap) (src dst: obj_addr)
   : Lemma
     (requires well_formed_heap g /\
@@ -1660,6 +1739,8 @@ let graph_edge_implies_points_to (g: heap) (src dst: obj_addr)
              Seq.mem ((src <: hp_addr), (dst <: hp_addr)) (create_graph g).edges)
     (ensures GC.Spec.Fields.points_to g src dst)
   = objects_is_vertex_set g;
+    GC.Spec.Fields.wf_object_bound g src;
+    HeapGraph.object_fits_from_bound src g;
     HeapGraph.graph_edge_has_field_index g (objects zero_addr g) src (dst <: hp_addr);
     // Gives ∃j. j >= 1, j <= wosize(src), get_field g src j == dst, is_pointer_field dst
     let j = FStar.IndefiniteDescription.indefinite_description_ghost
@@ -1674,6 +1755,11 @@ let graph_edge_implies_points_to (g: heap) (src dst: obj_addr)
     // well_formed_object g src follows from well_formed_heap + membership
     GC.Spec.Fields.wf_object_bound g src;
     hd_address_spec src;
+    wosize_of_object_bound src g;
+    assert (U64.v wz < pow2 54);
+    FStar.Math.Lemmas.pow2_lt_compat 61 54;
+    assert (U64.v k < pow2 61);
+    field_addr_arithmetic (U64.v src) (U64.v k) (U64.v (wosize_of_object src g));
     // get_field g src j = read_word g (src + k*8)
     HeapGraph.get_field_addr_eq g src j;
     let far = U64.add_mod src (U64.mul_mod k mword) in
@@ -1704,7 +1790,7 @@ let mc_edge_target_nonblue
   = let res = cheney_collect_spec minor major fp roots in
     let mc = res.mc_major in
     // Edge means src has outgoing edge → src is not no_scan
-    mc_edge_source_not_no_scan minor major fp roots src (dst <: U64.t);
+    mc_edge_source_not_no_scan minor major fp roots src dst;
     // Graph edge → points_to mc src dst
     graph_edge_implies_points_to mc src dst;
     // no_pointer_to_blue mc: non-blue src pointing to dst → dst non-blue

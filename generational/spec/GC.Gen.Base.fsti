@@ -97,3 +97,9 @@ val minor_major_disjoint : unit ->
 /// This ensures no major object address can be confused with a minor pointer.
 val major_starts_after_minor : unit ->
   Lemma (ensures U64.v zero_addr >= minor_heap_size)
+
+/// Introduction form for is_minor_addr from its defining conditions.
+/// Allows modules that know the numeric facts to establish is_minor_addr.
+val is_minor_addr_intro (a: U64.t)
+  : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+          (ensures is_minor_addr a)

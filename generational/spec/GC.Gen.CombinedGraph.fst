@@ -43,6 +43,16 @@ let classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
           (ensures classify_minor_field ms major v == Some (MinorV v))
   = ()
 
+let classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
+                    ~(is_minor_pointer v))
+          (ensures classify_minor_field ms major v == Some (MajorV v))
+  = // From ~(is_minor_pointer v) with v >= 8 and v % 8 = 0 → v >= minor_heap_size
+    // minor_objects_valid: Seq.mem x (minor_objects ms) → x < minor_heap_size
+    // Contrapositive: v >= minor_heap_size → ~(Seq.mem v (minor_objects ms))
+    // So first branch (is_minor_addr v && Seq.mem v ...) is false regardless of is_minor_addr
+    Classical.move_requires (GC.Gen.MinorHeap.minor_objects_valid ms) v
+
 /// From a major object's field: a value is a minor pointer if it's in
 /// the minor heap, or a major pointer if it's a valid major object address.
 let classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
@@ -58,6 +68,11 @@ let classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
                     ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
           (ensures classify_major_field ms major v == Some (MajorV v))
+  = ()
+
+let classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
+  : Lemma (requires is_minor_pointer v /\ Seq.mem v (minor_objects ms))
+          (ensures classify_major_field ms major v == Some (MinorV v))
   = ()
 
 /// ---------------------------------------------------------------------------
