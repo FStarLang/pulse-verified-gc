@@ -93,7 +93,35 @@ val cheney_promote_frame_old_fields
                     Seq.mem obj (objects zero_addr major) /\
                     is_blue obj major = false /\
                     j < U64.v (wosize_of_object obj major) /\
-                    U64.v obj + j * 8 + 8 <= heap_size)
+                    U64.v obj + j * 8 + 8 <= heap_size /\
+                    minor_infix_wf minor)
           (ensures (let res = cheney_promote minor major fp roots in
                     read_word res.major_final (U64.uint_to_t (U64.v obj + j * 8))
                     == read_word major (U64.uint_to_t (U64.v obj + j * 8))))
+
+/// ---------------------------------------------------------------------------
+/// Injectivity: non-infix forwarding targets are pairwise distinct
+/// ---------------------------------------------------------------------------
+
+/// The forwarding map is injective on non-infix targets: two different
+/// source addresses cannot be forwarded to the same non-infix destination.
+/// Proof: each successful cheney_forward_normal allocates from the free-list,
+/// which advances after each allocation. From chain_objects_blue, existing
+/// (non-blue) targets avoid the chain, hence differ from the next allocation
+/// (which IS a chain node). By induction, all normal targets are distinct.
+let fwd_normal_injective (fwd: forwarding_map) (g: heap) : prop =
+  forall (x y: U64.t). fwd x <> 0UL /\ fwd y <> 0UL /\
+    is_val_addr (fwd x) /\ is_val_addr (fwd y) /\
+    is_infix (fwd x) g = false /\ is_infix (fwd y) g = false /\
+    fwd x = fwd y ==> x = y
+
+val cheney_promote_fwd_normal_injective
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_normal_injective (cheney_promote minor major fp roots).fwd_map
+                                        (cheney_promote minor major fp roots).major_final)

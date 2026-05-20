@@ -334,6 +334,7 @@ let derive_promoted_entries_disjoint
       Seq.length farr == fwd_array_size /\
       (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == fwd (U64.uint_to_t (i * 8))) /\
       CheneyPres.fwd_valid_or_infix fwd major /\
+      CheneyPres.fwd_normal_injective fwd major /\
       CheneySpec.fwd_bounded fwd /\
       SpecFields.well_formed_heap_part1 major)
     (ensures promoted_entries_disjoint major farr)
@@ -367,9 +368,24 @@ let derive_promoted_entries_disjoint
         SpecFields.objects_separated zero_addr major o1 o2
       else if U64.v o2 < U64.v o1 then
         SpecFields.objects_separated zero_addr major o2 o1
-      else
-        // o1 = o2: impossible for injective fwd on normal targets
-        admit ()
+      else begin
+        // o1 = o2: from fwd_normal_injective, fwd is injective on non-infix targets
+        // o1 = fwd(i1*8), o2 = fwd(i2*8), both non-zero, both non-infix, and equal
+        // => i1*8 = i2*8 => i1 = i2, contradicting i1 <> i2
+        let addr1 = U64.uint_to_t (i1 * 8) in
+        let addr2 = U64.uint_to_t (i2 * 8) in
+        assert (fwd addr1 <> 0UL);
+        assert (fwd addr2 <> 0UL);
+        assert (SpecObj.is_infix (fwd addr1) major = false);
+        assert (SpecObj.is_infix (fwd addr2) major = false);
+        assert (fwd addr1 = fwd addr2);
+        // From fwd_normal_injective: addr1 = addr2
+        assert (addr1 = addr2);
+        // Therefore i1 * 8 = i2 * 8, so i1 = i2 — contradiction with i1 <> i2
+        assert (i1 * 8 = i2 * 8);
+        assert (i1 = i2)
+        // Contradiction reached: this branch is unreachable
+      end
     end
   in
   Classical.forall_intro_2 aux
@@ -420,6 +436,7 @@ let two_pass_implies_full_update
        Seq.length farr == fwd_array_size /\
        represents_fwd farr prom.fwd_map /\
        CheneyPres.fwd_valid_or_infix prom.fwd_map prom.major_final /\
+       CheneyPres.fwd_normal_injective prom.fwd_map prom.major_final /\
        CheneySpec.fwd_bounded prom.fwd_map /\
        SpecFields.well_formed_heap_part4 prom.major_final /\
        valid_slot_addrs slots n /\
@@ -656,6 +673,8 @@ fn minor_collect_full (gh: gen_heap_t)
   CheneySpec.cheney_promote_preserves_wfh_part4
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   CheneyPres.cheney_promote_fwd_valid_or_infix
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  CheneyPres.cheney_promote_fwd_normal_injective
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   CheneySpec.cheney_promote_fwd_bounded
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
