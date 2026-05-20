@@ -1416,7 +1416,7 @@ let if_branch_addr_eq
       Seq.length farr == fwd_array_size /\
       promoted_entries_valid_from major farr 0 /\
       promoted_entries_disjoint major farr /\
-      promoted_entries_no_infix major farr /\
+      well_formed_heap_part4 major /\
       valid_slot_addrs slots n /\
       slots_pairwise_distinct slots n /\
       fwd_targets_stable fwd /\
@@ -1473,6 +1473,9 @@ let if_branch_addr_eq
       // is_no_scan (farr[pi]) = is_no_scan obj = false (by equality)
       // U64.v addr = U64.v obj + j*8 >= U64.v obj = U64.v (farr[pi])
       // j < wosize(obj) = wosize(farr[pi]) so addr < farr[pi] + wosize*8
+      // Derive is_infix = false from well_formed_heap_part4 + Seq.mem obj (objects ...)
+      assert (Seq.mem obj (objects zero_addr major));
+      assert (~(is_infix obj major));
       if_branch_lhs_promoted major fwd farr slots n pi addr
     end else begin
       // Not promoted: forall pi. farr[pi] <> obj
@@ -1502,7 +1505,7 @@ let promoted_plus_slots_eq_full_update
        represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
-       promoted_entries_no_infix prom.major_final farr /\
+       well_formed_heap_part4 prom.major_final /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
        ref_table_sound major_pre slots n /\

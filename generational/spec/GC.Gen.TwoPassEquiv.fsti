@@ -169,7 +169,7 @@ val promoted_plus_slots_eq_full_update
        represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
-       promoted_entries_no_infix prom.major_final farr /\
+       well_formed_heap_part4 prom.major_final /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
        ref_table_sound major_pre slots n /\

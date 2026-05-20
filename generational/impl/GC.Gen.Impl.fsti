@@ -289,7 +289,7 @@ fn minor_collect_full (gh: gen_heap_t)
       //     object's body or listed in the ref_table.
       (UpdatePtrs.promoted_entries_valid_from prom.major_final farr2 0 /\
        UpdatePtrs.promoted_entries_disjoint prom.major_final farr2 /\
-       UpdatePtrs.promoted_entries_no_infix prom.major_final farr2 /\
+       SpecFields.well_formed_heap_part4 prom.major_final /\
        UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
        UpdatePtrs.fwd_targets_stable prom.fwd_map /\
        UpdatePtrs.fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)

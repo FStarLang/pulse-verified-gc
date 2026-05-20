@@ -258,7 +258,7 @@ let two_pass_implies_full_update
        represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
-       promoted_entries_no_infix prom.major_final farr /\
+       SpecFields.well_formed_heap_part4 prom.major_final /\
        valid_slot_addrs slots n /\
        slots_pairwise_distinct slots n /\
        ref_table_sound major_pre slots n /\
@@ -440,7 +440,7 @@ fn minor_collect_full (gh: gen_heap_t)
       // conditions, the result equals cheney_collect_spec.mc_major.
       (promoted_entries_valid_from prom.major_final farr2 0 /\
        promoted_entries_disjoint prom.major_final farr2 /\
-       promoted_entries_no_infix prom.major_final farr2 /\
+       SpecFields.well_formed_heap_part4 prom.major_final /\
        slots_pairwise_distinct 'sl (SZ.v nslots) /\
        fwd_targets_stable prom.fwd_map /\
        fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)
