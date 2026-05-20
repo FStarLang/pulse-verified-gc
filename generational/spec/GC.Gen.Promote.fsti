@@ -686,6 +686,19 @@ val promote_all_preserves_wfh_part1
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
           (ensures well_formed_heap_part1 (promote_all_spec minor major fp live_set).major_final)
 
+/// promote_object preserves well_formed_heap_part4 (no infix objects) when the
+/// promoted minor object has a non-infix tag (tag <> 249).
+val promote_object_preserves_wfh_part4
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             well_formed_heap_part4 major /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
+           (ensures (let res = promote_object minor major obj fp wosize in
+                     well_formed_heap_part4 res.major_out))
+
 /// promote_all_spec preserves well_formed_heap_part4 (no infix objects)
 /// Requires that no promoted object has infix_tag (249), since setting an
 /// infix tag on a major-heap object would violate the no-infix invariant.

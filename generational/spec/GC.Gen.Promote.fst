@@ -1228,6 +1228,50 @@ private let copy_fields_preserves_wfh_part4
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
+/// promote_object preserves well_formed_heap_part4 when tag is not infix_tag.
+/// Combines alloc_spec, copy_fields, zero_promote_padding, set_promoted_tag part4 preservation.
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+let promote_object_preserves_wfh_part4
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma (requires
+             well_formed_heap_part1 major /\
+             well_formed_heap_part4 major /\
+             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
+           (ensures (let res = promote_object minor major obj fp wosize in
+                     well_formed_heap_part4 res.major_out))
+  = let fuel : nat = heap_size / U64.v mword in
+    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+    if alloc_res.obj_out = 0UL then begin
+      promote_object_oom minor major obj fp wosize
+    end else begin
+      GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
+      let dst_obj : obj_addr = alloc_res.obj_out in
+      AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
+      AllocLemmas.alloc_spec_preserves_wfh_part4 major fp wosize;
+      AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wosize;
+      AllocLemmas.alloc_spec_preserves_fl_chain_terminates_part1 major fp wosize;
+      GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+      GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
+      AllocLemmas.alloc_spec_obj_not_in_chain_part1 major fp wosize;
+      chain_avoids_implies_not_in_fl_chain alloc_res.heap_out alloc_res.fp_out dst_obj fuel;
+      copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wosize;
+      copy_fields_preserves_wfh_part4 minor alloc_res.heap_out obj dst_obj wosize;
+      let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize in
+      let tag = minor_tag minor obj in
+      minor_tag_bound minor obj;
+      copy_fields_preserves_objects_aux minor alloc_res.heap_out obj dst_obj 0 wosize;
+      assert (Seq.mem dst_obj (objects zero_addr copied));
+      zero_promote_padding_preserves_objects copied dst_obj wosize;
+      zero_promote_padding_preserves_wfh_part1 copied dst_obj wosize;
+      zero_promote_padding_preserves_wfh_part4 copied dst_obj wosize;
+      let padded = zero_promote_padding copied dst_obj wosize in
+      assert (Seq.mem dst_obj (objects zero_addr padded));
+      set_promoted_tag_preserves_wfh_part4 padded dst_obj tag
+    end
+#pop-options
+
 /// promote_all_aux preserves well_formed_heap_part4 (no infix objects).
 #push-options "--z3rlimit 50 --fuel 1 --split_queries always"
 let rec promote_all_aux_preserves_wfh_part4

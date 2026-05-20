@@ -467,3 +467,18 @@ val cheney_promote_fwd_above_zero_addr
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
                     minor_infix_wf minor)
           (ensures fwd_above_zero_addr (cheney_promote minor major fp roots).fwd_map)
+
+/// --- well_formed_heap_part4 preservation ---
+
+/// Cheney promote preserves well_formed_heap_part4 (no infix objects in the
+/// objects list). Proof: cheney_forward_normal only promotes objects from
+/// minor_objects, which have tag <> infix_tag (by minor_objects_not_infix).
+/// set_promoted_tag with non-infix tag preserves part4.
+val cheney_promote_preserves_wfh_part4
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    minor_wf minor /\
+                    minor_infix_wf minor)
+          (ensures well_formed_heap_part4 (cheney_promote minor major fp roots).major_final)

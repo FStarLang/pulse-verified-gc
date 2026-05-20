@@ -283,14 +283,13 @@ fn minor_collect_full (gh: gen_heap_t)
       // the major allocator returns addresses >= minor_heap_size.
       // They are: (1) promoted entries are valid objects in the objects list,
       // (2) promoted entries have non-overlapping bodies,
-      // (3) heap objects aren't infix, (4) ref_table slots are pairwise distinct,
-      // (5) every forwarded-minor-pointer field is either in a promoted
+      // (3) ref_table slots are pairwise distinct,
+      // (4) every forwarded-minor-pointer field is either in a promoted
       //     object's body or listed in the ref_table.
-      // Note: fwd_targets_stable is derived unconditionally from
-      // cheney_promote_fwd_above_zero_addr (targets > zero_addr >= minor_heap_size).
+      // Note: fwd_targets_stable and well_formed_heap_part4 are derived
+      // unconditionally from cheney_promote properties.
       (UpdatePtrs.promoted_entries_valid_from prom.major_final farr2 0 /\
        UpdatePtrs.promoted_entries_disjoint prom.major_final farr2 /\
-       SpecFields.well_formed_heap_part4 prom.major_final /\
        UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
        UpdatePtrs.fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)
        ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))

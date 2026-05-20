@@ -472,7 +472,6 @@ fn minor_collect_full (gh: gen_heap_t)
       // conditions, the result equals cheney_collect_spec.mc_major.
       (promoted_entries_valid_from prom.major_final farr2 0 /\
        promoted_entries_disjoint prom.major_final farr2 /\
-       SpecFields.well_formed_heap_part4 prom.major_final /\
        slots_pairwise_distinct 'sl (SZ.v nslots) /\
        fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)
        ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))
@@ -516,12 +515,14 @@ fn minor_collect_full (gh: gen_heap_t)
   minor_heap_reset gh.minor;
 
   // Prove the conditional equivalence for the strong spec:
-  // IF the 5 TwoPassEquiv conditions hold THEN s2 == cheney_collect_spec.mc_major
-  // First derive fwd_targets_stable unconditionally (targets > zero_addr >= minor_heap_size)
+  // IF the 4 TwoPassEquiv conditions hold THEN s2 == cheney_collect_spec.mc_major
+  // First derive fwd_targets_stable and well_formed_heap_part4 unconditionally
   CheneySpec.cheney_promote_fwd_above_zero_addr
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   derive_fwd_targets_stable
     (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
+  CheneySpec.cheney_promote_preserves_wfh_part4
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   Classical.move_requires
     (two_pass_implies_full_update
        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs farr_post3 'sl)
