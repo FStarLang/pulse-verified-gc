@@ -43,6 +43,74 @@ let heap_read_word_extensional (h1 h2: heap)
   = HeapExt.heap_read_word_ext h1 h2
 
 /// ---------------------------------------------------------------------------
+/// update_promoted_iter: preservation at non-forwarded addresses
+/// ---------------------------------------------------------------------------
+
+/// Infix header values are not word-aligned (mod 8 ≠ 0), hence never minor pointers.
+/// Proof: getTag hdr == infix_tag (=249) → hdr mod 256 == 249 → hdr mod 8 == 1.
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+private let infix_header_not_minor_pointer (hdr: U64.t)
+  : Lemma (requires getTag hdr = infix_tag)
+          (ensures U64.v hdr % 8 <> 0 /\
+                   ~(is_minor_pointer (to_minor_offset hdr)))
+  = getTag_spec hdr;
+    infix_tag_val ();
+    FStar.UInt.logand_mask #64 (U64.v hdr) 8;
+    assert (U64.v hdr % 256 == 249);
+    assert (U64.v hdr % 8 == (U64.v hdr % 256) % 8)
+#pop-options
+
+/// Helper: update_object_pointers preserves is_infix status because
+/// infix header values are not minor pointers and thus are never rewritten.
+#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+private let update_obj_ptrs_preserves_is_infix
+  (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
+  (other: obj_addr)
+  : Lemma
+    (requires
+      Seq.mem obj (objects zero_addr major) /\
+      U64.v obj % 8 == 0 /\
+      wosize == U64.v (wosize_of_object obj major) /\
+      wosize > 0 /\
+      U64.v obj + wosize * 8 <= heap_size /\
+      (forall (k:nat). k < wosize ==>
+        (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)) /\
+      is_infix other major)
+    (ensures
+      is_infix other (update_object_pointers major obj wosize fwd 0))
+  = let major' = update_object_pointers major obj wosize fwd 0 in
+    let hdr_addr = hd_address other in
+    hd_address_spec other;
+    is_infix_spec other major;
+    tag_of_object_spec other major;
+    let old_hdr = read_word major hdr_addr in
+    assert (getTag old_hdr = infix_tag);
+    if U64.v hdr_addr < U64.v obj then begin
+      PromObj.update_object_pointers_preserves_addr_below major obj wosize fwd 0 hdr_addr;
+      assert (read_word major' hdr_addr == old_hdr);
+      is_infix_spec other major';
+      tag_of_object_spec other major'
+    end else if U64.v hdr_addr >= U64.v obj + wosize * 8 then begin
+      PromObj.update_object_pointers_preserves_addr_above major obj wosize fwd 0 hdr_addr;
+      assert (read_word major' hdr_addr == old_hdr);
+      is_infix_spec other major';
+      tag_of_object_spec other major'
+    end else begin
+      // hdr_addr is inside obj's body at field index j
+      let j = (U64.v hdr_addr - U64.v obj) / 8 in
+      assert (U64.v hdr_addr == U64.v obj + j * 8);
+      assert (j < wosize);
+      PromObj.update_object_pointers_field_self major obj wosize fwd 0 j;
+      let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
+      assert (field_addr == hdr_addr);
+      infix_header_not_minor_pointer old_hdr;
+      assert (read_word major' hdr_addr == old_hdr);
+      is_infix_spec other major';
+      tag_of_object_spec other major'
+    end
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// update_promoted_iter frame lemma
 /// ---------------------------------------------------------------------------
 
@@ -98,36 +166,45 @@ private let update_object_pointers_preserves_frame_pre
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
     assert (well_formed_heap_part1 major');
     // 3. For each i > idx with non-zero farr[i]:
-    //    - Seq.mem (farr[i]) (objects zero_addr major') — from (1)
-    //    - wosize_of_object (farr[i]) major' == wosize_of_object (farr[i]) major — from header pres
-    //    - addr is outside body — same bounds since wosize unchanged
+    //    - Either is_infix (preserved by update_obj_ptrs_preserves_is_infix)
+    //    - Or: Seq.mem (farr[i]) (objects zero_addr major') — from (1)
+    //          wosize_of_object (farr[i]) major' == wosize_of_object (farr[i]) major
+    //          addr is outside body — same bounds since wosize unchanged
     assert (Seq.length farr == fwd_array_size);
     let aux_entry (i: nat{i < Seq.length farr}) : Lemma
       (requires i > idx /\
                (let o = Seq.index farr i in o <> 0UL))
       (ensures
         (let o = Seq.index farr i in
-         U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
-         Seq.mem o (objects zero_addr major') /\
-         (let wz' = U64.v (wosize_of_object o major') in
-          U64.v o + wz' * 8 <= heap_size /\
-          (forall (k:nat). k < wz' ==>
-            (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)) /\
-          (U64.v addr < U64.v o \/ U64.v addr >= U64.v o + wz' * 8))))
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major') \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          Seq.mem o (objects zero_addr major') /\
+          (let wz' = U64.v (wosize_of_object o major') in
+           U64.v o + wz' * 8 <= heap_size /\
+           (forall (k:nat). k < wz' ==>
+             (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)) /\
+           (U64.v addr < U64.v o \/ U64.v addr >= U64.v o + wz' * 8)))))
     = let o = Seq.index farr i in
-      // From original precondition on major:
-      assert (Seq.mem o (objects zero_addr major));
-      assert (Seq.mem o (objects zero_addr major'));
-      // Show wosize_of_object o major' == wosize_of_object o major
-      hd_address_spec o;
-      wosize_of_object_spec o major;
-      wosize_of_object_spec o major';
-      if U64.v o > U64.v obj then
-        PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
-      else if o = obj then
-        PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
-      else
-        PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o)
+      // From promoted_iter_frame_pre: o <> 0UL, so either bounds+infix or bounds+objects
+      assert (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size);
+      if is_infix o major then begin
+        // Infix case: show is_infix preserved
+        update_obj_ptrs_preserves_is_infix major obj wz fwd o
+      end else begin
+        // Non-infix case: from weakened frame_pre, it's in objects with addr outside body
+        assert (Seq.mem o (objects zero_addr major));
+        assert (Seq.mem o (objects zero_addr major'));
+        hd_address_spec o;
+        wosize_of_object_spec o major;
+        wosize_of_object_spec o major';
+        if U64.v o > U64.v obj then
+          PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
+        else if o = obj then
+          PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
+        else
+          PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o)
+      end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_entry)
 #pop-options
@@ -160,8 +237,13 @@ let rec update_promoted_iter_frame
           let tag = getTag hdr in
           if wosize > 0 && U64.lt tag no_scan_tag && (tag <> infix_tag) then begin
             if U64.v major_addr + wosize * 8 <= heap_size then begin
-              wosize_of_object_spec major_addr major;
               hd_address_spec major_addr;
+              assert (U64.uint_to_t hdr_addr_v == hd_address major_addr);
+              tag_of_object_spec major_addr major;
+              is_infix_spec major_addr major;
+              assert (is_infix major_addr major = false);
+              assert (Seq.mem major_addr (objects zero_addr major));
+              wosize_of_object_spec major_addr major;
               assert (U64.v addr < U64.v major_addr \/
                       U64.v addr >= U64.v major_addr + wosize * 8);
               let major' = update_object_pointers major major_addr wosize fwd 0 in
@@ -241,7 +323,7 @@ private let update_object_pointers_preserves_other_obj_header
 
 /// Helper: after processing entry idx (which is != pi), the promoted_field_aux
 /// precondition holds for the updated heap at idx+1.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 500 --fuel 1 --ifuel 0"
 private let update_object_pointers_preserves_promoted_field_pre
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map)
   (pi: nat) (j: nat) (idx: nat)
@@ -265,25 +347,30 @@ private let update_object_pointers_preserves_promoted_field_pre
        entry <> 0UL /\
        U64.v entry >= U64.v mword /\ U64.v entry % 8 == 0 /\ U64.v entry < heap_size /\
        Seq.mem entry (objects zero_addr major) /\
+       is_infix entry major = false /\
        (let wz_e = U64.v (wosize_of_object entry major) in
+        wz_e > 0 /\
         U64.v entry + wz_e * 8 <= heap_size /\
         (forall (k:nat). k < wz_e ==>
           (U64.v entry + k * 8 + 8 <= heap_size /\ (U64.v entry + k * 8) % 8 == 0)))) /\
-      // All entries from idx onward are valid
+      // All entries from idx onward are valid or infix
       (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
         (let o = Seq.index farr i in
          o = 0UL \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major) \/
          (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
           Seq.mem o (objects zero_addr major) /\
           (let wz_o = U64.v (wosize_of_object o major) in
            U64.v o + wz_o * 8 <= heap_size /\
            (forall (k:nat). k < wz_o ==>
              (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)))))) /\
-      // Disjointness
+      // Disjointness (only between non-infix entries)
       (forall (i1 i2: nat). i1 >= idx /\ i1 < fwd_array_size /\ i2 >= idx /\ i2 < fwd_array_size /\ i1 <> i2 ==>
         (let o1 = Seq.index farr i1 in
          let o2 = Seq.index farr i2 in
-         o1 <> 0UL /\ o2 <> 0UL ==>
+         o1 <> 0UL /\ o2 <> 0UL /\
+         is_infix o1 major = false /\ is_infix o2 major = false ==>
          (U64.v o1 + U64.v (wosize_of_object o1 major) * 8 <= U64.v o2 \/
           U64.v o2 + U64.v (wosize_of_object o2 major) * 8 <= U64.v o1))))
     (ensures
@@ -299,16 +386,20 @@ private let update_object_pointers_preserves_promoted_field_pre
        Seq.mem obj (objects zero_addr major') /\
        wosize_of_object obj major' == wosize_of_object obj major /\
        read_word major' (hd_address obj) == read_word major (hd_address obj) /\
-       (forall (i: nat). i >= (idx + 1) /\ i < fwd_array_size ==>
-         (let o = Seq.index farr i in
-          o = 0UL \/
-          (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
-           Seq.mem o (objects zero_addr major') /\
-           (let wz_o = U64.v (wosize_of_object o major') in
-            wz_o == U64.v (wosize_of_object o major) /\
-            U64.v o + wz_o * 8 <= heap_size /\
-            (forall (k:nat). k < wz_o ==>
-              (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0))))))))
+        (forall (i: nat). i >= (idx + 1) /\ i < fwd_array_size ==>
+          (let o = Seq.index farr i in
+           o = 0UL \/
+           (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+            is_infix o major') \/
+           (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+            is_infix o major' = false /\
+            is_infix o major = false /\
+            Seq.mem o (objects zero_addr major') /\
+            (let wz_o = U64.v (wosize_of_object o major') in
+             wz_o == U64.v (wosize_of_object o major) /\
+             U64.v o + wz_o * 8 <= heap_size /\
+             (forall (k:nat). k < wz_o ==>
+               (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0))))))))
   = let entry = Seq.index farr idx in
     let obj = Seq.index farr pi in
     let wz_e = U64.v (wosize_of_object entry major) in
@@ -319,6 +410,12 @@ private let update_object_pointers_preserves_promoted_field_pre
     assert (U64.v field_addr < heap_size /\ U64.v field_addr % 8 == 0);
     let entry_o : obj_addr = entry in
     let field_hp : hp_addr = field_addr in
+    // Establish is_infix = false for both obj and entry (needed for disjointness)
+    is_infix_spec obj major;
+    tag_of_object_spec obj major;
+    hd_address_spec obj;
+    assert (is_infix obj major = false);
+    assert (is_infix entry major = false);
     // Objects list preserved
     PromObj.update_object_pointers_preserves_objects major entry_o wz_e fwd 0;
     assert (objects zero_addr major' == objects zero_addr major);
@@ -362,41 +459,58 @@ private let update_object_pointers_preserves_promoted_field_pre
       end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
-    // For each entry i > idx: wosize preserved in major'
+    // For each entry i > idx: either infix (preserved) or wosize preserved in major'
     let aux_entry (i: nat{i < Seq.length farr}) : Lemma
-      (requires i > idx /\
-               (let o = Seq.index farr i in
-                o <> 0UL /\
-                U64.v o >= U64.v mword /\ U64.v o % U64.v mword == 0 /\ U64.v o < heap_size))
+      (requires i > idx)
       (ensures
         (let o = Seq.index farr i in
-         U64.v o >= U64.v mword /\ U64.v o % U64.v mword == 0 /\ U64.v o < heap_size /\
-         Seq.mem o (objects zero_addr major') /\
-         wosize_of_object o major' == wosize_of_object o major))
+         o = 0UL \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major') \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major' = false /\
+          is_infix o major = false /\
+          Seq.mem o (objects zero_addr major') /\
+          (let wz_o = U64.v (wosize_of_object o major') in
+           wz_o == U64.v (wosize_of_object o major) /\
+           U64.v o + wz_o * 8 <= heap_size /\
+           (forall (k:nat). k < wz_o ==>
+             (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0))))))
     = let o = Seq.index farr i in
-      assert (Seq.mem o (objects zero_addr major));
-      assert (Seq.mem o (objects zero_addr major'));
-      // Two cases: either o == entry_o or o <> entry_o
-      if o = entry_o then begin
-        // o is the same object as entry; its header is preserved by self-preservation
-        PromObj.update_object_pointers_preserves_self_header major entry_o wz_e fwd 0;
-        hd_address_spec o;
-        wosize_of_object_spec o major;
-        wosize_of_object_spec o major'
-      end else begin
-        update_object_pointers_preserves_other_obj_header major entry_o wz_e fwd o;
-        hd_address_spec o;
-        wosize_of_object_spec o major;
-        wosize_of_object_spec o major'
+      if o = 0UL then ()
+      else begin
+        // From validity: bounds hold
+        assert (U64.v o >= U64.v mword /\ U64.v o % U64.v mword == 0 /\ U64.v o < heap_size);
+        if is_infix o major then begin
+          // Infix case: show is_infix preserved
+          update_obj_ptrs_preserves_is_infix major entry_o wz_e fwd o
+        end else begin
+          // Non-infix case: it's in objects
+          assert (Seq.mem o (objects zero_addr major));
+          assert (Seq.mem o (objects zero_addr major'));
+          hd_address_spec o;
+          if o = entry_o then begin
+            PromObj.update_object_pointers_preserves_self_header major entry_o wz_e fwd 0;
+            wosize_of_object_spec o major;
+            wosize_of_object_spec o major';
+            is_infix_spec o major;
+            is_infix_spec o major';
+            tag_of_object_spec o major;
+            tag_of_object_spec o major'
+          end else begin
+            update_object_pointers_preserves_other_obj_header major entry_o wz_e fwd o;
+            wosize_of_object_spec o major;
+            wosize_of_object_spec o major';
+            is_infix_spec o major;
+            is_infix_spec o major';
+            tag_of_object_spec o major;
+            tag_of_object_spec o major'
+          end
+        end
       end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_entry)
 #pop-options
-
-/// Effect: a field of a promoted object gets its minor pointers rewritten.
-/// Proof: induction on idx. For entries before pi, the field is outside their
-/// bodies (disjointness) so it's preserved. At entry pi, field_self gives the
-/// rewrite. For entries after pi, frame preserves the result.
 #push-options "--z3rlimit 150 --fuel 1 --ifuel 0 --split_queries always"
 private let rec update_promoted_iter_promoted_field_aux
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map)
@@ -417,21 +531,24 @@ private let rec update_promoted_iter_promoted_field_aux
         j < wz /\
         (forall (k:nat). k < wz ==>
           (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)))) /\
-      // All entries are valid objects
+      // All entries are valid objects or infix
       (forall (i: nat). i >= idx /\ i < fwd_array_size ==>
         (let o = Seq.index farr i in
          o = 0UL \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major) \/
          (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
           Seq.mem o (objects zero_addr major) /\
           (let wz_o = U64.v (wosize_of_object o major) in
            U64.v o + wz_o * 8 <= heap_size /\
            (forall (k:nat). k < wz_o ==>
              (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)))))) /\
-      // Disjointness of bodies
+      // Disjointness of bodies (only between non-infix entries)
       (forall (i1 i2: nat). i1 >= idx /\ i1 < fwd_array_size /\ i2 >= idx /\ i2 < fwd_array_size /\ i1 <> i2 ==>
         (let o1 = Seq.index farr i1 in
          let o2 = Seq.index farr i2 in
-         o1 <> 0UL /\ o2 <> 0UL ==>
+         o1 <> 0UL /\ o2 <> 0UL /\
+         is_infix o1 major = false /\ is_infix o2 major = false ==>
          (U64.v o1 + U64.v (wosize_of_object o1 major) * 8 <= U64.v o2 \/
           U64.v o2 + U64.v (wosize_of_object o2 major) * 8 <= U64.v o1))))
     (ensures
@@ -461,7 +578,7 @@ private let rec update_promoted_iter_promoted_field_aux
       // Need promoted_iter_frame_pre major' farr (pi+1) field_addr
       PromObj.update_object_pointers_preserves_objects major obj wz fwd 0;
       // For each i > pi: field_addr is outside farr[i]'s body (disjointness)
-      // and farr[i] is valid in major' (header preserved)
+      // and farr[i] is valid in major' (header preserved), or farr[i] is infix
       let aux_suffix (i: nat{i < Seq.length farr}) : Lemma
         (requires i > pi /\
                  (let o = Seq.index farr i in
@@ -469,27 +586,38 @@ private let rec update_promoted_iter_promoted_field_aux
                   U64.v o >= U64.v mword /\ U64.v o % U64.v mword == 0 /\ U64.v o < heap_size))
         (ensures
           (let o = Seq.index farr i in
-           U64.v o >= U64.v mword /\ U64.v o % U64.v mword == 0 /\ U64.v o < heap_size /\
-           Seq.mem o (objects zero_addr major') /\
-           (let wz_o = U64.v (wosize_of_object o major') in
-            U64.v o + wz_o * 8 <= heap_size /\
-            (forall (k:nat). k < wz_o ==>
-              (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)) /\
-            (U64.v field_addr < U64.v o \/ U64.v field_addr >= U64.v o + wz_o * 8))))
+           (U64.v o >= U64.v mword /\ U64.v o % U64.v mword == 0 /\ U64.v o < heap_size /\
+            is_infix o major') \/
+           (U64.v o >= U64.v mword /\ U64.v o % U64.v mword == 0 /\ U64.v o < heap_size /\
+            Seq.mem o (objects zero_addr major') /\
+            (let wz_o = U64.v (wosize_of_object o major') in
+             U64.v o + wz_o * 8 <= heap_size /\
+             (forall (k:nat). k < wz_o ==>
+               (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)) /\
+             (U64.v field_addr < U64.v o \/ U64.v field_addr >= U64.v o + wz_o * 8)))))
       = let o = Seq.index farr i in
-        hd_address_spec o;
-        wosize_of_object_spec o major;
-        wosize_of_object_spec o major';
-        if U64.v o > U64.v obj then
-          PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
-        else if o = obj then
-          PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
-        else
-          PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o);
-        // Disjointness: field_addr in obj's body, outside o's body
-        assert (U64.v obj + wz * 8 <= U64.v o \/ U64.v o + U64.v (wosize_of_object o major) * 8 <= U64.v obj);
-        // field_addr = obj + j * 8, j < wz, so obj <= field_addr < obj + wz*8
-        assert (U64.v field_addr >= U64.v obj /\ U64.v field_addr < U64.v obj + wz * 8)
+        if is_infix o major then begin
+          update_obj_ptrs_preserves_is_infix major obj wz fwd o
+        end else begin
+          hd_address_spec o;
+          wosize_of_object_spec o major;
+          wosize_of_object_spec o major';
+          if U64.v o > U64.v obj then
+            PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
+          else if o = obj then
+            PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
+          else
+            PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o);
+          // Disjointness: field_addr in obj's body, outside o's body
+          // Need is_infix obj major = false and is_infix o major = false for disjointness
+          is_infix_spec obj major;
+          tag_of_object_spec obj major;
+          assert (is_infix obj major = false);
+          assert (is_infix o major = false);
+          assert (U64.v obj + wz * 8 <= U64.v o \/ U64.v o + U64.v (wosize_of_object o major) * 8 <= U64.v obj);
+          // field_addr = obj + j * 8, j < wz, so obj <= field_addr < obj + wz*8
+          assert (U64.v field_addr >= U64.v obj /\ U64.v field_addr < U64.v obj + wz * 8)
+        end
       in
       FStar.Classical.forall_intro (FStar.Classical.move_requires aux_suffix);
       // Establish well_formed_heap_part1 for major'
@@ -519,22 +647,40 @@ private let rec update_promoted_iter_promoted_field_aux
         update_promoted_iter_zero major farr fwd idx;
         update_promoted_iter_promoted_field_aux major farr fwd pi j (idx + 1)
       end else begin
-        // Non-zero scannable entry: update_object_pointers preserves field_addr
+        // Non-zero entry: check if scannable
         hd_address_spec entry;
-        wosize_of_object_spec entry major;
-        let wz_e = U64.v (wosize_of_object entry major) in
-        let tag_e = getTag (read_word major (hd_address entry)) in
-        if wz_e > 0 && U64.lt tag_e no_scan_tag && (tag_e <> infix_tag) && U64.v entry + wz_e * 8 <= heap_size then begin
-          update_promoted_iter_scan major farr fwd idx;
-          // Establish recursive precondition via helper
-          update_object_pointers_preserves_promoted_field_pre major farr fwd pi j idx;
-          let major' = update_object_pointers major entry wz_e fwd 0 in
-          // Recurse: precondition holds for major' at idx+1
-          update_promoted_iter_promoted_field_aux major' farr fwd pi j (idx + 1)
-        end else begin
-          // Non-scannable entry: skip
+        let hdr_e = read_word major (hd_address entry) in
+        let tag_e = getTag hdr_e in
+        // If entry is infix, it's skipped
+        tag_of_object_spec entry major;
+        is_infix_spec entry major;
+        if tag_e = infix_tag then begin
+          // Infix entry: skipped by update_promoted_iter
           update_promoted_iter_skip major farr fwd idx;
           update_promoted_iter_promoted_field_aux major farr fwd pi j (idx + 1)
+        end else begin
+          // Non-infix entry: must be in objects
+          assert (is_infix entry major = false);
+          assert (Seq.mem entry (objects zero_addr major));
+          wosize_of_object_spec entry major;
+          let wz_e = U64.v (wosize_of_object entry major) in
+          if wz_e > 0 && U64.lt tag_e no_scan_tag && U64.v entry + wz_e * 8 <= heap_size then begin
+            update_promoted_iter_scan major farr fwd idx;
+            // Establish recursive precondition via helper
+            update_object_pointers_preserves_promoted_field_pre major farr fwd pi j idx;
+            let major' = update_object_pointers major entry wz_e fwd 0 in
+            // Recurse: precondition holds for major' at idx+1
+            // Validity from helper postcondition; disjointness from:
+            // helper gives is_infix o major' = false /\ wosize o major' == wosize o major
+            // precondition gives: is_infix o major → is_infix o major' (via aux_entry 2nd case)
+            // contrapositive: is_infix o major' = false → is_infix o major = false
+            // then original disjointness + wosize preservation gives disjointness in major'
+            update_promoted_iter_promoted_field_aux major' farr fwd pi j (idx + 1)
+          end else begin
+            // Non-scannable entry: skip
+            update_promoted_iter_skip major farr fwd idx;
+            update_promoted_iter_promoted_field_aux major farr fwd pi j (idx + 1)
+          end
         end
       end
     end
@@ -561,14 +707,17 @@ let update_promoted_iter_promoted_field
           (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)))) /\
       (forall (i: nat). i < fwd_array_size ==>
         (let o = Seq.index farr i in
-         o <> 0UL ==>
+         o = 0UL \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major) \/
          (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
           Seq.mem o (objects zero_addr major) /\
           U64.v o + U64.v (wosize_of_object o major) * 8 <= heap_size))) /\
       (forall (i1 i2: nat). i1 < fwd_array_size /\ i2 < fwd_array_size /\ i1 <> i2 ==>
         (let o1 = Seq.index farr i1 in
          let o2 = Seq.index farr i2 in
-         o1 <> 0UL /\ o2 <> 0UL ==>
+         o1 <> 0UL /\ o2 <> 0UL /\
+         is_infix o1 major = false /\ is_infix o2 major = false ==>
          (U64.v o1 + U64.v (wosize_of_object o1 major) * 8 <= U64.v o2 \/
           U64.v o2 + U64.v (wosize_of_object o2 major) * 8 <= U64.v o1))))
     (ensures
@@ -805,9 +954,6 @@ let rewrite_slots_iter_slot_effect
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> result == old_raw)))
   = rewrite_slots_iter_slot_effect_aux major fwd slots n si 0
 
-/// ---------------------------------------------------------------------------
-/// update_promoted_iter: preservation at non-forwarded addresses
-/// ---------------------------------------------------------------------------
 
 /// Helper: processing one entry preserves promoted_entries_valid_from for idx+1.
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
@@ -857,29 +1003,38 @@ private let update_obj_ptrs_preserves_entries_valid
       end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_wfh);
-    // Show each entry from idx+1 onward is still valid
+    // Show each entry from idx+1 onward is still valid (or infix)
     let aux_entry (i: nat{i < Seq.length farr}) : Lemma
       (requires i > idx /\ (let o = Seq.index farr i in o <> 0UL))
       (ensures
         (let o = Seq.index farr i in
-         U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
-         Seq.mem o (objects zero_addr major') /\
-         (let wz' = U64.v (wosize_of_object o major') in
-          U64.v o + wz' * 8 <= heap_size /\
-          (forall (k:nat). k < wz' ==>
-            (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0)))))
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major') \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          Seq.mem o (objects zero_addr major') /\
+          (let wz' = U64.v (wosize_of_object o major') in
+           U64.v o + wz' * 8 <= heap_size /\
+           (forall (k:nat). k < wz' ==>
+             (U64.v o + k * 8 + 8 <= heap_size /\ (U64.v o + k * 8) % 8 == 0))))))
     = let o = Seq.index farr i in
-      assert (Seq.mem o (objects zero_addr major));
-      assert (Seq.mem o (objects zero_addr major'));
-      hd_address_spec o;
-      wosize_of_object_spec o major;
-      wosize_of_object_spec o major';
-      if U64.v o > U64.v obj then
-        PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
-      else if o = obj then
-        PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
-      else
-        PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o)
+      // From weakened valid_from: entry is either infix or valid object
+      if is_infix o major then begin
+        // Infix case: show is_infix preserved
+        update_obj_ptrs_preserves_is_infix major obj wz fwd o
+      end else begin
+        // Non-infix case: original logic
+        assert (Seq.mem o (objects zero_addr major));
+        assert (Seq.mem o (objects zero_addr major'));
+        hd_address_spec o;
+        wosize_of_object_spec o major;
+        wosize_of_object_spec o major';
+        if U64.v o > U64.v obj then
+          PromObj.update_object_pointers_preserves_other_header major obj wz fwd 0 o
+        else if o = obj then
+          PromObj.update_object_pointers_preserves_self_header major obj wz fwd 0
+        else
+          PromObj.update_object_pointers_preserves_addr_below major obj wz fwd 0 (hd_address o)
+      end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_entry)
 #pop-options
@@ -918,8 +1073,14 @@ let rec update_promoted_iter_preserves_non_fwd
           let tag = getTag hdr in
           if wosize > 0 && U64.lt tag no_scan_tag && (tag <> infix_tag) then begin
             if U64.v obj + wosize * 8 <= heap_size then begin
-              wosize_of_object_spec obj major;
+              // tag <> infix_tag, so entry is not infix → by weakened valid_from, it's in objects
               hd_address_spec obj;
+              assert (U64.uint_to_t hdr_addr_v == hd_address obj);
+              tag_of_object_spec obj major;
+              is_infix_spec obj major;
+              assert (is_infix obj major = false);
+              assert (Seq.mem obj (objects zero_addr major));
+              wosize_of_object_spec obj major;
               let major' = update_object_pointers major obj wosize fwd 0 in
               // Show value at addr preserved by this step
               if U64.v addr < U64.v obj then
@@ -1271,10 +1432,11 @@ let if_branch_lhs_slot
       valid_slot_addrs slots n /\
       si < n /\
       U64.v (Seq.index slots si) == U64.v addr /\
-      // addr is NOT in any promoted body
+      // addr is NOT in any promoted body (infix entries also excluded)
       (forall (pi: nat). pi < fwd_array_size ==>
         (let obj_pi = Seq.index farr pi in
          obj_pi = 0UL \/
+         is_infix obj_pi major \/
          U64.v addr < U64.v obj_pi \/
          U64.v addr >= U64.v obj_pi + U64.v (wosize_of_object obj_pi major) * 8)) /\
       // Slots are pairwise distinct
@@ -1380,19 +1542,22 @@ let field_not_in_any_promoted_body
       (forall (pi: nat). pi < fwd_array_size ==>
         (let obj_pi = Seq.index farr pi in
          obj_pi = 0UL \/
+         is_infix obj_pi major \/
          U64.v addr < U64.v obj_pi \/
          U64.v addr >= U64.v obj_pi + U64.v (wosize_of_object obj_pi major) * 8)))
   = let aux (pi: nat{pi < Seq.length farr}) : Lemma
       (ensures
         (let obj_pi = Seq.index farr pi in
          obj_pi = 0UL \/
+         is_infix obj_pi major \/
          U64.v addr < U64.v obj_pi \/
          U64.v addr >= U64.v obj_pi + U64.v (wosize_of_object obj_pi major) * 8))
     = let obj_pi = Seq.index farr pi in
       if obj_pi = 0UL then ()
+      else if is_infix obj_pi major then ()  // Infix entries are skipped, don't affect addr
       else begin
-        // obj_pi <> 0 and obj_pi <> obj (from precondition)
-        // promoted_entries_valid_from gives obj_pi in objects
+        // obj_pi <> 0 and obj_pi <> obj (from precondition) and not infix
+        // weakened promoted_entries_valid_from gives obj_pi in objects
         assert (Seq.mem obj_pi (objects zero_addr major));
         field_not_in_other_obj major obj obj_pi j addr
       end
@@ -1501,8 +1666,6 @@ let promoted_plus_slots_eq_full_update
     (requires
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        Seq.length farr == fwd_array_size /\
-       valid_fwd_entries farr /\
-       represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
        well_formed_heap_part4 prom.major_final /\

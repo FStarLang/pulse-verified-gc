@@ -291,15 +291,17 @@ let promoted_entries_valid_from (major: heap) (farr: Seq.seq U64.t) (idx: nat) :
     (let obj = Seq.index farr i in
      obj = 0UL \/
      (U64.v obj >= U64.v mword /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size /\
+      SpecObj.is_infix obj major) \/
+     (U64.v obj >= U64.v mword /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size /\
       Seq.mem obj (GC.Spec.Fields.objects zero_addr major) /\
       (let wz = U64.v (SpecObj.wosize_of_object obj major) in
        U64.v obj + wz * 8 <= heap_size /\
        (forall (k:nat). k < wz ==>
          (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0))))))
 
-/// Promoted body disjointness: non-zero entries in farr have non-overlapping bodies.
-/// Derivable from objects_separated + promoted_entries_valid_from, but included
-/// as an explicit precondition for simplicity.
+/// Promoted body disjointness: non-zero, non-infix entries in farr have
+/// non-overlapping bodies. Infix entries are exempt (they are interior
+/// pointers with fake wosize and are skipped by update_promoted_iter).
 let promoted_entries_disjoint (major: heap) (farr: Seq.seq U64.t) : prop =
   Seq.length farr == fwd_array_size /\
   (forall (i1 i2: nat). i1 < fwd_array_size /\ i2 < fwd_array_size /\ i1 <> i2 ==>
@@ -308,7 +310,9 @@ let promoted_entries_disjoint (major: heap) (farr: Seq.seq U64.t) : prop =
      o1 <> 0UL /\ o2 <> 0UL /\
      U64.v o1 >= 8 /\ U64.v o2 >= 8 /\
      U64.v o1 % 8 == 0 /\ U64.v o2 % 8 == 0 /\
-     U64.v o1 < heap_size /\ U64.v o2 < heap_size ==>
+     U64.v o1 < heap_size /\ U64.v o2 < heap_size /\
+     SpecObj.is_infix o1 major = false /\
+     SpecObj.is_infix o2 major = false ==>
      (U64.v o1 + U64.v (SpecObj.wosize_of_object o1 major) * 8 <= U64.v o2 \/
       U64.v o2 + U64.v (SpecObj.wosize_of_object o2 major) * 8 <= U64.v o1)))
 

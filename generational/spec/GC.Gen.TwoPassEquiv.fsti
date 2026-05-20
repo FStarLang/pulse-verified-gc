@@ -48,6 +48,8 @@ let promoted_iter_frame_pre (major: heap) (farr: seq U64.t) (idx: nat) (addr: hp
     (let obj = Seq.index farr i in
      obj = 0UL \/
      (U64.v obj >= U64.v mword /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size /\
+      is_infix obj major) \/
+     (U64.v obj >= U64.v mword /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size /\
       Seq.mem obj (objects zero_addr major) /\
       (let wz = U64.v (wosize_of_object obj major) in
        U64.v obj + wz * 8 <= heap_size /\
@@ -90,17 +92,20 @@ val update_promoted_iter_promoted_field
         j < wz /\
         (forall (k:nat). k < wz ==>
           (U64.v obj + k * 8 + 8 <= heap_size /\ (U64.v obj + k * 8) % 8 == 0)))) /\
-      // All promoted objects are valid with disjoint bodies
+      // All promoted objects are valid (or infix) with disjoint bodies
       (forall (i: nat). i < fwd_array_size ==>
         (let o = Seq.index farr i in
-         o <> 0UL ==>
+         o = 0UL \/
+         (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
+          is_infix o major) \/
          (U64.v o >= U64.v mword /\ U64.v o % 8 == 0 /\ U64.v o < heap_size /\
           Seq.mem o (objects zero_addr major) /\
           U64.v o + U64.v (wosize_of_object o major) * 8 <= heap_size))) /\
       (forall (i1 i2: nat). i1 < fwd_array_size /\ i2 < fwd_array_size /\ i1 <> i2 ==>
         (let o1 = Seq.index farr i1 in
          let o2 = Seq.index farr i2 in
-         o1 <> 0UL /\ o2 <> 0UL ==>
+         o1 <> 0UL /\ o2 <> 0UL /\
+         is_infix o1 major = false /\ is_infix o2 major = false ==>
          (U64.v o1 + U64.v (wosize_of_object o1 major) * 8 <= U64.v o2 \/
           U64.v o2 + U64.v (wosize_of_object o2 major) * 8 <= U64.v o1))))
     (ensures
@@ -165,8 +170,6 @@ val promoted_plus_slots_eq_full_update
     (requires
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        Seq.length farr == fwd_array_size /\
-       valid_fwd_entries farr /\
-       represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
        well_formed_heap_part4 prom.major_final /\

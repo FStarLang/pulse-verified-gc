@@ -286,8 +286,6 @@ let two_pass_implies_full_update
     (requires
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        Seq.length farr == fwd_array_size /\
-       valid_fwd_entries farr /\
-       represents_fwd farr prom.fwd_map /\
        promoted_entries_valid_from prom.major_final farr 0 /\
        promoted_entries_disjoint prom.major_final farr /\
        SpecFields.well_formed_heap_part4 prom.major_final /\
