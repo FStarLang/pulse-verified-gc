@@ -279,15 +279,12 @@ fn minor_collect_full (gh: gen_heap_t)
       // conditions, the result equals cheney_collect_spec (single-pass full
       // update of all pointer fields in the major heap).
       //
-      // The remaining conditions are:
-      // (1) ref_table slots are pairwise distinct (caller responsibility),
-      // (2) every forwarded-minor-pointer field is either in a promoted
-      //     object's body or listed in the ref_table.
-      // Note: promoted_entries_valid_from, promoted_entries_disjoint,
-      // fwd_targets_stable, and well_formed_heap_part4 are all derived
-      // unconditionally from cheney_promote properties.
-      (UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
-       UpdatePtrs.fwd_ptrs_classified prom.major_final prom.fwd_map farr2 'sl (SZ.v nslots)
+      // The only remaining condition is that ref_table slots are pairwise
+      // distinct (a simple caller responsibility).
+      // All other conditions (promoted_entries_valid_from, promoted_entries_disjoint,
+      // fwd_targets_stable, well_formed_heap_part4, fwd_ptrs_classified) are
+      // derived unconditionally from cheney_promote + ref_table properties.
+      (UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots)
        ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))
 
 /// ---------------------------------------------------------------------------

@@ -72,3 +72,28 @@ val cheney_promote_fwd_valid_or_infix
                     minor_wf minor)
           (ensures fwd_valid_or_infix (cheney_promote minor major fp roots).fwd_map
                                       (cheney_promote minor major fp roots).major_final)
+
+/// ---------------------------------------------------------------------------
+/// Frame property: cheney_promote preserves fields of pre-existing non-blue objects
+/// ---------------------------------------------------------------------------
+
+/// For any non-blue object in the original major heap, its body fields are
+/// unchanged after cheney_promote. This is because:
+///   - Cheney BFS only writes to newly allocated regions (from the free-list)
+///   - Pre-existing non-blue objects are not on the free-list
+///   - promote_object_frame_old_field gives per-step field preservation
+///   - BFS induction carries this through all promotion steps
+val cheney_promote_frame_old_fields
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr) (j: nat)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    Seq.mem obj (objects zero_addr major) /\
+                    is_blue obj major = false /\
+                    j < U64.v (wosize_of_object obj major) /\
+                    U64.v obj + j * 8 + 8 <= heap_size)
+          (ensures (let res = cheney_promote minor major fp roots in
+                    read_word res.major_final (U64.uint_to_t (U64.v obj + j * 8))
+                    == read_word major (U64.uint_to_t (U64.v obj + j * 8))))
