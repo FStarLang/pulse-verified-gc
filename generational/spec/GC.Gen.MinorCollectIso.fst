@@ -40,6 +40,7 @@ module HeaderPres = GC.Gen.MinorCollectIso.HeaderPres
 module EdgeBridge = GC.Gen.CombinedGraph.EdgeBridge
 module MajorBridge = GC.Gen.CombinedGraph.MajorBridge
 module EdgePres = GC.Gen.CombinedGraph.EdgePreservation
+module BlueElim = GC.Gen.BlueElim
 
 /// ---------------------------------------------------------------------------
 /// (A) Injectivity
@@ -604,7 +605,7 @@ let prove_minor_field_value
 /// calling CheneyDisch/CheneyCorr to establish fwd_dst membership.
 private
 #restart-solver
-#push-options "--z3rlimit 600 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 600 --fuel 0 --ifuel 1 --split_queries always --z3refresh"
 let prove_minor_to_graph_edge
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: U64.t) (dst: combined_vertex)
@@ -1802,7 +1803,7 @@ let mc_edge_target_nonblue
 /// instead of combined_reachable(MajorV dst).
 private
 #restart-solver
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1 --split_queries always"
 let strong_edge_backward_to_major
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (cv_mid: combined_vertex) (dst: U64.t)
@@ -1830,15 +1831,16 @@ let strong_edge_backward_to_major
     let mid : hp_addr = Iso.fwd_morphism fwd cv_mid in
     match cv_mid with
     | MajorV s ->
-      // Edge (s, dst) in mc_major. Both non-blue pre-existing.
-      // Exact same logic as prove_edge_backward_major_major but we have
-      // dst properties directly instead of via combined_reachable.
       RBridge.reachable_major_valid_nonblue minor major roots;
       CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
       CheneyDisj.cheney_promote_fwd_disjoint_nonblue minor major fp roots;
       mc_edge_source_not_no_scan minor major fp roots (s <: obj_addr) dst;
       HeaderPres.minor_collect_preserves_wosize minor major fp roots (s <: obj_addr);
       HeaderPres.minor_collect_preserves_is_no_scan minor major fp roots (s <: obj_addr);
+      assert (Seq.mem (s <: obj_addr) (objects zero_addr major));
+      assert (Seq.mem (s <: obj_addr) (objects zero_addr mc));
+      GC.Spec.Fields.wf_object_bound mc (s <: obj_addr);
+      HeapGraph.object_fits_from_bound (s <: obj_addr) mc;
       objects_is_vertex_set mc;
       HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) (s <: obj_addr) dst;
       let j = FStar.IndefiniteDescription.indefinite_description_ghost
@@ -1848,7 +1850,7 @@ let strong_edge_backward_to_major
                   HeapGraph.is_pointer_field dst) in
       let i : nat = U64.v j - 1 in
       assert (U64.v j <= U64.v (wosize_of_object (s <: obj_addr) major));
-      GC.Spec.Fields.wf_object_bound mc (s <: obj_addr);
+      wosize_of_object_bound (s <: obj_addr) mc;
       field_addr_arithmetic (U64.v s) i (U64.v (wosize_of_object (s <: obj_addr) mc));
       HeapGraph.get_field_addr_eq mc (s <: obj_addr) j;
       derive_mc_major_field_value minor major fp roots (s <: obj_addr) i;
@@ -1865,13 +1867,17 @@ let strong_edge_backward_to_major
       HeapGraph.pointer_field_is_graph_edge major (objects zero_addr major) (s <: obj_addr) j;
       MajorBridge.heapgraph_edge_implies_combined minor major (s <: obj_addr) (dst <: obj_addr)
     | MinorV s ->
-      // Edge (fwd(s), dst) in mc_major. fwd(s) = mid.
       reachable_minor_gives_fwd_nonzero minor major fp roots s;
+      assert (Seq.mem s (live_set_of minor major roots));
+      assert (Seq.mem s (minor_objects minor));
       let fwd_s : obj_addr = fwd s in
       CheneyDisch.cheney_fwd_targets_in_mc_major minor major fp roots;
       CheneyDisj.cheney_promote_fwd_disjoint_nonblue minor major fp roots;
       CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
       mc_edge_source_not_no_scan minor major fp roots fwd_s dst;
+      assert (Seq.mem fwd_s (objects zero_addr mc));
+      GC.Spec.Fields.wf_object_bound mc fwd_s;
+      HeapGraph.object_fits_from_bound fwd_s mc;
       objects_is_vertex_set mc;
       HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) fwd_s dst;
       let j = FStar.IndefiniteDescription.indefinite_description_ghost
@@ -1881,18 +1887,20 @@ let strong_edge_backward_to_major
                   HeapGraph.is_pointer_field dst) in
       let i : nat = U64.v j - 1 in
       assert (i < minor_wosize minor s);
-      GC.Spec.Fields.wf_object_bound mc fwd_s;
+      wosize_of_object_bound fwd_s mc;
       field_addr_arithmetic (U64.v fwd_s) i (U64.v (wosize_of_object fwd_s mc));
       HeapGraph.get_field_addr_eq mc fwd_s j;
       let field_addr_v = U64.v fwd_s + i * 8 in
       assert (read_word mc (U64.uint_to_t field_addr_v) == dst);
-      EdgePres.promoted_field_through_minor_collect minor major fp roots s i;
+      assert (U64.v fwd_s + i * 8 + 8 <= heap_size);
+      assert (U64.v fwd_s % 8 == 0);
+      field_correspondence_instance minor major mc fwd roots s i;
       let minor_val = minor_read_field minor s i in
-      // Case 1: fwd(minor_val) = dst. But dst is non-blue, and fwd targets are blue in original.
-      //         fwd_map_disjoint_nonblue says fwd(a) ≠ non-blue obj. Contradiction!
-      // Case 2: minor_val = dst. Since dst ∈ objects(major) and not minor pointer:
+      // dst is non-blue, fwd targets are blue → minor_val can't be in Case 1 (fwd(minor_val)=dst)
+      // So Case 2: minor_val = dst (unchanged). dst is major obj, not minor pointer.
       assert (minor_val == dst);
       MajorBridge.major_object_not_minor_pointer major (dst <: obj_addr);
+      classify_minor_field_major minor major dst;
       minor_field_edge_intro minor major s i (MajorV dst)
 #pop-options
 
@@ -1901,7 +1909,7 @@ let strong_edge_backward_to_major
 /// (a ∈ live_set, fwd a = v, a ∈ minor_objects) instead of combined_reachable(MinorV a).
 private
 #restart-solver
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 150 --fuel 1 --ifuel 1 --split_queries always --z3refresh"
 let strong_edge_backward_to_minor
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (cv_mid: combined_vertex) (a: U64.t)
@@ -1930,7 +1938,6 @@ let strong_edge_backward_to_minor
     let fwd_a : U64.t = fwd a in
     match cv_mid with
     | MajorV s ->
-      // Edge (s, fwd(a)) in mc_major. s is non-blue, fwd(a) was blue in original.
       RBridge.reachable_major_valid_nonblue minor major roots;
       CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
       CheneyDisj.cheney_promote_fwd_disjoint_nonblue minor major fp roots;
@@ -1938,6 +1945,10 @@ let strong_edge_backward_to_minor
       mc_edge_source_not_no_scan minor major fp roots (s <: obj_addr) fwd_a;
       HeaderPres.minor_collect_preserves_wosize minor major fp roots (s <: obj_addr);
       HeaderPres.minor_collect_preserves_is_no_scan minor major fp roots (s <: obj_addr);
+      assert (Seq.mem (s <: obj_addr) (objects zero_addr major));
+      assert (Seq.mem (s <: obj_addr) (objects zero_addr mc));
+      GC.Spec.Fields.wf_object_bound mc (s <: obj_addr);
+      HeapGraph.object_fits_from_bound (s <: obj_addr) mc;
       objects_is_vertex_set mc;
       HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) (s <: obj_addr) fwd_a;
       let j = FStar.IndefiniteDescription.indefinite_description_ghost
@@ -1947,7 +1958,7 @@ let strong_edge_backward_to_minor
                   HeapGraph.is_pointer_field fwd_a) in
       let i : nat = U64.v j - 1 in
       assert (U64.v j <= U64.v (wosize_of_object (s <: obj_addr) major));
-      GC.Spec.Fields.wf_object_bound mc (s <: obj_addr);
+      wosize_of_object_bound (s <: obj_addr) mc;
       field_addr_arithmetic (U64.v s) i (U64.v (wosize_of_object (s <: obj_addr) mc));
       HeapGraph.get_field_addr_eq mc (s <: obj_addr) j;
       derive_mc_major_field_value minor major fp roots (s <: obj_addr) i;
@@ -1955,23 +1966,33 @@ let strong_edge_backward_to_minor
       let old_val = read_word major field_addr in
       let mc_val = read_word mc field_addr in
       assert (mc_val == fwd_a);
-      // fwd(a) was blue in original → no_pointer_to_blue prevents old_val = fwd(a) directly.
-      // So field was rewritten: old_val was minor, fwd(old_val) = fwd(a).
-      // Injectivity: old_val = a. old_val is a minor pointer to a.
-      assert (old_val == (a <: U64.t) \/ (is_minor_pointer old_val /\ fwd old_val == fwd_a));
-      // By injectivity fwd(old_val) = fwd(a) → old_val = a
+      // fwd(a) was blue in original major (from fwd_targets_originally_blue)
+      assert (is_blue (fwd_a <: obj_addr) major);
+      assert (Seq.mem (fwd_a <: obj_addr) (objects zero_addr major));
+      // s non-blue + no_pointer_to_blue → old_val can't equal fwd_a (blue)
+      BlueElim.major_field_not_equal_blue major (s <: obj_addr) i (fwd_a <: obj_addr);
+      assert (old_val <> (fwd_a <: U64.t));
+      // derive_mc_major_field_value Case 1 must hold
+      assert_spinoff (is_minor_pointer old_val /\ fwd old_val == fwd_a);
+      // By injectivity: fwd(old_val) = fwd(a) → old_val = a
       assert (old_val == (a <: U64.t));
-      // old_val = a is a minor pointer. classify_major_field gives MinorV a.
-      // major_field_edge_intro → combined edge (MajorV s, MinorV a)
+      assert (is_minor_pointer (a <: U64.t));
+      GC.Gen.MinorHeap.minor_objects_valid minor a;
+      is_minor_addr_intro a;
+      classify_major_field_is_minor minor major a;
       major_field_edge_intro minor major (s <: obj_addr) i (MinorV a)
     | MinorV s ->
-      // Edge (fwd(s), fwd(a)) in mc_major.
       reachable_minor_gives_fwd_nonzero minor major fp roots s;
+      assert (Seq.mem s (live_set_of minor major roots));
+      assert (Seq.mem s (minor_objects minor));
       let fwd_s : obj_addr = fwd s in
       CheneyDisch.cheney_fwd_targets_in_mc_major minor major fp roots;
       CheneyInj.cheney_promote_fwd_injective minor major fp roots;
-      objects_is_vertex_set mc;
       mc_edge_source_not_no_scan minor major fp roots fwd_s fwd_a;
+      assert (Seq.mem fwd_s (objects zero_addr mc));
+      GC.Spec.Fields.wf_object_bound mc fwd_s;
+      HeapGraph.object_fits_from_bound fwd_s mc;
+      objects_is_vertex_set mc;
       HeapGraph.graph_edge_has_field_index mc (objects zero_addr mc) fwd_s fwd_a;
       let j = FStar.IndefiniteDescription.indefinite_description_ghost
         (j:U64.t{U64.v j >= 1})
@@ -1980,18 +2001,21 @@ let strong_edge_backward_to_minor
                   HeapGraph.is_pointer_field fwd_a) in
       let i : nat = U64.v j - 1 in
       assert (i < minor_wosize minor s);
-      GC.Spec.Fields.wf_object_bound mc fwd_s;
+      wosize_of_object_bound fwd_s mc;
       field_addr_arithmetic (U64.v fwd_s) i (U64.v (wosize_of_object fwd_s mc));
       HeapGraph.get_field_addr_eq mc fwd_s j;
       let field_addr_v = U64.v fwd_s + i * 8 in
       assert (read_word mc (U64.uint_to_t field_addr_v) == fwd_a);
-      EdgePres.promoted_field_through_minor_collect minor major fp roots s i;
+      assert (U64.v fwd_s + i * 8 + 8 <= heap_size);
+      assert (U64.v fwd_s % 8 == 0);
+      field_correspondence_instance minor major mc fwd roots s i;
       let minor_val = minor_read_field minor s i in
-      // Case 1: is_minor_pointer minor_val ∧ fwd(minor_val) ≠ 0 → mc_val = fwd(minor_val)
-      //   fwd(minor_val) = fwd(a). Injectivity → minor_val = a.
-      // Case 2: mc_val = minor_val = fwd(a). But fwd(a) was blue in original.
-      //   minor_no_pointer_to_blue says minor can't point to blue major. Contradiction!
-      assert (minor_val == (a <: U64.t));
+      // fwd(a) blue in major + minor can't point to blue → Case 2 impossible
+      // Case 1: fwd(minor_val) = fwd_a → injectivity → minor_val = a
+      assert_spinoff (minor_val == (a <: U64.t));
+      GC.Gen.MinorHeap.minor_objects_valid minor a;
+      is_minor_addr_intro a;
+      classify_minor_field_minor minor major a;
       minor_field_edge_intro minor major s i (MinorV a)
 #pop-options
 
@@ -1999,7 +2023,7 @@ let strong_edge_backward_to_minor
 /// Strengthened IH: the pre-image exists AND the vertex is non-blue in mc_major.
 private
 #restart-solver
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 300 --fuel 1 --ifuel 1 --split_queries always --z3refresh"
 let rec prove_surjectivity_aux
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (root: vertex_id{mem_graph_vertex (create_graph (cheney_collect_spec minor major fp roots).mc_major) root})
@@ -2007,6 +2031,8 @@ let rec prove_surjectivity_aux
   (r: reach (create_graph (cheney_collect_spec minor major fp roots).mc_major) root v)
   : Lemma
     (requires minor_collect_iso_preconditions minor major fp roots /\
+             U64.v root >= U64.v mword /\ U64.v root < heap_size /\ U64.v root % U64.v mword == 0 /\
+             U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
              (let res = cheney_collect_spec minor major fp roots in
               let mc_roots = res.mc_roots in
               Seq.mem (root <: U64.t) mc_roots /\
@@ -2029,6 +2055,9 @@ let rec prove_surjectivity_aux
     let mc = res.mc_major in
     let g_mc = create_graph mc in
     let live_set = live_set_of minor major roots in
+    // Establish root and v are valid obj_addr from graph vertex membership
+    BlueElim.graph_vertex_is_obj_addr mc root;
+    BlueElim.graph_vertex_is_obj_addr mc v;
     match r with
     | ReachRefl _ ->
       // Base case: v = root ∈ mc_roots. Find the pre-image.
@@ -2045,6 +2074,8 @@ let rec prove_surjectivity_aux
         combined_reachable_root cg combined_roots (MinorV x)
       end else begin
         // rewrite_root x fwd = x = root. Pre-image = MajorV root
+        graph_vertices_mem mc (root <: obj_addr);
+        BlueElim.major_object_not_minor mc (root <: obj_addr);
         classify_roots_major_mem roots x;
         // root ∈ objects(mc_major) and non-blue → from vertex_partition:
         // either pre-existing non-blue (→ in objects(major)) or fwd target.
@@ -2057,11 +2088,15 @@ let rec prove_surjectivity_aux
       end
     | ReachTrans _ mid _ r_to_mid ->
       // Inductive step: reach root mid, edge (mid, v) in g_mc
+      // Establish mid is valid obj_addr (needed as precondition for recursive call)
+      BlueElim.graph_vertex_is_obj_addr mc mid;
       prove_surjectivity_aux minor major fp roots root mid r_to_mid;
       // IH gives pre-image for mid and mid is non-blue
       let cv_mid = FStar.IndefiniteDescription.indefinite_description_ghost combined_vertex
         (fun cv -> combined_reachable cg combined_roots cv /\
                    Iso.fwd_morphism fwd cv == (mid <: U64.t)) in
+      // Establish v is valid obj_addr
+      BlueElim.graph_vertex_is_obj_addr mc v;
       // Edge (mid, v) → v is non-blue (via graph_edge_implies_points_to + no_pointer_to_blue)
       graph_vertices_mem mc (mid <: obj_addr);
       graph_vertices_mem mc (v <: obj_addr);
@@ -2140,8 +2175,26 @@ let prove_surjectivity
         (fun _ -> True) in
       prove_surjectivity_aux minor major fp roots (root <: hp_addr) (v <: hp_addr) reach_wit
     in
-    FStar.Classical.forall_intro_2 (fun v root ->
-      FStar.Classical.move_requires (aux v) root)
+    let lift (v root: U64.t)
+      : Lemma ((let res = cheney_collect_spec minor major fp roots in
+               let g_mc = create_graph res.mc_major in
+               let mc_roots = res.mc_roots in
+               Seq.mem root mc_roots /\
+               U64.v root >= U64.v mword /\ U64.v root < heap_size /\ U64.v root % U64.v mword == 0 /\
+               Seq.mem (root <: hp_addr) g_mc.vertices /\
+               U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+               Seq.mem (v <: hp_addr) g_mc.vertices /\
+               reachable g_mc (root <: hp_addr) (v <: hp_addr)) ==>
+              (let prom = cheney_promote minor major fp roots in
+               let fwd = prom.fwd_map in
+               let cg = build_combined_graph minor major in
+               let combined_roots = pre_gc_roots roots in
+               exists (cv: combined_vertex).
+                 combined_reachable cg combined_roots cv /\
+                 Iso.fwd_morphism fwd cv == v))
+      = FStar.Classical.move_requires (aux v) root
+    in
+    FStar.Classical.forall_intro_2 lift
 #pop-options
 
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
