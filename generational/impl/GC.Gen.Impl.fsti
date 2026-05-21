@@ -285,7 +285,13 @@ fn minor_collect_full (gh: gen_heap_t)
       // fwd_targets_stable, well_formed_heap_part4, fwd_ptrs_classified) are
       // derived unconditionally from cheney_promote + ref_table properties.
       (UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots)
-       ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))
+       ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major)
+       //We should also prove that if we have the major GC preconditions
+       //initially than they remain true after minor collection, so that
+       //we can immediately run the major GC on the post-minor heap for a full collection
+       //It's ok to require MajorGC.gc_precondition as a precondition
+       //of minor_collect_full too
+       )
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)

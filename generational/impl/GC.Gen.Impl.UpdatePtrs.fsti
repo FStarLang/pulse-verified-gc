@@ -312,20 +312,24 @@ let promoted_entries_disjoint (major: heap) (farr: Seq.seq U64.t) : prop =
      U64.v o1 % 8 == 0 /\ U64.v o2 % 8 == 0 /\
      U64.v o1 < heap_size /\ U64.v o2 < heap_size /\
      SpecObj.is_infix o1 major = false /\
-     SpecObj.is_infix o2 major = false ==>
-     (U64.v o1 + U64.v (SpecObj.wosize_of_object o1 major) * 8 <= U64.v o2 \/
-      U64.v o2 + U64.v (SpecObj.wosize_of_object o2 major) * 8 <= U64.v o1)))
+      SpecObj.is_infix o2 major = false ==>
+      (U64.v o1 + U64.v (SpecObj.wosize_of_object o1 major) * 8 <= U64.v o2 \/
+       U64.v o2 + U64.v (SpecObj.wosize_of_object o2 major) * 8 <= U64.v o1)))
 
-/// No infix entries: non-zero entries in farr are not infix objects.
-/// Needed for two-pass equivalence since update_promoted_iter skips infix entries
-/// (their wosize is an offset-to-parent, not a field count) while the parent
-/// closure's scan covers the infix body.
-let promoted_entries_no_infix (major: heap) (farr: Seq.seq U64.t) : prop =
+/// Non-zero non-infix forwarding-array entries point to non-blue objects.
+/// This is needed because update_promoted_iter scans farr entries by tag,
+/// while update_major_pointers skips blue objects.  For farr values produced by
+/// Cheney promotion, this follows from fwd_targets_not_blue.
+let promoted_entries_not_blue (major: heap) (farr: Seq.seq U64.t) : prop =
   Seq.length farr == fwd_array_size /\
   (forall (i: nat). i < fwd_array_size ==>
     (let obj = Seq.index farr i in
-     obj <> 0UL /\ U64.v obj >= 8 /\ U64.v obj % 8 == 0 /\ U64.v obj < heap_size ==>
-     SpecObj.is_infix obj major = false))
+     obj <> 0UL /\
+     U64.v obj >= U64.v mword /\
+     U64.v obj % U64.v mword == 0 /\
+     U64.v obj < heap_size /\
+     SpecObj.is_infix obj major = false ==>
+     SpecObj.is_blue obj major = false))
 
 /// Update only the promoted objects' fields by iterating fwd_arr.
 /// For each non-zero fwd_arr[i], reads the header at (fwd_arr[i] - 8),
@@ -356,23 +360,57 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
 /// pre-existing object bodies). Combined with update_promoted_iter (which
 /// handles newly-promoted objects' fields), this ensures ALL minor pointers
 /// in the post-promotion heap get rewritten.
+///
+/// Quantifies over field positions (obj, j) rather than all aligned addresses,
+/// because header words can accidentally look like forwarded minor pointers
+/// (e.g., makeHeader 1 White 0 = 1024, which passes is_minor_pointer).
 let ref_table_complete (major_pre: heap) (fwd: PromoteSpec.forwarding_map)
                        (slots: Seq.seq U64.t) (n: nat) : prop =
   n <= Seq.length slots /\
-  (forall (addr: nat).
-    addr < heap_size /\ addr % 8 == 0 /\
-    (let field_val = GC.Gen.Base.to_minor_offset (SpecHeap.read_word major_pre (U64.uint_to_t addr)) in
+  (forall (obj: GC.Spec.Base.obj_addr) (j: nat).
+    Seq.mem obj (GC.Spec.Fields.objects zero_addr major_pre) /\
+    GC.Spec.Object.is_blue obj major_pre = false /\
+    GC.Spec.Object.is_no_scan obj major_pre = false /\
+    j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
+    U64.v obj + j * 8 + 8 <= heap_size /\
+    (let field_val = GC.Gen.Base.to_minor_offset
+       (SpecHeap.read_word major_pre (U64.uint_to_t (U64.v obj + j * 8))) in
      PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL) ==>
-    (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == addr))
+    (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v obj + j * 8))
 
 /// Slot soundness: every slot address is a field of a scannable non-blue object
 /// in the original heap. This ensures rewrite_slots_iter only touches addresses
 /// that update_major_pointers would also touch.
+///
+/// The write barrier only records addresses of pointer fields in non-blue,
+/// non-no_scan objects, so this is a natural caller obligation.
 let ref_table_sound (major_pre: heap) (slots: Seq.seq U64.t) (n: nat) : prop =
   n <= Seq.length slots /\
   (forall (i: nat). i < n ==>
     (let addr = U64.v (Seq.index slots i) in
-     addr < heap_size /\ addr % 8 == 0))
+     addr < heap_size /\ addr % 8 == 0 /\
+     (exists (obj: GC.Spec.Base.obj_addr) (j: nat).
+       Seq.mem obj (GC.Spec.Fields.objects zero_addr major_pre) /\
+       GC.Spec.Object.is_blue obj major_pre = false /\
+       GC.Spec.Object.is_no_scan obj major_pre = false /\
+       j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
+       addr == U64.v obj + j * 8)))
+
+/// Slot soundness in the post-promotion heap used by the two-pass equivalence
+/// proof.  The implementation derives this from ref_table_sound on major_pre
+/// plus Cheney frame/header preservation for pre-existing non-blue objects.
+let slots_scannable_in_major (major: heap) (slots: Seq.seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (i: nat). i < n ==>
+    (let addr = U64.v (Seq.index slots i) in
+     exists (obj: GC.Spec.Base.obj_addr) (j: nat).
+       Seq.mem obj (GC.Spec.Fields.objects zero_addr major) /\
+       GC.Spec.Object.is_blue obj major = false /\
+       GC.Spec.Object.is_no_scan obj major = false /\
+       j < U64.v (SpecObj.wosize_of_object obj major) /\
+       addr == U64.v obj + j * 8 /\
+       U64.v obj + j * 8 + 8 <= heap_size /\
+       (U64.v obj + j * 8) % 8 == 0))
 
 /// Forwarding targets don't trigger the minor-pointer condition.
 /// After pass 1 rewrites a field to fwd(offset), the resulting value
@@ -387,34 +425,36 @@ let fwd_targets_stable (fwd: PromoteSpec.forwarding_map) : prop =
      let target_as_minor = GC.Gen.Base.to_minor_offset target in
      ~(PromoteSpec.is_minor_pointer target_as_minor /\ fwd target_as_minor <> 0UL))
 
-/// Classification of addresses with forwarded minor pointers in major_final.
-/// Every such address is:
-///   (1) inside a scannable (non-blue, non-no_scan) object's body, AND
-///   (2) either inside a promoted object's body (farr entry) or a ref_table slot.
+/// Classification of forwarded minor pointers at scannable object fields.
+/// For every field of a scannable (non-blue, non-no_scan) object in major_final
+/// that contains a forwarded minor pointer, the object is either:
+///   (1) a promoted object (recorded in farr), OR
+///   (2) at a ref_table slot address.
 ///
-/// Part (1) enables update_major_pointers_field_effect (RHS of equivalence).
-/// Part (2) enables the pass1-or-pass2 case split (LHS of equivalence).
+/// Quantifies over field positions (obj, j) rather than all aligned addresses.
+/// This avoids the unprovable header-collision case where object headers
+/// (e.g., makeHeader 1 White 0 = 1024) accidentally satisfy is_minor_pointer.
 ///
-/// Provable from: well_formed_heap + no_scan_invariant + promotion frame +
-/// ref_table_complete. Added as a precondition to keep the proof modular.
+/// Provable from: well_formed_heap + promotion frame + nonblue_origin +
+/// ref_table_complete. Derived in GC.Gen.Impl.derive_fwd_ptrs_classified.
 let fwd_ptrs_classified (major: heap) (fwd: PromoteSpec.forwarding_map)
                         (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat) : prop =
   Seq.length farr == fwd_array_size /\
   n <= Seq.length slots /\
-  (forall (addr: nat). {:pattern (GC.Gen.Base.to_minor_offset (SpecHeap.read_word major (U64.uint_to_t addr)))}
-    addr < heap_size /\ addr % 8 == 0 /\
-    (let field_val = GC.Gen.Base.to_minor_offset (SpecHeap.read_word major (U64.uint_to_t addr)) in
+  (forall (obj: GC.Spec.Base.obj_addr) (j: nat).
+    {:pattern (GC.Gen.Base.to_minor_offset
+      (SpecHeap.read_word major (U64.uint_to_t (U64.v obj + j * 8))))}
+    Seq.mem obj (GC.Spec.Fields.objects zero_addr major) /\
+    GC.Spec.Object.is_blue obj major = false /\
+    GC.Spec.Object.is_no_scan obj major = false /\
+    j < U64.v (SpecObj.wosize_of_object obj major) /\
+    U64.v obj + j * 8 + 8 <= heap_size /\
+    (U64.v obj + j * 8) % 8 == 0 /\
+    (let field_val = GC.Gen.Base.to_minor_offset
+       (SpecHeap.read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
      PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL) ==>
-    // addr is a field of a scannable object that is either promoted (in farr) or at a slot
-    (exists (obj: GC.Spec.Base.obj_addr) (j: nat).
-      Seq.mem obj (GC.Spec.Fields.objects zero_addr major) /\
-      GC.Spec.Object.is_blue obj major = false /\
-      GC.Spec.Object.is_no_scan obj major = false /\
-      j < U64.v (SpecObj.wosize_of_object obj major) /\
-      addr == U64.v obj + j * 8 /\
-      U64.v obj + j * 8 + 8 <= heap_size /\
-      ((exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
-       (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == addr))))
+    ((exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
+     (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == U64.v obj + j * 8)))
 
 /// The key equivalence theorem (promoted + slots = full update) is proved in
 /// GC.Gen.TwoPassEquiv.promoted_plus_slots_eq_full_update.

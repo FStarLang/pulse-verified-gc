@@ -278,6 +278,8 @@ let derive_fwd_targets_stable (fwd: PromoteSpec.forwarding_map)
 
 module CheneyPres = GC.Gen.CheneyPreservation
 module SpecObj = GC.Spec.Object
+module IndDesc = FStar.IndefiniteDescription
+module Sim = GC.Gen.Cheney.Sim
 
 /// Derivation: fwd_valid_or_infix + wfh_part1 + fwd_bounded + represents_fwd
 /// implies promoted_entries_valid_from.
@@ -391,6 +393,127 @@ let derive_promoted_entries_disjoint
   Classical.forall_intro_2 aux
 #pop-options
 
+/// Derivation: farr represents a Cheney forwarding map whose normal targets are
+/// non-blue, hence every non-zero non-infix farr entry is non-blue.
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+let derive_promoted_entries_not_blue
+  (major: heap_state) (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map)
+  : Lemma (requires
+      Seq.length farr == fwd_array_size /\
+      represents_fwd farr fwd /\
+      CheneyPres.fwd_targets_not_blue fwd major)
+    (ensures promoted_entries_not_blue major farr)
+  =
+    let aux (i: nat{i < fwd_array_size}) : Lemma
+      (ensures
+        (let obj = Seq.index farr i in
+         obj <> 0UL /\
+         U64.v obj >= U64.v mword /\
+         U64.v obj % U64.v mword == 0 /\
+         U64.v obj < heap_size /\
+         SpecObj.is_infix obj major = false ==>
+         SpecObj.is_blue obj major = false))
+    = let obj = Seq.index farr i in
+      if obj <> 0UL &&
+         U64.v obj >= U64.v mword &&
+         U64.v obj % U64.v mword = 0 &&
+         U64.v obj < heap_size &&
+         SpecObj.is_infix obj major = false
+      then begin
+        let src = U64.uint_to_t (i * 8) in
+        assert (obj == fwd src);
+        GC.Spec.Base.is_val_addr_spec obj;
+        assert (is_val_addr obj);
+        assert (fwd src <> 0UL);
+        assert (is_val_addr (fwd src));
+        assert (SpecObj.is_infix (fwd src) major = false);
+        assert (SpecObj.is_blue ((fwd src) <: obj_addr) major = false)
+      end
+    in
+    Classical.forall_intro aux
+#pop-options
+
+/// Derive post-promotion slot soundness from the ref-table's pre-promotion
+/// soundness.  The slots point into pre-existing non-blue objects; Cheney frame
+/// preserves those objects' headers, so they remain non-blue scannable objects
+/// at the same field addresses in major_final.
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+let derive_slots_scannable_in_major
+  (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
+  (slots: Seq.seq U64.t) (n: nat)
+  : Lemma (requires
+      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+       SpecFields.well_formed_heap major_pre /\
+       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       PromoteSpec.chain_objects_blue major_pre fp /\
+       minor_infix_wf minor /\
+       ref_table_sound major_pre slots n))
+    (ensures
+      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+       slots_scannable_in_major prom.major_final slots n))
+  =
+    let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+    CheneySpec.cheney_promote_preserves_objects minor major_pre fp roots;
+    let aux (i: nat{i < n}) : Lemma
+      (ensures
+        (let addr = U64.v (Seq.index slots i) in
+         exists (obj: GC.Spec.Base.obj_addr) (j: nat).
+           Seq.mem obj (SpecFields.objects zero_addr prom.major_final) /\
+           SpecObj.is_blue obj prom.major_final = false /\
+           SpecObj.is_no_scan obj prom.major_final = false /\
+           j < U64.v (SpecObj.wosize_of_object obj prom.major_final) /\
+           addr == U64.v obj + j * 8 /\
+           U64.v obj + j * 8 + 8 <= heap_size /\
+           (U64.v obj + j * 8) % 8 == 0))
+    = let slot_addr = Seq.index slots i in
+      let a = U64.v slot_addr in
+      let obj : GC.Spec.Base.obj_addr = IndDesc.indefinite_description_ghost
+        GC.Spec.Base.obj_addr
+        (fun obj -> exists (j: nat).
+          Seq.mem obj (SpecFields.objects zero_addr major_pre) /\
+          SpecObj.is_blue obj major_pre = false /\
+          SpecObj.is_no_scan obj major_pre = false /\
+          j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
+          a == U64.v obj + j * 8) in
+      let j : nat = IndDesc.indefinite_description_ghost nat
+        (fun j ->
+          Seq.mem obj (SpecFields.objects zero_addr major_pre) /\
+          SpecObj.is_blue obj major_pre = false /\
+          SpecObj.is_no_scan obj major_pre = false /\
+          j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
+          a == U64.v obj + j * 8) in
+      assert (Seq.mem obj (SpecFields.objects zero_addr major_pre));
+      assert (SpecObj.is_blue obj major_pre = false);
+      assert (SpecObj.is_no_scan obj major_pre = false);
+      assert (j < U64.v (SpecObj.wosize_of_object obj major_pre));
+      assert (a == U64.v obj + j * 8);
+      assert (Seq.mem obj (SpecFields.objects zero_addr prom.major_final));
+      CheneyPres.cheney_promote_frame_old_header minor major_pre fp roots obj;
+      assert (GC.Spec.Heap.read_word prom.major_final (GC.Spec.Heap.hd_address obj)
+           == GC.Spec.Heap.read_word major_pre (GC.Spec.Heap.hd_address obj));
+      SpecObj.color_of_header_eq obj prom.major_final major_pre;
+      assert (SpecObj.is_blue obj prom.major_final = false);
+      SpecObj.tag_of_object_spec obj prom.major_final;
+      SpecObj.tag_of_object_spec obj major_pre;
+      SpecObj.is_no_scan_spec obj prom.major_final;
+      SpecObj.is_no_scan_spec obj major_pre;
+      assert (SpecObj.is_no_scan obj prom.major_final = false);
+      SpecObj.wosize_of_object_spec obj prom.major_final;
+      SpecObj.wosize_of_object_spec obj major_pre;
+      assert (SpecObj.wosize_of_object obj prom.major_final ==
+              SpecObj.wosize_of_object obj major_pre);
+      assert (j < U64.v (SpecObj.wosize_of_object obj prom.major_final));
+      wfh_implies_part1 major_pre;
+      SpecFields.wfh_part1_obj_bound major_pre obj;
+      assert (U64.v obj + U64.v (SpecObj.wosize_of_object obj major_pre) * 8 <= heap_size);
+      assert (U64.v obj + j * 8 + 8 <= heap_size);
+      ML.lemma_mod_plus (U64.v obj) j 8;
+      assert ((U64.v obj + j * 8) % 8 == 0)
+    in
+    Classical.forall_intro aux
+#pop-options
+
 /// Derivation: frame + ref_table_complete + ref_table_sound + represents_fwd
 /// implies fwd_ptrs_classified.
 ///
@@ -398,7 +521,173 @@ let derive_promoted_entries_disjoint
 ///   - In a pre-existing non-blue object body → frame shows same value as major_pre
 ///     → ref_table_complete covers it (second disjunct)
 ///   - In a promoted object body → the promoted object is in farr (first disjunct)
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+/// Case A helper: obj was pre-existing non-blue in major_pre
+private let derive_fwd_case_a
+  (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
+  (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
+  (obj: GC.Spec.Base.obj_addr) (j: nat)
+  : Lemma (requires
+      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+       let major_final = prom.major_final in
+       let fwd = prom.fwd_map in
+       Seq.length farr == fwd_array_size /\
+       represents_fwd farr fwd /\
+       SpecFields.well_formed_heap major_pre /\
+       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       PromoteSpec.chain_objects_blue major_pre fp /\
+       minor_infix_wf minor /\
+       n <= Seq.length slots /\
+       ref_table_complete major_pre fwd slots n /\
+       // obj is pre-existing non-blue
+       Seq.mem obj (SpecFields.objects zero_addr major_pre) /\
+       SpecObj.is_blue obj major_pre = false /\
+       // Field preconditions (from the universal)
+       Seq.mem obj (SpecFields.objects zero_addr major_final) /\
+       SpecObj.is_blue obj major_final = false /\
+        SpecObj.is_no_scan obj major_final = false /\
+        j < U64.v (SpecObj.wosize_of_object obj major_final) /\
+        U64.v obj + j * 8 + 8 <= heap_size /\
+        (U64.v obj + j * 8) % 8 == 0 /\
+        (let a = U64.v obj + j * 8 in
+         let field_val = to_minor_offset
+          (GC.Spec.Heap.read_word major_final (U64.uint_to_t a)) in
+        PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL)))
+    (ensures
+      (exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
+      (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == U64.v obj + j * 8))
+  = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+    let major_final = prom.major_final in
+    let fwd = prom.fwd_map in
+    let a = U64.v obj + j * 8 in
+    ML.lemma_mod_plus (U64.v obj) j 8;
+    // Frame: header is preserved
+    CheneyPres.cheney_promote_frame_old_header minor major_pre fp roots obj;
+    let hdr_eq : squash (GC.Spec.Heap.read_word major_final (GC.Spec.Heap.hd_address obj)
+                      == GC.Spec.Heap.read_word major_pre (GC.Spec.Heap.hd_address obj)) = () in
+    // Derive wosize equality
+    SpecObj.wosize_of_object_spec obj major_final;
+    SpecObj.wosize_of_object_spec obj major_pre;
+    assert (SpecObj.wosize_of_object obj major_final == SpecObj.wosize_of_object obj major_pre);
+    // Derive is_no_scan equality (same tag from same header)
+    SpecObj.is_no_scan_spec obj major_final;
+    SpecObj.is_no_scan_spec obj major_pre;
+    SpecObj.tag_of_object_spec obj major_final;
+    SpecObj.tag_of_object_spec obj major_pre;
+    assert (SpecObj.is_no_scan obj major_pre = false);
+    // Frame: field value preserved
+    CheneyPres.cheney_promote_frame_old_fields minor major_pre fp roots obj j;
+    assert (GC.Spec.Heap.read_word major_final (U64.uint_to_t a)
+         == GC.Spec.Heap.read_word major_pre (U64.uint_to_t a));
+    // ref_table_complete at (obj, j): all preconditions hold for major_pre
+    assert (j < U64.v (SpecObj.wosize_of_object obj major_pre));
+    let field_val = to_minor_offset (GC.Spec.Heap.read_word major_pre (U64.uint_to_t a)) in
+    assert (PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL);
+    // ref_table_complete gives us the slot witness
+    assert (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v obj + j * 8)
+
+/// Case B helper: obj is a newly promoted object (not pre-existing non-blue)
+private let derive_fwd_case_b
+  (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
+  (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
+  (obj: GC.Spec.Base.obj_addr) (j: nat)
+  : Lemma (requires
+      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+       let major_final = prom.major_final in
+       let fwd = prom.fwd_map in
+       Seq.length farr == fwd_array_size /\
+       represents_fwd farr fwd /\
+       SpecFields.well_formed_heap major_pre /\
+       SpecFields.well_formed_heap_part1 major_final /\
+       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       PromoteSpec.chain_objects_blue major_pre fp /\
+       minor_infix_wf minor /\
+       minor_wf minor /\
+       n <= Seq.length slots /\
+       // NOT pre-existing non-blue
+       ~(Seq.mem obj (SpecFields.objects zero_addr major_pre) /\
+         SpecObj.is_blue obj major_pre = false) /\
+       // obj is non-blue in major_final
+       Seq.mem obj (SpecFields.objects zero_addr major_final) /\
+       SpecObj.is_blue obj major_final = false))
+    (ensures
+      (exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
+      (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == U64.v obj + j * 8))
+  = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+    let fwd = prom.fwd_map in
+    // nonblue_origin: obj is a forwarding target
+    CheneyPres.cheney_promote_nonblue_origin minor major_pre fp roots obj;
+    // Get witness: exists x. fwd x == obj /\ is_minor_pointer x
+    let x : U64.t = IndDesc.indefinite_description_ghost U64.t
+      (fun x -> fwd x == obj /\ PromoteSpec.is_minor_pointer x) in
+    assert (fwd x == obj /\ PromoteSpec.is_minor_pointer x);
+    // is_minor_pointer x means: U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0
+    assert (U64.v x % 8 == 0);
+    assert (U64.v x >= 8);
+    assert (U64.v x < minor_heap_size);
+    // pi = U64.v x / 8
+    let pi = U64.v x / 8 in
+    assert (pi >= 1);
+    // x < minor_heap_size and x % 8 == 0 implies x <= minor_heap_size - 8
+    // hence x/8 <= (minor_heap_size - 8)/8 = minor_heap_size/8 - 1 < fwd_array_size
+    FStar.Math.Lemmas.lemma_div_le (U64.v x) (minor_heap_size - 8) 8;
+    assert (pi <= (minor_heap_size - 8) / 8);
+    assert (pi < fwd_array_size);
+    // From x % 8 == 0: pi * 8 == U64.v x
+    FStar.Math.Lemmas.lemma_div_exact (U64.v x) 8;
+    assert (pi * 8 == U64.v x);
+    assert (U64.uint_to_t (pi * 8) == x);
+    // From represents_fwd: farr[pi] == fwd(uint_to_t(pi * 8)) == fwd x == obj
+    assert (Seq.index farr pi == fwd x);
+    assert (Seq.index farr pi == obj)
+
+/// Point-wise helper: combines case A and B with the mod_plus arithmetic
+private let derive_fwd_ptrs_classified_pointwise
+  (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
+  (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
+  (obj: GC.Spec.Base.obj_addr) (j: nat)
+  : Lemma (requires
+      (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+       let major_final = prom.major_final in
+       let fwd = prom.fwd_map in
+       Seq.length farr == fwd_array_size /\
+       represents_fwd farr fwd /\
+       SpecFields.well_formed_heap major_pre /\
+       SpecFields.well_formed_heap_part1 major_final /\
+       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       PromoteSpec.chain_objects_blue major_pre fp /\
+       minor_infix_wf minor /\
+       minor_wf minor /\
+       n <= Seq.length slots /\
+       ref_table_complete major_pre fwd slots n /\
+       ref_table_sound major_pre slots n /\
+       Seq.mem obj (SpecFields.objects zero_addr major_final) /\
+       SpecObj.is_blue obj major_final = false /\
+        SpecObj.is_no_scan obj major_final = false /\
+        j < U64.v (SpecObj.wosize_of_object obj major_final) /\
+        U64.v obj + j * 8 + 8 <= heap_size /\
+        (U64.v obj + j * 8) % 8 == 0 /\
+        (let a = U64.v obj + j * 8 in
+         let field_val = to_minor_offset
+          (GC.Spec.Heap.read_word major_final (U64.uint_to_t a)) in
+        PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL)))
+    (ensures
+      (exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
+      (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == U64.v obj + j * 8))
+  = ML.lemma_mod_plus (U64.v obj) j 8;
+    if IndDesc.strong_excluded_middle
+      (Seq.mem obj (SpecFields.objects zero_addr major_pre) /\
+       SpecObj.is_blue obj major_pre = false)
+    then
+      derive_fwd_case_a minor major_pre fp roots farr slots n obj j
+    else
+      derive_fwd_case_b minor major_pre fp roots farr slots n obj j
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let derive_fwd_ptrs_classified
   (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
   (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
@@ -411,17 +700,49 @@ let derive_fwd_ptrs_classified
        AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
        AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
        PromoteSpec.chain_objects_blue major_pre fp /\
+       minor_infix_wf minor /\
+       minor_wf minor /\
        n <= Seq.length slots /\
        ref_table_complete major_pre prom.fwd_map slots n /\
        ref_table_sound major_pre slots n))
     (ensures (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
               fwd_ptrs_classified prom.major_final prom.fwd_map farr slots n))
-  = // The proof requires showing that for every addr with a forwarded minor pointer:
-    // 1. Identify which object contains addr (from well_formed_heap_part1 of major_final)
-    // 2. If the object was in major_pre (pre-existing): use frame to transfer to ref_table
-    // 3. If the object is new (promoted): show it's in farr
-    // This is complex but follows from the frame + membership characterization.
-    admit ()
+  = let aux (obj: GC.Spec.Base.obj_addr) (j: nat) : Lemma
+      (ensures
+        (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+         let major_final = prom.major_final in
+         let fwd = prom.fwd_map in
+         Seq.mem obj (SpecFields.objects zero_addr major_final) /\
+         SpecObj.is_blue obj major_final = false /\
+         SpecObj.is_no_scan obj major_final = false /\
+         j < U64.v (SpecObj.wosize_of_object obj major_final) /\
+         U64.v obj + j * 8 + 8 <= heap_size /\
+         (U64.v obj + j * 8) % 8 == 0 /\
+         (let field_val = to_minor_offset
+           (GC.Spec.Heap.read_word major_final (U64.uint_to_t (U64.v obj + j * 8))) in
+          PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL) ==>
+         ((exists (pi: nat). pi < fwd_array_size /\ Seq.index farr pi == obj) \/
+          (exists (si: nat). si < n /\ U64.v (Seq.index slots si) == U64.v obj + j * 8))))
+    = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
+      let major_final = prom.major_final in
+      let fwd = prom.fwd_map in
+      if Seq.mem obj (SpecFields.objects zero_addr major_final) &&
+         SpecObj.is_blue obj major_final = false &&
+         SpecObj.is_no_scan obj major_final = false &&
+         j < U64.v (SpecObj.wosize_of_object obj major_final) &&
+         U64.v obj + j * 8 + 8 <= heap_size &&
+         (U64.v obj + j * 8) % 8 = 0
+      then begin
+        let a = U64.v obj + j * 8 in
+        ML.lemma_mod_plus (U64.v obj) j 8;
+        assert (a < heap_size);
+        assert (a % 8 == 0);
+        let field_val = to_minor_offset (GC.Spec.Heap.read_word major_final (U64.uint_to_t a)) in
+        if PromoteSpec.is_minor_pointer field_val && fwd field_val <> 0UL then
+          derive_fwd_ptrs_classified_pointwise minor major_pre fp roots farr slots n obj j
+      end
+    in
+    Classical.forall_intro_2 aux
 #pop-options
 
 /// Bridge lemma: conditional two-pass ↔ full-update equivalence.
@@ -448,6 +769,8 @@ let two_pass_implies_full_update
        PromoteSpec.heap_objects_dense prom.major_final /\
        Seq.length (SpecFields.objects zero_addr prom.major_final) > 0 /\
        SpecFields.well_formed_heap major_pre /\
+       minor_infix_wf minor /\
+       minor_wf minor /\
        PromoteSpec.chain_objects_blue major_pre fp /\
        AllocLemmas.fl_valid major_pre fp TwoPass.heap_fuel /\
        AllocLemmas.fl_chain_terminates major_pre fp TwoPass.heap_fuel))
@@ -460,6 +783,9 @@ let two_pass_implies_full_update
   = let prom = CheneySpec.cheney_promote minor major_pre fp roots in
     derive_promoted_entries_valid_from prom.major_final farr prom.fwd_map;
     derive_promoted_entries_disjoint prom.major_final farr prom.fwd_map;
+    CheneyPres.cheney_promote_fwd_targets_not_blue minor major_pre fp roots;
+    derive_promoted_entries_not_blue prom.major_final farr prom.fwd_map;
+    derive_slots_scannable_in_major minor major_pre fp roots slots n;
     derive_fwd_ptrs_classified minor major_pre fp roots farr slots n;
     TwoPass.promoted_plus_slots_eq_full_update minor major_pre fp roots farr slots n;
     cheney_collect_spec_unfold minor major_pre fp roots

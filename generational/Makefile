@@ -73,6 +73,11 @@ spec/GC.Gen.Promote.fst.checked: spec/GC.Gen.Promote.fst
 spec/%.checked: spec/%
 	$(FSTAR) $<
 
+# GC.Gen.Impl.fst manages split_queries per-function via push-options;
+# command-line --split_queries always conflicts with the derive_fwd_ptrs_classified proof
+impl/GC.Gen.Impl.fst.checked: impl/GC.Gen.Impl.fst
+	$(FSTAR) --z3rlimit 160 $<
+
 impl/%.checked: impl/%
 	$(FSTAR) --z3rlimit 160 --split_queries always $<
 

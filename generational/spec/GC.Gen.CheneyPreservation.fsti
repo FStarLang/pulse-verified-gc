@@ -68,6 +68,7 @@ val cheney_promote_fwd_valid_or_infix
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
           (ensures fwd_valid_or_infix (cheney_promote minor major fp roots).fwd_map
@@ -100,6 +101,29 @@ val cheney_promote_frame_old_fields
                     == read_word major (U64.uint_to_t (U64.v obj + j * 8))))
 
 /// ---------------------------------------------------------------------------
+/// Header frame: cheney_promote preserves headers of pre-existing non-blue objects
+/// ---------------------------------------------------------------------------
+
+/// For any non-blue object in the original major heap, its header is unchanged
+/// after cheney_promote. This is because cheney BFS only allocates from the
+/// free-list chain (blue objects), never overwriting pre-existing non-blue headers.
+/// Combined with frame_old_fields, this gives complete preservation of
+/// pre-existing non-blue objects through promotion.
+val cheney_promote_frame_old_header
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    Seq.mem obj (objects zero_addr major) /\
+                    is_blue obj major = false /\
+                    minor_infix_wf minor)
+          (ensures (let res = cheney_promote minor major fp roots in
+                    read_word res.major_final (hd_address obj)
+                    == read_word major (hd_address obj)))
+
+/// ---------------------------------------------------------------------------
 /// Injectivity: non-infix forwarding targets are pairwise distinct
 /// ---------------------------------------------------------------------------
 
@@ -115,6 +139,15 @@ let fwd_normal_injective (fwd: forwarding_map) (g: heap) : prop =
     is_infix (fwd x) g = false /\ is_infix (fwd y) g = false /\
     fwd x = fwd y ==> x = y
 
+/// Non-infix forwarding targets produced by Cheney are normal objects, not
+/// blue free-list nodes.  update_promoted_iter relies on this to agree with
+/// update_major_pointers, which skips blue objects.
+let fwd_targets_not_blue (fwd: forwarding_map) (g: heap) : prop =
+  forall (x: U64.t). fwd x <> 0UL /\ is_val_addr (fwd x) /\
+    is_infix (fwd x) g = false ==>
+    Seq.mem ((fwd x) <: obj_addr) (objects zero_addr g) /\
+    is_blue ((fwd x) <: obj_addr) g = false
+
 val cheney_promote_fwd_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -123,5 +156,45 @@ val cheney_promote_fwd_normal_injective
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
-          (ensures fwd_normal_injective (cheney_promote minor major fp roots).fwd_map
+           (ensures fwd_normal_injective (cheney_promote minor major fp roots).fwd_map
+                                         (cheney_promote minor major fp roots).major_final)
+
+val cheney_promote_fwd_targets_not_blue
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_targets_not_blue (cheney_promote minor major fp roots).fwd_map
                                         (cheney_promote minor major fp roots).major_final)
+
+/// ---------------------------------------------------------------------------
+/// Non-blue origin: objects that become non-blue during promotion are fwd targets
+/// ---------------------------------------------------------------------------
+
+/// If an object is non-blue in major_final but was NOT a pre-existing non-blue
+/// object (either wasn't in objects(major_pre) or was blue there), then it must
+/// be a forwarding target — i.e., it was allocated by cheney_promote to hold
+/// a promoted minor object.
+///
+/// Proof sketch (BFS induction): promote_object_frame_old_header_derived shows
+/// only the allocated object's header changes per step. Objects whose headers
+/// don't change retain their color. So: non-blue in final ∧ not-pre-nonblue → allocated → fwd target.
+val cheney_promote_nonblue_origin
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: obj_addr)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor /\
+                    (let res = cheney_promote minor major fp roots in
+                     Seq.mem obj (objects zero_addr res.major_final) /\
+                     is_blue obj res.major_final = false /\
+                     ~(Seq.mem obj (objects zero_addr major) /\
+                       is_blue obj major = false)))
+          (ensures (let res = cheney_promote minor major fp roots in
+                    exists (x: U64.t). res.fwd_map x == obj /\ is_minor_pointer x))
