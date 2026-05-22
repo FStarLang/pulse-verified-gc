@@ -31,6 +31,7 @@ open GC.Gen.PromoteUpdate
 open GC.Gen.Remembered
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FreeListShape = GC.Gen.FreeListShape
 
 /// ---------------------------------------------------------------------------
 /// Cheney state: threaded through all BFS operations
@@ -355,6 +356,18 @@ val cheney_promote_preserves_cob
                     chain_objects_blue major fp)
           (ensures (let res = cheney_promote minor major fp roots in
                     chain_objects_blue res.major_final res.fp_final))
+
+val cheney_promote_preserves_free_list_shape
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    FreeListShape.fp_pointer_or_zero fp /\
+                    FreeListShape.blue_link_fields_valid major /\
+                    chain_objects_blue major fp)
+          (ensures (let res = cheney_promote minor major fp roots in
+                    FreeListShape.fp_pointer_or_zero res.fp_final /\
+                    FreeListShape.blue_link_fields_valid res.major_final))
 
 /// --- Object preservation ---
 

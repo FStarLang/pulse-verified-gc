@@ -25,6 +25,7 @@ open GC.Gen.PromoteUpdate.BlueAlloc
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
+module FreeListShape = GC.Gen.FreeListShape
 
 private let copy_fields_preserves_objects_aux = WriteBody.copy_fields_preserves_objects_aux
 private let copy_fields_preserves_fl_valid_aux = WriteBody.copy_fields_preserves_fl_valid_aux
@@ -446,7 +447,7 @@ private let promote_object_preserves_bfc_close
 #pop-options
 
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
-private let promote_object_preserves_bfc
+let promote_object_preserves_bfc
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   : Lemma (requires
@@ -753,6 +754,113 @@ let promote_object_preserves_chain_objects_blue
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires full_proof);
     reveal_opaque (`%chain_objects_blue) chain_objects_blue
+#pop-options
+
+/// A successful promotion preserves the shape of the free-list head and blue
+/// link fields. Allocation establishes the shape for the immediate post-alloc
+/// heap; copy/padding/tag writes do not affect link fields of still-blue objects.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0 --split_queries always"
+let promote_object_preserves_free_list_shape
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      FreeListShape.fp_pointer_or_zero fp /\
+      FreeListShape.blue_link_fields_valid major /\
+      chain_objects_blue major fp /\
+      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+    (ensures
+      FreeListShape.fp_pointer_or_zero
+        (promote_object minor major obj fp wosize).fp_out /\
+      FreeListShape.blue_link_fields_valid
+        (promote_object minor major obj fp wosize).major_out)
+  =
+    let res = promote_object minor major obj fp wosize in
+    let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
+    let new_major = alloc_res.heap_out in
+    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
+    let dst_obj : obj_addr = alloc_res.obj_out in
+    promote_object_success minor major obj fp wosize;
+    let copied = copy_fields minor new_major obj dst_obj 0 wosize in
+    let padded = zero_promote_padding copied dst_obj wosize in
+    let tag = minor_tag minor obj in
+    minor_tag_bound minor obj;
+    let final = set_promoted_tag padded dst_obj tag in
+    assert (res.major_out == final);
+    // Allocation establishes both shape components on new_major / alloc_res.fp_out.
+    GC.Gen.PromoteUpdate.BlueAlloc.alloc_spec_preserves_fp_pointer_or_zero major fp wosize;
+    GC.Gen.PromoteUpdate.BlueAlloc.alloc_spec_preserves_blue_link_fields_valid major fp wosize;
+    AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wosize;
+    assert (FreeListShape.fp_pointer_or_zero res.fp_out);
+    assert (FreeListShape.blue_link_fields_valid new_major);
+    assert (well_formed_heap_part1 new_major);
+
+    // Objects are unchanged from new_major to final.
+    GC.Gen.AllocProps.alloc_spec_obj_in_objects_part1 major fp wosize;
+    GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wosize;
+    copy_fields_preserves_objects_aux minor new_major obj dst_obj 0 wosize;
+    copy_fields_preserves_wfh_part1 minor new_major obj dst_obj wosize;
+    zero_promote_padding_preserves_objects copied dst_obj wosize;
+    zero_promote_padding_preserves_wfh_part1 copied dst_obj wosize;
+    set_promoted_tag_preserves_objects padded dst_obj tag;
+
+    // The promoted destination is white in the final heap, so it is not a blue
+    // free-list node whose link field must be considered.
+    hd_address_spec dst_obj;
+    zero_promote_padding_frame copied dst_obj wosize (hd_address dst_obj);
+    set_promoted_tag_unfold padded dst_obj tag;
+    let padded_hdr = read_word padded (hd_address dst_obj) in
+    getWosize_bound padded_hdr;
+    let new_hdr = makeHeader (getWosize padded_hdr) White (U64.uint_to_t tag) in
+    read_write_same padded (hd_address dst_obj) new_hdr;
+    makeHeader_getColor (getWosize padded_hdr) White (U64.uint_to_t tag);
+    color_of_object_spec dst_obj final;
+    GC.Spec.Object.is_blue_iff dst_obj final;
+    assert (is_blue dst_obj final = false);
+
+    let blfv_proof (src: obj_addr)
+      : Lemma (requires Seq.mem src (objects zero_addr final) /\
+                        is_blue src final /\
+                        U64.v (wosize_of_object src final) >= 1 /\
+                        U64.v (hd_address src) + 16 <= heap_size)
+              (ensures (let v = read_word final src in
+                        FreeListShape.fp_pointer_or_zero v))
+      = assert (Seq.mem src (objects zero_addr new_major));
+        assert (src <> dst_obj);
+        headers_disjoint_from_separation new_major src dst_obj;
+        set_promoted_tag_read_frame padded dst_obj tag (hd_address src);
+        copy_fields_other_hdr_precond new_major src dst_obj wosize;
+        copy_fields_preserves_other minor new_major obj dst_obj 0 wosize (hd_address src);
+        hd_address_spec dst_obj;
+        wfh_part1_obj_bound new_major dst_obj;
+        dst_fields_valid_from_bounds dst_obj wosize;
+        copy_fields_frame minor new_major obj dst_obj 0 wosize (hd_address dst_obj);
+        wosize_of_object_spec dst_obj new_major;
+        wosize_of_object_spec dst_obj copied;
+        let actual_wz = U64.v (wosize_of_object dst_obj copied) in
+        if actual_wz <= wosize then
+          zero_promote_padding_noop copied dst_obj wosize
+        else begin
+          hd_address_spec src;
+          if U64.v src < U64.v dst_obj then
+            objects_separated zero_addr new_major src dst_obj
+          else begin
+            objects_separated zero_addr new_major dst_obj src;
+            wosize_of_object_spec dst_obj new_major
+          end;
+          zero_promote_padding_frame copied dst_obj wosize (hd_address src)
+        end;
+        wosize_of_object_spec src new_major;
+        wosize_of_object_spec src final;
+        color_of_header_eq src final new_major;
+        assert (is_blue src new_major);
+        assert (U64.v (wosize_of_object src new_major) >= 1);
+        read_word_preserved_at_obj minor new_major obj src dst_obj wosize tag;
+        FreeListShape.blue_link_fields_valid_elim new_major src
+    in
+    FreeListShape.blue_link_fields_valid_intro final blfv_proof
 #pop-options
 
 /// Inductive proof: promote_all_aux preserves blue_fields_closed.

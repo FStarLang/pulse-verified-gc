@@ -237,7 +237,7 @@ private let promote_object_header_from_alloc_frame
 #pop-options
 
 #push-options "--z3rlimit 120 --fuel 0 --ifuel 0 --split_queries always"
-private let promote_object_nonblue_other_reflects_pre
+let promote_object_nonblue_other_reflects_pre
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (target: obj_addr)
   : Lemma
@@ -510,6 +510,8 @@ private let rec cheney_scan_preserves_nonblue_origin_inv
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_cob minor cs obj 0 wz;
     let cs' = cheney_forward_fields minor cs obj 0 wz in
+    assert (fuel > 0);
+    assert (fuel - 1 < fuel);
     cheney_scan_preserves_nonblue_origin_inv major0 minor cs' (scan + 1) (fuel - 1)
   end
 #pop-options

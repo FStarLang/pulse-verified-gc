@@ -34,8 +34,12 @@ module ML = FStar.Math.Lemmas
 module MajorGC = GC.Impl
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
+module Sweep = GC.Spec.Sweep
+module SweepInv = GC.Spec.SweepInv
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module TwoPass = GC.Gen.TwoPassEquiv
+module GenInv = GC.Gen.HeapInvariant
+module FreeListShape = GC.Gen.FreeListShape
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -82,6 +86,11 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 
 module PromoteSpec = GC.Gen.Promote
 open GC.Gen.PromoteUpdate
+
+let minor_heap_no_scan_invariant_elim (d: minor_heap) (b: U64.t)
+  : Lemma (requires minor_heap_no_scan_invariant d b)
+          (ensures PromoteSpec.minor_no_scan_invariant ({ data = d; bump = b }))
+  = reveal_opaque (`%minor_heap_no_scan_invariant) (minor_heap_no_scan_invariant d b)
 
 /// Helper: advancing by a multiple of 8 preserves 8-alignment
 let advance_aligned (p tw: nat)
@@ -901,24 +910,14 @@ fn minor_collect_full (gh: gen_heap_t)
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
-           pure (SpecFields.well_formed_heap 's /\
-                 AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
-                 PromoteSpec.heap_objects_dense 's /\
-                 PromoteSpec.chain_objects_blue 's 'fp /\
-                 SZ.v nroots == Seq.length 'rs /\
-                 Seq.length 'farr == fwd_array_size /\
-                 (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
-                 minor_wf ({ data = 'd; bump = 'b }) /\
-                 minor_guards_complete ({ data = 'd; bump = 'b }) /\
-                 minor_infix_wf ({ data = 'd; bump = 'b }) /\
-                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-                 SZ.v nslots <= Seq.length 'sl /\
-                 valid_slot_addrs 'sl (SZ.v nslots) /\
-                 ref_table_sound 's 'sl (SZ.v nslots) /\
-                 (let prom = CheneySpec.cheney_promote
-                              ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs in
-                  ref_table_complete 's prom.fwd_map 'sl (SZ.v nslots)))
+            pure (GenInv.collection_heap_shape
+                    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp /\
+                  SZ.v nroots == Seq.length 'rs /\
+                  Seq.length 'farr == fwd_array_size /\
+                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+                  ref_table_sound 's 'sl (SZ.v nslots) /\
+                  ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
+                  slots_pairwise_distinct 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -946,12 +945,13 @@ fn minor_collect_full (gh: gen_heap_t)
       Seq.length farr2 == fwd_array_size /\
       // Well-formedness preserved through promotion
       SpecFields.well_formed_heap_part1 prom.major_final /\
-      // Strong correctness (conditional): under the two-pass equivalence
-      // conditions, the result equals cheney_collect_spec.mc_major.
-      (slots_pairwise_distinct 'sl (SZ.v nslots)
-       ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major))
+      // Strong correctness: the result equals cheney_collect_spec.mc_major.
+      s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major)
 {
   unfold is_gen_heap;
+  GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
+  GenInv.major_heap_shape_elim 's 'fp;
+  GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
   let ok = cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr queue roots nroots;
@@ -975,6 +975,7 @@ fn minor_collect_full (gh: gen_heap_t)
   with farr_post2. assert (pts_to fwd_arr farr_post2);
 
   // Phase 2b: Rewrite ref_table slots for full correctness
+  ref_table_sound_implies_valid_slot_addrs 's 'sl (SZ.v nslots);
   rewrite_heap_slots gh.major fwd_arr slots nslots
     #(hide (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
 
@@ -989,13 +990,17 @@ fn minor_collect_full (gh: gen_heap_t)
   // Phase 4: Reset minor heap
   minor_heap_reset gh.minor;
 
-  // Prove the conditional equivalence for the strong spec:
-  // IF slots_pairwise_distinct THEN s2 == cheney_collect_spec.mc_major
-  // Derive all conditions unconditionally from Cheney BFS properties
+  // Prove the full-update equivalence for the strong spec. The slot table is
+  // pairwise distinct by precondition; all other conditions are derived here.
   CheneySpec.cheney_promote_fwd_above_zero_addr
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   derive_fwd_targets_stable
     (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
+  ref_table_covers_minor_ptrs_implies_complete
+    's
+    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map
+    'sl
+    (SZ.v nslots);
   CheneySpec.cheney_promote_preserves_wfh_part4
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   CheneyPres.cheney_promote_fwd_valid_or_infix
@@ -1034,23 +1039,13 @@ fn gen_gc (gh: gen_heap_t)
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            is_gray_stack st 'st **
-           pure (
-             SpecFields.well_formed_heap 's /\
-             AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
-             PromoteSpec.heap_objects_dense 's /\
-             PromoteSpec.chain_objects_blue 's 'fp /\
-             SZ.v nroots == Seq.length 'rs /\
-             Seq.length 'farr == fwd_array_size /\
-             (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
-             minor_wf ({ data = 'd; bump = 'b }) /\
-             minor_guards_complete ({ data = 'd; bump = 'b }) /\
-             minor_infix_wf ({ data = 'd; bump = 'b }) /\
-             Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-             Mark.no_black_objects 's /\
-             (let res = CheneySpec.cheney_collect_spec
-                          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
-              MajorGC.gc_precondition res.mc_major 'st res.mc_fp (stack_capacity st)))
+            pure (
+              GenInv.full_heap_shape
+                ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'st
+                (stack_capacity st) /\
+              SZ.v nroots == Seq.length 'rs /\
+              Seq.length 'farr == fwd_array_size /\
+              (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
     is_gen_heap gh d2 b2 s2 (fst res) **
@@ -1074,6 +1069,12 @@ fn gen_gc (gh: gen_heap_t)
       AllocLemmas.fl_chain_terminates result.mc_major result.mc_fp (heap_size / U64.v mword))
 {
   unfold is_gen_heap;
+  GenInv.full_heap_shape_elim
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'st (stack_capacity st);
+  GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
+  GenInv.major_heap_shape_elim 's 'fp;
+  GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
+  GenInv.major_stack_shape_elim 's 'st (stack_capacity st);
 
   // Phase 1: Cheney BFS promotion (forward roots + scan)
   let ok = cheney_promote_phase gh.minor gh.major gh.fp_ref fwd_arr queue roots nroots;
@@ -1107,6 +1108,60 @@ fn gen_gc (gh: gen_heap_t)
   // Now: ms_updated == cheney_collect_spec(...).mc_major
   // Read post-minor free-list pointer
   let fp_val = R.op_Bang gh.fp_ref;
+
+  assert (pure (ms_updated ==
+    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major));
+  assert (pure (fp_val ==
+    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_fp));
+  CheneyPres.cheney_collect_preserves_wfh_from_shape
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  assert (pure (SpecFields.well_formed_heap ms_updated));
+  CheneyPres.cheney_collect_preserves_fp_pointer_or_zero
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  assert (pure (FreeListShape.fp_pointer_or_zero fp_val));
+  assert (pure (AllocLemmas.fl_valid ms_updated fp_val (heap_size / U64.v mword)));
+  FreeListShape.fp_pointer_or_zero_fl_valid_implies_fp_valid
+    fp_val ms_updated (heap_size / U64.v mword);
+  assert (pure (SweepInv.fp_valid fp_val ms_updated));
+  FreeListShape.fp_pointer_or_zero_implies_fp_in_heap fp_val ms_updated;
+  assert (pure (Sweep.fp_in_heap fp_val ms_updated));
+  CheneyPres.cheney_collect_preserves_no_black
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  assert (pure (Mark.no_black_objects ms_updated));
+  GC.Spec.MarkBoundedInv.bounded_mark_inv_elim_bsp 's 'st (stack_capacity st);
+  CheneyPres.cheney_collect_preserves_bounded_stack_props
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st;
+  assert (pure (GC.Spec.MarkBounded.bounded_stack_props ms_updated 'st));
+  assert (pure (Seq.length (SpecFields.objects zero_addr ms_updated) > 0));
+  assert (pure (PromoteSpec.heap_objects_dense ms_updated));
+  SweepInv.heap_objects_dense_intro ms_updated;
+  assert (pure (SweepInv.heap_objects_dense ms_updated));
+  assert (pure (Seq.length 'st <= stack_capacity st /\ stack_capacity st > 0));
+  GC.Spec.MarkBoundedInv.bounded_mark_inv_intro ms_updated 'st (stack_capacity st);
+  assert (pure (GC.Spec.MarkBoundedInv.bounded_mark_inv ms_updated 'st (stack_capacity st)));
+  assert (pure (SpecFields.well_formed_heap
+    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major));
+  CheneyPres.cheney_collect_preserves_no_pointer_to_blue
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  assert (pure (Mark.no_pointer_to_blue ms_updated));
+  assert (pure (Mark.root_props ms_updated 'st));
+  assert (pure (SpecFields.no_scan_invariant 's));
+  assert (pure (PromoteSpec.minor_no_scan_invariant ({data = 'd; bump = 'b} <: minor_state)));
+  CheneyPres.cheney_collect_preserves_no_scan_invariant
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  assert (pure (SpecFields.no_scan_invariant ms_updated));
+  assert (pure (CheneyPres.gray_black_objects_on_stack 's 'st));
+  CheneyPres.cheney_collect_preserves_gray_black_objects_on_stack
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st;
+  assert (pure (CheneyPres.gray_black_objects_on_stack ms_updated 'st));
+  assert (pure (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr ms_updated) /\
+    (GC.Spec.Object.is_gray x ms_updated \/ GC.Spec.Object.is_black x ms_updated) ==> Seq.mem x 'st));
+  assert (pure (GC.Spec.Graph.is_vertex_set (GC.Spec.HeapGraph.coerce_to_vertex_list 'st)));
+  Mark.root_graph_precondition ms_updated 'st;
+  assert (pure (let graph = GC.Spec.HeapModel.create_graph ms_updated in
+    let roots' = GC.Spec.HeapGraph.coerce_to_vertex_list 'st in
+    GC.Spec.Graph.graph_wf graph /\ GC.Spec.Graph.is_vertex_set roots' /\
+    GC.Spec.Graph.subset_vertices roots' graph.vertices));
 
   // Phase 5: Major collection (mark + sweep + coalesce)
   let final_fp = MajorGC.collect gh.major st fp_val;

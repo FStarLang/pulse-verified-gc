@@ -265,6 +265,25 @@ let no_pointer_to_blue (g: heap) : prop =
     Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\ points_to g src dst ==>
     ~(is_blue dst g)
 
+/// Introduce `no_pointer_to_blue` from a field-local proof.
+///
+/// This avoids unfolding `points_to` at call sites: clients prove that every
+/// concrete field of every non-blue object does not point to a blue target, and
+/// this lemma lifts that fact through `exists_field_pointing_to_unchecked`.
+val no_pointer_to_blue_intro_from_fields
+  (g: heap)
+  (field_no_blue: (src:obj_addr -> dst:obj_addr -> j:nat -> Lemma
+    (requires Seq.mem src (objects zero_addr g) /\
+              ~(is_blue src g) /\
+              j < U64.v (wosize_of_object src g) /\
+              U64.v src + j * 8 + 8 <= heap_size /\
+              is_pointer_to
+                (read_word g (U64.uint_to_t (U64.v src + j * 8)))
+                dst)
+    (ensures ~(is_blue dst g))))
+  : Lemma (requires well_formed_heap_part1 g)
+          (ensures no_pointer_to_blue g)
+
 /// ---------------------------------------------------------------------------
 /// Mark Aux/Mark Lemmas
 /// ---------------------------------------------------------------------------
@@ -548,6 +567,22 @@ val mark_preserves_no_pointer_to_blue : (g: heap{well_formed_heap g}) -> (st: se
 /// ---------------------------------------------------------------------------
 /// Graph / DFS Lemmas
 /// ---------------------------------------------------------------------------
+
+val create_graph_wf_from_heap : (g: heap) ->
+  Lemma (requires well_formed_heap g)
+        (ensures graph_wf (create_graph g))
+
+val root_props_subset_create_graph : (g: heap) -> (roots: seq obj_addr) ->
+  Lemma (requires root_props g roots)
+        (ensures subset_vertices (HeapGraph.coerce_to_vertex_list roots) (create_graph g).vertices)
+
+val root_graph_precondition : (g: heap) -> (roots: seq obj_addr) ->
+  Lemma (requires well_formed_heap g /\
+                  root_props g roots /\
+                  is_vertex_set (HeapGraph.coerce_to_vertex_list roots))
+        (ensures (let graph = create_graph g in
+                  let roots' = HeapGraph.coerce_to_vertex_list roots in
+                  graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
 
 val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\

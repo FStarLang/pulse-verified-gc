@@ -755,6 +755,62 @@ let no_pointer_to_blue (g: heap) : prop =
     Seq.mem src (objects zero_addr g) /\ ~(is_blue src g) /\ points_to g src dst ==>
     ~(is_blue dst g)
 
+/// Introduce no_pointer_to_blue from a field-local proof.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1"
+let no_pointer_to_blue_intro_from_fields
+  (g: heap)
+  (field_no_blue: (src:obj_addr -> dst:obj_addr -> j:nat -> Lemma
+    (requires Seq.mem src (objects zero_addr g) /\
+              ~(is_blue src g) /\
+              j < U64.v (wosize_of_object src g) /\
+              U64.v src + j * 8 + 8 <= heap_size /\
+              is_pointer_to
+                (read_word g (U64.uint_to_t (U64.v src + j * 8)))
+                dst)
+    (ensures ~(is_blue dst g))))
+  : Lemma (requires well_formed_heap_part1 g)
+          (ensures no_pointer_to_blue g)
+  =
+  let aux (src dst: obj_addr)
+    : Lemma (requires Seq.mem src (objects zero_addr g) /\
+                      ~(is_blue src g) /\
+                      points_to g src dst)
+            (ensures ~(is_blue dst g))
+    =
+    if is_blue dst g then begin
+      let wz = wosize_of_object src g in
+      wosize_of_object_bound src g;
+      wfh_part1_obj_bound g src;
+      hd_address_spec src;
+      assert (U64.v src + U64.v wz * 8 <= heap_size);
+      let field_not_dst (idx: nat{idx < U64.v wz})
+        : Lemma (let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
+                 U64.v far < heap_size /\ U64.v far % 8 == 0 ==>
+                 ~(is_pointer_to (read_word g (far <: hp_addr)) dst))
+        =
+        let far = U64.add_mod src (U64.mul_mod (U64.uint_to_t idx) mword) in
+        assert (idx * 8 < pow2 64);
+        assert (U64.v (U64.mul_mod (U64.uint_to_t idx) mword) == idx * 8);
+        assert (U64.v src + idx * 8 < pow2 64);
+        assert (U64.v far == U64.v src + idx * 8);
+        if U64.v far >= heap_size || U64.v far % 8 <> 0 then ()
+        else begin
+          let fv = read_word g (far <: hp_addr) in
+          if is_pointer_to fv dst then begin
+            assert (U64.v src + idx * 8 + 8 <= heap_size);
+            field_no_blue src dst idx;
+            assert False
+          end
+        end
+      in
+      Classical.forall_intro field_not_dst;
+      efptu_false_if_no_field_matches g src wz dst;
+      assert False
+    end
+  in
+  Classical.forall_intro_2 (Classical.move_requires_2 aux)
+#pop-options
+
 /// Fuel must be positive when stack is non-empty and mark_aux converges
 let mark_aux_fuel_pos (g: heap) (st: seq obj_addr) (fuel: nat)
   : Lemma (requires stack_props g st /\ Seq.length st > 0 /\
@@ -2632,6 +2688,111 @@ let rec all_edges_mem_reverse g objs src dst =
   end
 #pop-options
 
+/// Membership in a coerced object-address list provides the original obj_addr.
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+let rec coerce_mem_obj_addr (objs: seq obj_addr) (x: vertex_id)
+  : Lemma (requires Seq.mem x (HeapGraph.coerce_to_vertex_list objs))
+          (ensures U64.v x >= U64.v mword /\ Seq.mem (x <: obj_addr) objs)
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let h = Seq.head objs in
+      let tl = Seq.tail objs in
+      HeapGraph.coerce_cons_lemma h tl;
+      FStar.Seq.Properties.lemma_mem_append (Seq.create 1 h) (HeapGraph.coerce_to_vertex_list tl);
+      if x = h then begin
+        let xo : obj_addr = x in
+        assert (xo == h)
+      end else begin
+        coerce_mem_obj_addr tl x;
+        let xo : obj_addr = x in
+        assert (Seq.mem xo tl);
+        FStar.Seq.Properties.lemma_mem_append (Seq.create 1 h) tl
+      end
+    end
+#pop-options
+
+/// Pointer-field enumeration only contains object addresses.
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+let rec get_pointer_fields_aux_mem_ge_mword
+  (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t) (dst: vertex_id)
+  : Lemma (requires Seq.mem dst (HeapGraph.get_pointer_fields_aux g obj i ws))
+          (ensures U64.v dst >= U64.v mword)
+          (decreases (U64.v ws - U64.v i + 1))
+  = if U64.v i > U64.v ws then ()
+    else begin
+      let v = HeapGraph.get_field g obj i in
+      let rest =
+        if U64.v i < U64.v ws then
+          HeapGraph.get_pointer_fields_aux g obj (U64.add i 1UL) ws
+        else
+          Seq.empty
+      in
+      if HeapGraph.is_pointer_field v then begin
+        HeapGraph.is_pointer_field_is_obj_addr v;
+        assert (HeapGraph.get_pointer_fields_aux g obj i ws == Seq.cons v rest);
+        FStar.Seq.Properties.lemma_mem_append (Seq.create 1 v) rest;
+        if dst = v then ()
+        else begin
+          assert (Seq.mem dst rest);
+          if U64.v i < U64.v ws then
+            get_pointer_fields_aux_mem_ge_mword g obj (U64.add i 1UL) ws dst
+          else
+            assert (Seq.mem dst Seq.empty)
+        end
+      end else begin
+        assert (HeapGraph.get_pointer_fields_aux g obj i ws == rest);
+        if U64.v i < U64.v ws then
+          get_pointer_fields_aux_mem_ge_mword g obj (U64.add i 1UL) ws dst
+        else
+          assert (Seq.mem dst Seq.empty)
+      end
+    end
+
+let get_pointer_fields_mem_ge_mword (g: heap) (obj: obj_addr) (dst: vertex_id)
+  : Lemma (requires Seq.mem dst (HeapGraph.get_pointer_fields g obj))
+          (ensures U64.v dst >= U64.v mword)
+  = if not (HeapGraph.object_fits_in_heap obj g) then
+      assert (Seq.mem dst Seq.empty)
+    else if is_no_scan obj g then
+      assert (Seq.mem dst Seq.empty)
+    else
+      get_pointer_fields_aux_mem_ge_mword g obj 1UL (wosize_of_object obj g) dst
+#pop-options
+
+/// Version of all_edges_mem_reverse that first recovers obj_addr refinements.
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1 --split_queries always"
+let rec all_edges_mem_reverse_vertex
+  (g: heap) (objs: seq obj_addr) (src: vertex_id) (dst: vertex_id)
+  : Lemma (requires Seq.mem (src, dst) (HeapGraph.all_edges g objs))
+          (ensures U64.v src >= U64.v mword /\
+                   U64.v dst >= U64.v mword /\
+                   Seq.mem (src <: obj_addr) objs /\
+                   Seq.mem dst (HeapGraph.get_pointer_fields g (src <: obj_addr)))
+          (decreases Seq.length objs)
+  = if Seq.length objs = 0 then ()
+    else begin
+      let h = Seq.head objs in
+      let tl = Seq.tail objs in
+      let edges1 = HeapGraph.object_edges g h in
+      let edges2 = HeapGraph.all_edges g tl in
+      FStar.Seq.Properties.lemma_mem_append edges1 edges2;
+      if Seq.mem (src, dst) edges1 then begin
+        object_edges_mem_reverse g h src dst;
+        assert (src == h);
+        get_pointer_fields_mem_ge_mword g h dst;
+        let srco : obj_addr = src in
+        assert (srco == h);
+        assert (Seq.mem srco objs)
+      end else begin
+        all_edges_mem_reverse_vertex g tl src dst;
+        let srco : obj_addr = src in
+        assert (Seq.mem srco tl);
+        FStar.Seq.Properties.lemma_mem_append (Seq.create 1 h) tl
+      end
+    end
+#pop-options
+
 /// Helper lemma: if dst is in get_pointer_fields_aux result, then efptu finds it
 /// Connects get_pointer_fields_aux (1-indexed scan) to exists_field_pointing_to_unchecked (0-indexed scan)
 
@@ -3579,6 +3740,66 @@ let mark_preserves_no_pointer_to_blue g st =
     end
   in
   Classical.forall_intro_2 aux
+#pop-options
+
+/// A graph built from a well-formed heap has only in-heap object endpoints.
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1 --split_queries always"
+let create_graph_wf_from_heap (g: heap)
+  : Lemma (requires well_formed_heap g)
+          (ensures graph_wf (create_graph g))
+  =
+  let graph = create_graph g in
+  let objs = objects zero_addr g in
+  objects_is_vertex_set g;
+  let edge_ok (e: edge)
+    : Lemma (requires Seq.mem e graph.edges)
+            (ensures Seq.mem (fst e) graph.vertices /\ Seq.mem (snd e) graph.vertices)
+    = let src_v = fst e in
+      let dst_v = snd e in
+      all_edges_mem_reverse_vertex g objs src_v dst_v;
+      let src : obj_addr = src_v in
+      let dst : obj_addr = dst_v in
+      assert (e == (src, dst));
+      assert (Seq.mem src objs);
+      edge_implies_points_to g src dst;
+      points_to_target_in_objects g src dst;
+      graph_vertices_mem g src;
+      graph_vertices_mem g dst
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires edge_ok)
+#pop-options
+
+/// Roots satisfying root_props are vertices of the graph built from the heap.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+let root_props_subset_create_graph (g: heap) (roots: seq obj_addr)
+  : Lemma (requires root_props g roots)
+          (ensures subset_vertices (HeapGraph.coerce_to_vertex_list roots) (create_graph g).vertices)
+  =
+  let graph = create_graph g in
+  let roots' = HeapGraph.coerce_to_vertex_list roots in
+  let root_ok (x: vertex_id)
+    : Lemma (requires Seq.mem x roots')
+            (ensures Seq.mem x graph.vertices)
+    = coerce_mem_obj_addr roots x;
+      let xo : obj_addr = x in
+      assert (Seq.mem xo roots);
+      assert (Seq.mem xo (objects zero_addr g));
+      graph_vertices_mem g xo
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires root_ok)
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let root_graph_precondition (g: heap) (roots: seq obj_addr)
+  : Lemma (requires well_formed_heap g /\
+                    root_props g roots /\
+                    is_vertex_set (HeapGraph.coerce_to_vertex_list roots))
+          (ensures (let graph = create_graph g in
+                    let roots' = HeapGraph.coerce_to_vertex_list roots in
+                    graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+  =
+  create_graph_wf_from_heap g;
+  root_props_subset_create_graph g roots
 #pop-options
 
 /// Actual proof: every object reachable from roots is black after mark

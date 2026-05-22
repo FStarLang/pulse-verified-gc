@@ -65,6 +65,17 @@ let fwd_valid_or_infix (fwd: forwarding_map) (g: heap) : prop =
      (Seq.mem ((fwd x) <: obj_addr) (objects zero_addr g) \/
       is_infix (fwd x) g))
 
+/// Forwarding entries whose source is not a minor infix sub-object are ordinary
+/// major objects.  Infix entries are deliberately excluded: they are interior
+/// pointers into a promoted closure, not members of `objects zero_addr g`.
+let fwd_noninfix_targets_valid (minor: minor_state) (fwd: forwarding_map)
+                               (g: heap) : prop =
+  forall (x: U64.t). fwd x <> 0UL /\ ~(is_infix_in_minor minor x) ==>
+    U64.v (fwd x) >= U64.v mword /\
+    U64.v (fwd x) < heap_size /\
+    U64.v (fwd x) % U64.v mword == 0 /\
+    Seq.mem ((fwd x) <: obj_addr) (objects zero_addr g)
+
 val promote_object_frame_old_header_derived
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr)
@@ -152,9 +163,22 @@ val promote_object_new_addr_in_objects_not_blue
        U64.v res.new_addr >= U64.v mword /\
        U64.v res.new_addr < heap_size /\
        U64.v res.new_addr % U64.v mword == 0 /\
-       (let na : obj_addr = res.new_addr in
-        Seq.mem na (objects zero_addr res.major_out) /\
-        is_blue na res.major_out = false)))
+        (let na : obj_addr = res.new_addr in
+         Seq.mem na (objects zero_addr res.major_out) /\
+         is_blue na res.major_out = false)))
+
+val promote_object_new_addr_wosize_ge
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (dst: obj_addr)
+  : Lemma
+    (requires well_formed_heap_part1 major /\
+              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+              AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+              (let res = promote_object minor major obj fp wz in
+               res.new_addr <> 0UL /\ dst == res.new_addr))
+    (ensures
+      (let res = promote_object minor major obj fp wz in
+       U64.v (wosize_of_object dst res.major_out) >= wz))
 
 val cheney_forward_normal_preserves_fwd_classified
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
@@ -268,3 +292,16 @@ val cheney_promote_fwd_valid_or_infix
                     minor_wf minor)
           (ensures fwd_valid_or_infix (cheney_promote minor major fp roots).fwd_map
                                       (cheney_promote minor major fp roots).major_final)
+
+val cheney_promote_fwd_noninfix_targets_valid
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_noninfix_targets_valid
+            minor
+            (cheney_promote minor major fp roots).fwd_map
+            (cheney_promote minor major fp roots).major_final)

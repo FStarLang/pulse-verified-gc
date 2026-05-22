@@ -30,6 +30,11 @@ let fwd_targets_not_blue (fwd: forwarding_map) (g: heap) : prop =
     Seq.mem ((fwd x) <: obj_addr) (objects zero_addr g) /\
     is_blue ((fwd x) <: obj_addr) g = false
 
+let fwd_noninfix_sources_in_minor_objects
+  (minor: minor_state) (fwd: forwarding_map) (g: heap) : prop =
+  forall (x: U64.t). fwd x <> 0UL /\ is_val_addr (fwd x) /\
+    is_infix (fwd x) g = false ==> Seq.mem x (minor_objects minor)
+
 val cheney_promote_fwd_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -51,3 +56,16 @@ val cheney_promote_fwd_targets_not_blue
                     minor_wf minor)
           (ensures fwd_targets_not_blue (cheney_promote minor major fp roots).fwd_map
                                         (cheney_promote minor major fp roots).major_final)
+
+val cheney_promote_fwd_noninfix_sources_in_minor_objects
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_noninfix_sources_in_minor_objects
+                     minor
+                     (cheney_promote minor major fp roots).fwd_map
+                     (cheney_promote minor major fp roots).major_final)

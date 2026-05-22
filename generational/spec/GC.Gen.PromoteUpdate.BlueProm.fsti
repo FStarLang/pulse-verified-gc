@@ -16,6 +16,20 @@ open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FreeListShape = GC.Gen.FreeListShape
+
+val promote_object_preserves_bfc
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      blue_fields_closed major /\
+      chain_objects_blue major fp /\
+      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+    (ensures
+      blue_fields_closed (promote_object minor major obj fp wosize).major_out)
 
 /// promote_object preserves chain_objects_blue
 val promote_object_preserves_chain_objects_blue
@@ -30,6 +44,23 @@ val promote_object_preserves_chain_objects_blue
     (ensures
       chain_objects_blue (promote_object minor major obj fp wosize).major_out
                          (promote_object minor major obj fp wosize).fp_out)
+
+val promote_object_preserves_free_list_shape
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      FreeListShape.fp_pointer_or_zero fp /\
+      FreeListShape.blue_link_fields_valid major /\
+      chain_objects_blue major fp /\
+      (promote_object minor major obj fp wosize).new_addr <> 0UL)
+    (ensures
+      FreeListShape.fp_pointer_or_zero
+        (promote_object minor major obj fp wosize).fp_out /\
+      FreeListShape.blue_link_fields_valid
+        (promote_object minor major obj fp wosize).major_out)
 
 /// After promote_all_spec, blue objects' pointer fields still target valid objects.
 val promote_all_preserves_blue_fields_closed

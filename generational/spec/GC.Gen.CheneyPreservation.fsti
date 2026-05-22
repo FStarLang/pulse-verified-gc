@@ -23,6 +23,10 @@ open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
+module MarkBounded = GC.Spec.MarkBounded
+module GenInv = GC.Gen.HeapInvariant
+module FreeListShape = GC.Gen.FreeListShape
+module FreeListShape = GC.Gen.FreeListShape
 
 /// Cheney promotion preserves no_black_objects.
 ///
@@ -36,8 +40,101 @@ val cheney_promote_preserves_no_black
                     AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
                     Mark.no_black_objects major /\
                     minor_infix_wf minor)
+           (ensures (let res = cheney_promote minor major fp roots in
+                     Mark.no_black_objects res.major_final))
+
+val cheney_collect_preserves_no_black
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    Mark.no_black_objects major /\
+                    minor_infix_wf minor)
+          (ensures Mark.no_black_objects
+            (cheney_collect_spec minor major fp roots).mc_major)
+
+val cheney_collect_preserves_fp_pointer_or_zero
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires GenInv.collection_heap_shape minor major fp)
+          (ensures FreeListShape.fp_pointer_or_zero
+            (cheney_collect_spec minor major fp roots).mc_fp)
+
+/// All gray/black objects are present in the major gray stack.
+///
+/// This is the color-stack conjunct of MajorGC.gc_precondition, named so
+/// Cheney promotion and the post-promotion pointer update can preserve it
+/// without forcing clients to reason about Cheney's result.
+let gray_black_objects_on_stack (g: heap) (st: seq obj_addr) : prop =
+  forall (obj: obj_addr).
+    Seq.mem obj (objects zero_addr g) /\
+    (is_gray obj g \/ is_black obj g) ==> Seq.mem obj st
+
+val cheney_promote_preserves_gray_black_objects_on_stack
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (st: seq obj_addr)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    gray_black_objects_on_stack major st /\
+                    minor_infix_wf minor)
           (ensures (let res = cheney_promote minor major fp roots in
-                    Mark.no_black_objects res.major_final))
+                    gray_black_objects_on_stack res.major_final st))
+
+val update_major_pointers_preserves_gray_black_objects_on_stack
+  (major: heap) (fwd: forwarding_map) (st: seq obj_addr)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    gray_black_objects_on_stack major st)
+          (ensures gray_black_objects_on_stack (update_major_pointers major fwd) st)
+
+val cheney_collect_preserves_gray_black_objects_on_stack
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (st: seq obj_addr)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    gray_black_objects_on_stack major st /\
+                    minor_infix_wf minor)
+          (ensures (let res = cheney_collect_spec minor major fp roots in
+                    gray_black_objects_on_stack res.mc_major st))
+
+val cheney_promote_preserves_no_scan_invariant
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    no_scan_invariant major /\
+                    minor_no_scan_invariant minor /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor)
+          (ensures no_scan_invariant (cheney_promote minor major fp roots).major_final)
+
+val cheney_promote_preserves_blue_fields_closed
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor)
+          (ensures blue_fields_closed (cheney_promote minor major fp roots).major_final)
+
+val update_major_pointers_preserves_no_scan_invariant
+  (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    no_scan_invariant major)
+          (ensures no_scan_invariant (update_major_pointers major fwd))
+
+val cheney_collect_preserves_no_scan_invariant
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    no_scan_invariant major /\
+                    minor_no_scan_invariant minor /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                     minor_infix_wf minor)
+          (ensures no_scan_invariant (cheney_collect_spec minor major fp roots).mc_major)
 
 /// ---------------------------------------------------------------------------
 /// Forwarding targets classification: in objects or infix
@@ -196,5 +293,32 @@ val cheney_promote_nonblue_origin
                      is_blue obj res.major_final = false /\
                      ~(Seq.mem obj (objects zero_addr major) /\
                        is_blue obj major = false)))
-          (ensures (let res = cheney_promote minor major fp roots in
-                    exists (x: U64.t). res.fwd_map x == obj /\ is_minor_pointer x))
+           (ensures (let res = cheney_promote minor major fp roots in
+                     exists (x: U64.t). res.fwd_map x == obj /\ is_minor_pointer x))
+
+val cheney_collect_preserves_wfh_from_shape
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires GenInv.collection_heap_shape minor major fp)
+    (ensures well_formed_heap
+      (cheney_collect_spec minor major fp roots).mc_major)
+
+val cheney_collect_preserves_no_pointer_to_blue
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires GenInv.collection_heap_shape minor major fp /\
+              well_formed_heap (cheney_collect_spec minor major fp roots).mc_major)
+    (ensures Mark.no_pointer_to_blue
+      (cheney_collect_spec minor major fp roots).mc_major)
+
+val cheney_collect_preserves_bounded_stack_props
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (st: seq obj_addr)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    MarkBounded.bounded_stack_props major st)
+          (ensures MarkBounded.bounded_stack_props
+            (cheney_collect_spec minor major fp roots).mc_major st)

@@ -113,6 +113,8 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pure (GC.Spec.Fields.well_formed_heap_part1 ms2 /\
+          PromoteSpec.heap_objects_dense ms2 /\
+          Seq.length (GC.Spec.Fields.objects zero_addr ms2) > 0 /\
           ms2 == PromoteSpec.update_major_pointers 'ms fwd)
 
 /// ---------------------------------------------------------------------------
@@ -350,16 +352,37 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
 /// Ref-table completeness: sufficient condition for full correctness
 /// ---------------------------------------------------------------------------
 
-/// The ref_table is "complete" w.r.t. the pre-promotion major heap: every
+/// Client-facing remembered-set completeness.  Every scannable non-blue field
+/// in the ORIGINAL major heap that currently contains a minor pointer has its
+/// address listed in slots[0..n).
+///
+/// This is intentionally independent of the forwarding map produced by Cheney
+/// promotion: the write barrier records old-major fields when they are assigned
+/// young pointers, without knowing which young objects will be live later.
+let ref_table_covers_minor_ptrs (major_pre: heap)
+                               (slots: Seq.seq U64.t) (n: nat) : prop =
+  n <= Seq.length slots /\
+  (forall (obj: GC.Spec.Base.obj_addr) (j: nat).
+    Seq.mem obj (GC.Spec.Fields.objects zero_addr major_pre) /\
+    GC.Spec.Object.is_blue obj major_pre = false /\
+    GC.Spec.Object.is_no_scan obj major_pre = false /\
+    j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
+    U64.v obj + j * 8 + 8 <= heap_size /\
+    (let field_val = GC.Gen.Base.to_minor_offset
+       (SpecHeap.read_word major_pre (U64.uint_to_t (U64.v obj + j * 8))) in
+     PromoteSpec.is_minor_pointer field_val) ==>
+    (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v obj + j * 8))
+
+/// Internal proof-facing completeness. The ref_table is "complete" w.r.t. the
+/// pre-promotion major heap and a particular forwarding map: every
 /// field (of a scannable, non-blue object) in the ORIGINAL major heap that
 /// holds a forwarded minor pointer has its address listed in slots[0..n).
 ///
-/// This matches what the write barrier records: addresses of existing major-heap
-/// fields that were assigned minor pointers. After promotion, these same fields
-/// still hold minor pointers (promotion adds new objects but doesn't modify
-/// pre-existing object bodies). Combined with update_promoted_iter (which
-/// handles newly-promoted objects' fields), this ensures ALL minor pointers
-/// in the post-promotion heap get rewritten.
+/// This is derived inside the implementation from ref_table_covers_minor_ptrs.
+/// After promotion, these same fields still hold minor pointers (promotion adds
+/// new objects but doesn't modify pre-existing object bodies). Combined with
+/// update_promoted_iter (which handles newly-promoted objects' fields), this
+/// ensures ALL forwarded minor pointers in the post-promotion heap get rewritten.
 ///
 /// Quantifies over field positions (obj, j) rather than all aligned addresses,
 /// because header words can accidentally look like forwarded minor pointers
@@ -378,6 +401,12 @@ let ref_table_complete (major_pre: heap) (fwd: PromoteSpec.forwarding_map)
      PromoteSpec.is_minor_pointer field_val /\ fwd field_val <> 0UL) ==>
     (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v obj + j * 8))
 
+val ref_table_covers_minor_ptrs_implies_complete
+  (major_pre: heap) (fwd: PromoteSpec.forwarding_map)
+  (slots: Seq.seq U64.t) (n: nat)
+  : Lemma (requires ref_table_covers_minor_ptrs major_pre slots n)
+          (ensures ref_table_complete major_pre fwd slots n)
+
 /// Slot soundness: every slot address is a field of a scannable non-blue object
 /// in the original heap. This ensures rewrite_slots_iter only touches addresses
 /// that update_major_pointers would also touch.
@@ -395,6 +424,11 @@ let ref_table_sound (major_pre: heap) (slots: Seq.seq U64.t) (n: nat) : prop =
        GC.Spec.Object.is_no_scan obj major_pre = false /\
        j < U64.v (SpecObj.wosize_of_object obj major_pre) /\
        addr == U64.v obj + j * 8)))
+
+val ref_table_sound_implies_valid_slot_addrs
+  (major_pre: heap) (slots: Seq.seq U64.t) (n: nat)
+  : Lemma (requires ref_table_sound major_pre slots n)
+          (ensures valid_slot_addrs slots n)
 
 /// Slot soundness in the post-promotion heap used by the two-pass equivalence
 /// proof.  The implementation derives this from ref_table_sound on major_pre

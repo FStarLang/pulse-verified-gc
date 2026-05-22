@@ -344,6 +344,8 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
     is_heap major ms2 **
     pts_to fwd_arr 'farr **
     pure (SpecFields.well_formed_heap_part1 ms2 /\
+          PromoteSpec.heap_objects_dense ms2 /\
+          Seq.length (SpecFields.objects zero_addr ms2) > 0 /\
           ms2 == PromoteSpec.update_major_pointers 'ms fwd)
 {
   // Unfold: update_major_pointers = update_all_objects_aux on objects zero_addr
@@ -492,7 +494,10 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
         ))
       }
     }
-  }
+  };
+  with ms_done. assert (is_heap major ms_done);
+  update_major_pointers_preserves_objects 'ms fwd;
+  assert (pure (Seq.length (SpecFields.objects zero_addr ms_done) > 0))
 }
 #pop-options
 
@@ -809,6 +814,19 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
   update_promoted_iter_done ms_final 'farr fwd (SZ.v iv_final)
 }
 #pop-options
+
+let ref_table_covers_minor_ptrs_implies_complete
+  (major_pre: heap) (fwd: PromoteSpec.forwarding_map)
+  (slots: Seq.seq U64.t) (n: nat)
+  : Lemma (requires ref_table_covers_minor_ptrs major_pre slots n)
+          (ensures ref_table_complete major_pre fwd slots n)
+  = ()
+
+let ref_table_sound_implies_valid_slot_addrs
+  (major_pre: heap) (slots: Seq.seq U64.t) (n: nat)
+  : Lemma (requires ref_table_sound major_pre slots n)
+          (ensures valid_slot_addrs slots n)
+  = ()
 
 /// ---------------------------------------------------------------------------
 /// Equivalence: update_promoted_iter + rewrite_slots_iter = update_major_pointers

@@ -18,6 +18,22 @@ open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
+val promote_object_nonblue_other_reflects_pre
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  (target: obj_addr)
+  : Lemma
+    (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (promote_object minor major obj fp wz).new_addr <> 0UL /\
+      Seq.mem target (objects zero_addr (promote_object minor major obj fp wz).major_out) /\
+      is_blue target (promote_object minor major obj fp wz).major_out = false /\
+      target <> (promote_object minor major obj fp wz).new_addr)
+    (ensures
+      Seq.mem target (objects zero_addr major) /\
+      is_blue target major = false)
+
 val cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)

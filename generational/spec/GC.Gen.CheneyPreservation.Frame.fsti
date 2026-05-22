@@ -56,6 +56,80 @@ val promote_object_frame_old_header_derived
       (let res = promote_object minor major obj fp wz in
        read_word res.major_out (hd_address src) == read_word major (hd_address src)))
 
+val cheney_forward_normal_preserves_old_nonblue_shape
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (src: obj_addr)
+  : Lemma
+      (requires
+        well_formed_heap_part1 cs.cs_major /\
+        AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+        chain_objects_blue cs.cs_major cs.cs_fp /\
+        Seq.mem src (objects zero_addr cs.cs_major) /\
+        is_blue src cs.cs_major = false)
+      (ensures
+        (let cs' = cheney_forward_normal minor cs addr in
+         Seq.mem src (objects zero_addr cs'.cs_major) /\
+         is_blue src cs'.cs_major = false /\
+         wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
+
+val cheney_forward_one_preserves_old_nonblue_shape
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (src: obj_addr)
+  : Lemma
+      (requires
+        well_formed_heap_part1 cs.cs_major /\
+        AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+        AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+        chain_objects_blue cs.cs_major cs.cs_fp /\
+        Seq.mem src (objects zero_addr cs.cs_major) /\
+        is_blue src cs.cs_major = false /\
+        minor_infix_wf minor)
+      (ensures
+        (let cs' = cheney_forward_one minor cs addr in
+         Seq.mem src (objects zero_addr cs'.cs_major) /\
+         is_blue src cs'.cs_major = false /\
+         wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
+
+val cheney_forward_normal_frame_field
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (src: obj_addr) (idx: nat)
+  : Lemma
+    (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      chain_objects_blue cs.cs_major cs.cs_fp /\
+      Seq.mem src (objects zero_addr cs.cs_major) /\
+      is_blue src cs.cs_major = false /\
+      idx < U64.v (wosize_of_object src cs.cs_major) /\
+      U64.v src + idx * 8 + 8 <= heap_size /\
+      (U64.v src + idx * 8) % 8 == 0)
+    (ensures
+      (let cs' = cheney_forward_normal minor cs addr in
+       read_word cs'.cs_major (U64.uint_to_t (U64.v src + idx * 8)) ==
+       read_word cs.cs_major (U64.uint_to_t (U64.v src + idx * 8))))
+
+val cheney_forward_one_frame_field
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (src: obj_addr) (idx: nat)
+  : Lemma
+    (requires
+      well_formed_heap_part1 cs.cs_major /\
+      AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+      chain_objects_blue cs.cs_major cs.cs_fp /\
+      Seq.mem src (objects zero_addr cs.cs_major) /\
+      is_blue src cs.cs_major = false /\
+      idx < U64.v (wosize_of_object src cs.cs_major) /\
+      U64.v src + idx * 8 + 8 <= heap_size /\
+      (U64.v src + idx * 8) % 8 == 0 /\
+      minor_infix_wf minor)
+    (ensures
+      (let cs' = cheney_forward_one minor cs addr in
+       read_word cs'.cs_major (U64.uint_to_t (U64.v src + idx * 8)) ==
+       read_word cs.cs_major (U64.uint_to_t (U64.v src + idx * 8))))
+
 val cheney_promote_frame_old_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr) (j: nat)

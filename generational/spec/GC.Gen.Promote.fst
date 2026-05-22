@@ -914,6 +914,81 @@ let promote_preserves_fields
   end
 #pop-options
 
+#push-options "--z3rlimit 120 --fuel 0 --ifuel 0 --split_queries always"
+let promote_object_extra_field_not_pointer
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wz: nat{wz > 0}) (field_idx: nat)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (let res = promote_object minor major obj fp wz in
+       res.new_addr <> 0UL /\
+       U64.v res.new_addr >= U64.v mword /\
+       U64.v res.new_addr < heap_size /\
+       U64.v res.new_addr % U64.v mword == 0 /\
+       field_idx >= wz /\
+       field_idx < U64.v (wosize_of_object (res.new_addr <: obj_addr) res.major_out) /\
+       U64.v res.new_addr + field_idx * 8 < heap_size /\
+       (U64.v res.new_addr + field_idx * 8) % U64.v mword == 0))
+     (ensures
+       (let res = promote_object minor major obj fp wz in
+        let field_addr : hp_addr =
+          U64.uint_to_t (U64.v res.new_addr + field_idx * 8) in
+        read_word res.major_out field_addr == 0UL /\
+        ~(is_pointer_field (read_word res.major_out field_addr))))
+  =
+  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
+  let res = promote_object minor major obj fp wz in
+  promote_object_success minor major obj fp wz;
+  AllocProps.alloc_spec_obj_valid major fp wz;
+  let dst_obj : obj_addr = alloc_res.obj_out in
+  let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
+  let padded = zero_promote_padding copied dst_obj wz in
+  let tag = minor_tag minor obj in
+  minor_tag_bound minor obj;
+  let field_addr : hp_addr =
+    U64.uint_to_t (U64.v dst_obj + field_idx * U64.v mword) in
+  hd_address_spec dst_obj;
+  set_promoted_tag_read_frame padded dst_obj tag field_addr;
+  AllocProps.alloc_spec_obj_wosize_upper_part1 major fp wz;
+  AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
+  let hd_dst = hd_address dst_obj in
+  copy_fields_frame minor alloc_res.heap_out obj dst_obj 0 wz hd_dst;
+  wosize_of_object_spec dst_obj copied;
+  wosize_of_object_spec dst_obj alloc_res.heap_out;
+  assert (wosize_of_object dst_obj copied ==
+          wosize_of_object dst_obj alloc_res.heap_out);
+  assert (U64.v (wosize_of_object dst_obj copied) <= wz + 1);
+  zero_promote_padding_preserves_wosize copied dst_obj wz;
+  assert (U64.v (wosize_of_object dst_obj padded) <= wz + 1);
+  set_promoted_tag_unfold padded dst_obj tag;
+  assert (U64.v hd_dst <> U64.v dst_obj + wz * U64.v mword);
+  zero_promote_padding_frame copied dst_obj wz hd_dst;
+  let new_hdr =
+    makeHeader (getWosize (read_word padded hd_dst)) White (U64.uint_to_t tag) in
+  read_write_same padded hd_dst new_hdr;
+  wosize_of_object_spec dst_obj res.major_out;
+  makeHeader_getWosize (getWosize (read_word padded hd_dst)) White (U64.uint_to_t tag);
+  wosize_of_object_spec dst_obj padded;
+  assert (wosize_of_object dst_obj res.major_out == wosize_of_object dst_obj padded);
+  assert (U64.v (wosize_of_object dst_obj res.major_out) <= wz + 1);
+  assert (field_idx == wz);
+  let pad_nat = U64.v dst_obj + wz * U64.v mword in
+  assert (pad_nat == U64.v field_addr);
+  assert (pad_nat < heap_size);
+  assert (pad_nat % U64.v mword == 0);
+  assert (U64.v (wosize_of_object dst_obj copied) > wz);
+  zero_promote_padding_write copied dst_obj wz;
+  let pad_hp : hp_addr = U64.uint_to_t pad_nat in
+  assert (pad_hp == field_addr);
+  assert (padded == write_word copied pad_hp 0UL);
+  read_write_same copied pad_hp 0UL;
+  assert (read_word padded field_addr == 0UL);
+  assert (read_word res.major_out field_addr == read_word padded field_addr);
+  assert (read_word res.major_out field_addr == 0UL)
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// copy_fields preserves heap structure — delegated to WriteBodyLemmas module
 /// ---------------------------------------------------------------------------
@@ -2288,4 +2363,3 @@ let rec fields_match_minor_intro_by_proof
         reveal_opaque (`%fields_match_minor) (fields_match_minor minor major fwd live_set idx)
     end
 #pop-options
-

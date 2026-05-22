@@ -34,6 +34,7 @@ module MajorGC = GC.Impl
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
+module GenInv = GC.Gen.HeapInvariant
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -55,6 +56,10 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
   is_minor gh.minor d b **
   is_heap gh.major s **
   R.pts_to gh.fp_ref fp
+
+[@@"opaque_to_smt"]
+let minor_heap_no_scan_invariant (d: minor_heap) (b: U64.t) : prop =
+  PromoteSpec.minor_no_scan_invariant ({ data = d; bump = b })
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -220,6 +225,11 @@ fn minor_collect (gh: gen_heap_t)
 /// major-heap fields that were assigned minor-heap pointers. Combined with
 /// update_promoted_objects (which handles newly promoted objects), this covers
 /// all minor pointers in the major heap.
+///
+/// The caller states this as a pre-promotion remembered-set property
+/// (`ref_table_covers_minor_ptrs`); the implementation derives the
+/// forwarding-map-specific `ref_table_complete` fact after computing Cheney's
+/// promotion map.
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
@@ -230,24 +240,14 @@ fn minor_collect_full (gh: gen_heap_t)
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
            pts_to slots 'sl **
-           pure (SpecFields.well_formed_heap 's /\
-                 AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
-                 PromoteSpec.heap_objects_dense 's /\
-                 PromoteSpec.chain_objects_blue 's 'fp /\
-                 SZ.v nroots == Seq.length 'rs /\
-                 Seq.length 'farr == UpdatePtrs.fwd_array_size /\
-                 (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
-                 minor_wf ({ data = 'd; bump = 'b }) /\
-                 minor_guards_complete ({ data = 'd; bump = 'b }) /\
-                 minor_infix_wf ({ data = 'd; bump = 'b }) /\
-                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-                 SZ.v nslots <= Seq.length 'sl /\
-                 UpdatePtrs.valid_slot_addrs 'sl (SZ.v nslots) /\
-                 UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
-                 (let prom = CheneySpec.cheney_promote
-                              ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs in
-                  UpdatePtrs.ref_table_complete 's prom.fwd_map 'sl (SZ.v nslots)))
+            pure (GenInv.collection_heap_shape
+                    ({ data = 'd; bump = 'b } <: minor_state) 's 'fp /\
+                  SZ.v nroots == Seq.length 'rs /\
+                  Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+                  UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
+                  UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
+                  UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots))
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -275,23 +275,9 @@ fn minor_collect_full (gh: gen_heap_t)
       Seq.length farr2 == UpdatePtrs.fwd_array_size /\
       // Well-formedness preserved through promotion
       SpecFields.well_formed_heap_part1 prom.major_final /\
-      // Strong correctness (conditional): under the two-pass equivalence
-      // conditions, the result equals cheney_collect_spec (single-pass full
-      // update of all pointer fields in the major heap).
-      //
-      // The only remaining condition is that ref_table slots are pairwise
-      // distinct (a simple caller responsibility).
-      // All other conditions (promoted_entries_valid_from, promoted_entries_disjoint,
-      // fwd_targets_stable, well_formed_heap_part4, fwd_ptrs_classified) are
-      // derived unconditionally from cheney_promote + ref_table properties.
-      (UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots)
-       ==> s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major)
-       //We should also prove that if we have the major GC preconditions
-       //initially than they remain true after minor collection, so that
-       //we can immediately run the major GC on the post-minor heap for a full collection
-       //It's ok to require MajorGC.gc_precondition as a precondition
-       //of minor_collect_full too
-       )
+      // Strong correctness: the result equals cheney_collect_spec
+      // (single-pass full update of all pointer fields in the major heap).
+      s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
@@ -305,9 +291,9 @@ fn minor_collect_full (gh: gen_heap_t)
 /// - Major GC correctness (5 pillars of mark-and-sweep) on post-minor heap
 /// - Minor collection properties (roots rewritten, minor heap reset)
 ///
-/// The caller must provide gc_precondition on the post-minor heap.
-/// no_black_objects on the post-minor heap is derived internally from
-/// no_black_objects on the pre-minor heap via cheney_collect_no_black.
+/// The caller provides `MajorGC.gc_precondition` for the initial major heap.
+/// The implementation derives the corresponding post-minor precondition before
+/// invoking mark-and-sweep.
 fn gen_gc (gh: gen_heap_t)
           (roots: array U64.t) (nroots: SZ.t)
           (fwd_arr: array U64.t)
@@ -319,72 +305,17 @@ fn gen_gc (gh: gen_heap_t)
            pts_to queue 'qv **
            is_gray_stack st 'st **
            pure (
-             // ============================
-             // Minor collection preconditions
-             // ============================
+              // Full heap shape: major layout/free-list/colors, minor layout,
+              // cross-generation no-blue fields, and stack-coupled major-GC
+              // preconditions.
+              GenInv.full_heap_shape
+                ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'st
+                (stack_capacity st) /\
 
-             // Major heap has valid OCaml object layout (see minor_collect)
-             SpecFields.well_formed_heap 's /\
-
-             // Free-list from 'fp is valid: each node is a blue object
-             // with wosize >= 1 and a valid next link
-             AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
-
-             // Free-list from 'fp terminates within bounded steps
-             AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
-
-             // Object walk is well-formed: stepping header-to-header covers
-             // the entire heap with no unaccounted bytes (both allocated
-             // and free-list nodes are valid objects)
-             PromoteSpec.heap_objects_dense 's /\
-
-             // Free chain visits only blue objects (allocated objects
-             // are not on the free list)
-             PromoteSpec.chain_objects_blue 's 'fp /\
-
-             // nroots matches root array length
-             SZ.v nroots == Seq.length 'rs /\
-
-             // Forwarding array is correctly sized for the minor
-             // heap address range
-             Seq.length 'farr == UpdatePtrs.fwd_array_size /\
-
-             // Forwarding array is zeroed (clean slate for this cycle)
-             (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
-
-             // Minor heap is well-formed: bump pointer aligned,
-             // within bounds, allocated prefix is a valid object chain
-             minor_wf ({ data = 'd; bump = 'b }) /\
-
-             // Guard completeness for minor heap object recognition
-             // (see minor_collect for details)
-             minor_guards_complete ({ data = 'd; bump = 'b }) /\
-             minor_infix_wf ({ data = 'd; bump = 'b }) /\
-
-             // Major heap has at least one object (free-list sentinel)
-             Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-
-             // No major-heap object is black: the tri-color starting
-             // state requires all objects to be white (allocated) or
-             // blue (free) before any GC cycle begins
-             Mark.no_black_objects 's /\
-
-             // ============================
-             // Major GC preconditions on the POST-minor-collection heap
-             // ============================
-             // These must hold on the heap state AFTER Cheney promotion,
-             // since mark-and-sweep runs on that heap. The caller states
-             // them in terms of cheney_collect_spec's output.
-             // Includes: bounded_mark_inv (gray stack capacity sufficient),
-             // fp_valid, root_props (roots are valid object addresses),
-             // fp_in_heap, no_black_objects on post-minor heap,
-             // no_pointer_to_blue (live objects don't point to free-list
-             // nodes), no_scan_invariant (objects with tag >= 251 have
-             // no pointer fields), gray/black objects are in the stack,
-             // and graph well-formedness
-             (let res = CheneySpec.cheney_collect_spec
-                          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs in
-              MajorGC.gc_precondition res.mc_major 'st res.mc_fp (stack_capacity st)))
+              // Operational array preconditions.
+              SZ.v nroots == Seq.length 'rs /\
+              Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+              (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
     is_gen_heap gh d2 b2 s2 (fst res) **

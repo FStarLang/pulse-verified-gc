@@ -230,7 +230,7 @@ private let cheney_forward_normal_preserves_objects
         promote_object_preserves_objects_part1 minor cs.cs_major addr cs.cs_fp wz
       end
 
-private let cheney_forward_normal_preserves_old_nonblue_shape
+let cheney_forward_normal_preserves_old_nonblue_shape
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr)
   : Lemma
@@ -274,7 +274,7 @@ private let cheney_forward_normal_preserves_old_nonblue_shape
         wosize_of_object_spec src cs'.cs_major
       end
 
-private let cheney_forward_one_preserves_old_nonblue_shape
+let cheney_forward_one_preserves_old_nonblue_shape
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr)
   : Lemma
@@ -440,7 +440,7 @@ private let rec cheney_forward_roots_preserves_wfh_part1
 #pop-options
 
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
-private let cheney_forward_normal_frame_field
+let cheney_forward_normal_frame_field
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr) (idx: nat)
   : Lemma
@@ -479,7 +479,7 @@ private let cheney_forward_normal_frame_field
 #pop-options
 
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
-private let cheney_forward_one_frame_field
+let cheney_forward_one_frame_field
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr) (idx: nat)
   : Lemma

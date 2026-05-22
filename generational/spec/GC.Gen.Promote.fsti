@@ -611,6 +611,31 @@ val promote_preserves_fields
                 read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8)) ==
                 minor_read_field minor obj j)))
 
+/// If allocation rounded a promoted block up by one word, the extra field is
+/// zeroed by `zero_promote_padding`, hence cannot be a pointer.
+val promote_object_extra_field_not_pointer
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wz: nat{wz > 0}) (field_idx: nat)
+  : Lemma (requires
+      well_formed_heap_part1 major /\
+      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      (let res = promote_object minor major obj fp wz in
+       res.new_addr <> 0UL /\
+       U64.v res.new_addr >= U64.v mword /\
+       U64.v res.new_addr < heap_size /\
+       U64.v res.new_addr % U64.v mword == 0 /\
+       field_idx >= wz /\
+       field_idx < U64.v (wosize_of_object (res.new_addr <: obj_addr) res.major_out) /\
+       U64.v res.new_addr + field_idx * 8 < heap_size /\
+       (U64.v res.new_addr + field_idx * 8) % U64.v mword == 0))
+     (ensures
+       (let res = promote_object minor major obj fp wz in
+        let field_addr : hp_addr =
+          U64.uint_to_t (U64.v res.new_addr + field_idx * 8) in
+        read_word res.major_out field_addr == 0UL /\
+        ~(is_pointer_field (read_word res.major_out field_addr))))
+
 /// copy_fields preserves the objects walk (writes only within object bodies, never headers)
 val copy_fields_preserves_objects
   (minor: minor_state) (major: heap)
@@ -737,6 +762,20 @@ let allocated_avoid_chain (major: heap) (fp: U64.t) : prop =
   forall (x: obj_addr).
     Seq.mem x (objects zero_addr major) /\ ~(is_blue x major) ==>
     AllocLemmas.chain_avoids major fp x (heap_size / U64.v mword) = true
+
+/// A single Cheney promotion step preserves the no-scan invariant when the
+/// promoted minor heap itself satisfies the analogous no-scan condition.
+val promote_object_preserves_no_scan_invariant
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
+  : Lemma (requires no_scan_invariant major /\
+                    well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    allocated_avoid_chain major fp /\
+                    minor_no_scan_invariant minor /\
+                    Seq.mem obj (minor_objects minor) /\
+                    wz == minor_wosize minor obj)
+          (ensures no_scan_invariant (promote_object minor major obj fp wz).major_out)
 
 /// promote_all_spec preserves no_scan_invariant: after promoting all live
 /// minor objects, no-scan objects in the post-promote major heap still have

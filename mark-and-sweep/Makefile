@@ -35,10 +35,7 @@ SPEC_SRC = $(wildcard spec/*.fst spec/*.fsti \
                       $(C)/spec/*.fst $(C)/spec/*.fsti $(C)/lib/*.fst)
 IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti \
                       $(C)/impl/*.fst $(C)/impl/*.fsti)
-# Test files assume zero_addr = 0 (concrete); exclude from default build.
-# The mark-and-sweep allocator (init_heap_spec) is correct when zero_addr = 0.
-# The generational GC does not use init_heap_spec.
-TEST_SRC = spec/GC.Test.Bridge.fst spec/GC.Test.fst impl/GC.Impl.Test.fst
+TEST_SRC =
 ALL_SRC  = $(filter-out $(TEST_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
 # --- Auto-generated dependency graph ----------------------------------------
@@ -80,15 +77,10 @@ verify-spec: $(addsuffix .checked,$(filter-out $(TEST_SRC),$(SPEC_SRC)))
 verify-impl: $(addsuffix .checked,$(ALL_SRC))
 	@echo "=== all modules verified ==="
 
-verify-tests: $(addsuffix .checked,$(TEST_SRC))
-	@echo "=== test modules verified (requires zero_addr = 0) ==="
+verify-tests:
+	@echo "=== no mark-and-sweep test modules ==="
 
 # --- Pattern rules (verification) -------------------------------------------
-
-# Bridge lemmas: no z3refresh (some queries benefit from accumulated state)
-# friend GC.Spec.Base is declared in the module source
-spec/GC.Test.Bridge.fst.checked: spec/GC.Test.Bridge.fst
-	$(FSTAR) $<
 
 spec/%.checked: spec/%
 	$(FSTAR) $<

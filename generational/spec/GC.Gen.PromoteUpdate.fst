@@ -23,6 +23,7 @@ open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module FreeListShape = GC.Gen.FreeListShape
 
 /// --- From GC.Gen.PromoteUpdate.Aux ---
 
@@ -110,6 +111,9 @@ let promote_all_read_other =
 
 let promote_object_preserves_chain_objects_blue =
   GC.Gen.PromoteUpdate.BlueProm.promote_object_preserves_chain_objects_blue
+
+let promote_object_preserves_free_list_shape =
+  GC.Gen.PromoteUpdate.BlueProm.promote_object_preserves_free_list_shape
 
 let promote_all_preserves_blue_fields_closed =
   GC.Gen.PromoteUpdate.BlueProm.promote_all_preserves_blue_fields_closed
