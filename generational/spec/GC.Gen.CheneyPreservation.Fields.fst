@@ -363,21 +363,24 @@ let rec cheney_scan_preserves_fwd_target_fields_match_state
         (cheney_scan minor cs scan fuel))
       (decreases fuel)
   =
-  if fuel = 0 then
-    cheney_scan_base minor cs scan fuel
-  else if scan >= Seq.length cs.cs_queue then
-    cheney_scan_base minor cs scan fuel
-  else begin
-    cheney_scan_step minor cs scan fuel;
-    let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
-    cheney_forward_fields_preserves_fwd_target_fields_match_state minor cs obj 0 wz;
-    cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
-    Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;
-    let cs' = cheney_forward_fields minor cs obj 0 wz in
+  if fuel > 0 then begin
     assert (fuel > 0);
-    assert (fuel - 1 < fuel);
-    cheney_scan_preserves_fwd_target_fields_match_state minor cs' (scan + 1) (fuel - 1)
+    if scan >= Seq.length cs.cs_queue then
+      cheney_scan_base minor cs scan fuel
+    else begin
+      cheney_scan_step minor cs scan fuel;
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_wosize minor obj in
+      cheney_forward_fields_preserves_fwd_target_fields_match_state minor cs obj 0 wz;
+      cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
+      Forwarding.cheney_forward_fields_preserves_cob minor cs obj 0 wz;
+      let cs' = cheney_forward_fields minor cs obj 0 wz in
+      assert (fuel - 1 < fuel);
+      cheney_scan_preserves_fwd_target_fields_match_state minor cs' (scan + 1) (fuel - 1)
+    end
+  end else begin
+    assert (fuel = 0);
+    cheney_scan_base minor cs scan fuel
   end
 #pop-options
 

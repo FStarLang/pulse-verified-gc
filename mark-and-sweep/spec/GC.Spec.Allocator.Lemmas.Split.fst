@@ -731,14 +731,6 @@ let rec split_new_mem_in_old_or_rem
 /// 6d: Shared precondition and fact-establishing lemmas
 /// ---------------------------------------------------------------------------
 
-let alloc_split_pre (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) : prop =
-  well_formed_heap g /\
-  Seq.mem obj (objects zero_addr g) /\
-  (let hdr = read_word g (hd_address obj) in
-   let block_wz = U64.v (getWosize hdr) in
-   block_wz >= wz /\ block_wz - wz >= 2) /\
-  (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g))
-
 /// Per-point g3 agreement: at any hp_addr p that is not one of the 3 write
 /// positions, g3 returns the same read_word as g.
 #restart-solver

@@ -80,11 +80,6 @@ let minor_heap_shape (minor: minor_state) : prop =
   minor_no_scan_invariant minor /\
   minor_fields_no_infix_targets minor
 
-let gray_black_objects_on_stack (major: heap) (st: seq obj_addr) : prop =
-  forall (obj: obj_addr).
-    Seq.mem obj (objects zero_addr major) /\
-    (is_gray obj major \/ is_black obj major) ==> Seq.mem obj st
-
 [@@"opaque_to_smt"]
 let major_stack_shape (major: heap) (st: seq obj_addr) (cap: nat) : prop =
   MarkBoundedInv.bounded_mark_inv major st cap /\

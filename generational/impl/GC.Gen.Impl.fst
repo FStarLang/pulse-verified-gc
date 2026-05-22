@@ -1017,8 +1017,15 @@ fn gen_gc (gh: gen_heap_t)
     Seq.mem x (SpecFields.objects zero_addr ms_updated)));
   assert (pure (GenInv.collection_heap_shape
     ({ data = d_mid; bump = b_mid } <: minor_state) ms_updated fp_val));
+  assert (pure (GenInv.collection_heap_shape
+    ({ data = d_mid; bump = b_mid } <: minor_state) ms_updated fp_mid));
+  GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
+    ms_updated fp_mid;
+  GenInv.major_heap_shape_elim ms_updated fp_mid;
+  assert (pure (AllocLemmas.fl_valid ms_updated fp_mid (heap_size / U64.v mword)));
   GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
     ms_updated fp_val;
+  assert (pure (GenInv.major_heap_shape ms_updated fp_val));
   GenInv.major_heap_shape_elim ms_updated fp_val;
   assert (pure (SpecFields.well_formed_heap ms_updated));
   assert (pure (FreeListShape.fp_pointer_or_zero fp_val));

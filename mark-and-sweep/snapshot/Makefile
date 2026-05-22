@@ -13,8 +13,9 @@ CFLAGS  ?= -O2 -Wall -Wextra -Wno-unused-parameter
 
 # krmllib headers are vendored under krmllib/
 CFLAGS += -I. -Iinternal -Ikrmllib -Ikrmllib/krml -Ikrmllib/krml/internal
+CFLAGS += -include compat.h
 
-SOURCES = GC_Impl.c GC_Spec_GC_Lib_Header_GC_Lib_Address.c main.c
+SOURCES = GC_Impl.c GC_Spec_GC_Lib_Header_GC_Lib_Address.c compat.c main.c
 TARGET  = gc_test
 
 .PHONY: all test clean

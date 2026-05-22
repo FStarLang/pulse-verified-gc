@@ -354,83 +354,12 @@ let rec cheney_forward_roots_preserves_cob
 /// Forwarding targets classification: fwd_valid_or_infix
 /// ---------------------------------------------------------------------------
 
-/// State-level invariant: fwd targets in objects or is_infix with parent witness.
-let fwd_classified (cs: cheney_state) : prop =
-  forall (x: U64.t). cs.cs_fwd x <> 0UL ==>
-    (U64.v (cs.cs_fwd x) >= U64.v mword /\
-     U64.v (cs.cs_fwd x) < heap_size /\
-     U64.v (cs.cs_fwd x) % U64.v mword == 0 /\
-     (Seq.mem ((cs.cs_fwd x) <: obj_addr) (objects zero_addr cs.cs_major) \/
-      (is_infix (cs.cs_fwd x) cs.cs_major /\
-       (exists (p: obj_addr).
-         Seq.mem p (objects zero_addr cs.cs_major) /\
-         is_blue p cs.cs_major = false /\
-         U64.v (cs.cs_fwd x) - 8 >= U64.v p /\
-         U64.v (cs.cs_fwd x) <=
-           U64.v p + U64.v (wosize_of_object p cs.cs_major) * 8))))
-
 let fwd_noninfix_targets_valid_state (minor: minor_state) (cs: cheney_state) : prop =
   forall (x: U64.t). cs.cs_fwd x <> 0UL /\ ~(is_infix_in_minor minor x) ==>
     U64.v (cs.cs_fwd x) >= U64.v mword /\
     U64.v (cs.cs_fwd x) < heap_size /\
     U64.v (cs.cs_fwd x) % U64.v mword == 0 /\
     Seq.mem ((cs.cs_fwd x) <: obj_addr) (objects zero_addr cs.cs_major)
-
-/// Invariant: for every infix addr in minor whose parent has already been
-/// forwarded, the derived target (parent_fwd + delta) satisfies the
-/// fwd_classified classification.
-let infix_fwd_ready (minor: minor_state) (cs: cheney_state) : prop =
-  forall (addr: U64.t).
-    is_infix_in_minor minor addr ==>
-    (let parent = infix_parent minor addr in
-     cs.cs_fwd parent <> 0UL ==>
-     U64.v (cs.cs_fwd parent) >= U64.v mword ==>
-     U64.v (cs.cs_fwd parent) < heap_size ==>
-     U64.v (cs.cs_fwd parent) % U64.v mword == 0 ==>
-     U64.v addr >= U64.v parent ==>
-     (let fwd_parent : obj_addr = cs.cs_fwd parent in
-      let delta = U64.v addr - U64.v parent in
-      U64.v fwd_parent + delta < heap_size ==>
-      (let sum_v = U64.v fwd_parent + delta in
-       sum_v >= U64.v mword /\
-       sum_v % U64.v mword == 0 /\
-       (let sum : obj_addr = U64.uint_to_t sum_v in
-        is_infix sum cs.cs_major /\
-        Seq.mem fwd_parent (objects zero_addr cs.cs_major) /\
-        is_blue fwd_parent cs.cs_major = false /\
-        sum_v - 8 >= U64.v fwd_parent /\
-         sum_v <= U64.v fwd_parent +
-           U64.v (wosize_of_object fwd_parent cs.cs_major) * 8))))
-
-let infix_fwd_ready_pre (minor: minor_state) (cs: cheney_state) (addr: U64.t) : prop =
-  is_infix_in_minor minor addr /\
-  (let parent = infix_parent minor addr in
-   cs.cs_fwd parent <> 0UL /\
-   U64.v (cs.cs_fwd parent) >= U64.v mword /\
-   U64.v (cs.cs_fwd parent) < heap_size /\
-   U64.v (cs.cs_fwd parent) % U64.v mword == 0 /\
-   U64.v addr >= U64.v parent /\
-   (let fwd_parent : obj_addr = cs.cs_fwd parent in
-    let delta = U64.v addr - U64.v parent in
-    U64.v fwd_parent + delta < heap_size))
-
-let infix_fwd_ready_post
-  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  (_: squash (infix_fwd_ready_pre minor cs addr))
-  : prop =
-  let parent = infix_parent minor addr in
-  let fwd_parent : obj_addr = cs.cs_fwd parent in
-  let delta = U64.v addr - U64.v parent in
-  let sum_v = U64.v fwd_parent + delta in
-  sum_v >= U64.v mword /\
-  sum_v % U64.v mword == 0 /\
-  (let sum : obj_addr = U64.uint_to_t sum_v in
-   is_infix sum cs.cs_major /\
-   Seq.mem fwd_parent (objects zero_addr cs.cs_major) /\
-   is_blue fwd_parent cs.cs_major = false /\
-   sum_v - 8 >= U64.v fwd_parent /\
-   sum_v <= U64.v fwd_parent +
-     U64.v (wosize_of_object fwd_parent cs.cs_major) * 8)
 
 let infix_fwd_ready_intro (minor: minor_state) (cs: cheney_state)
   : Lemma
@@ -922,9 +851,7 @@ let cheney_forward_normal_infix_ready_one
     assert (wz <= wfinal);
     assert (wfinal == U64.v (wosize_of_object fwd_parent cs'.cs_major));
     infix_wosize_bound_chain_pf sv (U64.v fwd_parent) d wz wfinal
-      (FStar.Squash.get_proof (sv == U64.v fwd_parent + d))
-      (FStar.Squash.get_proof (d <= wz * 8))
-      (FStar.Squash.get_proof (wz <= wfinal));
+      () () ();
     assert (U64.v res.new_addr + j * 8 == U64.v res.new_addr + (d - 8));
     add_sub_8 (U64.v res.new_addr) d;
     assert (U64.v res.new_addr + (d - 8) == sv - 8);
@@ -1343,6 +1270,8 @@ let rec cheney_scan_preserves_fwd_classified
   else if scan >= Seq.length cs.cs_queue then
     cheney_scan_base minor cs scan fuel
   else begin
+    assert (fuel <> 0);
+    assert (fuel > 0);
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
     let wz = minor_wosize minor obj in
@@ -1350,10 +1279,14 @@ let rec cheney_scan_preserves_fwd_classified
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_cob minor cs obj 0 wz;
     let cs' = cheney_forward_fields minor cs obj 0 wz in
-    assert (fuel > 0);
-    let fuel' : nat = fuel - 1 in
-    assert (fuel' < fuel);
+    if fuel = 0 then ()
+    else begin
+      assert (fuel <> 0);
+      assert (fuel > 0);
+      let fuel' : nat = fuel - 1 in
+      assert (fuel' < fuel);
       cheney_scan_preserves_fwd_classified minor cs' (scan + 1) fuel'
+    end
   end
 #pop-options
 
@@ -1553,21 +1486,23 @@ let rec cheney_scan_preserves_fwd_noninfix_targets_valid
             (cheney_scan minor cs scan fuel))
           (decreases fuel)
   =
-  if fuel = 0 then
+  if fuel > 0 then begin
+    if scan >= Seq.length cs.cs_queue then
+      cheney_scan_base minor cs scan fuel
+    else begin
+      cheney_scan_step minor cs scan fuel;
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_wosize minor obj in
+      cheney_forward_fields_preserves_fwd_noninfix_targets_valid minor cs obj 0 wz;
+      cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
+      cheney_forward_fields_preserves_cob minor cs obj 0 wz;
+      let cs' = cheney_forward_fields minor cs obj 0 wz in
+      assert (fuel - 1 < fuel);
+      cheney_scan_preserves_fwd_noninfix_targets_valid minor cs' (scan + 1) (fuel - 1)
+    end
+  end else begin
+    assert (fuel = 0);
     cheney_scan_base minor cs scan fuel
-  else if scan >= Seq.length cs.cs_queue then
-    cheney_scan_base minor cs scan fuel
-  else begin
-    cheney_scan_step minor cs scan fuel;
-    let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
-    cheney_forward_fields_preserves_fwd_noninfix_targets_valid minor cs obj 0 wz;
-    cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
-    cheney_forward_fields_preserves_cob minor cs obj 0 wz;
-    let cs' = cheney_forward_fields minor cs obj 0 wz in
-    assert (fuel > 0);
-    assert (fuel - 1 < fuel);
-    cheney_scan_preserves_fwd_noninfix_targets_valid minor cs' (scan + 1) (fuel - 1)
   end
 #pop-options
 

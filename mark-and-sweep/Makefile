@@ -95,6 +95,9 @@ $(C)/spec/%.checked: $(C)/spec/%
 $(C)/lib/%.checked: $(C)/lib/%
 	$(FSTAR) $<
 
+$(C)/lib/GC.Lib.Header.fst.checked: $(C)/lib/GC.Lib.Header.fst
+	$(FSTAR) --z3rlimit 20 $<
+
 impl/%.checked: impl/%
 	$(FSTAR) --split_queries always --z3refresh $<
 
@@ -128,6 +131,11 @@ _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 	  --codegen krml --extract_module FStar.Pervasives.Native \
 	  --odir $(OUTPUT_DIR) $(FSTAR_LIB)/ulib/FStar.Pervasives.Native.fst
 
+# GC.Impl.ArrayWord — interface-only module (assumed vals, no .fst)
+_output/GC_Impl_ArrayWord.krml: verify-impl | $(OUTPUT_DIR)
+	$(FSTAR) --codegen krml --odir $(OUTPUT_DIR) \
+	  --extract_module GC.Impl.ArrayWord GC.Impl.ArrayWord.fsti
+
 # GC.Spec.ZeroAddr — interface-only module (extern zero_addr, no .fst)
 _output/GC_Spec_ZeroAddr.krml: | $(OUTPUT_DIR)
 	$(FSTAR) --codegen krml --odir $(OUTPUT_DIR) \
@@ -140,7 +148,7 @@ EXTRACT_MODULES = \
   GC.Impl.Coalesce \
   GC.Impl.FusedSweepCoalesce GC.Impl \
   GC.Impl.Allocator \
-  GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+  GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
 
 ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_MODULES))) \
@@ -155,7 +163,7 @@ KRML_FLAGS = \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
     GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
-    GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce GC.Spec.ZeroAddr) \
+    GC.Impl.ArrayWord GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce GC.Spec.ZeroAddr) \
   -warn-error -2-9-15
 
 $(EXTRACT_DIR):

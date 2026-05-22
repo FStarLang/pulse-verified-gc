@@ -32,13 +32,51 @@ let inj_inv (cs: cheney_state) : prop =
   fwd_normal_injective cs.cs_fwd cs.cs_major /\
   fwd_targets_not_blue cs.cs_fwd cs.cs_major
 
-let fwd_noninfix_sources_in_minor_objects
-  (minor: minor_state) (fwd: forwarding_map) (g: heap) : prop =
-  forall (x: U64.t). fwd x <> 0UL /\ is_val_addr (fwd x) /\
-    is_infix (fwd x) g = false ==> Seq.mem x (minor_objects minor)
-
 let source_inv (minor: minor_state) (cs: cheney_state) : prop =
   fwd_noninfix_sources_in_minor_objects minor cs.cs_fwd cs.cs_major
+
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+private let extend_infix_preserves_fwd_normal_injective
+  (fwd: forwarding_map) (g: heap) (addr sum: U64.t)
+  : Lemma (requires fwd_normal_injective fwd g /\
+                    is_val_addr sum /\
+                    is_infix (sum <: obj_addr) g)
+          (ensures fwd_normal_injective (extend_forwarding fwd addr sum) g)
+  =
+  let fwd' = extend_forwarding fwd addr sum in
+  let aux (x y: U64.t) : Lemma
+    (requires fwd' x <> 0UL /\ fwd' y <> 0UL /\
+              is_val_addr (fwd' x) /\ is_val_addr (fwd' y) /\
+              is_infix (fwd' x) g = false /\
+              is_infix (fwd' y) g = false /\
+              fwd' x = fwd' y)
+    (ensures x = y)
+    =
+    if x = addr then begin
+      assert (fwd' x == sum);
+      assert (is_infix (fwd' x) g);
+      assert (is_infix (fwd' x) g = false);
+      assert False
+    end else if y = addr then begin
+      assert (fwd' y == sum);
+      assert (is_infix (fwd' y) g);
+      assert (is_infix (fwd' y) g = false);
+      assert False
+    end else begin
+      assert (fwd' x == fwd x);
+      assert (fwd' y == fwd y);
+      assert (fwd x <> 0UL);
+      assert (fwd y <> 0UL);
+      assert (is_val_addr (fwd x));
+      assert (is_val_addr (fwd y));
+      assert (is_infix (fwd x) g = false);
+      assert (is_infix (fwd y) g = false);
+      assert (fwd x = fwd y);
+      assert (x = y)
+    end
+  in
+  FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
+#pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let source_inv_elim (minor: minor_state) (cs: cheney_state) (x: U64.t)
@@ -476,6 +514,8 @@ private let cheney_forward_one_preserves_inj_inv
     cheney_forward_normal_preserves_wfh_part1 minor cs parent;
     cheney_forward_normal_preserves_cob minor cs parent;
     let cs' = cheney_forward_normal minor cs parent in
+    assert (inj_inv cs');
+    assert (fwd_normal_injective cs'.cs_fwd cs'.cs_major);
     if not (cs'.cs_fwd parent <> 0UL &&
             U64.v addr >= U64.v parent &&
             U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size) then begin
@@ -488,6 +528,19 @@ private let cheney_forward_one_preserves_inj_inv
       let r = cheney_forward_one minor cs addr in
       assert (r.cs_fwd == extend_forwarding cs'.cs_fwd addr sum);
       assert (r.cs_major == cs'.cs_major);
+      assert (fwd_classified cs');
+      assert (infix_fwd_ready minor cs');
+      assert (is_infix_in_minor minor addr);
+      assert (cs'.cs_fwd parent <> 0UL);
+      assert (U64.v addr >= U64.v parent);
+      assert (U64.v (cs'.cs_fwd parent) >= U64.v mword);
+      assert (U64.v (cs'.cs_fwd parent) < heap_size);
+      assert (U64.v (cs'.cs_fwd parent) % U64.v mword == 0);
+      assert (U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size);
+      assert (infix_fwd_ready_pre minor cs' addr);
+      infix_fwd_ready_elim minor cs' addr;
+      assert (infix_fwd_ready_post minor cs' addr ());
+      assert (is_infix sum cs'.cs_major);
       let aux_targets (x: U64.t) : Lemma
         (ensures
           (r.cs_fwd x <> 0UL /\
@@ -510,83 +563,19 @@ private let cheney_forward_one_preserves_inj_inv
             assert (is_infix (r.cs_fwd x) r.cs_major = false);
             if x = addr then begin
               assert (r.cs_fwd addr == sum);
-              infix_parent_value minor addr;
-              let wz_infix = minor_wosize minor addr in
-              assert (delta == wz_infix * 8);
-              reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
-              assert (wz_infix > 0);
-              FStar.Math.Lemmas.multiple_modulo_lemma wz_infix 8;
-              assert (delta % U64.v mword == 0);
-              assert (U64.v (r.cs_fwd addr) == U64.v (cs'.cs_fwd parent) + delta);
-              assert (U64.v (r.cs_fwd addr) % U64.v mword == 0);
-              assert (U64.v (cs'.cs_fwd parent) == U64.v (r.cs_fwd addr) - delta);
-              FStar.Math.Lemmas.lemma_mod_sub_distr (U64.v (r.cs_fwd addr)) delta (U64.v mword);
-              assert (U64.v (cs'.cs_fwd parent) % U64.v mword == 0);
-              assert (cs'.cs_fwd parent <> 0UL);
-              assert (U64.v (cs'.cs_fwd parent) >= U64.v mword);
               assert (is_infix sum cs'.cs_major);
               assert (is_infix (r.cs_fwd addr) r.cs_major);
-              assert (is_infix (r.cs_fwd addr) r.cs_major = false)
+              assert (is_infix (r.cs_fwd addr) r.cs_major = false);
+              assert False
             end else begin
               cheney_forward_one_infix_fwd minor cs addr x;
               assert (r.cs_fwd x == cs'.cs_fwd x)
             end)
       in
       FStar.Classical.forall_intro aux_targets;
-      let aux_inj (x y: U64.t) : Lemma
-        (requires r.cs_fwd x <> 0UL /\ r.cs_fwd y <> 0UL /\
-                  is_val_addr (r.cs_fwd x) /\ is_val_addr (r.cs_fwd y) /\
-                  is_infix (r.cs_fwd x) r.cs_major = false /\
-                  is_infix (r.cs_fwd y) r.cs_major = false /\
-                  r.cs_fwd x = r.cs_fwd y)
-        (ensures x = y) =
-        if x = addr then begin
-          assert (r.cs_fwd addr == sum);
-          infix_parent_value minor addr;
-          let wz_infix = minor_wosize minor addr in
-          assert (delta == wz_infix * 8);
-          reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
-          assert (wz_infix > 0);
-          FStar.Math.Lemmas.multiple_modulo_lemma wz_infix 8;
-          assert (delta % U64.v mword == 0);
-          assert (U64.v (r.cs_fwd addr) == U64.v (cs'.cs_fwd parent) + delta);
-          assert (U64.v (r.cs_fwd addr) % U64.v mword == 0);
-          assert (U64.v (cs'.cs_fwd parent) == U64.v (r.cs_fwd addr) - delta);
-          FStar.Math.Lemmas.lemma_mod_sub_distr (U64.v (r.cs_fwd addr)) delta (U64.v mword);
-          assert (U64.v (cs'.cs_fwd parent) % U64.v mword == 0);
-          assert (cs'.cs_fwd parent <> 0UL);
-          assert (U64.v (cs'.cs_fwd parent) >= U64.v mword);
-          assert (is_infix sum cs'.cs_major);
-          assert (is_infix (r.cs_fwd addr) r.cs_major);
-          assert (is_infix (r.cs_fwd addr) r.cs_major = false)
-        end else if y = addr then begin
-          assert (r.cs_fwd addr == sum);
-          infix_parent_value minor addr;
-          let wz_infix = minor_wosize minor addr in
-          assert (delta == wz_infix * 8);
-          reveal_opaque (`%minor_infix_wf) (minor_infix_wf minor);
-          assert (wz_infix > 0);
-          FStar.Math.Lemmas.multiple_modulo_lemma wz_infix 8;
-          assert (delta % U64.v mword == 0);
-          assert (U64.v (r.cs_fwd addr) == U64.v (cs'.cs_fwd parent) + delta);
-          assert (U64.v (r.cs_fwd addr) % U64.v mword == 0);
-          assert (U64.v (cs'.cs_fwd parent) == U64.v (r.cs_fwd addr) - delta);
-          FStar.Math.Lemmas.lemma_mod_sub_distr (U64.v (r.cs_fwd addr)) delta (U64.v mword);
-          assert (U64.v (cs'.cs_fwd parent) % U64.v mword == 0);
-          assert (cs'.cs_fwd parent <> 0UL);
-          assert (U64.v (cs'.cs_fwd parent) >= U64.v mword);
-          assert (is_infix sum cs'.cs_major);
-          assert (is_infix (r.cs_fwd addr) r.cs_major);
-          assert (is_infix (r.cs_fwd addr) r.cs_major = false)
-        end else begin
-          cheney_forward_one_infix_fwd minor cs addr x;
-          cheney_forward_one_infix_fwd minor cs addr y;
-          assert (r.cs_fwd x == cs'.cs_fwd x);
-          assert (r.cs_fwd y == cs'.cs_fwd y);
-          assert (x = y)
-        end
-      in
-      FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux_inj)
+      assert (is_val_addr sum);
+      extend_infix_preserves_fwd_normal_injective cs'.cs_fwd cs'.cs_major addr sum;
+      assert (fwd_normal_injective r.cs_fwd r.cs_major)
     end
   end else begin
     cheney_forward_one_normal minor cs addr;
@@ -620,9 +609,19 @@ private let cheney_forward_normal_preserves_source_inv
     end else
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
       if res.new_addr = 0UL then begin
+        assert (Seq.mem addr (minor_objects minor));
+        assert (cs.cs_fwd addr = 0UL);
+        assert (minor_wosize minor addr > 0);
+        assert ((promote_object minor cs.cs_major addr cs.cs_fp
+                  (minor_wosize minor addr)).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs addr;
         assert (cs' == cs)
       end else begin
+        assert (Seq.mem addr (minor_objects minor));
+        assert (cs.cs_fwd addr = 0UL);
+        assert (minor_wosize minor addr > 0);
+        assert ((promote_object minor cs.cs_major addr cs.cs_fp
+                  (minor_wosize minor addr)).new_addr <> 0UL);
         cheney_forward_normal_success minor cs addr;
         let aux (x: U64.t)
           : Lemma

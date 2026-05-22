@@ -519,6 +519,17 @@ let rec minor_reachable_aux_closed_aux
       else begin
         // x ≠ obj: x is not yet processed, still not in new_visited
         // Apply IH on (new_worklist, new_visited, fuel-1)
+        // Establish fuel precondition with explicit NL arithmetic
+        let count = count_not_mem (minor_objects ms) visited in
+        let count' = count_not_mem (minor_objects ms) new_visited in
+        assert (count' <= count - 1);
+        assert (Seq.length succs < minor_heap_size);
+        FStar.Math.Lemmas.lemma_mult_le_right minor_heap_size count' (count - 1);
+        FStar.Math.Lemmas.distributivity_sub_left count 1 minor_heap_size;
+        assert (count' * minor_heap_size <= (count - 1) * minor_heap_size);
+        assert (fuel' >= Seq.length new_worklist + count' * minor_heap_size);
+        // x ≠ obj and x ∉ visited implies x ∉ new_visited
+        Seq.mem_cons obj visited;
         minor_reachable_aux_closed_aux ms new_worklist new_visited fuel' x y
       end
     end

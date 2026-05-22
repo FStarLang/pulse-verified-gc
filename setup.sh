@@ -2,8 +2,10 @@
 # setup.sh — Install F* toolchain for pulse-verified-gc
 #
 # Usage:
-#   ./setup.sh              Install F* v2026.04.17 binary release
+#   ./setup.sh              Install F* v2026.05.17 binary release
+#   ./setup.sh --release    Install latest official release instead
 #   ./setup.sh --nightly    Install latest nightly instead
+#   ./setup.sh --force      Reinstall even if the requested version is present
 #
 # Prerequisites: curl, bash
 # Result: fstar/ directory with bin/fstar.exe, bin/krml, etc.
@@ -13,19 +15,40 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FSTAR_DIR="$SCRIPT_DIR/fstar"
 
-# Default: nightly release
-SOURCE="--nightly"
-VERSION="nightly-2026-04-21"
-
-if [[ "${1:-}" == "--nightly" ]]; then
-  SOURCE="--nightly"
-  VERSION=""
-  shift
-fi
+# Default: latest validated official binary release.
+SOURCE="--release"
+VERSION="v2026.05.17"
+EXPECTED_VERSION="F* 2026.05.17"
+FORCE=false
 
 red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
 green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
 info()  { printf '\033[1;34m=> %s\033[0m\n' "$*"; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --release)
+      SOURCE="--release"
+      VERSION=""
+      EXPECTED_VERSION=""
+      shift
+      ;;
+    --nightly)
+      SOURCE="--nightly"
+      VERSION=""
+      EXPECTED_VERSION=""
+      shift
+      ;;
+    --force)
+      FORCE=true
+      shift
+      ;;
+    *)
+      red "Unknown option: $1"
+      exit 1
+      ;;
+  esac
+done
 
 # Check prerequisites
 for cmd in curl bash; do
@@ -39,22 +62,28 @@ done
 if [ -x "$FSTAR_DIR/bin/fstar.exe" ]; then
   INSTALLED=$("$FSTAR_DIR/bin/fstar.exe" --version 2>/dev/null | head -1 || true)
   info "F* already installed: $INSTALLED"
-  info "Remove fstar/ directory to force reinstall."
-else
-  info "Installing F* to $FSTAR_DIR ..."
-  VERSION_FLAG=""
-  if [ -n "$VERSION" ]; then
-    VERSION_FLAG="--version $VERSION"
+  if [ "$FORCE" = false ] && { [ -z "$EXPECTED_VERSION" ] || [[ "$INSTALLED" == "$EXPECTED_VERSION"* ]]; }; then
+    info "Existing installation matches the requested version."
+  else
+    info "Reinstalling F* in $FSTAR_DIR ..."
+    rm -rf "$FSTAR_DIR"
   fi
-  curl -fsSL https://aka.ms/install-fstar | bash -s -- \
-    $SOURCE $VERSION_FLAG \
-    --dest "$FSTAR_DIR" \
-    --no-link
+fi
+
+if [ ! -x "$FSTAR_DIR/bin/fstar.exe" ]; then
+  info "Installing F* to $FSTAR_DIR ..."
+  INSTALL_ARGS=("$SOURCE" "--dest" "$FSTAR_DIR" "--no-link")
+  if [ -n "$VERSION" ]; then
+    INSTALL_ARGS+=("--version" "$VERSION")
+  fi
+  curl -fsSL https://aka.ms/install-fstar | bash -s -- "${INSTALL_ARGS[@]}"
 
   if [ ! -x "$FSTAR_DIR/bin/fstar.exe" ]; then
     red "Install failed — $FSTAR_DIR/bin/fstar.exe not found."
     exit 1
   fi
+else
+  info "Remove fstar/ or pass --force to reinstall."
 fi
 
 # Create karamel/ compatibility layout (symlinks)

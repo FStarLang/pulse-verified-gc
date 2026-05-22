@@ -8,11 +8,17 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include "compat.h"
 #include "GC_Impl.h"
+#include "internal/GC_Impl.h"
 #include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 
 int main(void)
 {
+  GC_Spec_Base_zero_addr = 0;
+  zero_addr0 = 0;
+  GC_Spec_Base_heap_size_u64 = 1024;
+
   size_t heap_bytes = (size_t)GC_Spec_Base_heap_size_u64;
 
   /* Allocate the heap (zero-initialized). */

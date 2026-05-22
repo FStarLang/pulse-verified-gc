@@ -16,9 +16,6 @@ module SweepInv = GC.Spec.SweepInv
 module HeapGraph = GC.Spec.HeapGraph
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
-let fp_pointer_or_zero (fp: U64.t) : prop =
-  fp = 0UL \/ HeapGraph.is_pointer_field fp
-
 [@@"opaque_to_smt"]
 let blue_link_fields_valid (major: heap) : prop =
   forall (src: obj_addr).

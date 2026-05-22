@@ -133,6 +133,42 @@ val cheney_forward_roots_preserves_cob
     (ensures (let cs' = cheney_forward_roots minor cs roots ridx in
               chain_objects_blue cs'.cs_major cs'.cs_fp))
 
+let infix_fwd_ready_pre (minor: minor_state) (cs: cheney_state) (addr: U64.t) : prop =
+  is_infix_in_minor minor addr /\
+  (let parent = infix_parent minor addr in
+   cs.cs_fwd parent <> 0UL /\
+   U64.v (cs.cs_fwd parent) >= U64.v mword /\
+   U64.v (cs.cs_fwd parent) < heap_size /\
+   U64.v (cs.cs_fwd parent) % U64.v mword == 0 /\
+   U64.v addr >= U64.v parent /\
+   (let fwd_parent : obj_addr = cs.cs_fwd parent in
+    let delta = U64.v addr - U64.v parent in
+    U64.v fwd_parent + delta < heap_size))
+
+let infix_fwd_ready_post
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (_: squash (infix_fwd_ready_pre minor cs addr))
+  : prop =
+  let parent = infix_parent minor addr in
+  let fwd_parent : obj_addr = cs.cs_fwd parent in
+  let delta = U64.v addr - U64.v parent in
+  let sum_v = U64.v fwd_parent + delta in
+  sum_v >= U64.v mword /\
+  sum_v % U64.v mword == 0 /\
+  (let sum : obj_addr = U64.uint_to_t sum_v in
+   is_infix sum cs.cs_major /\
+   Seq.mem fwd_parent (objects zero_addr cs.cs_major) /\
+   is_blue fwd_parent cs.cs_major = false /\
+   sum_v - 8 >= U64.v fwd_parent /\
+   sum_v <= U64.v fwd_parent +
+     U64.v (wosize_of_object fwd_parent cs.cs_major) * 8)
+
+val infix_fwd_ready_elim (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma
+      (requires infix_fwd_ready minor cs /\
+                infix_fwd_ready_pre minor cs addr)
+      (ensures infix_fwd_ready_post minor cs addr ())
+
 val promote_preserves_is_infix_frame
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (target: obj_addr) (parent_obj: obj_addr)

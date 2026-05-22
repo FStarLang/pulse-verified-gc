@@ -629,10 +629,15 @@ private let alloc_search_found_prev_dense
     Part2.alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
     // Prove prev_fp membership in g_alloc (exact vs split)
     let bwz_obj = U64.v (getWosize (read_word g (hd_address obj))) in
-    if bwz_obj - wz < 2 then
+    (if bwz_obj - wz < 2 then
       AllocProps.alloc_from_block_exact_objects_eq_part1 g obj wz next_fp
-    else
-      alloc_split_prev_mem g obj prev_fp wz next_fp;
+    else begin
+      assert (bwz_obj >= wz);
+      assert (bwz_obj - wz >= 2);
+      assert ((let bwz = U64.v (getWosize (read_word g (hd_address obj))) in
+               bwz >= wz /\ bwz - wz >= 2));
+      alloc_split_prev_mem g obj prev_fp wz next_fp
+    end);
     assert (Seq.mem prev_fp (objects zero_addr g_alloc));
     // prev ≠ obj, so hd_prev ≠ hd_obj
     hd_address_spec prev_fp;

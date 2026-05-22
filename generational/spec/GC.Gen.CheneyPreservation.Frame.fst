@@ -171,9 +171,16 @@ private let cheney_forward_normal_preserves_cob
       cheney_forward_normal_noop_wz0 minor cs addr
     else
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-      if res.new_addr = 0UL then
+      if res.new_addr = 0UL then begin
+        assert (minor_wosize minor addr > 0);
+        assert ((promote_object minor cs.cs_major addr cs.cs_fp
+                  (minor_wosize minor addr)).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs addr
+      end
       else begin
+        assert (minor_wosize minor addr > 0);
+        assert ((promote_object minor cs.cs_major addr cs.cs_fp
+                  (minor_wosize minor addr)).new_addr <> 0UL);
         cheney_forward_normal_success minor cs addr;
         promote_object_preserves_chain_objects_blue minor cs.cs_major addr cs.cs_fp wz
       end

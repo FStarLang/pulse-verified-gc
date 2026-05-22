@@ -148,6 +148,9 @@ spec/%.checked: spec/%
 lib/%.checked: lib/%
 	$(FSTAR) $(FSTAR_SPEC_FLAGS) $<
 
+lib/GC.Lib.Header.fst.checked: lib/GC.Lib.Header.fst
+	$(FSTAR) $(FSTAR_SPEC_FLAGS) --z3rlimit 20 $<
+
 impl/%.checked: impl/%
 	$(FSTAR) $(FSTAR_IMPL_FLAGS) $<
 

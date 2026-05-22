@@ -97,6 +97,10 @@ generational: $(addsuffix .checked,$(ALL_SRC))
 common/spec/%.checked: common/spec/%
 	$(FSTAR) $<
 
+# GC.Lib.Header needs a little more rlimit for bitvector mask reasoning.
+common/lib/GC.Lib.Header.fst.checked: common/lib/GC.Lib.Header.fst
+	$(FSTAR) --z3rlimit 20 $<
+
 common/lib/%.checked: common/lib/%
 	$(FSTAR) $<
 
