@@ -24,6 +24,9 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module AllocProps = GC.Gen.AllocProps
 module Mark = GC.Spec.Mark
 module MarkBounded = GC.Spec.MarkBounded
+module Sweep = GC.Spec.Sweep
+module SweepInv = GC.Spec.SweepInv
+module HeapGraph = GC.Spec.HeapGraph
 module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
 module Frame = GC.Gen.CheneyPreservation.Frame
@@ -1728,6 +1731,185 @@ let cheney_collect_preserves_no_pointer_to_blue
           update_major_pointers prom.major_final prom.fwd_map);
   NoBlue.update_major_pointers_preserves_no_pointer_to_blue
     prom.major_final prom.fwd_map
+#pop-options
+
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --split_queries always"
+private let update_major_pointers_preserves_blue_link_fields_valid
+  (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    FreeListShape.blue_link_fields_valid major)
+          (ensures FreeListShape.blue_link_fields_valid
+            (update_major_pointers major fwd))
+  =
+  let updated = update_major_pointers major fwd in
+  update_major_pointers_preserves_objects major fwd;
+  let aux (src: obj_addr)
+    : Lemma (requires Seq.mem src (objects zero_addr updated) /\
+                      is_blue src updated /\
+                      U64.v (wosize_of_object src updated) >= 1 /\
+                      U64.v (hd_address src) + 16 <= heap_size)
+            (ensures (let v = read_word updated src in
+                      v = 0UL \/ HeapGraph.is_pointer_field v))
+    =
+    assert (Seq.mem src (objects zero_addr major));
+    update_major_pointers_preserves_header major fwd src;
+    color_of_header_eq src major updated;
+    wosize_of_object_spec src major;
+    wosize_of_object_spec src updated;
+    assert (is_blue src major);
+    assert (U64.v (wosize_of_object src major) >= 1);
+    hd_address_spec src;
+    assert (U64.v src + 8 <= heap_size);
+    update_major_pointers_preserves_blue_field major fwd src 0;
+    FreeListShape.blue_link_fields_valid_elim major src;
+    assert (read_word updated src == read_word major src)
+  in
+  FreeListShape.blue_link_fields_valid_intro updated aux
+
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+private let objects_nonempty_from_header_local (g1 g2: heap) (start: hp_addr)
+  : Lemma (requires Seq.length g1 == Seq.length g2 /\
+                    read_word g1 start == read_word g2 start /\
+                    Seq.length (objects start g1) > 0)
+          (ensures Seq.length (objects start g2) > 0)
+  = ()
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+private let update_major_pointers_preserves_dense
+  (major: heap) (fwd: forwarding_map)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    heap_objects_dense major)
+          (ensures heap_objects_dense (update_major_pointers major fwd))
+  =
+  let updated = update_major_pointers major fwd in
+  update_major_pointers_preserves_objects major fwd;
+  let aux (start: hp_addr) : Lemma
+    (requires U64.v start + 8 < heap_size /\
+              Seq.mem (f_address start) (objects zero_addr updated) /\
+              Seq.length (objects start updated) > 0)
+    (ensures (let wz = getWosize (read_word updated start) in
+              let next = U64.v start + ((U64.v wz + 1) * 8) in
+              next + 8 < heap_size ==>
+              Seq.length (objects (U64.uint_to_t next) updated) > 0 /\
+              Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr updated)))
+  =
+    assert (Seq.mem (f_address start) (objects zero_addr major));
+    update_major_pointers_preserves_header major fwd (f_address start);
+    hd_f_roundtrip start;
+    assert (read_word updated start == read_word major start);
+    objects_nonempty_from_header_local updated major start;
+    assert (Seq.length (objects start major) > 0);
+    let wz = getWosize (read_word major start) in
+    let next = U64.v start + ((U64.v wz + 1) * 8) in
+    if next + 8 < heap_size then begin
+      assert (Seq.length (objects (U64.uint_to_t next) major) > 0);
+      assert (Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr major));
+      let next_hp : hp_addr = U64.uint_to_t next in
+      update_major_pointers_preserves_header major fwd (f_address next_hp);
+      hd_f_roundtrip next_hp;
+      assert (read_word updated next_hp == read_word major next_hp);
+      objects_nonempty_from_header_local major updated next_hp
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --split_queries always"
+private let update_major_pointers_preserves_chain_objects_blue
+  (major: heap) (fwd: forwarding_map) (fp: U64.t)
+  : Lemma (requires well_formed_heap_part1 major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp)
+          (ensures chain_objects_blue (update_major_pointers major fwd) fp)
+  =
+  let updated = update_major_pointers major fwd in
+  let fuel = heap_size / U64.v mword in
+  update_major_pointers_preserves_objects major fwd;
+  reveal_opaque (`%chain_objects_blue) chain_objects_blue;
+  let aux (obj: obj_addr) : Lemma
+    (requires Seq.mem obj (objects zero_addr updated) /\
+              ~(is_blue obj updated))
+    (ensures AllocLemmas.chain_avoids updated fp obj fuel = true)
+  =
+    assert (Seq.mem obj (objects zero_addr major));
+    update_major_pointers_preserves_header major fwd obj;
+    color_of_header_eq obj major updated;
+    assert (~(is_blue obj major));
+    assert (AllocLemmas.chain_avoids major fp obj fuel = true);
+    let links (a: obj_addr) : Lemma
+      (requires Seq.mem a (objects zero_addr major) /\
+                U64.v (wosize_of_object a major) >= 1 /\
+                U64.v (hd_address a) + 16 <= heap_size /\
+                a <> obj /\
+                AllocLemmas.chain_avoids major fp a fuel = false)
+      (ensures read_word updated a == read_word major a)
+    =
+      if is_blue a major then begin
+        hd_address_spec a;
+        update_major_pointers_preserves_blue_field major fwd a 0
+      end else begin
+        assert (AllocLemmas.chain_avoids major fp a fuel = true)
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires links);
+    AllocLemmas.chain_avoids_transfer_on_chain major updated fp obj fuel
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+let cheney_collect_preserves_collection_heap_shape
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires GenInv.collection_heap_shape minor major fp)
+          (ensures GenInv.collection_heap_shape
+            (cheney_collect_spec minor major fp roots).mc_minor
+            (cheney_collect_spec minor major fp roots).mc_major
+            (cheney_collect_spec minor major fp roots).mc_fp)
+  =
+  GenInv.collection_heap_shape_elim minor major fp;
+  GenInv.major_heap_shape_elim major fp;
+  GenInv.minor_heap_shape_elim minor;
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  let updated = update_major_pointers prom.major_final prom.fwd_map in
+  assert (res.mc_major == updated);
+  assert (res.mc_fp == prom.fp_final);
+  assert (res.mc_minor == minor_reset minor);
+  cheney_collect_preserves_wfh_from_shape minor major fp roots;
+  cheney_collect_preserves_fl_valid minor major fp roots;
+  cheney_collect_preserves_fp_pointer_or_zero minor major fp roots;
+  cheney_promote_preserves_free_list_shape minor major fp roots;
+  cheney_promote_preserves_wfh_part1 minor major fp roots;
+  assert (well_formed_heap_part1 prom.major_final);
+  update_major_pointers_preserves_blue_link_fields_valid
+    prom.major_final prom.fwd_map;
+  cheney_promote_preserves_dense minor major fp roots;
+  update_major_pointers_preserves_objects prom.major_final prom.fwd_map;
+  cheney_promote_preserves_cob minor major fp roots;
+  update_major_pointers_preserves_dense prom.major_final prom.fwd_map;
+  update_major_pointers_preserves_chain_objects_blue
+    prom.major_final prom.fwd_map prom.fp_final;
+  cheney_collect_preserves_no_black minor major fp roots;
+  cheney_collect_preserves_no_scan_invariant minor major fp roots;
+  assert (well_formed_heap res.mc_major);
+  cheney_collect_preserves_no_pointer_to_blue minor major fp roots;
+  FreeListShape.fp_pointer_or_zero_fl_valid_implies_fp_valid
+    res.mc_fp res.mc_major (heap_size / U64.v mword);
+  FreeListShape.fp_pointer_or_zero_implies_fp_in_heap res.mc_fp res.mc_major;
+  assert (heap_objects_dense res.mc_major);
+  assert (chain_objects_blue res.mc_major res.mc_fp);
+  assert (AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword));
+  assert (AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword));
+  assert (FreeListShape.fp_pointer_or_zero res.mc_fp);
+  assert (FreeListShape.blue_link_fields_valid res.mc_major);
+  assert (Seq.length (objects zero_addr res.mc_major) > 0);
+  assert (SweepInv.fp_valid res.mc_fp res.mc_major);
+  assert (Sweep.fp_in_heap res.mc_fp res.mc_major);
+  assert (Mark.no_black_objects res.mc_major);
+  assert (Mark.no_pointer_to_blue res.mc_major);
+  assert (no_scan_invariant res.mc_major);
+  GenInv.major_heap_shape_intro res.mc_major res.mc_fp;
+  GenInv.collection_heap_shape_after_minor_reset minor res.mc_major res.mc_fp
 #pop-options
 
 #push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"

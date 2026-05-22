@@ -1693,6 +1693,58 @@ let rec chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
     end
 #pop-options
 
+#restart-solver
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1 --split_queries always"
+let rec chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    fl_valid g fp fuel /\
+                    (forall (a: obj_addr). Seq.mem a (objects zero_addr g) /\
+                      U64.v (wosize_of_object a g) >= 1 /\
+                      U64.v (hd_address a) + 16 <= heap_size /\
+                      a <> excl /\
+                      chain_avoids g fp a fuel = false ==>
+                        read_word g' a == read_word g a))
+          (ensures chain_avoids g' fp excl fuel = true)
+          (decreases fuel)
+  = if fp = 0UL then ()
+    else if U64.v fp < U64.v mword then ()
+    else if U64.v fp >= heap_size then ()
+    else if U64.v fp % U64.v mword <> 0 then ()
+    else if fuel = 0 then ()
+    else begin
+      chain_avoids_head_ne g fp excl fuel;
+      fl_valid_gives_mem g fp fuel;
+      fl_valid_gives_wosize g fp fuel;
+      let fp_obj : obj_addr = fp in
+      let hd = hd_address fp_obj in
+      hd_address_spec fp_obj;
+      if U64.v hd + 16 > heap_size then ()
+      else begin
+        assert (chain_avoids g fp fp fuel = false);
+        assert (read_word g' fp_obj == read_word g fp_obj);
+        let next_fp = read_word g fp_obj in
+        chain_avoids_tail g fp excl fuel;
+        fl_valid_next g fp fuel;
+        let tail_links (a: obj_addr) : Lemma
+          (requires Seq.mem a (objects zero_addr g) /\
+                    U64.v (wosize_of_object a g) >= 1 /\
+                    U64.v (hd_address a) + 16 <= heap_size /\
+                    a <> excl /\
+                    chain_avoids g next_fp a (fuel - 1) = false)
+          (ensures read_word g' a == read_word g a)
+        = if a = fp_obj then begin
+            assert (chain_avoids g fp a fuel = false)
+          end else begin
+            chain_avoids_unfold_step g fp a fuel;
+            assert (chain_avoids g fp a fuel = false)
+          end
+        in
+        FStar.Classical.forall_intro (FStar.Classical.move_requires tail_links);
+        chain_avoids_transfer_on_chain g g' next_fp excl (fuel - 1)
+      end
+    end
+#pop-options
+
 /// chain_avoids_weaken: if chain_avoids holds for fuel steps, it also holds for fewer steps.
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)

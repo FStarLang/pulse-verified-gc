@@ -886,8 +886,83 @@ let minor_alloc_preserves_existing (ms: minor_state)
 /// Reset
 /// ---------------------------------------------------------------------------
 
-let minor_reset (ms: minor_state) : Tot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0}) =
-  { data = ms.data; bump = 0UL }
+let minor_reset (ms: minor_state)
+  : Tot (ms':minor_state{
+      minor_wf ms' /\
+      U64.v ms'.bump == 0 /\
+      ms'.data == Seq.create minor_heap_size 0uy
+    })
+  =
+  { data = Seq.create minor_heap_size 0uy; bump = 0UL }
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+private let zeroed_minor_read_word (addr: U64.t)
+  : Lemma (requires U64.v addr + 8 <= minor_heap_size /\
+                    U64.v addr % 8 == 0)
+          (ensures minor_read_word (Seq.create minor_heap_size 0uy) addr == 0UL)
+  =
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr);
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 1);
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 2);
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 3);
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 4);
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 5);
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 6);
+  FStar.Seq.Base.lemma_index_create minor_heap_size 0uy (U64.v addr + 7);
+  assert_norm (minor_combine_bytes 0uy 0uy 0uy 0uy 0uy 0uy 0uy 0uy == 0UL)
+
+let minor_reset_wosize_zero (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures minor_wosize (minor_reset ms) addr == 0)
+  =
+  if U64.v addr >= 8 && U64.v addr < minor_heap_size then begin
+    let hdr_addr = U64.v addr - 8 in
+    if hdr_addr + 8 <= minor_heap_size && hdr_addr % 8 = 0 then begin
+      assert_norm (pow2 57 < pow2 64);
+      assert (hdr_addr < pow2 64);
+      let h = U64.uint_to_t hdr_addr in
+      assert (U64.v h == hdr_addr);
+      assert (U64.v h + 8 <= minor_heap_size);
+      assert (U64.v h % 8 == 0);
+      zeroed_minor_read_word h;
+      assert (minor_read_word (Seq.create minor_heap_size 0uy) h == 0UL);
+      assert (minor_wosize (minor_reset ms) addr == 0)
+    end
+  end
+
+let minor_reset_objects_empty (ms: minor_state)
+  : Lemma (ensures minor_objects (minor_reset ms) == Seq.empty)
+  = ()
+
+let minor_reset_objects_not_mem (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures ~(Seq.mem addr (minor_objects (minor_reset ms))))
+  =
+  minor_reset_objects_empty ms;
+  assert_norm (Seq.count addr Seq.empty == 0)
+
+private let minor_reset_tag_zero (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures minor_tag (minor_reset ms) addr == 0)
+  =
+  if U64.v addr >= 8 && U64.v addr < minor_heap_size then begin
+    let hdr_addr = U64.v addr - 8 in
+    if hdr_addr + 8 <= minor_heap_size && hdr_addr % 8 = 0 then begin
+      assert_norm (pow2 57 < pow2 64);
+      assert (hdr_addr < pow2 64);
+      let h = U64.uint_to_t hdr_addr in
+      assert (U64.v h == hdr_addr);
+      assert (U64.v h + 8 <= minor_heap_size);
+      assert (U64.v h % 8 == 0);
+      zeroed_minor_read_word h;
+      assert (minor_read_word (Seq.create minor_heap_size 0uy) h == 0UL);
+      assert (minor_tag (minor_reset ms) addr == U64.v (U64.logand 0UL 0xFFUL));
+      assert_norm (U64.v (U64.logand 0UL 0xFFUL) == 0)
+    end
+  end
+
+let minor_reset_no_infix (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures ~(is_infix_in_minor (minor_reset ms) addr))
+  =
+  minor_reset_tag_zero ms addr
+#pop-options
 
 /// Each minor object consumes at least 16 bytes (8 header + 8 body with wosize >= 1),
 /// so |minor_objects| <= bump / 16 <= minor_heap_size / 16.

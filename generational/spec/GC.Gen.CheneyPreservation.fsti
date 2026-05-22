@@ -311,6 +311,14 @@ val cheney_collect_preserves_no_pointer_to_blue
     (ensures Mark.no_pointer_to_blue
       (cheney_collect_spec minor major fp roots).mc_major)
 
+val cheney_collect_preserves_collection_heap_shape
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires GenInv.collection_heap_shape minor major fp)
+          (ensures GenInv.collection_heap_shape
+            (cheney_collect_spec minor major fp roots).mc_minor
+            (cheney_collect_spec minor major fp roots).mc_major
+            (cheney_collect_spec minor major fp roots).mc_fp)
+
 val cheney_collect_preserves_bounded_stack_props
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr)

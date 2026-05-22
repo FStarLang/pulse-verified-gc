@@ -48,6 +48,8 @@ typedef struct gen_heap_t_s
 }
 gen_heap_t;
 
+typedef void *minor_heap_no_scan_invariant;
+
 uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag);
 
 bool
@@ -168,6 +170,8 @@ typedef void *represents_fwd;
 
 typedef void *valid_slot_addrs;
 
+typedef void *slots_pairwise_distinct;
+
 void rewrite_roots_impl(uint64_t *roots, uint64_t *fwd_arr, size_t n);
 
 void update_one_object(heap_t major, uint64_t *fwd_arr, uint64_t obj, uint64_t wosize);
@@ -178,11 +182,25 @@ void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t
 
 typedef void *valid_fwd_entries;
 
+typedef void *promoted_entries_valid_from;
+
+typedef void *promoted_entries_disjoint;
+
+typedef void *promoted_entries_not_blue;
+
+typedef void *ref_table_covers_minor_ptrs;
+
 typedef void *ref_table_complete;
+
+void update_promoted_objects(heap_t major, uint64_t *fwd_arr);
 
 typedef void *ref_table_sound;
 
-void update_promoted_objects(heap_t major, uint64_t *fwd_arr);
+typedef void *slots_scannable_in_major;
+
+typedef void *fwd_targets_stable;
+
+typedef void *fwd_ptrs_classified;
 
 typedef void *gc_precondition;
 

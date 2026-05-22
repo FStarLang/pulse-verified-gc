@@ -245,7 +245,8 @@ let infix_parent (ms: minor_state) (addr: U64.t) : GTot U64.t =
 /// infix sub-objects within closures, not standalone objects.
 ///
 /// This predicate is expected at GC entry and preserved by the collector
-/// (which only reads the minor heap) and by minor_reset (bump → 0).
+/// (which only reads the minor heap) and by minor_reset (which clears the
+/// nursery and resets bump → 0).
 [@@"opaque_to_smt"]
 let minor_guards_complete (ms: minor_state) : prop =
   forall (addr: U64.t).
@@ -336,8 +337,26 @@ val minor_alloc_preserves_existing (ms: minor_state)
                     (forall (i:nat). i < minor_wosize ms x ==>
                       minor_read_field res.ms_out x i == minor_read_field ms x i)))
 
-/// Resetting the minor heap (after collection)
-val minor_reset (ms: minor_state) : Tot (ms':minor_state{minor_wf ms' /\ U64.v ms'.bump == 0})
+/// Resetting the minor heap (after collection) clears stale object headers and
+/// bodies before making the heap empty again.
+val minor_reset (ms: minor_state)
+  : Tot (ms':minor_state{
+      minor_wf ms' /\
+      U64.v ms'.bump == 0 /\
+      ms'.data == Seq.create minor_heap_size 0uy
+    })
+
+val minor_reset_wosize_zero (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures minor_wosize (minor_reset ms) addr == 0)
+
+val minor_reset_objects_empty (ms: minor_state)
+  : Lemma (ensures minor_objects (minor_reset ms) == Seq.empty)
+
+val minor_reset_objects_not_mem (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures ~(Seq.mem addr (minor_objects (minor_reset ms))))
+
+val minor_reset_no_infix (ms: minor_state) (addr: U64.t)
+  : Lemma (ensures ~(is_infix_in_minor (minor_reset ms) addr))
 
 /// The number of minor objects is bounded by minor_heap_size / 16.
 /// Each object uses at least 16 bytes (8 for header + 8 for body with wosize >= 1).

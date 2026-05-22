@@ -29,7 +29,7 @@ open GC.Gen.MinorHeap
 /// Minor heap is a byte array + mutable bump pointer
 noeq
 type minor_heap_t = {
-  data : array U8.t;
+  data : larray U8.t minor_heap_size;
   size : (n:SZ.t{SZ.v n == minor_heap_size});
   bump_ref : R.ref U64.t;
 }
@@ -79,10 +79,10 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
 /// Reset (after minor collection)
 /// ---------------------------------------------------------------------------
 
-/// Reset the bump pointer to 0
+/// Reset the nursery by clearing its bytes and setting the bump pointer to 0.
 fn minor_heap_reset (mh: minor_heap_t)
   requires is_minor mh 'd 'b
-  ensures is_minor mh 'd 0UL
+  ensures is_minor mh (Seq.create minor_heap_size 0uy) 0UL
 
 /// ---------------------------------------------------------------------------
 /// Initialization

@@ -442,6 +442,7 @@ uint64_t minor_alloc(minor_heap_t mh, uint64_t wosize, uint64_t tag)
 
 void minor_heap_reset(minor_heap_t mh)
 {
+  Pulse_Lib_Array_zeroize(minor_heap_size_sz, mh.data, (void *)0U);
   *mh.bump_ref = 0ULL;
 }
 
@@ -1522,7 +1523,9 @@ void update_promoted_objects(heap_t major, uint64_t *fwd_arr)
       uint64_t wosize = hdr >> 10U;
       uint64_t tag = hdr & 0xFFULL;
       if (wosize > 0ULL)
-        if (tag < 251ULL)
+      {
+        bool is_scannable = tag < 251ULL && !(tag == 249ULL);
+        if (is_scannable)
         {
           uint64_t body_end = major_addr + wosize * 8ULL;
           if (body_end <= heap_size_u640)
@@ -1561,6 +1564,7 @@ void update_promoted_objects(heap_t major, uint64_t *fwd_arr)
         }
         else
           i = iv + (size_t)1U;
+      }
       else
         i = iv + (size_t)1U;
     }

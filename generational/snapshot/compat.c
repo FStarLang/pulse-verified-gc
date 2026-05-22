@@ -41,6 +41,13 @@ void Pulse_Lib_Array_fill(size_t n, uint64_t *arr, uint64_t val, void *ghost) {
     for (size_t i = 0; i < n; i++) arr[i] = val;
 }
 
+/* Pulse.Lib.Array.zeroize — zero a byte array.
+ * After ghost erasure: zeroize(n, arr, <erased>). */
+void Pulse_Lib_Array_zeroize(size_t n, uint8_t *arr, void *ghost) {
+  (void)ghost;
+  memset(arr, 0, n);
+}
+
 /* --- Word-level heap read/write (GC.Impl.ArrayWord assumed vals) ---
  * On little-endian platforms (x86-64, AArch64-LE), these are simple
  * aligned word loads/stores. */

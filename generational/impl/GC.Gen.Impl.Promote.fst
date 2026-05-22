@@ -68,6 +68,25 @@ fn read_minor_tag (minor: minor_heap_t) (obj: U64.t)
 module PromoteSpec = GC.Gen.Promote
 module WBL = GC.Gen.WriteBodyLemmas
 
+let field_in_bounds (limit obj_addr wosize jv: nat)
+  : Lemma (requires limit < pow2 57 /\
+                    obj_addr + wosize * 8 <= limit /\
+                    obj_addr % 8 == 0 /\
+                    jv < wosize)
+          (ensures jv * 8 < pow2 64 /\
+                   obj_addr + jv * 8 < pow2 64 /\
+                   obj_addr + jv * 8 + 8 <= limit /\
+                   (obj_addr + jv * 8) % 8 == 0 /\
+                   jv + 1 < pow2 64)
+  =
+  FStar.Math.Lemmas.lemma_mult_le_right 8 (jv + 1) wosize;
+  assert ((jv + 1) * 8 <= wosize * 8);
+  assert (jv * 8 + 8 <= wosize * 8);
+  assert (obj_addr + jv * 8 + 8 <= obj_addr + wosize * 8);
+  assert_norm (pow2 57 < pow2 64);
+  FStar.Math.Lemmas.cancel_mul_mod jv 8;
+  FStar.Math.Lemmas.modulo_addition_lemma obj_addr 8 jv
+
 inline_for_extraction
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
@@ -105,17 +124,21 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
             WBL.copy_fields {data='md; bump='mb} 'ms src_obj dst_obj 0 (U64.v wosize))
   {
     let iv = !i;
+    assert (pure (U64.v iv < U64.v wosize));
+    field_in_bounds minor_heap_size (U64.v src_obj) (U64.v wosize) (U64.v iv);
+    field_in_bounds heap_size (U64.v dst_obj) (U64.v wosize) (U64.v iv);
     // Source: minor_obj + iv * 8
     let src_off = U64.mul iv 8UL;
+    assert (pure (U64.v src_off == U64.v iv * 8));
     let src_addr = U64.add src_obj src_off;
     // Prove minor_read precondition
-    assert (pure (U64.v iv < U64.v wosize));
     assert (pure (U64.v src_addr == U64.v src_obj + U64.v iv * 8));
     assert (pure (U64.v src_addr + 8 <= U64.v src_obj + U64.v wosize * 8));
     assert (pure (U64.v src_addr + 8 <= minor_heap_size /\ U64.v src_addr % 8 == 0));
     let field_val = minor_read minor src_addr;
     // Dest: major_obj + iv * 8
     let dst_off = U64.mul iv 8UL;
+    assert (pure (U64.v dst_off == U64.v iv * 8));
     let dst_addr = U64.add dst_obj dst_off;
     // SMT hints: bounds and alignment needed for copy_fields_step to fire
     assert (pure (U64.v iv < U64.v wosize /\

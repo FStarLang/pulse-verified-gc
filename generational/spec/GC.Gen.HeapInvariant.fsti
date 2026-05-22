@@ -83,6 +83,22 @@ val collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop
 val full_heap_shape (minor: minor_state) (major: heap) (fp: U64.t)
                     (st: seq obj_addr) (cap: nat) : prop
 
+val major_heap_shape_intro (major: heap) (fp: U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    FreeListShape.fp_pointer_or_zero fp /\
+                    FreeListShape.blue_link_fields_valid major /\
+                    heap_objects_dense major /\
+                    chain_objects_blue major fp /\
+                    Seq.length (objects zero_addr major) > 0 /\
+                    SweepInv.fp_valid fp major /\
+                    Sweep.fp_in_heap fp major /\
+                    Mark.no_black_objects major /\
+                    Mark.no_pointer_to_blue major /\
+                    no_scan_invariant major)
+          (ensures major_heap_shape major fp)
+
 val major_heap_shape_elim (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
           (ensures well_formed_heap major /\
@@ -160,7 +176,24 @@ val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
                     major_minor_fields_no_infix_targets minor major)
 
 val full_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
-                         (st: seq obj_addr) (cap: nat)
+                          (st: seq obj_addr) (cap: nat)
   : Lemma (requires full_heap_shape minor major fp st cap)
           (ensures collection_heap_shape minor major fp /\
                    major_stack_shape major st cap)
+
+/// Resetting the nursery clears stale headers and makes all minor-side shape
+/// and cross-generation minor-pointer obligations vacuous.
+val minor_reset_heap_shape (minor: minor_state)
+  : Lemma (ensures minor_heap_shape (minor_reset minor))
+
+val minor_reset_minor_major_fields_no_blue (minor: minor_state) (major: heap)
+  : Lemma (ensures minor_major_fields_no_blue (minor_reset minor) major)
+
+val minor_reset_major_minor_fields_no_infix_targets
+  (minor: minor_state) (major: heap)
+  : Lemma (ensures major_minor_fields_no_infix_targets (minor_reset minor) major)
+
+val collection_heap_shape_after_minor_reset
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires major_heap_shape major fp)
+          (ensures collection_heap_shape (minor_reset minor) major fp)

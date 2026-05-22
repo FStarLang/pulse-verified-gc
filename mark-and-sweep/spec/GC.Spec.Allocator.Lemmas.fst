@@ -53,6 +53,7 @@ let chain_avoids = chain_avoids
 let chain_avoids_head_ne = chain_avoids_head_ne
 let chain_avoids_tail = chain_avoids_tail
 let chain_avoids_transfer = chain_avoids_transfer
+let chain_avoids_transfer_on_chain = chain_avoids_transfer_on_chain
 let chain_avoids_weaken = chain_avoids_weaken
 let first_hit = first_hit
 let first_hit_spec = first_hit_spec

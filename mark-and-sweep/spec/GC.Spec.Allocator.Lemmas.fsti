@@ -248,6 +248,19 @@ val chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
                         read_word g' a == read_word g a))
           (ensures chain_avoids g' fp excl fuel = true)
 
+/// Transfer chain_avoids when link reads are preserved on the actual fp-chain
+/// nodes (characterized by chain_avoids g fp a fuel = false), excluding excl.
+val chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma (requires chain_avoids g fp excl fuel = true /\
+                    fl_valid g fp fuel /\
+                    (forall (a: obj_addr). Seq.mem a (objects zero_addr g) /\
+                      U64.v (wosize_of_object a g) >= 1 /\
+                      U64.v (hd_address a) + 16 <= heap_size /\
+                      a <> excl /\
+                      chain_avoids g fp a fuel = false ==>
+                        read_word g' a == read_word g a))
+          (ensures chain_avoids g' fp excl fuel = true)
+
 /// chain_avoids_weaken: if chain_avoids holds for fuel steps, it also holds for fewer steps.
 val chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\ fuel' <= fuel)

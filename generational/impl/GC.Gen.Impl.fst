@@ -946,7 +946,8 @@ fn minor_collect_full (gh: gen_heap_t)
       // Well-formedness preserved through promotion
       SpecFields.well_formed_heap_part1 prom.major_final /\
       // Strong correctness: the result equals cheney_collect_spec.mc_major.
-      s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major)
+      s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
+      GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2)
 {
   unfold is_gen_heap;
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
@@ -1015,6 +1016,8 @@ fn minor_collect_full (gh: gen_heap_t)
     (two_pass_implies_full_update
        ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs farr_post3 'sl)
     (SZ.v nslots);
+  CheneyPres.cheney_collect_preserves_collection_heap_shape
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
 
   fold (is_gen_heap gh _ 0UL _ _);
   ok

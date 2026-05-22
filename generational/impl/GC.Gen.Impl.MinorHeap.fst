@@ -11,6 +11,7 @@ module GC.Gen.Impl.MinorHeap
 
 open Pulse.Lib.Pervasives
 open Pulse.Lib.Array.PtsTo
+module PArr = Pulse.Lib.Array
 module R = Pulse.Lib.Reference
 module SZ = FStar.SizeT
 module U8 = FStar.UInt8
@@ -137,11 +138,16 @@ fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
 
 fn minor_heap_reset (mh: minor_heap_t)
   requires is_minor mh 'd 'b
-  ensures is_minor mh 'd 0UL
+  ensures is_minor mh (Seq.create minor_heap_size 0uy) 0UL
 {
   unfold is_minor;
+  PArr.zeroize minor_heap_size_sz mh.data;
   R.op_Colon_Equals mh.bump_ref 0UL;
-  fold (is_minor mh 'd 0UL)
+  with d0. assert (pts_to mh.data d0);
+  assert (pure (d0 `Seq.equal` Seq.create (SZ.v minor_heap_size_sz) 0uy));
+  fold (is_minor mh d0 0UL);
+  rewrite (is_minor mh d0 0UL)
+       as (is_minor mh (Seq.create minor_heap_size 0uy) 0UL)
 }
 
 /// ---------------------------------------------------------------------------

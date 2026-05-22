@@ -108,6 +108,23 @@ let full_heap_shape (minor: minor_state) (major: heap) (fp: U64.t)
   collection_heap_shape minor major fp /\
   major_stack_shape major st cap
 
+let major_heap_shape_intro (major: heap) (fp: U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    FreeListShape.fp_pointer_or_zero fp /\
+                    FreeListShape.blue_link_fields_valid major /\
+                    heap_objects_dense major /\
+                    chain_objects_blue major fp /\
+                    Seq.length (objects zero_addr major) > 0 /\
+                    SweepInv.fp_valid fp major /\
+                    Sweep.fp_in_heap fp major /\
+                    Mark.no_black_objects major /\
+                    Mark.no_pointer_to_blue major /\
+                    no_scan_invariant major)
+          (ensures major_heap_shape major fp)
+  = reveal_opaque (`%major_heap_shape) (major_heap_shape major fp)
+
 let major_heap_shape_elim (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
           (ensures well_formed_heap major /\
@@ -202,3 +219,161 @@ let full_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
                    major_stack_shape major st cap)
   = reveal_opaque (`%full_heap_shape)
       (full_heap_shape minor major fp st cap)
+
+/// ---------------------------------------------------------------------------
+/// Minor reset shape
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+private let minor_reset_guards_complete (minor: minor_state)
+  : Lemma (ensures minor_guards_complete (minor_reset minor))
+  =
+  let reset = minor_reset minor in
+  let aux (addr: U64.t)
+    : Lemma (requires U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\
+                      U64.v addr % 8 == 0 /\
+                      minor_wosize reset addr > 0 /\
+                      U64.v addr + minor_wosize reset addr * 8 <= minor_heap_size /\
+                      minor_tag reset addr <> 249)
+            (ensures Seq.mem addr (minor_objects reset))
+    =
+    minor_reset_wosize_zero minor addr;
+    assert False
+  in
+  reveal_opaque (`%minor_guards_complete) (minor_guards_complete reset);
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+private let minor_reset_infix_wf (minor: minor_state)
+  : Lemma (ensures minor_infix_wf (minor_reset minor))
+  =
+  let reset = minor_reset minor in
+  let aux (addr: U64.t)
+    : Lemma (requires is_infix_in_minor reset addr)
+            (ensures (let wz = minor_wosize reset addr in
+                      let parent = infix_parent reset addr in
+                      wz > 0 /\
+                      wz * 8 <= U64.v addr - 8 /\
+                      U64.v parent >= 8 /\
+                      U64.v parent % 8 == 0 /\
+                      Seq.mem parent (minor_objects reset) /\
+                      U64.v addr - U64.v parent < minor_wosize reset parent * 8))
+    =
+    minor_reset_no_infix minor addr;
+    assert False
+  in
+  reveal_opaque (`%minor_infix_wf) (minor_infix_wf reset);
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+private let minor_reset_no_scan_invariant (minor: minor_state)
+  : Lemma (ensures minor_no_scan_invariant (minor_reset minor))
+  =
+  let reset = minor_reset minor in
+  minor_reset_objects_empty minor;
+  assert (minor_objects reset == Seq.empty);
+  let aux (obj: U64.t) (j: nat)
+    : Lemma (ensures (Seq.mem obj (minor_objects reset) /\
+                      minor_tag reset obj >= 251 /\
+                      j < minor_wosize reset obj ==>
+                      ~(is_pointer_field (minor_read_field reset obj j))))
+    =
+    minor_reset_objects_not_mem minor obj
+  in
+  FStar.Classical.forall_intro_2 aux
+
+private let minor_reset_fields_no_infix_targets (minor: minor_state)
+  : Lemma (ensures minor_fields_no_infix_targets (minor_reset minor))
+  =
+  let reset = minor_reset minor in
+  minor_reset_objects_empty minor;
+  assert (minor_objects reset == Seq.empty);
+  let aux (obj: U64.t) (j: nat)
+    : Lemma (ensures (Seq.mem obj (minor_objects reset) /\
+                      j < minor_wosize reset obj /\
+                      is_minor_pointer (to_minor_offset (minor_read_field reset obj j)) ==>
+                      ~(is_infix_in_minor reset
+                        (to_minor_offset (minor_read_field reset obj j)))))
+    =
+    minor_reset_objects_not_mem minor obj
+  in
+  reveal_opaque (`%minor_fields_no_infix_targets)
+    (minor_fields_no_infix_targets reset);
+  FStar.Classical.forall_intro_2 aux
+
+let minor_reset_heap_shape (minor: minor_state)
+  : Lemma (ensures minor_heap_shape (minor_reset minor))
+  =
+  let reset = minor_reset minor in
+  minor_reset_guards_complete minor;
+  minor_reset_infix_wf minor;
+  minor_reset_no_scan_invariant minor;
+  minor_reset_fields_no_infix_targets minor;
+  reveal_opaque (`%minor_heap_shape) (minor_heap_shape reset)
+
+let minor_reset_minor_major_fields_no_blue (minor: minor_state) (major: heap)
+  : Lemma (ensures minor_major_fields_no_blue (minor_reset minor) major)
+  =
+  let reset = minor_reset minor in
+  minor_reset_objects_empty minor;
+  assert (minor_objects reset == Seq.empty);
+  let aux (obj: U64.t) (j: nat)
+    : Lemma (ensures (Seq.mem obj (minor_objects reset) /\
+                      j < minor_wosize reset obj /\
+                      is_pointer_field (minor_read_field reset obj j) ==>
+                      Seq.mem ((minor_read_field reset obj j) <: obj_addr)
+                              (objects zero_addr major) /\
+                      ~(is_blue ((minor_read_field reset obj j) <: obj_addr) major)))
+    =
+    minor_reset_objects_not_mem minor obj
+  in
+  reveal_opaque (`%minor_major_fields_no_blue)
+    (minor_major_fields_no_blue reset major);
+  FStar.Classical.forall_intro_2 aux
+
+let minor_reset_major_minor_fields_no_infix_targets
+  (minor: minor_state) (major: heap)
+  : Lemma (ensures major_minor_fields_no_infix_targets (minor_reset minor) major)
+  =
+  let reset = minor_reset minor in
+  let aux (obj: obj_addr) (j: nat)
+    : Lemma (ensures (Seq.mem obj (objects zero_addr major) /\
+                      ~(is_blue obj major) /\
+                      ~(is_no_scan obj major) /\
+                      j < U64.v (wosize_of_object obj major) /\
+                      U64.v obj + j * 8 + 8 <= heap_size /\
+                      (U64.v obj + j * 8) % 8 == 0 ==>
+                      (let v = to_minor_offset
+                         (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
+                       is_minor_pointer v ==> ~(is_infix_in_minor reset v))))
+    =
+    if Seq.mem obj (objects zero_addr major) &&
+       not (is_blue obj major) &&
+       not (is_no_scan obj major) &&
+       j < U64.v (wosize_of_object obj major) &&
+       U64.v obj + j * 8 + 8 <= heap_size &&
+       (U64.v obj + j * 8) % 8 = 0 then begin
+      let field_nat = U64.v obj + j * 8 in
+      assert_norm (pow2 57 < pow2 64);
+      assert (field_nat < heap_size);
+      assert (field_nat < pow2 64);
+      let field_addr : hp_addr = U64.uint_to_t field_nat in
+      assert (U64.v field_addr == field_nat);
+      let v = to_minor_offset (read_word major field_addr) in
+      minor_reset_no_infix minor v
+    end
+  in
+  reveal_opaque (`%major_minor_fields_no_infix_targets)
+    (major_minor_fields_no_infix_targets reset major);
+  FStar.Classical.forall_intro_2 aux
+
+let collection_heap_shape_after_minor_reset
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires major_heap_shape major fp)
+          (ensures collection_heap_shape (minor_reset minor) major fp)
+  =
+  let reset = minor_reset minor in
+  minor_reset_heap_shape minor;
+  minor_reset_minor_major_fields_no_blue minor major;
+  minor_reset_major_minor_fields_no_infix_targets minor major;
+  reveal_opaque (`%collection_heap_shape)
+    (collection_heap_shape reset major fp)
+#pop-options

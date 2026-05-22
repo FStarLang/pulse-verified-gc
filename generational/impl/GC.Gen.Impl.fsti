@@ -277,7 +277,8 @@ fn minor_collect_full (gh: gen_heap_t)
       SpecFields.well_formed_heap_part1 prom.major_final /\
       // Strong correctness: the result equals cheney_collect_spec
       // (single-pass full update of all pointer fields in the major heap).
-      s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major)
+      s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
+      GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
