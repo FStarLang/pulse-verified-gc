@@ -38,31 +38,42 @@ SPEC_SRC = $(wildcard spec/*.fst spec/*.fsti)
 IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti)
 ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
 
+ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst
+ROOT_CHECKED = $(addsuffix .checked,$(ROOT_SRC))
+VERIFY_CHECKED ?= $(ROOT_CHECKED)
+
 # --- Auto-generated dependency graph ----------------------------------------
 
-.depend: $(ALL_SRC)
-	$(FSTAR) --dep full $(ALL_SRC) --output_deps_to $@.raw
+.depend: Makefile $(ALL_SRC)
+	$(FSTAR) --dep full $(ROOT_SRC) --output_deps_to $@.raw
 	@awk -v cwd="$$(pwd)/" -v proj="$$(cd .. && pwd)/" ' \
 	  { gsub(cwd, ""); gsub(proj, "../") } \
-	  /^[^ \t].*:/ { if (n) flush(); \
-	    keep = (/\.checked:/) ? 1 : 0; n = 0 } \
-	  keep { line =$$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
-	    if (line == "") next; \
-	    if (line !~ /:/ && line !~ /^(spec|impl|_output)\/|^\.\.\//) next; \
-	    buf[n++] = $$0 } \
-	  END { if (n) flush() } \
-	  function flush() { if (!n) return; \
-	    sub(/[ \t]*\\[ \t]*$$/, "", buf[n-1]); \
-	    for (i=0;i<n;i++) print buf[i]; print ""; n=0 }' $@.raw > $@
+	  /^[^ \t].*:/ { flush(); split($$0, a, ":"); target = a[1]; \
+	    keep = (target ~ /\.checked$$/); n = 0; next } \
+	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
+	    if (line ~ /\.checked$$/) deps[++n] = line } \
+	  END { flush() } \
+	  function flush() { if (!keep || target == "") return; \
+	    print target ": \\"; \
+	    for (i=1;i<=n;i++) print "\t" deps[i] (i < n ? " \\" : ""); \
+	    print ""; delete deps; n=0 }' $@.raw > $@
+	@printf '\nVERIFY_CHECKED := ' >> $@
+	@awk '/^[^ \t].*\.checked:/ { target=$$1; sub(/:$$/, "", target); \
+	    if (target ~ /^(spec|impl)\/.*\.checked$$/) print target }' $@ \
+	  | sort -u | tr '\n' ' ' >> $@
+	@printf '\n' >> $@
 	@rm -f $@.raw
 
 # --- Default goal -----------------------------------------------------------
 
-.PHONY: all verify extract snapshot clean
+.PHONY: all verify check-orphans extract snapshot clean
 
 all: verify
 
 -include .depend
+
+REACHABLE_SRC = $(patsubst %.checked,%,$(VERIFY_CHECKED))
+ORPHAN_SRC = $(filter-out $(REACHABLE_SRC),$(ALL_SRC))
 
 # --- Pattern rules (verification) -------------------------------------------
 
@@ -84,9 +95,16 @@ impl/%.checked: impl/%
 $(OUTPUT_DIR):
 	@mkdir -p $@
 
-# Verify all modules
-verify: $(addsuffix .checked,$(ALL_SRC))
-	@echo "=== all generational modules verified ==="
+# Verify the GC.Gen.Impl root closure and fail if new orphan modules appear.
+check-orphans:
+	@if [ -n "$(strip $(ORPHAN_SRC))" ]; then \
+	  echo "=== unreachable generational modules from $(ROOT_SRC) ==="; \
+	  printf '  %s\n' $(ORPHAN_SRC); \
+	  exit 1; \
+	fi
+
+verify: check-orphans $(VERIFY_CHECKED)
+	@echo "=== GC.Gen.Impl root closure verified ==="
 
 # === Extraction (.krml → C) =================================================
 #

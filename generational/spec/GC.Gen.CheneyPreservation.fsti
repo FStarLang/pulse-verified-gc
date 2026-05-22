@@ -4,7 +4,8 @@
 ///
 /// Separated from GC.Gen.Cheney to avoid Z3 context pollution: adding val
 /// declarations to Cheney.fsti causes GC.Gen.Impl.Cheney.fst to fail verification.
-/// This module is imported only by CheneyEnd2End, not by the Pulse implementation.
+/// The Pulse implementation imports this module explicitly for post-minor
+/// heap-shape preservation facts.
 
 module GC.Gen.CheneyPreservation
 
@@ -25,7 +26,6 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
 module MarkBounded = GC.Spec.MarkBounded
 module GenInv = GC.Gen.HeapInvariant
-module FreeListShape = GC.Gen.FreeListShape
 module FreeListShape = GC.Gen.FreeListShape
 
 /// Cheney promotion preserves no_black_objects.
