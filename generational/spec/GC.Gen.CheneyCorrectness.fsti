@@ -143,8 +143,8 @@ val cheney_collect_rewrites_roots
 /// unconditional properties plus allocator invariant preservation into a
 /// single lemma for convenient use in the Pulse implementation.
 ///
-/// This is what GC.Gen.Impl.fst calls after minor_collect to establish
-/// the enriched postcondition of the minor_collect Pulse function.
+/// This is what GC.Gen.Impl.fst calls to establish Cheney collection
+/// postconditions around the full minor collection path.
 val cheney_gc_correct
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma

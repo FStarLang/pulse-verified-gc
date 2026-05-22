@@ -53,15 +53,6 @@ typedef void *minor_heap_no_scan_invariant;
 uint64_t gen_alloc(gen_heap_t gh, uint64_t wosize, uint64_t tag);
 
 bool
-minor_collect(
-  gen_heap_t gh,
-  uint64_t *roots,
-  size_t nroots,
-  uint64_t *fwd_arr,
-  uint64_t *queue
-);
-
-bool
 minor_collect_full(
   gen_heap_t gh,
   uint64_t *roots,
@@ -86,6 +77,8 @@ gen_gc(
   size_t nroots,
   uint64_t *fwd_arr,
   uint64_t *queue,
+  uint64_t *slots,
+  size_t nslots,
   gray_stack_rec st
 );
 

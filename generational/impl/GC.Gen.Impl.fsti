@@ -3,7 +3,7 @@
 
    Provides:
    - gen_alloc: Allocate an object (routes to minor or major by size)
-   - minor_collect: Cheney-style BFS collection of minor heap
+    - minor_collect_full: full Cheney minor collection with ref_table rewriting
    - gen_gc: Full generational GC (minor + major collection)
 *)
 
@@ -85,141 +85,12 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   ensures exists* d2 b2 s2 fp2. is_gen_heap gh d2 b2 s2 fp2
 
 /// ---------------------------------------------------------------------------
-/// Minor collection (Cheney BFS: promote reachable + update pointers + reset)
-/// ---------------------------------------------------------------------------
-
-/// Trigger a minor collection using Cheney-style BFS:
-/// 1. Forward roots (promote reachable minor objects on discovery)
-/// 2. BFS scan: for each promoted object, forward its children
-/// 3. Update promoted objects' pointer fields (via fwd_arr, efficient path)
-/// 4. Rewrite program roots
-/// 5. Reset minor heap (bump = 0)
-///
-/// Postcondition: promoted objects' fields are updated; the heap state is
-/// update_promoted_iter applied to the post-promotion heap.
-/// The caller is responsible for updating any additional slots (e.g.,
-/// remembered-set entries) that may also contain minor pointers.
-///
-/// Correctness properties:
-/// - Promotion preserves structural invariants (wfh_part1, fl_valid, dense)
-/// - Minor heap reset
-/// - Roots rewritten via forwarding map
-/// - Forwarding array and map exposed for caller's use
-fn minor_collect (gh: gen_heap_t)
-                 (roots: array U64.t) (nroots: SZ.t)
-                 (fwd_arr: array U64.t)
-                 (queue: larray U64.t Cheney.queue_size)
-  requires is_gen_heap gh 'd 'b 's 'fp **
-           pts_to roots 'rs **
-           pts_to fwd_arr 'farr **
-           pts_to queue 'qv **
-           pure (
-             // Major heap has valid OCaml object layout: every object's
-             // header+body fits in the byte array, pointer fields target
-             // valid objects, infix headers are well-formed, and no
-             // spurious infix tags appear inside object bodies
-             SpecFields.well_formed_heap 's /\
-
-             // Free-list from 'fp consists of valid objects: each node is
-             // a member of objects(0, major), has wosize >= 1, blue color,
-             // and its first field (next pointer) links to another valid
-             // node or terminates
-             AllocLemmas.fl_valid 's 'fp (heap_size / U64.v mword) /\
-
-             // Free-list traversal from 'fp terminates within
-             // heap_size/mword steps (no cycles; the chain is finite)
-             AllocLemmas.fl_chain_terminates 's 'fp (heap_size / U64.v mword) /\
-
-             // Object walk is well-formed: stepping from any object's header
-             // (at header + (1 + wosize) * 8 bytes) lands on another valid
-             // object header. Both allocated and free-list nodes are objects,
-             // so the heap is fully partitioned with no unaccounted bytes
-             PromoteSpec.heap_objects_dense 's /\
-
-             // Every allocated (non-blue) object is NOT on the free chain;
-             // equivalently, the free chain only visits blue objects
-             PromoteSpec.chain_objects_blue 's 'fp /\
-
-             // nroots matches the actual root array length
-             SZ.v nroots == Seq.length 'rs /\
-
-             // Forwarding array has exactly fwd_array_size entries
-             // (sized for the minor heap address range)
-             Seq.length 'farr == UpdatePtrs.fwd_array_size /\
-
-             // Forwarding array is zeroed: no stale forwarding entries
-             // from a previous collection cycle
-             (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
-
-             // Minor heap bump pointer is word-aligned, within
-             // minor_heap_size, and the allocated prefix [0..bump)
-             // forms a valid chain of OCaml objects
-             minor_wf ({ data = 'd; bump = 'b }) /\
-
-             // Guard completeness: any minor-heap address that passes
-             // the runtime object-recognition checks (aligned, positive
-             // wosize, fits before bump) is genuinely in the minor
-             // object list — no false negatives when scanning
-             minor_guards_complete ({ data = 'd; bump = 'b }) /\
-             minor_infix_wf ({ data = 'd; bump = 'b }) /\
-
-             // Major heap contains at least one object (the initial
-             // free-list sentinel; needed for free-list operations)
-             Seq.length (SpecFields.objects zero_addr 's) > 0)
-  returns ok: bool
-  ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
-    is_gen_heap gh d2 b2 s2 fp2 **
-    pts_to roots rs2 **
-    pts_to fwd_arr farr2 **
-    pts_to queue qv2 **
-    pure (
-      let minor_st : minor_state = { data = 'd; bump = 'b } in
-      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
-
-      // --- Spec refinement ---
-      // Post-collection major heap has promoted objects' fields updated
-      // via the forwarding array. This is the efficient path that only
-      // visits promoted objects (not the entire major heap).
-      s2 == UpdatePtrs.update_promoted_iter prom.major_final farr2 prom.fwd_map 0 /\
-
-      // Post-collection free pointer matches spec (free-list head
-      // advanced past all newly promoted objects)
-      fp2 == prom.fp_final /\
-
-      // Post-collection roots match spec output (rewritten via fwd map)
-      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-
-      // Minor heap has been fully reset (bump pointer = 0, ready for
-      // new allocations)
-      U64.v b2 == 0 /\
-
-      // --- Forwarding array exposed for caller ---
-      // The forwarding array represents the spec-level forwarding map
-      UpdatePtrs.represents_fwd farr2 prom.fwd_map /\
-
-      // All forwarding entries are valid addresses
-      UpdatePtrs.valid_fwd_entries farr2 /\
-
-      // Forwarding array length preserved
-      Seq.length farr2 == UpdatePtrs.fwd_array_size /\
-
-      // --- Structural invariants preserved by promotion ---
-      // (These hold on the post-promotion heap prom.major_final)
-      SpecFields.well_formed_heap_part1 prom.major_final /\
-      AllocLemmas.fl_valid prom.major_final fp2 (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates prom.major_final fp2 (heap_size / U64.v mword) /\
-      PromoteSpec.heap_objects_dense prom.major_final /\
-      PromoteSpec.chain_objects_blue prom.major_final fp2 /\
-      Seq.length (SpecFields.objects zero_addr prom.major_final) > 0)
-
-/// ---------------------------------------------------------------------------
 /// Full minor collection with ref_table (full correctness)
 /// ---------------------------------------------------------------------------
 
-/// Like minor_collect but also takes a ref_table of major-heap field addresses
-/// holding minor pointers and rewrites them. Proves full cheney_collect_spec
-/// correctness (s2 == cheney_collect_spec result) rather than the weaker
-/// update_promoted_iter spec of minor_collect.
+/// Full minor collection with a ref_table of major-heap field addresses holding
+/// minor pointers. Rewrites both promoted-object fields and existing major slots,
+/// proving full cheney_collect_spec correctness.
 ///
 /// The ref_table comes from the write barrier: it records addresses of existing
 /// major-heap fields that were assigned minor-heap pointers. Combined with
@@ -291,19 +162,22 @@ fn minor_collect_full (gh: gen_heap_t)
 /// Postcondition provides:
 /// - Major GC correctness (5 pillars of mark-and-sweep) on post-minor heap
 /// - Minor collection properties (roots rewritten, minor heap reset)
+/// - The post-minor `GenInv.full_heap_shape` used to justify the major GC call
 ///
-/// The caller provides `MajorGC.gc_precondition` for the initial major heap.
-/// The implementation derives the corresponding post-minor precondition before
-/// invoking mark-and-sweep.
+/// The caller provides full heap shape plus the remembered-set table needed by
+/// `minor_collect_full`. The implementation derives the post-minor major-GC
+/// precondition before invoking mark-and-sweep.
 fn gen_gc (gh: gen_heap_t)
-          (roots: array U64.t) (nroots: SZ.t)
-          (fwd_arr: array U64.t)
-          (queue: larray U64.t Cheney.queue_size)
-          (st: gray_stack)
+           (roots: array U64.t) (nroots: SZ.t)
+           (fwd_arr: array U64.t)
+           (queue: larray U64.t Cheney.queue_size)
+           (slots: array U64.t) (nslots: SZ.t)
+           (st: gray_stack)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pts_to roots 'rs **
            pts_to fwd_arr 'farr **
            pts_to queue 'qv **
+           pts_to slots 'sl **
            is_gray_stack st 'st **
            pure (
               // Full heap shape: major layout/free-list/colors, minor layout,
@@ -313,16 +187,20 @@ fn gen_gc (gh: gen_heap_t)
                 ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'st
                 (stack_capacity st) /\
 
-              // Operational array preconditions.
-              SZ.v nroots == Seq.length 'rs /\
-              Seq.length 'farr == UpdatePtrs.fwd_array_size /\
-              (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
+               // Operational array preconditions.
+               SZ.v nroots == Seq.length 'rs /\
+               Seq.length 'farr == UpdatePtrs.fwd_array_size /\
+               (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
+               UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
+               UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
+               UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots))
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
     is_gen_heap gh d2 b2 s2 (fst res) **
     pts_to roots rs2 **
     pts_to fwd_arr farr2 **
     pts_to queue qv2 **
+    pts_to slots 'sl **
     is_gray_stack st st2 **
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
@@ -362,7 +240,13 @@ fn gen_gc (gh: gen_heap_t)
       // Minor heap has been fully reset (bump = 0)
       U64.v b2 == 0 /\
 
-      // --- Post-minor heap properties (proven by minor_collect) ---
+      // The post-minor heap satisfies the full invariant needed for the
+      // immediately following major collection.
+      GenInv.full_heap_shape
+        ({ data = d2; bump = b2 } <: minor_state) result.mc_major result.mc_fp
+        'st (stack_capacity st) /\
+
+      // --- Post-minor heap properties (proven by minor_collect_full) ---
 
       // Pre-existing major-heap objects survive minor collection
       // (promotion only adds, never removes)

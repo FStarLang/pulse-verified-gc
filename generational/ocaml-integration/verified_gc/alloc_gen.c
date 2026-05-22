@@ -28,8 +28,8 @@
  * Inter-generational pointers:
  *   Uses OCaml's caml_ref_table (populated by caml_modify).  Before minor
  *   collection, the bridge translates ref_table entries from absolute minor
- *   pointers to minor offsets in-place.  After minor_collect, update_all_objects
- *   rewrites them to major addresses (absolute with NULL-base).
+ *   pointers to minor offsets in-place.  minor_collect_full rewrites those
+ *   slots to major addresses (absolute with NULL-base).
  */
 
 #include "GC_Gen_Impl.h"

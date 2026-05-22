@@ -1,6 +1,6 @@
 /* Minimal test harness for the verified generational GC.
  *
- * Tests: init → minor allocs → minor_collect → major GC → reuse.
+ * Tests: init → minor allocs → minor_collect_full → major GC → reuse.
  *
  * NOTE: alloc_minor_heap() as extracted uses VLA (returns stack pointers),
  * so we construct minor_heap_t manually with heap-allocated storage.
@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include "compat.h"
 #include "GC_Gen_Impl.h"
 #include "krmlinit.h"
 #include "internal/GC_Gen_Impl.h"
@@ -24,17 +25,20 @@ static uint64_t peek_minor(minor_heap_t mh, uint64_t offset) {
 
 int main(void)
 {
+    zero_addr = 0;
+    heap_size_u64 = 1024 * 1024;
+
     /* Initialize derived constants (fwd_array_size, queue_size_sz, ...) */
     krmlinit_globals();
 
     printf("=== Verified Generational GC Test ===\n");
-    printf("minor_heap_size = %lld bytes\n", (long long)minor_heap_size);
+    printf("minor_heap_size = %lld bytes\n", (long long)minor_heap_size_sz);
     printf("minor_heap_size_u64 = %llu\n", (unsigned long long)minor_heap_size_u64);
     printf("max_young_wosize_u64 = %llu\n", (unsigned long long)max_young_wosize_u64);
-    printf("heap_size_u64 (major) = %llu\n", (unsigned long long)GC_Spec_Base_heap_size_u64);
+    printf("heap_size_u64 (major) = %llu\n", (unsigned long long)heap_size_u64);
 
     /* ---- Allocate major heap ---- */
-    size_t major_bytes = (size_t)GC_Spec_Base_heap_size_u64;
+    size_t major_bytes = (size_t)heap_size_u64;
     uint8_t *major_data = calloc(major_bytes, 1);
     if (!major_data) { perror("calloc major"); return 1; }
     heap_t major_heap = { .data = major_data, .size = major_bytes };
@@ -44,7 +48,7 @@ int main(void)
     printf("init_heap returned fp = %llu\n", (unsigned long long)fp);
 
     /* ---- Allocate minor heap (manually, not via alloc_minor_heap) ---- */
-    size_t minor_bytes = (size_t)minor_heap_size;
+    size_t minor_bytes = (size_t)minor_heap_size_sz;
     uint8_t *minor_data = calloc(minor_bytes, 1);
     if (!minor_data) { perror("calloc minor"); free(major_data); return 1; }
     uint64_t *bump_ref = calloc(1, sizeof(uint64_t));
@@ -61,9 +65,12 @@ int main(void)
     gen_heap_t gh = { .minor = minor, .major = major_heap, .fp_ref = fp_ref };
 
     /* ---- Forwarding array ---- */
-    size_t fwd_entries = (size_t)fwd_array_size;
+    size_t fwd_entries = (size_t)fwd_arr_size_sz;
     uint64_t *fwd_arr = calloc(fwd_entries, sizeof(uint64_t));
     if (!fwd_arr) { perror("calloc fwd"); goto cleanup; }
+    uint64_t *queue = calloc((size_t)queue_size_sz, sizeof(uint64_t));
+    if (!queue) { perror("calloc queue"); goto cleanup_fwd; }
+    uint64_t empty_slots[1] = { 0 };
 
     /* ---- Phase 1: Minor allocations ---- */
     printf("\n--- Phase 1: Minor allocations ---\n");
@@ -82,7 +89,7 @@ int main(void)
 
     if (obj1 == 0 || obj2 == 0 || obj3 == 0) {
         printf("FAIL: minor allocation returned 0\n");
-        goto cleanup_fwd;
+        goto cleanup_queue;
     }
 
     /* Store a pointer from obj1 to obj3 (field 1 of obj1 = obj3's address) */
@@ -99,10 +106,10 @@ int main(void)
     /* Zero forwarding array */
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
 
-    printf("Calling minor_collect (nroots=%zu) ...\n", nroots);
-    minor_collect(gh, roots, nroots, fwd_arr);
+    printf("Calling minor_collect_full (nroots=%zu) ...\n", nroots);
+    minor_collect_full(gh, roots, nroots, fwd_arr, queue, empty_slots, 0);
 
-    printf("After minor_collect:\n");
+    printf("After minor_collect_full:\n");
     printf("  bump = %llu (should be 0 after reset)\n", (unsigned long long)*bump_ref);
     printf("  roots[0] = %llu (was obj1=%llu, now major)\n",
            (unsigned long long)roots[0], (unsigned long long)obj1);
@@ -110,8 +117,8 @@ int main(void)
            (unsigned long long)roots[1], (unsigned long long)obj2);
 
     if (*bump_ref != 0) {
-        printf("FAIL: bump should be 0 after minor_collect\n");
-        goto cleanup_fwd;
+        printf("FAIL: bump should be 0 after minor_collect_full\n");
+        goto cleanup_queue;
     }
 
     /* ---- Phase 3: More minor allocations + full GC ---- */
@@ -124,14 +131,20 @@ int main(void)
     size_t gray_cap = major_bytes / 64;
     if (gray_cap < 256) gray_cap = 256;
     uint64_t *gray_storage = calloc(gray_cap, sizeof(uint64_t));
-    if (!gray_storage) { perror("calloc gray"); goto cleanup_fwd; }
+    if (!gray_storage) { perror("calloc gray"); goto cleanup_queue; }
     size_t gray_top = gray_cap;  /* stack grows downward; start at cap = empty */
     gray_stack_rec st = { .storage = gray_storage, .top = &gray_top, .cap = gray_cap };
 
     /* No roots → everything becomes garbage after full GC */
     uint64_t empty_roots[1] = { 0 };
     memset(fwd_arr, 0, fwd_entries * sizeof(uint64_t));
-    uint64_t result_fp = gen_gc(gh, empty_roots, 0, fwd_arr, st);
+    K___uint64_t_bool result = gen_gc(gh, empty_roots, 0, fwd_arr, queue, empty_slots, 0, st);
+    if (!result.snd) {
+        printf("FAIL: gen_gc promotion phase failed\n");
+        free(gray_storage);
+        goto cleanup_queue;
+    }
+    uint64_t result_fp = result.fst;
     printf("gen_gc returned fp = %llu\n", (unsigned long long)result_fp);
 
     /* ---- Phase 4: Allocate after GC ---- */
@@ -144,11 +157,12 @@ int main(void)
     if (obj5 == 0) {
         printf("FAIL: allocation after GC failed\n");
         free(gray_storage);
-        goto cleanup_fwd;
+        goto cleanup_queue;
     }
 
     printf("\nAll tests passed.\n");
     free(gray_storage);
+    free(queue);
     free(fwd_arr);
     free(fp_ref);
     free(bump_ref);
@@ -156,6 +170,8 @@ int main(void)
     free(major_data);
     return 0;
 
+cleanup_queue:
+    free(queue);
 cleanup_fwd:
     free(fwd_arr);
 cleanup:

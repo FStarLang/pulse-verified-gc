@@ -199,8 +199,19 @@ let major_stack_shape_elim (major: heap) (st: seq obj_addr) (cap: nat)
                    gray_black_objects_on_stack major st /\
                    (let graph = HeapModel.create_graph major in
                     let roots' = HeapGraph.coerce_to_vertex_list st in
-                    Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
-                    Graph.subset_vertices roots' graph.vertices))
+                     Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
+                     Graph.subset_vertices roots' graph.vertices))
+  = reveal_opaque (`%major_stack_shape) (major_stack_shape major st cap)
+
+let major_stack_shape_intro (major: heap) (st: seq obj_addr) (cap: nat)
+  : Lemma (requires MarkBoundedInv.bounded_mark_inv major st cap /\
+                    Mark.root_props major st /\
+                    gray_black_objects_on_stack major st /\
+                    (let graph = HeapModel.create_graph major in
+                     let roots' = HeapGraph.coerce_to_vertex_list st in
+                     Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
+                     Graph.subset_vertices roots' graph.vertices))
+          (ensures major_stack_shape major st cap)
   = reveal_opaque (`%major_stack_shape) (major_stack_shape major st cap)
 
 let collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
@@ -215,8 +226,16 @@ let collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
 let full_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
                          (st: seq obj_addr) (cap: nat)
   : Lemma (requires full_heap_shape minor major fp st cap)
-          (ensures collection_heap_shape minor major fp /\
-                   major_stack_shape major st cap)
+           (ensures collection_heap_shape minor major fp /\
+                    major_stack_shape major st cap)
+  = reveal_opaque (`%full_heap_shape)
+      (full_heap_shape minor major fp st cap)
+
+let full_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
+                          (st: seq obj_addr) (cap: nat)
+  : Lemma (requires collection_heap_shape minor major fp /\
+                    major_stack_shape major st cap)
+          (ensures full_heap_shape minor major fp st cap)
   = reveal_opaque (`%full_heap_shape)
       (full_heap_shape minor major fp st cap)
 

@@ -168,18 +168,34 @@ val major_stack_shape_elim (major: heap) (st: seq obj_addr) (cap: nat)
                     Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
                     Graph.subset_vertices roots' graph.vertices))
 
+val major_stack_shape_intro (major: heap) (st: seq obj_addr) (cap: nat)
+  : Lemma (requires MarkBoundedInv.bounded_mark_inv major st cap /\
+                    Mark.root_props major st /\
+                    gray_black_objects_on_stack major st /\
+                    (let graph = HeapModel.create_graph major in
+                     let roots' = HeapGraph.coerce_to_vertex_list st in
+                     Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
+                     Graph.subset_vertices roots' graph.vertices))
+          (ensures major_stack_shape major st cap)
+
 val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires collection_heap_shape minor major fp)
            (ensures major_heap_shape major fp /\
-                    minor_heap_shape minor /\
-                    minor_major_fields_no_blue minor major /\
+                     minor_heap_shape minor /\
+                     minor_major_fields_no_blue minor major /\
                     major_minor_fields_no_infix_targets minor major)
 
 val full_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
                           (st: seq obj_addr) (cap: nat)
   : Lemma (requires full_heap_shape minor major fp st cap)
           (ensures collection_heap_shape minor major fp /\
-                   major_stack_shape major st cap)
+                    major_stack_shape major st cap)
+
+val full_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
+                          (st: seq obj_addr) (cap: nat)
+  : Lemma (requires collection_heap_shape minor major fp /\
+                    major_stack_shape major st cap)
+          (ensures full_heap_shape minor major fp st cap)
 
 /// Resetting the nursery clears stale headers and makes all minor-side shape
 /// and cross-generation minor-pointer obligations vacuous.

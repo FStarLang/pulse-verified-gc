@@ -10,7 +10,7 @@ to C via KaRaMeL.
 OCaml 4.14 runtime (patched: memory.h, interp.c, minor_gc.c, ...)
     ↓ verified_allocate(wosize, tag)
 alloc_gen.c (bridge: root scanning, minor/major collection, heap init)
-    ↓ gen_alloc(), minor_collect(), collect()
+    ↓ gen_alloc(), minor_collect_full(), collect()
 GC_Gen_Impl.c (KaRaMeL-extracted verified code)
 ```
 
