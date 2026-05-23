@@ -99,6 +99,27 @@ val combined_reachable_minor_has_fwd
         CG.combined_reachable cg combined_roots (CG.MinorV v) /\
         minor_wosize minor v > 0 ==> fwd v <> 0UL))
 
+let combined_reachable_images_valid_or_infix_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let cg = CG.build_combined_graph minor major in
+  let combined_roots = CG.classify_roots roots in
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  let fwd = prom.fwd_map in
+  (forall (v: U64.t).
+    CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
+    U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+    Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major)) /\
+  (forall (v: U64.t).
+    CG.combined_reachable cg combined_roots (CG.MinorV v) /\
+    minor_wosize minor v > 0 ==>
+    fwd v <> 0UL /\
+    U64.v (fwd v) >= U64.v mword /\
+    U64.v (fwd v) < heap_size /\
+    U64.v (fwd v) % U64.v mword == 0 /\
+    (Seq.mem ((fwd v) <: obj_addr) (objects zero_addr prom.major_final) \/
+     is_infix (fwd v) prom.major_final))
+
 /// First image-validity conjunct for the eventual isomorphism:
 /// - reachable major vertices survive in the post-minor heap;
 /// - reachable positive-size minor vertices have valid-or-infix forwarding
@@ -112,25 +133,7 @@ val combined_reachable_images_valid_or_infix
       RBridge.major_field_zero_no_minor minor major /\
       RBridge.remembered_roots_in_roots major roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures (
-      let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
-      let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
-      let fwd = prom.fwd_map in
-      (forall (v: U64.t).
-        CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
-        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-        Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major)) /\
-      (forall (v: U64.t).
-        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
-        minor_wosize minor v > 0 ==>
-        fwd v <> 0UL /\
-        U64.v (fwd v) >= U64.v mword /\
-        U64.v (fwd v) < heap_size /\
-        U64.v (fwd v) % U64.v mword == 0 /\
-        (Seq.mem ((fwd v) <: obj_addr) (objects zero_addr prom.major_final) \/
-         is_infix (fwd v) prom.major_final))))
+    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
 
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
@@ -158,7 +161,11 @@ let minor_collect_full_forwarding_kernel
     CheneyPres.fwd_valid_or_infix fwd prom.major_final /\
     // Normal images are injective and non-blue.
     CheneyPres.fwd_normal_injective fwd prom.major_final /\
-    CheneyPres.fwd_targets_not_blue fwd prom.major_final)
+    CheneyPres.fwd_targets_not_blue fwd prom.major_final /\
+    (RBridge.major_field_one_plus_in_remembered minor major /\
+     RBridge.major_field_zero_no_minor minor major /\
+     RBridge.remembered_roots_in_roots major roots ==>
+     combined_reachable_images_valid_or_infix_prop minor major fp roots))
 
 val minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)

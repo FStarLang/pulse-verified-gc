@@ -76,25 +76,7 @@ let combined_reachable_images_valid_or_infix
       RBridge.major_field_zero_no_minor minor major /\
       RBridge.remembered_roots_in_roots major roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures (
-      let cg = CG.build_combined_graph minor major in
-      let combined_roots = CG.classify_roots roots in
-      let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
-      let fwd = prom.fwd_map in
-      (forall (v: U64.t).
-        CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
-        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-        Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major)) /\
-      (forall (v: U64.t).
-        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
-        minor_wosize minor v > 0 ==>
-        fwd v <> 0UL /\
-        U64.v (fwd v) >= U64.v mword /\
-        U64.v (fwd v) < heap_size /\
-        U64.v (fwd v) % U64.v mword == 0 /\
-        (Seq.mem ((fwd v) <: obj_addr) (objects zero_addr prom.major_final) \/
-         is_infix (fwd v) prom.major_final))))
+    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
   = let cg = CG.build_combined_graph minor major in
     let combined_roots = CG.classify_roots roots in
     let prom = cheney_promote minor major fp roots in
@@ -159,5 +141,10 @@ let minor_collect_full_forwarding_kernel_intro
     CheneyCorr.cheney_promotes_all_reachable minor major fp roots;
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
-    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots
+    CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
+    if RBridge.major_field_one_plus_in_remembered minor major /\
+       RBridge.major_field_zero_no_minor minor major /\
+       RBridge.remembered_roots_in_roots major roots
+    then
+      combined_reachable_images_valid_or_infix minor major fp roots
   end
