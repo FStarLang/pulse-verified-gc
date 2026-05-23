@@ -288,6 +288,35 @@ val combined_major_minor_field_forwarded
       prom.fwd_map dst <> 0UL /\
       read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map dst))
 
+/// Field-level MinorV -> MajorV edge-forwarding slice: for a promoted normal
+/// minor source, a field that points to an old major object remains that major
+/// object in the post-minor heap.
+val promoted_minor_major_field_preserved
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: U64.t) (j: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      (let prom = cheney_promote minor major fp roots in
+       let fwd_src = prom.fwd_map src in
+       fwd_src <> 0UL /\
+       Seq.mem src (minor_objects minor) /\
+       is_val_addr fwd_src /\
+       is_infix fwd_src prom.major_final = false /\
+       Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final) /\
+       is_blue (fwd_src <: obj_addr) prom.major_final = false /\
+       is_no_scan (fwd_src <: obj_addr) prom.major_final = false /\
+       j < minor_wosize minor src /\
+       j < U64.v (wosize_of_object (fwd_src <: obj_addr) prom.major_final) /\
+       U64.v fwd_src + j * 8 + 8 <= heap_size /\
+       (U64.v fwd_src + j * 8) % 8 == 0 /\
+       CG.classify_minor_field minor major (minor_read_field minor src j) ==
+       Some (CG.MajorV dst)))
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) == dst))
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel
