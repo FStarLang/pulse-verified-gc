@@ -38,16 +38,16 @@ let rec remembered_slot_targets_from
 
 let minor_collect_full_iso_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots slots: seq U64.t) (n: nat)
+  (roots slots: seq U64.t) (n: nat) (ok: bool)
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures (
       let res = cheney_collect_spec minor major fp roots in
-      minor_collect_full_iso minor major fp roots slots n
+      minor_collect_full_iso minor major fp roots slots n ok
         res.mc_major (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map)))
   =
   reveal_opaque (`%minor_collect_full_iso)
-    (minor_collect_full_iso minor major fp roots slots n
+    (minor_collect_full_iso minor major fp roots slots n ok
       (cheney_collect_spec minor major fp roots).mc_major
       (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map));
   GenInv.collection_heap_shape_elim minor major fp;
@@ -60,6 +60,7 @@ let minor_collect_full_iso_intro
   CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
   CheneyCorr.cheney_collect_rewrites_roots minor major fp roots;
   if remembered_targets_in_roots major roots slots n /\
+     ok /\
      CheneyBFS.cheney_no_oom minor major fp roots
   then begin
     CheneyCorr.cheney_promotes_all_reachable minor major fp roots;

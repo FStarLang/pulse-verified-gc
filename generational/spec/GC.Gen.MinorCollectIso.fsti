@@ -8,11 +8,12 @@
 /// The property is intentionally stated over `cheney_collect_spec`, since the
 /// Pulse implementation proves its concrete two-pass update equals that spec.
 /// The source roots are the program roots plus the remembered-set slot targets;
-/// when those remembered targets are represented in the root array and Cheney
-/// does not run out of major space, the forwarding map is an injective morphism
-/// for reachable minor objects and all images are valid post-minor addresses
-/// (ordinary objects or infix interior pointers).  This is the graph-isomorphism
-/// core that callers can strengthen with edge-specific facts as needed.
+/// when those remembered targets are represented in the root array and the
+/// collector returns `ok`, the forwarding map is an injective morphism for
+/// reachable minor objects and all images are valid post-minor addresses
+/// (ordinary objects or infix interior pointers).  The current proof also
+/// keeps the existing pure `cheney_no_oom` condition explicit; connecting the
+/// runtime `ok` flag to that pure predicate is the next strengthening step.
 
 module GC.Gen.MinorCollectIso
 
@@ -72,7 +73,7 @@ let remembered_targets_in_roots
 [@@"opaque_to_smt"]
 let minor_collect_full_iso
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots slots: seq U64.t) (n: nat)
+  (roots slots: seq U64.t) (n: nat) (ok: bool)
   (post_major: heap) (post_roots: seq U64.t) : prop =
   let prom = cheney_promote minor major fp roots in
   let res = cheney_collect_spec minor major fp roots in
@@ -84,6 +85,7 @@ let minor_collect_full_iso
   // Conditional isomorphism kernel.  Full graph isomorphism only makes sense
   // when all remembered targets are part of the root set and promotion succeeds.
   (remembered_targets_in_roots major roots slots n /\
+   ok /\
    CheneyBFS.cheney_no_oom minor major fp roots ==>
     // Reachable minor vertices have images.
     (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) /\
@@ -97,10 +99,10 @@ let minor_collect_full_iso
 
 val minor_collect_full_iso_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
-  (roots slots: seq U64.t) (n: nat)
+  (roots slots: seq U64.t) (n: nat) (ok: bool)
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures (
       let res = cheney_collect_spec minor major fp roots in
-      minor_collect_full_iso minor major fp roots slots n
+      minor_collect_full_iso minor major fp roots slots n ok
         res.mc_major (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map)))
