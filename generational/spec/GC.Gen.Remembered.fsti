@@ -64,6 +64,8 @@ val scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   : Lemma (requires
              well_formed_heap major /\
              Seq.mem obj (objects zero_addr major) /\
+             is_blue obj major = false /\
+             is_no_scan obj major = false /\
              field_idx >= 1 /\ field_idx < U64.v (wosize_of_object obj major) /\
              U64.v obj + field_idx * 8 + 8 <= heap_size /\
              (U64.v obj + field_idx * 8) % 8 == 0 /\
@@ -79,6 +81,8 @@ val minor_roots_from_major_sound (major: heap) (v: U64.t)
           (ensures
             exists (obj: obj_addr) (field_idx: nat).
               Seq.mem obj (objects zero_addr major) /\
+              is_blue obj major = false /\
+              is_no_scan obj major = false /\
               field_idx >= 1 /\
               field_idx < U64.v (wosize_of_object obj major) /\
               U64.v obj + field_idx * 8 + 8 <= heap_size /\

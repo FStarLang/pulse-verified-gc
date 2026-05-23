@@ -1159,6 +1159,31 @@ let combined_reachable_ind (g: combined_graph) (roots: seq combined_vertex)
     in
     aux d
 
+let combined_reachable_ind_with_reach
+  (g: combined_graph) (roots: seq combined_vertex)
+  (p: combined_vertex -> prop) (v: combined_vertex)
+  : Lemma (requires
+      combined_reachable g roots v /\
+      (forall r. Seq.mem r roots /\ mem_cv r g ==> p r) /\
+      (forall u w. combined_reachable g roots u /\ p u /\ mem_ce (u, w) g ==> p w))
+    (ensures p v)
+  = let open FStar.IndefiniteDescription in
+    let d = indefinite_description_ghost (combined_reach g roots v) (fun _ -> True) in
+    let rec aux (#v: combined_vertex) (d: combined_reach g roots v)
+      : Lemma
+        (requires (forall r. Seq.mem r roots /\ mem_cv r g ==> p r) /\
+                  (forall u w. combined_reachable g roots u /\ p u /\ mem_ce (u, w) g ==> p w))
+        (ensures p v)
+        (decreases d) =
+      match d with
+      | CR_root _ -> ()
+      | CR_step u _ du _ ->
+        aux du;
+        let witness : combined_reach g roots u = du in
+        assert (combined_reachable g roots u)
+    in
+    aux d
+
 /// ---------------------------------------------------------------------------
 /// Root Classification
 /// ---------------------------------------------------------------------------

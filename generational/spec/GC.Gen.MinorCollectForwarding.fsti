@@ -36,6 +36,8 @@ open GC.Gen.Reachability
 open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module Mark = GC.Spec.Mark
+module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyPres = GC.Gen.CheneyPreservation
@@ -60,6 +62,16 @@ let remembered_targets_in_roots
   (major: heap) (roots slots: seq U64.t) (n: nat) : prop =
   forall (r: U64.t).
     Seq.mem r (remembered_slot_targets major slots n) ==> Seq.mem r roots
+
+/// Bridge the implementation-facing ref-table coverage predicate to the
+/// scan-root coverage predicate used by the combined-graph reachability bridge.
+val remembered_roots_in_roots_from_slots
+  (major: heap) (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n)
+    (ensures RBridge.remembered_roots_in_roots major roots)
 
 /// Generic shape of a true reachable-subgraph graph isomorphism.  Re-exported
 /// from `CombinedGraph` so callers of this module can name the desired target
@@ -89,6 +101,9 @@ val combined_reachable_minor_has_fwd
       RBridge.remembered_roots_in_roots major roots /\
       well_formed_heap major /\
       minor_wf minor /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures (
       let cg = CG.build_combined_graph minor major in
@@ -130,6 +145,9 @@ val combined_reachable_images_valid_or_infix
       GenInv.collection_heap_shape minor major fp /\
       RBridge.major_field_zero_no_minor minor major /\
       RBridge.remembered_roots_in_roots major roots /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
 
@@ -161,7 +179,16 @@ let minor_collect_full_forwarding_kernel
     CheneyPres.fwd_normal_injective fwd prom.major_final /\
     CheneyPres.fwd_targets_not_blue fwd prom.major_final /\
     (RBridge.major_field_zero_no_minor minor major /\
-     RBridge.remembered_roots_in_roots major roots ==>
+     RBridge.remembered_roots_in_roots major roots /\
+     Mark.no_pointer_to_blue major /\
+     RBridge.minor_no_pointer_to_blue minor major /\
+     RBridge.roots_valid_nonblue roots major ==>
+     combined_reachable_images_valid_or_infix_prop minor major fp roots) /\
+    (UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+     RBridge.major_field_zero_no_minor minor major /\
+     Mark.no_pointer_to_blue major /\
+     RBridge.minor_no_pointer_to_blue minor major /\
+     RBridge.roots_valid_nonblue roots major ==>
      combined_reachable_images_valid_or_infix_prop minor major fp roots))
 
 val minor_collect_full_forwarding_kernel_intro

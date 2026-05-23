@@ -93,7 +93,8 @@ val reachable_major_valid
 /// for by `minor_roots_from_major`.
 let major_field_one_plus_in_remembered (ms: minor_state) (major: heap) : prop =
   forall (src: obj_addr) (v: U64.t).
-    Seq.mem src (objects zero_addr major) /\ ~(is_no_scan src major) /\
+    Seq.mem src (objects zero_addr major) /\ is_blue src major = false /\
+    ~(is_no_scan src major) /\
     (exists (i: nat). i >= 1 /\ i < U64.v (wosize_of_object src major) /\
       U64.v src + i * 8 + 8 <= heap_size /\
       (U64.v src + i * 8) % 8 == 0 /\
@@ -142,6 +143,9 @@ val reachability_bridge
     (requires
       well_formed_heap major /\
       minor_wf minor /\
+      Mark.no_pointer_to_blue major /\
+      minor_no_pointer_to_blue minor major /\
+      roots_valid_nonblue roots major /\
       major_field_zero_no_minor minor major)
     (ensures (
       let cg = build_combined_graph minor major in
@@ -158,6 +162,9 @@ val combined_minor_reachable_in_minor_reachable
     (requires
       well_formed_heap major /\
       minor_wf minor /\
+      Mark.no_pointer_to_blue major /\
+      minor_no_pointer_to_blue minor major /\
+      roots_valid_nonblue roots major /\
       major_field_zero_no_minor minor major /\
       remembered_roots_in_roots major roots)
     (ensures (

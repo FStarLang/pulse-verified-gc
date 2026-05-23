@@ -291,6 +291,18 @@ val combined_reachable_ind (g: combined_graph) (roots: seq combined_vertex)
       (forall u w. p u /\ mem_ce (u, w) g ==> p w))
     (ensures p v)
 
+/// Induction principle that exposes reachability of the edge source in the
+/// step case.  This is useful when edge preservation needs global facts about
+/// reachable sources, not just the induction predicate.
+val combined_reachable_ind_with_reach
+  (g: combined_graph) (roots: seq combined_vertex)
+  (p: combined_vertex -> prop) (v: combined_vertex)
+  : Lemma (requires
+      combined_reachable g roots v /\
+      (forall r. Seq.mem r roots /\ mem_cv r g ==> p r) /\
+      (forall u w. combined_reachable g roots u /\ p u /\ mem_ce (u, w) g ==> p w))
+    (ensures p v)
+
 /// ---------------------------------------------------------------------------
 /// Root Classification
 /// ---------------------------------------------------------------------------

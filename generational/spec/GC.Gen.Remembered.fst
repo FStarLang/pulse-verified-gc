@@ -37,8 +37,10 @@ let rec scan_object_fields (major: heap) (obj: obj_addr) (wosize: nat) (i: nat)
 
 let scan_object_for_minor_refs (major: heap) (obj: obj_addr)
   : GTot (seq remembered_ref) =
-  let wz = U64.v (wosize_of_object obj major) in
-  scan_object_fields major obj wz 0
+  if is_blue obj major || is_no_scan obj major then Seq.empty
+  else
+    let wz = U64.v (wosize_of_object obj major) in
+    scan_object_fields major obj wz 0
 
 /// ---------------------------------------------------------------------------
 /// Scan entire major heap
@@ -203,6 +205,8 @@ private let rec scan_objects_list_sound
        exists (obj: obj_addr) (field_idx: nat).
          rr.rem_obj == obj /\
          Seq.mem obj objs /\
+         is_blue obj major = false /\
+         is_no_scan obj major = false /\
          field_idx == rr.rem_field /\
          field_idx >= 1 /\
          field_idx < U64.v (wosize_of_object obj major) /\
@@ -218,6 +222,10 @@ private let rec scan_objects_list_sound
     let refs0 = scan_object_for_minor_refs major obj in
     let rest = scan_objects_list major objs (idx + 1) in
     if k < Seq.length refs0 then begin
+      if is_blue obj major || is_no_scan obj major then begin
+        assert (refs0 == Seq.empty);
+        assert False
+      end;
       assert (scan_objects_list major objs idx == Seq.append refs0 rest);
       assert (Seq.index (scan_objects_list major objs idx) k == Seq.index refs0 k);
       assert (refs0 == scan_object_fields major obj (U64.v (wosize_of_object obj major)) 0);
@@ -245,6 +253,8 @@ let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   : Lemma (requires
              well_formed_heap major /\
              Seq.mem obj (objects zero_addr major) /\
+             is_blue obj major = false /\
+             is_no_scan obj major = false /\
              field_idx >= 1 /\ field_idx < U64.v (wosize_of_object obj major) /\
              U64.v obj + field_idx * 8 + 8 <= heap_size /\
              (U64.v obj + field_idx * 8) % 8 == 0 /\
@@ -276,6 +286,8 @@ let minor_roots_from_major_sound (major: heap) (v: U64.t)
           (ensures
             exists (obj: obj_addr) (field_idx: nat).
               Seq.mem obj (objects zero_addr major) /\
+              is_blue obj major = false /\
+              is_no_scan obj major = false /\
               field_idx >= 1 /\
               field_idx < U64.v (wosize_of_object obj major) /\
               U64.v obj + field_idx * 8 + 8 <= heap_size /\

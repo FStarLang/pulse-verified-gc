@@ -22,6 +22,12 @@ open GC.Gen.CombinedGraph
 
 module Mark = GC.Spec.Mark
 
+private let combined_vertex_cases (v: combined_vertex)
+  : Lemma (ensures MinorV? v \/ MajorV? v)
+  = match v with
+    | MinorV _ -> ()
+    | MajorV _ -> ()
+
 /// Helper: from `major_edge_elim`'s witness, establish `points_to` for
 /// `Mark.no_pointer_to_blue`.
 #push-options "--z3rlimit 80 --fuel 2 --ifuel 0"
@@ -78,6 +84,7 @@ let reachable_major_valid_nonblue
         Seq.mem (v <: obj_addr) (objects zero_addr major) /\
         ~(is_blue (v <: obj_addr) major)
       | MinorV _ -> True
+      | _ -> False
     in
     let base (r: combined_vertex) : Lemma
       (requires Seq.mem r combined_roots /\ mem_cv r cg)
@@ -87,6 +94,7 @@ let reachable_major_valid_nonblue
       | MajorV v ->
         major_vertex_valid minor major v;
         classify_roots_inv_major roots v
+      | _ -> combined_vertex_cases r; assert False
     in
     let edge (u w: combined_vertex) : Lemma
       (requires p u /\ mem_ce (u, w) cg)
@@ -196,6 +204,7 @@ let major_field_one_plus_in_remembered_intro
   =
     let aux (src: obj_addr) (v: U64.t) : Lemma
       (requires Seq.mem src (objects zero_addr major) /\
+                is_blue src major = false /\
                 ~(is_no_scan src major) /\
                 (exists (i: nat). i >= 1 /\ i < U64.v (wosize_of_object src major) /\
                   U64.v src + i * 8 + 8 <= heap_size /\
@@ -261,6 +270,9 @@ let reachability_bridge
     (requires
       well_formed_heap major /\
       minor_wf minor /\
+      Mark.no_pointer_to_blue major /\
+      minor_no_pointer_to_blue minor major /\
+      roots_valid_nonblue roots major /\
       major_field_zero_no_minor minor major)
     (ensures (
       let cg = build_combined_graph minor major in
@@ -276,20 +288,23 @@ let reachability_bridge
       match cv with
       | MinorV v -> Seq.mem v (live_set_of minor major roots)
       | MajorV _ -> True
+      | _ -> False
     in
     let base (r: combined_vertex) : Lemma
       (requires Seq.mem r combined_roots /\ mem_cv r cg)
       (ensures p r)
     = match r with
-      | MajorV _ -> ()
       | MinorV v ->
         classify_roots_inv_minor roots v;
         minor_vertex_char minor major v;
         Seq.lemma_mem_append roots (minor_roots_from_major major);
         minor_reachable_roots minor full_roots
+      | MajorV v ->
+        ()
+      | _ -> combined_vertex_cases r; assert False
     in
     let edge (u w: combined_vertex) : Lemma
-      (requires p u /\ mem_ce (u, w) cg)
+      (requires combined_reachable cg combined_roots u /\ p u /\ mem_ce (u, w) cg)
       (ensures p w)
     = match w with
       | MajorV _ -> ()
@@ -309,6 +324,8 @@ let reachability_bridge
         | MajorV src ->
           build_combined_graph_wf minor major;
           major_vertex_valid minor major src;
+          reachable_major_valid_nonblue minor major roots;
+          assert (~(is_blue (src <: obj_addr) major));
           major_edge_elim minor major src (MinorV v);
           let case_aux (i:nat) : Lemma
             (requires i < U64.v (wosize_of_object src major) /\
@@ -328,13 +345,15 @@ let reachability_bridge
           Classical.forall_intro (Classical.move_requires case_aux);
           Seq.lemma_mem_append roots (minor_roots_from_major major);
           minor_reachable_roots minor full_roots
+        | _ -> combined_vertex_cases u; assert False
+      | _ -> combined_vertex_cases w; assert False
     in
     Classical.forall_intro (Classical.move_requires base);
     Classical.forall_intro_2 (fun u -> Classical.move_requires (edge u));
     let aux (v: U64.t) : Lemma
       (requires combined_reachable cg combined_roots (MinorV v))
       (ensures p (MinorV v))
-    = combined_reachable_ind cg combined_roots p (MinorV v)
+    = combined_reachable_ind_with_reach cg combined_roots p (MinorV v)
     in
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
@@ -346,6 +365,9 @@ let combined_minor_reachable_in_minor_reachable
     (requires
       well_formed_heap major /\
       minor_wf minor /\
+      Mark.no_pointer_to_blue major /\
+      minor_no_pointer_to_blue minor major /\
+      roots_valid_nonblue roots major /\
       major_field_zero_no_minor minor major /\
       remembered_roots_in_roots major roots)
     (ensures (
