@@ -73,6 +73,25 @@ val remembered_roots_in_roots_from_slots
       remembered_targets_in_roots major roots slots n)
     (ensures RBridge.remembered_roots_in_roots major roots)
 
+/// A major-to-major field is not affected by `update_major_pointers`: existing
+/// major object addresses are outside the nursery range.
+val update_preserves_major_target_field
+  (major: heap) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      well_formed_heap_part1 major /\
+      Seq.mem src (objects zero_addr major) /\
+      Seq.mem dst (objects zero_addr major) /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0 /\
+      is_blue src major = false /\
+      is_no_scan src major = false /\
+      read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst)
+    (ensures
+      read_word (update_major_pointers major fwd)
+        (U64.uint_to_t (U64.v src + j * 8)) == dst)
+
 /// Generic shape of a true reachable-subgraph graph isomorphism.  Re-exported
 /// from `CombinedGraph` so callers of this module can name the desired target
 /// predicate directly.

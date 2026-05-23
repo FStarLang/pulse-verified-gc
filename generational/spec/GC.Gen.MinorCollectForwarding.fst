@@ -21,6 +21,7 @@ open GC.Gen.Cheney
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module Mark = GC.Spec.Mark
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module PromUpdate = GC.Gen.PromoteUpdate
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyPres = GC.Gen.CheneyPreservation
@@ -126,6 +127,35 @@ let remembered_roots_in_roots_from_slots
       assert (Seq.mem r (remembered_slot_targets major slots n))
     in
     Classical.forall_intro (Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let update_preserves_major_target_field
+  (major: heap) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      well_formed_heap_part1 major /\
+      Seq.mem src (objects zero_addr major) /\
+      Seq.mem dst (objects zero_addr major) /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0 /\
+      is_blue src major = false /\
+      is_no_scan src major = false /\
+      read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst)
+    (ensures
+      read_word (update_major_pointers major fwd)
+        (U64.uint_to_t (U64.v src + j * 8)) == dst)
+  =
+    RBridge.major_object_not_minor_pointer major dst;
+    PromUpdate.update_major_pointers_field_effect major fwd src j;
+    let field_addr = U64.uint_to_t (U64.v src + j * 8) in
+    let old_raw = read_word major field_addr in
+    let old_val = to_minor_offset old_raw in
+    assert (old_raw == dst);
+    assert (old_val == dst);
+    assert (~(is_minor_pointer old_val));
+    assert (~(is_minor_pointer old_val /\ fwd old_val <> 0UL))
 #pop-options
 
 let combined_reachable_minor_has_fwd
