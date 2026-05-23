@@ -28,6 +28,7 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
@@ -44,6 +45,7 @@ module CheneyPres = GC.Gen.CheneyPreservation
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
+module HeapModel = GC.Spec.HeapModel
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
 /// Only valid slots containing minor pointers contribute roots.
@@ -91,6 +93,28 @@ val update_preserves_major_target_field
     (ensures
       read_word (update_major_pointers major fwd)
         (U64.uint_to_t (U64.v src + j * 8)) == dst)
+
+/// Cheney promotion preserves the header-derived facts and body field of a
+/// pre-existing non-blue major object.
+val cheney_promote_preserves_old_major_field_context
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Seq.mem src (objects zero_addr major) /\
+      is_blue src major = false /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      Seq.mem src (objects zero_addr prom.major_final) /\
+      is_blue src prom.major_final = false /\
+      is_no_scan src prom.major_final == is_no_scan src major /\
+      wosize_of_object src prom.major_final == wosize_of_object src major /\
+      read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8)) ==
+      read_word major (U64.uint_to_t (U64.v src + j * 8))))
 
 /// Generic shape of a true reachable-subgraph graph isomorphism.  Re-exported
 /// from `CombinedGraph` so callers of this module can name the desired target
@@ -208,6 +232,27 @@ val combined_reachable_images_valid_or_infix_from_slots
       RBridge.roots_valid_nonblue roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
+
+/// Concrete MajorV -> MajorV edge-forwarding lemma for the eventual
+/// isomorphism: if a reachable pre-collection major object has a combined-graph
+/// edge to another major object, the post-minor major heap graph still contains
+/// the same concrete edge.
+val combined_reachable_major_edge_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: obj_addr)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      (let cg = CG.build_combined_graph minor major in
+       let combined_roots = CG.classify_roots roots in
+       CG.combined_reachable cg combined_roots (CG.MajorV src) /\
+       CG.mem_ce (CG.MajorV src, CG.MajorV dst) cg))
+    (ensures
+      (let res = cheney_collect_spec minor major fp roots in
+       mem_graph_edge (HeapModel.create_graph res.mc_major) src dst))
 
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]

@@ -11,6 +11,7 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Spec.Graph
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
@@ -28,6 +29,9 @@ module CheneyPres = GC.Gen.CheneyPreservation
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
+module SpecBase = GC.Spec.Base
+module HeapGraph = GC.Spec.HeapGraph
+module HeapModel = GC.Spec.HeapModel
 
 let rec remembered_slot_targets_from
   (major: heap) (slots: seq U64.t) (n idx: nat)
@@ -158,6 +162,43 @@ let update_preserves_major_target_field
     assert (~(is_minor_pointer old_val /\ fwd old_val <> 0UL))
 #pop-options
 
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let cheney_promote_preserves_old_major_field_context
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src: obj_addr) (j: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Seq.mem src (objects zero_addr major) /\
+      is_blue src major = false /\
+      j < U64.v (wosize_of_object src major) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      Seq.mem src (objects zero_addr prom.major_final) /\
+      is_blue src prom.major_final = false /\
+      is_no_scan src prom.major_final == is_no_scan src major /\
+      wosize_of_object src prom.major_final == wosize_of_object src major /\
+      read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8)) ==
+      read_word major (U64.uint_to_t (U64.v src + j * 8))))
+  =
+    GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.major_heap_shape_elim major fp;
+    GenInv.minor_heap_shape_elim minor;
+    let prom = cheney_promote minor major fp roots in
+    cheney_promote_preserves_objects minor major fp roots;
+    CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
+    CheneyPres.cheney_promote_frame_old_fields minor major fp roots src j;
+    color_of_header_eq src major prom.major_final;
+    wosize_of_object_spec src major;
+    wosize_of_object_spec src prom.major_final;
+    tag_of_object_spec src major;
+    tag_of_object_spec src prom.major_final;
+    is_no_scan_spec src major;
+    is_no_scan_spec src prom.major_final
+#pop-options
+
 let combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -277,6 +318,94 @@ let combined_reachable_images_valid_or_infix_from_slots
   =
     remembered_roots_in_roots_from_slots major roots slots n;
     combined_reachable_images_valid_or_infix minor major fp roots
+
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 1"
+let combined_reachable_major_edge_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: obj_addr)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      (let cg = CG.build_combined_graph minor major in
+       let combined_roots = CG.classify_roots roots in
+       CG.combined_reachable cg combined_roots (CG.MajorV src) /\
+       CG.mem_ce (CG.MajorV src, CG.MajorV dst) cg))
+    (ensures
+      (let res = cheney_collect_spec minor major fp roots in
+       mem_graph_edge (HeapModel.create_graph res.mc_major) src dst))
+  =
+    let cg = CG.build_combined_graph minor major in
+    let combined_roots = CG.classify_roots roots in
+    let prom = cheney_promote minor major fp roots in
+    let res = cheney_collect_spec minor major fp roots in
+    let updated = res.mc_major in
+    GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.major_heap_shape_elim major fp;
+    GenInv.minor_heap_shape_elim minor;
+    assert (well_formed_heap major);
+    assert (minor_wf minor);
+    assert (minor_infix_wf minor);
+    assert (AllocLemmas.fl_valid major fp (heap_size / U64.v mword));
+    assert (AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword));
+    assert (chain_objects_blue major fp);
+    RBridge.reachable_major_valid_nonblue minor major roots;
+    CG.major_edge_elim minor major src (CG.MajorV dst);
+    let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
+      (fun i -> i < U64.v (wosize_of_object src major) /\
+        U64.v src + i * 8 + 8 <= heap_size /\
+        (U64.v src + i * 8) % 8 == 0 /\
+        CG.classify_major_field minor major
+          (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MajorV dst)) in
+    let field_addr = U64.uint_to_t (U64.v src + i * 8) in
+    let old_raw = read_word major field_addr in
+    CG.classify_major_field_inv_major minor major old_raw dst;
+    assert (old_raw == dst);
+    RBridge.major_edge_points_to minor major src dst i;
+    assert (~(is_blue src major));
+    assert (~(is_blue dst major));
+    RBridge.major_object_not_minor_pointer major dst;
+    Cheney.cheney_promote_preserves_objects minor major fp roots;
+    Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
+    cheney_promote_preserves_old_major_field_context minor major fp roots src i;
+    assert (Seq.mem src (objects zero_addr prom.major_final));
+    assert (Seq.mem dst (objects zero_addr prom.major_final));
+    assert (read_word prom.major_final field_addr == dst);
+    assert (well_formed_heap_part1 prom.major_final);
+    assert (updated == update_major_pointers prom.major_final prom.fwd_map);
+    update_preserves_major_target_field prom.major_final prom.fwd_map src dst i;
+    assert (read_word updated field_addr == dst);
+    PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map src;
+    assert (read_word updated (hd_address src) == read_word prom.major_final (hd_address src));
+    wosize_of_object_spec src updated;
+    assert (wosize_of_object src updated == wosize_of_object src major);
+    is_no_scan_spec src updated;
+    tag_of_object_spec src updated;
+    assert (tag_of_object src updated == tag_of_object src major);
+    assert (is_no_scan src updated == is_no_scan src major);
+    CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
+    CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
+    assert (Seq.mem src (objects zero_addr updated));
+    wf_object_bound updated src;
+    HeapGraph.object_fits_from_bound src updated;
+    HeapModel.objects_is_vertex_set updated;
+    SpecBase.is_val_addr_spec dst;
+    assert (HeapGraph.is_pointer_field dst);
+    assert (i + 1 < pow2 64);
+    let j = U64.uint_to_t (i + 1) in
+    assert (U64.v j == i + 1);
+    assert (U64.v j >= 1);
+    assert (U64.v j <= U64.v (wosize_of_object src updated));
+    assert (U64.v j < pow2 54);
+    hd_address_spec src;
+    assert (U64.v (hd_address src) + U64.v mword * U64.v j + U64.v mword <= heap_size);
+    HeapGraph.get_field_addr_eq updated src j;
+    assert (HeapGraph.get_field updated src j == dst);
+    assert (HeapGraph.is_pointer_field (HeapGraph.get_field updated src j));
+    HeapGraph.pointer_field_is_graph_edge updated (objects zero_addr updated) src j
+#pop-options
 
 let minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
