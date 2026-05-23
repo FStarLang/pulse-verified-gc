@@ -94,6 +94,17 @@ let post_minor_edge
   let res = cheney_collect_spec minor major fp roots in
   mem_graph_edge_at (HeapModel.create_graph res.mc_major) x y
 
+val post_minor_reachable_refl_from_root
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (w: U64.t)
+  : Lemma
+    (requires (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      Seq.mem w (rewrite_roots roots prom.fwd_map) /\
+      mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
+    (ensures post_minor_reachable minor major fp roots w)
+
 /// Bridge the implementation-facing ref-table coverage predicate to the
 /// scan-root coverage predicate used by the combined-graph reachability bridge.
 val remembered_roots_in_roots_from_slots
@@ -705,6 +716,19 @@ val normal_image_vertices_are_post_vertices
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures normal_image_vertices_are_post_vertices_prop minor major fp roots)
+
+val normal_classified_root_image_post_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (u: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Seq.mem u (CG.classify_roots roots) /\
+      normal_src_reachable minor major fp roots u)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      post_minor_reachable minor major fp roots
+        (CG.fwd_morphism prom.fwd_map u)))
 
 let normal_image_reachable_subgraph_isomorphism_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =

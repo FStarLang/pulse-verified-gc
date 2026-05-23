@@ -80,6 +80,38 @@ private let rec remembered_slot_targets_from_mem
   end
 #pop-options
 
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let post_minor_reachable_refl_from_root
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (w: U64.t)
+  : Lemma
+    (requires (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      Seq.mem w (rewrite_roots roots prom.fwd_map) /\
+      mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
+    (ensures post_minor_reachable minor major fp roots w)
+  =
+    let prom = cheney_promote minor major fp roots in
+    let res = cheney_collect_spec minor major fp roots in
+    let post_g = HeapModel.create_graph res.mc_major in
+    let goal = post_minor_reachable minor major fp roots w in
+    let proof (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
+      (requires x == w)
+      (ensures goal)
+    =
+      assert (Seq.mem w (rewrite_roots roots prom.fwd_map));
+      assert (x == w);
+      reach_refl post_g x;
+      assert (reachable post_g x x);
+      assert (goal)
+    in
+    FStar.Classical.exists_elim goal #_
+      #(fun x -> x == w)
+      ()
+      (fun x -> FStar.Classical.move_requires proof x)
+#pop-options
+
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
 let remembered_roots_in_roots_from_slots
   (major: heap) (roots slots: seq U64.t) (n: nat)
@@ -1266,6 +1298,34 @@ let normal_image_vertices_are_post_vertices
     = normal_image_vertex_is_post_vertex minor major fp roots w
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let normal_classified_root_image_post_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (u: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Seq.mem u (CG.classify_roots roots) /\
+      normal_src_reachable minor major fp roots u)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      post_minor_reachable minor major fp roots
+        (CG.fwd_morphism prom.fwd_map u)))
+  =
+    let prom = cheney_promote minor major fp roots in
+    let w = CG.fwd_morphism prom.fwd_map u in
+    normal_classified_root_image_in_rewrite_roots minor major fp roots u;
+    assert (Seq.mem w (rewrite_roots roots prom.fwd_map));
+    FStar.Classical.exists_intro
+      (fun (x: CG.combined_vertex) ->
+        normal_src_reachable minor major fp roots x /\
+        CG.fwd_morphism prom.fwd_map x == w)
+      u;
+    assert (normal_image_reachable minor major fp roots w);
+    normal_image_vertex_is_post_vertex minor major fp roots w;
+    post_minor_reachable_refl_from_root minor major fp roots w
 #pop-options
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1 --split_queries always"
