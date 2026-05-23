@@ -86,6 +86,13 @@ let major_field_one_plus_in_remembered (ms: minor_state) (major: heap) : prop =
     is_minor_pointer v /\ Seq.mem v (minor_objects ms) ==>
     Seq.mem v (minor_roots_from_major major)
 
+/// The pure remembered-set scan records every non-field-0 minor pointer in a
+/// scannable major object.
+val major_field_one_plus_in_remembered_intro
+  (minor: minor_state) (major: heap)
+  : Lemma (requires well_formed_heap major)
+          (ensures major_field_one_plus_in_remembered minor major)
+
 /// Field 0 is not scanned by the remembered-set model, so callers must rule out
 /// minor pointers there when using the generic bridge.
 let major_field_zero_no_minor (ms: minor_state) (major: heap) : prop =
@@ -120,7 +127,6 @@ val reachability_bridge
     (requires
       well_formed_heap major /\
       minor_wf minor /\
-      major_field_one_plus_in_remembered minor major /\
       major_field_zero_no_minor minor major)
     (ensures (
       let cg = build_combined_graph minor major in
@@ -137,7 +143,6 @@ val combined_minor_reachable_in_minor_reachable
     (requires
       well_formed_heap major /\
       minor_wf minor /\
-      major_field_one_plus_in_remembered minor major /\
       major_field_zero_no_minor minor major /\
       remembered_roots_in_roots major roots)
     (ensures (

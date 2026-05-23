@@ -189,6 +189,34 @@ private let minor_succ_in_live_set
     minor_reachable_closed minor full_roots u v
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let major_field_one_plus_in_remembered_intro
+  (minor: minor_state) (major: heap)
+  : Lemma (requires well_formed_heap major)
+          (ensures major_field_one_plus_in_remembered minor major)
+  =
+    let aux (src: obj_addr) (v: U64.t) : Lemma
+      (requires Seq.mem src (objects zero_addr major) /\
+                ~(is_no_scan src major) /\
+                (exists (i: nat). i >= 1 /\ i < U64.v (wosize_of_object src major) /\
+                  U64.v src + i * 8 + 8 <= heap_size /\
+                  (U64.v src + i * 8) % 8 == 0 /\
+                  read_word major (U64.uint_to_t (U64.v src + i * 8)) == v) /\
+                is_minor_pointer v /\ Seq.mem v (minor_objects minor))
+      (ensures Seq.mem v (minor_roots_from_major major))
+    =
+      let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
+        (fun i -> i >= 1 /\ i < U64.v (wosize_of_object src major) /\
+          U64.v src + i * 8 + 8 <= heap_size /\
+          (U64.v src + i * 8) % 8 == 0 /\
+          read_word major (U64.uint_to_t (U64.v src + i * 8)) == v) in
+      is_minor_addr_from_bounds v;
+      assert (is_minor_addr v);
+      scan_complete major src i
+    in
+    Classical.forall_intro_2 (Classical.move_requires_2 aux)
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let live_set_in_minor_reachable
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   : Lemma
@@ -232,7 +260,6 @@ let reachability_bridge
     (requires
       well_formed_heap major /\
       minor_wf minor /\
-      major_field_one_plus_in_remembered minor major /\
       major_field_zero_no_minor minor major)
     (ensures (
       let cg = build_combined_graph minor major in
@@ -243,6 +270,7 @@ let reachability_bridge
   = let cg = build_combined_graph minor major in
     let combined_roots = classify_roots roots in
     let full_roots = Seq.append roots (minor_roots_from_major major) in
+    major_field_one_plus_in_remembered_intro minor major;
     let p (cv: combined_vertex) : prop =
       match cv with
       | MinorV v -> Seq.mem v (live_set_of minor major roots)
@@ -317,7 +345,6 @@ let combined_minor_reachable_in_minor_reachable
     (requires
       well_formed_heap major /\
       minor_wf minor /\
-      major_field_one_plus_in_remembered minor major /\
       major_field_zero_no_minor minor major /\
       remembered_roots_in_roots major roots)
     (ensures (

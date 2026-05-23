@@ -52,6 +52,11 @@ noextract
 let is_minor_addr (a: U64.t) : bool =
   U64.v a >= 0 && U64.v a < minor_heap_size && U64.v a % 8 = 0
 
+let is_minor_addr_from_bounds (a: U64.t)
+  : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+          (ensures is_minor_addr a)
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// Lemmas
 /// ---------------------------------------------------------------------------

@@ -42,7 +42,6 @@ let combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
     (requires
-      RBridge.major_field_one_plus_in_remembered minor major /\
       RBridge.major_field_zero_no_minor minor major /\
       RBridge.remembered_roots_in_roots major roots /\
       well_formed_heap major /\
@@ -72,7 +71,6 @@ let combined_reachable_images_valid_or_infix
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_one_plus_in_remembered minor major /\
       RBridge.major_field_zero_no_minor minor major /\
       RBridge.remembered_roots_in_roots major roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
@@ -142,8 +140,7 @@ let minor_collect_full_forwarding_kernel_intro
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
     CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
-    if RBridge.major_field_one_plus_in_remembered minor major /\
-       RBridge.major_field_zero_no_minor minor major /\
+    if RBridge.major_field_zero_no_minor minor major /\
        RBridge.remembered_roots_in_roots major roots
     then
       combined_reachable_images_valid_or_infix minor major fp roots

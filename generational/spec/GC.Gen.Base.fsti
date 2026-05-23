@@ -104,6 +104,12 @@ let minor_obj_addr = a:U64.t{
 noextract
 val is_minor_addr (a: U64.t) : bool
 
+/// Establish `is_minor_addr` from the concrete bounds used by
+/// `Promote.is_minor_pointer`.
+val is_minor_addr_from_bounds (a: U64.t)
+  : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+          (ensures is_minor_addr a)
+
 /// Is a pointer value within the major heap?  
 /// (Re-export from GC.Spec.Base for convenience)
 noextract
