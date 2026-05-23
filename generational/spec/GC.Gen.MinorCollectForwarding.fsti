@@ -113,6 +113,29 @@ val combined_reachable_minor_has_fwd
         CG.combined_reachable cg combined_roots (CG.MinorV v) /\
         minor_wosize minor v > 0 ==> fwd v <> 0UL))
 
+/// Slot-table-facing form of `combined_reachable_minor_has_fwd`.
+val combined_reachable_minor_has_fwd_from_slots
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      well_formed_heap major /\
+      minor_wf minor /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures (
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      let fwd = (cheney_promote minor major fp roots).fwd_map in
+      forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
+        minor_wosize minor v > 0 ==> fwd v <> 0UL))
+
 let combined_reachable_images_valid_or_infix_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
@@ -145,6 +168,22 @@ val combined_reachable_images_valid_or_infix
       GenInv.collection_heap_shape minor major fp /\
       RBridge.major_field_zero_no_minor minor major /\
       RBridge.remembered_roots_in_roots major roots /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
+
+/// Slot-table-facing form of `combined_reachable_images_valid_or_infix`.
+val combined_reachable_images_valid_or_infix_from_slots
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\

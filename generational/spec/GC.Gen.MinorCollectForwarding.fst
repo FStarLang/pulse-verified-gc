@@ -159,6 +159,31 @@ let combined_reachable_minor_has_fwd
     in
     Classical.forall_intro (Classical.move_requires aux)
 
+let combined_reachable_minor_has_fwd_from_slots
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      well_formed_heap major /\
+      minor_wf minor /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures (
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      let fwd = (cheney_promote minor major fp roots).fwd_map in
+      forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
+        minor_wosize minor v > 0 ==> fwd v <> 0UL))
+  =
+    remembered_roots_in_roots_from_slots major roots slots n;
+    combined_reachable_minor_has_fwd minor major fp roots
+
 let combined_reachable_images_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -204,6 +229,24 @@ let combined_reachable_images_valid_or_infix
     in
     Classical.forall_intro (Classical.move_requires major_aux);
     Classical.forall_intro (Classical.move_requires minor_aux)
+
+let combined_reachable_images_valid_or_infix_from_slots
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
+  =
+    remembered_roots_in_roots_from_slots major roots slots n;
+    combined_reachable_images_valid_or_infix minor major fp roots
 
 let minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
