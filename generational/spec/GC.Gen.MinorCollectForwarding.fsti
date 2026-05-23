@@ -40,6 +40,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyPres = GC.Gen.CheneyPreservation
 module CG = GC.Gen.CombinedGraph
+module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
@@ -64,6 +65,12 @@ let remembered_targets_in_roots
 /// from `CombinedGraph` so callers of this module can name the desired target
 /// predicate directly.
 let reachable_subgraph_isomorphism = CG.reachable_subgraph_isomorphism
+
+/// Re-export the first concrete bridge needed by the eventual isomorphism:
+/// combined-reachable minor vertices correspond to the existing minor live-set
+/// notion, under the remembered-set coverage hypotheses named by
+/// `ReachabilityBridge`.
+let combined_minor_reachable_in_live_set = RBridge.reachability_bridge
 
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]

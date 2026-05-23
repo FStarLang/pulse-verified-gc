@@ -63,6 +63,15 @@ val minor_reachable_roots (ms: minor_state) (roots: seq U64.t)
 val minor_successors_length (ms: minor_state) (obj: U64.t)
   : Lemma (ensures Seq.length (minor_successors ms obj) <= minor_wosize ms obj)
 
+/// Characterization: y is a successor of x iff some field of x contains y and
+/// y is a valid allocated minor object.
+val minor_successors_char (ms: minor_state) (x y: U64.t)
+  : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
+                   (exists (i:nat). i < minor_wosize ms x /\
+                                    minor_read_field ms x i == y /\
+                                    is_minor_addr y /\
+                                    Seq.mem y (minor_objects ms)))
+
 /// The reachable set is closed under minor_successors
 val minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
   : Lemma (requires Seq.mem x (minor_reachable ms roots) /\

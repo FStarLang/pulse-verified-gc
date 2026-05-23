@@ -352,6 +352,41 @@ let minor_successors_length (ms: minor_state) (obj: U64.t)
   : Lemma (ensures Seq.length (minor_successors ms obj) <= minor_wosize ms obj)
   = collect_minor_successors_length ms obj 0 (minor_wosize ms obj)
 
+/// Characterization of collect_minor_successors
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let rec collect_minor_successors_char
+  (ms: minor_state)
+  (obj: U64.t)
+  (idx: nat)
+  (wosize: nat)
+  (y: U64.t)
+  : Lemma
+    (ensures Seq.mem y (collect_minor_successors ms obj idx wosize) <==>
+             (exists (i:nat). idx <= i /\ i < wosize /\
+                              minor_read_field ms obj i == y /\
+                              is_minor_addr y /\
+                              Seq.mem y (minor_objects ms)))
+    (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then ()
+  else begin
+    let field_val = minor_read_field ms obj idx in
+    let rest = collect_minor_successors ms obj (idx + 1) wosize in
+    collect_minor_successors_char ms obj (idx + 1) wosize y;
+    if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
+    then Seq.mem_cons field_val rest
+    else ()
+  end
+#pop-options
+
+let minor_successors_char (ms: minor_state) (x y: U64.t)
+  : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
+                   (exists (i:nat). i < minor_wosize ms x /\
+                                    minor_read_field ms x i == y /\
+                                    is_minor_addr y /\
+                                    Seq.mem y (minor_objects ms)))
+  = collect_minor_successors_char ms x 0 (minor_wosize ms x) y
+
 /// For objects in minor_objects, successors length < minor_heap_size
 let minor_successors_length_bound (ms: minor_state) (obj: U64.t)
   : Lemma (requires Seq.mem obj (minor_objects ms))
