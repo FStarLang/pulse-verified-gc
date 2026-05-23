@@ -1,8 +1,8 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.MinorCollectIso -- Reachable-subgraph isomorphism kernel
+/// GC.Gen.MinorCollectForwarding -- Minor-collection forwarding kernel
 /// ---------------------------------------------------------------------------
 
-module GC.Gen.MinorCollectIso
+module GC.Gen.MinorCollectForwarding
 
 open FStar.Seq
 module U64 = FStar.UInt64
@@ -36,18 +36,18 @@ let rec remembered_slot_targets_from
       if is_minor_pointer v then Seq.cons v rest else rest
     else rest
 
-let minor_collect_full_iso_intro
+let minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat) (ok: bool)
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures (
       let res = cheney_collect_spec minor major fp roots in
-      minor_collect_full_iso minor major fp roots slots n ok
+      minor_collect_full_forwarding_kernel minor major fp roots slots n ok
         res.mc_major (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map)))
   =
-  reveal_opaque (`%minor_collect_full_iso)
-    (minor_collect_full_iso minor major fp roots slots n ok
+  reveal_opaque (`%minor_collect_full_forwarding_kernel)
+    (minor_collect_full_forwarding_kernel minor major fp roots slots n ok
       (cheney_collect_spec minor major fp roots).mc_major
       (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map));
   GenInv.collection_heap_shape_elim minor major fp;

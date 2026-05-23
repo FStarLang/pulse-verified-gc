@@ -40,6 +40,7 @@ module CheneyCorr = GC.Gen.CheneyCorrectness
 module TwoPass = GC.Gen.TwoPassEquiv
 module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
+module MinorFwd = GC.Gen.MinorCollectForwarding
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -856,7 +857,8 @@ fn minor_collect_full (gh: gen_heap_t)
       // Strong correctness: the result equals cheney_collect_spec.mc_major.
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
-      MinorIso.minor_collect_full_iso minor_st 's 'fp 'rs 'sl (SZ.v nslots) ok s2 rs2)
+      MinorFwd.minor_collect_full_forwarding_kernel
+        minor_st 's 'fp 'rs 'sl (SZ.v nslots) ok s2 rs2)
 {
   unfold is_gen_heap;
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
@@ -927,7 +929,7 @@ fn minor_collect_full (gh: gen_heap_t)
     (SZ.v nslots);
   CheneyPres.cheney_collect_preserves_collection_heap_shape
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
-  MinorIso.minor_collect_full_iso_intro
+  MinorFwd.minor_collect_full_forwarding_kernel_intro
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl (SZ.v nslots) ok;
 
   fold (is_gen_heap gh _ 0UL _ _);

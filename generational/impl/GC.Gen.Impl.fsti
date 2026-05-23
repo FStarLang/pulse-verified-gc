@@ -35,7 +35,7 @@ module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
 module GenInv = GC.Gen.HeapInvariant
-module MinorIso = GC.Gen.MinorCollectIso
+module MinorFwd = GC.Gen.MinorCollectForwarding
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -151,7 +151,8 @@ fn minor_collect_full (gh: gen_heap_t)
       // (single-pass full update of all pointer fields in the major heap).
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
-      MinorIso.minor_collect_full_iso minor_st 's 'fp 'rs 'sl (SZ.v nslots) ok s2 rs2)
+      MinorFwd.minor_collect_full_forwarding_kernel
+        minor_st 's 'fp 'rs 'sl (SZ.v nslots) ok s2 rs2)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)

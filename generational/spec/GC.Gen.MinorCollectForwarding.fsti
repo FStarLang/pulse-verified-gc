@@ -1,9 +1,10 @@
 /// ---------------------------------------------------------------------------
-/// GC.Gen.MinorCollectIso -- Reachable-subgraph isomorphism kernel
+/// GC.Gen.MinorCollectForwarding -- Minor-collection forwarding kernel
 /// ---------------------------------------------------------------------------
 ///
-/// This module captures the reusable kernel of the upstream minor-collection
-/// isomorphism proof, specialized to the current `minor_collect_full` path.
+/// This module captures the reusable forwarding kernel of the upstream
+/// minor-collection isomorphism proof, specialized to the current
+/// `minor_collect_full` path.
 ///
 /// The property is intentionally stated over `cheney_collect_spec`, since the
 /// Pulse implementation proves its concrete two-pass update equals that spec.
@@ -11,11 +12,14 @@
 /// when those remembered targets are represented in the root array and the
 /// collector returns `ok`, the forwarding map is an injective morphism for
 /// reachable minor objects and all images are valid post-minor addresses
-/// (ordinary objects or infix interior pointers).  The current proof also
-/// keeps the existing pure `cheney_no_oom` condition explicit; connecting the
-/// runtime `ok` flag to that pure predicate is the next strengthening step.
+/// (ordinary objects or infix interior pointers).  This is NOT, by itself, a
+/// graph isomorphism: a real reachable-subgraph isomorphism must also prove
+/// surjectivity onto the post-minor reachable subgraph and edge preservation
+/// and reflection.  The current proof also keeps the existing pure
+/// `cheney_no_oom` condition explicit; connecting the runtime `ok` flag to
+/// that pure predicate is the next strengthening step.
 
-module GC.Gen.MinorCollectIso
+module GC.Gen.MinorCollectForwarding
 
 open FStar.Seq
 module U64 = FStar.UInt64
@@ -68,10 +72,32 @@ let remembered_targets_in_roots
   forall (r: U64.t).
     Seq.mem r (remembered_slot_targets major slots n) ==> Seq.mem r roots
 
-/// The post-minor reachable-subgraph isomorphism kernel established by
-/// `minor_collect_full`.
+/// Generic shape of a true reachable-subgraph graph isomorphism.  The current
+/// `minor_collect_full` proof does not yet establish this predicate; it is
+/// recorded here to make the missing obligations explicit.
+let reachable_subgraph_isomorphism
+  (src_reachable: combined_vertex -> prop)
+  (dst_reachable: U64.t -> prop)
+  (src_edge: combined_vertex -> combined_vertex -> prop)
+  (dst_edge: U64.t -> U64.t -> prop)
+  (fwd: forwarding_map) : prop =
+  // Image validity
+  (forall (u: combined_vertex). src_reachable u ==>
+    dst_reachable (fwd_morphism fwd u)) /\
+  // Injectivity on reachable source vertices
+  (forall (u v: combined_vertex). src_reachable u /\ src_reachable v /\
+    fwd_morphism fwd u == fwd_morphism fwd v ==> u == v) /\
+  // Surjectivity onto the reachable target subgraph
+  (forall (w: U64.t). dst_reachable w ==>
+    exists (u: combined_vertex). src_reachable u /\ fwd_morphism fwd u == w) /\
+  // Edge preservation and reflection
+  (forall (u v: combined_vertex). src_reachable u /\ src_reachable v ==>
+    (src_edge u v <==>
+     dst_edge (fwd_morphism fwd u) (fwd_morphism fwd v)))
+
+/// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
-let minor_collect_full_iso
+let minor_collect_full_forwarding_kernel
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat) (ok: bool)
   (post_major: heap) (post_roots: seq U64.t) : prop =
@@ -97,12 +123,12 @@ let minor_collect_full_iso
     CheneyPres.fwd_normal_injective fwd prom.major_final /\
     CheneyPres.fwd_targets_not_blue fwd prom.major_final)
 
-val minor_collect_full_iso_intro
+val minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat) (ok: bool)
   : Lemma
     (requires GenInv.collection_heap_shape minor major fp)
     (ensures (
       let res = cheney_collect_spec minor major fp roots in
-      minor_collect_full_iso minor major fp roots slots n ok
+      minor_collect_full_forwarding_kernel minor major fp roots slots n ok
         res.mc_major (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map)))
