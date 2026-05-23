@@ -288,7 +288,8 @@ private let minor_reset_no_scan_invariant (minor: minor_state)
     : Lemma (ensures (Seq.mem obj (minor_objects reset) /\
                       minor_tag reset obj >= 251 /\
                       j < minor_wosize reset obj ==>
-                      ~(is_pointer_field (minor_read_field reset obj j))))
+                      ~(is_pointer_field (minor_read_field reset obj j)) /\
+                      ~(is_minor_pointer (minor_read_field reset obj j))))
     =
     minor_reset_objects_not_mem minor obj
   in

@@ -754,7 +754,8 @@ let minor_no_scan_invariant (minor: minor_state) : prop =
     Seq.mem obj (minor_objects minor) /\
     minor_tag minor obj >= 251 /\
     j < minor_wosize minor obj ==>
-    ~(is_pointer_field (minor_read_field minor obj j))
+    ~(is_pointer_field (minor_read_field minor obj j)) /\
+    ~(is_minor_pointer (minor_read_field minor obj j))
 
 /// Allocated (non-blue) objects avoid the free-list chain.
 /// (Defined here for use in the no-scan preservation proof.)
