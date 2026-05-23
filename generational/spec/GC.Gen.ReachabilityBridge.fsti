@@ -81,6 +81,23 @@ let major_field_zero_no_minor (ms: minor_state) (major: heap) : prop =
     (let v = read_word major (U64.uint_to_t (U64.v src)) in
      ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
 
+/// The scan-derived remembered roots are already included in the Cheney root
+/// sequence.  This is the pure scan analogue of the slot-table coverage
+/// condition used by `minor_collect_full`.
+let remembered_roots_in_roots (major: heap) (roots: seq U64.t) : prop =
+  forall (r: U64.t).
+    Seq.mem r (minor_roots_from_major major) ==> Seq.mem r roots
+
+/// If remembered roots are included in `roots`, then the existing live-set
+/// definition (roots ++ remembered) is a subset of `minor_reachable roots`.
+val live_set_in_minor_reachable
+  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  : Lemma
+    (requires remembered_roots_in_roots major roots)
+    (ensures forall (v: U64.t).
+      Seq.mem v (live_set_of minor major roots) ==>
+      Seq.mem v (minor_reachable minor roots))
+
 /// Any minor vertex reachable in the combined graph is in the minor live set
 /// computed from program roots plus remembered-set roots.
 val reachability_bridge
@@ -97,3 +114,21 @@ val reachability_bridge
       forall (v: U64.t).
         combined_reachable cg combined_roots (MinorV v) ==>
         Seq.mem v (live_set_of minor major roots)))
+
+/// Combined-reachable minor vertices are reachable by Cheney from `roots` once
+/// the scan-derived remembered roots are included in `roots`.
+val combined_minor_reachable_in_minor_reachable
+  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      minor_wf minor /\
+      major_field_one_plus_in_remembered minor major /\
+      major_field_zero_no_minor minor major /\
+      remembered_roots_in_roots major roots)
+    (ensures (
+      let cg = build_combined_graph minor major in
+      let combined_roots = classify_roots roots in
+      forall (v: U64.t).
+        combined_reachable cg combined_roots (MinorV v) ==>
+        Seq.mem v (minor_reachable minor roots)))

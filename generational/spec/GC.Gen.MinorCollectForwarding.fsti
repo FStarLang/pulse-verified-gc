@@ -72,6 +72,12 @@ let reachable_subgraph_isomorphism = CG.reachable_subgraph_isomorphism
 /// `ReachabilityBridge`.
 let combined_minor_reachable_in_live_set = RBridge.reachability_bridge
 
+/// Stronger root-coverage form: when the scan-derived remembered roots are
+/// already included in the Cheney roots, combined-reachable minor vertices are
+/// reachable by the actual Cheney promotion.
+let combined_minor_reachable_in_minor_reachable =
+  RBridge.combined_minor_reachable_in_minor_reachable
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel

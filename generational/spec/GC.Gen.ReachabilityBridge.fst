@@ -140,6 +140,43 @@ private let minor_succ_in_live_set
   = let full_roots = Seq.append roots (minor_roots_from_major major) in
     minor_reachable_closed minor full_roots u v
 
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let live_set_in_minor_reachable
+  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  : Lemma
+    (requires remembered_roots_in_roots major roots)
+    (ensures forall (v: U64.t).
+      Seq.mem v (live_set_of minor major roots) ==>
+      Seq.mem v (minor_reachable minor roots))
+  = let remembered = minor_roots_from_major major in
+    let full_roots = Seq.append roots remembered in
+    let p (x: U64.t) : prop = Seq.mem x (minor_reachable minor roots) in
+    let base (r: U64.t) : Lemma
+      (requires Seq.mem r full_roots /\ Seq.mem r (minor_objects minor))
+      (ensures p r)
+    = Seq.lemma_mem_append roots remembered;
+      if Seq.mem r roots then
+        minor_reachable_roots minor roots
+      else begin
+        assert (Seq.mem r remembered);
+        minor_reachable_roots minor roots
+      end
+    in
+    let edge (a b: U64.t) : Lemma
+      (requires p a /\ Seq.mem b (minor_successors minor a))
+      (ensures p b)
+    = minor_reachable_closed minor roots a b
+    in
+    Classical.forall_intro (Classical.move_requires base);
+    Classical.forall_intro_2 (fun a -> Classical.move_requires (edge a));
+    let aux (v: U64.t) : Lemma
+      (requires Seq.mem v (live_set_of minor major roots))
+      (ensures Seq.mem v (minor_reachable minor roots))
+    = minor_reachable_ind minor full_roots p v
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+#pop-options
+
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let reachability_bridge
   (minor: minor_state) (major: heap) (roots: seq U64.t)
@@ -221,6 +258,34 @@ let reachability_bridge
       (requires combined_reachable cg combined_roots (MinorV v))
       (ensures p (MinorV v))
     = combined_reachable_ind cg combined_roots p (MinorV v)
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+let combined_minor_reachable_in_minor_reachable
+  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      minor_wf minor /\
+      major_field_one_plus_in_remembered minor major /\
+      major_field_zero_no_minor minor major /\
+      remembered_roots_in_roots major roots)
+    (ensures (
+      let cg = build_combined_graph minor major in
+      let combined_roots = classify_roots roots in
+      forall (v: U64.t).
+        combined_reachable cg combined_roots (MinorV v) ==>
+        Seq.mem v (minor_reachable minor roots)))
+  = let cg = build_combined_graph minor major in
+    let combined_roots = classify_roots roots in
+    reachability_bridge minor major roots;
+    live_set_in_minor_reachable minor major roots;
+    let aux (v: U64.t) : Lemma
+      (requires combined_reachable cg combined_roots (MinorV v))
+      (ensures Seq.mem v (minor_reachable minor roots))
+    = ()
     in
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
