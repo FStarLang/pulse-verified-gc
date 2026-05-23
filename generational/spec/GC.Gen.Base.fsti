@@ -104,11 +104,27 @@ let minor_obj_addr = a:U64.t{
 noextract
 val is_minor_addr (a: U64.t) : bool
 
+/// Is a value a minor object pointer (not the zero/header base address)?
+let is_minor_object_addr (a: U64.t) : bool =
+  U64.v a >= 8 && U64.v a < minor_heap_size && U64.v a % 8 = 0
+
 /// Establish `is_minor_addr` from the concrete bounds used by
 /// `Promote.is_minor_pointer`.
 val is_minor_addr_from_bounds (a: U64.t)
   : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
           (ensures is_minor_addr a)
+
+val is_minor_addr_from_object_addr (a: U64.t)
+  : Lemma (requires is_minor_object_addr a)
+          (ensures is_minor_addr a)
+
+val is_minor_object_addr_bounds (a: U64.t)
+  : Lemma (requires is_minor_object_addr a)
+          (ensures U64.v a >= 8 /\ U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+
+val to_minor_offset_in_minor_range (a: U64.t)
+  : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+          (ensures to_minor_offset a == a)
 
 /// Is a pointer value within the major heap?  
 /// (Re-export from GC.Spec.Base for convenience)

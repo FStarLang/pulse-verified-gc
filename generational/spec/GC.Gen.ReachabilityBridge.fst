@@ -209,6 +209,7 @@ let major_field_one_plus_in_remembered_intro
           U64.v src + i * 8 + 8 <= heap_size /\
           (U64.v src + i * 8) % 8 == 0 /\
           read_word major (U64.uint_to_t (U64.v src + i * 8)) == v) in
+      assert (is_minor_object_addr v);
       is_minor_addr_from_bounds v;
       assert (is_minor_addr v);
       scan_complete major src i

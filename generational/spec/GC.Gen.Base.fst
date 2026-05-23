@@ -57,6 +57,21 @@ let is_minor_addr_from_bounds (a: U64.t)
           (ensures is_minor_addr a)
   = ()
 
+let is_minor_addr_from_object_addr (a: U64.t)
+  : Lemma (requires is_minor_object_addr a)
+          (ensures is_minor_addr a)
+  = ()
+
+let is_minor_object_addr_bounds (a: U64.t)
+  : Lemma (requires is_minor_object_addr a)
+          (ensures U64.v a >= 8 /\ U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+  = ()
+
+let to_minor_offset_in_minor_range (a: U64.t)
+  : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
+          (ensures to_minor_offset a == a)
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// Lemmas
 /// ---------------------------------------------------------------------------

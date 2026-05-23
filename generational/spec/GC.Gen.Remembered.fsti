@@ -31,7 +31,7 @@ open GC.Gen.MinorHeap
 /// points into the minor heap.
 noeq
 type remembered_ref = {
-  rem_obj   : U64.t;   // major-heap object containing the pointer
+  rem_obj   : obj_addr; // major-heap object containing the pointer
   rem_field : nat;      // 1-based field index within that object
   rem_target: U64.t;   // the minor-heap address being pointed to
 }
@@ -64,10 +64,24 @@ val scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   : Lemma (requires
              well_formed_heap major /\
              Seq.mem obj (objects zero_addr major) /\
-             field_idx >= 1 /\ field_idx <= U64.v (wosize_of_object obj major) /\
+             field_idx >= 1 /\ field_idx < U64.v (wosize_of_object obj major) /\
              U64.v obj + field_idx * 8 + 8 <= heap_size /\
              (U64.v obj + field_idx * 8) % 8 == 0 /\
-             is_minor_addr (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
-          (ensures
+             is_minor_object_addr (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
+           (ensures
              Seq.mem (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))
                      (minor_roots_from_major major))
+
+/// Soundness of the scan: every root returned by `minor_roots_from_major`
+/// comes from an actual non-field-0 object field in the major heap.
+val minor_roots_from_major_sound (major: heap) (v: U64.t)
+  : Lemma (requires Seq.mem v (minor_roots_from_major major))
+          (ensures
+            exists (obj: obj_addr) (field_idx: nat).
+              Seq.mem obj (objects zero_addr major) /\
+              field_idx >= 1 /\
+              field_idx < U64.v (wosize_of_object obj major) /\
+              U64.v obj + field_idx * 8 + 8 <= heap_size /\
+              (U64.v obj + field_idx * 8) % 8 == 0 /\
+              read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) == v /\
+              is_minor_object_addr v)
