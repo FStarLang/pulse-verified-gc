@@ -39,20 +39,8 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneyBFS = GC.Gen.CheneyBFS
 module CheneyCorr = GC.Gen.CheneyCorrectness
 module CheneyPres = GC.Gen.CheneyPreservation
+module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
-
-/// Source graph vertices are tagged to distinguish overlapping minor and major
-/// address spaces.
-type combined_vertex =
-  | MinorV : addr:U64.t -> combined_vertex
-  | MajorV : addr:U64.t -> combined_vertex
-
-/// The minor-collection morphism: minor vertices map through the forwarding
-/// map; major vertices are preserved by identity.
-let fwd_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot U64.t =
-  match v with
-  | MinorV addr -> fwd addr
-  | MajorV addr -> addr
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
 /// Only valid slots containing minor pointers contribute roots.
@@ -72,28 +60,10 @@ let remembered_targets_in_roots
   forall (r: U64.t).
     Seq.mem r (remembered_slot_targets major slots n) ==> Seq.mem r roots
 
-/// Generic shape of a true reachable-subgraph graph isomorphism.  The current
-/// `minor_collect_full` proof does not yet establish this predicate; it is
-/// recorded here to make the missing obligations explicit.
-let reachable_subgraph_isomorphism
-  (src_reachable: combined_vertex -> prop)
-  (dst_reachable: U64.t -> prop)
-  (src_edge: combined_vertex -> combined_vertex -> prop)
-  (dst_edge: U64.t -> U64.t -> prop)
-  (fwd: forwarding_map) : prop =
-  // Image validity
-  (forall (u: combined_vertex). src_reachable u ==>
-    dst_reachable (fwd_morphism fwd u)) /\
-  // Injectivity on reachable source vertices
-  (forall (u v: combined_vertex). src_reachable u /\ src_reachable v /\
-    fwd_morphism fwd u == fwd_morphism fwd v ==> u == v) /\
-  // Surjectivity onto the reachable target subgraph
-  (forall (w: U64.t). dst_reachable w ==>
-    exists (u: combined_vertex). src_reachable u /\ fwd_morphism fwd u == w) /\
-  // Edge preservation and reflection
-  (forall (u v: combined_vertex). src_reachable u /\ src_reachable v ==>
-    (src_edge u v <==>
-     dst_edge (fwd_morphism fwd u) (fwd_morphism fwd v)))
+/// Generic shape of a true reachable-subgraph graph isomorphism.  Re-exported
+/// from `CombinedGraph` so callers of this module can name the desired target
+/// predicate directly.
+let reachable_subgraph_isomorphism = CG.reachable_subgraph_isomorphism
 
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
