@@ -45,6 +45,7 @@ module CheneyPres = GC.Gen.CheneyPreservation
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
+module HeapGraph = GC.Spec.HeapGraph
 module HeapModel = GC.Spec.HeapModel
 
 /// Read the remembered-set slot targets from the pre-collection major heap.
@@ -64,6 +65,12 @@ let remembered_targets_in_roots
   (major: heap) (roots slots: seq U64.t) (n: nat) : prop =
   forall (r: U64.t).
     Seq.mem r (remembered_slot_targets major slots n) ==> Seq.mem r roots
+
+/// Raw-address view of graph-edge membership, useful when the endpoint is a
+/// forwarding-map image whose `hp_addr` refinement is proved by preconditions.
+let mem_graph_edge_at (g: graph_state) (src dst: U64.t) : prop =
+  exists (s: hp_addr) (d: hp_addr).
+    s == src /\ d == dst /\ mem_graph_edge g s d
 
 /// Bridge the implementation-facing ref-table coverage predicate to the
 /// scan-root coverage predicate used by the combined-graph reachability bridge.
@@ -93,6 +100,22 @@ val update_preserves_major_target_field
     (ensures
       read_word (update_major_pointers major fwd)
         (U64.uint_to_t (U64.v src + j * 8)) == dst)
+
+/// Turn a concrete field value in a heap object into a graph edge in
+/// `HeapModel.create_graph`.
+val heap_field_points_to_graph_edge
+  (g: heap) (src: obj_addr) (dst: U64.t) (j: nat)
+  : Lemma
+    (requires
+      well_formed_heap g /\
+      Seq.mem src (objects zero_addr g) /\
+      ~(is_no_scan src g) /\
+      j < U64.v (wosize_of_object src g) /\
+      U64.v src + j * 8 + 8 <= heap_size /\
+      (U64.v src + j * 8) % 8 == 0 /\
+      read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst /\
+      HeapGraph.is_pointer_field dst)
+    (ensures mem_graph_edge (HeapModel.create_graph g) src dst)
 
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.
@@ -288,6 +311,38 @@ val combined_major_minor_field_forwarded
       prom.fwd_map dst <> 0UL /\
       read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map dst))
 
+val combined_major_minor_edge_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (src: obj_addr) (dst: U64.t) (i: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      (let prom = cheney_promote minor major fp roots in
+       HeapGraph.is_pointer_field (prom.fwd_map dst)) /\
+      (let cg = CG.build_combined_graph minor major in
+       let combined_roots = CG.classify_roots roots in
+       CG.combined_reachable cg combined_roots (CG.MajorV src) /\
+       CG.combined_reachable cg combined_roots (CG.MinorV dst)) /\
+      ~(is_no_scan src major) /\
+      i < U64.v (wosize_of_object src major) /\
+      U64.v src + i * 8 + 8 <= heap_size /\
+      (U64.v src + i * 8) % 8 == 0 /\
+      CG.classify_major_field minor major
+        (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MinorV dst) /\
+      minor_wosize minor dst > 0)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      mem_graph_edge (HeapModel.create_graph res.mc_major) src (prom.fwd_map dst)))
+
 /// Field-level MinorV -> MajorV edge-forwarding slice: for a promoted normal
 /// minor source, a field that points to an old major object remains that major
 /// object in the post-minor heap.
@@ -306,6 +361,7 @@ val promoted_minor_major_field_preserved
        Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final) /\
        is_blue (fwd_src <: obj_addr) prom.major_final = false /\
        is_no_scan (fwd_src <: obj_addr) prom.major_final = false /\
+       is_val_addr dst /\
        j < minor_wosize minor src /\
        j < U64.v (wosize_of_object (fwd_src <: obj_addr) prom.major_final) /\
        U64.v fwd_src + j * 8 + 8 <= heap_size /\
@@ -316,6 +372,33 @@ val promoted_minor_major_field_preserved
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
       read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) == dst))
+
+val promoted_minor_major_edge_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: U64.t) (j: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      (let prom = cheney_promote minor major fp roots in
+       let fwd_src = prom.fwd_map src in
+       fwd_src <> 0UL /\
+       Seq.mem src (minor_objects minor) /\
+       is_val_addr fwd_src /\
+       is_infix fwd_src prom.major_final = false /\
+       Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final) /\
+       is_blue (fwd_src <: obj_addr) prom.major_final = false /\
+       is_no_scan (fwd_src <: obj_addr) prom.major_final = false /\
+       is_val_addr dst /\
+       j < minor_wosize minor src /\
+       j < U64.v (wosize_of_object (fwd_src <: obj_addr) prom.major_final) /\
+       U64.v fwd_src + j * 8 + 8 <= heap_size /\
+       (U64.v fwd_src + j * 8) % 8 == 0 /\
+       CG.classify_minor_field minor major (minor_read_field minor src j) ==
+       Some (CG.MajorV dst)))
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      mem_graph_edge_at (HeapModel.create_graph res.mc_major) (prom.fwd_map src) dst))
 
 /// Field-level MinorV -> MinorV edge-forwarding slice: for a promoted normal
 /// minor source, a copied field that points to another forwarded minor object
@@ -348,6 +431,102 @@ val promoted_minor_minor_field_forwarded
       let res = cheney_collect_spec minor major fp roots in
       read_word res.mc_major (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8)) ==
       prom.fwd_map dst))
+
+val promoted_minor_minor_edge_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (src dst: U64.t) (j: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      (let prom = cheney_promote minor major fp roots in
+       let fwd_src = prom.fwd_map src in
+       fwd_src <> 0UL /\
+       prom.fwd_map dst <> 0UL /\
+       HeapGraph.is_pointer_field (prom.fwd_map dst) /\
+       Seq.mem src (minor_objects minor) /\
+       is_val_addr fwd_src /\
+       is_infix fwd_src prom.major_final = false /\
+       Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final) /\
+       is_blue (fwd_src <: obj_addr) prom.major_final = false /\
+       is_no_scan (fwd_src <: obj_addr) prom.major_final = false /\
+       j < minor_wosize minor src /\
+       j < U64.v (wosize_of_object (fwd_src <: obj_addr) prom.major_final) /\
+       U64.v fwd_src + j * 8 + 8 <= heap_size /\
+       (U64.v fwd_src + j * 8) % 8 == 0 /\
+       is_minor_pointer dst /\
+       CG.classify_minor_field minor major (minor_read_field minor src j) ==
+       Some (CG.MinorV dst)))
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      mem_graph_edge_at (HeapModel.create_graph res.mc_major)
+        (prom.fwd_map src) (prom.fwd_map dst)))
+
+/// Side condition for the normal-object edge-forwarding theorem.  Minor-source
+/// cases require the source image to be a normal promoted object; minor-target
+/// cases require the target image to be pointer-shaped.
+let normal_edge_forward_ready
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (u v: CG.combined_vertex) : prop =
+  let prom = cheney_promote minor major fp roots in
+  let normal_minor_source (src: U64.t) =
+    let fwd_src = prom.fwd_map src in
+    fwd_src <> 0UL /\
+    Seq.mem src (minor_objects minor) /\
+    is_val_addr fwd_src /\
+    is_infix fwd_src prom.major_final = false /\
+    Seq.mem (fwd_src <: obj_addr) (objects zero_addr prom.major_final) /\
+    is_blue (fwd_src <: obj_addr) prom.major_final = false /\
+    is_no_scan (fwd_src <: obj_addr) prom.major_final = false /\
+    U64.v (wosize_of_object (fwd_src <: obj_addr) prom.major_final) >=
+      minor_wosize minor src /\
+    (forall (i:nat). i < minor_wosize minor src ==>
+      i < U64.v (wosize_of_object (fwd_src <: obj_addr) prom.major_final) /\
+      U64.v fwd_src + i * 8 + 8 <= heap_size /\
+      (U64.v fwd_src + i * 8) % 8 == 0)
+  in
+  match u, v with
+  | CG.MajorV _, CG.MajorV _ -> True
+  | CG.MajorV _, CG.MinorV dst ->
+    minor_wosize minor dst > 0 /\
+    HeapGraph.is_pointer_field (prom.fwd_map dst)
+  | CG.MinorV src, CG.MajorV dst ->
+    normal_minor_source src /\ is_val_addr dst
+  | CG.MinorV src, CG.MinorV dst ->
+    normal_minor_source src /\
+    prom.fwd_map dst <> 0UL /\
+    HeapGraph.is_pointer_field (prom.fwd_map dst) /\
+    is_minor_pointer dst
+
+/// Composed forward-edge theorem for the normal reachable subgraph: any
+/// reachable combined edge satisfying `normal_edge_forward_ready` maps to a
+/// concrete edge in the post-minor major heap graph.
+val combined_reachable_edge_forwarded_normal
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      (let cg = CG.build_combined_graph minor major in
+       let combined_roots = CG.classify_roots roots in
+       CG.combined_reachable cg combined_roots u /\
+       CG.combined_reachable cg combined_roots v /\
+       CG.mem_ce (u, v) cg) /\
+      normal_edge_forward_ready minor major fp roots u v)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      mem_graph_edge_at (HeapModel.create_graph res.mc_major)
+        (CG.fwd_morphism prom.fwd_map u)
+        (CG.fwd_morphism prom.fwd_map v)))
 
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
