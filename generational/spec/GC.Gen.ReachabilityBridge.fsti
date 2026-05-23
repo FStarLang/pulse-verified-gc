@@ -60,6 +60,20 @@ val reachable_major_valid_nonblue
         Seq.mem (v <: obj_addr) (objects zero_addr major) /\
         ~(is_blue (v <: obj_addr) major)))
 
+/// Every reachable major vertex is a valid major object.  This weaker form is
+/// enough for image-validity proofs and does not require root color facts.
+val reachable_major_valid
+  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  : Lemma
+    (requires well_formed_heap major /\ minor_wf minor)
+    (ensures (
+      let cg = build_combined_graph minor major in
+      let combined_roots = classify_roots roots in
+      forall (v: U64.t).
+        combined_reachable cg combined_roots (MajorV v) ==>
+        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+        Seq.mem (v <: obj_addr) (objects zero_addr major)))
+
 /// Major fields with index >= 1 that point into the minor heap are accounted
 /// for by `minor_roots_from_major`.
 let major_field_one_plus_in_remembered (ms: minor_state) (major: heap) : prop =

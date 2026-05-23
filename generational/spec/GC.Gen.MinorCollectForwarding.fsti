@@ -78,6 +78,60 @@ let combined_minor_reachable_in_live_set = RBridge.reachability_bridge
 let combined_minor_reachable_in_minor_reachable =
   RBridge.combined_minor_reachable_in_minor_reachable
 
+/// Combined-reachable minor vertices have forwarding images when promotion does
+/// not run out of space and scan-derived remembered roots are included in the
+/// Cheney roots.
+val combined_reachable_minor_has_fwd
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      RBridge.major_field_one_plus_in_remembered minor major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.remembered_roots_in_roots major roots /\
+      well_formed_heap major /\
+      minor_wf minor /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures (
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      let fwd = (cheney_promote minor major fp roots).fwd_map in
+      forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
+        minor_wosize minor v > 0 ==> fwd v <> 0UL))
+
+/// First image-validity conjunct for the eventual isomorphism:
+/// - reachable major vertices survive in the post-minor heap;
+/// - reachable positive-size minor vertices have valid-or-infix forwarding
+///   images in the post-promotion heap.
+val combined_reachable_images_valid_or_infix
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_one_plus_in_remembered minor major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.remembered_roots_in_roots major roots /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures (
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      let prom = cheney_promote minor major fp roots in
+      let res = cheney_collect_spec minor major fp roots in
+      let fwd = prom.fwd_map in
+      (forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
+        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+        Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major)) /\
+      (forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
+        minor_wosize minor v > 0 ==>
+        fwd v <> 0UL /\
+        U64.v (fwd v) >= U64.v mword /\
+        U64.v (fwd v) < heap_size /\
+        U64.v (fwd v) % U64.v mword == 0 /\
+        (Seq.mem ((fwd v) <: obj_addr) (objects zero_addr prom.major_final) \/
+         is_infix (fwd v) prom.major_final))))
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel

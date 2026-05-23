@@ -131,6 +131,54 @@ let reachable_major_valid_nonblue
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let reachable_major_valid
+  (minor: minor_state) (major: heap) (roots: seq U64.t)
+  : Lemma
+    (requires well_formed_heap major /\ minor_wf minor)
+    (ensures (
+      let cg = build_combined_graph minor major in
+      let combined_roots = classify_roots roots in
+      forall (v: U64.t).
+        combined_reachable cg combined_roots (MajorV v) ==>
+        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+        Seq.mem (v <: obj_addr) (objects zero_addr major)))
+  = let cg = build_combined_graph minor major in
+    let combined_roots = classify_roots roots in
+    let p (cv: combined_vertex) : prop =
+      match cv with
+      | MajorV v ->
+        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+        Seq.mem (v <: obj_addr) (objects zero_addr major)
+      | MinorV _ -> True
+    in
+    let base (r: combined_vertex) : Lemma
+      (requires Seq.mem r combined_roots /\ mem_cv r cg)
+      (ensures p r)
+    = match r with
+      | MinorV _ -> ()
+      | MajorV v -> major_vertex_valid minor major v
+    in
+    let edge (u w: combined_vertex) : Lemma
+      (requires p u /\ mem_ce (u, w) cg)
+      (ensures p w)
+    = match w with
+      | MinorV _ -> ()
+      | MajorV v ->
+        build_combined_graph_wf minor major;
+        assert (mem_cv w cg);
+        major_vertex_valid minor major v
+    in
+    Classical.forall_intro (Classical.move_requires base);
+    Classical.forall_intro_2 (fun u -> Classical.move_requires (edge u));
+    let aux (v: U64.t) : Lemma
+      (requires combined_reachable cg combined_roots (MajorV v))
+      (ensures p (MajorV v))
+    = combined_reachable_ind cg combined_roots p (MajorV v)
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+#pop-options
+
 private let minor_succ_in_live_set
   (minor: minor_state) (major: heap) (roots: seq U64.t) (u v: U64.t)
   : Lemma
