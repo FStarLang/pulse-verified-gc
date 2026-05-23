@@ -788,6 +788,29 @@ val normal_image_edges_are_post_edges
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures normal_image_edges_are_post_edges_prop minor major fp roots slots n)
 
+val normal_src_edge_preserves_post_minor_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      normal_src_edge minor major fp roots u v /\
+      (let prom = cheney_promote minor major fp roots in
+       post_minor_reachable minor major fp roots
+         (CG.fwd_morphism prom.fwd_map u)))
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      post_minor_reachable minor major fp roots
+        (CG.fwd_morphism prom.fwd_map v)))
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel

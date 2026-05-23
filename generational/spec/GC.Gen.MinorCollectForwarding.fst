@@ -1533,6 +1533,138 @@ let normal_image_edges_are_post_edges
     Classical.forall_intro_2 (fun u -> Classical.move_requires (aux u))
 #pop-options
 
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 1 --split_queries always"
+let normal_src_edge_preserves_post_minor_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      normal_src_edge minor major fp roots u v /\
+      (let prom = cheney_promote minor major fp roots in
+       post_minor_reachable minor major fp roots
+         (CG.fwd_morphism prom.fwd_map u)))
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      post_minor_reachable minor major fp roots
+        (CG.fwd_morphism prom.fwd_map v)))
+  =
+    let prom = cheney_promote minor major fp roots in
+    let res = cheney_collect_spec minor major fp roots in
+    let post_g = HeapModel.create_graph res.mc_major in
+    let fu = CG.fwd_morphism prom.fwd_map u in
+    let fv = CG.fwd_morphism prom.fwd_map v in
+    let goal = post_minor_reachable minor major fp roots fv in
+    assert (normal_src_edge minor major fp roots u v);
+    let post_edge_aux (a b: CG.combined_vertex) : Lemma
+      (requires normal_src_edge minor major fp roots a b)
+      (ensures
+        mem_graph_edge_at post_g
+          (CG.fwd_morphism prom.fwd_map a)
+          (CG.fwd_morphism prom.fwd_map b))
+    = combined_reachable_edge_forwarded_normal minor major fp roots slots n a b
+    in
+    post_edge_aux u v;
+    assert (mem_graph_edge_at post_g fu fv);
+    FStar.Classical.exists_intro
+      (fun (x: CG.combined_vertex) ->
+        normal_src_reachable minor major fp roots x /\
+        CG.fwd_morphism prom.fwd_map x == fv)
+      v;
+    assert (normal_image_reachable minor major fp roots fv);
+    normal_image_vertex_is_post_vertex minor major fp roots fv;
+    let finish_with_target (target: vertex_id{mem_graph_vertex post_g target})
+      : Lemma (requires target == fv)
+              (ensures goal)
+    =
+      let finish_rr (rr: U64.t) : Lemma
+        (requires
+          exists (r: vertex_id{mem_graph_vertex post_g r})
+                 (x: vertex_id{mem_graph_vertex post_g x}).
+            Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+            r == rr /\ x == fu /\ reachable post_g r x)
+        (ensures goal)
+      =
+        let finish_r (r: vertex_id{mem_graph_vertex post_g r}) : Lemma
+          (requires
+            exists (x: vertex_id{mem_graph_vertex post_g x}).
+              Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+              r == rr /\ x == fu /\ reachable post_g r x)
+          (ensures goal)
+        =
+          let finish_x (x: vertex_id{mem_graph_vertex post_g x}) : Lemma
+            (requires
+              Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+              r == rr /\ x == fu /\ reachable post_g r x)
+            (ensures goal)
+          =
+            let finish_s (s: hp_addr) : Lemma
+              (requires exists (d: hp_addr).
+                s == fu /\ d == fv /\ mem_graph_edge post_g s d)
+              (ensures goal)
+            =
+              let finish_d (d: hp_addr) : Lemma
+                (requires s == fu /\ d == fv /\ mem_graph_edge post_g s d)
+                (ensures goal)
+              =
+                assert (x == s);
+                assert (target == d);
+                assert (mem_graph_edge post_g x target);
+                edge_reach post_g x target;
+                assert (reachable post_g x target);
+                reach_trans post_g r x target;
+                assert (reachable post_g r target);
+                assert (Seq.mem rr (rewrite_roots roots prom.fwd_map));
+                assert (r == rr);
+                assert (target == fv);
+                assert (goal)
+              in
+              FStar.Classical.exists_elim goal #_
+                #(fun d -> s == fu /\ d == fv /\ mem_graph_edge post_g s d)
+                ()
+                (fun d -> FStar.Classical.move_requires finish_d d)
+            in
+            FStar.Classical.exists_elim goal #_
+              #(fun s -> exists (d: hp_addr).
+                s == fu /\ d == fv /\ mem_graph_edge post_g s d)
+              ()
+              (fun s -> FStar.Classical.move_requires finish_s s)
+          in
+          FStar.Classical.exists_elim goal #_
+            #(fun x -> Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+                       r == rr /\ x == fu /\ reachable post_g r x)
+            ()
+            (fun x -> FStar.Classical.move_requires finish_x x)
+        in
+        FStar.Classical.exists_elim goal #_
+          #(fun r -> exists (x: vertex_id{mem_graph_vertex post_g x}).
+            Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+            r == rr /\ x == fu /\ reachable post_g r x)
+          ()
+          (fun r -> FStar.Classical.move_requires finish_r r)
+      in
+      FStar.Classical.exists_elim goal #_
+        #(fun rr -> exists (r: vertex_id{mem_graph_vertex post_g r})
+                           (x: vertex_id{mem_graph_vertex post_g x}).
+          Seq.mem rr (rewrite_roots roots prom.fwd_map) /\
+          r == rr /\ x == fu /\ reachable post_g r x)
+        ()
+        (fun rr -> FStar.Classical.move_requires finish_rr rr)
+    in
+    FStar.Classical.exists_elim goal #_
+      #(fun target -> target == fv)
+      ()
+      (fun target -> FStar.Classical.move_requires finish_with_target target)
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let combined_reachable_images_valid_or_infix_reuse
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
