@@ -41,6 +41,21 @@ let roots_valid_nonblue (roots: seq U64.t) (major: heap) : prop =
     is_val_addr r /\ Seq.mem (r <: obj_addr) (objects zero_addr major) ==>
     ~(is_blue (r <: obj_addr) major)
 
+/// Convert a `MajorV -> MajorV` combined-graph edge witness into the concrete
+/// `points_to` relation used by `Mark.no_pointer_to_blue`.
+val major_edge_points_to
+  (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
+  : Lemma
+    (requires
+      well_formed_heap major /\
+      Seq.mem src (objects zero_addr major) /\
+      i < U64.v (wosize_of_object src major) /\
+      U64.v src + i * 8 + 8 <= heap_size /\
+      (U64.v src + i * 8) % 8 == 0 /\
+      classify_major_field minor major
+        (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
+    (ensures is_val_addr dst /\ points_to major src dst)
+
 /// Every reachable major vertex is a valid non-blue major object.
 val reachable_major_valid_nonblue
   (minor: minor_state) (major: heap) (roots: seq U64.t)

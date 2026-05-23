@@ -25,7 +25,7 @@ module Mark = GC.Spec.Mark
 /// Helper: from `major_edge_elim`'s witness, establish `points_to` for
 /// `Mark.no_pointer_to_blue`.
 #push-options "--z3rlimit 80 --fuel 2 --ifuel 0"
-private let major_edge_points_to_aux
+let major_edge_points_to
   (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
     (requires
@@ -107,7 +107,7 @@ let reachable_major_valid_nonblue
                       classify_major_field minor major
                         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
             (ensures points_to major src dst)
-          = major_edge_points_to_aux minor major src dst i
+          = major_edge_points_to minor major src dst i
           in
           Classical.forall_intro (Classical.move_requires pts_aux)
         | MinorV src ->
