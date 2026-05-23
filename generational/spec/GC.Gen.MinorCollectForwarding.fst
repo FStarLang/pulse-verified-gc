@@ -369,14 +369,30 @@ let combined_reachable_major_edge_forwarded
     RBridge.major_object_not_minor_pointer major dst;
     Cheney.cheney_promote_preserves_objects minor major fp roots;
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
-    cheney_promote_preserves_old_major_field_context minor major fp roots src i;
+    CheneyPres.cheney_promote_frame_old_header minor major fp roots src;
+    CheneyPres.cheney_promote_frame_old_fields minor major fp roots src i;
     assert (Seq.mem src (objects zero_addr prom.major_final));
-    assert (Seq.mem dst (objects zero_addr prom.major_final));
+    assert (read_word prom.major_final (hd_address src) ==
+            read_word major (hd_address src));
+    color_of_header_eq src major prom.major_final;
+    is_no_scan_spec src major;
+    is_no_scan_spec src prom.major_final;
+    tag_of_object_spec src major;
+    tag_of_object_spec src prom.major_final;
+    assert (tag_of_object src major == tag_of_object src prom.major_final);
+    assert (is_no_scan src prom.major_final == is_no_scan src major);
+    wosize_of_object_spec src major;
+    wosize_of_object_spec src prom.major_final;
+    assert (wosize_of_object src prom.major_final == wosize_of_object src major);
     assert (read_word prom.major_final field_addr == dst);
     assert (well_formed_heap_part1 prom.major_final);
+    PromUpdate.update_major_pointers_field_effect prom.major_final prom.fwd_map src i;
     assert (updated == update_major_pointers prom.major_final prom.fwd_map);
-    update_preserves_major_target_field prom.major_final prom.fwd_map src dst i;
-    assert (read_word updated field_addr == dst);
+    let new_val = read_word updated field_addr in
+    assert (to_minor_offset (read_word prom.major_final field_addr) == dst);
+    assert (~(is_minor_pointer (to_minor_offset (read_word prom.major_final field_addr)) /\
+              prom.fwd_map (to_minor_offset (read_word prom.major_final field_addr)) <> 0UL));
+    assert (new_val == dst);
     PromUpdate.update_major_pointers_preserves_header prom.major_final prom.fwd_map src;
     assert (read_word updated (hd_address src) == read_word prom.major_final (hd_address src));
     wosize_of_object_spec src updated;
@@ -391,7 +407,13 @@ let combined_reachable_major_edge_forwarded
     wf_object_bound updated src;
     HeapGraph.object_fits_from_bound src updated;
     HeapModel.objects_is_vertex_set updated;
+    assert (is_val_addr dst);
     SpecBase.is_val_addr_spec dst;
+    assert (U64.v dst >= U64.v mword);
+    assert (U64.v dst < heap_size);
+    assert (U64.v dst % U64.v mword == 0);
+    objects_addresses_gt_start zero_addr updated dst;
+    assert (U64.v dst >= U64.v zero_addr + U64.v mword);
     assert (HeapGraph.is_pointer_field dst);
     assert (i + 1 < pow2 64);
     let j = U64.uint_to_t (i + 1) in
