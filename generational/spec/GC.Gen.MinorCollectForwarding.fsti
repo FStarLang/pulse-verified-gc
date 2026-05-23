@@ -558,6 +558,16 @@ let fwd_disjoint_reachable_major
     is_infix (prom.fwd_map x) prom.major_final = false ==>
     prom.fwd_map x <> y
 
+val fwd_disjoint_reachable_major_intro
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major)
+    (ensures fwd_disjoint_reachable_major minor major fp roots)
+
 let combined_reachable_normal_injective_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
@@ -728,8 +738,7 @@ let minor_collect_full_forwarding_kernel
      RBridge.major_field_zero_no_minor minor major /\
      Mark.no_pointer_to_blue major /\
      RBridge.minor_no_pointer_to_blue minor major /\
-     RBridge.roots_valid_nonblue roots major /\
-     fwd_disjoint_reachable_major minor major fp roots ==>
+     RBridge.roots_valid_nonblue roots major ==>
      combined_reachable_normal_injective_prop minor major fp roots /\
      normal_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
      normal_image_edges_are_post_edges_prop minor major fp roots slots n))

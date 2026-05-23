@@ -916,6 +916,53 @@ let combined_reachable_edge_forwarded_normal
       promoted_minor_minor_edge_forwarded minor major fp roots src dst i
 #pop-options
 
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1 --split_queries always"
+let fwd_disjoint_reachable_major_intro
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major)
+    (ensures fwd_disjoint_reachable_major minor major fp roots)
+  =
+    GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.major_heap_shape_elim major fp;
+    GenInv.minor_heap_shape_elim minor;
+    CheneyPres.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
+      minor major fp roots;
+    RBridge.reachable_major_valid_nonblue minor major roots;
+    let aux (x y: U64.t) : Lemma
+      (requires
+        (let cg = CG.build_combined_graph minor major in
+         let combined_roots = CG.classify_roots roots in
+         let prom = cheney_promote minor major fp roots in
+         CG.combined_reachable cg combined_roots (CG.MinorV x) /\
+         CG.combined_reachable cg combined_roots (CG.MajorV y) /\
+         prom.fwd_map x <> 0UL /\
+         is_val_addr (prom.fwd_map x) /\
+         is_infix (prom.fwd_map x) prom.major_final = false))
+      (ensures
+        (let prom = cheney_promote minor major fp roots in
+         prom.fwd_map x <> y))
+    =
+      let prom = cheney_promote minor major fp roots in
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      assert (CG.combined_reachable cg combined_roots (CG.MajorV y));
+      assert (U64.v y >= U64.v mword);
+      assert (U64.v y < heap_size);
+      assert (U64.v y % U64.v mword == 0);
+      assert (Seq.mem (y <: obj_addr) (objects zero_addr major));
+      assert (is_blue (y <: obj_addr) major = false);
+      assert (CheneyPres.fwd_normal_targets_disjoint_from_old_nonblue
+        prom.fwd_map prom.major_final major);
+      assert (prom.fwd_map x <> y)
+    in
+    Classical.forall_intro_2 (Classical.move_requires_2 aux)
+#pop-options
+
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1 --split_queries always"
 let combined_reachable_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -1121,6 +1168,24 @@ let normal_image_edges_are_post_edges
     Classical.forall_intro_2 (fun u -> Classical.move_requires (aux u))
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let combined_reachable_images_valid_or_infix_reuse
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.remembered_roots_in_roots major roots /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
+  =
+    combined_reachable_images_valid_or_infix minor major fp roots;
+    assert (combined_reachable_images_valid_or_infix_prop minor major fp roots)
+#pop-options
+
 let minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat) (ok: bool)
@@ -1152,13 +1217,6 @@ let minor_collect_full_forwarding_kernel_intro
     CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
     CheneyPres.cheney_promote_fwd_targets_not_blue minor major fp roots;
-    if RBridge.major_field_zero_no_minor minor major /\
-       RBridge.remembered_roots_in_roots major roots /\
-       Mark.no_pointer_to_blue major /\
-       RBridge.minor_no_pointer_to_blue minor major /\
-       RBridge.roots_valid_nonblue roots major
-    then
-      combined_reachable_images_valid_or_infix minor major fp roots;
     if UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
        RBridge.major_field_zero_no_minor minor major /\
        Mark.no_pointer_to_blue major /\
@@ -1189,11 +1247,33 @@ let minor_collect_full_forwarding_kernel_intro
        RBridge.major_field_zero_no_minor minor major /\
        Mark.no_pointer_to_blue major /\
        RBridge.minor_no_pointer_to_blue minor major /\
-       RBridge.roots_valid_nonblue roots major /\
-       fwd_disjoint_reachable_major minor major fp roots
+       RBridge.roots_valid_nonblue roots major
     then begin
+      fwd_disjoint_reachable_major_intro minor major fp roots;
       combined_reachable_normal_injective minor major fp roots;
       normal_image_reachable_subgraph_isomorphism minor major fp roots;
       normal_image_edges_are_post_edges minor major fp roots slots n
+    end;
+    if RBridge.major_field_zero_no_minor minor major /\
+       RBridge.remembered_roots_in_roots major roots /\
+       Mark.no_pointer_to_blue major /\
+       RBridge.minor_no_pointer_to_blue minor major /\
+       RBridge.roots_valid_nonblue roots major
+    then begin
+      assert (GenInv.collection_heap_shape minor major fp);
+      assert (RBridge.major_field_zero_no_minor minor major);
+      assert (RBridge.remembered_roots_in_roots major roots);
+      assert (Mark.no_pointer_to_blue major);
+      assert (RBridge.minor_no_pointer_to_blue minor major);
+      assert (RBridge.roots_valid_nonblue roots major);
+      assert (CheneyBFS.cheney_no_oom minor major fp roots);
+      assert (GenInv.collection_heap_shape minor major fp /\
+        RBridge.major_field_zero_no_minor minor major /\
+        RBridge.remembered_roots_in_roots major roots /\
+        Mark.no_pointer_to_blue major /\
+        RBridge.minor_no_pointer_to_blue minor major /\
+        RBridge.roots_valid_nonblue roots major /\
+        CheneyBFS.cheney_no_oom minor major fp roots);
+      combined_reachable_images_valid_or_infix_reuse minor major fp roots
     end
   end

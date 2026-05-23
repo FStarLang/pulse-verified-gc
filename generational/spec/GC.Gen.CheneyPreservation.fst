@@ -1351,6 +1351,21 @@ let cheney_promote_fwd_targets_not_blue
                                         (cheney_promote minor major fp roots).major_final)
   = Injectivity.cheney_promote_fwd_targets_not_blue minor major fp roots
 
+let cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_normal_targets_disjoint_from_old_nonblue
+                     (cheney_promote minor major fp roots).fwd_map
+                     (cheney_promote minor major fp roots).major_final
+                     major)
+  = Injectivity.cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
+      minor major fp roots
+
 let cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)

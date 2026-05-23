@@ -245,6 +245,18 @@ let fwd_targets_not_blue (fwd: forwarding_map) (g: heap) : prop =
     Seq.mem ((fwd x) <: obj_addr) (objects zero_addr g) /\
     is_blue ((fwd x) <: obj_addr) g = false
 
+/// Normal forwarding targets are freshly allocated from the old free-list
+/// region, hence cannot equal a pre-existing non-blue major object.
+let fwd_normal_targets_disjoint_from_old_nonblue
+  (fwd: forwarding_map) (g_final: heap) (major0: heap) : prop =
+  forall (x: U64.t) (y: obj_addr).
+    fwd x <> 0UL /\
+    is_val_addr (fwd x) /\
+    is_infix (fwd x) g_final = false /\
+    Seq.mem y (objects zero_addr major0) /\
+    is_blue y major0 = false ==>
+    fwd x <> y
+
 val cheney_promote_fwd_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -266,6 +278,19 @@ val cheney_promote_fwd_targets_not_blue
                     minor_wf minor)
           (ensures fwd_targets_not_blue (cheney_promote minor major fp roots).fwd_map
                                         (cheney_promote minor major fp roots).major_final)
+
+val cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma (requires well_formed_heap major /\
+                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    chain_objects_blue major fp /\
+                    minor_infix_wf minor /\
+                    minor_wf minor)
+          (ensures fwd_normal_targets_disjoint_from_old_nonblue
+                     (cheney_promote minor major fp roots).fwd_map
+                     (cheney_promote minor major fp roots).major_final
+                     major)
 
 /// ---------------------------------------------------------------------------
 /// Non-blue origin: objects that become non-blue during promotion are fwd targets
