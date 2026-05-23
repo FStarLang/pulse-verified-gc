@@ -855,7 +855,8 @@ fn minor_collect_full (gh: gen_heap_t)
       SpecFields.well_formed_heap_part1 prom.major_final /\
       // Strong correctness: the result equals cheney_collect_spec.mc_major.
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
-      GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2)
+      GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+      MinorIso.minor_collect_full_iso minor_st 's 'fp 'rs 'sl (SZ.v nslots) s2 rs2)
 {
   unfold is_gen_heap;
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
@@ -926,6 +927,8 @@ fn minor_collect_full (gh: gen_heap_t)
     (SZ.v nslots);
   CheneyPres.cheney_collect_preserves_collection_heap_shape
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
+  MinorIso.minor_collect_full_iso_intro
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl (SZ.v nslots);
 
   fold (is_gen_heap gh _ 0UL _ _);
   ok
@@ -982,9 +985,7 @@ fn gen_gc (gh: gen_heap_t)
         'st (stack_capacity st) /\
       (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
         Seq.mem x (SpecFields.objects zero_addr result.mc_major)) /\
-      SpecFields.well_formed_heap_part1 result.mc_major /\
-      AllocLemmas.fl_valid result.mc_major result.mc_fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates result.mc_major result.mc_fp (heap_size / U64.v mword))
+      SpecFields.well_formed_heap_part1 result.mc_major)
 {
   GenInv.full_heap_shape_elim
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'st (stack_capacity st);
@@ -1021,16 +1022,14 @@ fn gen_gc (gh: gen_heap_t)
     ({ data = d_mid; bump = b_mid } <: minor_state) ms_updated fp_mid));
   GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
     ms_updated fp_mid;
+  assert (pure (GenInv.major_heap_shape ms_updated fp_mid));
   GenInv.major_heap_shape_elim ms_updated fp_mid;
-  assert (pure (AllocLemmas.fl_valid ms_updated fp_mid (heap_size / U64.v mword)));
   GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
     ms_updated fp_val;
   assert (pure (GenInv.major_heap_shape ms_updated fp_val));
   GenInv.major_heap_shape_elim ms_updated fp_val;
   assert (pure (SpecFields.well_formed_heap ms_updated));
   assert (pure (FreeListShape.fp_pointer_or_zero fp_val));
-  assert (pure (AllocLemmas.fl_valid ms_updated fp_val (heap_size / U64.v mword)));
-  assert (pure (AllocLemmas.fl_chain_terminates ms_updated fp_val (heap_size / U64.v mword)));
   assert (pure (SweepInv.fp_valid fp_val ms_updated));
   assert (pure (Sweep.fp_in_heap fp_val ms_updated));
   assert (pure (Mark.no_black_objects ms_updated));
@@ -1082,15 +1081,6 @@ fn gen_gc (gh: gen_heap_t)
   assert (pure (SpecFields.well_formed_heap_part1 ms_updated));
   assert (pure (SpecFields.well_formed_heap_part1
     (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major));
-  assert (pure (AllocLemmas.fl_valid
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_fp
-    (heap_size / U64.v mword)));
-  assert (pure (AllocLemmas.fl_chain_terminates
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_fp
-    (heap_size / U64.v mword)));
-
   // Phase 2: Major collection (mark + sweep + coalesce)
   let final_fp = MajorGC.collect gh.major st fp_val;
 

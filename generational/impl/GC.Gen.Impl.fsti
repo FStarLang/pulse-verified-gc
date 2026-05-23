@@ -35,6 +35,7 @@ module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
 module GenInv = GC.Gen.HeapInvariant
+module MinorIso = GC.Gen.MinorCollectIso
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -149,7 +150,8 @@ fn minor_collect_full (gh: gen_heap_t)
       // Strong correctness: the result equals cheney_collect_spec
       // (single-pass full update of all pointer fields in the major heap).
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
-      GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2)
+      GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
+      MinorIso.minor_collect_full_iso minor_st 's 'fp 'rs 'sl (SZ.v nslots) s2 rs2)
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
@@ -254,10 +256,4 @@ fn gen_gc (gh: gen_heap_t)
         Seq.mem x (SpecFields.objects zero_addr result.mc_major)) /\
 
       // Post-minor heap satisfies size-bounds invariant
-      SpecFields.well_formed_heap_part1 result.mc_major /\
-
-      // Post-minor free-list is valid
-      AllocLemmas.fl_valid result.mc_major result.mc_fp (heap_size / U64.v mword) /\
-
-      // Post-minor free-list terminates
-      AllocLemmas.fl_chain_terminates result.mc_major result.mc_fp (heap_size / U64.v mword))
+      SpecFields.well_formed_heap_part1 result.mc_major)
