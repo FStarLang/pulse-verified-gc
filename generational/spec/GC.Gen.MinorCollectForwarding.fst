@@ -1665,6 +1665,112 @@ let normal_src_edge_preserves_post_minor_reachable
       (fun target -> FStar.Classical.move_requires finish_with_target target)
 #pop-options
 
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+let rec ready_src_reach_image_post_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (u: CG.combined_vertex)
+  (r: ready_src_reach minor major fp roots u)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures (
+      let prom = cheney_promote minor major fp roots in
+      post_minor_reachable minor major fp roots
+        (CG.fwd_morphism prom.fwd_map u)))
+    (decreases r)
+  =
+    match r with
+    | ReadyRoot root facts ->
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      assert (Seq.mem root combined_roots);
+      assert (CG.mem_cv root cg);
+      assert (normal_vertex_ready minor major fp roots root);
+      CG.combined_reachable_root cg combined_roots root;
+      assert (normal_src_reachable minor major fp roots root);
+      normal_classified_root_image_post_reachable minor major fp roots root
+    | ReadyStep src dst r_src edge ->
+      ready_src_reach_image_post_reachable minor major fp roots slots n src r_src;
+      normal_src_edge_preserves_post_minor_reachable
+        minor major fp roots slots n src dst
+
+let ready_image_reachable_is_post_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (w: U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      ready_image_reachable minor major fp roots w)
+    (ensures post_minor_reachable minor major fp roots w)
+  =
+    let prom = cheney_promote minor major fp roots in
+    let goal = post_minor_reachable minor major fp roots w in
+    let proof_u (u: CG.combined_vertex) : Lemma
+      (requires ready_src_reachable minor major fp roots u /\
+                CG.fwd_morphism prom.fwd_map u == w)
+      (ensures goal)
+    =
+      let proof_r (r: ready_src_reach minor major fp roots u) : Lemma
+        (requires True)
+        (ensures goal)
+      =
+        ready_src_reach_image_post_reachable minor major fp roots slots n u r;
+        assert (post_minor_reachable minor major fp roots
+          (CG.fwd_morphism prom.fwd_map u));
+        assert (CG.fwd_morphism prom.fwd_map u == w);
+        assert (goal)
+      in
+      FStar.Classical.exists_elim goal
+        #(ready_src_reach minor major fp roots u)
+        #(fun _ -> True)
+        ()
+        (fun r -> FStar.Classical.move_requires proof_r r)
+    in
+    FStar.Classical.exists_elim goal #CG.combined_vertex
+      #(fun u -> ready_src_reachable minor major fp roots u /\
+                 CG.fwd_morphism prom.fwd_map u == w)
+      ()
+      (fun u -> FStar.Classical.move_requires proof_u u)
+
+let ready_image_reachable_is_post_reachable_all
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures ready_image_reachable_is_post_reachable_prop minor major fp roots)
+  =
+    let aux (w: U64.t) : Lemma
+      (requires ready_image_reachable minor major fp roots w)
+      (ensures post_minor_reachable minor major fp roots w)
+    = ready_image_reachable_is_post_reachable minor major fp roots slots n w
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let combined_reachable_images_valid_or_infix_reuse
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -1750,7 +1856,8 @@ let minor_collect_full_forwarding_kernel_intro
       combined_reachable_normal_injective minor major fp roots;
       normal_image_vertices_are_post_vertices minor major fp roots;
       normal_image_reachable_subgraph_isomorphism minor major fp roots;
-      normal_image_edges_are_post_edges minor major fp roots slots n
+      normal_image_edges_are_post_edges minor major fp roots slots n;
+      ready_image_reachable_is_post_reachable_all minor major fp roots slots n
     end;
     if RBridge.major_field_zero_no_minor minor major /\
        RBridge.remembered_roots_in_roots major roots /\
