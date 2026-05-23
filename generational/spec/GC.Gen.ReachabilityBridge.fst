@@ -57,6 +57,18 @@ let major_edge_points_to
     field_read_implies_exists_pointing major src wz k (dst <: obj_addr)
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let major_object_not_minor_pointer
+  (major: heap) (obj: obj_addr)
+  : Lemma (requires Seq.mem obj (objects zero_addr major))
+          (ensures ~(is_minor_pointer obj) /\ to_minor_offset obj == obj)
+  =
+    objects_addresses_gt_start zero_addr major obj;
+    zero_addr_above_minor ();
+    assert (U64.v obj >= minor_heap_size);
+    to_minor_offset_stable_above_minor obj
+#pop-options
+
 #push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let reachable_major_valid_nonblue
   (minor: minor_state) (major: heap) (roots: seq U64.t)

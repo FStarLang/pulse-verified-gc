@@ -56,6 +56,13 @@ val major_edge_points_to
         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
     (ensures is_val_addr dst /\ points_to major src dst)
 
+/// Major-heap objects live above the nursery range, so pointer-update logic
+/// cannot mistake an existing major object address for a minor pointer.
+val major_object_not_minor_pointer
+  (major: heap) (obj: obj_addr)
+  : Lemma (requires Seq.mem obj (objects zero_addr major))
+          (ensures ~(is_minor_pointer obj) /\ to_minor_offset obj == obj)
+
 /// Every reachable major vertex is a valid non-blue major object.
 val reachable_major_valid_nonblue
   (minor: minor_state) (major: heap) (roots: seq U64.t)
