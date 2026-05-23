@@ -528,6 +528,21 @@ val combined_reachable_edge_forwarded_normal
         (CG.fwd_morphism prom.fwd_map u)
         (CG.fwd_morphism prom.fwd_map v)))
 
+let combined_reachable_normal_edges_forwarded_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let cg = CG.build_combined_graph minor major in
+  let combined_roots = CG.classify_roots roots in
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  forall (u v: CG.combined_vertex).
+    CG.combined_reachable cg combined_roots u /\
+    CG.combined_reachable cg combined_roots v /\
+    CG.mem_ce (u, v) cg /\
+    normal_edge_forward_ready minor major fp roots u v ==>
+    mem_graph_edge_at (HeapModel.create_graph res.mc_major)
+      (CG.fwd_morphism prom.fwd_map u)
+      (CG.fwd_morphism prom.fwd_map v)
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel
@@ -566,7 +581,8 @@ let minor_collect_full_forwarding_kernel
      Mark.no_pointer_to_blue major /\
      RBridge.minor_no_pointer_to_blue minor major /\
      RBridge.roots_valid_nonblue roots major ==>
-     combined_reachable_images_valid_or_infix_prop minor major fp roots))
+     combined_reachable_images_valid_or_infix_prop minor major fp roots /\
+     combined_reachable_normal_edges_forwarded_prop minor major fp roots))
 
 val minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)

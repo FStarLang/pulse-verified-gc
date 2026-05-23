@@ -961,6 +961,23 @@ let minor_collect_full_forwarding_kernel_intro
        RBridge.roots_valid_nonblue roots major
     then begin
       remembered_roots_in_roots_from_slots major roots slots n;
-      combined_reachable_images_valid_or_infix minor major fp roots
+      combined_reachable_images_valid_or_infix minor major fp roots;
+      let edge_aux (u v: CG.combined_vertex) : Lemma
+        (requires
+          (let cg = CG.build_combined_graph minor major in
+           let combined_roots = CG.classify_roots roots in
+           CG.combined_reachable cg combined_roots u /\
+           CG.combined_reachable cg combined_roots v /\
+           CG.mem_ce (u, v) cg /\
+           normal_edge_forward_ready minor major fp roots u v))
+        (ensures
+          (let prom = cheney_promote minor major fp roots in
+           let res = cheney_collect_spec minor major fp roots in
+           mem_graph_edge_at (HeapModel.create_graph res.mc_major)
+             (CG.fwd_morphism prom.fwd_map u)
+             (CG.fwd_morphism prom.fwd_map v)))
+      = combined_reachable_edge_forwarded_normal minor major fp roots slots n u v
+      in
+      Classical.forall_intro_2 (fun u -> Classical.move_requires (edge_aux u))
     end
   end
