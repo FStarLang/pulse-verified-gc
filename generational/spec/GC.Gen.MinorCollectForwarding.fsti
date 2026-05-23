@@ -139,6 +139,19 @@ val heap_field_points_to_graph_edge
       HeapGraph.is_pointer_field dst)
     (ensures mem_graph_edge (HeapModel.create_graph g) src dst)
 
+val heap_graph_edge_to_pointer_field
+  (g: heap) (src dst: obj_addr)
+  : Lemma
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (ensures
+      Seq.mem src (objects zero_addr g) /\
+      HeapGraph.object_fits_in_heap src g /\
+      is_no_scan src g = false /\
+      HeapGraph.is_pointer_field dst /\
+      (exists (j: U64.t{U64.v j >= 1}).
+        U64.v j <= U64.v (wosize_of_object src g) /\
+        HeapGraph.get_field g src j == dst))
+
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.
 val cheney_promote_preserves_old_major_field_context
