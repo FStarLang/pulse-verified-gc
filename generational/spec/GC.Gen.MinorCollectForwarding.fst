@@ -1156,6 +1156,50 @@ let fwd_disjoint_reachable_major_intro
     Classical.forall_intro_2 (Classical.move_requires_2 aux)
 #pop-options
 
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1 --split_queries always"
+let minor_source_edge_not_no_scan
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (src: U64.t) (dst: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major))
+    (ensures minor_tag minor src < 251)
+  =
+    GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.minor_heap_shape_elim minor;
+    assert (minor_no_scan_invariant minor);
+    CG.minor_edge_elim minor major src dst;
+    assert (Seq.mem src (minor_objects minor));
+    let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
+      (fun i -> i < minor_wosize minor src /\
+        CG.classify_minor_field minor major (minor_read_field minor src i) == Some dst) in
+    assert (i < minor_wosize minor src);
+    assert (CG.classify_minor_field minor major (minor_read_field minor src i) == Some dst);
+    if minor_tag minor src >= 251 then begin
+      let field = minor_read_field minor src i in
+      match dst with
+      | CG.MinorV d ->
+        CG.classify_minor_field_inv_minor minor major field d;
+        assert (field == d);
+        assert (Seq.mem field (minor_objects minor));
+        minor_objects_valid minor field;
+        assert (is_minor_pointer field);
+        assert (~(is_minor_pointer field));
+        assert False
+      | CG.MajorV d ->
+        CG.classify_minor_field_inv_major minor major field d;
+        assert (field == d);
+        assert (Seq.mem (d <: obj_addr) (objects zero_addr major));
+        objects_addresses_gt_start zero_addr major (d <: obj_addr);
+        assert (U64.v d > U64.v zero_addr);
+        assert (U64.v d >= U64.v zero_addr + U64.v mword);
+        assert (is_pointer_field field);
+        assert (~(is_pointer_field field));
+        assert False
+    end
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let rec rewrite_roots_mem_image
   (roots: seq U64.t) (fwd: forwarding_map) (r: U64.t)
@@ -1769,6 +1813,119 @@ let ready_image_reachable_is_post_reachable_all
     = ready_image_reachable_is_post_reachable minor major fp roots slots n w
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+private let ready_src_reach_normal_src_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (u: CG.combined_vertex)
+  (r: ready_src_reach minor major fp roots u)
+  : Lemma
+    (ensures normal_src_reachable minor major fp roots u)
+  =
+    match r with
+    | ReadyRoot root facts ->
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      assert (Seq.mem root combined_roots);
+      assert (CG.mem_cv root cg);
+      assert (normal_vertex_ready minor major fp roots root);
+      CG.combined_reachable_root cg combined_roots root
+    | ReadyStep src dst r_src edge ->
+      assert (normal_src_edge minor major fp roots src dst);
+      assert (normal_src_reachable minor major fp roots dst)
+
+let ready_image_reachable_subgraph_isomorphism
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major)
+    (ensures ready_image_reachable_subgraph_isomorphism_prop minor major fp roots)
+  =
+    let prom = cheney_promote minor major fp roots in
+    fwd_disjoint_reachable_major_intro minor major fp roots;
+    combined_reachable_normal_injective minor major fp roots;
+    assert (combined_reachable_normal_injective_prop minor major fp roots);
+    let ready_normal (u: CG.combined_vertex) : Lemma
+      (requires ready_src_reachable minor major fp roots u)
+      (ensures normal_src_reachable minor major fp roots u)
+    =
+      let aux (r: ready_src_reach minor major fp roots u) : Lemma
+        (requires True)
+        (ensures normal_src_reachable minor major fp roots u)
+      = ready_src_reach_normal_src_reachable minor major fp roots u r
+      in
+      FStar.Classical.exists_elim
+        (normal_src_reachable minor major fp roots u)
+        #(ready_src_reach minor major fp roots u)
+        #(fun _ -> True)
+        ()
+        (fun r -> FStar.Classical.move_requires aux r)
+    in
+    let image_valid (u: CG.combined_vertex) : Lemma
+      (requires ready_src_reachable minor major fp roots u)
+      (ensures ready_image_reachable minor major fp roots (CG.fwd_morphism prom.fwd_map u))
+    = ()
+    in
+    let inj (u v: CG.combined_vertex) : Lemma
+      (requires ready_src_reachable minor major fp roots u /\
+                ready_src_reachable minor major fp roots v /\
+                CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map v)
+      (ensures u == v)
+    =
+      ready_normal u;
+      ready_normal v;
+      assert (normal_src_reachable minor major fp roots u);
+      assert (normal_src_reachable minor major fp roots v);
+      assert (combined_reachable_normal_injective_prop minor major fp roots);
+      assert (u == v)
+    in
+    let surj (w: U64.t) : Lemma
+      (requires ready_image_reachable minor major fp roots w)
+      (ensures exists (u: CG.combined_vertex).
+        ready_src_reachable minor major fp roots u /\
+        CG.fwd_morphism prom.fwd_map u == w)
+    = ()
+    in
+    let edge (u v: CG.combined_vertex) : Lemma
+      (requires ready_src_reachable minor major fp roots u /\
+                ready_src_reachable minor major fp roots v)
+      (ensures (ready_src_edge minor major fp roots u v <==>
+                ready_image_edge minor major fp roots
+                  (CG.fwd_morphism prom.fwd_map u)
+                  (CG.fwd_morphism prom.fwd_map v)))
+    =
+      if ready_src_edge minor major fp roots u v then ()
+      else begin
+        if ready_image_edge minor major fp roots
+             (CG.fwd_morphism prom.fwd_map u)
+             (CG.fwd_morphism prom.fwd_map v)
+        then begin
+          let u' = FStar.IndefiniteDescription.indefinite_description_ghost CG.combined_vertex
+            (fun u' -> exists (v': CG.combined_vertex).
+              ready_src_edge minor major fp roots u' v' /\
+              CG.fwd_morphism prom.fwd_map u' == CG.fwd_morphism prom.fwd_map u /\
+              CG.fwd_morphism prom.fwd_map v' == CG.fwd_morphism prom.fwd_map v) in
+          let v' = FStar.IndefiniteDescription.indefinite_description_ghost CG.combined_vertex
+            (fun v' ->
+              ready_src_edge minor major fp roots u' v' /\
+              CG.fwd_morphism prom.fwd_map u' == CG.fwd_morphism prom.fwd_map u /\
+              CG.fwd_morphism prom.fwd_map v' == CG.fwd_morphism prom.fwd_map v) in
+          assert (ready_src_reachable minor major fp roots u');
+          assert (ready_src_reachable minor major fp roots v');
+          inj u' u;
+          inj v' v;
+          assert (u' == u);
+          assert (v' == v);
+          assert False
+        end
+      end
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires image_valid);
+    FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 inj);
+    FStar.Classical.forall_intro (FStar.Classical.move_requires surj);
+    FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (edge u))
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
@@ -1857,6 +2014,7 @@ let minor_collect_full_forwarding_kernel_intro
       normal_image_vertices_are_post_vertices minor major fp roots;
       normal_image_reachable_subgraph_isomorphism minor major fp roots;
       normal_image_edges_are_post_edges minor major fp roots slots n;
+      ready_image_reachable_subgraph_isomorphism minor major fp roots;
       ready_image_reachable_is_post_reachable_all minor major fp roots slots n
     end;
     if RBridge.major_field_zero_no_minor minor major /\

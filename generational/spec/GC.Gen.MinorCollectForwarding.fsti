@@ -614,6 +614,15 @@ val fwd_disjoint_reachable_major_intro
       RBridge.roots_valid_nonblue roots major)
     (ensures fwd_disjoint_reachable_major minor major fp roots)
 
+val minor_source_edge_not_no_scan
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (src: U64.t) (dst: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      CG.mem_ce (CG.MinorV src, dst) (CG.build_combined_graph minor major))
+    (ensures minor_tag minor src < 251)
+
 let combined_reachable_normal_injective_prop
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
   let cg = CG.build_combined_graph minor major in
@@ -704,6 +713,32 @@ let ready_image_reachable
   exists (u: CG.combined_vertex).
     ready_src_reachable minor major fp roots u /\
     CG.fwd_morphism prom.fwd_map u == w
+
+let ready_src_edge
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (u v: CG.combined_vertex) : prop =
+  ready_src_reachable minor major fp roots u /\
+  ready_src_reachable minor major fp roots v /\
+  normal_src_edge minor major fp roots u v
+
+let ready_image_edge
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x y: U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  exists (u v: CG.combined_vertex).
+    ready_src_edge minor major fp roots u v /\
+    CG.fwd_morphism prom.fwd_map u == x /\
+    CG.fwd_morphism prom.fwd_map v == y
+
+let ready_image_reachable_subgraph_isomorphism_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  CG.reachable_subgraph_isomorphism
+    (ready_src_reachable minor major fp roots)
+    (ready_image_reachable minor major fp roots)
+    (ready_src_edge minor major fp roots)
+    (ready_image_edge minor major fp roots)
+    prom.fwd_map
 
 let normal_image_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -898,6 +933,16 @@ val ready_image_reachable_is_post_reachable_all
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures ready_image_reachable_is_post_reachable_prop minor major fp roots)
 
+val ready_image_reachable_subgraph_isomorphism
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major)
+    (ensures ready_image_reachable_subgraph_isomorphism_prop minor major fp roots)
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel
@@ -948,6 +993,7 @@ let minor_collect_full_forwarding_kernel
      normal_image_vertices_are_post_vertices_prop minor major fp roots /\
      normal_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
      normal_image_edges_are_post_edges_prop minor major fp roots slots n /\
+     ready_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
      ready_image_reachable_is_post_reachable_prop minor major fp roots))
 
 val minor_collect_full_forwarding_kernel_intro
