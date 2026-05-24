@@ -958,6 +958,61 @@ val ready_image_reachable_subgraph_isomorphism
       RBridge.roots_valid_nonblue roots major)
     (ensures ready_image_reachable_subgraph_isomorphism_prop minor major fp roots)
 
+val normal_src_reachable_is_ready_src_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (u: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      normal_src_reachable minor major fp roots u)
+    (ensures ready_src_reachable minor major fp roots u)
+
+let normal_image_reachable_is_post_reachable_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  forall (w: U64.t).
+    normal_image_reachable minor major fp roots w ==>
+    post_minor_reachable minor major fp roots w
+
+val normal_image_reachable_is_post_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (w: U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      normal_image_reachable minor major fp roots w)
+    (ensures post_minor_reachable minor major fp roots w)
+
+val normal_image_reachable_is_post_reachable_all
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures normal_image_reachable_is_post_reachable_prop minor major fp roots)
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel
@@ -1009,7 +1064,8 @@ let minor_collect_full_forwarding_kernel
      normal_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
      normal_image_edges_are_post_edges_prop minor major fp roots slots n /\
      ready_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
-     ready_image_reachable_is_post_reachable_prop minor major fp roots))
+     ready_image_reachable_is_post_reachable_prop minor major fp roots /\
+     normal_image_reachable_is_post_reachable_prop minor major fp roots))
 
 val minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
