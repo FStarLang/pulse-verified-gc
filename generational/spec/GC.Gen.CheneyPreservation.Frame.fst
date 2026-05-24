@@ -252,6 +252,7 @@ let cheney_forward_normal_preserves_old_nonblue_shape
         (let cs' = cheney_forward_normal minor cs addr in
          Seq.mem src (objects zero_addr cs'.cs_major) /\
          is_blue src cs'.cs_major = false /\
+         is_no_scan src cs'.cs_major == is_no_scan src cs.cs_major /\
          wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
   =
   if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then
@@ -277,6 +278,10 @@ let cheney_forward_normal_preserves_old_nonblue_shape
         assert (read_word cs'.cs_major (hd_address src) ==
                 read_word cs.cs_major (hd_address src));
         color_of_header_eq src cs.cs_major cs'.cs_major;
+        tag_of_object_spec src cs.cs_major;
+        tag_of_object_spec src cs'.cs_major;
+        is_no_scan_spec src cs.cs_major;
+        is_no_scan_spec src cs'.cs_major;
         wosize_of_object_spec src cs.cs_major;
         wosize_of_object_spec src cs'.cs_major
       end
@@ -297,6 +302,7 @@ let cheney_forward_one_preserves_old_nonblue_shape
         (let cs' = cheney_forward_one minor cs addr in
          Seq.mem src (objects zero_addr cs'.cs_major) /\
          is_blue src cs'.cs_major = false /\
+         is_no_scan src cs'.cs_major == is_no_scan src cs.cs_major /\
          wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
   =
   if cs.cs_fwd addr <> 0UL then

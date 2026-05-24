@@ -71,6 +71,7 @@ val cheney_forward_normal_preserves_old_nonblue_shape
         (let cs' = cheney_forward_normal minor cs addr in
          Seq.mem src (objects zero_addr cs'.cs_major) /\
          is_blue src cs'.cs_major = false /\
+         is_no_scan src cs'.cs_major == is_no_scan src cs.cs_major /\
          wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
 
 val cheney_forward_one_preserves_old_nonblue_shape
@@ -89,6 +90,7 @@ val cheney_forward_one_preserves_old_nonblue_shape
         (let cs' = cheney_forward_one minor cs addr in
          Seq.mem src (objects zero_addr cs'.cs_major) /\
          is_blue src cs'.cs_major = false /\
+         is_no_scan src cs'.cs_major == is_no_scan src cs.cs_major /\
          wosize_of_object src cs'.cs_major == wosize_of_object src cs.cs_major))
 
 val cheney_forward_normal_frame_field

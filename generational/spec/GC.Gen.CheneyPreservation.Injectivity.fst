@@ -809,9 +809,19 @@ private let cheney_forward_one_preserves_source_inv
         =
         if x = addr then begin
           assert (r.cs_fwd addr == sum);
+          assert (is_infix_in_minor minor addr);
+          assert (minor_wosize minor addr * 8 <= U64.v addr - 8);
           infix_parent_value minor addr;
           let wz_infix = minor_wosize minor addr in
           assert (U64.v parent == U64.v addr - wz_infix * 8);
+          FStar.Math.Lemmas.subtraction_is_distributive
+            (U64.v addr) (U64.v addr) (wz_infix * 8);
+          assert (U64.v addr - (U64.v addr - wz_infix * 8) ==
+                  U64.v addr - U64.v addr + wz_infix * 8);
+          assert (U64.v addr - U64.v parent ==
+                  U64.v addr - (U64.v addr - wz_infix * 8));
+          assert (U64.v addr - U64.v addr == 0);
+          assert (U64.v addr - U64.v parent == wz_infix * 8);
           assert (delta == wz_infix * 8);
           assert (wz_infix > 0);
           FStar.Math.Lemmas.multiple_modulo_lemma wz_infix 8;

@@ -46,6 +46,33 @@ val cheney_promote_fwd_target_fields_match
           (U64.uint_to_t (U64.v (prom.fwd_map x) + j * 8))
         == minor_read_field minor x j))
 
+/// A normally-forwarded minor object whose source tag is below No_scan_tag is
+/// not a no-scan object in the final promoted heap.  Infix forwarding targets
+/// are excluded by the `is_infix = false` premise.
+val cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (x: U64.t)
+  : Lemma
+    (requires well_formed_heap major /\
+              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+              AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+              chain_objects_blue major fp /\
+              minor_wf minor /\
+              minor_infix_wf minor /\
+              (let prom = cheney_promote minor major fp roots in
+               prom.fwd_map x <> 0UL /\
+               Seq.mem x (minor_objects minor) /\
+               is_val_addr (prom.fwd_map x) /\
+               is_infix (prom.fwd_map x) prom.major_final = false /\
+               minor_tag minor x < 251))
+    (ensures
+      (let prom = cheney_promote minor major fp roots in
+       let target : obj_addr = prom.fwd_map x in
+       Seq.mem target (objects zero_addr prom.major_final) /\
+       is_blue target prom.major_final = false /\
+       is_no_scan target prom.major_final = false /\
+       U64.v (wosize_of_object target prom.major_final) >= minor_wosize minor x))
+
 /// Allocator rounding can leave one extra body word in a promoted block.
 /// That word is zeroed during promotion and remains non-pointer through the
 /// rest of Cheney's BFS.

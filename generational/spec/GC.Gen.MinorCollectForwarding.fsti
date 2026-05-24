@@ -664,6 +664,21 @@ let normal_src_reachable
   CG.combined_reachable cg combined_roots u /\
   normal_vertex_ready minor major fp roots u
 
+val normal_edge_forward_ready_intro
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      normal_src_reachable minor major fp roots u /\
+      normal_src_reachable minor major fp roots v /\
+      CG.mem_ce (u, v) (CG.build_combined_graph minor major))
+    (ensures normal_edge_forward_ready minor major fp roots u v)
+
 val normal_classified_root_image_in_rewrite_roots
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (u: CG.combined_vertex)
