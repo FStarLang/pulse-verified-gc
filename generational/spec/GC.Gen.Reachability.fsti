@@ -26,9 +26,8 @@ open GC.Gen.MinorHeap
 
 /// Given a minor-heap state and an object address, return the sequence of
 /// intra-minor pointer targets reachable from that object's fields.
-/// A field value is included if:
-///   - is_minor_addr returns true for it (word-aligned, within minor heap bounds)
-///   - It is a member of minor_objects ms (actually allocated)
+/// A field value is included if its `to_minor_offset` value is a word-aligned
+/// address of an allocated minor object.
 val minor_successors (ms: minor_state) (obj: U64.t) : GTot (seq U64.t)
 
 /// Every successor is a valid minor object
@@ -63,14 +62,14 @@ val minor_reachable_roots (ms: minor_state) (roots: seq U64.t)
 val minor_successors_length (ms: minor_state) (obj: U64.t)
   : Lemma (ensures Seq.length (minor_successors ms obj) <= minor_wosize ms obj)
 
-/// Characterization: y is a successor of x iff some field of x contains y and
-/// y is a valid allocated minor object.
+/// Characterization: y is a successor of x iff some field of x normalizes to y
+/// and y is a valid allocated minor object.
 val minor_successors_char (ms: minor_state) (x y: U64.t)
   : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
-                   (exists (i:nat). i < minor_wosize ms x /\
-                                    minor_read_field ms x i == y /\
-                                    is_minor_addr y /\
-                                    Seq.mem y (minor_objects ms)))
+                    (exists (i:nat). i < minor_wosize ms x /\
+                                     to_minor_offset (minor_read_field ms x i) == y /\
+                                     is_minor_addr y /\
+                                     Seq.mem y (minor_objects ms)))
 
 /// The reachable set is closed under minor_successors
 val minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)

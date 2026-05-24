@@ -28,9 +28,10 @@ let rec scan_object_fields (major: heap) (obj: obj_addr) (wosize: nat) (i: nat)
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then Seq.empty
     else
       let field_val = read_word major (U64.uint_to_t field_offset) in
+      let target = to_minor_offset field_val in
       let rest = scan_object_fields major obj wosize (i + 1) in
-      if is_minor_object_addr field_val then
-        let ref = { rem_obj = obj; rem_field = i + 1; rem_target = field_val } in
+      if is_minor_object_addr target then
+        let ref = { rem_obj = obj; rem_field = i + 1; rem_target = target } in
         Seq.cons ref rest
       else
         rest
@@ -108,7 +109,7 @@ private let rec extract_targets_sound (refs: seq remembered_ref) (idx: nat) (v: 
   end
 #pop-options
 
-/// scan_object_fields produces an entry whose .rem_target is the target field value.
+/// scan_object_fields produces an entry whose .rem_target is the normalized target.
 /// Returns the concrete index of that entry as a Ghost witness.
 #push-options "--fuel 2 --z3rlimit 40"
 let rec scan_object_fields_witness (major: heap) (obj: obj_addr) (wosize: nat) (i: nat) (field_idx: nat)
@@ -117,13 +118,13 @@ let rec scan_object_fields_witness (major: heap) (obj: obj_addr) (wosize: nat) (
       i <= field_idx - 1 /\ field_idx < wosize /\
       U64.v obj + field_idx * 8 + 8 <= heap_size /\
       (U64.v obj + field_idx * 8) % 8 == 0 /\
-      is_minor_object_addr (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
+      is_minor_object_addr (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))))
     (ensures (fun j ->
       let result = scan_object_fields major obj wosize i in
-      let target = read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) in
+      let target = to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) in
       j < Seq.length result /\ (Seq.index result j).rem_target == target))
     (decreases (wosize - i)) =
-  let target = read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) in
+  let target = to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) in
   let field_offset_i = U64.v obj + (i + 1) * 8 in
   // Intermediate field offsets are valid since (i+1) <= field_idx
   assert (field_offset_i + 8 <= U64.v obj + field_idx * 8 + 8);
@@ -133,7 +134,8 @@ let rec scan_object_fields_witness (major: heap) (obj: obj_addr) (wosize: nat) (
   else begin
     let rest_witness = scan_object_fields_witness major obj wosize (i + 1) field_idx in
     let field_val = read_word major (U64.uint_to_t field_offset_i) in
-    if is_minor_object_addr field_val then
+    let target_i = to_minor_offset field_val in
+    if is_minor_object_addr target_i then
       rest_witness + 1
     else
       rest_witness
@@ -153,7 +155,7 @@ private let rec scan_object_fields_sound
        rr.rem_field < wosize /\
        U64.v obj + rr.rem_field * 8 + 8 <= heap_size /\
        (U64.v obj + rr.rem_field * 8) % 8 == 0 /\
-       read_word major (U64.uint_to_t (U64.v obj + rr.rem_field * 8)) == rr.rem_target /\
+       to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + rr.rem_field * 8))) == rr.rem_target /\
        is_minor_object_addr rr.rem_target))
     (decreases (wosize - i)) =
   if i + 1 >= wosize then ()
@@ -162,9 +164,10 @@ private let rec scan_object_fields_sound
     if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
     else begin
       let field_val = read_word major (U64.uint_to_t field_offset) in
+      let target = to_minor_offset field_val in
       let rest = scan_object_fields major obj wosize (i + 1) in
-      if is_minor_object_addr field_val then begin
-        let ref = { rem_obj = obj; rem_field = i + 1; rem_target = field_val } in
+      if is_minor_object_addr target then begin
+        let ref = { rem_obj = obj; rem_field = i + 1; rem_target = target } in
         if k = 0 then ()
         else scan_object_fields_sound major obj wosize (i + 1) (k - 1)
       end else
@@ -212,7 +215,7 @@ private let rec scan_objects_list_sound
          field_idx < U64.v (wosize_of_object obj major) /\
          U64.v obj + field_idx * 8 + 8 <= heap_size /\
          (U64.v obj + field_idx * 8) % 8 == 0 /\
-         read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) == rr.rem_target /\
+          to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == rr.rem_target /\
        is_minor_object_addr rr.rem_target))
     (decreases (Seq.length objs - idx)) =
   if idx >= Seq.length objs then
@@ -258,11 +261,11 @@ let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
              field_idx >= 1 /\ field_idx < U64.v (wosize_of_object obj major) /\
              U64.v obj + field_idx * 8 + 8 <= heap_size /\
              (U64.v obj + field_idx * 8) % 8 == 0 /\
-              is_minor_object_addr (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
+              is_minor_object_addr (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))))
           (ensures
-             Seq.mem (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))
+             Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
                      (minor_roots_from_major major)) =
-  let target = read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) in
+  let target = to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) in
   let objs = objects zero_addr major in
   let wz = U64.v (wosize_of_object obj major) in
 
@@ -292,7 +295,7 @@ let minor_roots_from_major_sound (major: heap) (v: U64.t)
               field_idx < U64.v (wosize_of_object obj major) /\
               U64.v obj + field_idx * 8 + 8 <= heap_size /\
               (U64.v obj + field_idx * 8) % 8 == 0 /\
-              read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) == v /\
+              to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == v /\
               is_minor_object_addr v)
   =
     let refs = scan_major_for_minor_refs major in

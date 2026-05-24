@@ -69,9 +69,10 @@ val scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
              field_idx >= 1 /\ field_idx < U64.v (wosize_of_object obj major) /\
              U64.v obj + field_idx * 8 + 8 <= heap_size /\
              (U64.v obj + field_idx * 8) % 8 == 0 /\
-             is_minor_object_addr (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
+             is_minor_object_addr (to_minor_offset
+               (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))))
            (ensures
-             Seq.mem (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))
+             Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
                      (minor_roots_from_major major))
 
 /// Soundness of the scan: every root returned by `minor_roots_from_major`
@@ -87,5 +88,5 @@ val minor_roots_from_major_sound (major: heap) (v: U64.t)
               field_idx < U64.v (wosize_of_object obj major) /\
               U64.v obj + field_idx * 8 + 8 <= heap_size /\
               (U64.v obj + field_idx * 8) % 8 == 0 /\
-              read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)) == v /\
+              to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == v /\
               is_minor_object_addr v)

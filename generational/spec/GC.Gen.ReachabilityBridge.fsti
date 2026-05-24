@@ -96,33 +96,13 @@ val reachable_major_valid
         U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
         Seq.mem (v <: obj_addr) (objects zero_addr major)))
 
-/// Major fields with index >= 1 that point into the minor heap are accounted
-/// for by `minor_roots_from_major`.
-let major_field_one_plus_in_remembered (ms: minor_state) (major: heap) : prop =
-  forall (src: obj_addr) (v: U64.t).
-    Seq.mem src (objects zero_addr major) /\ is_blue src major = false /\
-    ~(is_no_scan src major) /\
-    (exists (i: nat). i >= 1 /\ i < U64.v (wosize_of_object src major) /\
-      U64.v src + i * 8 + 8 <= heap_size /\
-      (U64.v src + i * 8) % 8 == 0 /\
-      read_word major (U64.uint_to_t (U64.v src + i * 8)) == v) /\
-    is_minor_pointer v /\ Seq.mem v (minor_objects ms) ==>
-    Seq.mem v (minor_roots_from_major major)
-
-/// The pure remembered-set scan records every non-field-0 minor pointer in a
-/// scannable major object.
-val major_field_one_plus_in_remembered_intro
-  (minor: minor_state) (major: heap)
-  : Lemma (requires well_formed_heap major)
-          (ensures major_field_one_plus_in_remembered minor major)
-
 /// Field 0 is not scanned by the remembered-set model, so callers must rule out
 /// minor pointers there when using the generic bridge.
 let major_field_zero_no_minor (ms: minor_state) (major: heap) : prop =
   forall (src: obj_addr).
     Seq.mem src (objects zero_addr major) /\ ~(is_no_scan src major) /\
     U64.v src + 8 <= heap_size ==>
-    (let v = read_word major (U64.uint_to_t (U64.v src)) in
+    (let v = to_minor_offset (read_word major (U64.uint_to_t (U64.v src))) in
      ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
 
 /// The scan-derived remembered roots are already included in the Cheney root

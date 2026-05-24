@@ -163,6 +163,20 @@ val heap_graph_edge_to_pointer_field
         U64.v j <= U64.v (wosize_of_object src g) /\
         HeapGraph.get_field g src j == dst))
 
+val heap_graph_edge_to_field_read
+  (g: heap) (src dst: obj_addr)
+  : Lemma
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (ensures
+      Seq.mem src (objects zero_addr g) /\
+      is_no_scan src g = false /\
+      HeapGraph.is_pointer_field dst /\
+      (exists (j: nat).
+        j < U64.v (wosize_of_object src g) /\
+        U64.v src + j * 8 + 8 <= heap_size /\
+        (U64.v src + j * 8) % 8 == 0 /\
+        read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst))
+
 /// Cheney promotion preserves the header-derived facts and body field of a
 /// pre-existing non-blue major object.
 val cheney_promote_preserves_old_major_field_context
@@ -1013,6 +1027,59 @@ val normal_image_reachable_is_post_reachable_all
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures normal_image_reachable_is_post_reachable_prop minor major fp roots)
 
+let normal_post_image_reachable
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (w: U64.t) : prop =
+  post_minor_reachable minor major fp roots w /\
+  normal_image_reachable minor major fp roots w
+
+let normal_post_image_reachable_subgraph_isomorphism_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  CG.reachable_subgraph_isomorphism
+    (normal_src_reachable minor major fp roots)
+    (normal_post_image_reachable minor major fp roots)
+    (normal_src_edge minor major fp roots)
+    (post_minor_edge minor major fp roots)
+    prom.fwd_map
+
+val post_normal_image_edges_reflect_src
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots /\
+      normal_src_reachable minor major fp roots u /\
+      normal_src_reachable minor major fp roots v /\
+      (let prom = cheney_promote minor major fp roots in
+       post_minor_edge minor major fp roots
+         (CG.fwd_morphism prom.fwd_map u)
+         (CG.fwd_morphism prom.fwd_map v)))
+    (ensures normal_src_edge minor major fp roots u v)
+
+val normal_post_image_reachable_subgraph_isomorphism
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures normal_post_image_reachable_subgraph_isomorphism_prop minor major fp roots)
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel
@@ -1065,7 +1132,8 @@ let minor_collect_full_forwarding_kernel
      normal_image_edges_are_post_edges_prop minor major fp roots slots n /\
      ready_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
      ready_image_reachable_is_post_reachable_prop minor major fp roots /\
-     normal_image_reachable_is_post_reachable_prop minor major fp roots))
+     normal_image_reachable_is_post_reachable_prop minor major fp roots /\
+     normal_post_image_reachable_subgraph_isomorphism_prop minor major fp roots))
 
 val minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)

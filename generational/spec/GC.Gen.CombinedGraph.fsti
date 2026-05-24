@@ -70,24 +70,30 @@ let combined_graph_wf (g: combined_graph) : prop =
 /// ---------------------------------------------------------------------------
 
 /// Classify a field value read from a minor-heap object.
-/// A field is a pointer if it refers to another minor object or a major object.
+/// Minor targets are normalized with `to_minor_offset`; major targets use the
+/// raw value.
 val classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
   : GTot (option combined_vertex)
 
-/// Characterization: classify_minor_field returns MinorV v when v is a minor object
+/// Characterization: classify_minor_field returns `MinorV (to_minor_offset v)`
+/// when the normalized value is a minor object.
 val classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires is_minor_addr v /\ Seq.mem v (minor_objects ms))
-          (ensures classify_minor_field ms major v == Some (MinorV v))
+  : Lemma (requires (
+             let vo = to_minor_offset v in
+             is_minor_addr vo /\ Seq.mem vo (minor_objects ms)))
+          (ensures classify_minor_field ms major v == Some (MinorV (to_minor_offset v)))
 
 /// Characterization: classify_minor_field returns MajorV v when v is a major object
 /// and not a minor object (used by edge backward proofs)
 val classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
-                    ~(is_minor_pointer v))
+                    (let vo = to_minor_offset v in
+                     ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms))))
           (ensures classify_minor_field ms major v == Some (MajorV v))
 
 /// Classify a field value read from a major-heap object.
-/// A field is a pointer if it refers to a major object or a minor object.
+/// Minor targets are normalized with `to_minor_offset`, matching the
+/// remembered-set scan and pointer-update semantics.
 val classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
   : GTot (option combined_vertex)
 
@@ -95,40 +101,47 @@ val classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
 /// and not a minor pointer
 val classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
-                    ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
+                    (let vo = to_minor_offset v in
+                     ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
           (ensures classify_major_field ms major v == Some (MajorV v))
 
-/// Characterization: classify_major_field returns MinorV v when v is a minor pointer
-/// in the minor objects set (used by edge backward proofs)
+/// Characterization: classify_major_field returns MinorV (to_minor_offset v)
+/// when the normalized value is a minor pointer in the minor objects set.
 val classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires is_minor_pointer v /\ Seq.mem v (minor_objects ms))
-          (ensures classify_major_field ms major v == Some (MinorV v))
+  : Lemma (requires (
+             let vo = to_minor_offset v in
+             is_minor_pointer vo /\ Seq.mem vo (minor_objects ms)))
+          (ensures classify_major_field ms major v == Some (MinorV (to_minor_offset v)))
 
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas
 /// ---------------------------------------------------------------------------
 
-/// Inversion: classify_minor_field == Some (MinorV x) implies v == x and v is minor
+/// Inversion: classify_minor_field == Some (MinorV x) implies the normalized
+/// value is x and x is minor.
 val classify_minor_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_minor_field ms major v == Some (MinorV x))
-          (ensures v == x /\ is_minor_addr v /\ Seq.mem v (minor_objects ms))
+          (ensures to_minor_offset v == x /\ is_minor_addr x /\ Seq.mem x (minor_objects ms))
 
 /// Inversion: classify_minor_field == Some (MajorV x) implies v == x and v is major
 val classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_minor_field ms major v == Some (MajorV x))
           (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   ~(is_minor_addr v /\ Seq.mem v (minor_objects ms)))
+                   (let vo = to_minor_offset v in
+                    ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms))))
 
-/// Inversion: classify_major_field == Some (MinorV x) implies v == x and v is minor
+/// Inversion: classify_major_field == Some (MinorV x) implies the normalized
+/// field value is x and x is minor.
 val classify_major_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_major_field ms major v == Some (MinorV x))
-          (ensures v == x /\ is_minor_pointer v /\ Seq.mem v (minor_objects ms))
+          (ensures to_minor_offset v == x /\ is_minor_pointer x /\ Seq.mem x (minor_objects ms))
 
 /// Inversion: classify_major_field == Some (MajorV x) implies v == x and v is major
 val classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_major_field ms major v == Some (MajorV x))
           (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   ~(is_minor_pointer v /\ Seq.mem v (minor_objects ms)))
+                   (let vo = to_minor_offset v in
+                    ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
 
 /// ---------------------------------------------------------------------------
 /// Graph Construction

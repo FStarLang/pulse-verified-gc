@@ -289,7 +289,7 @@ private let minor_reset_no_scan_invariant (minor: minor_state)
                       minor_tag reset obj >= 251 /\
                       j < minor_wosize reset obj ==>
                       ~(is_pointer_field (minor_read_field reset obj j)) /\
-                      ~(is_minor_pointer (minor_read_field reset obj j))))
+                      ~(is_minor_pointer (to_minor_offset (minor_read_field reset obj j)))))
     =
     minor_reset_objects_not_mem minor obj
   in

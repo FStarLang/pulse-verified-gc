@@ -28,7 +28,7 @@ let rec collect_minor_successors
   =
   if idx >= wosize then Seq.empty
   else
-    let field_val = minor_read_field ms obj idx in
+    let field_val = to_minor_offset (minor_read_field ms obj idx) in
     let rest = collect_minor_successors ms obj (idx + 1) wosize in
     if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
     then Seq.cons field_val rest
@@ -60,7 +60,7 @@ let rec collect_minor_successors_valid
   =
   if idx >= wosize then ()
   else
-    let field_val = minor_read_field ms obj idx in
+    let field_val = to_minor_offset (minor_read_field ms obj idx) in
     let rest = collect_minor_successors ms obj (idx + 1) wosize in
     if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
     then begin
@@ -362,15 +362,15 @@ private let rec collect_minor_successors_char
   (y: U64.t)
   : Lemma
     (ensures Seq.mem y (collect_minor_successors ms obj idx wosize) <==>
-             (exists (i:nat). idx <= i /\ i < wosize /\
-                              minor_read_field ms obj i == y /\
-                              is_minor_addr y /\
-                              Seq.mem y (minor_objects ms)))
+                    (exists (i:nat). idx <= i /\ i < wosize /\
+                                     to_minor_offset (minor_read_field ms obj i) == y /\
+                                     is_minor_addr y /\
+                                     Seq.mem y (minor_objects ms)))
     (decreases (if idx < wosize then wosize - idx else 0))
   =
   if idx >= wosize then ()
   else begin
-    let field_val = minor_read_field ms obj idx in
+    let field_val = to_minor_offset (minor_read_field ms obj idx) in
     let rest = collect_minor_successors ms obj (idx + 1) wosize in
     collect_minor_successors_char ms obj (idx + 1) wosize y;
     if is_minor_addr field_val && Seq.mem field_val (minor_objects ms)
@@ -381,10 +381,10 @@ private let rec collect_minor_successors_char
 
 let minor_successors_char (ms: minor_state) (x y: U64.t)
   : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
-                   (exists (i:nat). i < minor_wosize ms x /\
-                                    minor_read_field ms x i == y /\
-                                    is_minor_addr y /\
-                                    Seq.mem y (minor_objects ms)))
+                    (exists (i:nat). i < minor_wosize ms x /\
+                                     to_minor_offset (minor_read_field ms x i) == y /\
+                                     is_minor_addr y /\
+                                     Seq.mem y (minor_objects ms)))
   = collect_minor_successors_char ms x 0 (minor_wosize ms x) y
 
 /// For objects in minor_objects, successors length < minor_heap_size
