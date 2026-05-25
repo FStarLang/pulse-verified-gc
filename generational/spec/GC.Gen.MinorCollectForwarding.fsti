@@ -77,7 +77,8 @@ let roots_valid_for_minor_collection
     ((is_minor_pointer r ==>
       Seq.mem r (minor_objects minor) /\ minor_wosize minor r > 0) /\
      (~(is_minor_pointer r) ==>
-      is_val_addr r /\ Seq.mem (r <: obj_addr) (objects zero_addr major)))
+     is_val_addr r /\ Seq.mem (r <: obj_addr) (objects zero_addr major) /\
+     ~(is_blue (r <: obj_addr) major)))
 
 /// Raw-address view of graph-edge membership, useful when the endpoint is a
 /// forwarding-map image whose `hp_addr` refinement is proved by preconditions.

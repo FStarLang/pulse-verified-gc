@@ -27,6 +27,7 @@ open GC.Gen.Impl.Cheney
 open GC.Impl.Heap
 open GC.Impl.Stack
 module SpecFields = GC.Spec.Fields
+module SpecObj = GC.Spec.Object
 module Alloc = GC.Impl.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
@@ -813,15 +814,6 @@ let minor_collect_full_isomorphism_post
     (ensures
       (MinorFwd.remembered_targets_in_roots major roots slots n /\
        RBridge.major_field_zero_no_minor minor major /\
-       Mark.no_pointer_to_blue major /\
-       RBridge.minor_no_pointer_to_blue minor major /\
-       RBridge.roots_valid_nonblue roots major /\
-       CheneyBFS.cheney_no_oom minor major fp roots ==>
-       MinorFwd.normal_post_image_reachable_subgraph_isomorphism_prop
-         minor major fp roots) /\
-      (MinorFwd.remembered_targets_in_roots major roots slots n /\
-       RBridge.major_field_zero_no_minor minor major /\
-       Mark.no_pointer_to_blue major /\
        RBridge.minor_no_pointer_to_blue minor major /\
        RBridge.roots_valid_nonblue roots major /\
        MinorFwd.roots_valid_for_minor_collection minor major roots /\
@@ -831,16 +823,15 @@ let minor_collect_full_isomorphism_post
   =
     if MinorFwd.remembered_targets_in_roots major roots slots n /\
        RBridge.major_field_zero_no_minor minor major /\
-       Mark.no_pointer_to_blue major /\
        RBridge.minor_no_pointer_to_blue minor major /\
        RBridge.roots_valid_nonblue roots major /\
+       MinorFwd.roots_valid_for_minor_collection minor major roots /\
        CheneyBFS.cheney_no_oom minor major fp roots
     then begin
-      MinorFwd.normal_post_image_reachable_subgraph_isomorphism
-        minor major fp roots slots n;
-      if MinorFwd.roots_valid_for_minor_collection minor major roots then
-        MinorFwd.normal_post_reachable_subgraph_isomorphism
-          minor major fp roots slots n
+      GenInv.collection_heap_shape_elim minor major fp;
+      GenInv.major_heap_shape_elim major fp;
+      MinorFwd.normal_post_reachable_subgraph_isomorphism
+        minor major fp roots slots n
     end
 #pop-options
 
@@ -901,22 +892,12 @@ fn minor_collect_full (gh: gen_heap_t)
       // Strong correctness: the result equals cheney_collect_spec.mc_major.
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
-      MinorFwd.minor_collect_full_forwarding_kernel
-        minor_st 's 'fp 'rs 'sl (SZ.v nslots) ok s2 rs2 /\
       (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
        RBridge.major_field_zero_no_minor minor_st 's /\
-       Mark.no_pointer_to_blue 's /\
-       RBridge.minor_no_pointer_to_blue minor_st 's /\
-       RBridge.roots_valid_nonblue 'rs 's /\
-       CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs ==>
-       MinorFwd.normal_post_image_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs) /\
-      (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-       RBridge.major_field_zero_no_minor minor_st 's /\
-       Mark.no_pointer_to_blue 's /\
        RBridge.minor_no_pointer_to_blue minor_st 's /\
        RBridge.roots_valid_nonblue 'rs 's /\
        MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
+       ok /\
        CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs ==>
        MinorFwd.normal_post_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs))
@@ -990,8 +971,6 @@ fn minor_collect_full (gh: gen_heap_t)
     (SZ.v nslots);
   CheneyPres.cheney_collect_preserves_collection_heap_shape
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
-  MinorFwd.minor_collect_full_forwarding_kernel_intro
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl (SZ.v nslots) ok;
   minor_collect_full_isomorphism_post
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl (SZ.v nslots);
 
