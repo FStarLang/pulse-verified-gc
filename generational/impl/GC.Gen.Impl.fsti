@@ -36,6 +36,8 @@ module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
 module GenInv = GC.Gen.HeapInvariant
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module RBridge = GC.Gen.ReachabilityBridge
+module CheneyBFS = GC.Gen.CheneyBFS
 
 /// ---------------------------------------------------------------------------
 /// Combined generational heap state
@@ -152,7 +154,27 @@ fn minor_collect_full (gh: gen_heap_t)
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
       MinorFwd.minor_collect_full_forwarding_kernel
-        minor_st 's 'fp 'rs 'sl (SZ.v nslots) ok s2 rs2)
+        minor_st 's 'fp 'rs 'sl (SZ.v nslots) ok s2 rs2 /\
+      // Explicit isomorphism surface: when callers provide the bridge facts
+      // needed by the pure theorem, minor collection is a concrete reachable
+      // subgraph isomorphism over the post-minor heap graph.
+      (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
+       RBridge.major_field_zero_no_minor minor_st 's /\
+       Mark.no_pointer_to_blue 's /\
+       RBridge.minor_no_pointer_to_blue minor_st 's /\
+       RBridge.roots_valid_nonblue 'rs 's /\
+       CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs ==>
+       MinorFwd.normal_post_image_reachable_subgraph_isomorphism_prop
+         minor_st 's 'fp 'rs) /\
+      (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
+       RBridge.major_field_zero_no_minor minor_st 's /\
+       Mark.no_pointer_to_blue 's /\
+       RBridge.minor_no_pointer_to_blue minor_st 's /\
+       RBridge.roots_valid_nonblue 'rs 's /\
+       MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
+       CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs ==>
+       MinorFwd.normal_post_reachable_subgraph_isomorphism_prop
+         minor_st 's 'fp 'rs))
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)
