@@ -21,12 +21,63 @@ open GC.Gen.Remembered
 open GC.Gen.CombinedGraph
 
 module Mark = GC.Spec.Mark
+module GenInv = GC.Gen.HeapInvariant
+module ML = FStar.Math.Lemmas
 
 private let combined_vertex_cases (v: combined_vertex)
   : Lemma (ensures MinorV? v \/ MajorV? v)
   = match v with
     | MinorV _ -> ()
     | MajorV _ -> ()
+
+private let aligned_gt_ge_plus_mword (x z: nat)
+  : Lemma (requires x > z /\ x % U64.v mword == 0 /\ z % U64.v mword == 0)
+          (ensures x >= z + U64.v mword)
+  =
+    if x < z + U64.v mword then begin
+      assert (x - z > 0);
+      assert (x - z < U64.v mword);
+      ML.lemma_mod_sub_distr x z (U64.v mword);
+      assert ((x - z) % U64.v mword == 0);
+      ML.small_mod (x - z) (U64.v mword);
+      assert False
+    end
+
+/// The central collection heap shape already contains the stronger
+/// `GenInv.minor_major_fields_no_blue` condition.
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+let minor_no_pointer_to_blue_from_collection_shape
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires GenInv.collection_heap_shape minor major fp)
+          (ensures minor_no_pointer_to_blue minor major)
+  =
+    GenInv.collection_heap_shape_elim minor major fp;
+    let aux (obj: U64.t) (j: nat)
+      : Lemma
+        (requires Seq.mem obj (minor_objects minor) /\
+                  j < minor_wosize minor obj)
+        (ensures
+          (let v = minor_read_field minor obj j in
+           is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) ==>
+           ~(is_blue (v <: obj_addr) major)))
+      =
+        let v = minor_read_field minor obj j in
+        if is_val_addr v && Seq.mem (v <: obj_addr) (objects zero_addr major) then begin
+          is_val_addr_spec v;
+          assert (Seq.mem (v <: obj_addr) (objects zero_addr major));
+          objects_addresses_gt_start zero_addr major (v <: obj_addr);
+          assert (U64.v (v <: obj_addr) > U64.v zero_addr);
+          assert (U64.v v > U64.v zero_addr);
+          assert (U64.v v % U64.v mword == 0);
+          assert (U64.v zero_addr % U64.v mword == 0);
+          aligned_gt_ge_plus_mword (U64.v v) (U64.v zero_addr);
+          assert (U64.v v >= U64.v zero_addr + U64.v mword);
+          assert (is_pointer_field v);
+          GenInv.minor_major_fields_no_blue_elim minor major obj j
+        end
+    in
+    FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
+#pop-options
 
 /// Helper: from `major_edge_elim`'s witness, establish `points_to` for
 /// `Mark.no_pointer_to_blue`.

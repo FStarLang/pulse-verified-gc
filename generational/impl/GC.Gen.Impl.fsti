@@ -158,7 +158,6 @@ fn minor_collect_full (gh: gen_heap_t)
       // reachable subgraph isomorphism over the post-minor heap graph.
       (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
        RBridge.major_field_zero_no_minor minor_st 's /\
-       RBridge.minor_no_pointer_to_blue minor_st 's /\
        RBridge.roots_valid_nonblue 'rs 's /\
        MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
        ok ==>

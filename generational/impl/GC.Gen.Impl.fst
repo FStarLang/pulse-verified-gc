@@ -815,7 +815,6 @@ let minor_collect_full_isomorphism_post
     (ensures
       (MinorFwd.remembered_targets_in_roots major roots slots n /\
        RBridge.major_field_zero_no_minor minor major /\
-       RBridge.minor_no_pointer_to_blue minor major /\
        RBridge.roots_valid_nonblue roots major /\
        MinorFwd.roots_valid_for_minor_collection minor major roots /\
        ok ==>
@@ -824,13 +823,13 @@ let minor_collect_full_isomorphism_post
   =
     if MinorFwd.remembered_targets_in_roots major roots slots n /\
        RBridge.major_field_zero_no_minor minor major /\
-       RBridge.minor_no_pointer_to_blue minor major /\
        RBridge.roots_valid_nonblue roots major /\
        MinorFwd.roots_valid_for_minor_collection minor major roots /\
        ok
     then begin
       GenInv.collection_heap_shape_elim minor major fp;
       GenInv.major_heap_shape_elim major fp;
+      RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp;
       assert (CheneyBFS.cheney_no_oom minor major fp roots);
       MinorFwd.normal_post_reachable_subgraph_isomorphism
         minor major fp roots slots n
@@ -896,7 +895,6 @@ fn minor_collect_full (gh: gen_heap_t)
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
       (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
        RBridge.major_field_zero_no_minor minor_st 's /\
-       RBridge.minor_no_pointer_to_blue minor_st 's /\
        RBridge.roots_valid_nonblue 'rs 's /\
        MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
        ok ==>

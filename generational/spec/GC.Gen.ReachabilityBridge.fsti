@@ -24,6 +24,7 @@ open GC.Gen.Remembered
 open GC.Gen.CombinedGraph
 
 module Mark = GC.Spec.Mark
+module GenInv = GC.Gen.HeapInvariant
 
 /// If a minor object has a field pointing to the major heap, the target is a
 /// non-blue allocated object.
@@ -33,6 +34,14 @@ let minor_no_pointer_to_blue (minor: minor_state) (major: heap) : prop =
     (let v = minor_read_field minor obj j in
      is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) ==>
      ~(is_blue (v <: obj_addr) major))
+
+/// The central collection heap shape already contains the stronger
+/// `GenInv.minor_major_fields_no_blue` condition; expose this bridge predicate
+/// as a derived fact so clients do not need to carry it as an extra assumption.
+val minor_no_pointer_to_blue_from_collection_shape
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires GenInv.collection_heap_shape minor major fp)
+          (ensures minor_no_pointer_to_blue minor major)
 
 /// Major roots must be valid non-blue objects when they classify as `MajorV`.
 let roots_valid_nonblue (roots: seq U64.t) (major: heap) : prop =
