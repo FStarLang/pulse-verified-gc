@@ -69,6 +69,13 @@ val scan_preserves_queue_valid
 /// Abstract compound BFS invariant
 val cheney_bfs_inv (minor: minor_state) (cs: CheneySpec.cheney_state) : prop
 
+val cheney_bfs_inv_fwd_in_queue
+  (minor: minor_state) (cs: CheneySpec.cheney_state)
+  : Lemma (requires cheney_bfs_inv minor cs)
+          (ensures forall (x: U64.t).
+            Seq.mem x (minor_objects minor) /\
+            cs.CheneySpec.cs_fwd x <> 0UL ==> Seq.mem x cs.CheneySpec.cs_queue)
+
 /// Initial state satisfies the invariant
 val cheney_bfs_inv_initial (minor: minor_state) (cs: CheneySpec.cheney_state)
   : Lemma (requires cs.CheneySpec.cs_queue == Seq.empty /\

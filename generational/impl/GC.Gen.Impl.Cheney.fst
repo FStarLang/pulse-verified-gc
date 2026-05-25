@@ -38,6 +38,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SF = GC.Spec.Fields
 module PromoteSpec = GC.Gen.Promote
 module CheneySpec = GC.Gen.Cheney
+module CheneyBFS = GC.Gen.CheneyBFS
 module Sim = GC.Gen.Cheney.Sim
 module SimOne = GC.Gen.Cheney.SimOne
 module GR = Pulse.Lib.GhostReference
@@ -81,6 +82,15 @@ let promote_one_oom_unchanged (ms: minor_state) (major: heap) (addr: U64.t) (fp:
           (ensures (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).major_out == major /\
                    (PromoteSpec.promote_object ms major addr fp (minor_wosize ms addr)).fp_out == fp)
   = Sim.promote_object_zero_noop ms major addr fp (minor_wosize ms addr)
+
+let minor_tag_infix_not_minor_object (ms: minor_state) (addr: U64.t)
+  : Lemma (requires minor_wf ms /\ minor_tag ms addr == 249)
+          (ensures ~(Seq.mem addr (minor_objects ms)))
+  =
+    if Seq.mem addr (minor_objects ms) then begin
+      minor_objects_not_infix ms addr;
+      assert False
+    end
 
 /// Helper: infix fwd addition doesn't overflow: parent_fwd < heap_size < pow2 57
 /// and delta < minor_heap_size < pow2 57, so sum < pow2 58 < pow2 64
@@ -172,8 +182,12 @@ fn forward_if_minor_infix
           SZ.v bk2 <= SZ.v 'bk + 1 /\
           Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs_post /\
           SimOne.cheney_bfs_inv minor_st cs_post /\
-          ('oom_in == true ==> oom_out == true))
+          ('oom_in == true ==> oom_out == true) /\
+          (not oom_out ==> CheneyBFS.addr_covered minor_st cs_post addr))
 {
+  minor_tag_infix_not_minor_object ({data='md; bump='mb} <: minor_state) addr;
+  CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+    (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
   // Establish is_infix_in_minor and extract parent info from minor_infix_wf
   infix_parent_in_minor_objects ({data='md; bump='mb} <: minor_state) addr;
   infix_parent_value ({data='md; bump='mb} <: minor_state) addr;
@@ -270,7 +284,7 @@ fn forward_if_minor_infix
 }
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --z3smtopt '(set-option :smt.qi.eager_threshold 100)'"
 inline_for_extraction
 fn forward_if_minor
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
@@ -320,23 +334,30 @@ fn forward_if_minor
           SZ.v bk2 <= SZ.v 'bk + 1 /\
           Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs_post /\
           SimOne.cheney_bfs_inv minor_st cs_post /\
-          ('oom_in == true ==> oom_out == true))
+          ('oom_in == true ==> oom_out == true) /\
+          (not oom_out ==> CheneyBFS.addr_covered minor_st cs_post addr))
 {
   // Check: is addr a valid minor object address?
   if U64.lt addr 8UL {
     // addr < 8 → not a minor object → spec is noop
     Sim.not_minor_if_guards_fail ({data='md; bump='mb} <: minor_state) addr;
     CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
+    CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+      (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
     SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
   } else if U64.gte addr minor_heap_size_u64 {
     // addr >= minor_heap_size → not minor → noop
     Sim.not_minor_if_guards_fail ({data='md; bump='mb} <: minor_state) addr;
     CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
+    CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+      (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
     SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
   } else if not (U64.eq (U64.rem addr 8UL) 0UL) {
     // addr not word-aligned → not minor → noop
     Sim.not_minor_if_guards_fail ({data='md; bump='mb} <: minor_state) addr;
     CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
+    CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+      (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
     SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
   } else {
     // Check forwarding array: already forwarded?
@@ -346,6 +367,8 @@ fn forward_if_minor
       // Already forwarded: fwd_arr[addr/8] ≠ 0 → cs_fwd addr ≠ 0 → noop
       Sim.represents_fwd_read 'farr (cs_pre.CheneySpec.cs_fwd) addr;
       CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
+      CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+        (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
       SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
     } else {
       // fwd_val == 0: establish cs_pre.cs_fwd addr = 0
@@ -364,6 +387,8 @@ fn forward_if_minor
         // wosize too large → contrapositive proves not minor → noop
         Sim.not_minor_if_wosize_bounds_fail ({data='md; bump='mb} <: minor_state) addr;
         CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+          (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
         SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
       } else {
       // Prove no overflow for wosize*8 and addr + wosize*8
@@ -373,6 +398,8 @@ fn forward_if_minor
         // Bounds fail → contrapositive proves not minor → noop
         Sim.not_minor_if_wosize_bounds_fail ({data='md; bump='mb} <: minor_state) addr;
         CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
+        CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+          (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
         SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
       } else {
       // All guards pass — promote
@@ -383,6 +410,8 @@ fn forward_if_minor
           // wosize = 0 → addr ∉ minor_objects → cheney_forward_one is noop
           not_minor_if_wosize_zero ({data='md; bump='mb} <: minor_state) addr;
           CheneySpec.cheney_forward_one_noop ({data='md; bump='mb} <: minor_state) cs_pre addr;
+          CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+            (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
           SimOne.fwd_one_preserves_bfs_inv ({data='md; bump='mb} <: minor_state) cs_pre addr
         } else {
           // wosize > 0, new_addr = 0 → OOM case
@@ -403,6 +432,8 @@ fn forward_if_minor
         fwd_arr.(idx) <- new_addr;
         // Prove forwarding array correspondence
         Sim.represents_fwd_update 'farr (cs_pre.CheneySpec.cs_fwd) addr new_addr;
+        CheneyBFS.addr_covered_intro ({data='md; bump='mb} <: minor_state)
+          (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs_pre) addr) addr;
         // Enqueue the minor address for scanning
         let bk = R.op_Bang back;
         if SZ.lt bk queue_size_sz {
@@ -484,10 +515,12 @@ fn forward_roots
           rs2 == 'rs /\
           Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs1 /\
           SimOne.cheney_bfs_inv minor_st cs1 /\
-          ('oom_in == true ==> oom_out == true))
+          ('oom_in == true ==> oom_out == true) /\
+          (not oom_out ==> CheneyBFS.fwd_covers_roots minor_st cs1.CheneySpec.cs_fwd 'rs))
 {
   // Ghost reference tracks the spec state through the loop
   let gcs = GR.alloc (Ghost.reveal cs0);
+  CheneyBFS.root_prefix_empty ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs0) 'rs;
   let mut i = 0sz;
   while (SZ.lt !i nroots)
     invariant exists* md_i mb_i ms_i fp_i farr_i q_i bk_i rs_i iv cs_i oom_i.
@@ -518,6 +551,7 @@ fn forward_roots
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_i /\
             SimOne.cheney_bfs_inv minor_st cs_i /\
             ('oom_in == true ==> oom_i == true) /\
+            (not oom_i ==> CheneyBFS.root_prefix_covered minor_st cs_i 'rs (SZ.v iv)) /\
             CheneySpec.cheney_forward_roots minor_st cs_i 'rs (SZ.v iv) ==
               CheneySpec.cheney_forward_roots minor_st cs0 'rs 0)
   {
@@ -529,8 +563,12 @@ fn forward_roots
     //   forward_one cs_cur (rs[iv]) then forward_roots cs' rs (iv+1)
     CheneySpec.cheney_forward_roots_step ({data='md; bump='mb} <: minor_state)
       (reveal cs_cur) 'rs (SZ.v iv);
+    let oom_before = !oom_ref;
     // Forward this root — postcondition gives cs_post = cheney_forward_one minor_st cs_cur r
     forward_if_minor minor major fp_ref fwd_arr queue back oom_ref r #cs_cur;
+    let oom_after = !oom_ref;
+    CheneyBFS.root_prefix_step_oom ({data='md; bump='mb} <: minor_state)
+      (reveal cs_cur) 'rs (SZ.v iv) oom_before oom_after;
     // Update ghost ref to the new spec state
     GR.op_Colon_Equals gcs
       (Ghost.hide (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state)
@@ -542,6 +580,11 @@ fn forward_roots
   let cs_final = GR.op_Bang gcs;
   CheneySpec.cheney_forward_roots_base ({data='md; bump='mb} <: minor_state)
     (reveal cs_final) 'rs (SZ.v nroots);
+  let oom_final = !oom_ref;
+  CheneyBFS.root_prefix_all_implies_covers_oom ({data='md; bump='mb} <: minor_state)
+    (reveal cs_final) 'rs oom_final;
+  assert (pure ((reveal cs_final) ==
+    CheneySpec.cheney_forward_roots ({data='md; bump='mb} <: minor_state) cs0 'rs 0));
   GR.free gcs
 }
 #pop-options
@@ -600,9 +643,11 @@ fn scan_loop
           SZ.v bk2 <= queue_size /\
           Sim.impl_matches_spec ms2 fp2 farr2 q2 (SZ.v bk2) cs_final /\
           SimOne.cheney_bfs_inv minor_st cs_final /\
-          ('oom_in == true ==> oom_out == true))
+          ('oom_in == true ==> oom_out == true) /\
+          (not oom_out ==> CheneyBFS.fwd_closed minor_st cs_final.CheneySpec.cs_fwd))
 {
   let gcs = GR.alloc (Ghost.reveal cs1);
+  CheneyBFS.scanned_prefix_empty ({data='md; bump='mb} <: minor_state) (Ghost.reveal cs1);
   let mut scan = 0sz;
   while (
     let s = !scan;
@@ -634,6 +679,7 @@ fn scan_loop
             Sim.impl_matches_spec ms_i fp_i farr_i q_i (SZ.v bk_i) cs_s /\
             SimOne.cheney_bfs_inv minor_st cs_s /\
             ('oom_in == true ==> oom_s == true) /\
+            (not oom_s ==> CheneyBFS.scanned_prefix_closed minor_st cs_s (SZ.v sv)) /\
             SZ.v sv <= CheneySpec.cheney_fuel minor_st /\
             CheneySpec.cheney_scan minor_st cs_s (SZ.v sv)
               (CheneySpec.cheney_fuel minor_st - SZ.v sv) ==
@@ -688,6 +734,8 @@ fn scan_loop
         (CheneySpec.cheney_fuel ({data='md; bump='mb} <: minor_state) - SZ.v s);
       // Inner field loop: forward each field of obj
       let gcs_f = GR.alloc (Ghost.reveal cs_cur);
+      let oom_s_before = !oom_ref;
+      CheneyBFS.field_prefix_empty ({data='md; bump='mb} <: minor_state) (reveal cs_cur) obj;
       let mut field_idx = 0UL;
       while (U64.lt !field_idx wosize)
         invariant exists* md_f mb_f ms_f fp_f farr_f q_f bk_f fi cs_f oom_f.
@@ -720,6 +768,8 @@ fn scan_loop
                 Sim.impl_matches_spec ms_f fp_f farr_f q_f (SZ.v bk_f) cs_f /\
                 SimOne.cheney_bfs_inv minor_st cs_f /\
                 ('oom_in == true ==> oom_f == true) /\
+                (oom_s_before == true ==> oom_f == true) /\
+                (not oom_f ==> CheneyBFS.field_prefix_covered minor_st cs_f obj (U64.v fi)) /\
                 CheneySpec.cheney_forward_fields minor_st cs_f obj (U64.v fi) (U64.v wosize) ==
                   CheneySpec.cheney_forward_fields minor_st (reveal cs_cur) obj 0 (U64.v wosize))
       {
@@ -736,12 +786,18 @@ fn scan_loop
         let child_raw = minor_read minor field_addr;
         // Bridge: minor_read at impl level == minor_read_field at spec level
         Sim.minor_read_eq_field ({data='md; bump='mb} <: minor_state) obj (U64.v fi);
+        assert (pure (child_raw == minor_read_field ({data='md; bump='mb} <: minor_state) obj (U64.v fi)));
         // Translate absolute minor address to offset
         let child = to_minor_offset_u64 child_raw;
+        assert (pure (child == to_minor_offset child_raw));
         // Bridge: child == to_minor_offset (minor_read_field minor_st obj fi)
         assert (pure (child == to_minor_offset (minor_read_field ({data='md; bump='mb} <: minor_state) obj (U64.v fi))));
         // Forward this child — produces cs' = cheney_forward_one minor_st cs_fcur child
+        let oom_before_child = !oom_ref;
         forward_if_minor minor major fp_ref fwd_arr queue back oom_ref child #cs_fcur;
+        let oom_after_child = !oom_ref;
+        CheneyBFS.field_prefix_step_oom ({data='md; bump='mb} <: minor_state)
+          (reveal cs_fcur) obj (U64.v fi) oom_before_child oom_after_child;
         // Update inner ghost ref
         GR.op_Colon_Equals gcs_f
           (Ghost.hide (CheneySpec.cheney_forward_one ({data='md; bump='mb} <: minor_state)
@@ -753,6 +809,9 @@ fn scan_loop
       CheneySpec.cheney_forward_fields_base ({data='md; bump='mb} <: minor_state)
         (reveal cs_fend) obj (U64.v wosize) (U64.v wosize);
       GR.free gcs_f;
+      let oom_s_after = !oom_ref;
+      CheneyBFS.scanned_prefix_step_oom ({data='md; bump='mb} <: minor_state)
+        (reveal cs_cur) (reveal cs_fend) (SZ.v s) oom_s_before oom_s_after;
       // cs_fend == cheney_forward_fields minor cs_cur obj 0 wosize
       // Update outer ghost ref to new scan state
       GR.op_Colon_Equals gcs cs_fend;
@@ -766,6 +825,10 @@ fn scan_loop
   CheneySpec.cheney_scan_base ({data='md; bump='mb} <: minor_state)
     (reveal cs_end) (SZ.v !scan)
     (CheneySpec.cheney_fuel ({data='md; bump='mb} <: minor_state) - SZ.v !scan);
+  let oom_final = !oom_ref;
+  assert (pure (SZ.v !scan >= Seq.length ((reveal cs_end).CheneySpec.cs_queue)));
+  CheneyBFS.scanned_exhausted_implies_fwd_closed_oom ({data='md; bump='mb} <: minor_state)
+    (reveal cs_end) (SZ.v !scan) oom_final;
   GR.free gcs
 }
 #pop-options
@@ -824,7 +887,8 @@ fn cheney_promote_phase
           PromoteSpec.chain_objects_blue ms2 fp2 /\
           Seq.length (SF.objects zero_addr ms2) > 0 /\
           Seq.length farr2 == fwd_array_size /\
-          rs2 == 'rs)
+          rs2 == 'rs /\
+          (ok ==> CheneyBFS.cheney_no_oom minor_st 'ms 'fp 'rs))
 {
   // Zero the BFS queue (heap-allocated, passed from caller)
   PArr.fill queue_size_sz queue 0UL;
@@ -855,6 +919,7 @@ fn cheney_promote_phase
 
   // Post: impl matches cs1 = cheney_forward_roots minor_st cs0 'rs 0,
   //       cheney_bfs_inv minor_st cs1
+  let oom_after_roots = !oom;
 
   // Phase 2: BFS scan loop
   // Pre: impl_matches_spec ... cs1, cheney_bfs_inv minor_st cs1
@@ -877,6 +942,8 @@ fn cheney_promote_phase
 
   // Return success (no OOM detected)
   let oom_val = !oom;
+  CheneyBFS.cheney_no_oom_from_loop_posts
+    ({data='md; bump='mb} <: minor_state) 'ms 'fp 'rs oom_after_roots oom_val;
   not oom_val
 }
 #pop-options

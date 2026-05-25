@@ -161,8 +161,7 @@ fn minor_collect_full (gh: gen_heap_t)
        RBridge.minor_no_pointer_to_blue minor_st 's /\
        RBridge.roots_valid_nonblue 'rs 's /\
        MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
-       ok /\
-       CheneyBFS.cheney_no_oom minor_st 's 'fp 'rs ==>
+       ok ==>
        MinorFwd.normal_post_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs))
 

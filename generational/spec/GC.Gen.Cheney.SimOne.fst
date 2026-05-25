@@ -342,15 +342,34 @@ let cheney_bfs_inv (minor: minor_state) (cs: CheneySpec.cheney_state) : prop =
   queue_valid minor cs.cs_queue /\
   (forall (j:nat). j < Seq.length cs.cs_queue ==>
     cs.cs_fwd (Seq.index cs.cs_queue j) <> 0UL) /\
+  (forall (x: U64.t).
+    Seq.mem x (minor_objects minor) /\
+    cs.cs_fwd x <> 0UL ==> Seq.mem x cs.cs_queue) /\
   Seq.length cs.cs_queue + count_unforwarded (minor_objects minor) cs.cs_fwd 0
     <= Seq.length (minor_objects minor)
+
+let cheney_bfs_inv_fwd_in_queue
+  (minor: minor_state) (cs: CheneySpec.cheney_state)
+  : Lemma (requires cheney_bfs_inv minor cs)
+          (ensures forall (x: U64.t).
+            Seq.mem x (minor_objects minor) /\
+            cs.CheneySpec.cs_fwd x <> 0UL ==> Seq.mem x cs.CheneySpec.cs_queue)
+  = ()
 
 let cheney_bfs_inv_initial (minor: minor_state) (cs: CheneySpec.cheney_state)
   : Lemma (requires cs.CheneySpec.cs_queue == Seq.empty /\
                     cs.CheneySpec.cs_fwd == empty_forwarding)
           (ensures cheney_bfs_inv minor cs)
   = queue_valid_intro minor Seq.empty;
-    count_unforwarded_empty (minor_objects minor) 0
+    count_unforwarded_empty (minor_objects minor) 0;
+    let aux_complete (x: U64.t) : Lemma
+      (requires Seq.mem x (minor_objects minor) /\ cs.CheneySpec.cs_fwd x <> 0UL)
+      (ensures Seq.mem x cs.CheneySpec.cs_queue)
+    =
+      assert (cs.CheneySpec.cs_fwd x == 0UL);
+      assert False
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_complete)
 
 let cheney_bfs_inv_bound (minor: minor_state) (cs: CheneySpec.cheney_state)
   : Lemma (requires cheney_bfs_inv minor cs)
@@ -400,6 +419,23 @@ private let fwd_one_bfs_inv_success
       end
   in
   FStar.Classical.forall_intro aux_fwd;
+  let aux_complete (x: U64.t) : Lemma
+    (requires Seq.mem x (minor_objects minor) /\ cs'.cs_fwd x <> 0UL)
+    (ensures Seq.mem x cs'.cs_queue)
+  =
+    Seq.Base.lemma_len_append cs.cs_queue (Seq.create 1 addr);
+    if x = addr then begin
+      Seq.lemma_mem_append cs.cs_queue (Seq.create 1 addr);
+      Seq.mem_cons addr Seq.empty
+    end else begin
+      assert (fwd' x == cs.cs_fwd x);
+      assert (cs.cs_fwd x <> 0UL);
+      cheney_bfs_inv_fwd_in_queue minor cs;
+      assert (Seq.mem x cs.cs_queue);
+      Seq.lemma_mem_append cs.cs_queue (Seq.create 1 addr)
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux_complete);
   FStar.Classical.exists_intro
     (fun (k:nat) -> k >= 0 /\ k < Seq.length (minor_objects minor) /\
                     Seq.index (minor_objects minor) k == addr)
@@ -488,6 +524,19 @@ let fwd_one_preserves_bfs_inv
         CheneySpec.cheney_forward_one_infix_fwd minor cs addr y
     in
     FStar.Classical.forall_intro aux_ext;
+    let aux_complete (x: U64.t) : Lemma
+      (requires Seq.mem x objs /\ r.cs_fwd x <> 0UL)
+      (ensures Seq.mem x r.cs_queue)
+    =
+      let k = Seq.index_mem x objs in
+      aux_ext k;
+      assert (r.cs_fwd x == cs'.cs_fwd x);
+      assert (cs'.cs_fwd x <> 0UL);
+      cheney_bfs_inv_fwd_in_queue minor cs';
+      assert (Seq.mem x cs'.cs_queue);
+      assert (r.cs_queue == cs'.cs_queue)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires aux_complete);
     count_unforwarded_ext objs r.cs_fwd cs'.cs_fwd 0;
     // queue_valid is same since queues are equal
     assert (queue_valid minor r.cs_queue)
