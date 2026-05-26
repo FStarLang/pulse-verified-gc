@@ -13,11 +13,10 @@
 /// collector returns `ok`, the forwarding map is an injective morphism for
 /// reachable minor objects and all images are valid post-minor addresses
 /// (ordinary objects or infix interior pointers).  This is NOT, by itself, a
-/// graph isomorphism: a real reachable-subgraph isomorphism must also prove
-/// surjectivity onto the post-minor reachable subgraph and edge preservation
-/// and reflection.  The current proof also keeps the existing pure
-/// `cheney_no_oom` condition explicit; connecting the runtime `ok` flag to
-/// that pure predicate is the next strengthening step.
+/// graph isomorphism: the full reachable-subgraph isomorphism additionally
+/// proves surjectivity onto the post-minor reachable subgraph and edge
+/// preservation/reflection.  The result-indexed wrapper states that theorem
+/// directly over the heap and roots returned by `minor_collect_full`.
 
 module GC.Gen.MinorCollectForwarding
 
@@ -106,6 +105,21 @@ let post_minor_edge
   (x y: U64.t) : prop =
   let res = cheney_collect_spec minor major fp roots in
   mem_graph_edge_at (HeapModel.create_graph res.mc_major) x y
+
+/// Result-indexed post-minor reachability: unlike `post_minor_reachable`, this
+/// names the concrete heap and rewritten roots exposed by an implementation
+/// postcondition.
+let result_post_reachable
+  (post_major: heap) (post_roots: seq U64.t) (w: U64.t) : prop =
+  let post_g = HeapModel.create_graph post_major in
+  exists (rr: U64.t)
+         (r: vertex_id{mem_graph_vertex post_g r})
+         (x: vertex_id{mem_graph_vertex post_g x}).
+    Seq.mem rr post_roots /\
+    r == rr /\ x == w /\ reachable post_g r x
+
+let result_post_edge (post_major: heap) (x y: U64.t) : prop =
+  mem_graph_edge_at (HeapModel.create_graph post_major) x y
 
 val post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -1109,6 +1123,17 @@ let normal_post_reachable_subgraph_isomorphism_prop
     (post_minor_edge minor major fp roots)
     prom.fwd_map
 
+let normal_result_reachable_subgraph_isomorphism_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (post_major: heap) (post_roots: seq U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  CG.reachable_subgraph_isomorphism
+    (normal_src_reachable minor major fp roots)
+    (result_post_reachable post_major post_roots)
+    (normal_src_edge minor major fp roots)
+    (result_post_edge post_major)
+    prom.fwd_map
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel
@@ -1195,6 +1220,18 @@ val normal_post_reachable_subgraph_isomorphism
       roots_valid_for_minor_collection minor major roots /\
       CheneyBFS.cheney_no_oom minor major fp roots)
     (ensures normal_post_reachable_subgraph_isomorphism_prop minor major fp roots)
+
+val normal_post_reachable_subgraph_isomorphism_to_result
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (post_major: heap) (post_roots: seq U64.t)
+  : Lemma
+    (requires
+      post_major == (cheney_collect_spec minor major fp roots).mc_major /\
+      post_roots == rewrite_roots roots (cheney_promote minor major fp roots).fwd_map /\
+      normal_post_reachable_subgraph_isomorphism_prop minor major fp roots)
+    (ensures
+      normal_result_reachable_subgraph_isomorphism_prop
+        minor major fp roots post_major post_roots)
 
 val minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)

@@ -161,8 +161,8 @@ fn minor_collect_full (gh: gen_heap_t)
        RBridge.roots_valid_nonblue 'rs 's /\
        MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
        ok ==>
-       MinorFwd.normal_post_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs))
+       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+         minor_st 's 'fp 'rs s2 rs2))
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)

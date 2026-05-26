@@ -3638,6 +3638,65 @@ let normal_post_reachable_subgraph_isomorphism
     FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (edge u))
 #pop-options
 
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+let normal_post_reachable_subgraph_isomorphism_to_result
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (post_major: heap) (post_roots: seq U64.t)
+  : Lemma
+    (requires
+      post_major == (cheney_collect_spec minor major fp roots).mc_major /\
+      post_roots == rewrite_roots roots (cheney_promote minor major fp roots).fwd_map /\
+      normal_post_reachable_subgraph_isomorphism_prop minor major fp roots)
+    (ensures
+      normal_result_reachable_subgraph_isomorphism_prop
+        minor major fp roots post_major post_roots)
+  =
+    let prom = cheney_promote minor major fp roots in
+    let image_valid (u: CG.combined_vertex) : Lemma
+      (requires normal_src_reachable minor major fp roots u)
+      (ensures result_post_reachable post_major post_roots
+        (CG.fwd_morphism prom.fwd_map u))
+    =
+      assert (post_minor_reachable minor major fp roots
+        (CG.fwd_morphism prom.fwd_map u))
+    in
+    let inj (u v: CG.combined_vertex) : Lemma
+      (requires normal_src_reachable minor major fp roots u /\
+                normal_src_reachable minor major fp roots v /\
+                CG.fwd_morphism prom.fwd_map u == CG.fwd_morphism prom.fwd_map v)
+      (ensures u == v)
+    =
+      assert (u == v)
+    in
+    let surj (w: U64.t) : Lemma
+      (requires result_post_reachable post_major post_roots w)
+      (ensures exists (u: CG.combined_vertex).
+        normal_src_reachable minor major fp roots u /\
+        CG.fwd_morphism prom.fwd_map u == w)
+    =
+      assert (post_minor_reachable minor major fp roots w)
+    in
+    let edge (u v: CG.combined_vertex) : Lemma
+      (requires normal_src_reachable minor major fp roots u /\
+                normal_src_reachable minor major fp roots v)
+      (ensures (normal_src_edge minor major fp roots u v <==>
+                result_post_edge post_major
+                  (CG.fwd_morphism prom.fwd_map u)
+                  (CG.fwd_morphism prom.fwd_map v)))
+    =
+      assert (post_minor_edge minor major fp roots
+        (CG.fwd_morphism prom.fwd_map u)
+        (CG.fwd_morphism prom.fwd_map v) <==>
+        result_post_edge post_major
+          (CG.fwd_morphism prom.fwd_map u)
+          (CG.fwd_morphism prom.fwd_map v))
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires image_valid);
+    FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 inj);
+    FStar.Classical.forall_intro (FStar.Classical.move_requires surj);
+    FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (edge u))
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let combined_reachable_images_valid_or_infix_reuse
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)

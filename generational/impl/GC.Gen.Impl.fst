@@ -807,10 +807,14 @@ let two_pass_implies_full_update
 let minor_collect_full_isomorphism_post
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: Seq.seq U64.t) (n: nat) (ok: bool)
+  (post_major: heap) (post_roots: Seq.seq U64.t)
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
       ref_table_covers_minor_ptrs major slots n /\
+      post_major == (CheneySpec.cheney_collect_spec minor major fp roots).mc_major /\
+      post_roots == PromoteSpec.rewrite_roots roots
+        (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
       (ok ==> CheneyBFS.cheney_no_oom minor major fp roots))
     (ensures
       (MinorFwd.remembered_targets_in_roots major roots slots n /\
@@ -818,8 +822,8 @@ let minor_collect_full_isomorphism_post
        RBridge.roots_valid_nonblue roots major /\
        MinorFwd.roots_valid_for_minor_collection minor major roots /\
        ok ==>
-       MinorFwd.normal_post_reachable_subgraph_isomorphism_prop
-         minor major fp roots))
+       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+         minor major fp roots post_major post_roots))
   =
     if MinorFwd.remembered_targets_in_roots major roots slots n /\
        RBridge.major_field_zero_no_minor minor major /\
@@ -832,7 +836,9 @@ let minor_collect_full_isomorphism_post
       RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp;
       assert (CheneyBFS.cheney_no_oom minor major fp roots);
       MinorFwd.normal_post_reachable_subgraph_isomorphism
-        minor major fp roots slots n
+        minor major fp roots slots n;
+      MinorFwd.normal_post_reachable_subgraph_isomorphism_to_result
+        minor major fp roots post_major post_roots
     end
 #pop-options
 
@@ -898,8 +904,8 @@ fn minor_collect_full (gh: gen_heap_t)
        RBridge.roots_valid_nonblue 'rs 's /\
        MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
        ok ==>
-       MinorFwd.normal_post_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs))
+       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+         minor_st 's 'fp 'rs s2 rs2))
 {
   unfold is_gen_heap;
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
@@ -971,7 +977,10 @@ fn minor_collect_full (gh: gen_heap_t)
   CheneyPres.cheney_collect_preserves_collection_heap_shape
     ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs;
   minor_collect_full_isomorphism_post
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl (SZ.v nslots) ok;
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'sl (SZ.v nslots) ok
+    ms_final
+    (PromoteSpec.rewrite_roots 'rs
+      (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map);
 
   fold (is_gen_heap gh _ 0UL _ _);
   ok
