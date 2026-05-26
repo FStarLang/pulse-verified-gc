@@ -38,7 +38,7 @@ SPEC_SRC = $(wildcard spec/*.fst spec/*.fsti)
 IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti)
 
 # Exclude SPOT test files from orphan checking (they are tests, not production code)
-SPOT_SRC = spec/GC.Gen.SPOT.fst impl/GC.Gen.SPOT.Pulse.fst impl/GC.Gen.SPOT.Simple.fst
+SPOT_SRC = spec/GC.Gen.SPOT.fst spec/GC.Gen.SPOT.Lemmas.fst impl/GC.Gen.SPOT.Pulse.fst impl/GC.Gen.SPOT.Simple.fst impl/GC.Gen.SPOT.Full.fst
 ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
 ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst
