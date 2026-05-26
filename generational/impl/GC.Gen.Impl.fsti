@@ -60,6 +60,11 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
   is_heap gh.major s **
   R.pts_to gh.fp_ref fp
 
+let roots_match_stack (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : prop =
+  (forall (r: U64.t). Seq.mem r roots ==> is_val_addr r) /\
+  (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==> Seq.mem r st) /\
+  (forall (r: obj_addr). Seq.mem r st ==> Seq.mem (r <: U64.t) roots)
+
 [@@"opaque_to_smt"]
 let minor_heap_no_scan_invariant (d: minor_heap) (b: U64.t) : prop =
   PromoteSpec.minor_no_scan_invariant ({ data = d; bump = b })
@@ -197,12 +202,13 @@ fn gen_gc (gh: gen_heap_t)
            pts_to slots 'sl **
            is_gray_stack st 'st **
            pure (
-              // Full heap shape: major layout/free-list/colors, minor layout,
-              // cross-generation no-blue fields, and stack-coupled major-GC
-              // preconditions.
-              GenInv.full_heap_shape
-                ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'st
-                (stack_capacity st) /\
+              let minor_st : minor_state = { data = 'd; bump = 'b } in
+              let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+              // Pre-minor shape plus the post-minor major-root stack used by
+              // mark/sweep.  The stack must match the roots after promotion.
+              GenInv.collection_heap_shape minor_st 's 'fp /\
+              GenInv.major_stack_shape result.mc_major 'st (stack_capacity st) /\
+              roots_match_stack result.mc_roots 'st /\
 
                // Operational array preconditions.
                SZ.v nroots == Seq.length 'rs /\
@@ -259,6 +265,7 @@ fn gen_gc (gh: gen_heap_t)
       // Roots have been pointwise rewritten through the forwarding map:
       // minor-heap pointers now point to promoted copies in major heap
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+      roots_match_stack rs2 'st /\
 
       // Minor heap has been fully reset (bump = 0)
       U64.v b2 == 0 /\
@@ -277,4 +284,11 @@ fn gen_gc (gh: gen_heap_t)
         Seq.mem x (SpecFields.objects zero_addr result.mc_major)) /\
 
       // Post-minor heap satisfies size-bounds invariant
-      SpecFields.well_formed_heap_part1 result.mc_major)
+      SpecFields.well_formed_heap_part1 result.mc_major /\
+
+      // If promotion succeeds, the original combined reachable subgraph is
+      // isomorphic to the post-minor major reachable subgraph that mark/sweep
+      // subsequently treats as its root set.
+      (snd res ==>
+       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+         minor_st 's 'fp 'rs result.mc_major rs2))

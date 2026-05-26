@@ -1004,9 +1004,11 @@ fn gen_gc (gh: gen_heap_t)
            pts_to slots 'sl **
            is_gray_stack st 'st **
              pure (
-               GenInv.full_heap_shape
-                 ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'st
-                 (stack_capacity st) /\
+               let minor_st : minor_state = { data = 'd; bump = 'b } in
+               let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
+               GenInv.collection_heap_shape minor_st 's 'fp /\
+               GenInv.major_stack_shape result.mc_major 'st (stack_capacity st) /\
+               roots_match_stack result.mc_roots 'st /\
                SZ.v nroots == Seq.length 'rs /\
                Seq.length 'farr == fwd_array_size /\
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
@@ -1035,20 +1037,21 @@ fn gen_gc (gh: gen_heap_t)
       SpecGCPost.full_gc_correctness result.mc_major s2 'st /\
       rs2 == result.mc_roots /\
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
+      roots_match_stack rs2 'st /\
       U64.v b2 == 0 /\
       GenInv.full_heap_shape
         ({ data = d2; bump = b2 } <: minor_state) result.mc_major result.mc_fp
         'st (stack_capacity st) /\
       (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
         Seq.mem x (SpecFields.objects zero_addr result.mc_major)) /\
-      SpecFields.well_formed_heap_part1 result.mc_major)
+      SpecFields.well_formed_heap_part1 result.mc_major /\
+      (snd res ==>
+       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+         minor_st 's 'fp 'rs result.mc_major rs2))
 {
-  GenInv.full_heap_shape_elim
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'st (stack_capacity st);
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
-  GenInv.major_stack_shape_elim 's 'st (stack_capacity st);
 
   // Phase 1: Full minor collection, including remembered-set slot rewriting.
   let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots;
@@ -1089,9 +1092,9 @@ fn gen_gc (gh: gen_heap_t)
   assert (pure (SweepInv.fp_valid fp_val ms_updated));
   assert (pure (Sweep.fp_in_heap fp_val ms_updated));
   assert (pure (Mark.no_black_objects ms_updated));
-  GC.Spec.MarkBoundedInv.bounded_mark_inv_elim_bsp 's 'st (stack_capacity st);
-  CheneyPres.cheney_collect_preserves_bounded_stack_props
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st;
+  GenInv.major_stack_shape_elim
+    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
+    'st (stack_capacity st);
   assert (pure (GC.Spec.MarkBounded.bounded_stack_props ms_updated 'st));
   assert (pure (Seq.length (SpecFields.objects zero_addr ms_updated) > 0));
   assert (pure (PromoteSpec.heap_objects_dense ms_updated));
@@ -1103,9 +1106,6 @@ fn gen_gc (gh: gen_heap_t)
   assert (pure (Mark.no_pointer_to_blue ms_updated));
   assert (pure (Mark.root_props ms_updated 'st));
   assert (pure (SpecFields.no_scan_invariant ms_updated));
-  assert (pure (CheneyPres.gray_black_objects_on_stack 's 'st));
-  CheneyPres.cheney_collect_preserves_gray_black_objects_on_stack
-    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st;
   assert (pure (CheneyPres.gray_black_objects_on_stack ms_updated 'st));
   assert (pure (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr ms_updated) /\
     (GC.Spec.Object.is_gray x ms_updated \/ GC.Spec.Object.is_black x ms_updated) ==> Seq.mem x 'st));
