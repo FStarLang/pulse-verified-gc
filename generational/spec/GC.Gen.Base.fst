@@ -29,6 +29,11 @@ let max_young_wosize : n:pos{n >= 1 /\ (n + 1) * 8 <= minor_heap_size} = 128
 
 let max_young_wosize_u64 : n:U64.t{U64.v n == max_young_wosize} = 128UL
 
+let small_wosize_fits (w: nat)
+  : Lemma (requires w > 0 /\ w <= 10)
+          (ensures w <= max_young_wosize)
+  = ()
+
 /// ---------------------------------------------------------------------------
 /// Minor heap base address
 /// ---------------------------------------------------------------------------

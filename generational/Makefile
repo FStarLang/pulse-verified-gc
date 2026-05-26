@@ -36,7 +36,10 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
 SPEC_SRC = $(wildcard spec/*.fst spec/*.fsti)
 IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti)
-ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
+
+# Exclude SPOT test files from orphan checking (they are tests, not production code)
+SPOT_SRC = spec/GC.Gen.SPOT.fst impl/GC.Gen.SPOT.Pulse.fst impl/GC.Gen.SPOT.Simple.fst
+ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
 ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst
 ROOT_CHECKED = $(addsuffix .checked,$(ROOT_SRC))
