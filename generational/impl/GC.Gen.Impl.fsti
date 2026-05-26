@@ -97,6 +97,8 @@ let gen_gc_reachable_subgraph_isomorphism_post
   ok ==>
   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
     minor major fp roots result.mc_major roots_out /\
+  MinorFwd.normal_result_non_pointer_fields_preserved_prop
+    minor major fp roots result.mc_major /\
   SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major final_major st
 
 /// Collection completeness: every object that remains in the final major heap
@@ -213,7 +215,9 @@ fn minor_collect_full (gh: gen_heap_t)
       // subgraph isomorphism over the actual post-minor heap graph.
       (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs s2 rs2))
+         minor_st 's 'fp 'rs s2 rs2 /\
+        MinorFwd.normal_result_non_pointer_fields_preserved_prop
+         minor_st 's 'fp 'rs s2))
 
 /// ---------------------------------------------------------------------------
 /// Full generational GC (minor collection + major collection)

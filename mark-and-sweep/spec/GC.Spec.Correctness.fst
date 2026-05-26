@@ -1266,6 +1266,25 @@ let major_gc_live_subgraph_isomorphism_gen h_init h_mark roots fp =
     end
   in
   FStar.Classical.forall_intro_2 edge_preserved
+  ;
+  let field_preserved (x: obj_addr) (i: U64.t) : Lemma
+    (heap_reachable h_init roots x /\
+     U64.v i >= 1 /\
+     U64.v i <= U64.v (wosize_of_object x h_init) ==>
+     HeapGraph.get_field h_init x i == HeapGraph.get_field h_coal x i)
+  = if heap_reachable h_init roots x /\
+       U64.v i >= 1 /\
+       U64.v i <= U64.v (wosize_of_object x h_init) then begin
+      graph_vertices_mem h_init x;
+      assert (Seq.mem x (objects zero_addr h_init));
+      assert (is_black x h_mark);
+      live_survives x;
+      graph_vertices_mem h_coal x;
+      assert (Seq.mem x (create_graph h_coal).vertices);
+      assert (HeapGraph.get_field h_init x i == HeapGraph.get_field h_coal x i)
+    end
+  in
+  FStar.Classical.forall_intro_2 field_preserved
 #pop-options
 
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"

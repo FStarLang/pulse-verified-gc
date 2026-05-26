@@ -404,7 +404,12 @@ let major_gc_live_subgraph_isomorphism
   (forall (x y: obj_addr).
     heap_reachable h_init roots x /\
     heap_reachable h_init roots y ==>
-    (heap_edge h_init x y <==> heap_edge h_final x y))
+    (heap_edge h_init x y <==> heap_edge h_final x y)) /\
+  (forall (x: obj_addr) (i: U64.t).
+    heap_reachable h_init roots x /\
+    U64.v i >= 1 /\
+    U64.v i <= U64.v (wosize_of_object x h_init) ==>
+    HeapGraph.get_field h_init x i == HeapGraph.get_field h_final x i)
 
 let major_gc_unreachable_final_blue
   (h_init h_final: heap) (roots: seq obj_addr) : prop =

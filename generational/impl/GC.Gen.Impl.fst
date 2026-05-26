@@ -823,7 +823,9 @@ let minor_collect_full_isomorphism_post
     (ensures
       (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor major fp roots post_major post_roots))
+         minor major fp roots post_major post_roots /\
+       MinorFwd.normal_result_non_pointer_fields_preserved_prop
+         minor major fp roots post_major))
   =
     if ok
     then begin
@@ -834,7 +836,11 @@ let minor_collect_full_isomorphism_post
       MinorFwd.normal_post_reachable_subgraph_isomorphism
         minor major fp roots slots n;
       MinorFwd.normal_post_reachable_subgraph_isomorphism_to_result
-        minor major fp roots post_major post_roots
+        minor major fp roots post_major post_roots;
+      MinorFwd.normal_post_non_pointer_fields_preserved
+        minor major fp roots slots n;
+      MinorFwd.normal_post_non_pointer_fields_preserved_to_result
+        minor major fp roots post_major
     end
 #pop-options
 
@@ -903,7 +909,9 @@ fn minor_collect_full (gh: gen_heap_t)
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
       (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs s2 rs2))
+         minor_st 's 'fp 'rs s2 rs2 /\
+        MinorFwd.normal_result_non_pointer_fields_preserved_prop
+         minor_st 's 'fp 'rs s2))
 {
   unfold is_gen_heap;
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;

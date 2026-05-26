@@ -1134,6 +1134,64 @@ let normal_result_reachable_subgraph_isomorphism_prop
     (result_post_edge post_major)
     prom.fwd_map
 
+let normal_post_non_pointer_fields_preserved_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) : prop =
+  let prom = cheney_promote minor major fp roots in
+  let res = cheney_collect_spec minor major fp roots in
+  forall (u: CG.combined_vertex).
+    normal_src_reachable minor major fp roots u ==>
+    (match u with
+    | CG.MajorV src ->
+      is_val_addr src ==>
+      forall (j:nat).
+        j < U64.v (wosize_of_object (src <: obj_addr) major) /\
+        U64.v src + j * 8 + 8 <= heap_size /\
+        (U64.v src + j * 8) % 8 == 0 /\
+        CG.classify_major_field minor major
+          (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None ==>
+        read_word res.mc_major (U64.uint_to_t (U64.v src + j * 8)) ==
+        read_word major (U64.uint_to_t (U64.v src + j * 8))
+    | CG.MinorV src ->
+      let img = prom.fwd_map src in
+      is_val_addr img ==>
+      forall (j:nat).
+        j < minor_wosize minor src /\
+        j < U64.v (wosize_of_object (img <: obj_addr) prom.major_final) /\
+        U64.v img + j * 8 + 8 <= heap_size /\
+        (U64.v img + j * 8) % 8 == 0 /\
+        CG.classify_minor_field minor major (minor_read_field minor src j) == None ==>
+        read_word res.mc_major (U64.uint_to_t (U64.v img + j * 8)) ==
+        minor_read_field minor src j)
+
+let normal_result_non_pointer_fields_preserved_prop
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (post_major: heap) : prop =
+  let prom = cheney_promote minor major fp roots in
+  forall (u: CG.combined_vertex).
+    normal_src_reachable minor major fp roots u ==>
+    (match u with
+    | CG.MajorV src ->
+      is_val_addr src ==>
+      forall (j:nat).
+        j < U64.v (wosize_of_object (src <: obj_addr) major) /\
+        U64.v src + j * 8 + 8 <= heap_size /\
+        (U64.v src + j * 8) % 8 == 0 /\
+        CG.classify_major_field minor major
+          (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None ==>
+        read_word post_major (U64.uint_to_t (U64.v src + j * 8)) ==
+        read_word major (U64.uint_to_t (U64.v src + j * 8))
+    | CG.MinorV src ->
+      let img = prom.fwd_map src in
+      is_val_addr img ==>
+      forall (j:nat).
+        j < minor_wosize minor src /\
+        j < U64.v (wosize_of_object (img <: obj_addr) prom.major_final) /\
+        U64.v img + j * 8 + 8 <= heap_size /\
+        (U64.v img + j * 8) % 8 == 0 /\
+        CG.classify_minor_field minor major (minor_read_field minor src j) == None ==>
+        read_word post_major (U64.uint_to_t (U64.v img + j * 8)) ==
+        minor_read_field minor src j)
+
 /// The post-minor forwarding kernel established by `minor_collect_full`.
 [@@"opaque_to_smt"]
 let minor_collect_full_forwarding_kernel
@@ -1187,7 +1245,8 @@ let minor_collect_full_forwarding_kernel
      ready_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
      ready_image_reachable_is_post_reachable_prop minor major fp roots /\
      normal_image_reachable_is_post_reachable_prop minor major fp roots /\
-     normal_post_image_reachable_subgraph_isomorphism_prop minor major fp roots))
+     normal_post_image_reachable_subgraph_isomorphism_prop minor major fp roots /\
+     normal_post_non_pointer_fields_preserved_prop minor major fp roots))
 
 val post_minor_reachable_is_normal_image_reachable_all
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -1232,6 +1291,33 @@ val normal_post_reachable_subgraph_isomorphism_to_result
     (ensures
       normal_result_reachable_subgraph_isomorphism_prop
         minor major fp roots post_major post_roots)
+
+val normal_post_non_pointer_fields_preserved
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      roots_valid_for_minor_collection minor major roots /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures normal_post_non_pointer_fields_preserved_prop minor major fp roots)
+
+val normal_post_non_pointer_fields_preserved_to_result
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (post_major: heap)
+  : Lemma
+    (requires
+      post_major == (cheney_collect_spec minor major fp roots).mc_major /\
+      normal_post_non_pointer_fields_preserved_prop minor major fp roots)
+    (ensures
+      normal_result_non_pointer_fields_preserved_prop
+        minor major fp roots post_major)
 
 val minor_collect_full_forwarding_kernel_intro
   (minor: minor_state) (major: heap) (fp: U64.t)
