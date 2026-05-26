@@ -65,6 +65,48 @@ let roots_match_stack (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : prop =
   (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==> Seq.mem r st) /\
   (forall (r: obj_addr). Seq.mem r st ==> Seq.mem (r <: U64.t) roots)
 
+/// The roots array contains exactly the post-minor roots used by the following
+/// major collection.
+let gen_gc_roots_post
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots roots_out: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) : prop =
+  let result = CheneySpec.cheney_collect_spec minor major fp roots in
+  roots_out == result.mc_roots /\ roots_match_stack roots_out st
+
+/// Shape facts exposed by the abstract `gen_gc` contract: the nursery is reset,
+/// the final major heap satisfies the major GC postcondition, and the post-minor
+/// heap has the full shape needed by the major phase.
+let gen_gc_heap_shape_post
+  (minor_data: minor_heap) (minor_bump: U64.t)
+  (post_minor_major final_major: heap) (post_minor_fp: U64.t)
+  (st: Seq.seq obj_addr) (cap: nat) : prop =
+  U64.v minor_bump == 0 /\
+  SpecGCPost.gc_postcondition final_major /\
+  GenInv.full_heap_shape
+    ({ data = minor_data; bump = minor_bump } <: minor_state)
+    post_minor_major post_minor_fp st cap
+
+/// Reachable subgraph correctness.  On successful promotion, minor collection
+/// maps the original combined reachable subgraph into the post-minor major heap;
+/// major GC then preserves that live subgraph without moving objects.
+let gen_gc_reachable_subgraph_isomorphism_post
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (ok: bool) (final_major: heap) (roots_out: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) : prop =
+  let result = CheneySpec.cheney_collect_spec minor major fp roots in
+  ok ==>
+  MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+    minor major fp roots result.mc_major roots_out /\
+  SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major final_major st
+
+/// Collection completeness: every object that remains in the final major heap
+/// but is not reachable from the final roots is blue.
+let gen_gc_unreachable_final_blue_post
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (final_major: heap) (st: Seq.seq obj_addr) : prop =
+  let result = CheneySpec.cheney_collect_spec minor major fp roots in
+  SpecGCPost.major_gc_unreachable_final_blue result.mc_major final_major st
+
 [@@"opaque_to_smt"]
 let minor_heap_no_scan_invariant (d: minor_heap) (b: U64.t) : prop =
   PromoteSpec.minor_no_scan_invariant ({ data = d; bump = b })
@@ -234,54 +276,10 @@ fn gen_gc (gh: gen_heap_t)
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
-      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
       let ok = snd res in
-
-      // --- Major GC correctness (applied to the post-minor heap) ---
-
-      // Post-GC heap is well-formed AND every object is white or blue
-      // (no gray or black objects remain — marking is complete and
-      // colors have been reset by sweep)
-      SpecGCPost.gc_postcondition s2 /\
-
-      // Full mark-and-sweep correctness theorem (5 pillars):
-      //   1. well_formed_heap preserved through mark+sweep
-      //   2. Reachability-based survival: objects reachable from roots
-      //      in the post-minor heap survive sweep
-      //   3. Successor preservation: surviving objects' pointer fields
-      //      still point to surviving objects
-      //   4. Color reset: all objects are white or blue after sweep
-      //   5. Field data preservation: non-color header bits and object
-      //      body data are unchanged by mark+sweep
-      // Here result.mc_major is the post-minor heap (input to mark-sweep),
-      // s2 is the final post-sweep heap, and 'st is the gray stack
-      // contents (roots for the major GC)
-      SpecGCPost.full_gc_correctness result.mc_major s2 'st /\
-      SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major s2 'st /\
-      SpecGCPost.major_gc_unreachable_final_blue result.mc_major s2 'st /\
-
-      // --- Minor collection properties ---
-
-      // Roots match the Cheney spec's output
-      rs2 == result.mc_roots /\
-
-      // Roots have been pointwise rewritten through the forwarding map:
-      // minor-heap pointers now point to promoted copies in major heap
-      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-      roots_match_stack rs2 'st /\
-
-      // Minor heap has been fully reset (bump = 0)
-      U64.v b2 == 0 /\
-
-      // The post-minor heap satisfies the full invariant needed for the
-      // immediately following major collection.
-      GenInv.full_heap_shape
-        ({ data = d2; bump = b2 } <: minor_state) result.mc_major result.mc_fp
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st /\
+      gen_gc_heap_shape_post d2 b2 result.mc_major s2 result.mc_fp
         'st (stack_capacity st) /\
-
-      // If promotion succeeds, minor collection maps the original combined
-      // reachable subgraph into the post-minor major heap.  The major-GC
-      // identity theorem above then applies from result.mc_major to s2.
-      (ok ==>
-       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs result.mc_major rs2))
+      gen_gc_reachable_subgraph_isomorphism_post
+        minor_st 's 'fp 'rs ok s2 rs2 'st /\
+      gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs s2 'st)

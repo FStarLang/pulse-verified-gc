@@ -1032,22 +1032,13 @@ fn gen_gc (gh: gen_heap_t)
     pure (
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
-      let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
       let ok = snd res in
-      SpecGCPost.gc_postcondition s2 /\
-      SpecGCPost.full_gc_correctness result.mc_major s2 'st /\
-      SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major s2 'st /\
-      SpecGCPost.major_gc_unreachable_final_blue result.mc_major s2 'st /\
-      rs2 == result.mc_roots /\
-      rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
-      roots_match_stack rs2 'st /\
-      U64.v b2 == 0 /\
-      GenInv.full_heap_shape
-        ({ data = d2; bump = b2 } <: minor_state) result.mc_major result.mc_fp
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st /\
+      gen_gc_heap_shape_post d2 b2 result.mc_major s2 result.mc_fp
         'st (stack_capacity st) /\
-      (ok ==>
-       MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-         minor_st 's 'fp 'rs result.mc_major rs2))
+      gen_gc_reachable_subgraph_isomorphism_post
+        minor_st 's 'fp 'rs ok s2 rs2 'st /\
+      gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs s2 'st)
 {
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
