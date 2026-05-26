@@ -36,24 +36,29 @@ See: https://risemsr.github.io/blog/2026-04-16-spotting-specs/
 **What it validates**:
 - Minor heap creation from raw arrays
 - `minor_alloc` preconditions are provable
-- `minor_alloc` postcondition is usable
+- `minor_alloc` postcondition is usable  
 - Allocation produces distinct addresses
 - Bump pointer advances correctly  
 - `minor_heap_reset` clears state properly
 - **Completely admit-free** - proves everything from first principles
 - Demonstrates minor heap API is fully usable from Pulse code
 
-### 3. GC.Gen.SPOT.Pulse.fst (Full GC SPOT - Skeleton)
-**Status**: 🚧 Skeleton only  
-**Location**: `impl/GC.Gen.SPOT.Pulse.fst`  
-**Scope**: Would test full `gen_gc` with actual heap construction  
-**Estimated lines**: 400-600  
+**Limitation**: Tests allocator only, not the full GC (`minor_collect_full` or `gen_gc`)
 
-**Challenges** for completion:
-- Proving `collection_heap_shape` from scratch requires ~100+ lines
-- Setting up major heap with valid free list chain
-- Proving all cross-heap invariants
-- Proving remembered set coverage properties
+### 3. Full GC SPOT - Not Completed
+**Status**: ❌ Not implemented  
+**Scope**: Would call `minor_collect_full` or `gen_gc` from Pulse  
+**Estimated effort**: 400-600 lines  
+
+**Why not completed**:
+To call `minor_collect_full`, we need to prove ~10 complex preconditions:
+- `collection_heap_shape` (requires proving: `major_heap_shape` with 15+ conjuncts, `minor_heap_shape`, cross-heap invariants)
+- `ref_table_sound`, `ref_table_covers_minor_ptrs`, `slots_pairwise_distinct`
+- `remembered_targets_in_roots`
+- `major_field_zero_no_minor`
+- `roots_valid_nonblue`, `roots_valid_for_minor_collection`
+
+Each precondition requires substantial proof engineering from first principles. The Simple SPOT demonstrates the allocator API works; the spec SPOT demonstrates the GC postconditions are correct. A full Pulse GC SPOT would be valuable but requires significant investment.
 
 ## Verification
 
@@ -82,17 +87,22 @@ cd generational
 
 **Simple SPOT**: Proves everything from scratch, demonstrating the allocator API is genuinely usable in Pulse. This is the "gold standard" for API testing.
 
-**Full GC SPOT**: Would require significant proof engineering (~400+ lines) to build `collection_heap_shape` from scratch. The effort/benefit tradeoff favors focused testing.
+**Full GC SPOT**: Would require significant proof engineering (~400+ lines) to build `collection_heap_shape` from scratch. The effort/benefit tradeoff currently favors focused testing over end-to-end GC proofs.
 
 ## Verdict
 
-✅ **Mission accomplished**: The Simple SPOT demonstrates the minor heap API is fully usable from Pulse code with complete, admit-free proofs.
-
 ✅ **Spec validation**: The Spec SPOT demonstrates the GC postconditions are strong enough for client reasoning.
 
-The combination provides high confidence that:
+✅ **API validation**: The Simple SPOT demonstrates the minor heap allocator API is fully usable from Pulse code with complete, admit-free proofs.
+
+⏸️  **Full GC validation**: Not yet implemented due to complexity. Future work could:
+- Provide helper lemmas for proving `collection_heap_shape`
+- Create builder functions for test heaps
+- Simplify precondition structure
+
+The combination of spec + allocator SPOTs provides high confidence that:
 - The spec is correct and usable
 - The implementation API is accessible from Pulse
-- Preconditions are achievable
+- Preconditions are achievable (at least for the allocator)
 - Postconditions are strong enough
 
