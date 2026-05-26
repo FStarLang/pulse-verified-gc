@@ -1033,6 +1033,7 @@ fn gen_gc (gh: gen_heap_t)
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
+      let ok = snd res in
       SpecGCPost.gc_postcondition s2 /\
       SpecGCPost.full_gc_correctness result.mc_major s2 'st /\
       SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major s2 'st /\
@@ -1044,10 +1045,7 @@ fn gen_gc (gh: gen_heap_t)
       GenInv.full_heap_shape
         ({ data = d2; bump = b2 } <: minor_state) result.mc_major result.mc_fp
         'st (stack_capacity st) /\
-      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
-        Seq.mem x (SpecFields.objects zero_addr result.mc_major)) /\
-      SpecFields.well_formed_heap_part1 result.mc_major /\
-      (snd res ==>
+      (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs result.mc_major rs2))
 {

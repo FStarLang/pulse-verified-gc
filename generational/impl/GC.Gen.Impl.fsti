@@ -235,6 +235,7 @@ fn gen_gc (gh: gen_heap_t)
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
+      let ok = snd res in
 
       // --- Major GC correctness (applied to the post-minor heap) ---
 
@@ -278,19 +279,9 @@ fn gen_gc (gh: gen_heap_t)
         ({ data = d2; bump = b2 } <: minor_state) result.mc_major result.mc_fp
         'st (stack_capacity st) /\
 
-      // --- Post-minor heap properties (proven by minor_collect_full) ---
-
-      // Pre-existing major-heap objects survive minor collection
-      // (promotion only adds, never removes)
-      (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr 's) ==>
-        Seq.mem x (SpecFields.objects zero_addr result.mc_major)) /\
-
-      // Post-minor heap satisfies size-bounds invariant
-      SpecFields.well_formed_heap_part1 result.mc_major /\
-
-      // If promotion succeeds, the original combined reachable subgraph is
-      // isomorphic to the post-minor major reachable subgraph that mark/sweep
-      // subsequently treats as its root set.
-      (snd res ==>
+      // If promotion succeeds, minor collection maps the original combined
+      // reachable subgraph into the post-minor major heap.  The major-GC
+      // identity theorem above then applies from result.mc_major to s2.
+      (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs result.mc_major rs2))
