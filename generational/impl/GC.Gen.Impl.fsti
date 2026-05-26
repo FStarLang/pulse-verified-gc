@@ -256,6 +256,8 @@ fn gen_gc (gh: gen_heap_t)
       // s2 is the final post-sweep heap, and 'st is the gray stack
       // contents (roots for the major GC)
       SpecGCPost.full_gc_correctness result.mc_major s2 'st /\
+      SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major s2 'st /\
+      SpecGCPost.major_gc_unreachable_final_blue result.mc_major s2 'st /\
 
       // --- Minor collection properties ---
 

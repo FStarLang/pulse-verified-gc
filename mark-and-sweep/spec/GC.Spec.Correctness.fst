@@ -1199,6 +1199,281 @@ let full_gc_correctness_through_coalesce_gen h_init h_mark roots fp =
   full_gc_correctness_intro h_init h_mark h_coal roots
 #pop-options
 
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+let major_gc_live_subgraph_isomorphism_gen h_init h_mark roots fp =
+  let h_sweep = fst (sweep h_mark fp) in
+  let h_coal = fst (Coalesce.coalesce h_sweep) in
+  let g_init = create_graph h_init in
+  let g_coal = create_graph h_coal in
+  let roots' = HeapGraph.coerce_to_vertex_list roots in
+
+  mark_post_elim_wfh h_init h_mark roots fp;
+  mark_post_elim_no_grey h_init h_mark roots fp;
+  mark_post_elim_objects h_init h_mark roots fp;
+  mark_post_elim_graph h_init h_mark roots fp;
+  mark_post_elim_fp h_init h_mark roots fp;
+  sweep_post_sweep_strong_gen h_init h_mark roots fp;
+  sweep_black_survives h_mark fp;
+  full_gc_correctness_through_coalesce_gen h_init h_mark roots fp;
+
+  let live_survives (x: obj_addr) : Lemma
+    (heap_reachable h_init roots x ==>
+     Seq.mem x (objects zero_addr h_coal) /\ is_white x h_coal)
+  = if heap_reachable h_init roots x then begin
+      graph_vertices_mem h_init x;
+      assert (Seq.mem x (objects zero_addr h_init));
+      assert (is_black x h_mark);
+      assert (Seq.mem x (objects zero_addr h_mark));
+      assert (Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep);
+      Coalesce.coalesce_survivors_in_objects h_sweep x;
+      Coalesce.coalesce_preserves_survivor_header h_sweep x;
+      color_of_header_eq x h_sweep h_coal
+    end
+  in
+  FStar.Classical.forall_intro live_survives;
+
+  let edge_preserved (x y: obj_addr) : Lemma
+    (heap_reachable h_init roots x /\
+     heap_reachable h_init roots y ==>
+     (heap_edge h_init x y <==> heap_edge h_coal x y))
+  = if heap_reachable h_init roots x /\ heap_reachable h_init roots y then begin
+      graph_vertices_mem h_init x;
+      assert (Seq.mem x (objects zero_addr h_init));
+      assert (is_black x h_mark);
+      assert (Seq.mem x (objects zero_addr h_mark));
+      assert (Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep);
+      Coalesce.coalesce_survivors_in_objects h_sweep x;
+      graph_vertices_mem h_coal x;
+      assert (Seq.mem x g_coal.vertices);
+      assert (successors g_init x == successors g_coal x);
+      let fwd () : Lemma
+        (heap_edge h_init x y ==> heap_edge h_coal x y)
+      = if heap_edge h_init x y then begin
+          edge_mem_successors g_init x y;
+          assert (Seq.mem y (successors g_coal x));
+          successors_mem_edge g_coal x y
+        end
+      in
+      let bwd () : Lemma
+        (heap_edge h_coal x y ==> heap_edge h_init x y)
+      = if heap_edge h_coal x y then begin
+          edge_mem_successors g_coal x y;
+          assert (Seq.mem y (successors g_init x));
+          successors_mem_edge g_init x y
+        end
+      in
+      fwd (); bwd ()
+    end
+  in
+  FStar.Classical.forall_intro_2 edge_preserved
+#pop-options
+
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+private let rec coerce_mem_is_obj_addr (s: seq obj_addr) (x: vertex_id)
+  : Lemma
+    (requires Seq.mem x (HeapGraph.coerce_to_vertex_list s))
+    (ensures U64.v x >= U64.v mword)
+    (decreases Seq.length s)
+  = if Seq.length s = 0 then ()
+    else begin
+      mem_cons_lemma x (Seq.head s) (HeapGraph.coerce_to_vertex_list (Seq.tail s));
+      if x = Seq.head s then ()
+      else coerce_mem_is_obj_addr (Seq.tail s) x
+    end
+
+private let heap_graph_vertex_is_obj_addr (h: heap) (x: vertex_id)
+  : Lemma
+    (requires mem_graph_vertex (create_graph h) x)
+    (ensures U64.v x >= U64.v mword)
+  = coerce_mem_is_obj_addr (objects zero_addr h) x
+
+private let root_heap_reachable
+  (h: heap) (roots: seq obj_addr) (r: obj_addr)
+  : Lemma
+    (requires
+      (let g = create_graph h in
+       let roots' = HeapGraph.coerce_to_vertex_list roots in
+       graph_wf g /\ is_vertex_set roots' /\ subset_vertices roots' g.vertices /\
+       Seq.mem r roots))
+    (ensures heap_reachable h roots r)
+  = let g = create_graph h in
+    let roots' = HeapGraph.coerce_to_vertex_list roots in
+    HeapGraph.coerce_mem_lemma roots r;
+    assert (Seq.mem r roots');
+    assert (mem_graph_vertex g r);
+    assert (Seq.mem r (reachable_set g roots'))
+
+private let roots_subset_coal_from_iso
+  (h_init h_coal: heap) (roots: seq obj_addr)
+  : Lemma
+    (requires
+      (let g_init = create_graph h_init in
+       let roots' = HeapGraph.coerce_to_vertex_list roots in
+       graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices) /\
+      major_gc_live_subgraph_isomorphism h_init h_coal roots)
+    (ensures subset_vertices (HeapGraph.coerce_to_vertex_list roots) (create_graph h_coal).vertices)
+  = let roots' = HeapGraph.coerce_to_vertex_list roots in
+    let aux (v: vertex_id) : Lemma
+      (Seq.mem v roots' ==> Seq.mem v (create_graph h_coal).vertices)
+    = if Seq.mem v roots' then begin
+        coerce_mem_is_obj_addr roots v;
+        let r: obj_addr = v in
+        HeapGraph.coerce_mem_lemma roots r;
+        assert (Seq.mem r roots);
+        root_heap_reachable h_init roots r;
+        assert (Seq.mem r (objects zero_addr h_coal));
+        graph_vertices_mem h_coal r
+      end
+    in
+    FStar.Classical.forall_intro aux
+
+private let rec reach_transfer_init_to_coal
+  (h_init h_coal: heap) (roots: seq obj_addr)
+  (r: vertex_id{mem_graph_vertex (create_graph h_init) r /\
+                mem_graph_vertex (create_graph h_coal) r})
+  (x: vertex_id{mem_graph_vertex (create_graph h_init) x /\
+                mem_graph_vertex (create_graph h_coal) x})
+  (p: reach (create_graph h_init) r x)
+  : Lemma
+    (requires
+      (let g_init = create_graph h_init in
+       let g_coal = create_graph h_coal in
+       let roots' = HeapGraph.coerce_to_vertex_list roots in
+       graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices /\
+       graph_wf g_coal /\ subset_vertices roots' g_coal.vertices /\
+       Seq.mem r roots') /\
+      major_gc_live_subgraph_isomorphism h_init h_coal roots)
+    (ensures reachable (create_graph h_coal) r x)
+    (decreases p)
+  = let g_init = create_graph h_init in
+    let g_coal = create_graph h_coal in
+    let roots' = HeapGraph.coerce_to_vertex_list roots in
+    match p with
+    | ReachRefl _ ->
+      reach_refl g_coal r
+    | ReachTrans _ y z py ->
+      heap_graph_vertex_is_obj_addr h_init y;
+      heap_graph_vertex_is_obj_addr h_init z;
+      let yy: obj_addr = y in
+      let zz: obj_addr = z in
+      // y is reachable in the initial graph since r is a root and r reaches y.
+      FStar.Classical.exists_intro (fun (_: reach g_init r y) -> True) py;
+      assert (reachable g_init r y);
+      assert (Seq.mem r roots');
+      reachable_set_correct g_init roots';
+      assert (Seq.mem y (reachable_set g_init roots'));
+      assert (Seq.mem yy (reachable_set g_init roots'));
+      assert (heap_reachable h_init roots yy);
+      reachable_successor_closed g_init roots' yy zz;
+      assert (heap_reachable h_init roots zz);
+      assert (heap_edge h_init yy zz);
+      assert (heap_edge h_coal yy zz);
+      assert (Seq.mem yy (objects zero_addr h_coal));
+      assert (Seq.mem zz (objects zero_addr h_coal));
+      graph_vertices_mem h_coal yy;
+      graph_vertices_mem h_coal zz;
+      assert (mem_graph_vertex g_coal y);
+      assert (mem_graph_vertex g_coal z);
+      reach_transfer_init_to_coal h_init h_coal roots r yy py;
+      edge_reach g_coal yy zz;
+      reach_trans g_coal r yy zz
+
+private let heap_reachable_transfer_init_to_coal
+  (h_init h_coal: heap) (roots: seq obj_addr) (x: obj_addr)
+  : Lemma
+    (requires
+      (let g_init = create_graph h_init in
+       let g_coal = create_graph h_coal in
+       let roots' = HeapGraph.coerce_to_vertex_list roots in
+       graph_wf g_init /\ is_vertex_set roots' /\ subset_vertices roots' g_init.vertices /\
+       graph_wf g_coal /\ subset_vertices roots' g_coal.vertices) /\
+      major_gc_live_subgraph_isomorphism h_init h_coal roots /\
+      heap_reachable h_init roots x)
+    (ensures heap_reachable h_coal roots x)
+  = let g_init = create_graph h_init in
+    let g_coal = create_graph h_coal in
+    let roots' = HeapGraph.coerce_to_vertex_list roots in
+    reachable_set_correct g_init roots';
+    assert (Seq.mem x (objects zero_addr h_coal));
+    graph_vertices_mem h_coal x;
+    let goal () : Lemma (Seq.mem x (reachable_set g_coal roots')) =
+      FStar.Classical.exists_elim
+        (Seq.mem x (reachable_set g_coal roots'))
+        #_
+        #(fun (r: vertex_id{mem_graph_vertex g_init r}) ->
+            Seq.mem r roots' /\ reachable g_init r x)
+        ()
+        (fun r ->
+          let finish (p: reach g_init r x) : Lemma
+            (requires True)
+            (ensures Seq.mem x (reachable_set g_coal roots'))
+          = assert (mem_graph_vertex g_coal r);
+            reach_transfer_init_to_coal h_init h_coal roots r x p;
+            reachable_set_correct g_coal roots';
+            assert (Seq.mem x (reachable_set g_coal roots'))
+          in
+          FStar.Classical.forall_intro finish)
+    in
+    goal ()
+#pop-options
+
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+let major_gc_unreachable_final_blue_gen h_init h_mark roots fp =
+  let h_sweep = fst (sweep h_mark fp) in
+  let h_coal = fst (Coalesce.coalesce h_sweep) in
+
+  mark_post_elim_wfh h_init h_mark roots fp;
+  mark_post_elim_no_grey h_init h_mark roots fp;
+  mark_post_elim_objects h_init h_mark roots fp;
+  mark_post_elim_fp h_init h_mark roots fp;
+  sweep_preserves_objects h_mark fp;
+  sweep_post_sweep_strong_gen h_init h_mark roots fp;
+  sweep_white_becomes_blue h_mark fp;
+  sweep_blue_stays_blue h_mark fp;
+  major_gc_live_subgraph_isomorphism_gen h_init h_mark roots fp;
+  Coalesce.coalesce_preserves_wf h_sweep;
+  create_graph_wf_from_heap h_coal;
+  roots_subset_coal_from_iso h_init h_coal roots;
+
+  let aux (x: obj_addr) : Lemma
+    (requires Seq.mem x (objects zero_addr h_coal) /\
+              ~(heap_reachable h_coal roots x))
+    (ensures is_blue x h_coal)
+  = Coalesce.coalesce_objects_subset h_sweep x;
+    assert (Seq.mem x (objects zero_addr h_sweep));
+    assert (Seq.mem x (objects zero_addr h_mark));
+    assert (Seq.mem x (objects zero_addr h_init));
+    graph_vertices_mem h_init x;
+    if is_black x h_mark then begin
+      assert (Seq.mem x (reachable_set (create_graph h_init)
+                         (HeapGraph.coerce_to_vertex_list roots)));
+      assert (heap_reachable h_init roots x);
+      heap_reachable_transfer_init_to_coal h_init h_coal roots x;
+      assert (heap_reachable h_coal roots x)
+    end;
+    assert (~(is_black x h_mark));
+    color_exhaustive x h_mark;
+    colors_exclusive x h_mark;
+    if is_white x h_mark then
+      assert (is_blue x h_sweep)
+    else if is_blue x h_mark then
+      assert (is_blue x h_sweep)
+    else if is_gray x h_mark then
+      assert False
+    else
+      assert False;
+    assert (is_blue x h_sweep);
+    Coalesce.coalesce_heap_unfold h_sweep h_sweep (objects zero_addr h_sweep) 0UL 0 0UL;
+    Coalesce.coalesce_aux_walk_all_wb h_sweep h_sweep zero_addr
+      (objects zero_addr h_sweep) 0UL 0 0UL (objects zero_addr h_sweep) x;
+    if Seq.mem x (objects zero_addr h_sweep) /\ is_white x h_sweep then begin
+      colors_exclusive x h_sweep;
+      assert False
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Generalized gc_postcondition
 /// ---------------------------------------------------------------------------

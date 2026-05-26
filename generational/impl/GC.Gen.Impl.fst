@@ -1035,6 +1035,8 @@ fn gen_gc (gh: gen_heap_t)
       let prom = CheneySpec.cheney_promote minor_st 's 'fp 'rs in
       SpecGCPost.gc_postcondition s2 /\
       SpecGCPost.full_gc_correctness result.mc_major s2 'st /\
+      SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major s2 'st /\
+      SpecGCPost.major_gc_unreachable_final_blue result.mc_major s2 'st /\
       rs2 == result.mc_roots /\
       rs2 == PromoteSpec.rewrite_roots 'rs prom.fwd_map /\
       roots_match_stack rs2 'st /\
@@ -1146,6 +1148,14 @@ fn gen_gc (gh: gen_heap_t)
   assert (pure (SpecGCPost.gc_postcondition s_final));
   assert (pure (SpecGCPost.full_gc_correctness ms_updated s_final 'st));
   assert (pure (SpecGCPost.full_gc_correctness
+    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
+    s_final 'st));
+  assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism ms_updated s_final 'st));
+  assert (pure (SpecGCPost.major_gc_unreachable_final_blue ms_updated s_final 'st));
+  assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism
+    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
+    s_final 'st));
+  assert (pure (SpecGCPost.major_gc_unreachable_final_blue
     (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
     s_final 'st));
 

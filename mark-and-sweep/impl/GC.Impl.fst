@@ -60,7 +60,9 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\
-                SpecGCPost.full_gc_correctness 's s2 'st)
+                SpecGCPost.full_gc_correctness 's s2 'st /\
+                SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
+                SpecGCPost.major_gc_unreachable_final_blue 's s2 'st)
 {
   // Mark phase: bounded-stack mark with overflow handling
   mark_loop_bounded heap st 'st;
@@ -91,6 +93,8 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   // These only need mark_post, which we established above
   SpecGCPost.gc_postcondition_gen 's s_mark 'st fp;
   SpecGCPost.full_gc_correctness_through_coalesce_gen 's s_mark 'st fp;
+  SpecGCPost.major_gc_live_subgraph_isomorphism_gen 's s_mark 'st fp;
+  SpecGCPost.major_gc_unreachable_final_blue_gen 's s_mark 'st fp;
   
   final_fp
 }
