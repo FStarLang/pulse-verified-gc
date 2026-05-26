@@ -104,6 +104,9 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 /// (`ref_table_covers_minor_ptrs`); the implementation derives the
 /// forwarding-map-specific `ref_table_complete` fact after computing Cheney's
 /// promotion map.
+///
+/// The remaining reachability/validity preconditions state that `roots` is the
+/// complete valid minor-collection root set for the supplied remembered table.
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
@@ -121,7 +124,13 @@ fn minor_collect_full (gh: gen_heap_t)
                   (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                   UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
                   UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-                  UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots))
+                  UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
+                  MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
+                  RBridge.major_field_zero_no_minor
+                    ({ data = 'd; bump = 'b } <: minor_state) 's /\
+                  RBridge.roots_valid_nonblue 'rs 's /\
+                  MinorFwd.roots_valid_for_minor_collection
+                    ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -153,14 +162,9 @@ fn minor_collect_full (gh: gen_heap_t)
       // (single-pass full update of all pointer fields in the major heap).
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
-      // Explicit isomorphism surface: when callers provide the remaining facts
-      // not contained in collection_heap_shape, minor collection is a concrete
-      // reachable subgraph isomorphism over the post-minor heap graph.
-      (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-       RBridge.major_field_zero_no_minor minor_st 's /\
-       RBridge.roots_valid_nonblue 'rs 's /\
-       MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
-       ok ==>
+      // If promotion succeeds, minor collection is a concrete reachable
+      // subgraph isomorphism over the actual post-minor heap graph.
+      (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs s2 rs2))
 
@@ -206,7 +210,13 @@ fn gen_gc (gh: gen_heap_t)
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                UpdatePtrs.ref_table_sound 's 'sl (SZ.v nslots) /\
                UpdatePtrs.ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-               UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots))
+               UpdatePtrs.slots_pairwise_distinct 'sl (SZ.v nslots) /\
+               MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
+               RBridge.major_field_zero_no_minor
+                 ({ data = 'd; bump = 'b } <: minor_state) 's /\
+               RBridge.roots_valid_nonblue 'rs 's /\
+               MinorFwd.roots_valid_for_minor_collection
+                 ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
     is_gen_heap gh d2 b2 s2 (fst res) **

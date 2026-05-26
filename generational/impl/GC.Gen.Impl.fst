@@ -815,21 +815,17 @@ let minor_collect_full_isomorphism_post
       post_major == (CheneySpec.cheney_collect_spec minor major fp roots).mc_major /\
       post_roots == PromoteSpec.rewrite_roots roots
         (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
+      MinorFwd.remembered_targets_in_roots major roots slots n /\
+      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      MinorFwd.roots_valid_for_minor_collection minor major roots /\
       (ok ==> CheneyBFS.cheney_no_oom minor major fp roots))
     (ensures
-      (MinorFwd.remembered_targets_in_roots major roots slots n /\
-       RBridge.major_field_zero_no_minor minor major /\
-       RBridge.roots_valid_nonblue roots major /\
-       MinorFwd.roots_valid_for_minor_collection minor major roots /\
-       ok ==>
+      (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
          minor major fp roots post_major post_roots))
   =
-    if MinorFwd.remembered_targets_in_roots major roots slots n /\
-       RBridge.major_field_zero_no_minor minor major /\
-       RBridge.roots_valid_nonblue roots major /\
-       MinorFwd.roots_valid_for_minor_collection minor major roots /\
-       ok
+    if ok
     then begin
       GenInv.collection_heap_shape_elim minor major fp;
       GenInv.major_heap_shape_elim major fp;
@@ -868,7 +864,13 @@ fn minor_collect_full (gh: gen_heap_t)
                   (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                   ref_table_sound 's 'sl (SZ.v nslots) /\
                   ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-                  slots_pairwise_distinct 'sl (SZ.v nslots))
+                  slots_pairwise_distinct 'sl (SZ.v nslots) /\
+                  MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
+                  RBridge.major_field_zero_no_minor
+                    ({ data = 'd; bump = 'b } <: minor_state) 's /\
+                  RBridge.roots_valid_nonblue 'rs 's /\
+                  MinorFwd.roots_valid_for_minor_collection
+                    ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
   ensures exists* d2 b2 s2 fp2 rs2 farr2 qv2.
     is_gen_heap gh d2 b2 s2 fp2 **
@@ -899,11 +901,7 @@ fn minor_collect_full (gh: gen_heap_t)
       // Strong correctness: the result equals cheney_collect_spec.mc_major.
       s2 == (CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs).mc_major /\
       GenInv.collection_heap_shape ({ data = d2; bump = b2 } <: minor_state) s2 fp2 /\
-      (MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-       RBridge.major_field_zero_no_minor minor_st 's /\
-       RBridge.roots_valid_nonblue 'rs 's /\
-       MinorFwd.roots_valid_for_minor_collection minor_st 's 'rs /\
-       ok ==>
+      (ok ==>
        MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
          minor_st 's 'fp 'rs s2 rs2))
 {
@@ -1014,7 +1012,13 @@ fn gen_gc (gh: gen_heap_t)
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
                ref_table_sound 's 'sl (SZ.v nslots) /\
                ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
-               slots_pairwise_distinct 'sl (SZ.v nslots))
+               slots_pairwise_distinct 'sl (SZ.v nslots) /\
+               MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
+               RBridge.major_field_zero_no_minor
+                 ({ data = 'd; bump = 'b } <: minor_state) 's /\
+               RBridge.roots_valid_nonblue 'rs 's /\
+               MinorFwd.roots_valid_for_minor_collection
+                 ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 s2 rs2 farr2 qv2 st2.
     is_gen_heap gh d2 b2 s2 (fst res) **
