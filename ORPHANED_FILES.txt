@@ -1,0 +1,44 @@
+Orphaned Files Analysis (May 28, 2025)
+======================================
+
+The Makefile now scans dependencies from true roots only:
+- generational/impl/GC.Gen.Impl.fsti/fst (main GC entry points)
+- spot/GC.SPOT.EmptyHeapLemmas.fst (empty heap SPOT)
+- spot/GC.SPOT.ThreeObjects.fst (3-object SPOT)
+
+ORPHANED FILES (15 total):
+--------------------------
+
+mark-and-sweep standalone modules (6 files):
+  - mark-and-sweep/impl/GC.Impl.Closure.fst/fsti
+  - mark-and-sweep/impl/GC.Impl.Mark.fst/fsti
+  - mark-and-sweep/impl/GC.Impl.Sweep.fst/fsti
+  → These are the original standalone mark-and-sweep GC
+  → Not used by generational GC (which has its own implementations)
+  → Could be kept for historical/reference purposes or removed
+
+mark-and-sweep spec module (1 file):
+  - mark-and-sweep/spec/GC.Spec.SeqMemLemmas.fst
+  → Sequential memory lemmas not used by generational GC
+  → Could be removed if not needed for mark-and-sweep standalone
+
+spot experimental/old files (8 files):
+  - spot/GC.SPOT.InitHeapLemmas.fst
+  - spot/GC.SPOT.PreconditionProofs.fst
+  - spot/GC.SPOT.Simple.Admitted.fst
+  - spot/GC.SPOT.ThreeObjects.Clean.fst
+  - spot/GC.SPOT.ThreeObjectsConstructive.fst
+  - spot/GC.SPOT.ThreeObjects.Constructive.Full.fst
+  - spot/GC.SPOT.ThreeObjects.Preconditions.fst
+  - spot/GC.SPOT.ThreeObjects.Spec.fst
+  → Old experimental SPOT attempts
+  → Can be safely removed (superceded by current SPOT files)
+
+RECOMMENDATION:
+--------------
+1. Move mark-and-sweep standalone files to mark-and-sweep/archive/ if keeping for reference
+2. Delete old spot/ experimental files (already have spot/archive/ for history)
+3. This will reduce the codebase to only actively used modules
+
+To regenerate this analysis:
+  make orphans

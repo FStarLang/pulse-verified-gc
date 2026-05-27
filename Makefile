@@ -26,7 +26,8 @@ OUTPUT_DIR = _output
 INCLUDES = \
   --include common/spec --include common/lib --include common/impl \
   --include mark-and-sweep/spec --include mark-and-sweep/impl \
-  --include generational/spec --include generational/impl
+  --include generational/spec --include generational/impl \
+  --include spot
 
 # --- F* base flags ----------------------------------------------------------
 
@@ -42,18 +43,29 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 
 # --- Sources ----------------------------------------------------------------
 
+# True entry points: only scan dependencies from these roots
+# This identifies orphaned/unused files that are not reachable
+ROOT_MODULES = \
+  generational/impl/GC.Gen.Impl.fsti \
+  generational/impl/GC.Gen.Impl.fst \
+  spot/GC.SPOT.EmptyHeapLemmas.fst \
+  spot/GC.SPOT.ThreeObjects.fst
+
+# All sources (for pattern rules and clean targets)
 COMMON_SRC = $(wildcard common/spec/*.fst common/spec/*.fsti \
                         common/lib/*.fst common/impl/*.fst common/impl/*.fsti)
 MS_SRC     = $(wildcard mark-and-sweep/spec/*.fst mark-and-sweep/spec/*.fsti \
                         mark-and-sweep/impl/*.fst mark-and-sweep/impl/*.fsti)
 GEN_SRC    = $(wildcard generational/spec/*.fst generational/spec/*.fsti \
                         generational/impl/*.fst generational/impl/*.fsti)
-ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC)
+SPOT_SRC   = $(wildcard spot/*.fst spot/*.fsti)
+ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC) $(SPOT_SRC)
 
 # --- Auto-generated dependency graph ----------------------------------------
 
-.depend: $(ALL_SRC)
-	$(FSTAR) --dep full $(ALL_SRC) --output_deps_to $@.raw
+.depend: $(ROOT_MODULES) $(ALL_SRC)
+	@echo "Scanning dependencies from roots: $(ROOT_MODULES)"
+	$(FSTAR) --dep full $(ROOT_MODULES) --output_deps_to $@.raw
 	@awk -v cwd="$$(pwd)/" ' \
 	  { gsub(cwd, "") } \
 	  /^[^ \t].*:/ { if (n) flush(); \
@@ -70,9 +82,30 @@ ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC)
 
 # --- Default goal (before -include .depend) ---------------------------------
 
-.PHONY: all verify common mark-and-sweep generational extract clean
+.PHONY: all verify common mark-and-sweep generational extract clean orphans
 
 all: verify
+
+# --- Find orphaned files (not reachable from roots) -------------------------
+
+orphans: .depend
+	@echo "=== Orphaned files (not reachable from ROOT_MODULES) ==="
+	@echo "Root modules:"
+	@for f in $(ROOT_MODULES); do echo "  $$f"; done
+	@echo ""
+	@echo "Checking for orphans..."
+	@find common mark-and-sweep generational spot -name '*.fst' -o -name '*.fsti' | grep -v archive | sort > /tmp/all_files.txt
+	@awk '/\.checked:/ {print $$1}' .depend | sed 's/\.checked://' | sort > /tmp/reachable.txt
+	@comm -23 /tmp/all_files.txt /tmp/reachable.txt > /tmp/orphans.txt
+	@if [ -s /tmp/orphans.txt ]; then \
+	  cat /tmp/orphans.txt | while read f; do echo "  $$f"; done; \
+	  count=$$(cat /tmp/orphans.txt | wc -l); \
+	  echo ""; \
+	  echo "Total: $$count orphaned files"; \
+	else \
+	  echo "  (none - all files are reachable)"; \
+	fi
+	@rm -f /tmp/all_files.txt /tmp/reachable.txt /tmp/orphans.txt
 
 -include .depend
 
@@ -155,6 +188,10 @@ generational/impl/GC.Gen.Impl.fst.checked: generational/impl/GC.Gen.Impl.fst
 generational/impl/%.checked: generational/impl/%
 	$(FSTAR) --z3rlimit 160 --split_queries always $<
 
+# spot/ — SPOT verification tests, default flags
+spot/%.checked: spot/%
+	$(FSTAR) $<
+
 # --- Extraction (mark-and-sweep) --------------------------------------------
 
 $(OUTPUT_DIR):
@@ -180,6 +217,6 @@ extract-generational: generational
 clean:
 	rm -f .depend .depend.raw
 	rm -rf $(OUTPUT_DIR)
-	find common mark-and-sweep generational -name '*.checked' -delete 2>/dev/null || true
+	find common mark-and-sweep generational spot -name '*.checked' -delete 2>/dev/null || true
 	rm -rf mark-and-sweep/_output mark-and-sweep/_extract
 	rm -rf generational/_output generational/_extract
