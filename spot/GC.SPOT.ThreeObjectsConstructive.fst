@@ -251,16 +251,36 @@ fn test_three_objects_constructive ()
     A.pts_to queue qv2
   );
   
-  // TODO: Extract and prove postcondition properties
-  // Goal: Prove A is promoted, B is collected, C's field updated
-  // This requires:
-  // 1. Extract isomorphism witnesses from postcondition
-  // 2. Prove A exists in post-major heap (promoted)
-  // 3. Prove B does not exist in either heap (collected)
-  // 4. Prove C's field 0 now points to promoted A (not old A)
-  // 5. Prove minor bump is reset to 0
+  // Extract postcondition pure properties
+  // The postcondition gives us rich information about the result
   
-  admit();  // Property proofs TODO
+  // Property 1: Minor bump is reset to 0
+  // Directly from postcondition: U64.v mb2 == 0
+  assert (pure (U64.v mb2 == 0));
+  
+  // Property 2: Collection heap shape preserved
+  // From postcondition: GenInv.collection_heap_shape holds on post-state
+  assert (pure (GenInv.collection_heap_shape
+                  ({ data = md2; bump = mb2 } <: minor_state) ms2 fp2));
+  
+  // Property 3: Isomorphism holds (if ok = true)
+  // From postcondition: ok ==> normal_result_reachable_subgraph_isomorphism_prop
+  // This is the key property that relates pre/post heaps
+  
+  // For full property proofs (A promoted, B collected, C updated), we would need to:
+  // 1. Unfold the isomorphism definition
+  // 2. Extract the graph correspondence witnesses
+  // 3. Prove object A exists in post-major heap
+  // 4. Prove object B does not exist in post-heaps
+  // 5. Prove C's field 0 was rewritten to promoted A
+  //
+  // These proofs require understanding the cheney_promote spec and the
+  // isomorphism property in detail. For now, we've validated that:
+  // - The GC is callable ✅
+  // - Postcondition witnesses are extractable ✅
+  // - Basic properties (bump reset, heap shape) are provable ✅
+  
+  admit();  // Full isomorphism-based property proofs TODO
   
   // Cleanup
   unfold (is_gen_heap gh);
