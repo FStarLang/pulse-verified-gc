@@ -12,29 +12,18 @@ open GC.Gen.Base
 open GC.Gen.MinorHeap
 
 /// When bump is 0, minor_objects returns empty sequence
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 30"
 let minor_objects_zero (ms: minor_state)
-  : Lemma (requires U64.v ms.bump == 0)
+  : Lemma (requires U64.v ms.bump == 0 /\ U64.v ms.bump % 8 == 0 /\ U64.v ms.bump <= minor_heap_size)
           (ensures minor_objects ms == Seq.empty)
-  = // We know minor_reset produces a state with bump==0 and empty objects
-    // Let's use minor_reset_objects_empty
-    // However, minor_reset might change ms.data, so we can't directly use it
-    // 
-    // Instead, let's use the fact that minor_init also produces bump==0
-    // and we can prove minor_init produces empty objects
-    let ms_init = minor_init ms.data in
-    // ms_init has bump==0, just like ms
-    assert (U64.v ms_init.bump == 0);
+  = // The definition of minor_objects checks the bump value
+    // When bump==0, it should delegate to minor_objects_aux which immediately returns empty
+    // Let's try to let the definition reduce
     assert (U64.v ms.bump == 0);
-    // Both call minor_objects_aux with the same data and bump=0
-    // So they should give the same result
-    // Actually, they have the SAME data and SAME bump
-    assert (ms_init.data == ms.data);
-    assert (ms_init.bump == ms.bump);
-    // Therefore ms_init == ms
-    assert (ms_init == ms);
-    // Now we need to prove minor_objects (minor_init data) == Seq.empty
-    // But we don't have that lemma either...
-    admit() // TODO: Need fundamental lemma about minor_objects and bump==0
+    // Try normalization at term level
+    let result = normalize_term (minor_objects ms) in
+    assert (result == Seq.empty)
+#pop-options
 
 /// Corollary: No object is a member when bump==0
 let minor_objects_zero_not_mem (ms: minor_state) (addr: U64.t)

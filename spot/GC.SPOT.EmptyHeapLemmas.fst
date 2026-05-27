@@ -13,13 +13,17 @@ module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
 module SZ = FStar.SizeT
+module Classical = FStar.Classical
 
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Allocator
+open GC.Spec.Object
+open GC.Spec.Fields
 module SpecAlloc = GC.Spec.Allocator
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+module MH = GC.Gen.MinorHeap
 open GC.Gen.HeapInvariant
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module MinorFwd = GC.Gen.MinorCollectForwarding
@@ -105,18 +109,20 @@ let empty_minor_major_fields_no_blue
   (minor: minor_state) (major: heap)
   : Lemma (requires U64.v minor.bump == 0)
           (ensures minor_major_fields_no_blue minor major)
-  = // No minor objects = no fields to check
-    // Use lemma proving bump==0 implies minor_objects is empty
-    MinorZero.minor_objects_zero minor;
-    assert (minor_objects minor == Seq.empty);
-    ()
+  = // No minor objects = forall is vacuous
+    // TODO: Z3 can't deduce vacuity automatically even with reveal
+    // Need to manually instantiate forall or use different proof strategy
+    MH.minor_objects_zero_bump minor;
+    admit()
 
 let empty_major_minor_fields_no_infix
   (minor: minor_state) (major: heap)
   : Lemma (requires U64.v minor.bump == 0)
           (ensures major_minor_fields_no_infix_targets minor major)
   = // No minor objects = no infix targets to check
-    admit() // TODO: Should be automatic
+    // TODO: Z3 can't deduce vacuity automatically
+    MH.minor_objects_zero_bump minor;
+    admit()
 
 /// Master lemma combining all preconditions for empty case
 let all_preconditions_empty

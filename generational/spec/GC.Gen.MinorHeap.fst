@@ -1086,3 +1086,17 @@ let minor_objects_count_bound (ms: minor_state)
   // So |minor_objects ms| <= minor_heap_size / 16
   FStar.Math.Lemmas.lemma_div_le (16 * Seq.length (minor_objects ms)) minor_heap_size 16;
   assert_norm (minor_heap_size / 16 < minor_heap_size / 8)
+
+/// ---------------------------------------------------------------------------
+/// Zero Bump Lemma (for SPOT)
+/// ---------------------------------------------------------------------------
+
+/// When bump is 0, there are no objects
+let minor_objects_zero_bump (ms: minor_state)
+  : Lemma (requires U64.v ms.bump == 0)
+          (ensures minor_objects ms == Seq.empty)
+  = // When bump==0, minor_objects calls minor_objects_aux data 0 0
+    // The definition checks: if pos + 8 > bump, i.e., if 0 + 8 > 0
+    // which is true, so it returns Seq.empty
+    assert_norm (0 + 8 > 0);
+    ()

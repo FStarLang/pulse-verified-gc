@@ -365,3 +365,8 @@ val minor_objects_count_bound (ms: minor_state)
   : Lemma (requires minor_wf ms)
           (ensures Seq.length (minor_objects ms) <= minor_heap_size / 16 /\
                    Seq.length (minor_objects ms) < minor_heap_size / 8)
+
+/// When bump is 0, there are no objects (for SPOT)
+val minor_objects_zero_bump (ms: minor_state)
+  : Lemma (requires U64.v ms.bump == 0)
+          (ensures minor_objects ms == Seq.empty)
