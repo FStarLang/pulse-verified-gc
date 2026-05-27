@@ -176,18 +176,19 @@ fn test_three_objects ()
   with md. assert (pts_to mh.data md);
   with mb. assert (R.pts_to mh.bump_ref mb);
   
-  // Step 2: Create major heap with initial state
+  // Step 2: Create major heap (empty for simplicity)
   let major_arr = PArr.alloc 0uy major_sz;
   
-  // For SPOT: assume we can rewrite to initial_heap (like Collect.fst)
-  rewrite (pts_to major_arr (Seq.create heap_size 0uy))
-       as (pts_to major_arr initial_heap);
-  
+  // Create initial_fp for empty heap (at mword)
   let major_h : heap_t = { data = major_arr; size = major_sz };
-  fold (is_heap major_h initial_heap);
+  
+  // For SPOT: fold with zeros (simpler than initializedheap)
+  rewrite (pts_to major_arr (Seq.create (SZ.v major_sz) 0uy))
+       as (pts_to major_arr (Seq.create heap_size 0uy));
+  fold (is_heap major_h (Seq.create heap_size 0uy));
   
   // Step 3: Create gen_heap
-  let fp_ref = R.alloc initial_fp;
+  let fp_ref = R.alloc mword;  // Initial fp for empty major heap
   let gh : gen_heap_t = { minor = mh; major = major_h; fp_ref = fp_ref };
   
   // Fold is_gen_heap
@@ -201,8 +202,8 @@ fn test_three_objects ()
   rewrite (pts_to major_h.data ms) as (pts_to gh.major.data ms);
   fold (is_heap gh.major ms);
   
-  rewrite (R.pts_to fp_ref initial_fp) as (R.pts_to gh.fp_ref initial_fp);
-  fold (is_gen_heap gh md mb ms initial_fp);
+  rewrite (R.pts_to fp_ref mword) as (R.pts_to gh.fp_ref mword);
+  fold (is_gen_heap gh md mb ms mword);
   
   // Step 4: Create roots array with obj_A
   let roots = PArr.alloc obj_A (sz 1);
