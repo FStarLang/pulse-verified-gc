@@ -69,13 +69,20 @@ let empty_ref_table_sound
 /// Precondition 6: Empty ref table covers all minor ptrs
 let empty_ref_table_covers
   (major: heap) (slots: Seq.seq U64.t) (nslots: nat)
-  : Lemma (requires nslots == 0)
+  : Lemma (requires nslots == 0 /\
+                     (let (g, fp) = SpecAlloc.init_heap_spec (Seq.create heap_size 0uy) in
+                      major == g))
           (ensures UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots)
-  = // Definition: all major→minor pointers are in slots
-    // Need to prove: for any major→minor pointer, it's in slots
-    // Since slots is empty, we need to show there ARE no major→minor pointers
-    // in the init_heap case (single blue block with no fields)
-    admit() // TODO: Not automatic - need to unfold definition
+  = // ref_table_covers requires: all major→minor pointers are in slots (which is empty)
+    // So we need to prove: init_heap blue block has NO minor pointers
+    // init_heap creates:
+    //   - Header at offset 0: wosize=..., color=blue, tag=0
+    //   - First field at offset 8: 0UL (end of free list)
+    //   - That's it - single object with one field containing 0
+    // 0UL is not a minor pointer (requires v >= 8)
+    // So there are no major→minor pointers => forall is vacuous
+    // TODO: Need lemma about init_heap structure
+    admit()
 
 /// Precondition 8: Empty remembered set targets in roots
 let empty_remembered_targets
