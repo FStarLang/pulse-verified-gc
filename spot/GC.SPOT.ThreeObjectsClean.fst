@@ -79,32 +79,32 @@ let empty_major_minor_no_infix_lemma (ms: minor_state) (s: heap)
 let empty_ref_table_sound_lemma (s: heap) (sl: Seq.seq U64.t) (n: nat)
   : Lemma (requires n == 0)
           (ensures UpdatePtrs.ref_table_sound s sl n)
-  = admit()
+  = ()  // Trivial - forall i < 0 is vacuous
 
 let empty_ref_table_covers_lemma (s: heap) (sl: Seq.seq U64.t) (n: nat)
   : Lemma (requires n == 0)
           (ensures UpdatePtrs.ref_table_covers_minor_ptrs s sl n)
-  = admit()
+  = admit()  // F* struggles with this one
 
 let empty_slots_distinct_lemma (sl: Seq.seq U64.t) (n: nat)
   : Lemma (requires n == 0)
           (ensures UpdatePtrs.slots_pairwise_distinct sl n)
-  = admit()
+  = ()  // Trivial - forall i,j < 0 is vacuous
 
 let empty_remembered_targets_lemma (s: heap) (rs: Seq.seq U64.t) (sl: Seq.seq U64.t) (n: nat)
   : Lemma (requires n == 0 /\ Seq.length rs == 0)
           (ensures MinorFwd.remembered_targets_in_roots s rs sl n)
-  = admit()
+  = admit()  // F* struggles
 
 let empty_major_field_zero_lemma (ms: minor_state) (s: heap)
   : Lemma (requires U64.v ms.bump == 0)
           (ensures RBridge.major_field_zero_no_minor ms s)
-  = admit()
+  = admit()  // F* struggles
 
 let empty_roots_valid_nonblue_lemma (rs: Seq.seq U64.t) (s: heap)
   : Lemma (requires Seq.length rs == 0)
           (ensures RBridge.roots_valid_nonblue rs s)
-  = admit()
+  = ()  // Trivial - forall i < 0 is vacuous
 
 let empty_roots_valid_for_minor_lemma (ms: minor_state) (s: heap) (rs: Seq.seq U64.t)
   : Lemma (requires U64.v ms.bump == 0 /\ Seq.length rs == 0)
