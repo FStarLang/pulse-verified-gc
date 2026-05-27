@@ -72,7 +72,7 @@ ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC) $(SPOT_SRC)
 	    keep = (/\.checked:/) ? 1 : 0; n = 0 } \
 	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
 	    if (line == "") next; \
-	    if (line !~ /:/ && line !~ /^(common|mark-and-sweep|generational)\//) next; \
+	    if (line !~ /:/ && line !~ /^(common|mark-and-sweep|generational|spot)\//) next; \
 	    buf[n++] = $$0 } \
 	  END { if (n) flush() } \
 	  function flush() { if (!n) return; \
