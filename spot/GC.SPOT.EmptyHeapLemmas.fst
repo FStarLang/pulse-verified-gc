@@ -82,9 +82,9 @@ let empty_remembered_targets
   (major: heap) (roots: Seq.seq U64.t) (slots: Seq.seq U64.t) (nslots: nat)
   : Lemma (requires nslots == 0)
           (ensures MinorFwd.remembered_targets_in_roots major roots slots nslots)
-  = // Definition: targets of slots pointers are in roots
-    // Since nslots == 0, vacuously true
-    admit() // TODO: Not automatic - need to unfold
+  = // When nslots == 0, remembered_slot_targets should be empty
+    // TODO: Need lemma showing remembered_slot_targets_from returns empty when n==0
+    admit()
 
 /// Precondition 9: Major fields satisfy constraints
 /// For init_heap (single blue block), need to check field constraints
