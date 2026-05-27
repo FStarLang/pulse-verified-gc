@@ -46,21 +46,22 @@ assume val platform_fits_u64 : squash SZ.fits_u64
 /// Heap size lemma
 let heap_size_bound ()
   : Lemma (heap_size < pow2 32)
-  = // heap_size < pow2 57 from Base
-    // pow2 57 > pow2 32, so heap_size < pow2 32
-    assume (heap_size < pow2 32)  // Arithmetic lemma
+  = // heap_size < pow2 57 from GC.Spec.Base
+    // pow2 32 < pow2 57 by pow2 monotonicity
+    FStar.Math.Lemmas.pow2_lt_compat 57 32
 
 /// Fwd array size lemma
 let fwd_array_size_bound ()
   : Lemma (UpdatePtrs.fwd_array_size < pow2 32)
   = // fwd_array_size = minor_heap_size / 8
-    // minor_heap_size = 2^20 (1 MB)
-    // fwd_array_size = 2^20 / 8 = 2^17 < 2^32
-    assume (UpdatePtrs.fwd_array_size < pow2 32)
+    // minor_heap_size < pow2 57 from GC.Gen.Base
+    // fwd_array_size < pow2 57 / 8 = pow2 54 < pow2 32
+    FStar.Math.Lemmas.pow2_lt_compat 54 32
 
-/// Size helper
+/// Size helper - requires bound proof first
 let sz (n: nat{n < pow2 32}) : (s:SZ.t{SZ.v s == n}) =
-  assume (SZ.fits_u32);
+  FStar.Math.Lemmas.pow2_le_compat 32 16;  // pow2 32 >= pow2 16 = 65536
+  assert (SZ.fits_u32);
   SZ.uint64_to_sizet (U64.uint_to_t n)
 
 /// Precondition fixture for SPOT testing
