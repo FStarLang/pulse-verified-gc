@@ -105,7 +105,9 @@ let empty_minor_major_fields_no_blue
   : Lemma (requires U64.v minor.bump == 0)
           (ensures minor_major_fields_no_blue minor major)
   = // No minor objects = no fields to check
-    admit() // TODO: Should be automatic
+    // TODO: Need lemma that bump==0 implies minor_objects is empty
+    // The definition should make this automatic but SMT isn't seeing it
+    admit()
 
 let empty_major_minor_fields_no_infix
   (minor: minor_state) (major: heap)
