@@ -392,3 +392,14 @@ let collection_heap_shape_after_minor_reset
   reveal_opaque (`%collection_heap_shape)
     (collection_heap_shape reset major fp)
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Helper Lemmas for SPOT (Empty Minor Heap)
+/// ---------------------------------------------------------------------------
+
+/// When there are no minor objects, minor_major_fields_no_blue is vacuously true
+let minor_major_fields_no_blue_empty (minor: minor_state) (major: heap)
+  : Lemma (requires minor_objects minor == Seq.empty)
+          (ensures minor_major_fields_no_blue minor major)
+  = reveal_opaque (`%minor_major_fields_no_blue) (minor_major_fields_no_blue minor major)
+    // Forall is over (obj in minor_objects minor), which is empty

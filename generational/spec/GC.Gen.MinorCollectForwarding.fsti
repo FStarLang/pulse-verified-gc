@@ -1328,3 +1328,7 @@ val minor_collect_full_forwarding_kernel_intro
       let res = cheney_collect_spec minor major fp roots in
       minor_collect_full_forwarding_kernel minor major fp roots slots n ok
         res.mc_major (rewrite_roots roots (cheney_promote minor major fp roots).fwd_map)))
+
+/// Helper lemma: empty remembered set has no targets
+val remembered_slot_targets_zero (major: heap) (slots: seq U64.t)
+  : Lemma (remembered_slot_targets major slots 0 == Seq.empty)

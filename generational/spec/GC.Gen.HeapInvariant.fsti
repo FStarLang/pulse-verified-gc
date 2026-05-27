@@ -213,3 +213,8 @@ val collection_heap_shape_after_minor_reset
   (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
           (ensures collection_heap_shape (minor_reset minor) major fp)
+
+/// Helper lemma: when there are no minor objects, minor_major_fields_no_blue holds vacuously
+val minor_major_fields_no_blue_empty (minor: minor_state) (major: heap)
+  : Lemma (requires minor_objects minor == Seq.empty)
+          (ensures minor_major_fields_no_blue minor major)

@@ -82,9 +82,10 @@ let empty_remembered_targets
   (major: heap) (roots: Seq.seq U64.t) (slots: Seq.seq U64.t) (nslots: nat)
   : Lemma (requires nslots == 0)
           (ensures MinorFwd.remembered_targets_in_roots major roots slots nslots)
-  = // When nslots == 0, remembered_slot_targets should be empty
-    // TODO: Need lemma showing remembered_slot_targets_from returns empty when n==0
-    admit()
+  = // When nslots == 0, remembered_slot_targets is empty
+    MinorFwd.remembered_slot_targets_zero major slots;
+    // Forall over empty set is vacuously true
+    ()
 
 /// Precondition 9: Major fields satisfy constraints
 /// For init_heap (single blue block), need to check field constraints
@@ -110,17 +111,17 @@ let empty_minor_major_fields_no_blue
   : Lemma (requires U64.v minor.bump == 0)
           (ensures minor_major_fields_no_blue minor major)
   = // No minor objects = forall is vacuous
-    // TODO: Z3 can't deduce vacuity automatically even with reveal
-    // Need to manually instantiate forall or use different proof strategy
     MH.minor_objects_zero_bump minor;
-    admit()
+    minor_major_fields_no_blue_empty minor major
 
 let empty_major_minor_fields_no_infix
   (minor: minor_state) (major: heap)
   : Lemma (requires U64.v minor.bump == 0)
           (ensures major_minor_fields_no_infix_targets minor major)
-  = // No minor objects = no infix targets to check
-    // TODO: Z3 can't deduce vacuity automatically
+  = // When bump==0, minor heap is empty (uninitialized)
+    // Any field value that looks like a minor pointer cannot be an infix
+    // because there are no allocated objects => no infix objects
+    // TODO: Need more sophisticated reasoning about uninitialized minor heap
     MH.minor_objects_zero_bump minor;
     admit()
 

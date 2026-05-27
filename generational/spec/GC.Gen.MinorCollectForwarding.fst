@@ -4113,3 +4113,14 @@ let minor_collect_full_forwarding_kernel_intro
       combined_reachable_images_valid_or_infix_reuse minor major fp roots
     end
   end
+
+/// ---------------------------------------------------------------------------
+/// Helper Lemmas for SPOT
+/// ---------------------------------------------------------------------------
+
+/// When n=0, there are no remembered slot targets
+let remembered_slot_targets_zero (major: heap) (slots: seq U64.t)
+  : Lemma (remembered_slot_targets major slots 0 == Seq.empty)
+  = // remembered_slot_targets calls remembered_slot_targets_from with idx=0
+    // When n=0 and idx=0, we have idx >= n, so it returns Seq.empty
+    ()
