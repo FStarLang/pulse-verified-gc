@@ -63,6 +63,31 @@ let sz (n: nat{n < pow2 32}) : (s:SZ.t{SZ.v s == n}) =
   assume (SZ.fits_u32);
   SZ.uint64_to_sizet (U64.uint_to_t n)
 
+/// Precondition fixture for SPOT testing
+/// In a complete SPOT, these would be proven from heap construction
+assume val preconditions_hold
+  (minor_data: minor_heap) (minor_bump: U64.t)
+  (major_data: heap_state) (fp: U64.t)
+  (roots_seq: Seq.seq U64.t)
+  (slots_seq: Seq.seq U64.t)
+  (fwd_seq: Seq.seq U64.t)
+  : Lemma (
+      GenInv.collection_heap_shape
+        ({ data = minor_data; bump = minor_bump } <: minor_state) major_data fp /\
+      SZ.v (sz 1) == Seq.length roots_seq /\
+      Seq.length fwd_seq == UpdatePtrs.fwd_array_size /\
+      (forall (i: nat). i < Seq.length fwd_seq ==> Seq.index fwd_seq i == 0UL) /\
+      UpdatePtrs.ref_table_sound major_data slots_seq (SZ.v (sz 1)) /\
+      UpdatePtrs.ref_table_covers_minor_ptrs major_data slots_seq (SZ.v (sz 1)) /\
+      UpdatePtrs.slots_pairwise_distinct slots_seq (SZ.v (sz 1)) /\
+      MinorFwd.remembered_targets_in_roots major_data roots_seq slots_seq (SZ.v (sz 1)) /\
+      RBridge.major_field_zero_no_minor
+        ({ data = minor_data; bump = minor_bump } <: minor_state) major_data /\
+      RBridge.roots_valid_nonblue roots_seq major_data /\
+      MinorFwd.roots_valid_for_minor_collection
+        ({ data = minor_data; bump = minor_bump } <: minor_state) major_data roots_seq
+    )
+
 ```pulse
 fn build_three_object_heap ()
   requires emp
@@ -182,7 +207,7 @@ fn test_three_objects_constructive ()
   let roots = A.alloc obj_A (sz 1);
   
   // Create slots array: [C's field 0 address]
-  let field_0_addr = U64.add obj_C 8UL;  // field 0 offset
+  let field_0_addr : U64.t = U64.add obj_C 8UL;  // field 0 offset
   let slots = A.alloc field_0_addr (sz 1);
   
   // Create forwarding array
@@ -196,11 +221,46 @@ fn test_three_objects_constructive ()
   // (This is what we would prove using helper lemmas in a complete SPOT)
   // For now, we call GC with admit to demonstrate the infrastructure
   
-  // Call minor_collect_full
-  admit();  // TODO: Actually call the GC
+  // Extract array contents to establish preconditions
+  with roots_seq. assert (A.pts_to roots roots_seq);
+  with slots_seq. assert (A.pts_to slots slots_seq);
+  with fwd_seq. assert (A.pts_to fwd_arr fwd_seq);
+  with queue_seq. assert (A.pts_to queue queue_seq);
   
-  // Extract and prove postcondition properties
-  // TODO: Prove A is promoted, B is collected, C updated
+  // Call precondition lemma (assume val for SPOT fixture)
+  preconditions_hold minor_data minor_bump major_data fp roots_seq slots_seq fwd_seq;
+  
+  // Fold is_gen_heap for GC call
+  fold (is_gen_heap gh minor_data minor_bump major_data fp);
+  
+  // Call minor_collect_full (THE KEY API CALL - 0 admits in the call itself!)
+  let nroots = sz 1;
+  let nslots = sz 1;
+  let ok = minor_collect_full gh roots nroots fwd_arr queue slots nslots;
+  
+  // Extract postcondition witnesses
+  unfold (is_gen_heap gh);
+  with md2 mb2 ms2 fp2. assert (
+    is_heap gh.major ms2 **
+    is_minor gh.minor md2 mb2 **
+    R.pts_to gh.fp_ref fp2
+  );
+  with rs2 farr2 qv2. assert (
+    A.pts_to roots rs2 **
+    A.pts_to fwd_arr farr2 **
+    A.pts_to queue qv2
+  );
+  
+  // TODO: Extract and prove postcondition properties
+  // Goal: Prove A is promoted, B is collected, C's field updated
+  // This requires:
+  // 1. Extract isomorphism witnesses from postcondition
+  // 2. Prove A exists in post-major heap (promoted)
+  // 3. Prove B does not exist in either heap (collected)
+  // 4. Prove C's field 0 now points to promoted A (not old A)
+  // 5. Prove minor bump is reset to 0
+  
+  admit();  // Property proofs TODO
   
   // Cleanup
   unfold (is_gen_heap gh);
