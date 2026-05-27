@@ -32,8 +32,8 @@ let empty_slots_distinct
           (ensures UpdatePtrs.slots_pairwise_distinct slots nslots)
   = // Unfold definition: pairwise distinct means for all i,j < nslots, i <> j ==> slots[i] <> slots[j]
     // Since nslots == 0, there are no i,j to check, so it's vacuously true
-    // The predicate should recognize this automatically
-    admit() // TODO: Check if this is automatic or needs definition unfolding
+    // Let's check if Z3 proves this automatically
+    ()
 
 /// Precondition 10: Empty roots are valid non-blue
 let empty_roots_valid_nonblue
@@ -42,7 +42,7 @@ let empty_roots_valid_nonblue
           (ensures RBridge.roots_valid_nonblue roots major)
   = // Definition: for all i < length roots, roots[i] is valid and non-blue
     // Since length == 0, vacuously true
-    admit() // TODO: Check if automatic
+    ()
 
 /// Precondition 11: Empty roots valid for minor collection
 let empty_roots_valid_for_collection
@@ -50,7 +50,7 @@ let empty_roots_valid_for_collection
   : Lemma (requires Seq.length roots == 0 /\ U64.v minor.bump == 0)
           (ensures MinorFwd.roots_valid_for_minor_collection minor major roots)
   = // Definition involves checking each root - vacuous for empty
-    admit() // TODO: Check if automatic
+    ()
 
 /// Precondition 5: Empty ref table is sound
 let empty_ref_table_sound
@@ -59,7 +59,7 @@ let empty_ref_table_sound
           (ensures UpdatePtrs.ref_table_sound major slots nslots)
   = // Definition: slots correctly describe major→minor pointers
     // Empty slots make no claims, so vacuously sound
-    admit() // TODO: Unfold definition
+    ()
 
 /// Precondition 6: Empty ref table covers all minor ptrs
 let empty_ref_table_covers
@@ -70,7 +70,7 @@ let empty_ref_table_covers
     // Need to prove: for any major→minor pointer, it's in slots
     // Since slots is empty, we need to show there ARE no major→minor pointers
     // in the init_heap case (single blue block with no fields)
-    admit() // TODO: Prove init_heap has no pointer fields
+    admit() // TODO: Not automatic - need to unfold definition
 
 /// Precondition 8: Empty remembered set targets in roots
 let empty_remembered_targets
@@ -79,7 +79,7 @@ let empty_remembered_targets
           (ensures MinorFwd.remembered_targets_in_roots major roots slots nslots)
   = // Definition: targets of slots pointers are in roots
     // Since nslots == 0, vacuously true
-    admit() // TODO: Check if automatic
+    admit() // TODO: Not automatic - need to unfold
 
 /// Precondition 9: Major fields satisfy constraints
 /// For init_heap (single blue block), need to check field constraints
