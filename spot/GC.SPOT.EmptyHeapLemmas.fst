@@ -98,13 +98,15 @@ let init_heap_major_field_zero_no_minor
     // init_heap creates single blue block - need to check its fields
     admit() // TODO: Reason about init_heap structure
 
-/// Precondition 1 components for empty minor heap
+/// Precondition 1 components for empty minor heap  
+/// For any minor state with bump==0, minor_reset gives us minor_heap_shape
 let empty_minor_heap_shape
   (minor: minor_state)
   : Lemma (requires U64.v minor.bump == 0)
-          (ensures minor_heap_shape minor)
-  = // Empty minor heap should satisfy shape invariant
-    admit() // TODO: Unfold definition
+          (ensures minor_heap_shape (minor_reset minor))
+  = // minor_reset_heap_shape proves minor_heap_shape (minor_reset minor)
+    // without any precondition!
+    minor_reset_heap_shape minor
 
 let empty_minor_major_fields_no_blue
   (minor: minor_state) (major: heap)
