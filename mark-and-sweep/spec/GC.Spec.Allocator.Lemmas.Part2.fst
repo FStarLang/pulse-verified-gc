@@ -6,7 +6,6 @@
 *)
 module GC.Spec.Allocator.Lemmas.Part2
 
-friend GC.Spec.Allocator.Lemmas.Core
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -16,12 +15,51 @@ open GC.Spec.Allocator
 open GC.Spec.Allocator.Lemmas.Header
 open GC.Spec.Allocator.Lemmas.Split
 open GC.Spec.Allocator.Lemmas.Part1
-open GC.Spec.Allocator.Lemmas.Core
+open GC.Spec.Allocator.Lemmas.Common
+open GC.Spec.Allocator.Lemmas.Chain
+open GC.Spec.Allocator.Lemmas.SearchBase
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module Header = GC.Lib.Header
 
 /// Module-level default: all functions get z3rlimit 20 unless overridden
 #push-options "--z3rlimit 20 --z3refresh"
+
+#restart-solver
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+private let chain_avoids_shrink (g: heap) (fp excl: U64.t) (s_small s_big: nat)
+  : Lemma (requires chain_avoids g fp excl s_big = true /\ s_small <= s_big)
+          (ensures chain_avoids g fp excl s_small = true)
+  = chain_avoids_weaken g fp excl s_big s_small
+#pop-options
+
+#restart-solver
+#push-options "--z3rlimit 400 --fuel 0 --ifuel 0"
+private let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
+                                 (c: U64.t{U64.v c < 4})
+                                 (t: U64.t{U64.v t < 256})
+  : Lemma (Header.get_color (U64.v (make_header wz c t)) == U64.v c)
+  = let hdr = make_header wz c t in
+    make_header_value wz c t;
+    Header.get_color_val (U64.v hdr);
+    FStar.UInt.shift_right_value_lemma #64 (U64.v hdr) 8;
+    assert_norm (pow2 8 = 256);
+    FStar.Math.Lemmas.lemma_div_plus (U64.v c * 256 + U64.v t) (U64.v wz * 4) 256;
+    FStar.Math.Lemmas.lemma_div_plus (U64.v t) (U64.v c) 256;
+    FStar.Math.Lemmas.small_div (U64.v t) 256;
+    FStar.UInt.logand_mask #64 (U64.v wz * 4 + U64.v c) 2;
+    assert_norm (pow2 2 - 1 = 3);
+    FStar.Math.Lemmas.lemma_mod_plus (U64.v c) (U64.v wz) 4;
+    FStar.Math.Lemmas.small_mod (U64.v c) 4
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+private let make_header_color_blue (wz: U64.t{U64.v wz < pow2 54})
+  : Lemma (getColor (make_header wz blue_bits 0UL) == Header.Blue)
+  = let hdr = make_header wz blue_bits 0UL in
+    getColor_raw hdr;
+    make_header_getColor wz blue_bits 0UL
+#pop-options
 
 /// ===========================================================================
 /// Section P2: alloc_spec preserves well_formed_heap_part1
@@ -32,7 +70,7 @@ module Seq = FStar.Seq
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
+#push-options "--split_queries always --z3rlimit 200 --fuel 3 --ifuel 1"
 private let rec split_new_mem_in_old_or_rem_part1
   (start: hp_addr) (g g3: heap)
   (obj: obj_addr) (wz block_wz: nat)
@@ -313,7 +351,7 @@ private let alloc_exact_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let alloc_from_block_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -382,7 +420,7 @@ private let write_body_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 400 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_wfh_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -461,6 +499,10 @@ private let rec alloc_search_preserves_wfh_part1
       else begin
         fl_valid_next g cur_fp fuel;
         assert (cur_fp <> next_fp);
+        assert (U64.v hd + 16 <= heap_size);
+        assert (fl_valid g next_fp (fuel - 1));
+        fl_chain_terminates_elim g cur_fp fuel;
+        assert (fl_chain_terminates g next_fp (fuel - 1));
         alloc_search_preserves_wfh_part1 g head_fp cur_fp next_fp wz (fuel - 1)
       end
     end
@@ -650,14 +692,21 @@ private let rec fl_valid_field_write_part1
     (ensures fl_valid (write_word g (p <: hp_addr) v) fp fuel)
     (decreases fuel)
   = let g' = write_word g (p <: hp_addr) v in
-    if fuel = 0 then ()
-    else if fp = 0UL then ()
-    else if U64.v fp < U64.v mword then ()
-    else if U64.v fp >= heap_size then ()
-    else if U64.v fp % U64.v mword <> 0 then ()
+    if fuel = 0 then
+      fl_valid_zero g' fp
+    else if fp = 0UL then
+      fl_valid_null g' fuel
+    else if U64.v fp < U64.v mword then
+      fl_valid_terminal g' fp fuel
+    else if U64.v fp >= heap_size then
+      fl_valid_terminal g' fp fuel
+    else if U64.v fp % U64.v mword <> 0 then
+      fl_valid_terminal g' fp fuel
     else begin
       let obj_fp : obj_addr = fp in
       let hd_fp = hd_address obj_fp in
+      fl_valid_gives_mem g fp fuel;
+      fl_valid_gives_wosize g fp fuel;
       // objects preserved by field write
       wfh_part1_obj_bound g p;
       wosize_of_object_bound p g;
@@ -677,15 +726,26 @@ private let rec fl_valid_field_write_part1
       wosize_of_object_spec obj_fp g';
       assert (U64.v (wosize_of_object obj_fp g') >= 1);
       if U64.v hd_fp + 16 <= heap_size then begin
+        fl_valid_next g fp fuel;
+        assert (read_word g obj_fp <> fp);
+        assert (fl_valid g (read_word g obj_fp) (fuel - 1));
         if fp = p then begin
           read_write_same g (p <: hp_addr) v;
+          assert (read_word g' obj_fp == v);
           fl_valid_weaken g' v tail_fuel (fuel - 1)
         end else begin
           read_write_different g (p <: hp_addr) (obj_fp <: hp_addr) v;
+          assert (read_word g' obj_fp == read_word g obj_fp);
           fl_valid_field_write_part1 g p v (read_word g obj_fp) (fuel - 1) tail_fuel
         end
-      end
-      else ()
+      end;
+      assert (Seq.mem fp (objects zero_addr g'));
+      assert (U64.v (wosize_of_object (fp <: obj_addr) g') >= 1);
+      assert (U64.v hd_fp + 16 <= heap_size ==>
+                read_word g' obj_fp <> fp /\
+                fl_valid g' (read_word g' obj_fp) (fuel - 1));
+      fl_valid_step g' fp fuel;
+      assert (fl_valid g' fp fuel)
     end
 #pop-options
 
@@ -704,14 +764,21 @@ private let rec fl_valid_field_write_tail_part1
     (ensures fl_valid (write_word g (p <: hp_addr) v) v fuel)
     (decreases fuel)
   = let g' = write_word g (p <: hp_addr) v in
-    if fuel = 0 then ()
-    else if v = 0UL then ()
-    else if U64.v v < U64.v mword then ()
-    else if U64.v v >= heap_size then ()
-    else if U64.v v % U64.v mword <> 0 then ()
+    if fuel = 0 then
+      fl_valid_zero g' v
+    else if v = 0UL then
+      fl_valid_null g' fuel
+    else if U64.v v < U64.v mword then
+      fl_valid_terminal g' v fuel
+    else if U64.v v >= heap_size then
+      fl_valid_terminal g' v fuel
+    else if U64.v v % U64.v mword <> 0 then
+      fl_valid_terminal g' v fuel
     else begin
       let obj_v : obj_addr = v in
       let hd_v = hd_address obj_v in
+      fl_valid_gives_mem g v fuel;
+      fl_valid_gives_wosize g v fuel;
       // objects preserved
       wfh_part1_obj_bound g p;
       wosize_of_object_bound p g;
@@ -728,19 +795,27 @@ private let rec fl_valid_field_write_tail_part1
       read_write_different g (p <: hp_addr) (hd_v <: hp_addr) v;
       wosize_of_object_spec obj_v g;
       wosize_of_object_spec obj_v g';
+      assert (Seq.mem v (objects zero_addr g'));
+      assert (U64.v (wosize_of_object (v <: obj_addr) g') >= 1);
       if U64.v hd_v + 16 <= heap_size then begin
+        fl_valid_next g v fuel;
         // v ≠ p, so link at v unchanged
         read_write_different g (p <: hp_addr) (obj_v <: hp_addr) v;
         let link = read_word g obj_v in
         assert (read_word g' obj_v == link);
         assert (link <> v);
+        assert (fl_valid g link (fuel - 1));
         // IH: fl_valid g' v (fuel-1)
         fl_valid_weaken g v fuel (fuel - 1);
         fl_valid_field_write_tail_part1 g p v (fuel - 1);
         // fl_valid g' link (fuel-1) via fl_valid_field_write_part1
         fl_valid_field_write_part1 g p v link (fuel - 1) (fuel - 1)
-      end
-      else ()
+      end;
+      assert (U64.v hd_v + 16 <= heap_size ==>
+                read_word g' obj_v <> v /\
+                fl_valid g' (read_word g' obj_v) (fuel - 1));
+      fl_valid_step g' v fuel;
+      assert (fl_valid g' v fuel)
     end
 #pop-options
 
@@ -750,7 +825,7 @@ private let rec fl_valid_field_write_tail_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_fl_valid_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -798,6 +873,7 @@ private let rec alloc_search_preserves_fl_valid_part1
       in
       assert (U64.v hd + 16 <= heap_size);
       assert (fl_valid g next_fp (fuel - 1));
+      fl_chain_terminates_elim g cur_fp fuel;
       assert (fl_chain_terminates g next_fp (fuel - 1));
       if block_wz >= wz then begin
         // ===== Found a suitable block =====
@@ -807,6 +883,10 @@ private let rec alloc_search_preserves_fl_valid_part1
          else if U64.v next_fp < U64.v mword then ()
          else if U64.v next_fp >= heap_size then ()
          else if U64.v next_fp % U64.v mword <> 0 then ()
+         else if fuel - 1 = 0 then begin
+           fl_chain_terminates_valid_zero g next_fp;
+           assert false
+         end
          else fl_valid_elim g next_fp (fuel - 1));
         assert (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g));
         alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
@@ -1131,7 +1211,7 @@ let alloc_spec_preserves_fl_valid_part1 (g: heap) (fp: U64.t) (requested_wz: nat
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 1600 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_fl_chain_terminates_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -1187,6 +1267,7 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
       in
       assert (U64.v hd + 16 <= heap_size);
       assert (fl_valid g next_fp (fuel - 1));
+      fl_chain_terminates_elim g cur_fp fuel;
       assert (fl_chain_terminates g next_fp (fuel - 1));
       if block_wz >= wz then begin
         // ===== Found a suitable block =====
@@ -1196,6 +1277,10 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
          else if U64.v next_fp < U64.v mword then ()
          else if U64.v next_fp >= heap_size then ()
          else if U64.v next_fp % U64.v mword <> 0 then ()
+         else if fuel - 1 = 0 then begin
+           fl_chain_terminates_valid_zero g next_fp;
+           assert false
+         end
          else fl_valid_elim g next_fp (fuel - 1));
         assert (is_pointer_field next_fp ==> Seq.mem next_fp (objects zero_addr g));
         alloc_from_block_preserves_wfh_part1 g obj wz next_fp;
@@ -1353,6 +1438,9 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
             // Now get fl_chain_terminates g2 head_fp big_fuel
             if d = 0 then begin
               // d = 0 → prev_fp = head_fp. Weaken (fuel+1) to big_fuel.
+              assert (fuel + 1 <= big_fuel);
+              walk_chain_zero g head_fp;
+              assert (head_fp == prev_fp);
               fl_chain_terminates_weaken g2 head_fp (fuel + 1) big_fuel
             end else begin
               // d > 0: use unfold_steps to equate head chain with prev chain
@@ -1401,6 +1489,9 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
             // Now get fl_chain_terminates g2 head_fp big_fuel
             if d = 0 then begin
               // d = 0 → prev_fp = head_fp. Weaken (fuel+1) to big_fuel.
+              assert (fuel + 1 <= big_fuel);
+              walk_chain_zero g head_fp;
+              assert (head_fp == prev_fp);
               fl_chain_terminates_weaken g2 head_fp (fuel + 1) big_fuel
             end else begin
               // d > 0: use unfold_steps
@@ -1441,6 +1532,8 @@ let alloc_spec_preserves_fl_chain_terminates_part1 (g: heap) (fp: U64.t) (reques
           (ensures (let r = alloc_spec g fp requested_wz in
                     fl_chain_terminates r.heap_out r.fp_out (heap_size / U64.v mword)))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
+    walk_chain_zero g fp;
+    walk_chain_valid_zero g fp;
     alloc_search_preserves_fl_chain_terminates_part1 g fp 0UL fp wz (heap_size / U64.v mword)
 
 /// ===========================================================================
@@ -1454,7 +1547,7 @@ let alloc_spec_preserves_fl_chain_terminates_part1 (g: heap) (fp: U64.t) (reques
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 1600 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 private let rec alloc_search_obj_not_in_chain_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -1510,6 +1603,7 @@ private let rec alloc_search_obj_not_in_chain_part1
       in
       assert (U64.v hd + 16 <= heap_size);
       assert (fl_valid g next_fp (fuel - 1));
+      fl_chain_terminates_elim g cur_fp fuel;
       assert (fl_chain_terminates g next_fp (fuel - 1));
       if block_wz >= wz then begin
         // ===== Found a suitable block: obj_out = cur_fp =====
@@ -1519,6 +1613,7 @@ private let rec alloc_search_obj_not_in_chain_part1
         fl_chain_terminates_weaken g next_fp (fuel - 1) big_fuel;
         // Key: cur_fp not in successor chain
         fl_chain_predecessor_not_in_suffix_b g cur_fp fuel;
+        not_in_fl_chain_b_is_chain_avoids g next_fp cur_fp (fuel - 1);
         assert (chain_avoids g next_fp cur_fp (fuel - 1) = true);
         if prev_fp = 0UL then begin
           // ===== prev_fp = 0: fp_out = new_fp =====
@@ -1650,6 +1745,9 @@ private let rec alloc_search_obj_not_in_chain_part1
             // Get chain_avoids g2 head_fp cur_fp big_fuel
             if d = 0 then begin
               // d = 0: head_fp = prev_fp. Strengthen (fuel+1) to big_fuel.
+              assert (fuel + 1 <= big_fuel);
+              walk_chain_zero g head_fp;
+              assert (head_fp == prev_fp);
               fl_chain_terminates_step g2 new_fp fuel;
               fl_chain_terminates_step g2 prev_fp (fuel + 1);
               chain_avoids_strengthen g2 prev_fp cur_fp (fuel + 1) big_fuel
@@ -1704,6 +1802,9 @@ private let rec alloc_search_obj_not_in_chain_part1
             // Get chain_avoids g2 head_fp cur_fp big_fuel
             if d = 0 then begin
               // d = 0: head_fp = prev_fp. Strengthen (fuel+1) to big_fuel.
+              assert (fuel + 1 <= big_fuel);
+              walk_chain_zero g head_fp;
+              assert (head_fp == prev_fp);
               fl_chain_terminates_weaken g2 next_fp (fuel - 1) fuel;
               fl_chain_terminates_step g2 prev_fp (fuel + 1);
               chain_avoids_strengthen g2 prev_fp cur_fp (fuel + 1) big_fuel
@@ -1748,6 +1849,8 @@ let alloc_spec_obj_not_in_chain_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
           (ensures (let r = alloc_spec g fp requested_wz in
                     chain_avoids r.heap_out r.fp_out r.obj_out (heap_size / U64.v mword) = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
+    walk_chain_zero g fp;
+    walk_chain_valid_zero g fp;
     alloc_search_obj_not_in_chain_part1 g fp 0UL fp wz (heap_size / U64.v mword)
 
 /// ---------------------------------------------------------------------------
@@ -2135,7 +2238,7 @@ let alloc_spec_read_other (g: heap) (fp: U64.t) (requested_wz: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 1600 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_chain_avoids_other
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   (excl: U64.t)
@@ -2199,6 +2302,7 @@ private let rec alloc_search_preserves_chain_avoids_other
       in
       assert (U64.v hd + 16 <= heap_size);
       assert (fl_valid g next_fp (fuel - 1));
+      fl_chain_terminates_elim g cur_fp fuel;
       assert (fl_chain_terminates g next_fp (fuel - 1));
       // chain_avoids g next_fp excl (fuel-1) from tail
       chain_avoids_tail g cur_fp excl fuel;
@@ -2210,6 +2314,7 @@ private let rec alloc_search_preserves_chain_avoids_other
         fl_chain_terminates_weaken g next_fp (fuel - 1) big_fuel;
         // cur_fp not in suffix
         fl_chain_predecessor_not_in_suffix_b g cur_fp fuel;
+        not_in_fl_chain_b_is_chain_avoids g next_fp cur_fp (fuel - 1);
         assert (chain_avoids g next_fp cur_fp (fuel - 1) = true);
         if prev_fp = 0UL then begin
           // ===== prev_fp = 0: fp_out = new_fp =====
@@ -2267,7 +2372,8 @@ private let rec alloc_search_preserves_chain_avoids_other
             assert (g' == g3);
             read_write_same g2 rem_obj next_fp;
             assert (read_word g' (new_fp <: obj_addr) == next_fp);
-            chain_avoids_unfold_step g' new_fp excl big_fuel
+            chain_avoids_unfold_step g' new_fp excl big_fuel;
+            assert (chain_avoids g' new_fp excl big_fuel = true)
           end else begin
             // ----- Exact-fit: new_fp = next_fp -----
             alloc_from_block_exact g obj wz next_fp;
@@ -2284,7 +2390,9 @@ private let rec alloc_search_preserves_chain_avoids_other
             FStar.Classical.forall_intro (FStar.Classical.move_requires transfer_aux_e);
             chain_avoids_transfer_excl2 g g' next_fp excl cur_fp (fuel - 1);
             fl_chain_terminates_transfer g g' next_fp (fuel - 1);
-            chain_avoids_strengthen g' next_fp excl (fuel - 1) big_fuel
+            chain_avoids_strengthen g' next_fp excl (fuel - 1) big_fuel;
+            assert (chain_avoids g' next_fp excl big_fuel = true);
+            assert (new_fp == next_fp)
           end
         end
         else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
@@ -2377,7 +2485,10 @@ private let rec alloc_search_preserves_chain_avoids_other
             if d = 0 then begin
               fl_chain_terminates_step g2 new_fp fuel;
               fl_chain_terminates_step g2 prev_fp (fuel + 1);
-              chain_avoids_strengthen g2 prev_fp excl (fuel + 1) big_fuel
+              chain_avoids_strengthen g2 prev_fp excl (fuel + 1) big_fuel;
+              walk_chain_zero g head_fp;
+              assert (head_fp == prev_fp);
+              assert (chain_avoids g2 head_fp excl big_fuel = true)
             end else begin
               // d > 0: transfer prefix and unfold
               chain_avoids_weaken g head_fp excl big_fuel d;
@@ -2386,7 +2497,11 @@ private let rec alloc_search_preserves_chain_avoids_other
               fl_valid_weaken g head_fp big_fuel d;
               chain_avoids_transfer_excl2 g g2 head_fp excl prev_fp d;
               walk_chain_valid_preserved g g2 head_fp prev_fp d big_fuel;
-              chain_avoids_unfold_steps g2 head_fp excl d big_fuel
+              assert (walk_chain g2 head_fp d == prev_fp);
+              assert (big_fuel - d == fuel + 1);
+              assert (chain_avoids g2 prev_fp excl (big_fuel - d) = true);
+              chain_avoids_unfold_steps g2 head_fp excl d big_fuel;
+              assert (chain_avoids g2 head_fp excl big_fuel = true)
             end
           end else begin
             // ----- Exact-fit sub-case (prev != 0) -----
@@ -2429,7 +2544,10 @@ private let rec alloc_search_preserves_chain_avoids_other
               // → strengthen to big_fuel
               fl_chain_terminates_weaken g2 next_fp (fuel - 1) fuel;
               fl_chain_terminates_step g2 prev_fp (fuel + 1);
-              chain_avoids_strengthen g2 prev_fp excl (fuel + 1) big_fuel
+              chain_avoids_strengthen g2 prev_fp excl (fuel + 1) big_fuel;
+              walk_chain_zero g head_fp;
+              assert (head_fp == prev_fp);
+              assert (chain_avoids g2 head_fp excl big_fuel = true)
             end else begin
               chain_avoids_weaken g head_fp excl big_fuel d;
               walk_chain_valid_prefix g head_fp (big_fuel - fuel) d;
@@ -2437,7 +2555,11 @@ private let rec alloc_search_preserves_chain_avoids_other
               fl_valid_weaken g head_fp big_fuel d;
               chain_avoids_transfer_excl2 g g2 head_fp excl prev_fp d;
               walk_chain_valid_preserved g g2 head_fp prev_fp d big_fuel;
-              chain_avoids_unfold_steps g2 head_fp excl d big_fuel
+              assert (walk_chain g2 head_fp d == prev_fp);
+              assert (big_fuel - d == fuel + 1);
+              assert (chain_avoids g2 prev_fp excl (big_fuel - d) = true);
+              chain_avoids_unfold_steps g2 head_fp excl d big_fuel;
+              assert (chain_avoids g2 head_fp excl big_fuel = true)
             end
           end
         end
@@ -2448,6 +2570,7 @@ private let rec alloc_search_preserves_chain_avoids_other
         assert (cur_fp <> next_fp);
         assert (read_word g obj == next_fp);
         assert (U64.v hd + 16 <= heap_size);
+        alloc_search_advance g head_fp prev_fp cur_fp wz fuel;
         walk_chain_append g head_fp (big_fuel - fuel) 1;
         walk_chain_one_step g cur_fp;
         walk_chain_valid_snoc g head_fp (big_fuel - fuel);
@@ -2502,6 +2625,8 @@ let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz:
                     chain_avoids r.heap_out r.fp_out excl (heap_size / U64.v mword) = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     let big_fuel = heap_size / U64.v mword in
+    walk_chain_zero g fp;
+    walk_chain_valid_zero g fp;
     assert (walk_chain g fp 0 == fp);
     assert (walk_chain_valid g fp 0);
     assert (big_fuel - big_fuel = 0);
@@ -2738,6 +2863,10 @@ private let rec alloc_search_preserves_wfh_part4
       else begin
         fl_valid_next g cur_fp fuel;
         assert (cur_fp <> next_fp);
+        assert (U64.v hd + 16 <= heap_size);
+        assert (fl_valid g next_fp (fuel - 1));
+        fl_chain_terminates_elim g cur_fp fuel;
+        assert (fl_chain_terminates g next_fp (fuel - 1));
         alloc_search_preserves_wfh_part4 g head_fp cur_fp next_fp wz (fuel - 1)
       end
     end
@@ -3185,8 +3314,14 @@ private let rec alloc_search_new_objects_blue_part1
         else ()
       end
       else begin
-        if U64.v hd + 16 <= heap_size then
+        if U64.v hd + 16 <= heap_size then begin
+          fl_valid_next g cur_fp fuel;
+          assert (cur_fp <> next_fp);
+          assert (fl_valid g next_fp (fuel - 1));
+          fl_chain_terminates_elim g cur_fp fuel;
+          assert (fl_chain_terminates g next_fp (fuel - 1));
           alloc_search_new_objects_blue_part1 g head_fp cur_fp next_fp wz (fuel - 1)
+        end
         else ()
       end
     end

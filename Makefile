@@ -138,16 +138,7 @@ common/lib/%.checked: common/lib/%
 common/impl/%.checked: common/impl/%
 	$(FSTAR) --split_queries always $<
 
-# mark-and-sweep/spec — default flags, with specific overrides
-mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.fst.checked: mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.fst
-	$(FSTAR) --z3rlimit 400 $<
-
-mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Split.fst.checked: mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Split.fst
-	$(FSTAR) --z3rlimit 400 $<
-
-mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Part1.fst.checked: mark-and-sweep/spec/GC.Spec.Allocator.Lemmas.Part1.fst
-	$(FSTAR) --z3rlimit 400 $<
-
+# mark-and-sweep/spec — default flags
 mark-and-sweep/spec/%.checked: mark-and-sweep/spec/%
 	$(FSTAR) $<
 

@@ -8,6 +8,8 @@ open GC.Spec.Allocator
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module Header = GC.Lib.Header
+module AllocCommon = GC.Spec.Allocator.Lemmas.Common
+module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 /// getWosize of make_header returns the original wosize
 val make_header_getWosize : (wz: U64.t{U64.v wz < pow2 54}) ->
                             (c: U64.t{U64.v c < 4}) ->
@@ -33,24 +35,15 @@ val alloc_from_block_preserves_wf :
 
 /// Free-list validity: each node is a valid object with wosize >= 1,
 /// no self-loops, and the successor (if any) is also fl_valid.
-val fl_valid (g: heap) (fp: U64.t) (fuel: nat) : Tot prop (decreases fuel)
+let fl_valid = AllocCommon.fl_valid
 
 /// fl_valid extractors
-val fl_valid_gives_mem : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
-  Lemma (requires fuel > 0 /\
-                  U64.v fp >= U64.v mword /\
-                  U64.v fp < heap_size /\
-                  U64.v fp % U64.v mword = 0 /\
-                  fl_valid g fp fuel)
-        (ensures Seq.mem fp (objects zero_addr g))
+let fl_valid_gives_mem = AllocCommon.fl_valid_gives_mem
 
-val fl_valid_gives_wosize : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
-  Lemma (requires fuel > 0 /\
-                  U64.v fp >= U64.v mword /\
-                  U64.v fp < heap_size /\
-                  U64.v fp % U64.v mword = 0 /\
-                  fl_valid g fp fuel)
-        (ensures U64.v (wosize_of_object (fp <: obj_addr) g) >= 1)
+let fl_valid_gives_wosize = AllocCommon.fl_valid_gives_wosize
+
+/// fl_valid for next node.
+let fl_valid_next = AllocCommon.fl_valid_next
 
 /// **Theorem**: alloc_from_block preserves object membership AND the remainder
 /// (if split) is in the post-alloc objects list.
@@ -73,55 +66,26 @@ val alloc_spec_preserves_wf : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
                   well_formed_heap r.heap_out))
 
 /// fl_valid introduction: null pointer terminates the free list.
-val fl_valid_null : (g: heap) -> (fuel: nat) ->
-  Lemma (requires fuel > 0)
-        (ensures fl_valid g 0UL fuel)
+let fl_valid_null = AllocCommon.fl_valid_null
 
 /// fl_valid introduction: a valid node with a valid successor.
-val fl_valid_step : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
-  Lemma (requires fuel > 0 /\
-                  U64.v fp >= U64.v mword /\
-                  U64.v fp < heap_size /\
-                  U64.v fp % U64.v mword = 0 /\
-                  Seq.mem fp (objects zero_addr g) /\
-                  U64.v (wosize_of_object (fp <: obj_addr) g) >= 1 /\
-                  (U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size ==>
-                    read_word g (fp <: obj_addr) <> fp /\
-                    fl_valid g (read_word g (fp <: obj_addr)) (fuel - 1)))
-        (ensures fl_valid g fp fuel)
+let fl_valid_step = AllocCommon.fl_valid_step
 
 /// fl_valid eliminator: extract all components from fl_valid.
-val fl_valid_elim : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
-  Lemma (requires fuel > 0 /\
-                  U64.v fp >= U64.v mword /\
-                  U64.v fp < heap_size /\
-                  U64.v fp % U64.v mword = 0 /\
-                  fl_valid g fp fuel)
-        (ensures Seq.mem fp (objects zero_addr g) /\
-                 U64.v (wosize_of_object (fp <: obj_addr) g) >= 1 /\
-                 (U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size ==>
-                   read_word g (fp <: obj_addr) <> fp /\
-                   fl_valid g (read_word g (fp <: obj_addr)) (fuel - 1)))
+let fl_valid_elim = AllocCommon.fl_valid_elim
 
 /// fl_valid base case: fuel = 0 makes fl_valid trivially true.
-val fl_valid_zero : (g: heap) -> (fp: U64.t) ->
-  Lemma (fl_valid g fp 0)
+let fl_valid_zero = AllocCommon.fl_valid_zero
 
 /// fl_valid terminal case: out of bounds, unaligned, or null pointer.
-val fl_valid_terminal : (g: heap) -> (fp: U64.t) -> (fuel: nat) ->
-  Lemma (requires fuel > 0 /\
-                  (fp = 0UL \/ U64.v fp < U64.v mword \/ U64.v fp >= heap_size \/
-                   U64.v fp % U64.v mword <> 0))
-        (ensures fl_valid g fp fuel)
+let fl_valid_terminal = AllocCommon.fl_valid_terminal
 
 /// fl_valid monotonicity: more fuel implies less fuel.
-val fl_valid_weaken : (g: heap) -> (fp: U64.t) -> (fuel_strong: nat) -> (fuel_weak: nat) ->
-  Lemma (requires fl_valid g fp fuel_strong /\ fuel_weak <= fuel_strong)
-        (ensures fl_valid g fp fuel_weak)
+let fl_valid_weaken = AllocCommon.fl_valid_weaken
 
 /// Free-list chain termination: the chain from fp reaches a terminal node
 /// (0UL, out of bounds, or unaligned) within the given number of steps.
-val fl_chain_terminates (g: heap) (fp: U64.t) (steps: nat) : Tot bool (decreases steps)
+let fl_chain_terminates = AllocChain.fl_chain_terminates
 
 /// Terminal base cases: 0UL, out of bounds, or misaligned -> always terminates.
 val fl_chain_terminates_terminal (g: heap) (fp: U64.t) (steps: nat)
@@ -158,10 +122,10 @@ val fl_chain_terminates_valid_zero (g: heap) (fp: U64.t)
           (ensures fl_chain_terminates g fp 0 = false)
 
 /// walk_chain: walk n steps following free-list links (stops at terminal nodes).
-val walk_chain (g: heap) (fp: U64.t) (n: nat) : Tot U64.t (decreases n)
+let walk_chain = AllocChain.walk_chain
 
 /// walk_chain_valid: all intermediate nodes (positions 0..n-1) are valid (non-terminal).
-val walk_chain_valid (g: heap) (fp: U64.t) (n: nat) : Tot prop (decreases n)
+let walk_chain_valid = AllocChain.walk_chain_valid
 
 /// walk_chain_valid prefix: truncating preserves validity.
 val walk_chain_valid_prefix (g: heap) (fp: U64.t) (k j: nat)
@@ -209,7 +173,7 @@ val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: n
                   fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
 
 /// chain_avoids: boolean test for "fp chain does not visit excl".
-val chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool
+let chain_avoids = AllocChain.chain_avoids
 
 /// chain_avoids_head_ne: if chain_avoids is true and fp is a valid chain node with fuel > 0,
 /// then fp ≠ excl.
@@ -260,7 +224,7 @@ val chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
           (ensures chain_avoids g fp excl fuel' = true)
 
 /// first_hit: position of first occurrence of dst_obj when chain_avoids = false.
-val first_hit (g: heap) (fp dst_obj: U64.t) (fuel: nat) : Tot nat
+let first_hit = AllocChain.first_hit
 
 /// first_hit_spec: characterization of first_hit when chain_avoids = false.
 val first_hit_spec (g: heap) (fp dst_obj: U64.t) (fuel: nat)
@@ -271,7 +235,7 @@ val first_hit_spec (g: heap) (fp dst_obj: U64.t) (fuel: nat)
 
 /// not_in_fl_chain_b: boolean version of "dst_obj not in chain from fp".
 /// (Alias for chain_avoids.)
-val not_in_fl_chain_b (g: heap) (fp: U64.t) (dst_obj: U64.t) (fuel: nat) : Tot bool
+let not_in_fl_chain_b = AllocChain.not_in_fl_chain_b
 
 /// **Theorem**: A node does not appear in the chain starting from its successor.
 /// (Boolean version — suitable for direct case analysis.)

@@ -696,6 +696,27 @@ private let cheney_forward_one_preserves_inj_inv
   end
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+private let infix_delta_value (minor: minor_state) (addr: U64.t)
+  : Lemma (requires is_infix_in_minor minor addr /\ minor_infix_wf minor)
+          (ensures U64.v addr - U64.v (infix_parent minor addr) ==
+                   minor_wosize minor addr * 8)
+  =
+  infix_parent_value minor addr;
+  let parent = infix_parent minor addr in
+  let wz = minor_wosize minor addr in
+  let a = U64.v addr in
+  let c = wz * 8 in
+  assert (U64.v parent == a - c);
+  assert (a - U64.v parent == a - (a - c));
+  FStar.Math.Lemmas.subtraction_is_distributive a a c;
+  assert (a - (a - c) == a - a + c);
+  assert (a - a == 0);
+  assert (a - a + c == c)
+#pop-options
+
+#restart-solver
+
 #push-options "--z3rlimit 120 --fuel 1 --ifuel 0 --split_queries always"
 private let cheney_forward_normal_preserves_source_inv
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
@@ -812,15 +833,13 @@ private let cheney_forward_one_preserves_source_inv
           assert (is_infix_in_minor minor addr);
           assert (minor_wosize minor addr * 8 <= U64.v addr - 8);
           infix_parent_value minor addr;
+          infix_delta_value minor addr;
           let wz_infix = minor_wosize minor addr in
+          assert (parent == infix_parent minor addr);
           assert (U64.v parent == U64.v addr - wz_infix * 8);
-          FStar.Math.Lemmas.subtraction_is_distributive
-            (U64.v addr) (U64.v addr) (wz_infix * 8);
-          assert (U64.v addr - (U64.v addr - wz_infix * 8) ==
-                  U64.v addr - U64.v addr + wz_infix * 8);
+          assert (U64.v addr - U64.v (infix_parent minor addr) == wz_infix * 8);
           assert (U64.v addr - U64.v parent ==
-                  U64.v addr - (U64.v addr - wz_infix * 8));
-          assert (U64.v addr - U64.v addr == 0);
+                  U64.v addr - U64.v (infix_parent minor addr));
           assert (U64.v addr - U64.v parent == wz_infix * 8);
           assert (delta == wz_infix * 8);
           assert (wz_infix > 0);

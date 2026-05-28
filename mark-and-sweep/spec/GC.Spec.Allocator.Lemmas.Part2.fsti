@@ -11,7 +11,8 @@ open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Spec.Allocator
-open GC.Spec.Allocator.Lemmas.Core
+open GC.Spec.Allocator.Lemmas.Common
+open GC.Spec.Allocator.Lemmas.Chain
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
