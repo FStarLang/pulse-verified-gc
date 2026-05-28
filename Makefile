@@ -67,6 +67,7 @@ ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC) $(SPOT_SRC)
 	  { gsub(cwd, "") } \
 	  /^[^ \t].*:/ { if (n) flush(); \
 	    keep = (/\.checked:/) ? 1 : 0; n = 0 } \
+	  /^[A-Z_]+=/ { if (n) flush(); keep = 1; n = 0 } \
 	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
 	    if (line == "") next; \
 	    if (line !~ /:/ && line !~ /^(common|mark-and-sweep|generational|spot)\// && line !~ /^[A-Z_]+=/) next; \
@@ -108,7 +109,7 @@ orphans: .depend
 
 # --- Verification targets ---------------------------------------------------
 
-verify: $(addsuffix .checked,$(ALL_SRC))
+verify: $(ALL_CHECKED_FILES)
 	@echo "=== all modules verified ==="
 
 common: $(addsuffix .checked,$(COMMON_SRC))
