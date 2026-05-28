@@ -137,7 +137,7 @@ let remembered_roots_in_roots_from_slots
           field_idx < U64.v (wosize_of_object obj major) /\
           U64.v obj + field_idx * 8 + 8 <= heap_size /\
           (U64.v obj + field_idx * 8) % 8 == 0 /\
-          to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8) <: hp_addr)) == r /\
+          to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == r /\
           is_minor_object_addr r) in
       let field_idx = FStar.IndefiniteDescription.indefinite_description_ghost nat
         (fun field_idx ->
@@ -148,7 +148,7 @@ let remembered_roots_in_roots_from_slots
           field_idx < U64.v (wosize_of_object obj major) /\
           U64.v obj + field_idx * 8 + 8 <= heap_size /\
           (U64.v obj + field_idx * 8) % 8 == 0 /\
-          to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8) <: hp_addr)) == r /\
+          to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == r /\
           is_minor_object_addr r) in
       is_minor_object_addr_bounds r;
       to_minor_offset_in_minor_range r;
@@ -181,7 +181,7 @@ let update_preserves_major_target_field
       (U64.v src + j * 8) % 8 == 0 /\
       is_blue src major = false /\
       is_no_scan src major = false /\
-      read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == dst)
+      read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst)
     (ensures
       read_word (update_major_pointers major fwd)
         (U64.uint_to_t (U64.v src + j * 8)) == dst)
@@ -208,7 +208,7 @@ let heap_field_points_to_graph_edge
       j < U64.v (wosize_of_object src g) /\
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\
-      read_word g (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == dst /\
+      read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst /\
       HeapGraph.is_pointer_field dst)
     (ensures mem_graph_edge (HeapModel.create_graph g) src dst)
   =
@@ -403,7 +403,7 @@ let heap_graph_edge_to_field_read
         j < U64.v (wosize_of_object src g) /\
         U64.v src + j * 8 + 8 <= heap_size /\
         (U64.v src + j * 8) % 8 == 0 /\
-        read_word g (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == dst))
+        read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst))
   =
     heap_graph_edge_to_pointer_field g src dst;
     let ws = wosize_of_object src g in
@@ -412,7 +412,7 @@ let heap_graph_edge_to_field_read
         j < U64.v ws /\
         U64.v src + j * 8 + 8 <= heap_size /\
         (U64.v src + j * 8) % 8 == 0 /\
-        read_word g (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == dst in
+        read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst in
     let proof (j1: U64.t{U64.v j1 >= 1}) : Lemma
       (requires U64.v j1 <= U64.v ws /\
                 HeapGraph.get_field g src j1 == dst)
@@ -429,13 +429,13 @@ let heap_graph_edge_to_field_read
       HeapGraph.get_field_addr_eq g src j1;
       assert (U64.v src + j * 8 + 8 <= heap_size);
       assert ((U64.v src + j * 8) % 8 == 0);
-      assert (read_word g (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == dst);
+      assert (read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst);
       FStar.Classical.exists_intro
         (fun (k:nat) ->
           k < U64.v ws /\
           U64.v src + k * 8 + 8 <= heap_size /\
           (U64.v src + k * 8) % 8 == 0 /\
-          read_word g (U64.uint_to_t (U64.v src + k * 8) <: hp_addr) == dst)
+          read_word g (U64.uint_to_t (U64.v src + k * 8)) == dst)
         j
     in
     FStar.Classical.exists_elim goal #_
@@ -514,8 +514,8 @@ let cheney_promote_preserves_old_major_field_context
       is_blue src prom.major_final = false /\
       is_no_scan src prom.major_final == is_no_scan src major /\
       wosize_of_object src prom.major_final == wosize_of_object src major /\
-      read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) ==
-      read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)))
+      read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8)) ==
+      read_word major (U64.uint_to_t (U64.v src + j * 8))))
   =
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
@@ -708,7 +708,7 @@ let combined_reachable_major_edge_forwarded
         U64.v src + i * 8 + 8 <= heap_size /\
         (U64.v src + i * 8) % 8 == 0 /\
         CG.classify_major_field minor major
-          (read_word major (U64.uint_to_t (U64.v src + i * 8) <: hp_addr)) == Some (CG.MajorV dst)) in
+          (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MajorV dst)) in
     let field_addr = U64.uint_to_t (U64.v src + i * 8) in
     let old_raw = read_word major field_addr in
     CG.classify_major_field_inv_major minor major old_raw dst;
@@ -803,13 +803,13 @@ let combined_major_minor_field_forwarded
       U64.v src + i * 8 + 8 <= heap_size /\
       (U64.v src + i * 8) % 8 == 0 /\
       CG.classify_major_field minor major
-        (read_word major (U64.uint_to_t (U64.v src + i * 8) <: hp_addr)) == Some (CG.MinorV dst) /\
+        (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MinorV dst) /\
       minor_wosize minor dst > 0)
     (ensures (
       let prom = cheney_promote minor major fp roots in
       let res = cheney_collect_spec minor major fp roots in
       prom.fwd_map dst <> 0UL /\
-      read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8) <: hp_addr) == prom.fwd_map dst))
+      read_word res.mc_major (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map dst))
   =
     let cg = CG.build_combined_graph minor major in
     let combined_roots = CG.classify_roots roots in
@@ -872,7 +872,7 @@ let combined_major_minor_edge_forwarded
       U64.v src + i * 8 + 8 <= heap_size /\
       (U64.v src + i * 8) % 8 == 0 /\
       CG.classify_major_field minor major
-        (read_word major (U64.uint_to_t (U64.v src + i * 8) <: hp_addr)) == Some (CG.MinorV dst) /\
+        (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MinorV dst) /\
       minor_wosize minor dst > 0)
     (ensures (
       let prom = cheney_promote minor major fp roots in
@@ -883,7 +883,7 @@ let combined_major_minor_edge_forwarded
     let res = cheney_collect_spec minor major fp roots in
     let updated = res.mc_major in
     combined_major_minor_field_forwarded minor major fp roots slots n src dst i;
-    assert (read_word updated (U64.uint_to_t (U64.v src + i * 8) <: hp_addr) == prom.fwd_map dst);
+    assert (read_word updated (U64.uint_to_t (U64.v src + i * 8)) == prom.fwd_map dst);
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
     GenInv.minor_heap_shape_elim minor;
@@ -1175,7 +1175,7 @@ let combined_reachable_edge_forwarded_normal
           U64.v src + i * 8 + 8 <= heap_size /\
           (U64.v src + i * 8) % 8 == 0 /\
           CG.classify_major_field minor major
-            (read_word major (U64.uint_to_t (U64.v src + i * 8) <: hp_addr)) == Some (CG.MinorV dst)) in
+            (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (CG.MinorV dst)) in
       combined_major_minor_edge_forwarded minor major fp roots slots n src_obj dst i
     | CG.MinorV src, CG.MajorV dst ->
       let fwd_src = prom.fwd_map src in
@@ -1521,7 +1521,7 @@ private let old_major_field_pointer_target_nonblue
       j < U64.v (wosize_of_object src major) /\
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\
-      read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == dst /\
+      read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst /\
       HeapGraph.is_pointer_field dst)
     (ensures
       Seq.mem (dst <: obj_addr) (objects zero_addr major) /\
@@ -1973,7 +1973,7 @@ private let post_edge_from_major_image_reflects_mem_ce
         j < U64.v (wosize_of_object src_obj updated) /\
         U64.v src + j * 8 + 8 <= heap_size /\
         (U64.v src + j * 8) % 8 == 0 /\
-        read_word updated (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == target_img) in
+        read_word updated (U64.uint_to_t (U64.v src + j * 8)) == target_img) in
     let field_addr = U64.uint_to_t (U64.v src + j * 8) in
     assert (read_word updated field_addr == target_img);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
@@ -2143,7 +2143,7 @@ private let post_edge_from_major_image_reflects_target
         j < U64.v (wosize_of_object src_obj updated) /\
         U64.v src + j * 8 + 8 <= heap_size /\
         (U64.v src + j * 8) % 8 == 0 /\
-        read_word updated (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) == y) in
+        read_word updated (U64.uint_to_t (U64.v src + j * 8)) == y) in
     let field_addr = U64.uint_to_t (U64.v src + j * 8) in
     assert (read_word updated field_addr == y);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
@@ -2286,7 +2286,7 @@ private let post_edge_from_minor_image_reflects_mem_ce
         j < U64.v (wosize_of_object fwd_src_obj updated) /\
         U64.v fwd_src + j * 8 + 8 <= heap_size /\
         (U64.v fwd_src + j * 8) % 8 == 0 /\
-        read_word updated (U64.uint_to_t (U64.v fwd_src + j * 8) <: hp_addr) == target_img) in
+        read_word updated (U64.uint_to_t (U64.v fwd_src + j * 8)) == target_img) in
     let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
     assert (read_word updated field_addr == target_img);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
@@ -2482,7 +2482,7 @@ private let post_edge_from_minor_image_reflects_target
         j < U64.v (wosize_of_object fwd_src_obj updated) /\
         U64.v fwd_src + j * 8 + 8 <= heap_size /\
         (U64.v fwd_src + j * 8) % 8 == 0 /\
-        read_word updated (U64.uint_to_t (U64.v fwd_src + j * 8) <: hp_addr) == y) in
+        read_word updated (U64.uint_to_t (U64.v fwd_src + j * 8)) == y) in
     let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
     assert (read_word updated field_addr == y);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
@@ -3743,11 +3743,11 @@ private let major_non_pointer_field_preserved
       U64.v src + j * 8 + 8 <= heap_size /\
       (U64.v src + j * 8) % 8 == 0 /\
       CG.classify_major_field minor major
-        (read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)) == None)
+        (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None)
     (ensures
       (let res = cheney_collect_spec minor major fp roots in
-       read_word res.mc_major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) ==
-       read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)))
+       read_word res.mc_major (U64.uint_to_t (U64.v src + j * 8)) ==
+       read_word major (U64.uint_to_t (U64.v src + j * 8))))
   =
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
@@ -3803,7 +3803,7 @@ private let minor_non_pointer_field_preserved
       (let prom = cheney_promote minor major fp roots in
        let res = cheney_collect_spec minor major fp roots in
        let img = prom.fwd_map src in
-       read_word res.mc_major (U64.uint_to_t (U64.v img + j * 8) <: hp_addr) ==
+       read_word res.mc_major (U64.uint_to_t (U64.v img + j * 8)) ==
        minor_read_field minor src j))
   =
     let prom = cheney_promote minor major fp roots in
@@ -3882,10 +3882,10 @@ let normal_post_non_pointer_fields_preserved
             U64.v src + j * 8 + 8 <= heap_size /\
             (U64.v src + j * 8) % 8 == 0 /\
             CG.classify_major_field minor major
-              (read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)) == None ==>
+              (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None ==>
             read_word (cheney_collect_spec minor major fp roots).mc_major
               (U64.uint_to_t (U64.v src + j * 8)) ==
-            read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)
+            read_word major (U64.uint_to_t (U64.v src + j * 8))
         | CG.MinorV src ->
           let img = prom.fwd_map src in
           is_val_addr img ==>
@@ -3911,11 +3911,11 @@ let normal_post_non_pointer_fields_preserved
             U64.v src + j * 8 + 8 <= heap_size /\
             (U64.v src + j * 8) % 8 == 0 /\
             CG.classify_major_field minor major
-              (read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)) == None)
-          (ensures
-            read_word (cheney_collect_spec minor major fp roots).mc_major
-              (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) ==
-            read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr))
+              (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None)
+          (ensures (
+            let addr = U64.uint_to_t (U64.v src + j * 8) in
+            read_word (cheney_collect_spec minor major fp roots).mc_major addr ==
+            read_word major addr))
         =
           major_non_pointer_field_preserved minor major fp roots src_obj j
         in
@@ -3936,10 +3936,10 @@ let normal_post_non_pointer_fields_preserved
             U64.v (prom.fwd_map src) + j * 8 + 8 <= heap_size /\
             (U64.v (prom.fwd_map src) + j * 8) % 8 == 0 /\
             CG.classify_minor_field minor major (minor_read_field minor src j) == None)
-          (ensures
-            read_word (cheney_collect_spec minor major fp roots).mc_major
-              (U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8) <: hp_addr) ==
-            minor_read_field minor src j)
+          (ensures (
+            let addr = U64.uint_to_t (U64.v (prom.fwd_map src) + j * 8) in
+            read_word (cheney_collect_spec minor major fp roots).mc_major addr ==
+            minor_read_field minor src j))
         =
           minor_non_pointer_field_preserved minor major fp roots src j
         in
@@ -3972,9 +3972,9 @@ let normal_post_non_pointer_fields_preserved_to_result
             U64.v src + j * 8 + 8 <= heap_size /\
             (U64.v src + j * 8) % 8 == 0 /\
             CG.classify_major_field minor major
-              (read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)) == None ==>
-            read_word post_major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr) ==
-            read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)
+              (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None ==>
+            read_word post_major (U64.uint_to_t (U64.v src + j * 8)) ==
+            read_word major (U64.uint_to_t (U64.v src + j * 8))
         | CG.MinorV src ->
           let img = prom.fwd_map src in
           is_val_addr img ==>
@@ -3984,7 +3984,7 @@ let normal_post_non_pointer_fields_preserved_to_result
             U64.v img + j * 8 + 8 <= heap_size /\
             (U64.v img + j * 8) % 8 == 0 /\
             CG.classify_minor_field minor major (minor_read_field minor src j) == None ==>
-            read_word post_major (U64.uint_to_t (U64.v img + j * 8) <: hp_addr) ==
+            read_word post_major (U64.uint_to_t (U64.v img + j * 8)) ==
             minor_read_field minor src j))
     =
       match u with
@@ -3995,10 +3995,10 @@ let normal_post_non_pointer_fields_preserved_to_result
           U64.v src + j * 8 + 8 <= heap_size /\
           (U64.v src + j * 8) % 8 == 0 /\
           CG.classify_major_field minor major
-            (read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr)) == None ==>
+            (read_word major (U64.uint_to_t (U64.v src + j * 8))) == None ==>
           read_word (cheney_collect_spec minor major fp roots).mc_major
             (U64.uint_to_t (U64.v src + j * 8)) ==
-          read_word major (U64.uint_to_t (U64.v src + j * 8) <: hp_addr))
+          read_word major (U64.uint_to_t (U64.v src + j * 8)))
       | CG.MinorV src ->
         assert (forall (j:nat).
           j < minor_wosize minor src /\
