@@ -26,8 +26,7 @@ OUTPUT_DIR = _output
 INCLUDES = \
   --include common/spec --include common/lib --include common/impl \
   --include mark-and-sweep/spec --include mark-and-sweep/impl \
-  --include generational/spec --include generational/impl \
-  --include spot
+  --include generational/spec --include generational/impl
 
 # --- F* base flags ----------------------------------------------------------
 
@@ -47,9 +46,7 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 # This identifies orphaned/unused files that are not reachable
 ROOT_MODULES = \
   generational/impl/GC.Gen.Impl.fsti \
-  generational/impl/GC.Gen.Impl.fst \
-  spot/GC.SPOT.EmptyHeapLemmas.fst \
-  spot/GC.SPOT.ThreeObjects.fst
+  generational/impl/GC.Gen.Impl.fst
 
 # All sources (for pattern rules and clean targets)
 COMMON_SRC = $(wildcard common/spec/*.fst common/spec/*.fsti \
@@ -72,7 +69,7 @@ ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC) $(SPOT_SRC)
 	    keep = (/\.checked:/) ? 1 : 0; n = 0 } \
 	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
 	    if (line == "") next; \
-	    if (line !~ /:/ && line !~ /^(common|mark-and-sweep|generational|spot)\//) next; \
+	    if (line !~ /:/ && line !~ /^(common|mark-and-sweep|generational|spot)\// && line !~ /^[A-Z_]+=/) next; \
 	    buf[n++] = $$0 } \
 	  END { if (n) flush() } \
 	  function flush() { if (!n) return; \

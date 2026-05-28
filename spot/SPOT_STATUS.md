@@ -103,26 +103,6 @@ Even after proving all preconditions, we need to:
 
 **Result**: Fully admit/assume-free 3-object SPOT validating entire GC spec
 
-### Option B: Validate with Partial Admits (5-8 hours)
-
-Keep the abstract heap approach with assumes, but:
-1. Complete the 5 precondition admits (10-15 hours)
-2. Add postcondition proofs using assumes about GC behavior (5-8 hours)
-
-**Total**: 15-23 hours
-
-**Result**: SPOT with assumes for heap construction but admit-free reasoning about GC
-
-### Option C: Strengthen Empty Heap Case (3-5 hours)
-
-Complete the empty heap case to 100% admit-free, then argue this validates:
-- Preconditions are satisfiable (from trivial heap)
-- Infrastructure works (10/11 proven)
-
-**Total**: 3-5 hours
-
-**Result**: Limited validation but fully proven
-
 ## Recommendation
 
 **Option A** is the only path that truly achieves your stated goal: validating that preconditions are not too strong AND postconditions are useful, with no admits or assumes.
@@ -130,8 +110,6 @@ Complete the empty heap case to 100% admit-free, then argue this validates:
 The current 3-object foundation (216 lines, 6/11 preconditions proven) is a good start, but we're at **25-30% of the total effort** needed for a truly admit/assume-free SPOT.
 
 If the goal is to **validate the GC specification is correct and usable**, Option A is necessary. The time investment is significant but tractable for systematic work.
-
-If the goal is to **demonstrate infrastructure and proof techniques**, the current state already shows the approach works - but doesn't provide the end-to-end validation you requested.
 
 ## Current Files
 
