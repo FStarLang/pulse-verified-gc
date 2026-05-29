@@ -8,7 +8,7 @@
  * Uses:
  *   gen_alloc()            from GC_Gen_Impl.c — bump alloc (minor) or free-list (major)
  *   minor_collect_full()   from GC_Gen_Impl.c — Cheney BFS + ref_table rewrite (full correctness)
- *   collect()              from GC_Gen_Impl.c — mark-and-sweep on major heap
+ *   gen_gc()               from GC_Gen_Impl.c — verified minor+major full collection
  *
  * NULL-base trick (major heap only):
  *   major.data = NULL so that byte offsets become absolute virtual addresses.
@@ -18,7 +18,6 @@
  *     3. update_all_objects — start at zero_addr instead of 0
  *     4. rescan_heap_impl  — start at zero_addr instead of 0
  *     5. is_valid_fp      — use zero_addr for lower bound
- *     6. darken_if_white_bounded — non-static for root darkening
  *
  * Minor heap:
  *   Uses a real data pointer (minor.data = calloc'd buffer).
@@ -55,7 +54,6 @@
 #include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
 #include "profiling_counters.h"
 extern size_t queue_size_sz;
-extern void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
 /* --- Globals --- */
 static gen_heap_t   gc_gen_heap;
@@ -220,7 +218,8 @@ static inline value minor_offset_to_abs(uint64_t off) {
 /* --- Root scanning callback for minor collection --- */
 
 static void scan_minor_root(value root, value *root_ptr) {
-    if (root_count >= MAX_ROOTS) return;
+    if (root_count >= MAX_ROOTS)
+        caml_fatal_error("verified gen GC: root overflow");
 
     /* Only collect block roots (not integers) */
     if (!Is_block(root)) return;
@@ -247,9 +246,87 @@ static void scan_minor_root(value root, value *root_ptr) {
     root_count++;
 }
 
+static void collect_minor_roots_and_refs(void) {
+    root_count = 0;
+    caml_do_roots(scan_minor_root, 1);
+
+    /* Inter-generational pointers (ref_table entries) are absolute
+     * addresses.  The verified to_minor_offset_u64 handles translation
+     * inline during cheney_promote_phase and update_one_object, so no
+     * pre-translation is needed.
+     *
+     * Also add ref_table entries as minor-collection roots. */
+    {
+        struct caml_ref_table *tbl = Caml_state->_ref_table;
+        value **r;
+        for (r = tbl->base; r < tbl->ptr; r++) {
+            value v = (value)(uintptr_t)(**r);
+            uint64_t v64 = (uint64_t)(uintptr_t)v;
+            if (is_minor_absolute((value)v64)) {
+                uint64_t off = v64 - (uint64_t)(uintptr_t)minor_base;
+                if (root_count >= MAX_ROOTS)
+                    caml_fatal_error("verified gen GC: root overflow (ref_table)");
+                root_values[root_count] = off;
+                root_locs[root_count] = NULL;
+                root_count++;
+            }
+        }
+    }
+}
+
+static void fatal_promotion_failed(void) {
+    uint64_t major_size = heap_size_u64 - zero_addr;
+    fprintf(stderr,
+        "verified gen GC: promotion failed — major heap full (%lu MB)\n"
+        "  Some objects could not be promoted (live set exceeds heap capacity).\n"
+        "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n",
+        (unsigned long)(major_size / 1048576),
+        (unsigned long)(major_size / 4));
+    caml_fatal_error("verified gen GC: out of memory (major heap too small)");
+}
+
+static void write_back_rewritten_roots(const uint64_t *rewritten_roots) {
+    uint64_t minor_limit = minor_heap_size_u64;
+    size_t i;
+    for (i = 0; i < root_count; i++) {
+        if (root_locs[i] != NULL) {
+            uint64_t rewritten = rewritten_roots[i];
+            if (rewritten == 0) continue;
+            if (rewritten < minor_limit) {
+                caml_fatal_error(
+                    "verified gen GC: internal error — unpromoted root after check");
+            }
+            *root_locs[i] = (value)(uintptr_t)rewritten;
+        }
+    }
+}
+
+static uint64_t rewrite_root_from_forwarding(uint64_t root) {
+    if (root >= 8 && root < minor_heap_size_u64 && root % 8 == 0) {
+        size_t idx = (size_t)(root / 8);
+        uint64_t rewritten = gc_fwd_arr[idx];
+        if (rewritten == 0 || rewritten < minor_heap_size_u64) {
+            caml_fatal_error(
+                "verified gen GC: internal error — unpromoted root after gen_gc");
+        }
+        return rewritten;
+    }
+    return root;
+}
+
+static void write_back_forwarded_roots(void) {
+    size_t i;
+    for (i = 0; i < root_count; i++) {
+        if (root_locs[i] != NULL) {
+            uint64_t rewritten = rewrite_root_from_forwarding(root_values[i]);
+            if (rewritten != 0)
+                *root_locs[i] = (value)(uintptr_t)rewritten;
+        }
+    }
+}
+
 /* --- Minor collection --- */
 
-static void do_major_gc_only(void);  /* forward decl */
 static void do_full_gc(void);       /* forward decl */
 
 /* Core minor GC implementation.  If major heap space is insufficient,
@@ -261,32 +338,7 @@ static void do_minor_gc_core(void) {
 
     /* 1. Collect roots */
     PROF_START(root_scan);
-    root_count = 0;
-    caml_do_roots(scan_minor_root, 1);
-
-    /* 2. Inter-generational pointers (ref_table entries) are absolute
-     * addresses.  The verified to_minor_offset_u64 handles translation
-     * inline during cheney_promote_phase and update_one_object, so no
-     * pre-translation is needed. */
-
-    /* 3. Also add ref_table entries as roots */
-    {
-        struct caml_ref_table *tbl = Caml_state->_ref_table;
-        value **r;
-        for (r = tbl->base; r < tbl->ptr; r++) {
-            value v = (value)(uintptr_t)(**r);
-            uint64_t v64 = (uint64_t)(uintptr_t)v;
-            /* ref_table values are absolute addresses; translate to offset */
-            if (is_minor_absolute((value)v64)) {
-                uint64_t off = v64 - (uint64_t)(uintptr_t)minor_base;
-                if (root_count >= MAX_ROOTS)
-                    caml_fatal_error("verified gen GC: root overflow (ref_table)");
-                root_values[root_count] = off;
-                root_locs[root_count] = NULL;
-                root_count++;
-            }
-        }
-    }
+    collect_minor_roots_and_refs();
     PROF_END(root_scan);
 
     /* 4. Zero forwarding array */
@@ -326,14 +378,7 @@ static void do_minor_gc_core(void) {
 
     /* OOM check (verified flag from cheney_promote_phase) */
     if (!promote_ok) {
-        uint64_t major_size = heap_size_u64 - zero_addr;
-        fprintf(stderr,
-            "verified gen GC: promotion failed — major heap full (%lu MB)\n"
-            "  Some objects could not be promoted (live set exceeds heap capacity).\n"
-            "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n",
-            (unsigned long)(major_size / 1048576),
-            (unsigned long)(major_size / 4));
-        caml_fatal_error("verified gen GC: out of memory (major heap too small)");
+        fatal_promotion_failed();
     }
 
     /* 6. Write back rewritten roots to OCaml stack/globals.
@@ -343,23 +388,7 @@ static void do_minor_gc_core(void) {
      * weren't).  Write the new major addresses back to the actual OCaml
      * root slots so the mutator sees promoted objects. */
     PROF_START(writeback);
-    {
-        uint64_t minor_limit = minor_heap_size_u64;
-        size_t i;
-        for (i = 0; i < root_count; i++) {
-            if (root_locs[i] != NULL) {
-                uint64_t rewritten = root_values[i];
-                if (rewritten == 0) continue;
-                /* Should never happen — we aborted above if any roots
-                 * remained as minor offsets.  Defensive check. */
-                if (rewritten < minor_limit) {
-                    caml_fatal_error(
-                        "verified gen GC: internal error — unpromoted root after check");
-                }
-                *root_locs[i] = (value)(uintptr_t)rewritten;
-            }
-        }
-    }
+    write_back_rewritten_roots(root_values);
     PROF_END(writeback);
 
     /* 7. Clear ref_table */
@@ -404,64 +433,78 @@ static void do_minor_gc(void) {
 
 static int full_gc_count = 0;
 
-/* Run major mark-and-sweep only (no minor collection).
- * Assumes minor heap is empty (already collected). */
-static void do_major_gc_only(void) {
+static void do_full_gc(void) {
+    ensure_heap();
+    in_full_gc = 1;
+
     PROF_INC(major_gc_count);
     PROF_START(major_gc);
     Caml_state->_stat_major_collections++;
     full_gc_count++;
 
-    /* Allocate gray stack */
+    if (*gc_gen_heap.minor.bump_ref != 0) {
+        PROF_INC(minor_gc_count);
+        Caml_state->_stat_minor_collections++;
+    }
+
+    /* Build the minor-collection root set: OCaml roots plus remembered slots. */
+    PROF_START(root_scan);
+    collect_minor_roots_and_refs();
+    PROF_END(root_scan);
+
+    PROF_START(fwd_arr_zero);
+    memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
+    PROF_END(fwd_arr_zero);
+
+    /* gen_gc expects the major gray stack to contain the post-minor roots.
+     * Place the roots array at the tail of the stack storage: minor collection
+     * rewrites those entries in-place before gen_gc starts mark-and-sweep.  The
+     * original root_values remain untouched for OCaml root writeback below. */
     size_t gray_cap = gc_gen_heap.major.size / 64;
     if (gray_cap < 4096) gray_cap = 4096;
+    if (gray_cap < root_count) gray_cap = root_count;
+    if (gray_cap == 0) gray_cap = 1;
+
     uint64_t *gray_storage = (uint64_t *)calloc(gray_cap, sizeof(uint64_t));
     if (!gray_storage)
         caml_fatal_error("verified gen GC: cannot allocate gray stack");
 
-    size_t gray_top = gray_cap;
+    size_t gray_top = gray_cap - root_count;
+    uint64_t *roots_for_gc = gray_storage;
+    if (root_count > 0) {
+        roots_for_gc = gray_storage + gray_top;
+        memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
+    }
+
     gray_stack_rec gc_stack;
     gc_stack.storage = gray_storage;
     gc_stack.top = &gray_top;
     gc_stack.cap = gray_cap;
 
-    /* Scan roots — darken live major objects */
-    root_count = 0;
-    caml_do_roots(scan_minor_root, 1);
     {
-        size_t i;
-        for (i = 0; i < root_count; i++) {
-            uint64_t root = root_values[i];
-            if (root >= zero_addr + 8 && root < heap_size_u64 &&
-                root % 8 == 0)
-            {
-                uint64_t h_addr = root - 8;
-                darken_if_white_bounded(gc_gen_heap.major, gc_stack, h_addr);
-            }
+        struct caml_ref_table *tbl = Caml_state->_ref_table;
+        size_t n_slots = (size_t)(tbl->ptr - tbl->base);
+        _Static_assert(sizeof(value *) == sizeof(uint64_t),
+            "ref_table optimization requires LP64 (sizeof(value*)==8)");
+        K___uint64_t_bool result =
+            gen_gc(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
+                   gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
+        if (!result.snd) {
+            free(gray_storage);
+            in_full_gc = 0;
+            fatal_promotion_failed();
         }
     }
 
-    /* Run verified mark-and-sweep on major heap */
-    uint64_t fp = *gc_gen_heap.fp_ref;
-    uint64_t new_fp = collect(gc_gen_heap.major, gc_stack, fp);
-    *gc_gen_heap.fp_ref = new_fp;
+    PROF_START(writeback);
+    write_back_forwarded_roots();
+    PROF_END(writeback);
 
-    /* Reset promotion counter after major collection */
+    Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
     bytes_promoted_since_major = 0;
 
     free(gray_storage);
     PROF_END(major_gc);
-}
-
-static void do_full_gc(void) {
-    ensure_heap();
-    in_full_gc = 1;
-
-    /* Phase 1: Minor collection to promote live young objects */
-    do_minor_gc();
-
-    /* Phase 2: Major mark-and-sweep */
-    do_major_gc_only();
 
     in_full_gc = 0;
 }

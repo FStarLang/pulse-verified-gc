@@ -15,7 +15,7 @@ This document describes how the verified generational garbage collector
 6. [Address Translation](#address-translation)
 7. [Allocation Path](#allocation-path)
 8. [Minor GC (Cheney Promotion)](#minor-gc-cheney-promotion)
-9. [Major GC (Mark-and-Sweep)](#major-gc-mark-and-sweep)
+9. [Full GC and Major Mark-and-Sweep](#full-gc-and-major-mark-and-sweep)
 10. [Inter-Generational Pointers (ref\_table)](#inter-generational-pointers)
 11. [Root Scanning](#root-scanning)
 12. [OOM Handling](#oom-handling)
@@ -47,9 +47,9 @@ This document describes how the verified generational garbage collector
 │                    alloc_gen.c (THE BRIDGE)                   │
 │                                                              │
 │  • verified_allocate() — allocation entry point              │
-│  • do_minor_gc()       — Cheney promotion + writeback        │
-│  • do_major_gc_only()  — mark-and-sweep on major heap        │
-│  • do_full_gc()        — minor + major                       │
+│  • do_minor_gc()       — calls verified minor_collect_full   │
+│  • do_full_gc()        — calls verified gen_gc               │
+│  • verified_do_minor_gc() — runtime forced minor collection  │
 │  • ensure_heap()       — lazy initialization                 │
 │                                                              │
 │  Responsibilities:                                           │
@@ -65,11 +65,11 @@ This document describes how the verified generational garbage collector
 │              GC_Gen_Impl.c (VERIFIED, extracted)              │
 │                                                              │
 │  • gen_alloc()             — bump (minor) or free-list       │
-│  • cheney_promote_phase()  — BFS copy minor→major            │
-│  • update_one_object()     — rewrite fields after promotion  │
-│  • rewrite_roots_impl()    — rewrite root array              │
+│  • minor_collect_full()    — verified minor collection       │
+│  • gen_gc()                — verified minor + major GC       │
 │  • collect()               — mark_loop + fused_sweep_coalesce│
 │  • allocate_part1()        — free-list allocator (major)     │
+│  • rewrite_heap_slots()    — remembered-set slot rewrite     │
 │                                                              │
 │  All functions are machine-checked against their specs.      │
 │  No patches needed — used exactly as extracted by KaRaMeL.   │
@@ -193,17 +193,14 @@ that lets the same verified code work with any heap placement.
 
 ### Verified Functions (called by alloc_gen.c)
 
-| Function | Purpose |
-|----------|---------|
-| `gen_alloc(gh, wosize, tag)` | Bump-allocate in minor, or free-list in major |
-| `cheney_promote_phase(minor, major, fp_ref, fwd_arr, queue, roots, n)` | BFS: copy reachable minor objects to major |
-| `update_one_object(major, fwd_arr, obj, wosize)` | Rewrite fields of a promoted object |
-| `rewrite_roots_impl(roots, fwd_arr, n)` | Rewrite root array: minor offset → major addr |
-| `rewrite_heap_slots(major, fwd_arr, slots, n)` | Rewrite slots in major objects (ref_table) |
-| `collect(major, gray_stack, fp)` | Mark-and-sweep: returns new free-list head |
-| `minor_collect_full(minor, major, fp, fwd_arr, queue, roots, n, slots, nslots)` | Full minor GC: promote + update + rewrite (handles infix on-demand) |
-| `minor_heap_reset(minor)` | Zero the bump pointer |
-| `darken_if_white_bounded(major, stack, hdr_addr)` | Push root onto gray stack for marking |
+| Function | Called by bridge? | Purpose |
+|----------|-------------------|---------|
+| `gen_alloc(gh, wosize, tag)` | Yes, allocation fast path | Bump-allocate in minor, or allocate from the major free list for large objects |
+| `minor_collect_full(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` | Verified minor collection: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset |
+| `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then major `collect` over the supplied gray stack |
+| `collect(major, gray_stack, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap, returning the new free-list head |
+| `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect_full` and `gen_gc` | Rewrite remembered major fields that still point into the minor heap |
+| `allocate_part1(major, wosize, tag, fp)` | Indirectly through `gen_alloc` | Free-list allocator for major allocations |
 
 ---
 
@@ -345,50 +342,56 @@ For small objects (`wosize <= 256`), allocation goes to the minor heap
 
 ## Minor GC (Cheney Promotion)
 
-When the minor heap fills, we promote live objects to the major heap.
-This is the most complex part of the bridge.
+When the minor heap fills, the bridge promotes live young objects to the
+major heap by calling the extracted verified `minor_collect_full` function.
+The bridge is responsible only for presenting OCaml roots and remembered
+slots in the layout expected by the verified collector, and for writing
+rewritten OCaml roots back afterward.
 
 ### Step-by-Step
 
 ```
-                      alloc_gen.c                        GC_Gen_Impl.c
-Step                  (bridge logic)                     (verified)
-────                  ──────────────                     ──────────
-1. Root scan          caml_do_roots(scan_minor_root)
-                      → fills root_values[] with
-                        minor offsets or major addrs
-                      → fills root_locs[] with
-                        slot addresses for writeback
+                      alloc_gen.c                         GC_Gen_Impl.c
+Step                  (bridge logic)                      (verified)
+────                  ──────────────                      ──────────
+1. Collect inputs     collect_minor_roots_and_refs()
+                      - caml_do_roots(scan_minor_root)
+                        records OCaml roots:
+                          root_values[i] = minor offset
+                                        or major address
+                          root_locs[i]   = OCaml root slot
+                      - scans Caml_state->ref_table and
+                        appends each minor value as a root
+                        with root_locs[i] = NULL
+                      - keeps the ref_table itself as the
+                        remembered-slot array
 
-2. Ref_table roots    Iterate Caml_state->ref_table
-                      Translate absolute minor → offset
-                      Append to root_values[]
+2. Zero fwd_arr       memset(gc_fwd_arr, 0, ...)
 
-3. Zero fwd_arr      memset(gc_fwd_arr, 0, ...)         (prep)
+3. Minor collect      ─────────────────────────────────► minor_collect_full()
+                                                           a) cheney_promote_phase
+                                                              (infix-aware BFS)
+                                                           b) update_promoted_objects
+                                                           c) rewrite_heap_slots
+                                                              on ref_table slots
+                                                           d) rewrite_roots_impl
+                                                           e) minor_heap_reset
+                                                           Returns: ok (bool)
 
-4. minor_collect     ─────────────────────────────────► minor_collect()
-                                                         Single verified call:
-                                                         a) cheney_promote_phase
-                                                            (infix-aware BFS)
-                                                         b) update_promoted_objects
-                                                         c) rewrite_roots_impl
-                                                         d) minor_heap_reset
-                                                         Returns: ok (bool)
+   OOM check          If !ok: fatal_promotion_failed()
 
-   OOM check          If !ok → fatal error
+4. Writeback          write_back_rewritten_roots()
+                      copies rewritten root_values[i]
+                      to each non-NULL root_locs[i]
 
-5. Ref_table slots    rewrite_heap_slots() ────────────► rewrite major fields
-                      (for major→minor pointers          that were in ref_table)
-                       recorded by caml_modify)
-                      recorded by caml_modify)
-
-6. Writeback         for each root_locs[i] != NULL:
-                       *root_locs[i] = root_values[i]
-                     (writes new major addrs back
-                      into OCaml's stack/globals)
-
-7. Clear ref_table   ref_table->ptr = ref_table->base
+5. Clear ref_table    ref_table->ptr = ref_table->base
 ```
+
+`minor_collect_full` mutates `root_values[]` in place.  Entries that were
+minor offsets become major value addresses using `gc_fwd_arr`; entries that
+were already major values remain unchanged.  Ref-table entries are also
+rewritten by the verified call because the bridge passes the actual table
+slots (`tbl->base`, `nslots`) as `slots`.
 
 ### Forwarding Array
 
@@ -646,12 +649,12 @@ needs to hold for non-infix entries (tag ≠ 249).  Infix entries are
 classified as "covered by parent" — their containing parent entry exists
 at a lower index in `farr`.
 
-> **Implementation note:** The current `promoted_entries_valid_from`
-> definition in `GC.Gen.Impl.UpdatePtrs.fsti` does not yet distinguish
-> infix vs real entries.  The planned fix partitions `farr` entries into
-> "real" (in `objects`, valid for scanning) and "infix" (interior pointer,
-> covered by a parent real entry), with the TwoPassEquiv preconditions
-> applying only to real entries.
+> **Implementation note:** `promoted_entries_valid_from` in
+> `GC.Gen.Impl.UpdatePtrs.fsti` now explicitly allows either real promoted
+> objects or `SpecObj.is_infix` entries.  The disjointness and non-blue
+> preconditions quantify only non-infix entries, matching the implementation:
+> real entries are scanned, while infix entries are skipped and covered by
+> their parent closure.
 
 #### Example (End-to-End)
 
@@ -720,37 +723,117 @@ all infix sub-object fields.
 
 ---
 
-## Major GC (Mark-and-Sweep)
+## Full GC and Major Mark-and-Sweep
 
-Triggered proactively when cumulative promotions exceed 50% of major
-heap capacity:
+`do_full_gc` now calls the extracted verified `gen_gc` entry point instead
+of sequencing an unverified bridge-level minor collection followed by a
+separate bridge-level major collection.
 
 ```
-alloc_gen.c                              GC_Gen_Impl.c
-───────────                              ──────────────
-do_major_gc_only():
+alloc_gen.c                                  GC_Gen_Impl.c
+───────────                                  ──────────────
+do_full_gc():
   │
-  ├─ Allocate gray stack (calloc)
+  ├─ collect_minor_roots_and_refs()
+  │   root_values[] = OCaml roots plus minor ref_table values
+  │   root_locs[]   = OCaml root slots, or NULL for ref_table roots
   │
-  ├─ Scan roots (caml_do_roots)
-  │   for each major root:
-  │     ───────────────────────────────► darken_if_white_bounded()
-  │                                       (push onto gray stack)
+  ├─ memset(gc_fwd_arr, 0, ...)
   │
-  ├─ ─────────────────────────────────► collect(major, gray_stack, fp)
-  │                                       1. mark_loop_bounded: trace gray→black
-  │                                       2. fused_sweep_coalesce: free white,
-  │                                          coalesce adjacent free blocks,
-  │                                          reset black→white
-  │                                       returns: new free-list head
+  ├─ allocate gray_storage[]
   │
-  ├─ *fp_ref = new_fp
+  ├─ seed roots into the tail of gray_storage[]
+  │   gray_top = gray_cap - root_count
+  │   roots_for_gc = gray_storage + gray_top
+  │   memcpy(roots_for_gc, root_values, root_count * 8)
+  │
+  ├─ ─────────────────────────────────────► gen_gc(gh,
+  │                                             roots_for_gc, root_count,
+  │                                             gc_fwd_arr, gc_queue,
+  │                                             ref_table slots, nslots,
+  │                                             gray_stack)
+  │                                           1. minor_collect_full(...)
+  │                                              rewrites roots_for_gc in place
+  │                                           2. collect(major, gray_stack, fp)
+  │                                              consumes the rewritten roots
+  │                                              from gray_storage[]
+  │                                           returns: (new_fp, ok)
+  │
+  ├─ write_back_forwarded_roots()
+  │   uses original root_values[] plus gc_fwd_arr to update OCaml roots
+  │
+  ├─ clear ref_table
   │
   └─ free(gray_storage)
 ```
 
-The gray stack is heap-allocated because its size depends on heap occupancy
-(up to `major_size / 64` entries).
+### Gray Stack and Root-Set Layout
+
+The verified major collector does not call `caml_do_roots`; it only knows
+about a `gray_stack_rec`:
+
+```c
+typedef struct gray_stack_rec_s {
+  uint64_t *storage;
+  size_t  *top;
+  size_t   cap;
+} gray_stack_rec;
+```
+
+The stack grows downward.  An empty stack has `*top == cap`; pushing
+decrements `top`, and popping consumes `storage[*top]` and then increments
+`top`.  To seed the mark phase with `root_count` roots, the bridge therefore
+places them in the tail of the storage array:
+
+```
+gray_storage indices:   0                  gray_top             cap
+                         ├──────────────────┼───────────────────┤
+                         │ free push space  │ initial roots      │
+                         │                  │ root[0] ... root[n]│
+                         └──────────────────┴───────────────────┘
+                                            ^
+                                         *top
+```
+
+This layout has an important extra property for `gen_gc`: the same memory
+serves as both the `roots` array passed to `minor_collect_full` and the
+initial gray stack consumed by `collect`.
+
+1. Before `gen_gc`, `roots_for_gc` contains OCaml roots plus minor values
+   read from the remembered set.  Minor roots are represented as minor
+   offsets; major roots are represented as major value addresses.
+2. `gen_gc` first calls `minor_collect_full`, which promotes reachable
+   minor objects, rewrites remembered slots, and rewrites `roots_for_gc`
+   in place.  After this step, every live minor root in the tail segment has
+   become the corresponding major value address.
+3. `gen_gc` then calls `collect(major, gray_stack, fp)` without moving
+   `gray_top`.  Since the gray stack's occupied segment is the same tail
+   segment just rewritten by `minor_collect_full`, the major mark loop pops
+   post-minor major addresses, not stale minor offsets.
+4. The bridge keeps the original `root_values[]` unchanged outside the gray
+   stack.  After `gen_gc`, `write_back_forwarded_roots()` uses those original
+   values and `gc_fwd_arr` to update only real OCaml root slots
+   (`root_locs[i] != NULL`).  Ref-table roots have `root_locs[i] == NULL`
+   because their owning major slots were already rewritten by
+   `rewrite_heap_slots` inside the verified collector.
+
+The stack capacity is chosen by the bridge as `major.size / 64`, with a
+minimum of 4096 entries and a final bump to at least `root_count`.  This
+keeps the stack large enough for the root seed while avoiding an oversized
+side allocation on small runs; verified stack operations remain bounded by
+the `cap` field.  The initial roots do not need to be pre-colored gray by
+the bridge: the verified mark step accepts a value address popped from the
+stack, scans its children, and blackens the object.  Children are grayed
+and pushed by the verified traversal.
+
+Including remembered-set minor values in the root array is conservative for
+full GC, but safe.  It matches the requirement of minor collection: an old
+object that currently points to a young object must not be left with a
+dangling pointer after the minor heap is reset.  During a full collection,
+this can keep a promoted young object alive even if the old remembered
+object itself is later swept; the ref table is cleared afterward, so the
+extra retention is bounded to this collection cycle rather than a permanent
+root.
 
 ---
 
@@ -787,32 +870,41 @@ struct caml_ref_table {
 };
 ```
 
-### Our Handling (Step 5.5)
+### Current Handling
 
-After promotion, major-heap fields recorded in the ref\_table still
-hold stale minor addresses.  We must rewrite them using `fwd_arr`:
+The bridge uses the ref\_table in two related ways.
+
+First, every ref\_table entry is read before collection.  If the recorded
+slot currently contains a minor pointer, that minor value is appended to
+`root_values[]` as a minor offset.  This makes minor collection conservative
+with respect to old-to-young edges: young objects reachable from old objects
+are promoted before the minor heap is reset.
+
+Second, the ref\_table itself is passed as the remembered-slot array to
+`minor_collect_full` or `gen_gc`.  After promotion, major-heap fields
+recorded in the ref\_table may still hold stale minor addresses.  The
+verified collector rewrites those slots using `fwd_arr`:
 
 ```c
-// Step 5.5: Ref_table-based pointer rewriting (zero-copy)
 struct caml_ref_table *tbl = Caml_state->_ref_table;
 size_t n_slots = (size_t)(tbl->ptr - tbl->base);
-if (n_slots > 0) {
-    // On LP64, value* (8 bytes) == uint64_t (8 bytes) in representation.
-    // The ref_table entries ARE the slot addresses we need — just cast.
-    rewrite_heap_slots(gc_gen_heap.major, gc_fwd_arr,
-                       (uint64_t *)tbl->base, n_slots);
-}
+
+minor_collect_full(gc_gen_heap, root_values, root_count,
+                   gc_fwd_arr, gc_queue,
+                   (uint64_t *)tbl->base, n_slots);
 ```
 
-**No malloc needed!**  On LP64, each `value*` in the ref\_table is 8
-bytes — the same as `uint64_t`.  The numeric value of the pointer IS
+The full-GC path passes the same `tbl->base`/`n_slots` pair to `gen_gc`.
+
+**No malloc needed.**  On LP64, each `value*` in the ref\_table is 8
+bytes -- the same as `uint64_t`.  The numeric value of the pointer is
 the slot address.  We cast `tbl->base` directly and pass it to the
 verified function.  This is safe because:
 
 1. `caml_modify` only adds entries when `Is_in_heap(fp)` — all
    entries are valid major-heap addresses.
 2. `rewrite_heap_slots` treats each entry as an address to read/write
-   via `read_word(major, slot_addr)` — with `major.data = NULL`, this
+   via `read_word(major, slot_addr)` -- with `major.data = NULL`, this
    dereferences the raw address, which is correct.
 3. A `_Static_assert` verifies `sizeof(value*) == sizeof(uint64_t)`
    at compile time.
@@ -836,14 +928,17 @@ for every live root:
 
 ```c
 static void scan_minor_root(value root, value *root_ptr) {
+    if (root_count >= MAX_ROOTS)
+        caml_fatal_error("too many GC roots");
     if (!Is_block(root)) return;           // skip integers
-    if (Wosize_val(root) == 0) return;     // skip atoms
+    if ((uint64_t)root < minor_heap_size_u64) return; // stale offset guard
+    if (Wosize_val(root) == 0) return;     // skip atoms/empty blocks
 
     uint64_t translated;
     if (is_minor_absolute(root))
-        translated = abs_to_minor_offset(root);  // minor → offset
+        translated = abs_to_minor_offset(root);  // minor -> offset
     else
-        translated = (uint64_t)(uintptr_t)root;  // major → passthrough
+        translated = (uint64_t)(uintptr_t)root;  // major -> passthrough
 
     root_values[root_count] = translated;
     root_locs[root_count] = root_ptr;  // for writeback
@@ -852,8 +947,8 @@ static void scan_minor_root(value root, value *root_ptr) {
 ```
 
 We collect roots into parallel arrays:
-- `root_values[i]` — the address in verified-GC coordinate space
-- `root_locs[i]` — where to write back the new address (NULL for
+- `root_values[i]` -- the address in verified-GC coordinate space
+- `root_locs[i]` -- where to write back the new address (NULL for
   ref\_table roots that don't need writeback)
 
 ### Capacity
@@ -865,69 +960,23 @@ practice, even binarytrees-14 uses only ~6K roots.
 
 ## OOM Handling
 
-The verified GC has a **fixed-size** major heap (no growth).  OOM
-is detected at two points:
+The verified GC has a **fixed-size** major heap (no growth).  OOM is
+surfaced by the extracted verified functions:
 
-### 1. Promotion Failure (step 5d.1)
+### 1. Promotion Failure
 
-After `rewrite_roots_impl`, any root still holding a minor offset
-means `cheney_promote_phase` couldn't find space.  Currently the
-*bridge* scans `root_values[]` to count these:
+`minor_collect_full` and `gen_gc` return a boolean success flag.  If
+Cheney promotion cannot allocate a major copy for a reachable minor object,
+the flag is false and the bridge calls:
 
 ```c
-// alloc_gen.c step 5d.1 (UNVERIFIED)
-for (i = 0; i < root_count; i++) {
-    if (root_values[i] >= 8 && root_values[i] < minor_limit
-        && root_values[i] % 8 == 0)
-        failed++;
-}
-if (failed > 0) caml_fatal_error("major heap too small");
+fatal_promotion_failed();
 ```
 
-#### Why the verified GC could detect this directly
+The bridge no longer scans rewritten roots to infer promotion failure.
+OOM detection is part of the verified collector result.
 
-The spec already models OOM explicitly:
-- `cheney_forward_one_noop_oom`: when `promote_object` returns
-  `new_addr = 0UL`, the forward is a no-op (that minor object
-  gets no `fwd_map` entry)
-- `rewrite_root r fwd` (Promote.fsti:463): if `fwd r == 0UL`,
-  the root stays unchanged as its original minor offset
-
-So the information is already present in the verified code's output.
-To surface it, `rewrite_roots_impl` could be extended to **return a
-count of un-rewritten minor roots** (roots where `is_minor_pointer r
-&& fwd_arr[r/8] == 0`).  This is a trivial accumulator addition to
-the existing loop — no new proof complexity.
-
-Alternatively, `cheney_promote_phase` itself could track a "did any
-OOM occur" flag (set to true whenever `new_addr == 0UL` is returned
-by the allocator).  This is even cheaper — a single boolean, no
-post-hoc scan.
-
-**Proposed verified interface:**
-
-```fstar
-fn rewrite_roots_impl (roots: ...) (fwd_arr: ...) (n: SZ.t) ...
-returns failed: SZ.t
-ensures exists* rs2.
-  pts_to roots rs2 ** ... **
-  pure (rs2 == PromoteSpec.rewrite_roots 'rs fwd /\
-        SZ.v failed == count_unrewritten 'rs fwd)
-```
-
-Or for the boolean-flag approach:
-
-```fstar
-fn cheney_promote_phase (...) 
-returns oom: bool
-ensures ... **
-  pure (oom == true <==> exists root in roots. fwd_map root == 0UL /\ is_minor_pointer root)
-```
-
-Either approach eliminates the unverified 5d.1 loop from the bridge,
-moving OOM detection inside the verified boundary.
-
-### 2. Allocation Failure (gen\_alloc returns 0)
+### 2. Allocation Failure (`gen_alloc` returns 0)
 
 If neither minor nor major allocation succeeds after a full GC:
 
@@ -938,7 +987,7 @@ if (result == 0) → caml_fatal_error("out of memory after collection")
 ### Proactive Prevention
 
 To avoid hitting promotion failure (which is fatal), we trigger a
-proactive major GC when cumulative promotions reach 50% of heap size:
+proactive full GC when cumulative promotions reach 50% of heap size:
 
 ```c
 if (bytes_promoted_since_major + bump > major_size / 2)
@@ -985,17 +1034,20 @@ No manual copying of snapshot files.  The `.a` is linked into `ocamlrun`.
 
 ## Performance Profile
 
-Profiling binarytrees-14 (1635 minor GCs, 25 major GCs, 6.4M allocations):
+Representative profiling from binarytrees-14 (1635 minor GCs, 25 major
+GCs, 6.4M allocations).  The phase names below are the verified collector
+sub-phases; in the current bridge, the minor phases execute inside
+`minor_collect_full` and the full-GC path executes them through `gen_gc`.
 
 ```
 Phase                              Time        % of GC
 ─────                              ────        ───────
 cheney_promote_phase (BFS copy)    1214 ms     24.5%
 major GC (mark + sweep)           2562 ms     51.7%
-update_one_object loop (5c)        797 ms     16.1%
+promoted field rewrite             797 ms     16.1%
 gen_alloc (allocation)             194 ms      3.9%
 fwd_arr zero (memset)               68 ms      1.4%
-ref_table rewrite (step 5.5)        0.2 ms      0.0%  ← negligible
+ref_table slot rewrite              0.2 ms      0.0%  ← negligible
 root scan                           1.1 ms      0.0%
 rewrite_roots                       0.2 ms      0.0%
 root writeback                      0.1 ms      0.0%
@@ -1006,9 +1058,9 @@ Per minor alloc                      30 ns
 Per minor GC                       1.34 ms
 ```
 
-The ref\_table rewriting (step 5.5) uses a zero-copy cast on LP64 —
-no allocation overhead.  The 0.2ms total is dominated by the verified
-`rewrite_heap_slots` function itself, not any bridge overhead.
+The ref\_table slot rewrite uses a zero-copy cast on LP64 -- no allocation
+overhead.  The 0.2ms total is dominated by the verified `rewrite_heap_slots`
+function itself, not any bridge overhead.
 
 ---
 
@@ -1038,204 +1090,109 @@ void krmlinit_globals(void) {
 ```
 
 **Must be called after setting `zero_addr`, `heap_size_u64`, and
-`minor_heap_size_u64`** — see `ensure_heap()` line 151.
+`minor_heap_size_u64`** in `ensure_heap()`.
 
 ---
 
 ## Verification Boundary
 
-Each step of the minor GC is classified by whether it runs verified
-(machine-checked F\*/Pulse) code or unverified bridge logic:
+The verified collector covers the core heap transformations.  `alloc_gen.c`
+remains the trusted bridge to the OCaml runtime: it scans OCaml roots,
+chooses the concrete support-array layouts, passes remembered-set slots, and
+writes results back to OCaml root locations.
 
-| Step | Function | Verified? | Notes |
-|------|----------|:---------:|-------|
-| 1 | `caml_do_roots` → `scan_minor_root` | ❌ bridge | OCaml root iteration + address translation |
-| 3 | ref\_table → root\_values | ❌ bridge | Translate ref\_table entries to offsets |
-| 4 | `memset(gc_fwd_arr, 0, …)` | ❌ bridge | Array zeroing (could use verified fill) |
-| 4 | `minor_collect()` | ✅ | Single verified call: BFS promote (infix-aware) + update + rewrite roots + reset |
-| 4.OOM | OOM failure check | ❌ bridge | Policy: abort if promotion fails (`!ok`) |
-| 5 | `rewrite_heap_slots()` | ✅ | Rewrites major fields from ref\_table |
-| 6 | root writeback to OCaml | ❌ bridge | Writes major addrs back to OCaml stack/globals |
-| 7 | clear ref\_table | ❌ bridge | Reset `ref_table->ptr` |
+| Operation | Function | Verified? | Notes |
+|-----------|----------|:---------:|-------|
+| Runtime root iteration | `caml_do_roots` -> `scan_minor_root` | Bridge | OCaml root enumeration and address translation |
+| Remembered-set enumeration | `collect_minor_roots_and_refs` | Bridge | Reads `Caml_state->_ref_table`, appends minor values to `root_values[]`, passes slot addresses to verified code |
+| Forwarding-array reset | `memset(gc_fwd_arr, 0, ...)` | Bridge | Clears stale forwarding entries before each collection |
+| Minor collection | `minor_collect_full` | Verified | Promotion, promoted-object rewrite, remembered-slot rewrite, root rewrite, minor reset, OOM flag |
+| Full collection | `gen_gc` | Verified | Calls `minor_collect_full`, then major `collect` over the supplied gray stack |
+| Full-GC gray-stack allocation and seeding | `calloc`, `memcpy`, `gray_stack_rec` setup | Bridge | Provides post-minor roots to `collect` by sharing storage with `gen_gc`'s roots array |
+| OCaml root writeback | `write_back_rewritten_roots`, `write_back_forwarded_roots` | Bridge | Updates only real OCaml root slots; ref-table slots are rewritten inside verified code |
+| Ref-table reset | `tbl->ptr = tbl->base` | Bridge | Drops remembered-set entries after the slots have been rewritten |
 
-**`update_all_objects` vs `update_promoted_objects`:**
+### Efficient promoted-object update and remembered slots
 
-The standalone verified `minor_collect` (in `GC.Gen.Impl.fst`) calls
-`update_all_objects`, which walks the **entire major heap** linearly
-from `zero_addr` to end.  This is O(major_heap_size) — correct but slow
-when the major heap is large and few objects were just promoted.
+`minor_collect_full` uses the efficient promoted-object path:
+`update_promoted_objects` iterates the forwarding array and rewrites only the
+freshly promoted major copies.  Those are precisely the new major objects
+whose fields were copied from the minor heap and may still contain minor
+offsets.
 
-The OCaml bridge instead calls `update_promoted_objects`, which iterates
-only the `fwd_arr` entries (O(minor_allocated)).  For each non-zero
-`fwd_arr[i]`, it reads the header at that major address and rewrites
-its pointer fields via `update_one_object`.  This is the same inner
-work as `update_all_objects`, but targeted only at freshly promoted
-objects.
-
-| | `update_all_objects` | `update_promoted_objects` |
-|---|---|---|
-| **Iteration** | Walk entire major heap | Iterate `fwd_arr` (minor_heap_size/8 entries) |
-| **Complexity** | O(major_heap_size) | O(minor_allocated) |
-| **Preconditions** | `well_formed_heap_part1`, `heap_objects_dense` | `valid_fwd_entries`, `represents_fwd` |
-| **Postcondition** | `ms2 == update_major_pointers ms fwd` | `ms2 == update_promoted_iter ms farr fwd 0` |
-| **Used by** | Standalone `minor_collect` | OCaml bridge (step 5c) |
-
-**Why the two are equivalent in practice:**
-
-The only major-heap objects that can contain stale minor pointers are
-freshly promoted objects (their fields were copied verbatim from the
-minor heap and not yet rewritten).  Pre-existing major objects cannot
-contain minor pointers because:
-- Mutations that create major→minor pointers are tracked by `ref_table`
-  and handled separately by `rewrite_heap_slots` (step 5.5)
-- The verified GC never creates dangling minor refs in major objects
-
-Therefore `update_all_objects` visits many objects unnecessarily — for
-non-promoted objects, `update_object_pointers` is a no-op (all their
-field values are already >= `minor_heap_size` or are immediates).
-
-**Path to unification (replacing `update_all_objects` with `update_promoted_objects`):**
-
-1. State the "no stale minor pointers" invariant formally:
-   ```
-   no_minor_ptrs_outside_promoted ms fwd ≜
-     ∀ obj ∈ objects(ms), obj ∉ range(fwd) →
-       ∀ field of obj: value < minor_heap_size → fwd[value/8] == 0
-   ```
-   (i.e., non-promoted objects don't reference minor addresses that have forwarding)
-
-2. Prove equivalence lemma:
-   ```
-   update_promoted_equiv: ms fwd farr →
-     Lemma (requires no_minor_ptrs_outside_promoted ms fwd ∧ represents_fwd farr fwd)
-           (ensures update_promoted_iter ms farr fwd 0 == update_major_pointers ms fwd)
-   ```
-
-3. Replace `update_all_objects` with `update_promoted_objects` in `GC.Gen.Impl.fst`'s
-   `minor_collect`, using the equivalence lemma to satisfy the existing postcondition.
-
-4. This also removes the `heap_objects_dense` precondition requirement — important
-   for the OCaml integration where the major heap has a free-list (blue objects
-   interspersed among live objects violate denseness).
-
-**Goal:** Once unified, `minor_collect` uses the efficient O(minor) iteration,
-and its postcondition still guarantees `update_major_pointers` — enabling the
-entire 4.1–5d sequence to eventually be a single call to a verified `minor_collect`.
+Pre-existing major objects are handled separately through the remembered set.
+If a mutator writes a young pointer into an old object, OCaml's write barrier
+records the slot in `Caml_state->_ref_table`.  Passing that table to
+`minor_collect_full` or `gen_gc` lets verified `rewrite_heap_slots` update
+those old slots after promotion.  The split is what makes the bridge fast:
+newly promoted objects are found through `fwd_arr`, while old-to-young fields
+are found through the ref table instead of scanning the whole major heap.
 
 ---
 
-## Plan: Replace Steps 4.1–5f with Verified `minor_collect`
+## Completed: Verified `minor_collect_full` and `gen_gc` Integration
 
-### Current State
+The old plan to replace the multi-step bridge pipeline with a verified
+minor-collection entry point is complete.  The bridge no longer calls
+individual phases such as `cheney_promote_phase`, `update_promoted_objects`,
+`rewrite_roots_impl`, or `rewrite_heap_slots` directly.
 
-The bridge (`alloc_gen.c`) uses a single verified call `minor_collect_full`
-that handles everything: infix-aware BFS, pointer rewriting, ref_table
-slot rewriting, and root rewriting.  The previous multi-step approach
-(find_infix_parents → cheney_promote → synthesize_infix → update → rewrite)
-has been replaced.
+### Minor collection path
 
-```
-Old pipeline (eliminated):
-4.1  find_infix_parents()           → REMOVED (infix handled in BFS)
-5a   cheney_promote_phase()         → integrated into minor_collect_full
-5b   synthesize_infix_forwarding()  → REMOVED (infix handled in BFS)
-5c   update_promoted_objects()      → integrated into minor_collect_full
-5d   rewrite_roots_impl()           → integrated into minor_collect_full
-5f   minor_heap_reset()             → integrated into minor_collect_full
-
-New pipeline:
-4.   minor_collect_full()           → single verified call (all steps)
-5.   rewrite_heap_slots()           → ref_table slot rewriting
-```
-
-### Goal
-
-Replace the entire 4.1–5f sequence with a **single call** to the verified
-`minor_collect`, which will internally:
-1. Handle infix pointers (infix-aware BFS — no separate phases needed)
-2. Use `update_promoted_objects` (efficient, no `heap_objects_dense` needed)
-3. Return the OOM flag
-
-### Step-by-Step Implementation Plan
-
-#### Phase A: Verified minor\_collect with zero assume\_ ✅ DONE
-
-**Resolution:** `minor_collect` uses `update_promoted_objects` (the efficient
-path that only visits promoted objects' fields), with the postcondition
-exposing `s2 == update_promoted_iter prom.major_final farr2 prom.fwd_map 0`.
-
-The caller (bridge) is responsible for updating remembered-set slots via
-`rewrite_heap_slots`, which handles pre-existing major objects that have
-fields pointing to forwarded minor objects.
-
-**Key lemmas proved:**
-- `cheney_promote_fwd_bounded`: Every forwarding target is a valid major
-  address (>= mword, < heap\_size, mword-aligned)
-- `fwd_bounded_implies_valid_fwd_entries`: Bridges the spec predicate to
-  the impl-level `valid_fwd_entries` required by `update_promoted_objects`
-
-**Soundness note:** The equivalence `update_promoted_iter == update_major_pointers`
-does NOT hold when there are remembered-set entries (pre-existing major objects
-with fields pointing to forwarded minor objects). This is handled correctly by
-the two-phase design: `minor_collect` does the efficient update, then the bridge
-rewrites remembered-set slots.
-
-The standalone `gen_gc` function (not used by bridge) inlines the phases
-directly with `update_all_objects` for full `cheney_collect_spec` correctness.
-
-#### Phase B: Infix-Aware BFS in `cheney_promote_phase` ✅ DONE
-
-The infix-aware BFS is fully implemented and verified in `forward_if_minor_infix`
-(GC.Gen.Impl.Cheney.fst).  When `forward_if_minor` encounters a tag=249 (Infix)
-object, it:
-1. Computes parent offset = addr - wosize*8
-2. Promotes parent if not already forwarded
-3. Derives infix forwarding = parent_fwd + (addr - parent)
-4. Records in fwd_arr
-
-No separate `find_infix_parents` or `synthesize_infix_forwarding` is needed.
-Zero assumes in the implementation.
-
-#### Phase C: Unify Bridge with Single `minor_collect_full` Call ✅ DONE
-
-After Phases A and B, the bridge (`alloc_gen.c`) uses a single verified call
-for ALL minor collections — no fallback path, no infix handling, no separate
-ref_table rewriting:
+`do_minor_gc_core` now performs only bridge setup and teardown around one
+verified call:
 
 ```c
-/* 4. Verified minor collection (single call — handles all, including ref_table) */
-bool ok = minor_collect_full(gc_gen_heap, root_values, root_count,
-                             gc_fwd_arr, gc_queue,
-                             ref_table_base, n_slots);
-if (!ok) caml_fatal_error("verified gen GC: out of memory");
+collect_minor_roots_and_refs();
+memset(gc_fwd_arr, 0, queue_size_sz * sizeof(uint64_t));
+
+bool ok =
+    minor_collect_full(gc_gen_heap, root_values, root_count,
+                       gc_fwd_arr, gc_queue,
+                       (uint64_t *)tbl->base, n_slots);
+if (!ok) fatal_promotion_failed();
+
+write_back_rewritten_roots(root_values);
+Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 ```
 
-`minor_collect_full` integrates `rewrite_heap_slots` inside the verified
-function.  Its postcondition proves full correctness:
-`s2 == cheney_collect_spec(minor, major_pre, fp, roots).mc_major`
-(not just the weaker `update_promoted_iter` spec).
+`minor_collect_full` bundles:
 
-The correctness relies on two preconditions about the ref_table:
-- `ref_table_complete`: every major-heap field containing a minor pointer is
-  either in a promoted object (handled by `update_promoted_objects`) or in
-  the ref_table (handled by `rewrite_heap_slots`)
-- `ref_table_sound`: every slot address is 8-byte aligned and in-bounds
+1. infix-aware Cheney promotion;
+2. `update_promoted_objects` for freshly promoted copies;
+3. `rewrite_heap_slots` for remembered old-to-young slots;
+4. `rewrite_roots_impl` for the root array;
+5. `minor_heap_reset`.
 
-The standalone `gen_gc` function (used in main.c tests) inlines the phases
-directly with `update_all_objects` for full `cheney_collect_spec` correctness,
-since it has no remembered set to manage.
+### Full collection path
 
-#### Phase Ordering and Risk
+`do_full_gc` now calls `gen_gc`, not `do_minor_gc()` followed by a separate
+bridge-level major collector.  The only additional bridge work is building
+the initial gray stack:
 
-| Phase | Complexity | Risk | Status |
-|-------|-----------|------|--------|
-| A (assume removal) | Low | Low | ✅ DONE — `update_promoted_objects` + fwd\_bounded |
-| B (infix BFS) | High | Medium | ✅ DONE — infix-aware `forward_if_minor_infix`, zero assumes |
-| C (single call) | Low | Low | ✅ DONE — `minor_collect_full` handles promote+update+slots+roots |
+```c
+collect_minor_roots_and_refs();
+memset(gc_fwd_arr, 0, queue_size_sz * sizeof(uint64_t));
 
-**All phases complete.  No assumes remain in spec or impl (except platform TCB).**
+gray_top = gray_cap - root_count;
+roots_for_gc = gray_storage + gray_top;
+memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
 
-Only `GC.Gen.Impl.MinorHeap.fst:26` — `platform_fits_u64` (TCB, always present).
+gray_stack_rec s = { gray_storage, &gray_top, gray_cap };
+K___uint64_t_bool r =
+    gen_gc(gc_gen_heap, roots_for_gc, root_count,
+           gc_fwd_arr, gc_queue,
+           (uint64_t *)tbl->base, n_slots, s);
+if (!r.snd) fatal_promotion_failed();
+
+write_back_forwarded_roots();
+Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
+```
+
+The gray-stack tail is deliberately used as the roots array because `gen_gc`
+performs minor collection before major marking.  This guarantees that the
+major mark loop sees rewritten major addresses without requiring the bridge
+to rescan OCaml roots or to call `darken_if_white_bounded`.
 
 ---
 
@@ -1248,12 +1205,17 @@ Only `GC.Gen.Impl.MinorHeap.fst:26` — `platform_fits_u64` (TCB, always present
    translation for major objects, ever.
 
 3. **Minor addresses are translated at GC boundaries only** — during
-   normal execution, OCaml uses absolute minor addresses.  Translation
-   happens only in `scan_minor_root` (enter GC) and step 6 writeback
-   (exit GC).
+   normal execution, OCaml uses absolute minor addresses.  Translation to
+   minor offsets happens when building `root_values[]`; translation back to
+   major value addresses happens inside `minor_collect_full`/`gen_gc` and
+   bridge root writeback.
 
 4. **The minor heap is fully evacuated** — after minor GC, the minor
    heap is empty (bump reset to 0).  All live objects are in major.
 
 5. **No incremental/concurrent GC** — both minor and major GC are
    stop-the-world.  The proactive trigger keeps pause times bounded.
+
+6. **Full-GC roots are post-minor roots** — `do_full_gc` shares the
+   gray-stack tail with the `gen_gc` roots array, so the minor phase rewrites
+   the exact entries that the major mark phase will later pop.
