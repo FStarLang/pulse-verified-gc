@@ -1,5 +1,8 @@
 # SPOT Status: Small Proof-Oriented Test for Generational GC
 
+Read about SPOTs here:
+https://risemsr.github.io/blog/2026-04-16-spotting-specs/
+
 ## Goal
 
 Build a **truly admit/assume-free SPOT** that validates:
@@ -15,116 +18,96 @@ The SPOT should demonstrate a complete end-to-end workflow:
 - Call `minor_collect_full`
 - Extract the result and prove postcondition properties from the isomorphism
 
-This validates the entire GC specification is usable and correct.
+I want objects
+
+* A in the minor heap
+* B in the minor heap (unreachable)
+* C in the major heap with a pointer to A
+
+And I want to prove that this heap is well-formed for calling gen_gc.
+
+And then prove that after calling gen_gc, A is promoted to an object A' in the major heap, C points to A', and B is collected.
+
+Completing the constructive witness below is what validates that the entire GC
+specification is usable on a concrete heap.
 
 ## Current State
 
-### What We Have
+The top-level `spot/` campaign has been replaced. The old overlapping modules
+with admits/assumes and markdown fragments in `.fst` files were removed from the
+active build; historical attempts remain only under `spot/archive/`.
 
-**GC.SPOT.EmptyHeapLemmas.fst** (161 lines):
-- **10 of 11 preconditions** proven for empty heap case (91%)
-- 4 admits remaining, all related to init_heap structure
-- Validates that empty/zero cases satisfy GC preconditions
-- Strong foundation but **not the actual goal**
+The active SPOT layer is admit/assume-free and verifies locally with:
 
-**GC.SPOT.ThreeObjects.fst** (216 lines):
-- **6 of 11 preconditions** proven (55%)
-- 5 admits for preconditions requiring quantification/witness construction
-- Master theorem `all_preconditions_provable` combining all proofs
-- Uses **abstract heap assumption** instead of constructive allocation
-- **Closer to goal** but still incomplete
+```bash
+cd spot
+make verify
+```
 
-### Honest Assessment
+The local `Makefile` uses `fstar.exe --dep full` to generate `.depend`, so
+`make -j` can schedule the `.fsti`/`.fst` files incrementally and in dependency
+order. Each active SPOT interface and implementation is checked with
+`--z3rlimit 10 --split_queries always`, using the same include paths as the
+generational development and treating upstream `GC.*` modules as already cached.
 
-**We do NOT have an admit-free SPOT yet.**
+## Active Module Structure
 
-The empty heap case is 91% proven but doesn't test the interesting GC behavior (collection, promotion, forwarding). The 3-object case has the right structure but:
+- `GC.SPOT.Layout`: names the intended three-object layout. `A` and `B` are
+  minor offsets (`a_minor = 8`, `b_minor = 24`) and the module proves their
+  basic pointer/distinctness facts.
+- `GC.SPOT.ConcreteMinor`: constructs the two-object minor heap by calling the
+  real minor allocation spec twice, proves the resulting A/B layout and zero
+  fields, and packages the concrete `minor_heap_shape`.
+- `GC.SPOT.ConcreteMajor`: constructs the major heap containing C and one blue
+  free-list block, proves the C.field1 -> A remembered edge, the object list,
+  free-list facts, and the concrete `major_heap_shape`.
+- `GC.SPOT.Preconditions`: packages the real `minor_collect_full` and `gen_gc`
+  preconditions into named predicates with elimination lemmas. This is only a
+  proof boundary; it does not weaken the collector contracts.
+- `GC.SPOT.Postconditions`: packages post-minor and post-full consequences.
+  It exposes reusable lemmas for promotion from nonzero forwarding, no-promotion
+  from zero forwarding, remembered-field rewriting, and final major survival
+  from the `gen_gc` isomorphism postcondition.
+- `GC.SPOT.CallMinor`: a Pulse wrapper that calls the real
+  `minor_collect_full`.
+- `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `gen_gc`.
+- `GC.SPOT.ThreeObjects`: the C/A/B scenario layer. Roots are `[C; A]` before
+  the minor phase, and the remembered table contains C's field slot. The module
+  proves that C and A are combined-graph roots, A is promoted when the real
+  precondition bundle holds, C's field is rewritten to A', B is not promoted
+  when its forwarding entry is zero, and final `gen_gc` reachability implies
+  survival in the final major heap.
 
-1. **Uses assumes instead of constructive allocation**: Instead of actually calling allocator APIs and proving properties, we axiomatize the existence of a well-formed heap
-2. **5 preconditions have admits**: These need upstream helper lemmas
-3. **No postcondition proofs**: We haven't called `minor_collect_full` or proven anything about the result
-4. **No isomorphism reasoning**: Haven't validated that postconditions are useful
+## What This Proves
 
-The 3-object module establishes a good **structure** and proves the **easy preconditions**, but significant work remains.
+The cleaned campaign now validates the collector proof surface directly:
 
-## Blockers
+1. The SPOT calls the real Pulse entry points (`minor_collect_full` and
+   `gen_gc`) rather than a model or duplicate implementation.
+2. The root set includes `C` pre-minor, so the post-minor major GC has a root
+   path that keeps both C and the promoted A' live.
+3. The remembered slot layout is explicit: the single remembered slot is C's
+   field 1, which contains a minor pointer to A. Field 0 is intentionally not
+   the minor pointer slot, because the generational invariant
+   `major_field_zero_no_minor` rules out minor pointers in field 0 of scannable
+   major objects. The postcondition proof uses the exported forwarding theorem
+   to show that field 1 is rewritten to A's promoted image.
+4. B's desired collection fact is isolated to the exact Cheney fact that
+   `(cheney_promote ...).fwd_map b_minor == 0UL`. Once the concrete heap
+   construction proves B is unreachable, the active SPOT already turns that
+   zero-forwarding fact into "B was not promoted."
 
-### 1. Opaque Predicates (Precondition 1)
+## Remaining Proof Obligation
 
-`collection_heap_shape` is marked `[@@"opaque_to_smt"]`. The four components don't automatically prove the predicate. Need to find/use the correct intro lemma or reveal pattern.
+The remaining hard part is not hidden in admits. It is the final constructive
+connection from the concrete heap witnesses to the complete collector-call
+precondition bundle:
 
-**Effort**: 1-2 hours
+- combine `GC.SPOT.ConcreteMinor` and `GC.SPOT.ConcreteMajor` into the exact
+  `minor_collect_full`/`gen_gc` preconditions for roots `[C; A]`, one
+  remembered slot at C.field1, and a zero forwarding array;
+- prove the exact Cheney execution fact that B's forwarding entry remains zero.
 
-### 2. Exists Witnesses (Precondition 5)
-
-`ref_table_sound` requires proving `exists (obj: obj_addr) (j: nat). ...`. Need to provide explicit witness construction.
-
-**Effort**: 2-3 hours
-
-### 3. Quantification Over Heap (Preconditions 6, 8, 9)
-
-These require proving properties hold for **all** major heap fields/objects, but we only have properties for our specific objects (C, A, B). Need upstream lemmas that let us reason about heaps with a known finite set of objects.
-
-**Effort**: 6-8 hours combined
-
-### 4. Constructive Allocation
-
-Currently we **assume** the existence of a well-formed heap. To truly validate preconditions are satisfiable, we need to:
-- Actually call allocator APIs (or their spec-level equivalents)
-- Prove allocator postconditions establish our heap properties
-- Wire up pointers and prove well-formedness is preserved
-
-This is significantly harder than abstract reasoning.
-
-**Effort**: 10-15 hours
-
-### 5. Postcondition Proofs
-
-Even after proving all preconditions, we need to:
-- Call `minor_collect_full_spec` (or the actual implementation)
-- Extract the result heap/state
-- Use the isomorphism postcondition to prove:
-  - B is collected (not in result minor heap)
-  - A is promoted (in result major heap with correct size/tag)
-  - C's field is forwarded to promoted A
-  - Payloads are preserved
-
-**Effort**: 8-12 hours
-
-## Path Forward
-
-### Option A: Complete the 3-Object SPOT (20-30 hours)
-
-1. Add upstream helper lemmas for preconditions 1, 5, 6, 8, 9 (10-15 hours)
-2. Replace assumes with constructive allocation (10-15 hours)
-3. Add postcondition proofs (8-12 hours)
-
-**Total**: 28-42 hours of focused work
-
-**Result**: Fully admit/assume-free 3-object SPOT validating entire GC spec
-
-## Recommendation
-
-**Option A** is the only path that truly achieves your stated goal: validating that preconditions are not too strong AND postconditions are useful, with no admits or assumes.
-
-The current 3-object foundation (216 lines, 6/11 preconditions proven) is a good start, but we're at **25-30% of the total effort** needed for a truly admit/assume-free SPOT.
-
-If the goal is to **validate the GC specification is correct and usable**, Option A is necessary. The time investment is significant but tractable for systematic work.
-
-## Current Files
-
-- `GC.SPOT.EmptyHeapLemmas.fst` - 161 lines, 10/11 preconditions proven (4 admits)
-- `GC.SPOT.ThreeObjects.fst` - 216 lines, 6/11 preconditions proven (5 admits, 0 assumes in axioms)
-- `GC.SPOT.MinorObjectsZero.fst` - Helper lemma (1 admit)
-- Archive with historical attempts
-
-## Bottom Line
-
-**We have a strong foundation but not a complete SPOT.**
-
-The infrastructure works. The approach is sound. But achieving a **truly admit/assume-free SPOT** that validates GC preconditions are satisfiable AND postconditions are useful requires an additional 20-30 hours of systematic work, primarily on:
-1. Constructive heap allocation (vs. assumed existence)
-2. Quantification lemmas for finite heaps
-3. Postcondition reasoning from isomorphism
-
-This is doable but not trivial.
+Those are now cleanly separated from the collector-call and postcondition
+reasoning. The active SPOT modules state the boundary precisely and verify
+without any local proof holes.

@@ -123,6 +123,35 @@ val minor_heap_shape_elim (minor: minor_state)
                     minor_no_scan_invariant minor /\
                     minor_fields_no_infix_targets minor)
 
+val minor_fields_no_infix_targets_intro (minor: minor_state)
+  : Lemma (requires
+            (forall (obj: U64.t) (j: nat).
+              Seq.mem obj (minor_objects minor) /\
+              j < minor_wosize minor obj /\
+              is_minor_pointer (to_minor_offset (minor_read_field minor obj j)) ==>
+              ~(is_infix_in_minor minor
+                  (to_minor_offset (minor_read_field minor obj j)))))
+          (ensures minor_fields_no_infix_targets minor)
+
+val minor_heap_shape_intro (minor: minor_state)
+  : Lemma (requires minor_wf minor /\
+                    minor_guards_complete minor /\
+                    minor_infix_wf minor /\
+                    minor_no_scan_invariant minor /\
+                    minor_fields_no_infix_targets minor)
+          (ensures minor_heap_shape minor)
+
+val minor_major_fields_no_blue_intro (minor: minor_state) (major: heap)
+  : Lemma (requires
+            (forall (obj: U64.t) (j: nat).
+              Seq.mem obj (minor_objects minor) /\
+              j < minor_wosize minor obj /\
+              is_pointer_field (minor_read_field minor obj j) ==>
+              Seq.mem ((minor_read_field minor obj j) <: obj_addr)
+                     (objects zero_addr major) /\
+              ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major)))
+          (ensures minor_major_fields_no_blue minor major)
+
 val minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
   (obj: U64.t) (j: nat)
   : Lemma (requires minor_major_fields_no_blue minor major /\
@@ -158,6 +187,21 @@ val major_minor_fields_no_infix_targets_elim
                         (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
                     ~(is_infix_in_minor minor v)))
 
+val major_minor_fields_no_infix_targets_intro
+  (minor: minor_state) (major: heap)
+  : Lemma (requires
+            (forall (obj: obj_addr) (j: nat).
+              Seq.mem obj (objects zero_addr major) /\
+              ~(is_blue obj major) /\
+              ~(is_no_scan obj major) /\
+              j < U64.v (wosize_of_object obj major) /\
+              U64.v obj + j * 8 + 8 <= heap_size /\
+              (U64.v obj + j * 8) % 8 == 0 ==>
+              (let v = to_minor_offset
+                 (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
+               is_minor_pointer v ==> ~(is_infix_in_minor minor v))))
+          (ensures major_minor_fields_no_infix_targets minor major)
+
 val major_stack_shape_elim (major: heap) (st: seq obj_addr) (cap: nat)
   : Lemma (requires major_stack_shape major st cap)
           (ensures MarkBoundedInv.bounded_mark_inv major st cap /\
@@ -184,6 +228,13 @@ val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
                      minor_heap_shape minor /\
                      minor_major_fields_no_blue minor major /\
                     major_minor_fields_no_infix_targets minor major)
+
+val collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires major_heap_shape major fp /\
+                    minor_heap_shape minor /\
+                    minor_major_fields_no_blue minor major /\
+                    major_minor_fields_no_infix_targets minor major)
+          (ensures collection_heap_shape minor major fp)
 
 val full_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
                           (st: seq obj_addr) (cap: nat)

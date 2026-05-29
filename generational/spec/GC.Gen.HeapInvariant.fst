@@ -146,6 +146,40 @@ let minor_heap_shape_elim (minor: minor_state)
                    minor_fields_no_infix_targets minor)
   = reveal_opaque (`%minor_heap_shape) (minor_heap_shape minor)
 
+let minor_fields_no_infix_targets_intro (minor: minor_state)
+  : Lemma (requires
+            (forall (obj: U64.t) (j: nat).
+              Seq.mem obj (minor_objects minor) /\
+              j < minor_wosize minor obj /\
+              is_minor_pointer (to_minor_offset (minor_read_field minor obj j)) ==>
+              ~(is_infix_in_minor minor
+                  (to_minor_offset (minor_read_field minor obj j)))))
+          (ensures minor_fields_no_infix_targets minor)
+  = reveal_opaque (`%minor_fields_no_infix_targets)
+      (minor_fields_no_infix_targets minor)
+
+let minor_heap_shape_intro (minor: minor_state)
+  : Lemma (requires minor_wf minor /\
+                   minor_guards_complete minor /\
+                   minor_infix_wf minor /\
+                   minor_no_scan_invariant minor /\
+                   minor_fields_no_infix_targets minor)
+          (ensures minor_heap_shape minor)
+  = reveal_opaque (`%minor_heap_shape) (minor_heap_shape minor)
+
+let minor_major_fields_no_blue_intro (minor: minor_state) (major: heap)
+  : Lemma (requires
+            (forall (obj: U64.t) (j: nat).
+              Seq.mem obj (minor_objects minor) /\
+              j < minor_wosize minor obj /\
+              is_pointer_field (minor_read_field minor obj j) ==>
+              Seq.mem ((minor_read_field minor obj j) <: obj_addr)
+                     (objects zero_addr major) /\
+              ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major)))
+          (ensures minor_major_fields_no_blue minor major)
+  = reveal_opaque (`%minor_major_fields_no_blue)
+      (minor_major_fields_no_blue minor major)
+
 let minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
   (obj: U64.t) (j: nat)
   : Lemma (requires minor_major_fields_no_blue minor major /\
@@ -187,6 +221,23 @@ let major_minor_fields_no_infix_targets_elim
   = reveal_opaque (`%major_minor_fields_no_infix_targets)
       (major_minor_fields_no_infix_targets minor major)
 
+let major_minor_fields_no_infix_targets_intro
+  (minor: minor_state) (major: heap)
+  : Lemma (requires
+            (forall (obj: obj_addr) (j: nat).
+              Seq.mem obj (objects zero_addr major) /\
+              ~(is_blue obj major) /\
+              ~(is_no_scan obj major) /\
+              j < U64.v (wosize_of_object obj major) /\
+              U64.v obj + j * 8 + 8 <= heap_size /\
+              (U64.v obj + j * 8) % 8 == 0 ==>
+              (let v = to_minor_offset
+                 (read_word major (U64.uint_to_t (U64.v obj + j * 8))) in
+               is_minor_pointer v ==> ~(is_infix_in_minor minor v))))
+          (ensures major_minor_fields_no_infix_targets minor major)
+  = reveal_opaque (`%major_minor_fields_no_infix_targets)
+      (major_minor_fields_no_infix_targets minor major)
+
 let major_stack_shape_elim (major: heap) (st: seq obj_addr) (cap: nat)
   : Lemma (requires major_stack_shape major st cap)
           (ensures MarkBoundedInv.bounded_mark_inv major st cap /\
@@ -215,6 +266,15 @@ let collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
                    minor_heap_shape minor /\
                    minor_major_fields_no_blue minor major /\
                    major_minor_fields_no_infix_targets minor major)
+  = reveal_opaque (`%collection_heap_shape)
+      (collection_heap_shape minor major fp)
+
+let collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
+  : Lemma (requires major_heap_shape major fp /\
+                    minor_heap_shape minor /\
+                    minor_major_fields_no_blue minor major /\
+                    major_minor_fields_no_infix_targets minor major)
+          (ensures collection_heap_shape minor major fp)
   = reveal_opaque (`%collection_heap_shape)
       (collection_heap_shape minor major fp)
 

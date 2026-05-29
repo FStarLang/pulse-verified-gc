@@ -320,6 +320,51 @@ let rec objects (start: hp_addr) (g: heap) : GTot (Seq.seq obj_addr) (decreases 
       end
     end
 
+let objects_cons_end (start: hp_addr) (g: heap)
+  : Lemma
+    (requires
+      U64.v start + 8 < Seq.length g /\
+      (let header = read_word g start in
+       let wz = getWosize header in
+       let next_start_nat = U64.v start + ((U64.v wz + 1) * 8) in
+       next_start_nat <= Seq.length g /\
+       next_start_nat < pow2 64 /\
+       next_start_nat >= heap_size))
+    (ensures objects start g == Seq.cons (f_address start) Seq.empty)
+  =
+  let header = read_word g start in
+  let wz = getWosize header in
+  let next_start_nat = U64.v start + ((U64.v wz + 1) * 8) in
+  f_address_spec start;
+  assert (next_start_nat <= Seq.length g);
+  assert (next_start_nat < pow2 64);
+  assert (next_start_nat >= heap_size);
+  ()
+
+let objects_cons_step_to (start: hp_addr) (g: heap) (next: hp_addr)
+  : Lemma
+    (requires
+      U64.v start + 8 < Seq.length g /\
+      (let header = read_word g start in
+       let wz = getWosize header in
+       let next_start_nat = U64.v start + ((U64.v wz + 1) * 8) in
+       next_start_nat <= Seq.length g /\
+       next_start_nat < pow2 64 /\
+       next_start_nat < heap_size /\
+       next_start_nat == U64.v next))
+    (ensures objects start g == Seq.cons (f_address start) (objects next g))
+  =
+  let header = read_word g start in
+  let wz = getWosize header in
+  let next_start_nat = U64.v start + ((U64.v wz + 1) * 8) in
+  f_address_spec start;
+  assert (next_start_nat <= Seq.length g);
+  assert (next_start_nat < pow2 64);
+  assert (next_start_nat < heap_size);
+  assert (next_start_nat == U64.v next);
+  assert (U64.uint_to_t next_start_nat == next);
+  ()
+
 /// Get all allocated block addresses
 let allocated_blocks (g: heap) : GTot (Seq.seq obj_addr) =
   objects zero_addr g
@@ -1893,4 +1938,3 @@ let field_write_preserves_wf g obj addr v =
   // Reconstruct well_formed_heap for the modified heap
   reveal_opaque (`%well_formed_heap) well_formed_heap
 #pop-options
-

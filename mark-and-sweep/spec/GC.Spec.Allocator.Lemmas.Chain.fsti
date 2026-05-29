@@ -160,6 +160,9 @@ val fl_valid_field_write_tail (g: heap) (p: obj_addr) (v: U64.t) (fuel: nat)
     (ensures GC.Spec.Allocator.Lemmas.Common.fl_valid (write_word g (p <: hp_addr) v) v fuel)
 val chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool
 
+val chain_avoids_null (g: heap) (excl: U64.t) (steps: nat)
+  : Lemma (ensures chain_avoids g 0UL excl steps = true)
+
 val chain_avoids_unfold_step (g: heap) (fp excl: U64.t) (steps: nat)
   : Lemma (requires U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
                     U64.v fp % U64.v mword = 0 /\

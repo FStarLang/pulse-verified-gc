@@ -85,6 +85,10 @@ let max_young_object_fits () : Lemma (ensures (max_young_wosize + 1) * 8 <= mino
 
 let minor_major_disjoint () : Lemma (ensures minor_heap_size > 0 /\ heap_size > 0) = ()
 
+let minor_heap_size_at_least_two_one_field_objects ()
+  : Lemma (ensures 32 <= minor_heap_size)
+  = ()
+
 let zero_addr_above_minor () : Lemma (ensures U64.v zero_addr >= minor_heap_size) =
   GC.Spec.Base.zero_addr_above_2048 ()
 

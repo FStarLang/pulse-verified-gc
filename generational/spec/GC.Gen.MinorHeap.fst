@@ -12,6 +12,22 @@ open GC.Spec.Base
 open GC.Gen.Base
 module SpecHeap = GC.Spec.Heap
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let minor_read_word_zero_heap
+  (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0})
+  : Lemma (minor_read_word (Seq.create minor_heap_size 0uy) addr == 0UL)
+  =
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr) == 0uy);
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 1) == 0uy);
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 2) == 0uy);
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 3) == 0uy);
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 4) == 0uy);
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 5) == 0uy);
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 6) == 0uy);
+  assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 7) == 0uy);
+  assert_norm (minor_combine_bytes 0uy 0uy 0uy 0uy 0uy 0uy 0uy 0uy == 0UL)
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Chain validity (implements the val from .fsti)
 /// ---------------------------------------------------------------------------
@@ -772,6 +788,71 @@ let minor_objects_body_bound (ms: minor_state) (obj: U64.t)
 /// Main proofs
 /// ---------------------------------------------------------------------------
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let minor_alloc_success_layout (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+                               (tag: nat{tag < 256 /\ tag <> 249})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    res.obj_addr == U64.uint_to_t (U64.v ms.bump + 8) /\
+                    U64.v res.ms_out.bump == U64.v ms.bump + (wosize + 1) * 8)) =
+  assert (U64.v ms.bump % 8 == 0);
+  assert (not (minor_can_alloc ms wosize) == false);
+  assert (U64.v ms.bump % 8 <> 0 == false);
+  assert ((not (minor_can_alloc ms wosize)) || U64.v ms.bump % 8 <> 0 == false);
+  assert_norm (pow2 57 < pow2 64);
+  GC.Gen.Base.max_young_object_fits ();
+  assert ((wosize + 1) * 8 <= minor_heap_size);
+  assert (minor_heap_size < pow2 57);
+  assert_norm (pow2 57 == 8 * pow2 54);
+  assert (wosize < pow2 54)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let minor_alloc_success_wosize (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+                               (tag: nat{tag < 256 /\ tag <> 249})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    minor_wosize res.ms_out res.obj_addr == wosize)) =
+  minor_alloc_success_layout ms wosize tag;
+  assert_norm (pow2 57 < pow2 64);
+  GC.Gen.Base.max_young_object_fits ();
+  assert (minor_heap_size < pow2 57);
+  assert_norm (pow2 57 == 8 * pow2 54);
+  assert (wosize < pow2 54);
+  let hdr = make_minor_header wosize tag in
+  let res = minor_alloc_spec ms wosize tag in
+  assert (res.obj_addr == U64.uint_to_t (U64.v ms.bump + 8));
+  assert (U64.v res.obj_addr == U64.v ms.bump + 8);
+  assert (U64.v res.obj_addr >= 8);
+  assert (U64.v res.obj_addr < minor_heap_size);
+  assert (U64.v res.obj_addr - 8 == U64.v ms.bump);
+  minor_read_write_same ms.data ms.bump hdr;
+  make_header_wosize wosize tag
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let minor_alloc_success_tag (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+                            (tag: nat{tag < 256 /\ tag <> 249})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    minor_tag res.ms_out res.obj_addr == tag)) =
+  minor_alloc_success_layout ms wosize tag;
+  assert_norm (pow2 57 < pow2 64);
+  GC.Gen.Base.max_young_object_fits ();
+  assert (minor_heap_size < pow2 57);
+  assert_norm (pow2 57 == 8 * pow2 54);
+  assert (wosize < pow2 54);
+  let hdr = make_minor_header wosize tag in
+  let res = minor_alloc_spec ms wosize tag in
+  assert (res.obj_addr == U64.uint_to_t (U64.v ms.bump + 8));
+  assert (U64.v res.obj_addr == U64.v ms.bump + 8);
+  assert (U64.v res.obj_addr >= 8);
+  assert (U64.v res.obj_addr < minor_heap_size);
+  assert (U64.v res.obj_addr - 8 == U64.v ms.bump);
+  minor_read_write_same ms.data ms.bump hdr;
+  make_header_tag wosize tag
+#pop-options
+
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 150 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256 /\ tag <> 249})
@@ -880,6 +961,56 @@ let minor_alloc_preserves_existing (ms: minor_state)
     minor_read_write_different ms.data ms.bump (U64.uint_to_t byte_offset) hdr
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+let minor_alloc_preserves_word_outside_header
+  (ms: minor_state)
+  (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+  (tag: nat{tag < 256 /\ tag <> 249})
+  (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\
+                    U64.v addr <> U64.v ms.bump)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    minor_read_word res.ms_out.data addr == minor_read_word ms.data addr))
+  =
+  minor_alloc_success_layout ms wosize tag;
+  assert_norm (pow2 57 < pow2 64);
+  GC.Gen.Base.max_young_object_fits ();
+  assert (minor_heap_size < pow2 57);
+  assert_norm (pow2 57 == 8 * pow2 54);
+  assert (wosize < pow2 54);
+  let hdr = make_minor_header wosize tag in
+  minor_read_write_different ms.data ms.bump addr hdr
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+let minor_alloc_fresh_field_read
+  (ms: minor_state)
+  (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+  (tag: nat{tag < 256 /\ tag <> 249})
+  (j: nat)
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\ j < wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    let field_addr = U64.uint_to_t (U64.v ms.bump + 8 + j * 8) in
+                    minor_read_field res.ms_out res.obj_addr j ==
+                    minor_read_word ms.data field_addr))
+  =
+  minor_alloc_success_layout ms wosize tag;
+  assert (U64.v ms.bump + (wosize + 1) * 8 <= minor_heap_size);
+  FStar.Math.Lemmas.lemma_mult_le_right 8 (j + 1) wosize;
+  assert ((j + 1) * 8 <= wosize * 8);
+  let field_nat = U64.v ms.bump + 8 + j * 8 in
+  assert (field_nat + 8 <= minor_heap_size);
+  assert (field_nat % 8 == 0);
+  assert (field_nat < pow2 64);
+  let field_addr = U64.uint_to_t field_nat in
+  assert (U64.v field_addr == field_nat);
+  assert (U64.v field_addr <> U64.v ms.bump);
+  minor_alloc_preserves_word_outside_header ms wosize tag field_addr;
+  let res = minor_alloc_spec ms wosize tag in
+  assert (U64.v res.obj_addr == U64.v ms.bump + 8);
+  assert (U64.v res.obj_addr + j * 8 == field_nat)
 #pop-options
 
 /// ---------------------------------------------------------------------------

@@ -642,6 +642,10 @@ let rec chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool (decreas
     if U64.v hd + 16 > heap_size then true
     else chain_avoids g (read_word g (fp <: obj_addr)) excl (steps - 1)
 
+let chain_avoids_null (g: heap) (excl: U64.t) (steps: nat)
+  : Lemma (ensures chain_avoids g 0UL excl steps = true)
+  = ()
+
 /// chain_avoids_unfold_step: one-step unfolding of chain_avoids.
 /// When fp is a valid non-terminal node, fp ≠ excl, and steps > 0,
 /// chain_avoids reduces to the recursive call on the successor.

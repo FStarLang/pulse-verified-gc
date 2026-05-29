@@ -60,6 +60,9 @@ let minor_read_word_t (h: minor_heap) (addr: U64.t) : U64.t =
   then minor_read_word h addr
   else 0UL
 
+val minor_read_word_zero_heap (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0})
+  : Lemma (minor_read_word (Seq.create minor_heap_size 0uy) addr == 0UL)
+
 /// Decompose a U64 into its low byte
 noextract
 let minor_byte_of (x: U64.t) : U8.t =
@@ -119,7 +122,7 @@ let minor_wf (ms: minor_state) : prop =
   minor_chain_no_infix ms.data 0 (U64.v ms.bump) == true
 
 /// Initial (empty) minor heap state
-val minor_init (data: minor_heap) : Tot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0})
+val minor_init (data: minor_heap) : Tot (ms:minor_state{minor_wf ms /\ U64.v ms.bump == 0 /\ ms.data == data})
 
 /// ---------------------------------------------------------------------------
 /// Bump Allocation Spec
@@ -316,6 +319,25 @@ val minor_objects_body_bound (ms: minor_state) (obj: U64.t)
                    minor_wosize ms obj < minor_heap_size)
 
 /// After allocation, the new object appears in minor_objects
+val minor_alloc_success_layout (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+                               (tag: nat{tag < 256 /\ tag <> 249})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    res.obj_addr == U64.uint_to_t (U64.v ms.bump + 8) /\
+                    U64.v res.ms_out.bump == U64.v ms.bump + (wosize + 1) * 8))
+
+val minor_alloc_success_wosize (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+                               (tag: nat{tag < 256 /\ tag <> 249})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    minor_wosize res.ms_out res.obj_addr == wosize))
+
+val minor_alloc_success_tag (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+                            (tag: nat{tag < 256 /\ tag <> 249})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    minor_tag res.ms_out res.obj_addr == tag))
+
 val minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256 /\ tag <> 249})
   : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
@@ -336,6 +358,27 @@ val minor_alloc_preserves_existing (ms: minor_state)
                     minor_wosize res.ms_out x == minor_wosize ms x /\
                     (forall (i:nat). i < minor_wosize ms x ==>
                       minor_read_field res.ms_out x i == minor_read_field ms x i)))
+
+val minor_alloc_preserves_word_outside_header
+  (ms: minor_state)
+  (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+  (tag: nat{tag < 256 /\ tag <> 249})
+  (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0})
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\
+                    U64.v addr <> U64.v ms.bump)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    minor_read_word res.ms_out.data addr == minor_read_word ms.data addr))
+
+val minor_alloc_fresh_field_read
+  (ms: minor_state)
+  (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
+  (tag: nat{tag < 256 /\ tag <> 249})
+  (j: nat)
+  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\ j < wosize)
+          (ensures (let res = minor_alloc_spec ms wosize tag in
+                    let field_addr = U64.uint_to_t (U64.v ms.bump + 8 + j * 8) in
+                    minor_read_field res.ms_out res.obj_addr j ==
+                    minor_read_word ms.data field_addr))
 
 /// Resetting the minor heap (after collection) clears stale object headers and
 /// bodies before making the heap empty again.

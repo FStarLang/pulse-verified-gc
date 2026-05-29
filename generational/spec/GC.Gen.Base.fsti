@@ -149,6 +149,10 @@ val max_young_object_fits : unit ->
 val minor_major_disjoint : unit ->
   Lemma (ensures minor_heap_size > 0 /\ heap_size > 0)
 
+/// The nursery is large enough for the two one-field objects used by small SPOTs.
+val minor_heap_size_at_least_two_one_field_objects : unit ->
+  Lemma (ensures 32 <= minor_heap_size)
+
 /// Major heap base is above the minor heap address range.
 /// This ensures forwarding targets (major addresses >= zero_addr + mword)
 /// cannot be confused with minor offsets (which are < minor_heap_size).
