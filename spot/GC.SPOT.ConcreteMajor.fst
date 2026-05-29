@@ -27,7 +27,14 @@ let spot_major_room : prop =
 
 let zero_major : heap = Seq.create heap_size 0uy
 
-let spot_c (r: unit{spot_major_room}) : obj_addr =
+let spot_c
+  (r: unit{spot_major_room})
+  : c:obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size}
+  =
+  f_address_spec zero_addr;
+  assert (U64.v (f_address zero_addr) == U64.v zero_addr + 8);
+  assert (Layout.c_to_a_field_index == 1);
+  assert (U64.v zero_addr + 40 <= heap_size);
   f_address zero_addr
 
 let spot_c_field0 (r: unit{spot_major_room}) : hp_addr =
@@ -285,6 +292,27 @@ let spot_major_objects (r: unit{spot_major_room})
   assert (SpecFields.objects zero_addr g ==
           Seq.cons (spot_c r) (SpecFields.objects (spot_free_header r) g));
   ()
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let spot_major_c_mem (r: unit{spot_major_room})
+  : Lemma (ensures
+      Seq.mem (spot_c r)
+        (SpecFields.objects zero_addr (spot_major_heap r)))
+  =
+  spot_major_objects r;
+  SpecFields.mem_cons_lemma (spot_c r) (spot_c r)
+    (Seq.cons (spot_free_obj r) Seq.empty)
+
+let spot_major_free_mem (r: unit{spot_major_room})
+  : Lemma (ensures
+      Seq.mem (spot_free_obj r)
+        (SpecFields.objects zero_addr (spot_major_heap r)))
+  =
+  spot_major_objects r;
+  SpecFields.mem_cons_lemma (spot_free_obj r) (spot_c r)
+    (Seq.cons (spot_free_obj r) Seq.empty);
+  SpecFields.mem_cons_lemma (spot_free_obj r) (spot_free_obj r) Seq.empty
+#pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_object_cases (r: unit{spot_major_room}) (obj: obj_addr)

@@ -28,8 +28,8 @@ And I want to prove that this heap is well-formed for calling gen_gc.
 
 And then prove that after calling gen_gc, A is promoted to an object A' in the major heap, C points to A', and B is collected.
 
-Completing the constructive witness below is what validates that the entire GC
-specification is usable on a concrete heap.
+The constructive witness below validates that the collector contracts are usable
+on a concrete heap, not just on abstract heaps satisfying assumed predicates.
 
 ## Current State
 
@@ -68,6 +68,15 @@ generational development and treating upstream `GC.*` modules as already cached.
   It exposes reusable lemmas for promotion from nonzero forwarding, no-promotion
   from zero forwarding, remembered-field rewriting, and final major survival
   from the `gen_gc` isomorphism postcondition.
+- `GC.SPOT.ConcreteForwarding`: proves the concrete Cheney forwarding fact for
+  the unreachable minor object B: its forwarding-map entry remains zero.
+- `GC.SPOT.ConcreteScenarios`: connects the concrete A/B/C heaps, roots, slot
+  table, and forwarding array to the real `minor_collect_full` and `gen_gc`
+  precondition bundles. It proves A is promoted, C.field1 is rewritten to A',
+  and B has no promoted image.
+- `GC.SPOT.ConcreteFull`: connects the post-minor result to the final `gen_gc`
+  postcondition. It proves C survives, A' survives, and C.field1 still points
+  to A' in the final major heap.
 - `GC.SPOT.CallMinor`: a Pulse wrapper that calls the real
   `minor_collect_full`.
 - `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `gen_gc`.
@@ -92,22 +101,30 @@ The cleaned campaign now validates the collector proof surface directly:
    `major_field_zero_no_minor` rules out minor pointers in field 0 of scannable
    major objects. The postcondition proof uses the exported forwarding theorem
    to show that field 1 is rewritten to A's promoted image.
-4. B's desired collection fact is isolated to the exact Cheney fact that
-   `(cheney_promote ...).fwd_map b_minor == 0UL`. Once the concrete heap
-   construction proves B is unreachable, the active SPOT already turns that
-   zero-forwarding fact into "B was not promoted."
+4. B's collection fact is isolated to the exact Cheney execution fact that
+   `(cheney_promote ...).fwd_map b_minor == 0UL`, which is now proved for the
+   concrete heap and then lifted to "B was not promoted."
+5. The final full-GC connector uses `gen_gc_roots_post`,
+   `gen_gc_heap_shape_post`, and
+   `gen_gc_reachable_subgraph_isomorphism_post`: C and A' are placed in the
+   major mark stack from the rewritten roots, shown reachable in the post-minor
+   major heap, and then shown to survive in the final major heap.
+6. C.field1 preservation is proved through the exported major-GC live-subgraph
+   isomorphism: the post-minor proof establishes that C.field1 contains A', and
+   the final proof uses the field-preservation conjunct for reachable object C
+   at field index 2 to show the same slot still contains A' after `gen_gc`.
 
-## Remaining Proof Obligation
+## Completed Connector
 
-The remaining hard part is not hidden in admits. It is the final constructive
-connection from the concrete heap witnesses to the complete collector-call
-precondition bundle:
+The active SPOT now covers the concrete three-object scenario end to end:
 
-- combine `GC.SPOT.ConcreteMinor` and `GC.SPOT.ConcreteMajor` into the exact
-  `minor_collect_full`/`gen_gc` preconditions for roots `[C; A]`, one
-  remembered slot at C.field1, and a zero forwarding array;
-- prove the exact Cheney execution fact that B's forwarding entry remains zero.
+- roots before the minor phase are exactly `[C; A]`;
+- the remembered table has exactly one slot, C.field1;
+- the concrete heap satisfies the `minor_collect_full` preconditions;
+- the post-minor result promotes A to A', rewrites C.field1 to A', and leaves
+  B without a promoted image;
+- the post-minor state satisfies the `gen_gc` preconditions; and
+- the final major heap contains both C and A', with C.field1 still pointing to
+  A'.
 
-Those are now cleanly separated from the collector-call and postcondition
-reasoning. The active SPOT modules state the boundary precisely and verify
-without any local proof holes.
+There are no local admits or assumes in the active `GC.SPOT.*` campaign.

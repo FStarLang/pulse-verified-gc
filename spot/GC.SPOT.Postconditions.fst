@@ -66,6 +66,14 @@ let promoted_image_from_forwarding
           (ensures promoted_image minor major fp roots old img)
   = ()
 
+let promoted_image_elim
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (old img: U64.t)
+  : Lemma (requires promoted_image minor major fp roots old img)
+          (ensures img <> 0UL /\
+                   (Cheney.cheney_promote minor major fp roots).fwd_map old == img)
+  = ()
+
 let not_promoted_from_zero_forwarding
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t) (old: U64.t)
   : Lemma (requires (Cheney.cheney_promote minor major fp roots).fwd_map old == 0UL)

@@ -87,6 +87,70 @@ private let rec remembered_slot_targets_from_mem
   end
 #pop-options
 
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+private let rec remembered_slot_targets_from_all_in_roots
+  (major: heap)
+  (roots slots: seq U64.t)
+  (n idx: nat)
+  : Lemma
+    (requires idx <= n /\ n <= Seq.length slots /\
+      (forall (i:nat). idx <= i /\ i < n ==>
+        U64.v (Seq.index slots i) < heap_size /\
+        U64.v (Seq.index slots i) % U64.v mword == 0 /\
+        (let slot = (Seq.index slots i <: hp_addr) in
+         let v = to_minor_offset (read_word major slot) in
+         is_minor_pointer v ==> Seq.mem v roots)))
+    (ensures forall (r: U64.t).
+      Seq.mem r (remembered_slot_targets_from major slots n idx) ==> Seq.mem r roots)
+    (decreases (n - idx))
+  =
+  if idx >= n || idx >= Seq.length slots then begin
+    let aux (r: U64.t) : Lemma
+      (requires Seq.mem r (remembered_slot_targets_from major slots n idx))
+      (ensures Seq.mem r roots)
+    =
+      assert (remembered_slot_targets_from major slots n idx == Seq.empty)
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+  end else begin
+    let slot = Seq.index slots idx in
+    assert (idx <= idx /\ idx < n);
+    assert (U64.v slot < heap_size);
+    assert (U64.v slot % U64.v mword == 0);
+    let hslot: hp_addr = slot in
+    let v = to_minor_offset (read_word major hslot) in
+    let tail = remembered_slot_targets_from major slots n (idx + 1) in
+    remembered_slot_targets_from_all_in_roots major roots slots n (idx + 1);
+    let aux (r: U64.t) : Lemma
+      (requires Seq.mem r (remembered_slot_targets_from major slots n idx))
+      (ensures Seq.mem r roots)
+    =
+      assert (idx < n);
+      assert (idx < Seq.length slots);
+      assert (U64.v slot < heap_size && U64.v slot % U64.v mword == 0);
+      if is_minor_pointer v then begin
+        assert (remembered_slot_targets_from major slots n idx == Seq.cons v tail);
+        mem_cons_lemma r v tail;
+        if r = v then
+          assert (Seq.mem v roots)
+        else begin
+          assert (Seq.mem r tail);
+          assert (Seq.mem r roots)
+        end
+      end else begin
+        assert (remembered_slot_targets_from major slots n idx == tail);
+        assert (Seq.mem r tail);
+        assert (Seq.mem r roots)
+      end
+    in
+    Classical.forall_intro (Classical.move_requires aux)
+  end
+
+let remembered_targets_in_roots_intro_by_slots major roots slots n
+  =
+  remembered_slot_targets_from_all_in_roots major roots slots n 0
+#pop-options
+
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)

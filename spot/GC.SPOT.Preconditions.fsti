@@ -24,6 +24,12 @@ val zero_forwarding_array_elim
           (ensures Seq.length farr == UpdatePtrs.fwd_array_size /\
                    (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL))
 
+val zero_forwarding_array_intro
+  : farr:seq U64.t ->
+    Lemma (requires Seq.length farr == UpdatePtrs.fwd_array_size /\
+                   (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL))
+          (ensures zero_forwarding_array farr)
+
 val singleton_slots_pairwise_distinct
   : slots:seq U64.t -> n:nat ->
     Lemma (requires n <= 1 /\ n <= Seq.length slots)
@@ -45,6 +51,22 @@ val minor_collect_full_pre_elim
             GC.Gen.ReachabilityBridge.roots_valid_nonblue roots major /\
             GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
 
+val minor_collect_full_pre_intro
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
+    Lemma
+      (requires
+        GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
+        zero_forwarding_array farr /\
+        UpdatePtrs.ref_table_sound major slots nslots /\
+        UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
+        UpdatePtrs.slots_pairwise_distinct slots nslots /\
+        GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots nslots /\
+        GC.Gen.ReachabilityBridge.major_field_zero_no_minor minor major /\
+        GC.Gen.ReachabilityBridge.roots_valid_nonblue roots major /\
+        GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
+      (ensures minor_collect_full_pre minor major fp roots farr slots nslots)
+
 val gen_gc_pre_elim
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
@@ -56,3 +78,14 @@ val gen_gc_pre_elim
              GC.Gen.HeapInvariant.major_stack_shape result.mc_major st cap /\
              GC.Gen.Impl.roots_match_stack result.mc_roots st))
 
+val gen_gc_pre_intro
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    farr:seq U64.t -> slots:seq U64.t -> nslots:nat ->
+    st:seq obj_addr -> cap:nat ->
+    Lemma
+      (requires
+        minor_collect_full_pre minor major fp roots farr slots nslots /\
+        (let result = GC.Gen.Cheney.cheney_collect_spec minor major fp roots in
+         GC.Gen.HeapInvariant.major_stack_shape result.mc_major st cap /\
+         GC.Gen.Impl.roots_match_stack result.mc_roots st))
+      (ensures gen_gc_pre minor major fp roots farr slots nslots st cap)

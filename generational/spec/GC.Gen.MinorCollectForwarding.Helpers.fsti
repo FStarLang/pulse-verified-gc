@@ -70,6 +70,21 @@ let remembered_targets_in_roots
   forall (r: U64.t).
     Seq.mem r (remembered_slot_targets major slots n) ==> Seq.mem r roots
 
+val remembered_targets_in_roots_intro_by_slots:
+  major:heap ->
+  roots:seq U64.t ->
+  slots:seq U64.t ->
+  n:nat ->
+  Lemma
+    (requires n <= Seq.length slots /\
+      (forall (i:nat). i < n ==>
+        U64.v (Seq.index slots i) < heap_size /\
+        U64.v (Seq.index slots i) % U64.v mword == 0 /\
+        (let slot = (Seq.index slots i <: hp_addr) in
+         let v = to_minor_offset (read_word major slot) in
+         is_minor_pointer v ==> Seq.mem v roots)))
+    (ensures remembered_targets_in_roots major roots slots n)
+
 #push-options "--z3rlimit 20"
 /// Root validity needed to make the target be all concrete post-reachable
 /// vertices: a minor-shaped root must be a real live minor object, while a

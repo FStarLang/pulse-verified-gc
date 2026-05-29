@@ -292,6 +292,15 @@ let spot_minor2_field_zero (obj: U64.t) (j: nat)
     assert (j == 0)
   end
 
+let spot_minor_a_not_infix ()
+  : Lemma (ensures ~(is_infix_in_minor spot_minor2 Layout.a_minor))
+  =
+  assert (U64.v Layout.a_minor >= 8);
+  assert (U64.v Layout.a_minor < minor_heap_size);
+  assert (U64.v Layout.a_minor % 8 == 0);
+  spot_minor2_tag_zero Layout.a_minor;
+  assert (minor_tag spot_minor2 Layout.a_minor == 0)
+
 let spot_minor_guards_complete ()
   : Lemma (ensures minor_guards_complete spot_minor2)
   =

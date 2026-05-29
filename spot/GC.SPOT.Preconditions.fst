@@ -46,6 +46,12 @@ let zero_forwarding_array_elim (farr: seq U64.t)
                    (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL))
   = ()
 
+let zero_forwarding_array_intro (farr: seq U64.t)
+  : Lemma (requires Seq.length farr == UpdatePtrs.fwd_array_size /\
+                    (forall (i:nat). i < Seq.length farr ==> Seq.index farr i == 0UL))
+          (ensures zero_forwarding_array farr)
+  = ()
+
 let singleton_slots_pairwise_distinct (slots: seq U64.t) (n: nat)
   : Lemma (requires n <= 1 /\ n <= Seq.length slots)
           (ensures UpdatePtrs.slots_pairwise_distinct slots n)
@@ -68,6 +74,23 @@ let minor_collect_full_pre_elim
             MinorFwd.roots_valid_for_minor_collection minor major roots)
   = zero_forwarding_array_elim farr
 
+let minor_collect_full_pre_intro
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots farr slots: seq U64.t) (nslots: nat)
+  : Lemma
+      (requires
+        GenInv.collection_heap_shape minor major fp /\
+        zero_forwarding_array farr /\
+        UpdatePtrs.ref_table_sound major slots nslots /\
+        UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
+        UpdatePtrs.slots_pairwise_distinct slots nslots /\
+        MinorFwd.remembered_targets_in_roots major roots slots nslots /\
+        RBridge.major_field_zero_no_minor minor major /\
+        RBridge.roots_valid_nonblue roots major /\
+        MinorFwd.roots_valid_for_minor_collection minor major roots)
+      (ensures minor_collect_full_pre minor major fp roots farr slots nslots)
+  = ()
+
 let gen_gc_pre_elim
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots farr slots: seq U64.t) (nslots: nat)
@@ -78,4 +101,17 @@ let gen_gc_pre_elim
             (let result = Cheney.cheney_collect_spec minor major fp roots in
              GenInv.major_stack_shape result.mc_major st cap /\
              GenImpl.roots_match_stack result.mc_roots st))
+  = ()
+
+let gen_gc_pre_intro
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots farr slots: seq U64.t) (nslots: nat)
+  (st: seq obj_addr) (cap: nat)
+  : Lemma
+      (requires
+        minor_collect_full_pre minor major fp roots farr slots nslots /\
+        (let result = Cheney.cheney_collect_spec minor major fp roots in
+         GenInv.major_stack_shape result.mc_major st cap /\
+         GenImpl.roots_match_stack result.mc_roots st))
+      (ensures gen_gc_pre minor major fp roots farr slots nslots st cap)
   = ()

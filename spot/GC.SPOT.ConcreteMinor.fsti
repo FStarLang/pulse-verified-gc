@@ -49,5 +49,8 @@ val spot_minor2_field_zero : obj:U64.t -> j:nat ->
                   j < minor_wosize spot_minor2 obj)
         (ensures minor_read_field spot_minor2 obj j == 0UL)
 
+val spot_minor_a_not_infix : unit ->
+  Lemma (ensures ~(is_infix_in_minor spot_minor2 Layout.a_minor))
+
 val spot_minor_heap_shape : unit ->
   Lemma (ensures GenInv.minor_heap_shape spot_minor2)

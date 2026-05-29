@@ -37,6 +37,12 @@ SPOT_SRC = \
   GC.SPOT.Postconditions.fst \
   GC.SPOT.ThreeObjects.fsti \
   GC.SPOT.ThreeObjects.fst \
+  GC.SPOT.ConcreteForwarding.fsti \
+  GC.SPOT.ConcreteForwarding.fst \
+  GC.SPOT.ConcreteScenarios.fsti \
+  GC.SPOT.ConcreteScenarios.fst \
+  GC.SPOT.ConcreteFull.fsti \
+  GC.SPOT.ConcreteFull.fst \
   GC.SPOT.CallMinor.fsti \
   GC.SPOT.CallMinor.fst \
   GC.SPOT.CallFull.fsti \

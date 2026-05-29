@@ -12,7 +12,9 @@ module Layout = GC.SPOT.Layout
 
 val spot_major_room : prop
 
-val spot_c : (r:unit{spot_major_room}) -> Tot obj_addr
+val spot_c
+  : (r:unit{spot_major_room}) ->
+    Tot (c:obj_addr{U64.v c + GC.SPOT.Layout.c_to_a_field_index * 8 + 8 <= heap_size})
 val spot_c_field0 : (r:unit{spot_major_room}) -> Tot hp_addr
 val spot_c_field1 : (r:unit{spot_major_room}) -> Tot hp_addr
 val spot_free_header : (r:unit{spot_major_room}) -> Tot hp_addr
@@ -63,6 +65,31 @@ val spot_major_objects
       SpecFields.objects zero_addr (spot_major_heap r) ==
         FStar.Seq.cons (spot_c r)
           (FStar.Seq.cons (spot_free_obj r) FStar.Seq.empty))
+
+val spot_major_c_mem
+  : r:unit{spot_major_room} ->
+    Lemma (ensures
+      FStar.Seq.mem (spot_c r)
+        (SpecFields.objects zero_addr (spot_major_heap r)))
+
+val spot_major_free_mem
+  : r:unit{spot_major_room} ->
+    Lemma (ensures
+      FStar.Seq.mem (spot_free_obj r)
+        (SpecFields.objects zero_addr (spot_major_heap r)))
+
+val spot_major_object_cases
+  : r:unit{spot_major_room} -> obj:obj_addr ->
+    Lemma (requires FStar.Seq.mem obj (SpecFields.objects zero_addr (spot_major_heap r)))
+          (ensures obj == spot_c r \/ obj == spot_free_obj r)
+
+val spot_major_free_field_read
+  : r:unit{spot_major_room} -> j:nat ->
+    Lemma (requires j < spot_free_wosize r /\
+                    U64.v (spot_free_obj r) + j * 8 + 8 <= heap_size)
+          (ensures
+            SpecHeap.read_word (spot_major_heap r)
+              (U64.uint_to_t (U64.v (spot_free_obj r) + j * 8)) == 0UL)
 
 val spot_major_heap_shape
   : r:unit{spot_major_room} ->

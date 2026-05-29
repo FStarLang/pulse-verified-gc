@@ -61,9 +61,23 @@ let is_gen_heap (gh: gen_heap_t) (d: minor_heap) (b: U64.t)
   R.pts_to gh.fp_ref fp
 
 let roots_match_stack (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) : prop =
-  (forall (r: U64.t). Seq.mem r roots ==> is_val_addr r) /\
+  (forall (r: U64.t). Seq.mem r roots ==> GC.Spec.Base.is_val_addr r) /\
   (forall (r: obj_addr). Seq.mem (r <: U64.t) roots ==> Seq.mem r st) /\
   (forall (r: obj_addr). Seq.mem r st ==> Seq.mem (r <: U64.t) roots)
+
+let roots_match_stack_root_is_val_addr
+  (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: U64.t)
+  : Lemma
+      (requires roots_match_stack roots st /\ Seq.mem r roots)
+      (ensures is_val_addr r)
+  = ()
+
+let roots_match_stack_root_in_stack
+  (roots: Seq.seq U64.t) (st: Seq.seq obj_addr) (r: obj_addr)
+  : Lemma
+      (requires roots_match_stack roots st /\ Seq.mem (r <: U64.t) roots)
+      (ensures Seq.mem r st)
+  = ()
 
 /// The roots array contains exactly the post-minor roots used by the following
 /// major collection.

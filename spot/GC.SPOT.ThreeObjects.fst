@@ -35,10 +35,33 @@ let spot_c_to_a_slot
   assert (U64.v c + 8 < pow2 64);
   U64.add c 8UL
 
+let spot_c_to_a_slot_spec
+  (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
+  : Lemma (ensures
+      U64.v (spot_c_to_a_slot c) == U64.v c + Layout.c_to_a_field_index * 8 /\
+      U64.v (spot_c_to_a_slot c) == U64.v c + 8)
+  =
+  assert (Layout.c_to_a_field_index == 1);
+  assert (heap_size < pow2 57);
+  assert (U64.v c + 8 < pow2 64)
+
 let spot_slots
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   : seq U64.t =
   Seq.cons (spot_c_to_a_slot c) Seq.empty
+
+let spot_slots_len
+  (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
+  : Lemma (ensures Seq.length (spot_slots c) == 1)
+  = ()
+
+let spot_slots_index
+  (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
+  (i: nat{i < Seq.length (spot_slots c)})
+  : Lemma (requires i < 1)
+          (ensures Seq.index (spot_slots c) i == spot_c_to_a_slot c)
+  =
+  assert (i == 0)
 
 let spot_roots_mem_c (c: obj_addr)
   : Lemma (Seq.mem (c <: U64.t) (spot_roots c))
@@ -47,6 +70,33 @@ let spot_roots_mem_c (c: obj_addr)
 let spot_roots_mem_a (c: obj_addr)
   : Lemma (Seq.mem Layout.a_minor (spot_roots c))
   = ()
+
+let spot_roots_len (c: obj_addr)
+  : Lemma (Seq.length (spot_roots c) == 2)
+  = ()
+
+let spot_roots_index_c (c: obj_addr)
+  : Lemma (requires Seq.length (spot_roots c) > 0)
+          (ensures Seq.index (spot_roots c) 0 == (c <: U64.t))
+  = ()
+
+let spot_roots_index_a (c: obj_addr)
+  : Lemma (requires Seq.length (spot_roots c) > 1)
+          (ensures Seq.index (spot_roots c) 1 == Layout.a_minor)
+  = ()
+
+let spot_roots_cases (c: obj_addr) (root: U64.t)
+  : Lemma (requires Seq.mem root (spot_roots c))
+          (ensures root == (c <: U64.t) \/ root == Layout.a_minor)
+  =
+  SpecFields.mem_cons_lemma root (c <: U64.t) (Seq.cons Layout.a_minor Seq.empty);
+  SpecFields.mem_cons_lemma root Layout.a_minor Seq.empty;
+  if root = (c <: U64.t) then ()
+  else if root = Layout.a_minor then ()
+  else begin
+    assert_norm (~(Seq.mem root (Seq.empty #U64.t)));
+    assert False
+  end
 
 let spot_slots_singleton_distinct
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
@@ -71,6 +121,45 @@ let spot_minor_scenario_pre
   minor_wosize minor Layout.a_minor > 0 /\
   minor_wosize minor Layout.b_minor > 0 /\
   CheneyBFS.cheney_no_oom minor major fp (spot_roots c)
+
+let spot_minor_scenario_pre_intro_from_c_to_a
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
+  (farr: seq U64.t)
+  : Lemma
+      (requires
+        Preconditions.minor_collect_full_pre
+          minor major fp (spot_roots c) farr (spot_slots c) 1 /\
+        ~(Promote.is_minor_pointer (c <: U64.t)) /\
+        Seq.mem c (SpecFields.objects zero_addr major) /\
+        ~(SpecObj.is_no_scan c major) /\
+        U64.v (SpecObj.wosize_of_object c major) > Layout.c_to_a_field_index /\
+        U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size /\
+        SpecHeap.read_word major (spot_c_to_a_slot c) == Layout.a_minor /\
+        Seq.mem Layout.a_minor (minor_objects minor) /\
+        Seq.mem Layout.b_minor (minor_objects minor) /\
+        minor_wosize minor Layout.a_minor > 0 /\
+        minor_wosize minor Layout.b_minor > 0 /\
+        CheneyBFS.cheney_no_oom minor major fp (spot_roots c))
+      (ensures spot_minor_scenario_pre minor major fp c farr)
+  =
+  let slot_v = SpecHeap.read_word major (spot_c_to_a_slot c) in
+  assert (slot_v == Layout.a_minor);
+  Layout.a_minor_is_minor_pointer ();
+  assert (U64.v slot_v == U64.v Layout.a_minor);
+  assert (U64.v slot_v < minor_heap_size);
+  assert (U64.v slot_v % 8 == 0);
+  to_minor_offset_in_minor_range slot_v;
+  assert (to_minor_offset slot_v == Layout.a_minor);
+  assert (Promote.is_minor_pointer (to_minor_offset slot_v));
+  assert (Seq.mem (to_minor_offset slot_v) (minor_objects minor));
+  CG.classify_major_field_is_minor minor major slot_v;
+  assert (CG.classify_major_field minor major slot_v ==
+          Some (CG.MinorV (to_minor_offset slot_v)));
+  assert (Some (CG.MinorV (to_minor_offset slot_v)) ==
+          Some (CG.MinorV Layout.a_minor));
+  assert (CG.classify_major_field minor major slot_v ==
+          Some (CG.MinorV Layout.a_minor))
 
 let spot_full_scenario_pre
   (minor: minor_state) (major: heap) (fp: U64.t)

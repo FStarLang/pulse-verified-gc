@@ -180,6 +180,19 @@ let minor_major_fields_no_blue_intro (minor: minor_state) (major: heap)
   = reveal_opaque (`%minor_major_fields_no_blue)
       (minor_major_fields_no_blue minor major)
 
+let minor_major_fields_no_blue_no_pointer_fields
+  (minor: minor_state) (major: heap)
+  : Lemma
+      (requires
+        (forall (obj:U64.t) (j:nat).
+          Seq.mem obj (minor_objects minor) /\
+          j < minor_wosize minor obj ==>
+          ~(is_pointer_field (minor_read_field minor obj j))))
+      (ensures minor_major_fields_no_blue minor major)
+  =
+  reveal_opaque (`%minor_major_fields_no_blue)
+    (minor_major_fields_no_blue minor major)
+
 let minor_major_fields_no_blue_elim (minor: minor_state) (major: heap)
   (obj: U64.t) (j: nat)
   : Lemma (requires minor_major_fields_no_blue minor major /\
