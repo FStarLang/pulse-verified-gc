@@ -79,7 +79,19 @@ generational development and treating upstream `GC.*` modules as already cached.
   to A' in the final major heap.
 - `GC.SPOT.CallMinor`: a Pulse wrapper that calls the real
   `minor_collect_full`.
+- `GC.SPOT.ConcreteCallMinor`: the concrete Pulse minor-collection SPOT. From
+  the concrete A/B/C heap resources, root array, forwarding array, Cheney queue,
+  and remembered slot table, it derives the real `minor_collect_full`
+  precondition, calls `minor_collect_full`, packages its postcondition, and
+  immediately proves the useful concrete consequences: A has a promoted image,
+  C.field1 contains that image in the post-minor heap, and B has no promoted
+  image.
 - `GC.SPOT.CallFull`: a Pulse wrapper that calls the real `gen_gc`.
+- `GC.SPOT.ConcreteCallFull`: the concrete Pulse full-GC SPOT. It derives the
+  real `gen_gc` precondition from the concrete heap/resources plus the supplied
+  post-minor gray stack shape, calls `gen_gc`, and consumes the exported
+  `gen_gc` postconditions to prove that a successful final heap contains C and
+  A', with C.field1 still pointing to A'.
 - `GC.SPOT.ThreeObjects`: the C/A/B scenario layer. Roots are `[C; A]` before
   the minor phase, and the remembered table contains C's field slot. The module
   proves that C and A are combined-graph roots, A is promoted when the real
@@ -92,7 +104,9 @@ generational development and treating upstream `GC.*` modules as already cached.
 The cleaned campaign now validates the collector proof surface directly:
 
 1. The SPOT calls the real Pulse entry points (`minor_collect_full` and
-   `gen_gc`) rather than a model or duplicate implementation.
+   `gen_gc`) rather than a model or duplicate implementation. The generic
+   wrappers expose the raw contracts, while the concrete wrappers establish
+   those contracts for the three-object heap and consume the postconditions.
 2. The root set includes `C` pre-minor, so the post-minor major GC has a root
    path that keeps both C and the promoted A' live.
 3. The remembered slot layout is explicit: the single remembered slot is C's
@@ -113,6 +127,13 @@ The cleaned campaign now validates the collector proof surface directly:
    isomorphism: the post-minor proof establishes that C.field1 contains A', and
    the final proof uses the field-preservation conjunct for reachable object C
    at field index 2 to show the same slot still contains A' after `gen_gc`.
+7. The final Pulse layer is imperative: `ConcreteCallMinor` calls
+   `minor_collect_full` on concrete resources and `ConcreteCallFull` calls
+   `gen_gc` on concrete resources. The full connector takes the gray stack as an
+   explicit runtime resource because `gen_gc`'s contract requires the caller to
+   supply a stack whose logical contents match the post-minor roots; the wrapper
+   proves that this stack fact, together with the concrete heap/array facts, is
+   exactly the real `gen_gc` precondition.
 
 ## Completed Connector
 

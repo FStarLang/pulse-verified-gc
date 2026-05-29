@@ -45,8 +45,12 @@ SPOT_SRC = \
   GC.SPOT.ConcreteFull.fst \
   GC.SPOT.CallMinor.fsti \
   GC.SPOT.CallMinor.fst \
+  GC.SPOT.ConcreteCallMinor.fsti \
+  GC.SPOT.ConcreteCallMinor.fst \
   GC.SPOT.CallFull.fsti \
-  GC.SPOT.CallFull.fst
+  GC.SPOT.CallFull.fst \
+  GC.SPOT.ConcreteCallFull.fsti \
+  GC.SPOT.ConcreteCallFull.fst
 
 SPOT_CHECKED = $(addsuffix .checked,$(SPOT_SRC))
 
