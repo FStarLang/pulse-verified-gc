@@ -8,12 +8,23 @@ verified systems component whose specification has to match a real runtime.
 
 This repository answers that question with a verified garbage collector for
 OCaml 4.14. The project began from the shape of an earlier verified
-mark-and-sweep collector for OCaml, but the code in this repository is not just a
-port. The development now contains a shared OCaml-compatible heap model, a
-verified major-heap allocator, a bounded-stack mark-and-sweep collector, a
-generational collector with a Cheney-style copying minor collection, proof
-oriented specification tests (SPOTs), extraction to C, and an OCaml runtime
-integration layer.
+mark-and-sweep collector for OCaml:
+
+
+> Sheera Shamsu, Dipesh Kafle, Dhruv Maroo, Kartik Nagar, Karthikeyan Bhargavan & KC Sivaramakrishnan
+> *"A Mechanically Verified Garbage Collector for OCaml"*
+> Journal of Automated Reasoning **69**, 7 (2025).
+> [DOI: 10.1007/s10817-025-09721-0](https://link.springer.com/article/10.1007/s10817-025-09721-0)
+>
+> Original source: <https://github.com/fplaunchpad/verified_ocaml_gc/>
+>
+
+But the code in this repository is not just a port. The development now contains
+a shared OCaml-compatible heap model, a verified major-heap allocator, a
+bounded-stack mark-and-sweep collector, a generational collector with a
+Cheney-style copying minor collection, proof oriented specification tests
+(SPOTs), extraction to C, and an OCaml runtime integration layer, all built
+using the latest F* and Pulse infrastructure.
 
 The result is intentionally both a research artifact and a codebase tour. This
 document supersedes the other Markdown files in the repository: it explains how
