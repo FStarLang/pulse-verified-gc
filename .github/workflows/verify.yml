@@ -9,7 +9,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -18,7 +18,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: fstar
-          key: fstar-release-v2026.04.17-linux-x86_64
+          key: fstar-release-v2026.05.17-linux-x86_64
 
       - name: Install F*
         if: steps.cache-fstar.outputs.cache-hit != 'true'
@@ -27,18 +27,31 @@ jobs:
       - name: Show F* version
         run: fstar/bin/fstar.exe --version
 
-      - name: Verify all modules
+      - name: Verify GC code
         run: make -j$(nproc)
+
+      - name: Verify SPOT proofs
+        run: make -C spot -j$(nproc)
 
       - name: Extract to C
         run: make extract
 
-      - name: Compile snapshot
-        run: make -C mark-and-sweep/snapshot
+      - name: Refresh generational snapshot
+        run: make -C generational snapshot
+
+      - name: Build verified_gc runtime
+        run: make -C generational/ocaml-integration setup
+
+      - name: Run verified_gc smoke tests
+        run: |
+          make -C generational/ocaml-integration/tests test \
+            OCAMLC="$PWD/generational/ocaml-integration/ocaml-4.14-unchanged/_install/bin/ocamlc" \
+            VERIFIED_GEN_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-verified-gen/runtime/ocamlrun" \
+            UNCHANGED_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-unchanged/runtime/ocamlrun"
 
   snapshot-diff:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     needs: verify
     if: github.event_name == 'pull_request'
     steps:
@@ -49,18 +62,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: fstar
-          key: fstar-release-v2026.04.17-linux-x86_64
+          key: fstar-release-v2026.05.17-linux-x86_64
 
       - name: Install F*
         if: steps.cache-fstar.outputs.cache-hit != 'true'
         run: ./setup.sh
 
-      - name: Regenerate snapshot
-        run: make snapshot
-
-      - name: Check snapshot is up to date
+      - name: Regenerate snapshots
         run: |
-          if ! git diff --quiet mark-and-sweep/snapshot/; then
-            echo "::warning::Snapshot is out of date. Run 'make snapshot' and commit."
-            git diff --stat mark-and-sweep/snapshot/
+          make -C mark-and-sweep snapshot
+          make -C generational snapshot
+
+      - name: Check snapshots are up to date
+        run: |
+          if ! git diff --quiet -- mark-and-sweep/snapshot/ generational/snapshot/; then
+            echo "::warning::Snapshots are out of date. Regenerate and commit them."
+            git diff --stat -- mark-and-sweep/snapshot/ generational/snapshot/
           fi
