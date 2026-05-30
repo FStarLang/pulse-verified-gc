@@ -24,6 +24,7 @@ module Layout = GC.SPOT.Layout
 module ConcreteMinor = GC.SPOT.ConcreteMinor
 module ConcreteMajor = GC.SPOT.ConcreteMajor
 module ConcreteScenarios = GC.SPOT.ConcreteScenarios
+module ConcreteForwarding = GC.SPOT.ConcreteForwarding
 module ConcreteFull = GC.SPOT.ConcreteFull
 module Postconditions = GC.SPOT.Postconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
@@ -43,30 +44,26 @@ let spot_gen_gc_success_post_from_gen_gc_post
             (ConcreteMajor.spot_major_fp r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
         ok ==>
-          CheneyBFS.cheney_no_oom
-            ConcreteMinor.spot_minor2
-            (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
-            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) /\
           GenImpl.gen_gc_roots_post
             ConcreteMinor.spot_minor2
             (ConcreteMajor.spot_major_heap r)
             (ConcreteMajor.spot_major_fp r)
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-            roots_out st /\
-          GenImpl.gen_gc_heap_shape_post
-            d2 b2 result.mc_major final_major result.mc_fp st cap /\
+            roots_out st cap /\
+          GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
           GenImpl.gen_gc_reachable_subgraph_isomorphism_post
-            ConcreteMinor.spot_minor2
-            (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
-            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-            ok final_major roots_out st))
+           ConcreteMinor.spot_minor2
+           (ConcreteMajor.spot_major_heap r)
+           (ConcreteMajor.spot_major_fp r)
+           (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
+           ok final_major roots_out st cap))
       (ensures spot_gen_gc_success_post r ok final_major)
   =
-  if ok then
+  if ok then begin
+    ConcreteForwarding.spot_concrete_no_oom r;
     ConcreteFull.spot_concrete_c_field_final_points_to_a_prime
       r d2 b2 roots_out ok final_major st cap
+  end
 
 fn call_concrete_gen_gc_spot
   (r: unit{ConcreteMajor.spot_major_room})
@@ -82,16 +79,11 @@ fn call_concrete_gen_gc_spot
            pts_to fwd_arr ConcreteScenarios.spot_fwd_array **
            pts_to queue 'qv **
            pts_to slots (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) **
-           is_gray_stack st 'st **
+           is_gray_stack st Seq.empty **
            pure (
              SZ.v nroots == 2 /\
              SZ.v nslots == 1 /\
-             CheneyBFS.cheney_no_oom
-               ConcreteMinor.spot_minor2
-               (ConcreteMajor.spot_major_heap r)
-               (ConcreteMajor.spot_major_fp r)
-               (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) /\
-             spot_gen_gc_stack_pre r 'st (stack_capacity st))
+             stack_capacity st >= 2)
   returns res: (U64.t & bool)
   ensures exists* d2 b2 final_major roots_out farr_out qv_out st_out.
     is_gen_heap gh d2 b2 final_major (fst res) **
@@ -113,21 +105,20 @@ fn call_concrete_gen_gc_spot
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        roots_out 'st /\
-      GenImpl.gen_gc_heap_shape_post
-        d2 b2 result.mc_major final_major result.mc_fp 'st (stack_capacity st) /\
+        roots_out Seq.empty (stack_capacity st) /\
+      GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
       GenImpl.gen_gc_reachable_subgraph_isomorphism_post
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        ok final_major roots_out 'st /\
+        ok final_major roots_out Seq.empty (stack_capacity st) /\
       GenImpl.gen_gc_unreachable_final_blue_post
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
         (ConcreteMajor.spot_major_fp r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        final_major 'st /\
+        final_major Seq.empty (stack_capacity st) /\
       Postconditions.minor_not_promoted
         ConcreteMinor.spot_minor2
         (ConcreteMajor.spot_major_heap r)
@@ -137,13 +128,14 @@ fn call_concrete_gen_gc_spot
       spot_gen_gc_success_post r ok final_major)
 {
   let c = ConcreteMajor.spot_c r;
+  ConcreteForwarding.spot_concrete_no_oom r;
   ThreeObjects.spot_roots_len c;
   ThreeObjects.spot_slots_len c;
   assert (pure (
     SZ.v nroots == Seq.length (ThreeObjects.spot_roots c) /\
     SZ.v nslots == 1));
-  ConcreteScenarios.spot_concrete_gen_gc_pre_from_stack
-    r 'st (stack_capacity st);
+  ConcreteScenarios.spot_concrete_gen_gc_pre_empty_stack
+    r (stack_capacity st);
   let res = CallFull.call_gen_gc_spot
     gh roots nroots fwd_arr queue slots nslots st;
   with d2 b2 final_major roots_out farr_out qv_out st_out. _;
@@ -156,6 +148,6 @@ fn call_concrete_gen_gc_spot
     (ThreeObjects.spot_roots c)
     Layout.b_minor));
   spot_gen_gc_success_post_from_gen_gc_post
-    r d2 b2 roots_out ok final_major 'st (stack_capacity st);
+    r d2 b2 roots_out ok final_major Seq.empty (stack_capacity st);
   res
 }

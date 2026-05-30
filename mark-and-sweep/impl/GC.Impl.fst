@@ -54,24 +54,26 @@ module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 /// - gc_postcondition: well_formed_heap preserved, all objects white or blue
 /// - full_gc_correctness: reachable objects survive with preserved data
 #push-options "--z3rlimit 200 --split_queries always"
-fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
+fn collect_with_roots
+    (heap: heap_t) (st: gray_stack)
+    (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (fp: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
-           pure (gc_precondition 's 'st fp (stack_capacity st))
+           pure (gc_precondition_with_roots 's 'st roots fp (stack_capacity st))
   returns final_fp: U64.t
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
           pure (SpecGCPost.gc_postcondition s2 /\
-                SpecGCPost.full_gc_correctness 's s2 'st /\
-                SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
-                SpecGCPost.major_gc_unreachable_final_blue 's s2 'st)
+               SpecGCPost.full_gc_correctness 's s2 roots /\
+               SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 roots /\
+               SpecGCPost.major_gc_unreachable_final_blue 's s2 roots)
 {
   // Mark phase: bounded-stack mark with overflow handling
-  mark_loop_bounded heap st 'st;
+  mark_loop_bounded heap st roots;
   
   // Bind existentials
   with s_mark st_mark. assert (is_heap heap s_mark ** is_gray_stack st st_mark);
   
   // Assemble mark_post from the mark invariants
-  SpecMarkBoundedCorr.mark_post_from_bounded_mark 's s_mark 'st fp;
+  SpecMarkBoundedCorr.mark_post_from_bounded_mark 's s_mark roots fp;
   
   // fp_valid transfers from 's to s_mark since objects list is preserved
   SI.fp_valid_transfer fp 's s_mark;
@@ -91,11 +93,24 @@ fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
 
   // gc_postcondition and full_gc_correctness from generalized bridges
   // These only need mark_post, which we established above
-  SpecGCPost.gc_postcondition_gen 's s_mark 'st fp;
-  SpecGCPost.full_gc_correctness_through_coalesce_gen 's s_mark 'st fp;
-  SpecGCPost.major_gc_live_subgraph_isomorphism_gen 's s_mark 'st fp;
-  SpecGCPost.major_gc_unreachable_final_blue_gen 's s_mark 'st fp;
+  SpecGCPost.gc_postcondition_gen 's s_mark roots fp;
+  SpecGCPost.full_gc_correctness_through_coalesce_gen 's s_mark roots fp;
+  SpecGCPost.major_gc_live_subgraph_isomorphism_gen 's s_mark roots fp;
+  SpecGCPost.major_gc_unreachable_final_blue_gen 's s_mark roots fp;
   
   final_fp
+}
+
+fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
+  requires is_heap heap 's ** is_gray_stack st 'st **
+            pure (gc_precondition 's 'st fp (stack_capacity st))
+  returns final_fp: U64.t
+  ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
+          pure (SpecGCPost.gc_postcondition s2 /\
+                SpecGCPost.full_gc_correctness 's s2 'st /\
+                SpecGCPost.major_gc_live_subgraph_isomorphism 's s2 'st /\
+                SpecGCPost.major_gc_unreachable_final_blue 's s2 'st)
+{
+  collect_with_roots heap st 'st fp
 }
 #pop-options

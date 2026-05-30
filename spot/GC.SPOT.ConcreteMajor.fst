@@ -127,6 +127,7 @@ let spot_major_c_reads (r: unit{spot_major_room})
       read_word major (spot_c_field0 r) == 0UL /\
       read_word major (spot_c_field1 r) == Layout.a_minor /\
       ~(SpecObj.is_blue (spot_c r) major) /\
+      ~(SpecObj.is_gray (spot_c r) major) /\
       ~(SpecObj.is_black (spot_c r) major) /\
       ~(SpecObj.is_infix (spot_c r) major) /\
       ~(SpecObj.is_no_scan (spot_c r) major)))
@@ -151,6 +152,7 @@ let spot_major_c_reads (r: unit{spot_major_room})
   SpecObj.color_of_object_spec (spot_c r) g5;
   SpecObj.tag_of_object_spec (spot_c r) g5;
   SpecObj.is_blue_iff (spot_c r) g5;
+  SpecObj.is_gray_iff (spot_c r) g5;
   SpecObj.is_black_iff (spot_c r) g5;
   SpecObj.is_infix_spec (spot_c r) g5;
   SpecObj.infix_tag_val ();
@@ -191,6 +193,7 @@ let spot_major_c_reads (r: unit{spot_major_room})
   assert (U64.v SpecObj.infix_tag == 249);
   assert (SpecObj.tag_of_object (spot_c r) g5 <> SpecObj.infix_tag);
   assert (~(SpecObj.is_blue (spot_c r) g5));
+  assert (~(SpecObj.is_gray (spot_c r) g5));
   assert (~(SpecObj.is_black (spot_c r) g5));
   assert (~(SpecObj.is_infix (spot_c r) g5));
   assert (~(SpecObj.is_no_scan (spot_c r) g5))
@@ -202,6 +205,7 @@ let spot_major_free_reads (r: unit{spot_major_room})
         U64.uint_to_t (spot_free_wosize r) /\
       read_word major (spot_free_obj r) == 0UL /\
       SpecObj.is_blue (spot_free_obj r) major /\
+      ~(SpecObj.is_gray (spot_free_obj r) major) /\
       ~(SpecObj.is_black (spot_free_obj r) major) /\
       ~(SpecObj.is_infix (spot_free_obj r) major) /\
       ~(SpecObj.is_no_scan (spot_free_obj r) major)))
@@ -226,6 +230,7 @@ let spot_major_free_reads (r: unit{spot_major_room})
   SpecObj.color_of_object_spec (spot_free_obj r) g5;
   SpecObj.tag_of_object_spec (spot_free_obj r) g5;
   SpecObj.is_blue_iff (spot_free_obj r) g5;
+  SpecObj.is_gray_iff (spot_free_obj r) g5;
   SpecObj.is_black_iff (spot_free_obj r) g5;
   SpecObj.is_infix_spec (spot_free_obj r) g5;
   SpecObj.infix_tag_val ();
@@ -240,6 +245,7 @@ let spot_major_free_reads (r: unit{spot_major_room})
   assert (U64.v SpecObj.infix_tag == 249);
   assert (SpecObj.tag_of_object (spot_free_obj r) g5 <> SpecObj.infix_tag);
   assert (SpecObj.is_blue (spot_free_obj r) g5);
+  assert (~(SpecObj.is_gray (spot_free_obj r) g5));
   assert (~(SpecObj.is_black (spot_free_obj r) g5));
   assert (~(SpecObj.is_infix (spot_free_obj r) g5));
   assert (~(SpecObj.is_no_scan (spot_free_obj r) g5))

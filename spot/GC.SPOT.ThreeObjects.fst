@@ -293,15 +293,16 @@ let spot_final_survives_from_gen_gc_post
   (minor: minor_state) (major: heap) (fp: U64.t)
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
   (roots_out: seq U64.t) (ok: bool) (final_major: heap)
-  (st: seq obj_addr) (x: obj_addr)
+  (st: seq obj_addr) (cap: nat) (x: obj_addr)
   : Lemma
       (requires
         ok /\
         GC.Gen.Impl.gen_gc_reachable_subgraph_isomorphism_post
-          minor major fp (spot_roots c) ok final_major roots_out st /\
+          minor major fp (spot_roots c) ok final_major roots_out st cap /\
         GC.Spec.Correctness.heap_reachable
-          (Cheney.cheney_collect_spec minor major fp (spot_roots c)).mc_major
-          st x)
+          (GC.Gen.Impl.gen_gc_prepared_major minor major fp (spot_roots c) st cap)
+          (GC.Gen.Impl.gen_gc_prepared_roots minor major fp (spot_roots c) st cap)
+          x)
       (ensures Seq.mem x (SpecFields.objects zero_addr final_major))
   = Postconditions.final_major_survives_from_gen_gc_post
-      minor major fp (spot_roots c) roots_out ok final_major st x
+      minor major fp (spot_roots c) roots_out ok final_major st cap x

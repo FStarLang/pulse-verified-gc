@@ -11,10 +11,12 @@ module GC.Impl.MarkBounded
 #lang-pulse
 
 open Pulse.Lib.Pervasives
+open Pulse.Lib.Array.PtsTo
 open GC.Impl.Heap
 open GC.Impl.Object
 open GC.Impl.Stack
 module U64 = FStar.UInt64
+module SZ = FStar.SizeT
 module Seq = FStar.Seq
 module SpecMark = GC.Spec.Mark
 module SpecMarkBounded = GC.Spec.MarkBounded
@@ -46,6 +48,198 @@ let check_and_darken_bounded_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64
       darken_if_white_bounded_spec g st (U64.sub v mword) cap
     else (g, st)
 
+/// Spec worker for root preparation: darken roots[0..idx) using the same
+/// bounded push discipline as field traversal.
+let rec darken_roots_bounded_prefix_spec
+    (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+    (idx: nat{idx <= Seq.length roots}) (cap: nat)
+  : GTot (heap_state & Seq.seq obj_addr) (decreases idx)
+  = if idx = 0 then (g, st)
+    else
+      let (g0, st0) = darken_roots_bounded_prefix_spec g st roots (idx - 1) cap in
+      check_and_darken_bounded_spec g0 st0 (Seq.index roots (idx - 1)) cap
+
+let darken_roots_bounded_spec
+    (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
+  : GTot (heap_state & Seq.seq obj_addr)
+  = darken_roots_bounded_prefix_spec g st roots (Seq.length roots) cap
+
+val check_and_darken_bounded_spec_length_le_cap
+  (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  : Lemma (requires Seq.length st <= cap)
+          (ensures Seq.length (snd (check_and_darken_bounded_spec g st v cap)) <= cap)
+
+val darken_roots_bounded_prefix_step
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx < Seq.length roots}) (cap: nat)
+  : Lemma (ensures
+      darken_roots_bounded_prefix_spec g st roots (idx + 1) cap ==
+        (let (g0, st0) = darken_roots_bounded_prefix_spec g st roots idx cap in
+         check_and_darken_bounded_spec g0 st0 (Seq.index roots idx) cap))
+
+val darken_roots_bounded_prefix_length_le_cap
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat)
+  : Lemma (requires Seq.length st <= cap)
+          (ensures Seq.length (snd (darken_roots_bounded_prefix_spec g st roots idx cap)) <= cap)
+
+let root_points_to_object (g: heap_state) (v: U64.t) : prop =
+  if U64.v v >= U64.v zero_addr + U64.v mword &&
+     U64.v v < heap_size &&
+     U64.v v % U64.v mword = 0
+  then
+    let h = U64.sub v mword in
+    if U64.v h + U64.v mword < heap_size then
+      Seq.mem (SpecHeap.f_address h) (SpecFields.objects zero_addr g)
+    else True
+  else True
+
+val check_and_darken_bounded_spec_preserves_wosize
+  (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  (obj: obj_addr)
+  : Lemma
+      (ensures
+        SpecObject.wosize_of_object obj
+          (fst (check_and_darken_bounded_spec g st v cap)) ==
+        SpecObject.wosize_of_object obj g)
+
+val darken_roots_bounded_prefix_preserves_wosize
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat) (obj: obj_addr)
+  : Lemma
+      (ensures
+        SpecObject.wosize_of_object obj
+          (fst (darken_roots_bounded_prefix_spec g st roots idx cap)) ==
+        SpecObject.wosize_of_object obj g)
+
+val darken_roots_bounded_spec_preserves_wosize
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat) (obj: obj_addr)
+  : Lemma
+      (ensures
+        SpecObject.wosize_of_object obj
+          (fst (darken_roots_bounded_spec g st roots cap)) ==
+        SpecObject.wosize_of_object obj g)
+
+val check_and_darken_bounded_spec_preserves_objects
+  (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  : Lemma
+      (ensures
+        SpecFields.objects zero_addr
+          (fst (check_and_darken_bounded_spec g st v cap)) ==
+        SpecFields.objects zero_addr g)
+
+val darken_roots_bounded_prefix_preserves_objects
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat)
+  : Lemma
+      (ensures
+        SpecFields.objects zero_addr
+          (fst (darken_roots_bounded_prefix_spec g st roots idx cap)) ==
+        SpecFields.objects zero_addr g)
+
+val darken_roots_bounded_spec_preserves_objects
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat)
+  : Lemma
+      (ensures
+        SpecFields.objects zero_addr
+          (fst (darken_roots_bounded_spec g st roots cap)) ==
+        SpecFields.objects zero_addr g)
+
+val check_and_darken_bounded_spec_preserves_read_word
+  (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
+  (slot: hp_addr)
+  : Lemma
+      (requires
+        (U64.v v >= U64.v zero_addr + U64.v mword /\
+         U64.v v < heap_size /\
+         U64.v v % U64.v mword == 0 ==>
+         U64.sub v mword <> slot))
+      (ensures
+        SpecHeap.read_word
+          (fst (check_and_darken_bounded_spec g st v cap)) slot ==
+        SpecHeap.read_word g slot)
+
+val darken_roots_bounded_prefix_preserves_read_word
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (idx: nat{idx <= Seq.length roots}) (cap: nat) (slot: hp_addr)
+  : Lemma
+      (requires
+        forall (i:nat). i < idx ==>
+          (U64.v (Seq.index roots i) >= U64.v zero_addr + U64.v mword /\
+           U64.v (Seq.index roots i) < heap_size /\
+           U64.v (Seq.index roots i) % U64.v mword == 0 ==>
+           U64.sub (Seq.index roots i) mword <> slot))
+      (ensures
+        SpecHeap.read_word
+          (fst (darken_roots_bounded_prefix_spec g st roots idx cap)) slot ==
+        SpecHeap.read_word g slot)
+
+val darken_roots_bounded_spec_preserves_read_word
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat) (slot: hp_addr)
+  : Lemma
+      (requires
+        forall (i:nat). i < Seq.length roots ==>
+          (U64.v (Seq.index roots i) >= U64.v zero_addr + U64.v mword /\
+           U64.v (Seq.index roots i) < heap_size /\
+           U64.v (Seq.index roots i) % U64.v mword == 0 ==>
+           U64.sub (Seq.index roots i) mword <> slot))
+      (ensures
+        SpecHeap.read_word
+          (fst (darken_roots_bounded_spec g st roots cap)) slot ==
+        SpecHeap.read_word g slot)
+
+val darken_roots_bounded_spec_preserves_bounded_mark_inv
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        SpecMarkBoundedInv.bounded_mark_inv g st cap /\
+        (forall (i:nat). i < Seq.length roots ==>
+          root_points_to_object g (Seq.index roots i)))
+      (ensures
+        SpecMarkBoundedInv.bounded_mark_inv
+          (fst (darken_roots_bounded_spec g st roots cap))
+          (snd (darken_roots_bounded_spec g st roots cap))
+          cap)
+
+val darken_roots_bounded_spec_preserves_no_black
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat)
+  : Lemma
+      (requires SpecMark.no_black_objects g)
+      (ensures
+        SpecMark.no_black_objects
+          (fst (darken_roots_bounded_spec g st roots cap)))
+
+val darken_roots_bounded_spec_preserves_no_pointer_to_blue
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        SpecFields.well_formed_heap g /\
+        SpecMark.no_pointer_to_blue g /\
+        (forall (i:nat). i < Seq.length roots ==>
+          root_points_to_object g (Seq.index roots i)))
+      (ensures
+        SpecMark.no_pointer_to_blue
+          (fst (darken_roots_bounded_spec g st roots cap)))
+
+val darken_roots_bounded_spec_preserves_no_scan_invariant
+  (g: heap_state) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        SpecFields.well_formed_heap g /\
+        SpecFields.no_scan_invariant g /\
+        (forall (i:nat). i < Seq.length roots ==>
+          root_points_to_object g (Seq.index roots i)))
+      (ensures
+        SpecFields.no_scan_invariant
+          (fst (darken_roots_bounded_spec g st roots cap)))
+
 /// Bounded mark loop: process gray objects with overflow handling.
 /// The outer loop alternates between draining the stack and rescanning
 /// the heap for remaining gray objects until none remain.
@@ -68,6 +262,21 @@ fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Gho
            pure (Seq.length 'st <= cap /\ stack_capacity st == cap)
   ensures exists* s2 st2. is_heap heap s2 ** is_gray_stack st st2 **
     pure ((s2, st2) == check_and_darken_bounded_spec 's 'st v cap)
+
+/// Darken every root in the supplied root array.  This is the operational
+/// preparation step used before invoking bounded mark with an explicit ghost
+/// root set.
+fn darken_roots_bounded
+    (heap: heap_t) (st: gray_stack) (roots: array U64.t) (nroots: SZ.t)
+    (cap: Ghost.erased nat)
+  requires is_heap heap 's ** is_gray_stack st 'st ** pts_to roots 'rs **
+           pure (SZ.v nroots == Seq.length 'rs /\
+                 Seq.length 'st <= cap /\
+                 stack_capacity st == cap)
+  ensures exists* s2 st2 rs2.
+    is_heap heap s2 ** is_gray_stack st st2 ** pts_to roots rs2 **
+    pure (rs2 == 'rs /\
+          (s2, st2) == darken_roots_bounded_spec 's 'st 'rs cap)
 
 /// Bounded mark loop: process gray objects with overflow handling.
 /// The outer loop alternates between draining the stack and rescanning

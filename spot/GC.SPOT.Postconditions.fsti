@@ -87,12 +87,14 @@ val major_minor_field_rewritten
 val final_major_survives_from_gen_gc_post
   : minor:minor_state -> major:heap -> fp:U64.t ->
     roots:seq U64.t -> roots_out:seq U64.t ->
-    ok:bool -> final_major:heap -> st:seq obj_addr -> x:obj_addr ->
+    ok:bool -> final_major:heap -> st:seq obj_addr -> cap:nat -> x:obj_addr ->
     Lemma
       (requires
         ok /\
         GC.Gen.Impl.gen_gc_reachable_subgraph_isomorphism_post
-          minor major fp roots ok final_major roots_out st /\
+          minor major fp roots ok final_major roots_out st cap /\
         GC.Spec.Correctness.heap_reachable
-          (GC.Gen.Cheney.cheney_collect_spec minor major fp roots).mc_major st x)
+          (GC.Gen.Impl.gen_gc_prepared_major minor major fp roots st cap)
+          (GC.Gen.Impl.gen_gc_prepared_roots minor major fp roots st cap)
+          x)
       (ensures Seq.mem x (GC.Spec.Fields.objects zero_addr final_major))

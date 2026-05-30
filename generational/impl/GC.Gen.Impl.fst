@@ -33,6 +33,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
 module ML = FStar.Math.Lemmas
 module MajorGC = GC.Impl
+module MarkBoundedImpl = GC.Impl.MarkBounded
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Sweep = GC.Spec.Sweep
@@ -1013,10 +1014,10 @@ fn gen_gc (gh: gen_heap_t)
            is_gray_stack st 'st **
              pure (
                let minor_st : minor_state = { data = 'd; bump = 'b } in
-               let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
                GenInv.collection_heap_shape minor_st 's 'fp /\
-               GenInv.major_stack_shape result.mc_major 'st (stack_capacity st) /\
-               roots_match_stack result.mc_roots 'st /\
+               Seq.length 'st <= stack_capacity st /\
+               gen_gc_major_precondition
+                 minor_st 's 'fp 'rs 'st (stack_capacity st) /\
                SZ.v nroots == Seq.length 'rs /\
                Seq.length 'farr == fwd_array_size /\
                (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL) /\
@@ -1041,12 +1042,12 @@ fn gen_gc (gh: gen_heap_t)
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let ok = snd res in
-      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st /\
-      gen_gc_heap_shape_post d2 b2 result.mc_major s2 result.mc_fp
-        'st (stack_capacity st) /\
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st (stack_capacity st) /\
+      gen_gc_heap_shape_post d2 b2 s2 /\
       gen_gc_reachable_subgraph_isomorphism_post
-        minor_st 's 'fp 'rs ok s2 rs2 'st /\
-      gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs s2 'st)
+        minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
+      gen_gc_unreachable_final_blue_post
+        minor_st 's 'fp 'rs s2 'st (stack_capacity st))
 {
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
@@ -1078,83 +1079,62 @@ fn gen_gc (gh: gen_heap_t)
     ({ data = d_mid; bump = b_mid } <: minor_state) ms_updated fp_val));
   assert (pure (GenInv.collection_heap_shape
     ({ data = d_mid; bump = b_mid } <: minor_state) ms_updated fp_mid));
-  GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
-    ms_updated fp_mid;
-  assert (pure (GenInv.major_heap_shape ms_updated fp_mid));
-  GenInv.major_heap_shape_elim ms_updated fp_mid;
-  GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
-    ms_updated fp_val;
-  assert (pure (GenInv.major_heap_shape ms_updated fp_val));
-  GenInv.major_heap_shape_elim ms_updated fp_val;
-  assert (pure (SpecFields.well_formed_heap ms_updated));
-  assert (pure (FreeListShape.fp_pointer_or_zero fp_val));
-  assert (pure (SweepInv.fp_valid fp_val ms_updated));
-  assert (pure (Sweep.fp_in_heap fp_val ms_updated));
-  assert (pure (Mark.no_black_objects ms_updated));
-  GenInv.major_stack_shape_elim
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
-    'st (stack_capacity st);
-  assert (pure (GC.Spec.MarkBounded.bounded_stack_props ms_updated 'st));
-  assert (pure (Seq.length (SpecFields.objects zero_addr ms_updated) > 0));
-  assert (pure (PromoteSpec.heap_objects_dense ms_updated));
-  SweepInv.heap_objects_dense_intro ms_updated;
-  assert (pure (SweepInv.heap_objects_dense ms_updated));
-  assert (pure (Seq.length 'st <= stack_capacity st /\ stack_capacity st > 0));
-  GC.Spec.MarkBoundedInv.bounded_mark_inv_intro ms_updated 'st (stack_capacity st);
-  assert (pure (GC.Spec.MarkBoundedInv.bounded_mark_inv ms_updated 'st (stack_capacity st)));
-  assert (pure (Mark.no_pointer_to_blue ms_updated));
-  assert (pure (Mark.root_props ms_updated 'st));
-  assert (pure (SpecFields.no_scan_invariant ms_updated));
-  assert (pure (CheneyPres.gray_black_objects_on_stack ms_updated 'st));
-  assert (pure (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr ms_updated) /\
-    (GC.Spec.Object.is_gray x ms_updated \/ GC.Spec.Object.is_black x ms_updated) ==> Seq.mem x 'st));
-  assert (pure (GC.Spec.Graph.is_vertex_set (GC.Spec.HeapGraph.coerce_to_vertex_list 'st)));
-  Mark.root_graph_precondition ms_updated 'st;
-  assert (pure (let graph = GC.Spec.HeapModel.create_graph ms_updated in
-    let roots' = GC.Spec.HeapGraph.coerce_to_vertex_list 'st in
-    GC.Spec.Graph.graph_wf graph /\ GC.Spec.Graph.is_vertex_set roots' /\
-    GC.Spec.Graph.subset_vertices roots' graph.vertices));
-  assert (pure (GenInv.gray_black_objects_on_stack ms_updated 'st));
-  GenInv.major_stack_shape_intro ms_updated 'st (stack_capacity st);
-  assert (pure (GenInv.collection_heap_shape
-    ({ data = d_mid; bump = b_mid } <: minor_state) ms_updated fp_val));
-  GenInv.full_heap_shape_intro
-    ({ data = d_mid; bump = b_mid } <: minor_state) ms_updated fp_val
-    'st (stack_capacity st);
-  assert (pure (GenInv.full_heap_shape
-    ({ data = d_mid; bump = b_mid } <: minor_state)
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_fp
-    'st (stack_capacity st)));
   assert (pure (rs_mid ==
     (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_roots));
   assert (pure (rs_mid ==
     PromoteSpec.rewrite_roots 'rs
       (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map));
+  PromoteSpec.rewrite_roots_length 'rs
+    (CheneySpec.cheney_promote ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).fwd_map;
+  assert (pure (SZ.v nroots == Seq.length rs_mid));
   assert (pure (U64.v b_mid == 0));
+  GenInv.collection_heap_shape_elim ({ data = d_mid; bump = b_mid } <: minor_state)
+    ms_updated fp_val;
+  assert (pure (GenInv.major_heap_shape ms_updated fp_val));
+  GenInv.major_heap_shape_elim ms_updated fp_val;
+  assert (pure (SpecFields.well_formed_heap ms_updated));
   wfh_implies_part1 ms_updated;
   assert (pure (SpecFields.well_formed_heap_part1 ms_updated));
   assert (pure (SpecFields.well_formed_heap_part1
     (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major));
+  MarkBoundedImpl.darken_roots_bounded gh.major st roots nroots (stack_capacity st);
+  with prepared_major prepared_st roots_after. assert (
+    is_heap gh.major prepared_major **
+    is_gray_stack st prepared_st **
+    pts_to roots roots_after);
+  assert (pure (roots_after == rs_mid));
+  assert (pure ((prepared_major, prepared_st) ==
+    gen_gc_prepared_state
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)));
+  assert (pure (gen_gc_major_precondition
+    ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)));
+  assert (pure (MajorGC.gc_precondition_with_roots
+    prepared_major prepared_st prepared_st fp_val (stack_capacity st)));
+  assert (pure (roots_match_stack rs_mid prepared_st));
   // Phase 2: Major collection (mark + sweep + coalesce)
-  let final_fp = MajorGC.collect gh.major st fp_val;
+  let final_fp = MajorGC.collect_with_roots gh.major st prepared_st fp_val;
 
   with s_final st_final. assert (
     is_heap gh.major s_final **
     is_gray_stack st st_final);
   assert (pure (SpecGCPost.gc_postcondition s_final));
-  assert (pure (SpecGCPost.full_gc_correctness ms_updated s_final 'st));
-  assert (pure (SpecGCPost.full_gc_correctness
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
-    s_final 'st));
-  assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism ms_updated s_final 'st));
-  assert (pure (SpecGCPost.major_gc_unreachable_final_blue ms_updated s_final 'st));
+  assert (pure (SpecGCPost.full_gc_correctness prepared_major s_final prepared_st));
   assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
-    s_final 'st));
+    prepared_major s_final prepared_st));
   assert (pure (SpecGCPost.major_gc_unreachable_final_blue
-    (CheneySpec.cheney_collect_spec ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs).mc_major
-    s_final 'st));
+    prepared_major s_final prepared_st));
+  assert (pure (SpecGCPost.major_gc_live_subgraph_isomorphism
+    (fst (gen_gc_prepared_state
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))
+    s_final
+    (snd (gen_gc_prepared_state
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))));
+  assert (pure (SpecGCPost.major_gc_unreachable_final_blue
+    (fst (gen_gc_prepared_state
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))
+    s_final
+    (snd (gen_gc_prepared_state
+      ({data = 'd; bump = 'b} <: minor_state) 's 'fp 'rs 'st (stack_capacity st)))));
 
   // Phase 6: Update free-list pointer and re-fold gen heap
   R.op_Colon_Equals gh.fp_ref final_fp;

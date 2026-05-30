@@ -73,12 +73,7 @@ fn call_concrete_minor_collect_full_spot
            pts_to slots (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) **
            pure (
              SZ.v nroots == 2 /\
-             SZ.v nslots == 1 /\
-             GC.Gen.CheneyBFS.cheney_no_oom
-               ConcreteMinor.spot_minor2
-               (ConcreteMajor.spot_major_heap r)
-               (ConcreteMajor.spot_major_fp r)
-               (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
+             SZ.v nslots == 1)
   returns ok: bool
   ensures exists* d2 b2 post_major fp2 roots_out farr_out qv_out.
     is_gen_heap gh d2 b2 post_major fp2 **
@@ -95,4 +90,3 @@ fn call_concrete_minor_collect_full_spot
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
         ok post_major roots_out /\
       spot_minor_collect_full_success_post r post_major)
-

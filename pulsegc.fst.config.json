@@ -13,6 +13,7 @@
     "mark-and-sweep/spec",
     "mark-and-sweep/impl",
     "generational/spec",
-    "generational/impl"
+    "generational/impl",
+    "spot"
   ]
 }

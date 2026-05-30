@@ -23,6 +23,7 @@ module Layout = GC.SPOT.Layout
 module ConcreteMinor = GC.SPOT.ConcreteMinor
 module ConcreteMajor = GC.SPOT.ConcreteMajor
 module ConcreteScenarios = GC.SPOT.ConcreteScenarios
+module ConcreteForwarding = GC.SPOT.ConcreteForwarding
 module Postconditions = GC.SPOT.Postconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
 module Preconditions = GC.SPOT.Preconditions
@@ -33,11 +34,6 @@ let spot_minor_collect_full_success_post_from_call_post
   (post_major: heap)
   : Lemma
       (requires
-        GC.Gen.CheneyBFS.cheney_no_oom
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) /\
         post_major ==
           (CheneySpec.cheney_collect_spec
             ConcreteMinor.spot_minor2
@@ -46,6 +42,7 @@ let spot_minor_collect_full_success_post_from_call_post
             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).mc_major)
       (ensures spot_minor_collect_full_success_post r post_major)
   =
+  ConcreteForwarding.spot_concrete_no_oom r;
   ConcreteScenarios.spot_concrete_a_promoted_from_no_oom r;
   ConcreteScenarios.spot_concrete_c_field_rewritten_from_no_oom r;
   ConcreteScenarios.spot_concrete_b_not_promoted r
@@ -65,12 +62,7 @@ fn call_concrete_minor_collect_full_spot
            pts_to slots (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) **
            pure (
              SZ.v nroots == 2 /\
-             SZ.v nslots == 1 /\
-             GC.Gen.CheneyBFS.cheney_no_oom
-               ConcreteMinor.spot_minor2
-               (ConcreteMajor.spot_major_heap r)
-               (ConcreteMajor.spot_major_fp r)
-               (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
+             SZ.v nslots == 1)
   returns ok: bool
   ensures exists* d2 b2 post_major fp2 roots_out farr_out qv_out.
     is_gen_heap gh d2 b2 post_major fp2 **
@@ -89,6 +81,7 @@ fn call_concrete_minor_collect_full_spot
       spot_minor_collect_full_success_post r post_major)
 {
   let c = ConcreteMajor.spot_c r;
+  ConcreteForwarding.spot_concrete_no_oom r;
   ThreeObjects.spot_roots_len c;
   ThreeObjects.spot_slots_len c;
   assert (pure (

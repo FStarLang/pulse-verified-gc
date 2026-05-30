@@ -45,6 +45,8 @@ FSTAR = $(FSTAR_EXE) $(FSTAR_FLAGS)
 # True entry points: only scan dependencies from these roots
 # This identifies orphaned/unused files that are not reachable
 ROOT_MODULES = \
+  mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti \
+  mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst \
   generational/impl/GC.Gen.Impl.fsti \
   generational/impl/GC.Gen.Impl.fst
 
@@ -60,7 +62,7 @@ ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC) $(SPOT_SRC)
 
 # --- Auto-generated dependency graph ----------------------------------------
 
-.depend: $(ROOT_MODULES) $(ALL_SRC)
+.depend: Makefile $(ROOT_MODULES) $(ALL_SRC)
 	@echo "Scanning dependencies from roots: $(ROOT_MODULES)"
 	$(FSTAR) --dep full $(ROOT_MODULES) --output_deps_to $@.raw
 	@awk -v cwd="$$(pwd)/" ' \

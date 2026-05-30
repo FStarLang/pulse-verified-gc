@@ -31,6 +31,7 @@ module CheneySpec = GC.Gen.Cheney
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module PromoteSpec = GC.Gen.Promote
 module MajorGC = GC.Impl
+module MarkBoundedImpl = GC.Impl.MarkBounded
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
@@ -79,26 +80,48 @@ let roots_match_stack_root_in_stack
       (ensures Seq.mem r st)
   = ()
 
+let gen_gc_prepared_state
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat) : GTot (heap & Seq.seq obj_addr) =
+  let result = CheneySpec.cheney_collect_spec minor major fp roots in
+  MarkBoundedImpl.darken_roots_bounded_spec result.mc_major st result.mc_roots cap
+
+let gen_gc_prepared_major
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat) : GTot heap =
+  fst (gen_gc_prepared_state minor major fp roots st cap)
+
+let gen_gc_prepared_roots
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat) : GTot (Seq.seq obj_addr) =
+  snd (gen_gc_prepared_state minor major fp roots st cap)
+
+let gen_gc_major_precondition
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat) : prop =
+  let result = CheneySpec.cheney_collect_spec minor major fp roots in
+  let prepared = gen_gc_prepared_state minor major fp roots st cap in
+  MajorGC.gc_precondition_with_roots
+    (fst prepared) (snd prepared) (snd prepared) result.mc_fp cap /\
+  roots_match_stack result.mc_roots (snd prepared)
+
 /// The roots array contains exactly the post-minor roots used by the following
 /// major collection.
 let gen_gc_roots_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots roots_out: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) : prop =
+  (st: Seq.seq obj_addr) (cap: nat) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  roots_out == result.mc_roots /\ roots_match_stack roots_out st
+  roots_out == result.mc_roots /\
+  roots_match_stack roots_out (gen_gc_prepared_roots minor major fp roots st cap)
 
 /// Shape facts exposed by the abstract `gen_gc` contract: the nursery is reset,
 /// the final major heap satisfies the major GC postcondition, and the post-minor
 /// heap has the full shape needed by the major phase.
 let gen_gc_heap_shape_post
   (minor_data: minor_heap) (minor_bump: U64.t)
-  (post_minor_major final_major: heap) (post_minor_fp: U64.t)
-  (st: Seq.seq obj_addr) (cap: nat) : prop =
+  (final_major: heap) : prop =
   U64.v minor_bump == 0 /\
-  SpecGCPost.gc_postcondition final_major /\
-  GenInv.full_heap_shape
-    ({ data = minor_data; bump = minor_bump } <: minor_state)
-    post_minor_major post_minor_fp st cap
+  SpecGCPost.gc_postcondition final_major
 
 /// Reachable subgraph correctness.  On successful promotion, minor collection
 /// maps the original combined reachable subgraph into the post-minor major heap;
@@ -106,22 +129,25 @@ let gen_gc_heap_shape_post
 let gen_gc_reachable_subgraph_isomorphism_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   (ok: bool) (final_major: heap) (roots_out: Seq.seq U64.t)
-  (st: Seq.seq obj_addr) : prop =
+  (st: Seq.seq obj_addr) (cap: nat) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  ok ==>
-  MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
-    minor major fp roots result.mc_major roots_out /\
-  MinorFwd.normal_result_non_pointer_fields_preserved_prop
-    minor major fp roots result.mc_major /\
-  SpecGCPost.major_gc_live_subgraph_isomorphism result.mc_major final_major st
+  let prepared = gen_gc_prepared_state minor major fp roots st cap in
+  gen_gc_major_precondition minor major fp roots st cap /\
+  (ok ==>
+   MinorFwd.normal_result_reachable_subgraph_isomorphism_prop
+     minor major fp roots result.mc_major roots_out /\
+   MinorFwd.normal_result_non_pointer_fields_preserved_prop
+     minor major fp roots result.mc_major /\
+   SpecGCPost.major_gc_live_subgraph_isomorphism
+     (fst prepared) final_major (snd prepared))
 
 /// Collection completeness: every object that remains in the final major heap
 /// but is not reachable from the final roots is blue.
 let gen_gc_unreachable_final_blue_post
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
-  (final_major: heap) (st: Seq.seq obj_addr) : prop =
-  let result = CheneySpec.cheney_collect_spec minor major fp roots in
-  SpecGCPost.major_gc_unreachable_final_blue result.mc_major final_major st
+  (final_major: heap) (st: Seq.seq obj_addr) (cap: nat) : prop =
+  let prepared = gen_gc_prepared_state minor major fp roots st cap in
+  SpecGCPost.major_gc_unreachable_final_blue (fst prepared) final_major (snd prepared)
 
 [@@"opaque_to_smt"]
 let minor_heap_no_scan_invariant (d: minor_heap) (b: U64.t) : prop =
@@ -263,12 +289,12 @@ fn gen_gc (gh: gen_heap_t)
            is_gray_stack st 'st **
            pure (
               let minor_st : minor_state = { data = 'd; bump = 'b } in
-              let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
-              // Pre-minor shape plus the post-minor major-root stack used by
-              // mark/sweep.  The stack must match the roots after promotion.
+              // Pre-minor shape plus the internally prepared post-minor root
+              // stack used by mark/sweep.
               GenInv.collection_heap_shape minor_st 's 'fp /\
-              GenInv.major_stack_shape result.mc_major 'st (stack_capacity st) /\
-              roots_match_stack result.mc_roots 'st /\
+              Seq.length 'st <= stack_capacity st /\
+              gen_gc_major_precondition
+                minor_st 's 'fp 'rs 'st (stack_capacity st) /\
 
                // Operational array preconditions.
                SZ.v nroots == Seq.length 'rs /\
@@ -295,9 +321,9 @@ fn gen_gc (gh: gen_heap_t)
       let minor_st : minor_state = { data = 'd; bump = 'b } in
       let result = CheneySpec.cheney_collect_spec minor_st 's 'fp 'rs in
       let ok = snd res in
-      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st /\
-      gen_gc_heap_shape_post d2 b2 result.mc_major s2 result.mc_fp
-        'st (stack_capacity st) /\
+      gen_gc_roots_post minor_st 's 'fp 'rs rs2 'st (stack_capacity st) /\
+      gen_gc_heap_shape_post d2 b2 s2 /\
       gen_gc_reachable_subgraph_isomorphism_post
-        minor_st 's 'fp 'rs ok s2 rs2 'st /\
-      gen_gc_unreachable_final_blue_post minor_st 's 'fp 'rs s2 'st)
+        minor_st 's 'fp 'rs ok s2 rs2 'st (stack_capacity st) /\
+      gen_gc_unreachable_final_blue_post
+        minor_st 's 'fp 'rs s2 'st (stack_capacity st))

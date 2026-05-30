@@ -42,12 +42,6 @@ val spot_concrete_minor_collect_full_pre
 val spot_concrete_minor_scenario_pre_from_no_oom
   : r:unit{ConcreteMajor.spot_major_room} ->
     Lemma
-      (requires
-        GC.Gen.CheneyBFS.cheney_no_oom
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
       (ensures
         ThreeObjects.spot_minor_scenario_pre
           ConcreteMinor.spot_minor2
@@ -61,14 +55,13 @@ val spot_concrete_gen_gc_pre_from_stack
     st:seq obj_addr -> cap:nat ->
     Lemma
       (requires
-        (let result =
-          Cheney.cheney_collect_spec
-            ConcreteMinor.spot_minor2
-            (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
-            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        GenInv.major_stack_shape result.mc_major st cap /\
-        GenImpl.roots_match_stack result.mc_roots st))
+        Seq.length st <= cap /\
+        GenImpl.gen_gc_major_precondition
+          ConcreteMinor.spot_minor2
+          (ConcreteMajor.spot_major_heap r)
+          (ConcreteMajor.spot_major_fp r)
+          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
+          st cap)
       (ensures
         Preconditions.gen_gc_pre
           ConcreteMinor.spot_minor2
@@ -79,15 +72,23 @@ val spot_concrete_gen_gc_pre_from_stack
           (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
           1 st cap)
 
-val spot_concrete_a_promoted_from_no_oom
+val spot_concrete_gen_gc_pre_empty_stack
   : r:unit{ConcreteMajor.spot_major_room} ->
+    cap:nat{cap >= 2} ->
     Lemma
-      (requires
-        GC.Gen.CheneyBFS.cheney_no_oom
+      (ensures
+        Preconditions.gen_gc_pre
           ConcreteMinor.spot_minor2
           (ConcreteMajor.spot_major_heap r)
           (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
+          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
+          spot_fwd_array
+          (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
+          1 Seq.empty cap)
+
+val spot_concrete_a_promoted_from_no_oom
+  : r:unit{ConcreteMajor.spot_major_room} ->
+    Lemma
       (ensures (
         let prom =
           Cheney.cheney_promote
@@ -106,12 +107,6 @@ val spot_concrete_a_promoted_from_no_oom
 val spot_concrete_c_field_rewritten_from_no_oom
   : r:unit{ConcreteMajor.spot_major_room} ->
     Lemma
-      (requires
-        GC.Gen.CheneyBFS.cheney_no_oom
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
       (ensures (
         let prom =
           Cheney.cheney_promote

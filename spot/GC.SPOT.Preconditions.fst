@@ -35,10 +35,9 @@ let gen_gc_pre
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots farr slots: seq U64.t) (nslots: nat)
   (st: seq obj_addr) (cap: nat) : prop =
-  let result = Cheney.cheney_collect_spec minor major fp roots in
   minor_collect_full_pre minor major fp roots farr slots nslots /\
-  GenInv.major_stack_shape result.mc_major st cap /\
-  GenImpl.roots_match_stack result.mc_roots st
+  Seq.length st <= cap /\
+  GenImpl.gen_gc_major_precondition minor major fp roots st cap
 
 let zero_forwarding_array_elim (farr: seq U64.t)
   : Lemma (requires zero_forwarding_array farr)
@@ -98,9 +97,8 @@ let gen_gc_pre_elim
   : Lemma (requires gen_gc_pre minor major fp roots farr slots nslots st cap)
           (ensures
             minor_collect_full_pre minor major fp roots farr slots nslots /\
-            (let result = Cheney.cheney_collect_spec minor major fp roots in
-             GenInv.major_stack_shape result.mc_major st cap /\
-             GenImpl.roots_match_stack result.mc_roots st))
+            Seq.length st <= cap /\
+            GenImpl.gen_gc_major_precondition minor major fp roots st cap)
   = ()
 
 let gen_gc_pre_intro
@@ -110,8 +108,7 @@ let gen_gc_pre_intro
   : Lemma
       (requires
         minor_collect_full_pre minor major fp roots farr slots nslots /\
-        (let result = Cheney.cheney_collect_spec minor major fp roots in
-         GenInv.major_stack_shape result.mc_major st cap /\
-         GenImpl.roots_match_stack result.mc_roots st))
+        Seq.length st <= cap /\
+        GenImpl.gen_gc_major_precondition minor major fp roots st cap)
       (ensures gen_gc_pre minor major fp roots farr slots nslots st cap)
   = ()

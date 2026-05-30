@@ -121,16 +121,20 @@ let major_minor_field_rewritten
 let final_major_survives_from_gen_gc_post
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots roots_out: seq U64.t) (ok: bool) (final_major: heap)
-  (st: seq obj_addr) (x: obj_addr)
+  (st: seq obj_addr) (cap: nat) (x: obj_addr)
   : Lemma
       (requires
         ok /\
         GenImpl.gen_gc_reachable_subgraph_isomorphism_post
-          minor major fp roots ok final_major roots_out st /\
+          minor major fp roots ok final_major roots_out st cap /\
         SpecCorrectness.heap_reachable
-          (Cheney.cheney_collect_spec minor major fp roots).mc_major st x)
+          (GenImpl.gen_gc_prepared_major minor major fp roots st cap)
+          (GenImpl.gen_gc_prepared_roots minor major fp roots st cap)
+          x)
       (ensures Seq.mem x (SpecFields.objects zero_addr final_major))
   =
   assert (SpecCorrectness.major_gc_live_subgraph_isomorphism
-    (Cheney.cheney_collect_spec minor major fp roots).mc_major final_major st);
+    (GenImpl.gen_gc_prepared_major minor major fp roots st cap)
+    final_major
+    (GenImpl.gen_gc_prepared_roots minor major fp roots st cap));
   assert (Seq.mem x (SpecFields.objects zero_addr final_major))

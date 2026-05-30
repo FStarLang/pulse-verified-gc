@@ -43,6 +43,7 @@ val spot_major_c_reads
       SpecHeap.read_word major (spot_c_field0 r) == 0UL /\
       SpecHeap.read_word major (spot_c_field1 r) == Layout.a_minor /\
       ~(SpecObj.is_blue (spot_c r) major) /\
+      ~(SpecObj.is_gray (spot_c r) major) /\
       ~(SpecObj.is_black (spot_c r) major) /\
       ~(SpecObj.is_infix (spot_c r) major) /\
       ~(SpecObj.is_no_scan (spot_c r) major)))
@@ -55,6 +56,7 @@ val spot_major_free_reads
         U64.uint_to_t (spot_free_wosize r) /\
       SpecHeap.read_word major (spot_free_obj r) == 0UL /\
       SpecObj.is_blue (spot_free_obj r) major /\
+      ~(SpecObj.is_gray (spot_free_obj r) major) /\
       ~(SpecObj.is_black (spot_free_obj r) major) /\
       ~(SpecObj.is_infix (spot_free_obj r) major) /\
       ~(SpecObj.is_no_scan (spot_free_obj r) major)))

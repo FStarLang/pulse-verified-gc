@@ -51,19 +51,15 @@ fn call_gen_gc_spot
     is_gray_stack st st2 **
     pure (
       gen_gc_roots_post
-        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs rs2 'st /\
-      gen_gc_heap_shape_post d2 b2
-        (CheneySpec.cheney_collect_spec
-          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs).mc_major
-        s2
-        (CheneySpec.cheney_collect_spec
-          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs).mc_fp
-        'st (stack_capacity st) /\
+        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
+        rs2 'st (stack_capacity st) /\
+      gen_gc_heap_shape_post d2 b2 s2 /\
       gen_gc_reachable_subgraph_isomorphism_post
         ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
-        (snd res) s2 rs2 'st /\
+        (snd res) s2 rs2 'st (stack_capacity st) /\
       gen_gc_unreachable_final_blue_post
-        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2 'st)
+        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
+        s2 'st (stack_capacity st))
 {
   Preconditions.gen_gc_pre_elim
     ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs 'farr 'sl
@@ -73,4 +69,3 @@ fn call_gen_gc_spot
     (SZ.v nslots);
   gen_gc gh roots nroots fwd_arr queue slots nslots st
 }
-

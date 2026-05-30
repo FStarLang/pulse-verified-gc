@@ -68,8 +68,10 @@ generational development and treating upstream `GC.*` modules as already cached.
   It exposes reusable lemmas for promotion from nonzero forwarding, no-promotion
   from zero forwarding, remembered-field rewriting, and final major survival
   from the `gen_gc` isomorphism postcondition.
-- `GC.SPOT.ConcreteForwarding`: proves the concrete Cheney forwarding fact for
-  the unreachable minor object B: its forwarding-map entry remains zero.
+- `GC.SPOT.ConcreteForwarding`: proves the concrete Cheney forwarding facts.
+  The concrete no-OOM obligation is discharged internally by proving root
+  coverage and scanned-forwarding closure for C -> A, A's promotion succeeds,
+  and the unreachable minor object B's forwarding-map entry remains zero.
 - `GC.SPOT.ConcreteScenarios`: connects the concrete A/B/C heaps, roots, slot
   table, and forwarding array to the real `minor_collect_full` and `gen_gc`
   precondition bundles. It proves A is promoted, C.field1 is rewritten to A',
@@ -118,22 +120,25 @@ The cleaned campaign now validates the collector proof surface directly:
 4. B's collection fact is isolated to the exact Cheney execution fact that
    `(cheney_promote ...).fwd_map b_minor == 0UL`, which is now proved for the
    concrete heap and then lifted to "B was not promoted."
-5. The final full-GC connector uses `gen_gc_roots_post`,
+5. The concrete Cheney no-OOM precondition is no longer exposed by the concrete
+   call connectors. `ConcreteForwarding` proves it once from the three-object
+   heap and roots, and the minor/full concrete wrappers call that lemma before
+   invoking the generic collector wrappers.
+6. The final full-GC connector uses `gen_gc_roots_post`,
    `gen_gc_heap_shape_post`, and
    `gen_gc_reachable_subgraph_isomorphism_post`: C and A' are placed in the
    major mark stack from the rewritten roots, shown reachable in the post-minor
    major heap, and then shown to survive in the final major heap.
-6. C.field1 preservation is proved through the exported major-GC live-subgraph
+7. C.field1 preservation is proved through the exported major-GC live-subgraph
    isomorphism: the post-minor proof establishes that C.field1 contains A', and
    the final proof uses the field-preservation conjunct for reachable object C
    at field index 2 to show the same slot still contains A' after `gen_gc`.
-7. The final Pulse layer is imperative: `ConcreteCallMinor` calls
+8. The final Pulse layer is imperative: `ConcreteCallMinor` calls
    `minor_collect_full` on concrete resources and `ConcreteCallFull` calls
-   `gen_gc` on concrete resources. The full connector takes the gray stack as an
-   explicit runtime resource because `gen_gc`'s contract requires the caller to
-   supply a stack whose logical contents match the post-minor roots; the wrapper
-   proves that this stack fact, together with the concrete heap/array facts, is
-   exactly the real `gen_gc` precondition.
+   `gen_gc` on concrete resources. The full connector now takes an empty gray
+   stack with capacity at least two and proves internally that darkening the
+   concrete post-minor roots produces the real `gen_gc` major-collection
+   precondition.
 
 ## Completed Connector
 
@@ -142,10 +147,17 @@ The active SPOT now covers the concrete three-object scenario end to end:
 - roots before the minor phase are exactly `[C; A]`;
 - the remembered table has exactly one slot, C.field1;
 - the concrete heap satisfies the `minor_collect_full` preconditions;
+- the concrete Cheney no-OOM proof is derived from the layout and is not a
+  caller precondition of the concrete Pulse connectors;
 - the post-minor result promotes A to A', rewrites C.field1 to A', and leaves
   B without a promoted image;
-- the post-minor state satisfies the `gen_gc` preconditions; and
+- the post-minor state satisfies the `gen_gc` preconditions from an initially
+  empty gray stack with capacity at least two; and
 - the final major heap contains both C and A', with C.field1 still pointing to
   A'.
 
 There are no local admits or assumes in the active `GC.SPOT.*` campaign.
+The remaining visible preconditions of the concrete call connectors are linear
+Pulse resources (heap, roots, forwarding array, Cheney queue, remembered slots,
+and an initially empty gray stack). The former stack-shape proof obligation is
+now constructed inside the concrete full-GC wrapper.

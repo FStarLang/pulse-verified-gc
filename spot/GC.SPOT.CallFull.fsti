@@ -45,17 +45,12 @@ fn call_gen_gc_spot
     is_gray_stack st st2 **
     pure (
       GC.Gen.Impl.gen_gc_roots_post
-        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs rs2 'st /\
-      GC.Gen.Impl.gen_gc_heap_shape_post d2 b2
-        (GC.Gen.Cheney.cheney_collect_spec
-          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs).mc_major
-        s2
-        (GC.Gen.Cheney.cheney_collect_spec
-          ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs).mc_fp
-        'st (stack_capacity st) /\
+        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
+        rs2 'st (stack_capacity st) /\
+      GC.Gen.Impl.gen_gc_heap_shape_post d2 b2 s2 /\
       GC.Gen.Impl.gen_gc_reachable_subgraph_isomorphism_post
         ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
-        (snd res) s2 rs2 'st /\
+        (snd res) s2 rs2 'st (stack_capacity st) /\
       GC.Gen.Impl.gen_gc_unreachable_final_blue_post
-        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs s2 'st)
-
+        ({ data = 'd; bump = 'b } <: minor_state) 's 'fp 'rs
+        s2 'st (stack_capacity st))

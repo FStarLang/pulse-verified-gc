@@ -74,9 +74,8 @@ val gen_gc_pre_elim
     Lemma (requires gen_gc_pre minor major fp roots farr slots nslots st cap)
           (ensures
             minor_collect_full_pre minor major fp roots farr slots nslots /\
-            (let result = GC.Gen.Cheney.cheney_collect_spec minor major fp roots in
-             GC.Gen.HeapInvariant.major_stack_shape result.mc_major st cap /\
-             GC.Gen.Impl.roots_match_stack result.mc_roots st))
+            Seq.length st <= cap /\
+            GC.Gen.Impl.gen_gc_major_precondition minor major fp roots st cap)
 
 val gen_gc_pre_intro
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
@@ -85,7 +84,6 @@ val gen_gc_pre_intro
     Lemma
       (requires
         minor_collect_full_pre minor major fp roots farr slots nslots /\
-        (let result = GC.Gen.Cheney.cheney_collect_spec minor major fp roots in
-         GC.Gen.HeapInvariant.major_stack_shape result.mc_major st cap /\
-         GC.Gen.Impl.roots_match_stack result.mc_roots st))
+        Seq.length st <= cap /\
+        GC.Gen.Impl.gen_gc_major_precondition minor major fp roots st cap)
       (ensures gen_gc_pre minor major fp roots farr slots nslots st cap)
