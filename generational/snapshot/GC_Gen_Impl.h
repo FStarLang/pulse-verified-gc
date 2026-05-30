@@ -167,6 +167,8 @@ void rewrite_heap_slots(heap_t major, uint64_t *fwd_arr, uint64_t *slots, size_t
 
 void update_promoted_objects(heap_t major, uint64_t *fwd_arr);
 
+uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp);
+
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t init_heap(heap_t heap);
@@ -178,6 +180,8 @@ K___uint64_t_uint64_t allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize);
 void darken_if_white_bounded(heap_t heap, gray_stack_rec st, uint64_t h_addr);
 
 void check_and_darken_bounded(heap_t heap, gray_stack_rec st, uint64_t v);
+
+void darken_roots_bounded(heap_t heap, gray_stack_rec st, uint64_t *roots, size_t nroots);
 
 void mark_loop_bounded(heap_t heap, gray_stack_rec st);
 

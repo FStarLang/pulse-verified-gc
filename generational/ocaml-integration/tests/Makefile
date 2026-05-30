@@ -42,50 +42,52 @@ test: $(BYTE_FILES)
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
 
-benchmark: $(BYTE_FILES)
+benchmark: bench-all
 	@echo "=== Benchmarks ==="
+
+results:
 	@mkdir -p results
 
-binarytrees.bench: binarytrees.byte
+binarytrees.bench: binarytrees.byte | results
 	MIN_EXPANSION_WORDSIZE=134217728 \
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 16' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 16'
 
-fasta.bench: fasta.byte
+fasta.bench: fasta.byte | results
 	MIN_EXPANSION_WORDSIZE=134217728 \
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 2500000' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 2500000'
 
-quicksort.bench: quicksort.byte
+quicksort.bench: quicksort.byte | results
 	MIN_EXPANSION_WORDSIZE=8000000 \
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 5000000' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 5000000'
 
-fannkuchredux.bench: fannkuchredux.byte
+fannkuchredux.bench: fannkuchredux.byte | results
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 11' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 11'
 
-count_change.bench: count_change.byte
+count_change.bench: count_change.byte | results
 	MIN_EXPANSION_WORDSIZE=20000000 \
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 150' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 150'
 
-nbodies.bench: nbodies.byte
+nbodies.bench: nbodies.byte | results
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 100000' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 100000'
 
-spectralnorm.bench: spectralnorm.byte
+spectralnorm.bench: spectralnorm.byte | results
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 1000' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 1000'
 
-mandelbrot.bench: mandelbrot.byte
+mandelbrot.bench: mandelbrot.byte | results
 	hyperfine --export-csv results/$@.csv \
 		--command-name 'verified-gen' '$(VERIFIED_GEN_OCAMLRUN) $< 1000' \
 		--command-name 'stock-ocaml'  '$(UNCHANGED_OCAMLRUN) $< 1000'

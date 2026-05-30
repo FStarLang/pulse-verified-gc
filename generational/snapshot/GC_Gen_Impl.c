@@ -355,7 +355,8 @@ gen_gc(
 {
   bool ok = minor_collect_full(gh, roots, nroots, fwd_arr, queue, slots, nslots);
   uint64_t fp_val = *gh.fp_ref;
-  uint64_t final_fp = collect(gh.major, st, fp_val);
+  darken_roots_bounded(gh.major, st, roots, nroots);
+  uint64_t final_fp = collect_with_roots(gh.major, st, fp_val);
   *gh.fp_ref = final_fp;
   return ((K___uint64_t_bool){ .fst = final_fp, .snd = ok });
 }
@@ -1532,11 +1533,16 @@ void update_promoted_objects(heap_t major, uint64_t *fwd_arr)
   }
 }
 
-uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
+uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);
   mark_loop_bounded(heap, st);
   return fused_sweep_coalesce(heap);
+}
+
+uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp)
+{
+  return collect_with_roots(heap, st, fp);
 }
 
 static bool is_valid_fp(uint64_t v)
@@ -1849,6 +1855,22 @@ void check_and_darken_bounded(heap_t heap, gray_stack_rec st, uint64_t v)
     uint64_t target_hdr_raw = v - 8ULL;
     uint64_t target_hdr = target_hdr_raw;
     darken_if_white_bounded(heap, st, target_hdr);
+  }
+}
+
+void darken_roots_bounded(heap_t heap, gray_stack_rec st, uint64_t *roots, size_t nroots)
+{
+  size_t i = (size_t)0U;
+  size_t __anf0 = i;
+  bool cond = __anf0 < nroots;
+  while (cond)
+  {
+    size_t iv = i;
+    uint64_t r = roots[iv];
+    check_and_darken_bounded(heap, st, r);
+    i = iv + (size_t)1U;
+    size_t __anf0 = i;
+    cond = __anf0 < nroots;
   }
 }
 

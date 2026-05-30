@@ -197,8 +197,8 @@ that lets the same verified code work with any heap placement.
 |----------|-------------------|---------|
 | `gen_alloc(gh, wosize, tag)` | Yes, allocation fast path | Bump-allocate in minor, or allocate from the major free list for large objects |
 | `minor_collect_full(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` | Verified minor collection: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset |
-| `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then major `collect` over the supplied gray stack |
-| `collect(major, gray_stack, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap, returning the new free-list head |
+| `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then root darkening into an initially empty gray stack, then major `collect_with_roots` |
+| `collect_with_roots(major, gray_stack, roots, n, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap from the post-minor roots, returning the new free-list head |
 | `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect_full` and `gen_gc` | Rewrite remembered major fields that still point into the minor heap |
 | `allocate_part1(major, wosize, tag, fp)` | Indirectly through `gen_alloc` | Free-list allocator for major allocations |
 
@@ -740,12 +740,11 @@ do_full_gc():
   │
   ├─ memset(gc_fwd_arr, 0, ...)
   │
-  ├─ allocate gray_storage[]
+  ├─ allocate roots_for_gc[] and gray_storage[]
   │
-  ├─ seed roots into the tail of gray_storage[]
-  │   gray_top = gray_cap - root_count
-  │   roots_for_gc = gray_storage + gray_top
+  ├─ copy roots into roots_for_gc[]; initialize an empty gray stack
   │   memcpy(roots_for_gc, root_values, root_count * 8)
+  │   gray_top = gray_cap
   │
   ├─ ─────────────────────────────────────► gen_gc(gh,
   │                                             roots_for_gc, root_count,
@@ -754,9 +753,10 @@ do_full_gc():
   │                                             gray_stack)
   │                                           1. minor_collect_full(...)
   │                                              rewrites roots_for_gc in place
-  │                                           2. collect(major, gray_stack, fp)
-  │                                              consumes the rewritten roots
-  │                                              from gray_storage[]
+  │                                           2. darken_roots_bounded(...)
+  │                                              pushes post-minor roots onto
+  │                                              the initially empty gray stack
+  │                                           3. collect_with_roots(...)
   │                                           returns: (new_fp, ok)
   │
   ├─ write_back_forwarded_roots()
@@ -764,7 +764,7 @@ do_full_gc():
   │
   ├─ clear ref_table
   │
-  └─ free(gray_storage)
+  └─ free(roots_for_gc); free(gray_storage)
 ```
 
 ### Gray Stack and Root-Set Layout
@@ -782,35 +782,35 @@ typedef struct gray_stack_rec_s {
 
 The stack grows downward.  An empty stack has `*top == cap`; pushing
 decrements `top`, and popping consumes `storage[*top]` and then increments
-`top`.  To seed the mark phase with `root_count` roots, the bridge therefore
-places them in the tail of the storage array:
+`top`.  The bridge passes `gen_gc` an initially empty stack:
 
 ```
-gray_storage indices:   0                  gray_top             cap
-                         ├──────────────────┼───────────────────┤
-                         │ free push space  │ initial roots      │
-                         │                  │ root[0] ... root[n]│
-                         └──────────────────┴───────────────────┘
-                                            ^
-                                         *top
+gray_storage indices:   0                                      cap
+                         ├──────────────────────────────────────┤
+                         │ free push space for verified marking │
+                         └──────────────────────────────────────┘
+                                                                ^
+                                                              *top
 ```
 
-This layout has an important extra property for `gen_gc`: the same memory
-serves as both the `roots` array passed to `minor_collect_full` and the
-initial gray stack consumed by `collect`.
+The roots array is separate from the stack storage.  This matches the verified
+`gen_gc` interface: `minor_collect_full` rewrites roots first, then `gen_gc`
+calls `darken_roots_bounded` to color/push the post-minor roots before major
+mark-and-sweep.
 
 1. Before `gen_gc`, `roots_for_gc` contains OCaml roots plus minor values
    read from the remembered set.  Minor roots are represented as minor
    offsets; major roots are represented as major value addresses.
 2. `gen_gc` first calls `minor_collect_full`, which promotes reachable
    minor objects, rewrites remembered slots, and rewrites `roots_for_gc`
-   in place.  After this step, every live minor root in the tail segment has
+   in place.  After this step, every live minor root in `roots_for_gc` has
    become the corresponding major value address.
-3. `gen_gc` then calls `collect(major, gray_stack, fp)` without moving
-   `gray_top`.  Since the gray stack's occupied segment is the same tail
-   segment just rewritten by `minor_collect_full`, the major mark loop pops
-   post-minor major addresses, not stale minor offsets.
-4. The bridge keeps the original `root_values[]` unchanged outside the gray
+3. `gen_gc` calls the verified root-darkening helper, which scans
+   `roots_for_gc`, colors white root objects gray, and pushes them into
+   `gray_storage`.
+4. `gen_gc` then calls `collect_with_roots(major, gray_stack, roots, fp)`.
+   The major mark loop consumes only addresses that the verified code pushed.
+5. The bridge keeps the original `root_values[]` unchanged outside the gray
    stack.  After `gen_gc`, `write_back_forwarded_roots()` uses those original
    values and `gc_fwd_arr` to update only real OCaml root slots
    (`root_locs[i] != NULL`).  Ref-table roots have `root_locs[i] == NULL`
@@ -819,12 +819,11 @@ initial gray stack consumed by `collect`.
 
 The stack capacity is chosen by the bridge as `major.size / 64`, with a
 minimum of 4096 entries and a final bump to at least `root_count`.  This
-keeps the stack large enough for the root seed while avoiding an oversized
+keeps the stack large enough for root darkening while avoiding an oversized
 side allocation on small runs; verified stack operations remain bounded by
-the `cap` field.  The initial roots do not need to be pre-colored gray by
-the bridge: the verified mark step accepts a value address popped from the
-stack, scans its children, and blackens the object.  Children are grayed
-and pushed by the verified traversal.
+the `cap` field.  The bridge does not pre-color or pre-seed root objects:
+coloring, pushing, child traversal, and blackening are all handled by verified
+code.
 
 Including remembered-set minor values in the root array is conservative for
 full GC, but safe.  It matches the requirement of minor collection: an old
@@ -1107,8 +1106,8 @@ writes results back to OCaml root locations.
 | Remembered-set enumeration | `collect_minor_roots_and_refs` | Bridge | Reads `Caml_state->_ref_table`, appends minor values to `root_values[]`, passes slot addresses to verified code |
 | Forwarding-array reset | `memset(gc_fwd_arr, 0, ...)` | Bridge | Clears stale forwarding entries before each collection |
 | Minor collection | `minor_collect_full` | Verified | Promotion, promoted-object rewrite, remembered-slot rewrite, root rewrite, minor reset, OOM flag |
-| Full collection | `gen_gc` | Verified | Calls `minor_collect_full`, then major `collect` over the supplied gray stack |
-| Full-GC gray-stack allocation and seeding | `calloc`, `memcpy`, `gray_stack_rec` setup | Bridge | Provides post-minor roots to `collect` by sharing storage with `gen_gc`'s roots array |
+| Full collection | `gen_gc` | Verified | Calls `minor_collect_full`, darkens post-minor roots into the gray stack, then calls major `collect_with_roots` |
+| Full-GC support-array setup | `calloc`, `memcpy`, `gray_stack_rec` setup | Bridge | Copies roots into a separate mutable roots array and passes an initially empty gray stack |
 | OCaml root writeback | `write_back_rewritten_roots`, `write_back_forwarded_roots` | Bridge | Updates only real OCaml root slots; ref-table slots are rewritten inside verified code |
 | Ref-table reset | `tbl->ptr = tbl->base` | Bridge | Drops remembered-set entries after the slots have been rewritten |
 
@@ -1167,17 +1166,17 @@ Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 ### Full collection path
 
 `do_full_gc` now calls `gen_gc`, not `do_minor_gc()` followed by a separate
-bridge-level major collector.  The only additional bridge work is building
-the initial gray stack:
+bridge-level major collector.  The additional bridge work is only building a
+mutable roots array and an initially empty gray stack:
 
 ```c
 collect_minor_roots_and_refs();
 memset(gc_fwd_arr, 0, queue_size_sz * sizeof(uint64_t));
 
-gray_top = gray_cap - root_count;
-roots_for_gc = gray_storage + gray_top;
+roots_for_gc = calloc(root_count, sizeof(uint64_t));
 memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
 
+gray_top = gray_cap;
 gray_stack_rec s = { gray_storage, &gray_top, gray_cap };
 K___uint64_t_bool r =
     gen_gc(gc_gen_heap, roots_for_gc, root_count,
@@ -1189,10 +1188,10 @@ write_back_forwarded_roots();
 Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
 ```
 
-The gray-stack tail is deliberately used as the roots array because `gen_gc`
-performs minor collection before major marking.  This guarantees that the
-major mark loop sees rewritten major addresses without requiring the bridge
-to rescan OCaml roots or to call `darken_if_white_bounded`.
+The roots array is deliberately separate from the gray-stack storage because
+`gen_gc` now owns the verified transition from post-minor roots to the major
+mark stack.  It performs minor collection, rewrites `roots_for_gc`, calls the
+verified root-darkening helper, and only then invokes the major mark loop.
 
 ---
 
@@ -1216,6 +1215,7 @@ to rescan OCaml roots or to call `darken_if_white_bounded`.
 5. **No incremental/concurrent GC** — both minor and major GC are
    stop-the-world.  The proactive trigger keeps pause times bounded.
 
-6. **Full-GC roots are post-minor roots** — `do_full_gc` shares the
-   gray-stack tail with the `gen_gc` roots array, so the minor phase rewrites
-   the exact entries that the major mark phase will later pop.
+6. **Full-GC roots are post-minor roots** — `do_full_gc` gives `gen_gc` a
+   separate mutable roots array and an empty gray stack.  The minor phase
+   rewrites the roots array, and verified root darkening pushes exactly those
+   post-minor roots for the major mark phase.

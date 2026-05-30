@@ -456,10 +456,11 @@ static void do_full_gc(void) {
     memset(gc_fwd_arr, 0, (size_t)queue_size_sz * sizeof(uint64_t));
     PROF_END(fwd_arr_zero);
 
-    /* gen_gc expects the major gray stack to contain the post-minor roots.
-     * Place the roots array at the tail of the stack storage: minor collection
-     * rewrites those entries in-place before gen_gc starts mark-and-sweep.  The
-     * original root_values remain untouched for OCaml root writeback below. */
+    /* gen_gc now prepares the major mark stack itself: minor_collect_full
+     * rewrites this roots array in place, then gen_gc darkens those post-minor
+     * roots and pushes them onto an initially empty gray stack before running
+     * mark-and-sweep.  Keep roots separate from the stack storage so the C
+     * bridge matches the verified separation-logic model. */
     size_t gray_cap = gc_gen_heap.major.size / 64;
     if (gray_cap < 4096) gray_cap = 4096;
     if (gray_cap < root_count) gray_cap = root_count;
@@ -469,12 +470,16 @@ static void do_full_gc(void) {
     if (!gray_storage)
         caml_fatal_error("verified gen GC: cannot allocate gray stack");
 
-    size_t gray_top = gray_cap - root_count;
-    uint64_t *roots_for_gc = gray_storage;
-    if (root_count > 0) {
-        roots_for_gc = gray_storage + gray_top;
-        memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
+    uint64_t *roots_for_gc =
+        (uint64_t *)calloc(root_count == 0 ? 1 : root_count, sizeof(uint64_t));
+    if (!roots_for_gc) {
+        free(gray_storage);
+        caml_fatal_error("verified gen GC: cannot allocate root buffer");
     }
+    if (root_count > 0)
+        memcpy(roots_for_gc, root_values, root_count * sizeof(uint64_t));
+
+    size_t gray_top = gray_cap;
 
     gray_stack_rec gc_stack;
     gc_stack.storage = gray_storage;
@@ -490,6 +495,7 @@ static void do_full_gc(void) {
             gen_gc(gc_gen_heap, roots_for_gc, (size_t)root_count, gc_fwd_arr,
                    gc_queue, (uint64_t *)tbl->base, n_slots, gc_stack);
         if (!result.snd) {
+            free(roots_for_gc);
             free(gray_storage);
             in_full_gc = 0;
             fatal_promotion_failed();
@@ -503,6 +509,7 @@ static void do_full_gc(void) {
     Caml_state->_ref_table->ptr = Caml_state->_ref_table->base;
     bytes_promoted_since_major = 0;
 
+    free(roots_for_gc);
     free(gray_storage);
     PROF_END(major_gc);
 
