@@ -506,6 +506,102 @@ The major collector also exports graph-isomorphism flavored consequences:
 These are the bridge to the generational proof, where graph isomorphism becomes
 the main correctness language.
 
+### Sweep and free-object coalescing
+
+After marking completes there are no gray objects: black objects are the live
+major-heap objects, while white objects are unreachable. The sweep phase resets
+black survivors to white and turns unreachable objects into blue free blocks.
+To reduce fragmentation, the implementation does not leave one free-list entry
+per dead object. It coalesces adjacent blue objects into one larger blue block
+and builds a fresh free list from those merged blocks.
+
+The pure coalescing spec is `GC.Spec.Coalesce`. It walks the post-sweep object
+list in address order and carries a pending blue run:
+
+```fstar
+let rec coalesce_aux (g0: heap) (g: heap) (objs: seq obj_addr)
+    (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  : GTot (heap & U64.t)
+```
+
+`g0` is the frozen heap used for color and size decisions; `g` is the heap being
+rewritten. A blue object extends the pending run by `wosize + 1` words, counting
+the header. A white survivor ends the run: `flush_blue` writes one merged blue
+header at the first object's header address, stores the previous free-list head
+in field 1 when the merged block has room for a link, zeroes the remaining
+payload words, and returns the first object of the run as the new free-list
+head. A zero-word run is a no-op, and a one-word run can only be represented as
+a header-only blue block because it has no field in which to store a free-list
+link.
+
+The Pulse implementation uses the fused entry point
+`GC.Impl.FusedSweepCoalesce.fused_sweep_coalesce`, which performs sweep and
+coalescing in one heap traversal. It keeps the same pending-run state
+`(first_blue, run_words, fp)` but checks colors and sizes against the original
+marked heap:
+
+```fstar
+let rec fused_aux (g0: heap) (g: heap) (objs: seq obj_addr)
+    (fb: U64.t) (rw: nat) (fp: U64.t)
+  : GTot (heap & U64.t) =
+  if Seq.length objs = 0 then
+    flush_blue g fb rw fp
+  else if is_black (Seq.head objs) g0 then
+    let (g', fp') = flush_blue g fb rw fp in
+    fused_aux g0 (makeWhite (Seq.head objs) g') (Seq.tail objs) 0UL 0 fp'
+  else
+    fused_aux g0 g (Seq.tail objs) new_fb (rw + ws + 1) fp
+```
+
+So a live black object first flushes any preceding free run and is then whitened;
+a non-black object is accumulated into the current free run without writing the
+heap. The top-level fused pass starts with an empty free list (`fp = 0UL`), so
+the final free list is a fresh list of the coalesced free runs rather than a
+mutation of the pre-GC free list.
+
+The proof deliberately separates the easy specification from the efficient
+implementation. `GC.Spec.Coalesce` proves that coalescing only changes blue
+regions: survivor headers and fields are preserved, the heap length and
+well-formedness are preserved, all final objects are white or blue, and the
+returned free-list head is either null or a valid object in the coalesced heap.
+Those survivor-preservation lemmas are what let the end-to-end correctness proof
+reuse the existing mark/sweep graph facts: live edges and scalar fields are
+unchanged by coalescing because live objects are white after sweep, and
+coalescing writes only the blue runs.
+
+The key bridge theorem is
+`GC.Spec.SweepCoalesce.fused_eq_sweep_coalesce`:
+
+```fstar
+let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
+  : Lemma
+    (requires well_formed_heap g /\
+              SI.heap_objects_dense g /\
+              SpecSweep.fp_in_heap fp g /\
+              (forall x. Seq.mem x (objects zero_addr g) ==> ~(is_gray x g)))
+    (ensures fused_sweep_coalesce g ==
+             SpecCoalesce.coalesce (fst (SpecSweep.sweep g fp)))
+```
+
+Its induction relates two walks over the same dense object sequence: the fused
+walk over the marked heap, and the standalone coalescing walk over the
+post-sweep heap. The proof establishes that sweep preserves object order and
+wosizes, that a pre-sweep black object corresponds exactly to a non-blue
+post-sweep survivor, and that black-object headers, tags, and bodies agree
+between the two heaps except for the color reset. For pending free runs,
+`flush_blue` is deterministic: inside the run both sides write the same merged
+blue header, link field, and zero padding; outside the run both sides preserve
+the previous word reads. With those facts, the relational induction shows each
+fused loop step matches the corresponding sweep-then-coalesce step.
+
+Finally, `GC.Impl.collect_with_roots` calls the fused Pulse implementation but
+then invokes `fused_eq_sweep_coalesce` to expose the result as the simpler
+`coalesce (sweep ...)` specification. The end-to-end theorems
+`gc_postcondition_gen`, `full_gc_correctness_through_coalesce_gen`,
+`major_gc_live_subgraph_isomorphism_gen`, and
+`major_gc_unreachable_final_blue_gen` therefore prove correctness of the actual
+single-pass implementation while reasoning at the cleaner two-phase level.
+
 ### Bounded mark stack
 
 The earlier verified mark-and-sweep design assumed an unbounded mark stack. That
