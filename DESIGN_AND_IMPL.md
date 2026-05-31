@@ -1713,11 +1713,15 @@ heap settings are:
 
 So the large RSS numbers in the default verified runs mostly reflect conservative
 fixed-heap choices, not inherent live-set requirements. At the calibrated heaps,
-the verified runtime still has its minor heap, runtime metadata, and touched-page
-effects; for example the 5 MiB major-heap calibrations report about 14 MiB peak
-RSS. The minimum-to-run settings are useful for memory comparisons, while the
-larger configured heaps keep the timing runs from being dominated by repeated
-full-heap sweeps.
+the verified runtime still has its minor heap, runtime metadata, collector
+auxiliary state, stack/code/data mappings, allocator metadata, page alignment,
+and touched-page high-water effects. The `verified heap/RSS` column below is
+therefore `configured verified major heap / whole-process peak RSS`, not two
+measurements of the same thing. For example, `nbodies` reports `5/14.137`: the
+verified major heap is 5 MiB, while the process peak RSS is 14.137 MiB after
+including the rest of the runtime and collector footprint. The minimum-to-run
+settings are useful for memory comparisons, while the larger configured heaps
+keep the timing runs from being dominated by repeated full-heap sweeps.
 
 A calibrated-heap hyperfine pass, using those minimum-to-run major heaps for the
 verified runtime, combines timing with the allocation and GC counters below.
@@ -1739,10 +1743,16 @@ calibrated-heap timing and merged snapshots are in
 
 The calibrated-heap geometric-mean slowdown is 1.35x, with a maximum of 2.14x
 on `count_change`. The allocation-word totals match across the runtimes; the
-main behavioral difference is the collection schedule. The 5 MiB calibrated
-verified major heaps dramatically reduce configured heap size, but because they
-force a full sweep at almost every minor collection for allocation-heavy
-benchmarks, their major-collection counts are much higher than stock OCaml's.
+main behavioral difference is the collection schedule. These calibrated heaps
+are the smallest heaps found by the stock-RSS-seeded search, not
+throughput-tuned heaps. For allocation-heavy benchmarks such as `nbodies`,
+`spectralnorm`, `fasta`, and `mandelbrot`, a 5 MiB or 25 MiB verified major heap
+leaves little slack after each batch of promotions. The verified runtime is
+currently pinned to that fixed heap and uses stop-the-world full major
+mark/sweep when it needs major space, while stock OCaml grows/tunes the major
+heap and amortizes major work under its normal policy. That is why, for example,
+`spectralnorm` has 762 verified major collections at the 5 MiB calibrated heap
+but only 23 verified major collections at the earlier 256 MiB configured heap.
 
 ## Proof engineering notes
 
