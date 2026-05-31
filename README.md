@@ -26,12 +26,13 @@ bundled toolchain code and archived attempts, the active F*/Pulse tree contains
 | Major collector and allocator | `mark-and-sweep/` | Verified free-list allocator, bounded-stack mark phase, sweep/coalescing, extraction rules, and snapshot C output. |
 | Generational collector | `generational/` | Verified minor heap, promotion, forwarding, remembered-slot/root rewriting, Cheney BFS, and composed `gen_gc`. |
 | SPOT contract audits | `spot/` | Concrete three-object scenario calls the real `minor_collect_full` and `gen_gc` entry points and proves client-visible consequences. |
-| OCaml integration | `generational/ocaml-integration/` | Extracted verified GC bridge for OCaml 4.14 bytecode, smoke tests, benchmark harness, and refreshed CSV results. |
+| OCaml integration | `generational/ocaml-integration/` | Extracted verified GC bridge for OCaml 4.14 bytecode, smoke tests, timing benchmarks, GC/RSS stats CSVs, heap calibration, and refreshed results. |
 
-The latest verified-GC benchmark run reports a geometric-mean slowdown of
-**1.45x** versus stock OCaml 4.14. The full per-benchmark numbers and discussion
-are in [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md); the refreshed CSV data lives
-under `generational/ocaml-integration/tests/results*/`.
+The latest default-heap verified-GC benchmark run reports a geometric-mean
+slowdown of **1.45x** versus stock OCaml 4.14; a calibrated-heap pass using
+stock-RSS-sized verified heaps reports **1.35x**. The full per-benchmark numbers
+and discussion are in [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md); the refreshed
+CSV data lives under `generational/ocaml-integration/tests/results*/`.
 
 ## Build and verification
 
@@ -82,6 +83,8 @@ make test
 
 cd tests
 make benchmark
+make bench-stats
+make bench-min-heaps
 ```
 
 See [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md) for the exact `gen_gc` contract,

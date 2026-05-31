@@ -1,0 +1,3 @@
+benchmark,runtime,total_allocated_words,minor_words,major_words,promoted_words,minor_collections,major_collections,forced_major_collections,heap_words,top_heap_words,rss_mb
+fannkuchredux,verified-gen,5840,3223,2617,0,0,0,0,126976,126976,4.426
+fannkuchredux,stock-ocaml,5840,3223,2617,0,0,0,0,126976,126976,2.395

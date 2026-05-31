@@ -1644,10 +1644,25 @@ hyperfine benchmarks against stock OCaml:
 cd generational/ocaml-integration/tests
 make test
 make benchmark   # or make bench-all
+make bench-stats # just collect GC/RSS statistics
+make bench-min-heaps # calibrate verified heap size from stock RSS
 ```
 
-The fresh hyperfine run writes CSVs to `results/*.bench.csv`. The tracked
-current snapshot is mirrored in:
+The fresh hyperfine run writes timing CSVs to `results/*.bench.csv`. `bench-all`
+also emits companion `results/*.stats.csv` files with one row per runtime. These
+stats files report the OCaml allocation metric (`total_allocated_words =
+minor_words + major_words - promoted_words`), the component allocation-word
+counters, minor/major/forced-major collection counts, heap/top-heap words, and
+peak RSS in MiB from `/proc/self/status`.
+
+The verified GC uses a fixed-size major heap configured by
+`MIN_EXPANSION_WORDSIZE` plus a fixed minor heap. `make bench-min-heaps` measures
+stock OCaml RSS for each benchmark, rounds that RSS up to the 1 MiB heap
+granularity, and searches upward for the smallest verified major heap that runs
+at or above that stock-RSS baseline. These calibrated sizes are sufficient to
+run the benchmark, not necessarily the best performance point: smaller heaps can
+substantially increase the number of full major sweeps. The tracked current
+timing, stats, and heap-calibration snapshots are mirrored in:
 
 - `generational/ocaml-integration/tests/results_final/`
 
@@ -1655,7 +1670,8 @@ The older `results_fastpath/`, `results_inline/`, and `results_wordlevel/`
 directories are retained as comparison snapshots from earlier optimization
 steps.
 
-The current run compares `verified-gen` with `stock-ocaml`:
+The default configured-heap timing run compares `verified-gen` with
+`stock-ocaml`:
 
 | Benchmark | verified-gen mean (s) | stock OCaml mean (s) | Ratio |
 | --- | ---: | ---: | ---: |
@@ -1680,6 +1696,53 @@ root/remembered-slot handling, forwarding arrays, and less optimized allocation
 paths. That is exactly why having the verification in place is valuable: future
 optimization work can target these overheads without weakening the collector's
 core invariants.
+
+The stock-RSS-seeded heap calibration shows how conservative the current fixed
+heap settings are:
+
+| Benchmark | stock RSS (MiB) | calibrated verified major heap (MiB) | Heap / stock RSS | current configured heap (MiB) | Current / stock RSS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `binarytrees` | 515.898 | 516.000 | 1.000x | 1024.000 | 1.985x |
+| `count_change` | 31.992 | 32.000 | 1.000x | 152.588 | 4.770x |
+| `fannkuchredux` | 2.395 | 3.000 | 1.253x | 256.000 | 106.889x |
+| `fasta` | 24.023 | 25.000 | 1.041x | 1024.000 | 42.626x |
+| `mandelbrot` | 4.465 | 5.000 | 1.120x | 256.000 | 57.335x |
+| `nbodies` | 4.527 | 5.000 | 1.104x | 256.000 | 56.550x |
+| `quicksort` | 41.008 | 42.000 | 1.024x | 61.035 | 1.488x |
+| `spectralnorm` | 4.605 | 5.000 | 1.086x | 256.000 | 55.592x |
+
+So the large RSS numbers in the default verified runs mostly reflect conservative
+fixed-heap choices, not inherent live-set requirements. At the calibrated heaps,
+the verified runtime still has its minor heap, runtime metadata, and touched-page
+effects; for example the 5 MiB major-heap calibrations report about 14 MiB peak
+RSS. The minimum-to-run settings are useful for memory comparisons, while the
+larger configured heaps keep the timing runs from being dominated by repeated
+full-heap sweeps.
+
+A calibrated-heap hyperfine pass, using those minimum-to-run major heaps for the
+verified runtime, combines timing with the allocation and GC counters below.
+Columns with `stock/ver` list stock OCaml first and verified GC second. The
+calibrated-heap timing and merged snapshots are in
+`results_final/calibrated_heap.bench.csv` and
+`results_final/combined_perf_stats.csv`.
+
+| Benchmark | stock time (s) | verified @ calibrated heap (s) | slowdown | stock RSS (MiB) | verified heap/RSS (MiB) | total alloc words stock/ver | minor GCs stock/ver | major GCs stock/ver | forced major GCs stock/ver |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `binarytrees` | 12.225 +/- 0.036 | 18.383 +/- 0.252 | 1.50x | 515.898 | 516/528.449 | 1,993,131,309/1,993,131,309 | 7,647/7,604 | 87/58 | 1/0 |
+| `count_change` | 0.198 +/- 0.001 | 0.422 +/- 0.004 | 2.14x | 31.992 | 32/44.793 | 23,166,011/23,166,011 | 91/88 | 7/9 | 0/0 |
+| `fannkuchredux` | 68.012 +/- 0.130 | 70.017 +/- 0.173 | 1.03x | 2.395 | 3/2.500 | 5,840/5,840 | 0/0 | 0/0 | 0/0 |
+| `fasta` | 2.548 +/- 0.004 | 2.922 +/- 0.022 | 1.15x | 24.023 | 25/36.691 | 207,824,073/207,824,073 | 785/783 | 1/111 | 0/0 |
+| `mandelbrot` | 1.846 +/- 0.006 | 2.427 +/- 0.013 | 1.31x | 4.465 | 5/14.129 | 394,518,214/394,518,214 | 1,508/1,504 | 8/752 | 1/0 |
+| `nbodies` | 0.303 +/- 0.005 | 0.489 +/- 0.008 | 1.61x | 4.527 | 5/14.137 | 106,007,085/106,007,085 | 405/404 | 2/202 | 0/0 |
+| `quicksort` | 7.809 +/- 0.054 | 7.897 +/- 0.055 | 1.01x | 41.008 | 42/40.867 | 5,006,520/5,006,520 | 1/0 | 0/0 | 0/0 |
+| `spectralnorm` | 2.199 +/- 0.037 | 2.947 +/- 0.018 | 1.34x | 4.605 | 5/14.145 | 400,043,844/400,043,844 | 1,528/1,525 | 7/762 | 1/0 |
+
+The calibrated-heap geometric-mean slowdown is 1.35x, with a maximum of 2.14x
+on `count_change`. The allocation-word totals match across the runtimes; the
+main behavioral difference is the collection schedule. The 5 MiB calibrated
+verified major heaps dramatically reduce configured heap size, but because they
+force a full sweep at almost every minor collection for allocation-heavy
+benchmarks, their major-collection counts are much higher than stock OCaml's.
 
 ## Proof engineering notes
 

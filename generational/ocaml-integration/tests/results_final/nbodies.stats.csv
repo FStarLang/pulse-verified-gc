@@ -1,0 +1,3 @@
+benchmark,runtime,total_allocated_words,minor_words,major_words,promoted_words,minor_collections,major_collections,forced_major_collections,heap_words,top_heap_words,rss_mb
+nbodies,verified-gen,106007085,106004397,2688,0,404,6,0,126976,126976,266.492
+nbodies,stock-ocaml,106007085,106004397,9062,6374,405,2,0,126976,126976,4.527

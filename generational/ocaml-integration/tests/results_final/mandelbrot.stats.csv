@@ -1,0 +1,3 @@
+benchmark,runtime,total_allocated_words,minor_words,major_words,promoted_words,minor_collections,major_collections,forced_major_collections,heap_words,top_heap_words,rss_mb
+mandelbrot,verified-gen,394518214,394515638,2576,0,1504,23,0,126976,126976,266.422
+mandelbrot,stock-ocaml,394518214,394515638,20696,18120,1508,8,1,61440,188416,4.465

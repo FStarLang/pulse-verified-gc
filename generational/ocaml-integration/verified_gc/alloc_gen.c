@@ -71,6 +71,11 @@ uint64_t *vergc_minor_bump_ref;
 uint8_t  *vergc_minor_base;
 uint64_t  vergc_minor_size;
 
+uintnat vergc_minor_words_current(void) {
+    if (!heap_initialized || gc_gen_heap.minor.bump_ref == NULL) return 0;
+    return (uintnat)(*gc_gen_heap.minor.bump_ref / sizeof(value));
+}
+
 /* Root scanning: parallel arrays for roots and writeback locations */
 #define MAX_ROOTS  (1 << 18)  /* 256K root slots */
 static uint64_t   root_values[MAX_ROOTS];
@@ -407,7 +412,6 @@ static void do_minor_gc_core(void) {
 static void do_minor_gc(void) {
     ensure_heap();
     if (*gc_gen_heap.minor.bump_ref == 0) return;  /* nothing to collect */
-    Caml_state->_stat_minor_collections++;
 
     /* Proactive major GC: run a full GC periodically to prevent the major
      * heap from filling up.  Without this, the heap fills with dead objects
@@ -428,6 +432,8 @@ static void do_minor_gc(void) {
 
     uint64_t fp_before = *gc_gen_heap.fp_ref;
     uint64_t bump_before = *gc_gen_heap.minor.bump_ref;
+    Caml_state->_stat_minor_collections++;
+    Caml_state->_stat_minor_words += (double)(bump_before / sizeof(value));
 
     do_minor_gc_core();
 
@@ -451,6 +457,8 @@ static void do_full_gc(void) {
     if (*gc_gen_heap.minor.bump_ref != 0) {
         PROF_INC(minor_gc_count);
         Caml_state->_stat_minor_collections++;
+        Caml_state->_stat_minor_words +=
+            (double)(*gc_gen_heap.minor.bump_ref / sizeof(value));
     }
 
     /* Build the minor-collection root set: OCaml roots plus remembered slots. */

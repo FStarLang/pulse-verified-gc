@@ -1,5 +1,5 @@
 diff --git a/runtime/Makefile b/runtime/Makefile
-index b62a579..dd4cb44 100644
+index b62a579..d24d2b2 100644
 --- a/runtime/Makefile
 +++ b/runtime/Makefile
 @@ -176,6 +176,7 @@ endif
@@ -10,11 +10,12 @@ index b62a579..dd4cb44 100644
  	rm -f *.o *.obj *.a *.lib *.so *.dll ld.conf
  	rm -f ocamlrun ocamlrund ocamlruni ocamlruns sak
  	rm -f ocamlrun.exe ocamlrund.exe ocamlruni.exe ocamlruns.exe sak.exe
-@@ -268,7 +269,11 @@ build_config.h: $(ROOTDIR)/Makefile.config sak$(EXE)
+@@ -268,7 +269,12 @@ build_config.h: $(ROOTDIR)/Makefile.config sak$(EXE)
  
  # Libraries and programs
  
 -ocamlrun$(EXE): prims.$(O) libcamlrun.$(A)
++.PHONY: libvergc_gen.a
 +libvergc_gen.a:
 +	$(MAKE) -C verified_gc
 +	cp verified_gc/libvergc_gen.a .
@@ -23,7 +24,7 @@ index b62a579..dd4cb44 100644
  	$(MKEXE) -o $@ $^ $(LIBS)
  
  ocamlruns$(EXE): prims.$(O) libcamlrun_non_shared.$(A)
-@@ -280,13 +285,13 @@ libcamlrun.$(A): $(libcamlrun_OBJECTS)
+@@ -280,13 +286,13 @@ libcamlrun.$(A): $(libcamlrun_OBJECTS)
  libcamlrun_non_shared.$(A): $(libcamlrun_non_shared_OBJECTS)
  	$(call MKLIB,$@, $^)
  
@@ -52,7 +53,7 @@ index 4429f24..8b8d704 100644
  DOMAIN_STATE(value*, young_ptr)
  /* Minor heap limit. See minor_gc.c. */
 diff --git a/runtime/caml/memory.h b/runtime/caml/memory.h
-index d9e58bc..f0c6762 100644
+index d9e58bc..e6b15a2 100644
 --- a/runtime/caml/memory.h
 +++ b/runtime/caml/memory.h
 @@ -217,20 +217,54 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
@@ -88,14 +89,9 @@ index d9e58bc..f0c6762 100644
    CAMLassert ((wosize) <= Max_young_wosize);                           \
 -  Caml_state_field(young_ptr) -= Whsize_wosize (wosize);               \
 -  if (Caml_state_field(young_ptr) < Caml_state_field(young_limit)) {   \
--    Setup_for_gc;                                                      \
--    caml_alloc_small_dispatch((wosize), (track) | Alloc_small_origin,  \
--                              1, NULL);                                \
--    Restore_after_gc;                                                  \
--  }                                                                    \
 +  if (vergc_minor_bump_ref != NULL && vergc_minor_base != NULL) {      \
 +    uint64_t vergc_bump = *vergc_minor_bump_ref;                       \
-+    if (vergc_bump <= vergc_minor_size &&                              \
++    if (vergc_bump <= vergc_minor_size &&                               \
 +        vergc_needed <= vergc_minor_size - vergc_bump) {               \
 +      vergc_alloc_hp = (value)(vergc_minor_base + vergc_bump);         \
 +      *vergc_minor_bump_ref = vergc_bump + vergc_needed;               \
@@ -103,16 +99,18 @@ index d9e58bc..f0c6762 100644
 +    }                                                                  \
 +  }                                                                    \
 +  if (!vergc_fast_alloc) {                                             \
-+    Setup_for_gc;                                                      \
+     Setup_for_gc;                                                      \
+-    caml_alloc_small_dispatch((wosize), (track) | Alloc_small_origin,  \
+-                              1, NULL);                                \
 +    Caml_state_field(temp) =                                           \
 +      (value)verified_allocate_minor((wosize), (uint8_t)(tag));        \
-+    Restore_after_gc;                                                  \
+     Restore_after_gc;                                                  \
 +    vergc_alloc_hp = Caml_state_field(temp);                           \
 +  }                                                                    \
 +  if (VERGC_SHOULD_WRITE_SMALL_HEADER(vergc_fast_alloc, vergc_alloc_hp)) {\
 +    Hd_hp (vergc_alloc_hp) =                                           \
 +      Make_header_with_profinfo ((wosize), (tag), 0, profinfo);        \
-+  }                                                                    \
+   }                                                                    \
 -  Hd_hp (Caml_state_field(young_ptr)) =                                \
 -    Make_header_with_profinfo ((wosize), (tag), 0, profinfo);          \
 -  (result) = Val_hp (Caml_state_field(young_ptr));                     \
@@ -120,6 +118,58 @@ index d9e58bc..f0c6762 100644
    DEBUG_clear ((result), (wosize));                                    \
  }while(0)
  
+diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
+index 9c47b91..2601ad1 100644
+--- a/runtime/gc_ctrl.c
++++ b/runtime/gc_ctrl.c
+@@ -49,6 +49,7 @@ extern uintnat caml_allocation_policy;    /*        see freelist.c */
+ extern uintnat caml_custom_major_ratio;   /* see custom.c */
+ extern uintnat caml_custom_minor_ratio;   /* see custom.c */
+ extern uintnat caml_custom_minor_max_bsz; /* see custom.c */
++extern uintnat vergc_minor_words_current(void);
+ 
+ #define Next(hp) ((header_t *)(hp) + Whsize_hp (hp))
+ 
+@@ -226,7 +227,8 @@ static value heap_stats (int returnstats)
+     /* get a copy of these before allocating anything... */
+     double minwords =
+       Caml_state->stat_minor_words
+-      + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr);
++      + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr)
++      + (double) vergc_minor_words_current();
+     double prowords = Caml_state->stat_promoted_words;
+     double majwords =
+       Caml_state->stat_major_words + (double) caml_allocated_words;
+@@ -286,7 +288,8 @@ CAMLprim value caml_gc_quick_stat(value v)
+   /* get a copy of these before allocating anything... */
+   double minwords =
+     Caml_state->stat_minor_words
+-    + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr);
++    + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr)
++    + (double) vergc_minor_words_current();
+   double prowords = Caml_state->stat_promoted_words;
+   double majwords =
+     Caml_state->stat_major_words + (double) caml_allocated_words;
+@@ -322,7 +325,8 @@ CAMLprim value caml_gc_quick_stat(value v)
+ double caml_gc_minor_words_unboxed(void)
+ {
+   return (Caml_state->stat_minor_words
+-          + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr));
++          + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr)
++          + (double) vergc_minor_words_current());
+ }
+ 
+ CAMLprim value caml_gc_minor_words(value v)
+@@ -339,7 +343,8 @@ CAMLprim value caml_gc_counters(value v)
+   /* get a copy of these before allocating anything... */
+   double minwords =
+     Caml_state->stat_minor_words
+-    + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr);
++    + (double) (Caml_state->young_alloc_end - Caml_state->young_ptr)
++    + (double) vergc_minor_words_current();
+   double prowords = Caml_state->stat_promoted_words;
+   double majwords =
+     Caml_state->stat_major_words + (double) caml_allocated_words;
 diff --git a/runtime/gen_primitives.sh b/runtime/gen_primitives.sh
 index a727d5c..331a07d 100755
 --- a/runtime/gen_primitives.sh
@@ -211,10 +261,10 @@ index 9b18f3c..6c90643 100644
        Store_double_flat_field(block, 0, Double_val(accu));
        for (i = 1; i < size; i++){
 diff --git a/runtime/memory.c b/runtime/memory.c
-index 66d1c50..94567ba 100644
+index 66d1c50..e37a2b6 100644
 --- a/runtime/memory.c
 +++ b/runtime/memory.c
-@@ -464,38 +464,9 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -464,38 +464,10 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
                                        uintnat profinfo)
  {
    header_t *hp;
@@ -251,12 +301,13 @@ index 66d1c50..94567ba 100644
 -    caml_request_major_slice ();
 -  }
 +  hp = (header_t *) verified_allocate(wosize, (uint8_t)tag);
++  caml_allocated_words += Whsize_wosize(wosize);
 +  Hd_hp (hp) =
 +    Make_header_with_profinfo (wosize, tag, Caml_white, profinfo);
  #ifdef DEBUG
    {
      uintnat i;
-@@ -504,8 +475,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
+@@ -504,8 +476,6 @@ Caml_inline value caml_alloc_shr_aux (mlsize_t wosize, tag_t tag, int track,
      }
    }
  #endif
