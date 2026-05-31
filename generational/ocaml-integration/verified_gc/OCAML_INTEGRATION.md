@@ -38,7 +38,7 @@ This document describes how the verified generational garbage collector
 │          ▼                     ▼                  │         │
 │  ┌─────────────────────────────────────────┐     │         │
 │  │     Alloc_small_aux (memory.h)          │     │         │
-│  │     calls verified_allocate(wosize,tag) │     │         │
+│  │     inline bump; verified minor slow    │     │         │
 │  └───────────────────┬─────────────────────┘     │         │
 └──────────────────────┼───────────────────────────┼─────────┘
                        │                           │
@@ -46,7 +46,8 @@ This document describes how the verified generational garbage collector
 ┌──────────────────────────────────────────────────────────────┐
 │                    alloc_gen.c (THE BRIDGE)                   │
 │                                                              │
-│  • verified_allocate() — allocation entry point              │
+│  • verified_allocate_minor() — Alloc_small slow path         │
+│  • verified_allocate()       — shared/major allocation       │
 │  • do_minor_gc()       — calls verified minor_collect_full   │
 │  • do_full_gc()        — calls verified gen_gc               │
 │  • verified_do_minor_gc() — runtime forced minor collection  │
@@ -64,7 +65,8 @@ This document describes how the verified generational garbage collector
 ┌──────────────────────────────────────────────────────────────┐
 │              GC_Gen_Impl.c (VERIFIED, extracted)              │
 │                                                              │
-│  • gen_alloc()             — bump (minor) or free-list       │
+│  • minor_alloc()           — bump allocation in minor heap   │
+│  • allocate()              — free-list allocation in major   │
 │  • minor_collect_full()    — verified minor collection       │
 │  • gen_gc()                — verified minor + major GC       │
 │  • collect()               — mark_loop + fused_sweep_coalesce│
@@ -85,19 +87,42 @@ OCaml 4.14's runtime expects these GC services:
 ### Allocation
 
 The macro `Alloc_small_aux` in `caml/memory.h` is the fast path for
-allocating small objects.  We replace its body:
+allocating small objects.  It now reserves space directly from the verified
+minor heap's bump pointer when there is room:
 
 ```c
 #define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
-  Caml_state_field(temp) = (value)verified_allocate((wosize), (uint8_t)(tag)); \
-  (result) = Caml_state_field(temp);                                    \
-  ...                                                                   \
+  int fast = 0;                                                         \
+  uint64_t needed = Whsize_wosize(wosize) * sizeof(value);              \
+  if (vergc_minor_bump_ref != NULL) {                                   \
+    uint64_t bump = *vergc_minor_bump_ref;                              \
+    if (bump <= vergc_minor_size && needed <= vergc_minor_size - bump) {\
+      hp = vergc_minor_base + bump;                                     \
+      *vergc_minor_bump_ref = bump + needed;                            \
+      fast = 1;                                                         \
+    }                                                                   \
+  }                                                                     \
+  if (!fast) {                                                          \
+    Setup_for_gc;                                                       \
+    hp = verified_allocate_minor(wosize, tag);                          \
+    Restore_after_gc;                                                   \
+  }                                                                     \
+  if (fast || WITH_PROFINFO || hp is not in the minor heap) {           \
+    Hd_hp(hp) = Make_header_with_profinfo(wosize, tag, 0, profinfo);    \
+  }                                                                     \
+  result = Val_hp(hp);                                                  \
 } while(0)
 ```
 
-The runtime calls `verified_allocate(wosize, tag)` and expects a
-**header pointer** (HP) — i.e., a pointer to the object header word.
-It then writes the header at `hp[0]` and returns `hp + 8` (the val).
+The slow path calls `verified_allocate_minor(wosize, tag)` and expects a
+**header pointer** (HP) — i.e., a pointer to the object header word.  This path
+mimics stock OCaml's small-allocation semantics: if the nursery is full, it runs
+minor collection and retries in the minor heap rather than falling back to the
+major heap.  The extracted minor slow path has already installed the same header
+when `WITH_PROFINFO` is disabled, so `Alloc_small_aux` reuses it.  The runtime
+still writes the final header for raw fast-path reservations and for
+`WITH_PROFINFO` builds.  Shared/large allocations use `verified_allocate()` and
+the verified major free list.
 
 ### Write Barrier (`caml_modify`)
 
@@ -195,12 +220,13 @@ that lets the same verified code work with any heap placement.
 
 | Function | Called by bridge? | Purpose |
 |----------|-------------------|---------|
-| `gen_alloc(gh, wosize, tag)` | Yes, allocation fast path | Bump-allocate in minor, or allocate from the major free list for large objects |
+| `minor_alloc(minor, wosize, tag)` | Yes, small-allocation slow path | Bump-allocate in the minor heap after any needed minor collection |
+| `allocate(major, fp, wosize)` | Yes, shared/major allocation path | Allocate from the major free list; the OCaml runtime finalizes the tag/profinfo header |
 | `minor_collect_full(gh, roots, n, fwd_arr, queue, slots, nslots)` | Yes, `do_minor_gc_core` | Verified minor collection: Cheney promotion, promoted-object field rewrite, remembered-slot rewrite, root rewrite, and minor bump reset |
 | `gen_gc(gh, roots, n, fwd_arr, queue, slots, nslots, gray_stack)` | Yes, `do_full_gc` | Verified full collection: first `minor_collect_full`, then root darkening into an initially empty gray stack, then major `collect_with_roots` |
 | `collect_with_roots(major, gray_stack, roots, n, fp)` | Indirectly through `gen_gc` | Mark-and-sweep over the major heap from the post-minor roots, returning the new free-list head |
 | `rewrite_heap_slots(major, fwd_arr, slots, n)` | Indirectly through `minor_collect_full` and `gen_gc` | Rewrite remembered major fields that still point into the minor heap |
-| `allocate_part1(major, wosize, tag, fp)` | Indirectly through `gen_alloc` | Free-list allocator for major allocations |
+| `allocate_part1(major, wosize, tag, fp)` | Indirectly through `allocate` | Internal split/consume step used by the major free-list allocator |
 
 ---
 
@@ -315,28 +341,28 @@ OCaml code                         alloc_gen.c                    GC_Gen_Impl.c
 ─────────                          ───────────                    ──────────────
 Alloc_small(result, 3, 0)
   │
-  └─► verified_allocate(3, 0)
+  └─► verified_allocate_minor(3, 0)
         │
         ├─ Check: minor heap full?
         │    Yes → do_minor_gc()
         │
-        ├─► gen_alloc(gc_gen_heap, 3, 0) ──────────────────────► bump alloc
+        ├─► minor_alloc(gc_gen_heap.minor, 3, 0) ──────────────► bump alloc
         │                                                         (minor offset)
         │   result = minor offset (e.g., 0x100)
         │
-        ├─ if result < minor_heap_size:
-        │     return (void*)(minor_base + result - 8)  ← HP (absolute)
-        │
-        └─ if result >= minor_heap_size:
-              return (void*)(result - 8)  ← HP (already absolute, NULL-base)
+        └─ return (void*)(minor_base + result - 8)  ← HP (absolute)
 ```
 
-`gen_alloc` returns an **object address** (first field = header + 8).
-OCaml expects a **header pointer** (HP = header address).  So we subtract 8.
+`minor_alloc` returns a minor **object offset** (first field = header + 8).
+OCaml expects an absolute **header pointer** (HP = header address), so the
+bridge adds `minor_base` and subtracts 8.  The small-object slow path is
+minor-only: it collects and retries instead of allocating a small object in the
+major heap.
 
-For small objects (`wosize <= 256`), allocation goes to the minor heap
-(bump pointer, O(1)).  Larger objects go directly to the major heap
-(free-list search).
+Shared and larger objects use `verified_allocate()`, which calls the verified
+major `allocate` function directly.  That path returns an absolute object
+address via the NULL-base trick; the bridge subtracts 8 and lets the OCaml
+runtime write the final header.
 
 ---
 
@@ -975,9 +1001,10 @@ fatal_promotion_failed();
 The bridge no longer scans rewritten roots to infer promotion failure.
 OOM detection is part of the verified collector result.
 
-### 2. Allocation Failure (`gen_alloc` returns 0)
+### 2. Allocation Failure
 
-If neither minor nor major allocation succeeds after a full GC:
+If a minor allocation still cannot fit after minor collection, or a major
+allocation still cannot fit after full GC:
 
 ```
 if (result == 0) → caml_fatal_error("out of memory after collection")
@@ -1015,7 +1042,7 @@ generational/
     └── ocaml-4.14-verified-gen/
         └── runtime/
             ├── ocamlrun   ← Final binary (links libvergc_gen.a)
-            ├── memory.h   ← Patched: Alloc_small → verified_allocate
+            ├── memory.h   ← Patched: Alloc_small inline minor fast path
             └── ...        ← Stock OCaml 4.14 runtime
 ```
 
@@ -1044,7 +1071,7 @@ Phase                              Time        % of GC
 cheney_promote_phase (BFS copy)    1214 ms     24.5%
 major GC (mark + sweep)           2562 ms     51.7%
 promoted field rewrite             797 ms     16.1%
-gen_alloc (allocation)             194 ms      3.9%
+allocation slow paths              194 ms      3.9%
 fwd_arr zero (memset)               68 ms      1.4%
 ref_table slot rewrite              0.2 ms      0.0%  ← negligible
 root scan                           1.1 ms      0.0%

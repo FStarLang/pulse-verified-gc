@@ -389,22 +389,7 @@ uint64_t minor_alloc(minor_heap_t mh, uint64_t wosize, uint64_t tag)
   {
     uint64_t hdr = make_header(wosize, tag);
     size_t base = (size_t)bump;
-    uint8_t b0 = (uint8_t)hdr;
-    uint8_t b1 = (uint8_t)(hdr >> 8U);
-    uint8_t b2 = (uint8_t)(hdr >> 16U);
-    uint8_t b3 = (uint8_t)(hdr >> 24U);
-    uint8_t b4 = (uint8_t)(hdr >> 32U);
-    uint8_t b5 = (uint8_t)(hdr >> 40U);
-    uint8_t b6 = (uint8_t)(hdr >> 48U);
-    uint8_t b7 = (uint8_t)(hdr >> 56U);
-    mh.data[base] = b0;
-    mh.data[base + (size_t)1U] = b1;
-    mh.data[base + (size_t)2U] = b2;
-    mh.data[base + (size_t)3U] = b3;
-    mh.data[base + (size_t)4U] = b4;
-    mh.data[base + (size_t)5U] = b5;
-    mh.data[base + (size_t)6U] = b6;
-    mh.data[base + (size_t)7U] = b7;
+    write_u64_le(mh.data, base, hdr);
     *mh.bump_ref = new_bump;
     return bump + 8ULL;
   }

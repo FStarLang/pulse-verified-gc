@@ -80,7 +80,7 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
 /// Allocation
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 160"
+#push-options "--z3rlimit 10"
 fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
@@ -100,22 +100,7 @@ fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
     // Write header at bump
     let hdr = make_header wosize tag;
     let base = SZ.uint64_to_sizet bump;
-    let b0 = FStar.Int.Cast.uint64_to_uint8 hdr;
-    let b1 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right hdr 8ul);
-    let b2 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right hdr 16ul);
-    let b3 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right hdr 24ul);
-    let b4 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right hdr 32ul);
-    let b5 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right hdr 40ul);
-    let b6 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right hdr 48ul);
-    let b7 = FStar.Int.Cast.uint64_to_uint8 (U64.shift_right hdr 56ul);
-    mh.data.(base) <- b0;
-    mh.data.(SZ.add base 1sz) <- b1;
-    mh.data.(SZ.add base 2sz) <- b2;
-    mh.data.(SZ.add base 3sz) <- b3;
-    mh.data.(SZ.add base 4sz) <- b4;
-    mh.data.(SZ.add base 5sz) <- b5;
-    mh.data.(SZ.add base 6sz) <- b6;
-    mh.data.(SZ.add base 7sz) <- b7;
+    ArrayWord.write_u64_le mh.data base hdr;
     // Advance bump
     R.op_Colon_Equals mh.bump_ref new_bump;
     assert (pure (U64.v new_bump <= minor_heap_size));

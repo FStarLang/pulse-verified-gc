@@ -1,18 +1,33 @@
---- ocaml-4.14-unchanged/runtime/caml/memory.h	2026-04-01 23:37:08.308659995 -0700
-+++ ocaml-4.14-verified-gen/runtime/caml/memory.h	2026-05-12 18:33:33.564197223 -0700
-@@ -217,21 +217,43 @@
+--- ocaml-4.14-unchanged/runtime/caml/memory.h
++++ ocaml-4.14-verified-gen/runtime/caml/memory.h
+@@ -217,19 +217,53 @@ extern void caml_alloc_small_dispatch (intnat wosize, int flags,
                                         int nallocs, unsigned char* alloc_lens);
  // Do not call asynchronous callbacks from allocation functions
  #define Alloc_small_origin CAML_FROM_C
 +
++void* verified_allocate_minor(mlsize_t wosize, uint8_t tag);
 +void* verified_allocate(mlsize_t wosize, uint8_t tag);
 +
-+/* Inline fast-path globals exposed by alloc_gen.c */
-+extern uint64_t *vergc_minor_bump_ref;   /* pointer to bump counter */
-+extern uint8_t  *vergc_minor_base;       /* absolute address of minor heap */
-+extern uint64_t  vergc_minor_size;       /* minor heap size in bytes */
++extern uint64_t *vergc_minor_bump_ref;
++extern uint8_t  *vergc_minor_base;
++extern uint64_t  vergc_minor_size;
++
++#ifndef WITH_PROFINFO
++#define VERGC_HP_IN_MINOR(hp)                                           \
++  (vergc_minor_base != NULL &&                                          \
++   (uintnat)(hp) >= (uintnat)vergc_minor_base &&                        \
++   (uintnat)(hp) - (uintnat)vergc_minor_base < (uintnat)vergc_minor_size)
++#define VERGC_SHOULD_WRITE_SMALL_HEADER(fast, hp)                       \
++  ((fast) || !VERGC_HP_IN_MINOR(hp))
++#else
++#define VERGC_SHOULD_WRITE_SMALL_HEADER(fast, hp) 1
++#endif
 +
  #define Alloc_small_aux(result, wosize, tag, profinfo, track) do {     \
++  value vergc_alloc_hp;                                                \
++  int vergc_fast_alloc = 0;                                            \
++  uint64_t vergc_needed =                                              \
++    (uint64_t) Whsize_wosize (wosize) * (uint64_t) sizeof(value);      \
    CAMLassert ((wosize) >= 1);                                          \
    CAMLassert ((tag_t) (tag) < 256);                                    \
    CAMLassert ((wosize) <= Max_young_wosize);                           \
@@ -23,34 +38,29 @@
 -                              1, NULL);                                \
 -    Restore_after_gc;                                                  \
 -  }                                                                    \
++  if (vergc_minor_bump_ref != NULL && vergc_minor_base != NULL) {      \
++    uint64_t vergc_bump = *vergc_minor_bump_ref;                       \
++    if (vergc_bump <= vergc_minor_size &&                              \
++        vergc_needed <= vergc_minor_size - vergc_bump) {               \
++      vergc_alloc_hp = (value)(vergc_minor_base + vergc_bump);         \
++      *vergc_minor_bump_ref = vergc_bump + vergc_needed;               \
++      vergc_fast_alloc = 1;                                            \
++    }                                                                  \
++  }                                                                    \
++  if (!vergc_fast_alloc) {                                             \
++    Setup_for_gc;                                                      \
++    Caml_state_field(temp) =                                           \
++      (value)verified_allocate_minor((wosize), (uint8_t)(tag));        \
++    Restore_after_gc;                                                  \
++    vergc_alloc_hp = Caml_state_field(temp);                           \
++  }                                                                    \
++  if (VERGC_SHOULD_WRITE_SMALL_HEADER(vergc_fast_alloc, vergc_alloc_hp)) {\
++    Hd_hp (vergc_alloc_hp) =                                           \
++      Make_header_with_profinfo ((wosize), (tag), 0, profinfo);        \
++  }                                                                    \
 -  Hd_hp (Caml_state_field(young_ptr)) =                                \
-+  /* Inline bump-pointer fast path for minor allocation */             \
-+  if (__builtin_expect(vergc_minor_bump_ref != NULL, 1)) {             \
-+    uint64_t _vergc_bump = *vergc_minor_bump_ref;                      \
-+    uint64_t _vergc_needed = ((uint64_t)(wosize) + 1) * 8;            \
-+    uint64_t _vergc_new_bump = _vergc_bump + _vergc_needed;            \
-+    if (__builtin_expect(_vergc_new_bump <= vergc_minor_size, 1)) {    \
-+      *vergc_minor_bump_ref = _vergc_new_bump;                         \
-+      char *_vergc_hp = (char *)vergc_minor_base + _vergc_bump;        \
-+      *(uint64_t *)_vergc_hp =                                         \
-+        Make_header_with_profinfo ((wosize), (tag), 0, profinfo);      \
-+      (result) = (value)(_vergc_hp + sizeof(value));                   \
-+      DEBUG_clear ((result), (wosize));                                 \
-+      break;                                                            \
-+    }                                                                   \
-+  }                                                                     \
-+  /* Slow path: heap not initialized or minor heap full */              \
-+  Setup_for_gc;                                                         \
-+  Caml_state_field(temp) =                                              \
-+    (value)verified_allocate((wosize), (uint8_t)(tag));                \
-+  Restore_after_gc;                                                     \
-+  (result) = Caml_state_field(temp);                                   \
-+  Hd_hp (result) =                                                      \
-     Make_header_with_profinfo ((wosize), (tag), 0, profinfo);          \
+-    Make_header_with_profinfo ((wosize), (tag), 0, profinfo);          \
 -  (result) = Val_hp (Caml_state_field(young_ptr));                     \
--  DEBUG_clear ((result), (wosize));                                    \
-+  (result) = Val_hp (result);                                           \
-+  DEBUG_clear ((result), (wosize));                                     \
++  (result) = Val_hp (vergc_alloc_hp);                                  \
+   DEBUG_clear ((result), (wosize));                                    \
  }while(0)
- 
- #define Alloc_small_with_profinfo(result, wosize, tag, profinfo) \

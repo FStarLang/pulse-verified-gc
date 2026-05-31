@@ -2,11 +2,13 @@
  *               generational GC (Cheney minor + mark-and-sweep major).
  *
  * Provides:
- *   verified_allocate(wosize, tag)    — called from OCaml's Alloc_small / caml_alloc_shr
+ *   verified_allocate_minor(wosize, tag) — slow path for Alloc_small
+ *   verified_allocate(wosize, tag)       — major/shared allocation path
  *   caml_trigger_verified_gc(unit)    — OCaml-callable full GC trigger
  *
  * Uses:
- *   gen_alloc()            from GC_Gen_Impl.c — bump alloc (minor) or free-list (major)
+ *   minor_alloc()          from GC_Gen_Impl.c — bump alloc in the minor heap
+ *   allocate()             from GC_Gen_Impl.c — free-list allocation in the major heap
  *   minor_collect_full()   from GC_Gen_Impl.c — Cheney BFS + ref_table rewrite (full correctness)
  *   gen_gc()               from GC_Gen_Impl.c — verified minor+major full collection
  *
@@ -62,7 +64,9 @@ static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-al
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
 
-/* Inline fast-path globals for Alloc_small_aux (memory.h) */
+/* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
+ * The fast path reserves bytes by updating the same verified bump counter;
+ * collections and heap initialization still go through verified_allocate_minor(). */
 uint64_t *vergc_minor_bump_ref;
 uint8_t  *vergc_minor_base;
 uint64_t  vergc_minor_size;
@@ -133,15 +137,17 @@ static void ensure_heap(void) {
     /* Override the verified constant (2048B) with a production-sized minor heap.
      * OCaml default is 256K words = 2MB.  We match that default, overridable
      * via environment variable. */
+    max_young_wosize_u64 = 256ULL;  /* match OCaml's Max_young_wosize */
     size_t minor_words = 256 * 1024;  /* 2 MB / 8 = 256K words (matches OCaml default) */
     const char *minor_env = getenv("MINOR_HEAP_WORDS");
     if (minor_env) {
         size_t w = (size_t)atoll(minor_env);
-        if (w >= 256) minor_words = w;
+        if (w > 0) minor_words = w;
     }
+    if (minor_words < (size_t)max_young_wosize_u64 + 1)
+        minor_words = (size_t)max_young_wosize_u64 + 1;
     size_t minor_sz = minor_words * 8;
     minor_heap_size_u64 = (uint64_t)minor_sz;
-    max_young_wosize_u64 = 256ULL;  /* match OCaml's Max_young_wosize */
 
     /* Re-derive constants that depend on minor_heap_size */
     krmlinit_globals();
@@ -516,67 +522,78 @@ static void do_full_gc(void) {
     in_full_gc = 0;
 }
 
-/* --- Allocation entry point --- */
+/* --- Allocation entry points --- */
 
-void *verified_allocate(mlsize_t wosize, uint8_t tag) {
+void *verified_allocate_minor(mlsize_t wosize, uint8_t tag) {
     ensure_heap();
 
-    /* Trigger minor GC when minor heap cannot fit this allocation. */
-    {
-        uint64_t bump = *gc_gen_heap.minor.bump_ref;
-        uint64_t needed = ((uint64_t)wosize + 1) * 8;
-        if ((uint64_t)wosize <= max_young_wosize_u64 && bump + needed > minor_heap_size_u64) {
-            do_minor_gc();
-        }
-    }
+    if ((uint64_t)wosize == 0 || (uint64_t)wosize > max_young_wosize_u64)
+        caml_fatal_error("verified gen GC: non-minor allocation on minor path");
 
-    PROF_START(minor_alloc);
-    uint64_t result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
-    PROF_END(minor_alloc);
+    uint64_t needed = ((uint64_t)wosize + 1) * 8;
+    if (needed > minor_heap_size_u64)
+        caml_fatal_error("verified gen GC: minor heap smaller than Max_young_wosize");
 
-    if (result == 0) {
+    if (*gc_gen_heap.minor.bump_ref > minor_heap_size_u64 - needed) {
         do_minor_gc();
-        PROF_START(minor_alloc);
-        result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
-        PROF_END(minor_alloc);
     }
 
-    if (result == 0) {
-        do_full_gc();
-        PROF_START(minor_alloc);
-        result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
-        PROF_END(minor_alloc);
-    }
-
-    if (result == 0) {
-        caml_fatal_error("verified gen GC: out of memory after collection");
+    if (*gc_gen_heap.minor.bump_ref > minor_heap_size_u64 - needed) {
+        caml_fatal_error("verified gen GC: minor allocation failed after collection");
         return NULL;
     }
 
-    /* Track if any pointer-bearing objects are in the minor heap */
-    if (result < minor_heap_size_u64) {
-        PROF_INC(minor_alloc_count);
-    } else {
-        PROF_INC(major_alloc_count);
+    PROF_START(minor_alloc);
+    uint64_t result = minor_alloc(gc_gen_heap.minor, (uint64_t)wosize, (uint64_t)tag);
+    PROF_END(minor_alloc);
+
+    if (result == 0) {
+        caml_fatal_error("verified gen GC: minor allocation unexpectedly returned OOM");
+        return NULL;
     }
 
-    /* gen_alloc returns the object address (first field = header + 8).
-     * OCaml's Alloc_small_aux expects an HP (header pointer).
-     * It writes the header at hp[0] and derives val = hp + 8.
-     * For minor: result is a minor offset → translate to absolute HP.
-     * For major: result is already absolute (NULL-base trick). */
+    PROF_INC(minor_alloc_count);
+
+    /* minor_alloc returns the object offset (first field = header + 8).
+     * OCaml's allocation paths expect an HP (header pointer).  Slow minor
+     * allocations can reuse the verified header when profiling bits are absent;
+     * fast/raw allocations get a final runtime header. */
     uint64_t hdr_addr = result - 8;  /* header offset/address */
-    if (result < minor_heap_size_u64) {
-        /* Minor heap allocation — translate offset to absolute HP */
-        return (void *)((uintptr_t)minor_base + (uintptr_t)hdr_addr);
-    } else {
-        /* Major heap allocation (absolute address with NULL-base) */
-        void *ret = (void *)(uintptr_t)hdr_addr;
-        /* The verified allocate() sets tag=0; patch in the correct tag. */
-        uint8_t *hdr_ptr = (uint8_t *)ret;
-        hdr_ptr[0] = tag;  /* tag is in lowest byte of header */
-        return ret;
+    return (void *)((uintptr_t)minor_base + (uintptr_t)hdr_addr);
+}
+
+void *verified_allocate(mlsize_t wosize, uint8_t tag) {
+    (void)tag;
+    ensure_heap();
+
+    PROF_START(major_alloc);
+    uint64_t fp = *gc_gen_heap.fp_ref;
+    K___uint64_t_uint64_t res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
+    *gc_gen_heap.fp_ref = res.fst;
+    uint64_t result = res.snd;
+    PROF_END(major_alloc);
+
+    if (result == 0) {
+        do_full_gc();
+        PROF_START(major_alloc);
+        fp = *gc_gen_heap.fp_ref;
+        res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
+        *gc_gen_heap.fp_ref = res.fst;
+        result = res.snd;
+        PROF_END(major_alloc);
     }
+
+    if (result == 0) {
+        caml_fatal_error("verified gen GC: major allocation failed after collection");
+        return NULL;
+    }
+
+    PROF_INC(major_alloc_count);
+
+    /* allocate returns an absolute object address (first field = header + 8)
+     * via the major heap's NULL-base trick.  The OCaml runtime finalizes the
+     * header after this returns, installing the requested tag/profinfo bits. */
+    return (void *)(uintptr_t)(result - 8);
 }
 
 /* --- OCaml primitive --- */

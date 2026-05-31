@@ -1238,7 +1238,11 @@ OCaml and the extracted verified code.
 The bridge provides:
 
 ```c
+void *verified_allocate_minor(mlsize_t wosize, uint8_t tag);
 void *verified_allocate(mlsize_t wosize, uint8_t tag);
+extern uint64_t *vergc_minor_bump_ref;
+extern uint8_t  *vergc_minor_base;
+extern uint64_t  vergc_minor_size;
 void verified_do_minor_gc(void);
 CAMLprim value caml_trigger_verified_gc(value v);
 ```
@@ -1246,7 +1250,8 @@ CAMLprim value caml_trigger_verified_gc(value v);
 It calls extracted functions from `GC_Gen_Impl.c`:
 
 ```c
-gen_alloc(...)
+minor_alloc(...)
+allocate(...)
 minor_collect_full(...)
 gen_gc(...)
 ```
@@ -1447,21 +1452,22 @@ major slots have already been rewritten by verified code.
 
 ### GC triggers and OOM handling
 
-Allocation calls `gen_alloc`. If the minor heap cannot fit the object, the bridge
-runs a minor collection first:
+Small allocation uses a minor-only bridge entry point. If the minor heap cannot
+fit the object, the bridge runs minor collection and retries `minor_alloc`; it
+does not fall back to the major heap for `Alloc_small_aux`:
 
 ```c
-if ((uint64_t)wosize <= max_young_wosize_u64 &&
-    bump + needed > minor_heap_size_u64) {
+if (*gc_gen_heap.minor.bump_ref > minor_heap_size_u64 - needed) {
     do_minor_gc();
 }
 
-uint64_t result = gen_alloc(gc_gen_heap, (uint64_t)wosize, (uint64_t)tag);
+uint64_t result =
+    minor_alloc(gc_gen_heap.minor, (uint64_t)wosize, (uint64_t)tag);
 ```
 
-If allocation still fails, the bridge tries minor GC, then full GC, and finally
-raises a fatal runtime error if the fixed-size heaps cannot satisfy the request.
-Promotion failure is also fatal:
+Shared/large allocation calls the verified major free-list allocator directly,
+tries a full GC on failure, and finally raises a fatal runtime error if the
+fixed-size heaps cannot satisfy the request. Promotion failure is also fatal:
 
 ```c
 if (!promote_ok) {
@@ -1509,8 +1515,13 @@ modifies the runtime so bytecode programs call the verified collector:
   `ocamlrun`.
 - `runtime/caml/domain_state.tbl` adds a temporary root slot used around
   allocation calls.
-- `runtime/caml/memory.h` routes `Alloc_small_aux` through
-  `verified_allocate`.
+- `runtime/caml/memory.h` performs inline bump allocation for small minor
+  objects when the verified minor heap has space, and falls back to
+  `verified_allocate_minor` for heap initialization and collection.  That slow
+  path collects and retries in the minor heap, matching stock OCaml's
+  `Alloc_small` behavior rather than sending small objects to the major heap.
+  The inline fast path writes the OCaml header itself; slow minor allocations
+  reuse the extracted header unless reserved profinfo bits are enabled.
 - `runtime/memory.c` routes `caml_alloc_shr_aux` through `verified_allocate`
   for major allocations.
 - `runtime/interp.c` wraps allocation sites with `Setup_for_gc` /
@@ -1540,27 +1551,28 @@ make benchmark   # or make bench-all
 ```
 
 The fresh hyperfine run writes CSVs to `results/*.bench.csv`. The tracked
-historical result directories have been refreshed from that run:
+current snapshot is mirrored in:
 
 - `generational/ocaml-integration/tests/results_final/`
-- `generational/ocaml-integration/tests/results_fastpath/`
-- `generational/ocaml-integration/tests/results_inline/`
-- `generational/ocaml-integration/tests/results_wordlevel/`
+
+The older `results_fastpath/`, `results_inline/`, and `results_wordlevel/`
+directories are retained as comparison snapshots from earlier optimization
+steps.
 
 The current run compares `verified-gen` with `stock-ocaml`:
 
 | Benchmark | verified-gen mean (s) | stock OCaml mean (s) | Ratio |
 | --- | ---: | ---: | ---: |
-| `binarytrees` | 16.011 ± 0.078 | 12.322 ± 0.035 | 1.30x |
-| `count_change` | 0.415 ± 0.005 | 0.197 ± 0.004 | 2.10x |
-| `fannkuchredux` | 70.016 ± 0.106 | 68.093 ± 0.070 | 1.03x |
-| `fasta` | 4.344 ± 0.029 | 2.544 ± 0.006 | 1.71x |
-| `mandelbrot` | 3.964 ± 0.013 | 1.857 ± 0.030 | 2.13x |
-| `nbodies` | 1.136 ± 0.010 | 0.303 ± 0.005 | 3.75x |
-| `quicksort` | 7.964 ± 0.055 | 7.735 ± 0.056 | 1.03x |
-| `spectralnorm` | 4.480 ± 0.019 | 2.176 ± 0.019 | 2.06x |
+| `binarytrees` | 15.685 ± 0.048 | 12.322 ± 0.060 | 1.27x |
+| `count_change` | 0.371 ± 0.007 | 0.197 ± 0.004 | 1.88x |
+| `fannkuchredux` | 68.934 ± 0.598 | 68.152 ± 0.116 | 1.01x |
+| `fasta` | 3.619 ± 0.020 | 2.546 ± 0.008 | 1.42x |
+| `mandelbrot` | 2.869 ± 0.008 | 1.843 ± 0.009 | 1.56x |
+| `nbodies` | 0.711 ± 0.014 | 0.303 ± 0.005 | 2.34x |
+| `quicksort` | 7.987 ± 0.064 | 7.772 ± 0.055 | 1.03x |
+| `spectralnorm` | 3.325 ± 0.009 | 2.166 ± 0.016 | 1.54x |
 
-The geometric-mean slowdown for this run is 1.73x, with a max slowdown of 3.75x
+The geometric-mean slowdown for this run is 1.45x, with a max slowdown of 2.34x
 on `nbodies`. Compute-heavy benchmarks such as `fannkuchredux` and `quicksort`
 are near parity, while allocation/runtime-sensitive cases still show the largest
 overheads.

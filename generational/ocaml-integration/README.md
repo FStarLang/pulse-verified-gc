@@ -8,9 +8,9 @@ to C via KaRaMeL.
 
 ```
 OCaml 4.14 runtime (patched: memory.h, interp.c, minor_gc.c, ...)
-    ↓ verified_allocate(wosize, tag)
+    ↓ inline minor bump allocation; verified_allocate_minor() slow path
 alloc_gen.c (bridge: root scanning, minor/major collection, heap init)
-    ↓ gen_alloc(), minor_collect_full(), collect()
+    ↓ minor_alloc(), allocate(), minor_collect_full(), gen_gc()
 GC_Gen_Impl.c (KaRaMeL-extracted verified code)
 ```
 
@@ -21,8 +21,10 @@ GC_Gen_Impl.c (KaRaMeL-extracted verified code)
    collectors.  Zero hand-written logic — all code extracted from verified
    F*/Pulse source.
 
-2. **alloc_gen.c** — Bridge layer (~250 lines).  Provides `verified_allocate()`
-   called by OCaml.  Handles:
+2. **alloc_gen.c** — C bridge layer.  Provides the shared minor
+   bump pointer used by the inline `Alloc_small` fast path,
+   `verified_allocate_minor()` for the small-allocation slow path, and
+   `verified_allocate()` for shared/major allocation.  Handles:
    - NULL-base trick for major heap (offsets = absolute addresses)
    - Root scanning via `caml_do_roots`
    - Minor→major address translation for roots
@@ -30,8 +32,9 @@ GC_Gen_Impl.c (KaRaMeL-extracted verified code)
    - Gray stack management for major GC
 
 3. **runtime_gen.patch** — OCaml runtime modifications (~250 lines).  Patches
-   `memory.h` (Alloc_small), `memory.c` (caml_alloc_shr), `interp.c`
-   (Setup_for_gc), `minor_gc.c` (disable native GC).
+   `memory.h` (inline minor allocation plus slow-path `verified_allocate_minor`),
+   `memory.c` (caml_alloc_shr), `interp.c` (Setup_for_gc), `minor_gc.c`
+   (disable native GC).
 
 ## Quick start
 
@@ -64,5 +67,6 @@ Everything else is KaRaMeL-extracted from verified F*/Pulse code with zero admit
 Set `MIN_EXPANSION_WORDSIZE` environment variable to control major heap size
 (in words).  Default: 32M words (256MB).
 
-Minor heap size is set at extraction time via `GC.Gen.Base.minor_heap_size`
-(currently 2048 bytes / 256 words — increase for benchmarks).
+Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
+256K words (2MB), matching OCaml's default, with a floor large enough for
+`Max_young_wosize`.

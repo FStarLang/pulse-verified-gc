@@ -29,7 +29,7 @@ bundled toolchain code and archived attempts, the active F*/Pulse tree contains
 | OCaml integration | `generational/ocaml-integration/` | Extracted verified GC bridge for OCaml 4.14 bytecode, smoke tests, benchmark harness, and refreshed CSV results. |
 
 The latest verified-GC benchmark run reports a geometric-mean slowdown of
-**1.73x** versus stock OCaml 4.14. The full per-benchmark numbers and discussion
+**1.45x** versus stock OCaml 4.14. The full per-benchmark numbers and discussion
 are in [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md); the refreshed CSV data lives
 under `generational/ocaml-integration/tests/results*/`.
 
