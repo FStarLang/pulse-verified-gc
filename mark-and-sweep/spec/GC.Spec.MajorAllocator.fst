@@ -698,3 +698,58 @@ let major_alloc_search_found_prev (mh: MH.major_heap) (head prev cur: U64.t)
                     major_alloc_search mh head prev cur wz fuel ==
                     { major_alloc_out = mh2; major_fp_out = head; major_obj_out = cur }))
   = ()
+
+#push-options "--z3rlimit 80"
+let major_alloc_after_expand_returns_fresh (mh: MH.major_heap) (c: MH.heap_chunk)
+                                           (next_fp: U64.t)
+                                           (requested_wz fuel: nat)
+  : Lemma (requires U64.v c.base >= U64.v zero_addr /\
+                    Alloc.normalized_wosize requested_wz <= fresh_chunk_wosize c)
+          (ensures (let er = expand_major_heap mh c next_fp in
+                    let r = major_alloc_spec_with_fuel er.major_out er.fp_out requested_wz (fuel + 1) in
+                    r.major_obj_out == er.fp_out))
+  = let er = expand_major_heap mh c next_fp in
+    let fp = er.fp_out in
+    let wz = Alloc.normalized_wosize requested_wz in
+    let hdr = Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL in
+    expand_major_heap_header mh c next_fp;
+    expand_major_heap_header_fields mh c next_fp;
+    expand_major_heap_link mh c next_fp;
+    fresh_chunk_object_in_chunk c;
+    f_address_spec c.base;
+    assert (fp == fresh_chunk_object c);
+    assert (U64.v fp == U64.v c.base + U64.v mword);
+    assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    assert (U64.v c.base + U64.v mword < heap_size);
+    hd_f_roundtrip c.base;
+    assert (hd_address fp == c.base);
+    assert (MH.read_word_in_major er.major_out (hd_address fp) == Some hdr);
+    assert (Obj.getWosize hdr == fresh_chunk_wosize_u64 c);
+    assert (U64.v (Obj.getWosize hdr) == fresh_chunk_wosize c);
+    assert (U64.v (Obj.getWosize hdr) >= wz);
+    major_alloc_search_found_head er.major_out fp 0UL fp wz (fuel + 1) hdr
+#pop-options
+
+let major_alloc_spec_expand_on_oom (mh: MH.major_heap) (fp: U64.t)
+                                   (requested_wz fuel: nat)
+                                   (fresh: MH.heap_chunk)
+  : GTot major_alloc_result =
+  let first = major_alloc_spec_with_fuel mh fp requested_wz fuel in
+  if first.major_obj_out <> 0UL then first
+  else
+    let er = expand_major_heap mh fresh fp in
+    major_alloc_spec_with_fuel er.major_out er.fp_out requested_wz (fuel + 1)
+
+let major_alloc_expand_on_oom_returns_fresh (mh: MH.major_heap) (fp: U64.t)
+                                            (requested_wz fuel: nat)
+                                            (fresh: MH.heap_chunk)
+  : Lemma (requires (major_alloc_spec_with_fuel mh fp requested_wz fuel).major_obj_out == 0UL /\
+                    U64.v fresh.base >= U64.v zero_addr /\
+                    Alloc.normalized_wosize requested_wz <= fresh_chunk_wosize fresh)
+          (ensures (major_alloc_spec_expand_on_oom mh fp requested_wz fuel fresh).major_obj_out ==
+                   fresh_chunk_object fresh)
+  = major_alloc_after_expand_returns_fresh mh fresh fp requested_wz fuel;
+    let er = expand_major_heap mh fresh fp in
+    assert (er.fp_out == fresh_chunk_object fresh)
