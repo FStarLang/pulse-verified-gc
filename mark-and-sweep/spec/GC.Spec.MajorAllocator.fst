@@ -44,6 +44,10 @@ let fresh_chunk_has_block (c: MH.heap_chunk)
     assert (c.size == chunk_word_capacity c * U64.v mword);
     assert (U64.v mword == 8)
 
+let fresh_chunk_wosize_nonzero (c: MH.heap_chunk)
+  : Lemma (fresh_chunk_wosize c >= 1)
+  = fresh_chunk_has_block c
+
 let fresh_chunk_object (c: MH.heap_chunk) : obj_addr =
   fresh_chunk_has_block c;
   assert (U64.v c.base + U64.v mword < heap_size);
@@ -281,3 +285,64 @@ let expand_major_heap_fresh_not_old (mh: MH.major_heap) (c: MH.heap_chunk) (next
     let r = init_fresh_chunk c next_fp in
     SeqProps.mem_cons r.fp_out Seq.empty;
     MH.fresh_chunk_object_not_old mh r.chunk_out r.fp_out
+
+let rec major_fl_valid (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot prop
+  (decreases fuel)
+  = if fuel = 0 then True
+    else
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then True
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then False
+      else
+        let obj : obj_addr = fp in
+        MH.is_major_pointer mh fp /\
+        Seq.mem obj (MH.major_objects mh) /\
+        (match MH.read_word_in_major mh (hd_address obj) with
+         | Some hdr -> U64.v (Obj.getWosize hdr) >= 1
+         | None -> False) /\
+        (match MH.read_word_in_major mh obj with
+         | Some next -> next <> fp /\ major_fl_valid mh next fuel'
+         | None -> False)
+
+let major_fl_valid_zero (mh: MH.major_heap) (fp: U64.t)
+  : Lemma (major_fl_valid mh fp 0)
+  = ()
+
+let major_fl_valid_null (mh: MH.major_heap) (fuel: nat)
+  : Lemma (requires fuel > 0)
+          (ensures major_fl_valid mh 0UL fuel)
+  = ()
+
+#push-options "--z3rlimit 80"
+let expand_major_heap_fresh_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
+                                     (next_fp: U64.t) (fuel: nat)
+  : Lemma (requires major_fl_valid (expand_major_heap mh c next_fp).major_out next_fp fuel /\
+                    next_fp <> fresh_chunk_object c)
+          (ensures major_fl_valid (expand_major_heap mh c next_fp).major_out
+                    (fresh_chunk_object c) (fuel + 1))
+  = fresh_chunk_object_in_chunk c;
+    fresh_chunk_wosize_nonzero c;
+    let er = expand_major_heap mh c next_fp in
+    let fp = fresh_chunk_object c in
+    expand_major_heap_fresh_object mh c next_fp;
+    expand_major_heap_header mh c next_fp;
+    expand_major_heap_header_fields mh c next_fp;
+    expand_major_heap_link mh c next_fp;
+    f_address_spec c.base;
+    assert (U64.v fp >= U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    assert (MH.is_major_pointer er.major_out fp);
+    assert (Seq.mem fp (MH.major_objects er.major_out));
+    assert (MH.read_word_in_major er.major_out c.base ==
+            Some (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL));
+    assert (Obj.getWosize (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL) ==
+            fresh_chunk_wosize_u64 c);
+    assert (U64.v (fresh_chunk_wosize_u64 c) >= 1);
+    assert (U64.v c.base + U64.v mword < heap_size);
+    hd_f_roundtrip c.base;
+    assert (f_address c.base == fp);
+    assert (hd_address fp == c.base);
+    assert (MH.read_word_in_major er.major_out fp == Some next_fp)
+#pop-options
