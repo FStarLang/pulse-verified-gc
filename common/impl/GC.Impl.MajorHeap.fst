@@ -99,3 +99,90 @@ fn read_word_in_chunk (h: major_heap_t)
   fold (chunk_range h (Ghost.reveal c));
   v
 }
+
+fn write_word_in_chunk (h: major_heap_t)
+                       (addr: Base.hp_addr)
+                       (v: U64.t)
+                       (#c: Ghost.erased (c0:MH.heap_chunk{MH.word_in_chunk c0 addr}))
+  requires chunk_range h (Ghost.reveal c)
+  ensures PTR.pts_to_range h.data
+            (MH.chunk_start (Ghost.reveal c))
+            (MH.chunk_end (Ghost.reveal c))
+            (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes
+{
+  let i0 = offset_sizet addr 0;
+  let i1 = offset_sizet addr 1;
+  let i2 = offset_sizet addr 2;
+  let i3 = offset_sizet addr 3;
+  let i4 = offset_sizet addr 4;
+  let i5 = offset_sizet addr 5;
+  let i6 = offset_sizet addr 6;
+  let i7 = offset_sizet addr 7;
+  assert (pure (MH.chunk_start (Ghost.reveal c) <= SZ.v i0));
+  assert (pure (SZ.v i7 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i0 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i1 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i2 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i3 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i4 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i5 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i6 < MH.chunk_end (Ghost.reveal c)));
+  assert (pure (SZ.v i0 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr));
+  assert (pure (SZ.v i1 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr + 1));
+  assert (pure (SZ.v i2 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr + 2));
+  assert (pure (SZ.v i3 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr + 3));
+  assert (pure (SZ.v i4 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr + 4));
+  assert (pure (SZ.v i5 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr + 5));
+  assert (pure (SZ.v i6 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr + 6));
+  assert (pure (SZ.v i7 - MH.chunk_start (Ghost.reveal c) == MH.chunk_offset (Ghost.reveal c) addr + 7));
+  let b0 = SpecHeap.uint64_to_uint8 v;
+  let b1 = SpecHeap.uint64_to_uint8 (U64.shift_right v 8ul);
+  let b2 = SpecHeap.uint64_to_uint8 (U64.shift_right v 16ul);
+  let b3 = SpecHeap.uint64_to_uint8 (U64.shift_right v 24ul);
+  let b4 = SpecHeap.uint64_to_uint8 (U64.shift_right v 32ul);
+  let b5 = SpecHeap.uint64_to_uint8 (U64.shift_right v 40ul);
+  let b6 = SpecHeap.uint64_to_uint8 (U64.shift_right v 48ul);
+  let b7 = SpecHeap.uint64_to_uint8 (U64.shift_right v 56ul);
+  unfold (chunk_range h (Ghost.reveal c));
+  with s0. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s0 **
+    pure (s0 == (Ghost.reveal c).bytes));
+  PTR.pts_to_range_upd h.data i0 b0;
+  with s1. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s1 **
+    pure (s1 == Seq.upd s0 (MH.chunk_offset (Ghost.reveal c) addr) b0));
+  PTR.pts_to_range_upd h.data i1 b1;
+  with s2. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s2 **
+    pure (s2 == Seq.upd s1 (MH.chunk_offset (Ghost.reveal c) addr + 1) b1));
+  PTR.pts_to_range_upd h.data i2 b2;
+  with s3. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s3 **
+    pure (s3 == Seq.upd s2 (MH.chunk_offset (Ghost.reveal c) addr + 2) b2));
+  PTR.pts_to_range_upd h.data i3 b3;
+  with s4. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s4 **
+    pure (s4 == Seq.upd s3 (MH.chunk_offset (Ghost.reveal c) addr + 3) b3));
+  PTR.pts_to_range_upd h.data i4 b4;
+  with s5. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s5 **
+    pure (s5 == Seq.upd s4 (MH.chunk_offset (Ghost.reveal c) addr + 4) b4));
+  PTR.pts_to_range_upd h.data i5 b5;
+  with s6. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s6 **
+    pure (s6 == Seq.upd s5 (MH.chunk_offset (Ghost.reveal c) addr + 5) b5));
+  PTR.pts_to_range_upd h.data i6 b6;
+  with s7. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s7 **
+    pure (s7 == Seq.upd s6 (MH.chunk_offset (Ghost.reveal c) addr + 6) b6));
+  PTR.pts_to_range_upd h.data i7 b7;
+  with s8. assert (
+    PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s8 **
+    pure (s8 == Seq.upd s7 (MH.chunk_offset (Ghost.reveal c) addr + 7) b7));
+  assert (pure (s8 == (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes));
+  assert (pure (MH.chunk_start (MH.write_word_in_chunk (Ghost.reveal c) addr v) == MH.chunk_start (Ghost.reveal c)));
+  assert (pure (MH.chunk_end (MH.write_word_in_chunk (Ghost.reveal c) addr v) == MH.chunk_end (Ghost.reveal c)));
+  assert (pure (MH.chunk_start (Ghost.reveal c) == MH.chunk_start (MH.write_word_in_chunk (Ghost.reveal c) addr v)));
+  assert (pure (MH.chunk_end (Ghost.reveal c) == MH.chunk_end (MH.write_word_in_chunk (Ghost.reveal c) addr v)));
+  rewrite each s8 as (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes
+}
