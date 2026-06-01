@@ -1276,3 +1276,136 @@ fn expand_and_allocate_fresh (heap: MajorHeap.major_heap_t)
     res
   }
 }
+
+fn expand_and_allocate_fresh_with_fuel (heap: MajorHeap.major_heap_t)
+                                       (base: hp_addr) (fp_out: obj_addr)
+                                       (fresh_wz requested_wz: wosize)
+                                       (next_fp: U64.t)
+                                       (#fuel: nat)
+                                       (#mh: Ghost.erased MH.major_heap)
+                                       (#fresh_chunk: Ghost.erased
+                                         (c:MH.heap_chunk{c.base == base /\
+                                                          fp_out == SMA.fresh_chunk_object c /\
+                                                          U64.v fresh_wz == SMA.fresh_chunk_wosize c}))
+   requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                  U64.v base >= U64.v zero_addr /\
+                  U64.v requested_wz > 0 /\
+                  SMA.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                    U64.v requested_wz)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+              let old_mh : MH.major_heap = Ghost.reveal mh in
+              let retry_fuel : nat = fuel + 1 in
+              let er =
+               SMA.expand_major_heap
+                 old_mh fresh_c next_fp in
+              (SMA.major_alloc_spec_with_fuel
+                er.major_out er.fp_out (U64.v requested_wz)
+                retry_fuel).major_alloc_out)
+{
+  let res =
+    expand_and_allocate_fresh
+      heap base fp_out fresh_wz requested_wz next_fp #mh #fresh_chunk;
+  SMA.major_alloc_after_expand_fuel_irrelevant
+    (Ghost.reveal mh) (Ghost.reveal fresh_chunk) next_fp
+    (U64.v requested_wz) fuel;
+  assert (pure (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+                let old_mh : MH.major_heap = Ghost.reveal mh in
+                let retry_fuel : nat = fuel + 1 in
+                let er = SMA.expand_major_heap old_mh fresh_c next_fp in
+                SMA.major_alloc_spec_with_fuel
+                  er.major_out er.fp_out (U64.v requested_wz) 1 ==
+                SMA.major_alloc_spec_with_fuel
+                  er.major_out er.fp_out (U64.v requested_wz)
+                  retry_fuel));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+       let old_mh : MH.major_heap = Ghost.reveal mh in
+       let er = SMA.expand_major_heap old_mh fresh_c next_fp in
+       (SMA.major_alloc_spec_with_fuel
+         er.major_out er.fp_out (U64.v requested_wz) 1).major_alloc_out))
+  as
+    (MajorHeap.is_indexed_major_heap heap
+      (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+       let old_mh : MH.major_heap = Ghost.reveal mh in
+       let retry_fuel : nat = fuel + 1 in
+       let er = SMA.expand_major_heap old_mh fresh_c next_fp in
+       (SMA.major_alloc_spec_with_fuel
+         er.major_out er.fp_out (U64.v requested_wz) retry_fuel).major_alloc_out));
+  res
+}
+
+fn expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
+                            (base: hp_addr) (fp_out: obj_addr)
+                            (fresh_wz requested_wz: wosize)
+                            (fp: U64.t)
+                            (#fuel: nat)
+                            (#mh: Ghost.erased MH.major_heap)
+                            (#fresh_chunk: Ghost.erased
+                              (c:MH.heap_chunk{c.base == base /\
+                                               fp_out == SMA.fresh_chunk_object c /\
+                                               U64.v fresh_wz == SMA.fresh_chunk_wosize c}))
+   requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                  U64.v base >= U64.v zero_addr /\
+                  U64.v requested_wz > 0 /\
+                  SMA.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                    U64.v requested_wz /\
+                  (SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz)
+                    fuel).major_obj_out == 0UL)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let old_mh : MH.major_heap = Ghost.reveal mh in
+              let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+              SMA.major_alloc_spec_expand_on_oom
+                old_mh fp (U64.v requested_wz)
+                fuel fresh_c).major_alloc_out **
+           pure (snd res == fp_out)
+{
+  let res =
+    expand_and_allocate_fresh
+      heap base fp_out fresh_wz requested_wz fp #mh #fresh_chunk;
+  SMA.major_alloc_after_expand_fuel_irrelevant
+    (Ghost.reveal mh) (Ghost.reveal fresh_chunk) fp
+    (U64.v requested_wz) fuel;
+  assert (pure ((SMA.major_alloc_spec_with_fuel
+                  (Ghost.reveal mh) fp (U64.v requested_wz)
+                  fuel).major_obj_out == 0UL));
+  assert (pure (SMA.major_alloc_spec_expand_on_oom
+                  (Ghost.reveal mh) fp (U64.v requested_wz)
+                  fuel (Ghost.reveal fresh_chunk) ==
+                (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+                 let er = SMA.expand_major_heap (Ghost.reveal mh) fresh_c fp in
+                 SMA.major_alloc_spec_with_fuel
+                   er.major_out er.fp_out (U64.v requested_wz)
+                   (fuel + 1))));
+  assert (pure (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+                let er = SMA.expand_major_heap (Ghost.reveal mh) fresh_c fp in
+                SMA.major_alloc_spec_with_fuel
+                  er.major_out er.fp_out (U64.v requested_wz) 1 ==
+                SMA.major_alloc_spec_with_fuel
+                  er.major_out er.fp_out (U64.v requested_wz)
+                  (fuel + 1)));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+       let er = SMA.expand_major_heap (Ghost.reveal mh) fresh_c fp in
+       (SMA.major_alloc_spec_with_fuel
+         er.major_out er.fp_out (U64.v requested_wz) 1).major_alloc_out))
+  as
+    (MajorHeap.is_indexed_major_heap heap
+      (SMA.major_alloc_spec_expand_on_oom
+        (Ghost.reveal mh) fp (U64.v requested_wz)
+        fuel (Ghost.reveal fresh_chunk)).major_alloc_out);
+  SMA.major_alloc_after_expand_returns_fresh
+    (Ghost.reveal mh) (Ghost.reveal fresh_chunk) fp
+    (U64.v requested_wz) 0;
+  assert (pure (snd res == fp_out));
+  res
+}

@@ -337,6 +337,69 @@ fn expand_and_allocate_fresh (heap: MajorHeap.major_heap_t)
                 fst res == r.major_fp_out /\
                 snd res == r.major_obj_out)
 
+/// Same as expand_and_allocate_fresh, but exposes the heap state for an
+/// arbitrary positive retry fuel. Fresh-head allocation is fuel-insensitive
+/// once the retry fuel is non-zero.
+fn expand_and_allocate_fresh_with_fuel (heap: MajorHeap.major_heap_t)
+                                       (base: hp_addr) (fp_out: obj_addr)
+                                       (fresh_wz requested_wz: wosize)
+                                       (next_fp: U64.t)
+                                       (#fuel: nat)
+                                       (#mh: Ghost.erased MH.major_heap)
+                                       (#fresh_chunk: Ghost.erased
+                                         (c:MH.heap_chunk{c.base == base /\
+                                                          fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                                          U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+   requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                 U64.v base >= U64.v zero_addr /\
+                 U64.v requested_wz > 0 /\
+                 SpecMajorAlloc.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                   U64.v requested_wz)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+              let old_mh : MH.major_heap = Ghost.reveal mh in
+              let retry_fuel : nat = fuel + 1 in
+              let er =
+               SpecMajorAlloc.expand_major_heap
+                old_mh fresh_c next_fp in
+              (SpecMajorAlloc.major_alloc_spec_with_fuel
+                er.major_out er.fp_out (U64.v requested_wz)
+                retry_fuel).major_alloc_out)
+
+/// Expand with a fresh chunk after an old free-list allocation attempt
+/// returned OOM, exposing the exact expand-on-OOM allocation spec.
+fn expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
+                            (base: hp_addr) (fp_out: obj_addr)
+                            (fresh_wz requested_wz: wosize)
+                            (fp: U64.t)
+                            (#fuel: nat)
+                            (#mh: Ghost.erased MH.major_heap)
+                            (#fresh_chunk: Ghost.erased
+                              (c:MH.heap_chunk{c.base == base /\
+                                               fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                               U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+   requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                 U64.v base >= U64.v zero_addr /\
+                 U64.v requested_wz > 0 /\
+                 SpecMajorAlloc.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                   U64.v requested_wz /\
+                 (SpecMajorAlloc.major_alloc_spec_with_fuel
+                   (Ghost.reveal mh) fp (U64.v requested_wz)
+                   fuel).major_obj_out == 0UL)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let old_mh : MH.major_heap = Ghost.reveal mh in
+              let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+              SpecMajorAlloc.major_alloc_spec_expand_on_oom
+                old_mh fp (U64.v requested_wz)
+                fuel fresh_c).major_alloc_out **
+           pure (snd res == fp_out)
+
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.

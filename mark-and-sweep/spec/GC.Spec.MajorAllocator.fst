@@ -1427,3 +1427,39 @@ let major_alloc_after_expand_split (mh: MH.major_heap) (c: MH.heap_chunk)
     major_alloc_from_block_split_normal er.major_out fp wz next_fp hdr;
     major_alloc_search_found_head er.major_out fp 0UL fp wz (fuel + 1) hdr
 #pop-options
+
+#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+let major_alloc_after_expand_fuel_irrelevant (mh: MH.major_heap) (c: MH.heap_chunk)
+                                             (next_fp: U64.t)
+                                             (requested_wz fuel: nat)
+  : Lemma (requires U64.v c.base >= U64.v zero_addr /\
+                    requested_wz > 0 /\
+                    fresh_chunk_wosize c >= requested_wz)
+          (ensures (let er = expand_major_heap mh c next_fp in
+                    major_alloc_spec_with_fuel er.major_out er.fp_out requested_wz 1 ==
+                    major_alloc_spec_with_fuel er.major_out er.fp_out requested_wz (fuel + 1)))
+  = let er = expand_major_heap mh c next_fp in
+    let r1 = major_alloc_spec_with_fuel er.major_out er.fp_out requested_wz 1 in
+    let rf = major_alloc_spec_with_fuel er.major_out er.fp_out requested_wz (fuel + 1) in
+    if fresh_chunk_wosize c - requested_wz >= 2 then begin
+      fresh_chunk_split_remainder_addr_bounds c requested_wz;
+      let rem_hd_nat = U64.v c.base + (1 + requested_wz) * 8 in
+      let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+      let rem_obj_nat = rem_hd_nat + U64.v mword in
+      let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+      assert (U64.v rem_hd == U64.v c.base + (1 + requested_wz) * 8);
+      assert (U64.v rem_obj == U64.v rem_hd + U64.v mword);
+      major_alloc_after_expand_split mh c next_fp requested_wz 0 rem_hd rem_obj;
+      major_alloc_after_expand_split mh c next_fp requested_wz fuel rem_hd rem_obj;
+      assert (r1.major_alloc_out == rf.major_alloc_out);
+      assert (r1.major_fp_out == rf.major_fp_out);
+      assert (r1.major_obj_out == rf.major_obj_out)
+    end else begin
+      assert (fresh_chunk_wosize c - requested_wz < 2);
+      major_alloc_after_expand_no_split mh c next_fp requested_wz 0;
+      major_alloc_after_expand_no_split mh c next_fp requested_wz fuel;
+      assert (r1.major_alloc_out == rf.major_alloc_out);
+      assert (r1.major_fp_out == rf.major_fp_out);
+      assert (r1.major_obj_out == rf.major_obj_out)
+    end
+#pop-options
