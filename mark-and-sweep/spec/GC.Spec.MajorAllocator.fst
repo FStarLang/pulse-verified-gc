@@ -11,7 +11,8 @@ module GC.Spec.MajorAllocator
 module U64 = FStar.UInt64
 module MH = GC.Spec.MajorHeap
 module Alloc = GC.Spec.Allocator
-module AllocLemmas = GC.Spec.Allocator.Lemmas
+module AllocCore = GC.Spec.Allocator.Lemmas.Core
+module AllocHeader = GC.Spec.Allocator.Lemmas.Header
 module Obj = GC.Spec.Object
 module Header = GC.Lib.Header
 
@@ -113,7 +114,7 @@ let init_fresh_chunk_header_fields (c: MH.heap_chunk) (next_fp: U64.t)
     init_fresh_chunk_header c next_fp;
     let wz = fresh_chunk_wosize_u64 c in
     let hdr = Alloc.make_header wz Alloc.blue_bits 0UL in
-    AllocLemmas.make_header_getWosize wz Alloc.blue_bits 0UL;
-    AllocLemmas.make_header_getColor wz Alloc.blue_bits 0UL;
-    AllocLemmas.make_header_getTag wz Alloc.blue_bits 0UL;
+    AllocHeader.make_header_getWosize wz Alloc.blue_bits 0UL;
+    AllocHeader.make_header_getTag wz Alloc.blue_bits 0UL;
+    AllocCore.make_header_getColor wz Alloc.blue_bits 0UL;
     Obj.getColor_raw hdr
