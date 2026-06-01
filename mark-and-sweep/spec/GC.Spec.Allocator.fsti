@@ -179,6 +179,17 @@ let rec alloc_search (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
 /// Top-Level Allocation
 /// ---------------------------------------------------------------------------
 
+let normalized_wosize (requested_wz: nat) : nat =
+  if requested_wz = 0 then 1 else requested_wz
+
+/// Allocate with an explicit search budget. This is the fuel-parametric
+/// entry point used to separate the allocation algorithm from the current
+/// single-heap compatibility budget.
+let alloc_spec_with_fuel (g: heap) (fp: U64.t) (requested_wz: nat) (fuel: nat)
+  : GTot alloc_result =
+  let wz = normalized_wosize requested_wz in
+  alloc_search g fp 0UL fp wz fuel
+
 /// Allocate an object of the given word size from the free list.
 /// fp: current free-list head (obj_addr of first free block, or 0)
 /// requested_wz: number of words needed (will be bumped to 1 if 0)
@@ -188,8 +199,7 @@ let rec alloc_search (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
 ///   - fp_out: new free-list head
 ///   - obj_out: allocated object address (0UL = OOM)
 let alloc_spec (g: heap) (fp: U64.t) (requested_wz: nat) : GTot alloc_result =
-  let wz = if requested_wz = 0 then 1 else requested_wz in
-  alloc_search g fp 0UL fp wz alloc_search_fuel
+  alloc_spec_with_fuel g fp requested_wz alloc_search_fuel
 
 /// ---------------------------------------------------------------------------
 /// Heap Initialization
