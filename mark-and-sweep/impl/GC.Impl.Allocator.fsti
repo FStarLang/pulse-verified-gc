@@ -151,6 +151,35 @@ fn expand_major_heap_owned (heap: MajorHeap.major_heap_t)
             (SpecMajorAlloc.expand_major_heap
               (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).fp_out)
 
+/// Allocate the entire freshly prepended free block.
+fn allocate_fresh_expanded_exact (heap: MajorHeap.major_heap_t)
+                                 (base: hp_addr) (fp_out: obj_addr)
+                                 (wz: wosize) (next_fp: U64.t)
+                                 (#mh: Ghost.erased MH.major_heap)
+                                 (#fresh: Ghost.erased
+                                   (c:MH.heap_chunk{c.base == base /\
+                                                    fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                                    U64.v wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+  requires MajorHeap.is_indexed_major_heap heap
+            (SpecMajorAlloc.expand_major_heap
+              (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).major_out **
+           pure (U64.v base >= U64.v zero_addr)
+  returns res: (U64.t & U64.t)
+  ensures MajorHeap.is_indexed_major_heap heap
+            (let er =
+              SpecMajorAlloc.expand_major_heap
+                (Ghost.reveal mh) (Ghost.reveal fresh) next_fp in
+             (SpecMajorAlloc.major_alloc_spec_with_fuel
+               er.major_out er.fp_out (U64.v wz) 1).major_alloc_out) **
+          pure (let er =
+                  SpecMajorAlloc.expand_major_heap
+                    (Ghost.reveal mh) (Ghost.reveal fresh) next_fp in
+                let r =
+                  SpecMajorAlloc.major_alloc_spec_with_fuel
+                    er.major_out er.fp_out (U64.v wz) 1 in
+                fst res == r.major_fp_out /\
+                snd res == r.major_obj_out)
+
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
