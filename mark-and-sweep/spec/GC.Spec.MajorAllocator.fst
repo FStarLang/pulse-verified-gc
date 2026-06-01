@@ -314,6 +314,64 @@ let major_fl_valid_null (mh: MH.major_heap) (fuel: nat)
           (ensures major_fl_valid mh 0UL fuel)
   = ()
 
+#push-options "--z3rlimit 40"
+let major_fl_valid_gives_pointer (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    major_fl_valid mh fp fuel)
+          (ensures MH.is_major_pointer mh fp)
+  = ()
+
+let major_fl_valid_gives_mem (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    major_fl_valid mh fp fuel)
+          (ensures Seq.mem (fp <: obj_addr) (MH.major_objects mh))
+  = ()
+
+let major_fl_valid_gives_wosize (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    major_fl_valid mh fp fuel)
+          (ensures (match MH.read_word_in_major mh (hd_address (fp <: obj_addr)) with
+                    | Some hdr -> U64.v (Obj.getWosize hdr) >= 1
+                    | None -> False))
+  = ()
+
+let major_fl_valid_next (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    major_fl_valid mh fp fuel)
+          (ensures (match MH.read_word_in_major mh (fp <: obj_addr) with
+                    | Some next -> next <> fp /\ major_fl_valid mh next (fuel - 1)
+                    | None -> False))
+  = ()
+
+let major_fl_valid_step (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    MH.is_major_pointer mh fp /\
+                    Seq.mem (fp <: obj_addr) (MH.major_objects mh) /\
+                    (match MH.read_word_in_major mh (hd_address (fp <: obj_addr)) with
+                     | Some hdr -> U64.v (Obj.getWosize hdr) >= 1
+                     | None -> False) /\
+                    (match MH.read_word_in_major mh (fp <: obj_addr) with
+                     | Some next -> next <> fp /\ major_fl_valid mh next (fuel - 1)
+                     | None -> False))
+          (ensures major_fl_valid mh fp fuel)
+  = ()
+#pop-options
+
 #push-options "--z3rlimit 120"
 let rec expand_major_heap_preserves_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
                                              (new_link: U64.t) (fp: U64.t) (fuel: nat)
