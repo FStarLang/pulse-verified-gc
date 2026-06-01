@@ -437,6 +437,77 @@ let append_empty_right (#a: Type) (s: seq a)
     Seq.lemma_eq_intro (Seq.append s (Seq.empty #a)) s;
     Seq.lemma_eq_elim (Seq.append s (Seq.empty #a)) s
 
+let seq_upd_head (#a: Type) (s: seq a{Seq.length s > 0}) (v: a)
+  : Lemma (Seq.upd s 0 v == Seq.cons v (Seq.tail s))
+  = Seq.cons_head_tail s;
+    assert (Seq.equal s (Seq.cons (Seq.head s) (Seq.tail s)));
+    Seq.lemma_eq_elim s (Seq.cons (Seq.head s) (Seq.tail s));
+    assert (Seq.length (Seq.upd s 0 v) == Seq.length (Seq.cons v (Seq.tail s)));
+    assert (forall k. k < Seq.length (Seq.upd s 0 v) ==>
+              Seq.index (Seq.upd s 0 v) k ==
+              Seq.index (Seq.cons v (Seq.tail s)) k);
+    Seq.lemma_eq_intro (Seq.upd s 0 v) (Seq.cons v (Seq.tail s));
+    Seq.lemma_eq_elim (Seq.upd s 0 v) (Seq.cons v (Seq.tail s))
+
+let seq_upd_tail (#a: Type) (s: seq a{Seq.length s > 0})
+                 (i: nat{0 < i /\ i < Seq.length s}) (v: a)
+  : Lemma (Seq.upd s i v ==
+           Seq.cons (Seq.head s) (Seq.upd (Seq.tail s) (i - 1) v))
+  = Seq.cons_head_tail s;
+    assert (Seq.equal s (Seq.cons (Seq.head s) (Seq.tail s)));
+    Seq.lemma_eq_elim s (Seq.cons (Seq.head s) (Seq.tail s));
+    assert (Seq.length (Seq.upd s i v) ==
+            Seq.length (Seq.cons (Seq.head s) (Seq.upd (Seq.tail s) (i - 1) v)));
+    assert (forall k. k < Seq.length (Seq.upd s i v) ==>
+              Seq.index (Seq.upd s i v) k ==
+              Seq.index (Seq.cons (Seq.head s) (Seq.upd (Seq.tail s) (i - 1) v)) k);
+    Seq.lemma_eq_intro
+      (Seq.upd s i v)
+      (Seq.cons (Seq.head s) (Seq.upd (Seq.tail s) (i - 1) v));
+    Seq.lemma_eq_elim
+      (Seq.upd s i v)
+      (Seq.cons (Seq.head s) (Seq.upd (Seq.tail s) (i - 1) v))
+
+#push-options "--split_queries always"
+let rec write_word_in_major_at_index (mh: major_heap) (addr: hp_addr)
+                                     (value: U64.t) (i: nat)
+  : Lemma (requires i < Seq.length mh /\
+                    word_in_chunk (Seq.index mh i) addr /\
+                    (forall k. k < i ==> ~(word_in_chunk (Seq.index mh k) addr)))
+          (ensures write_word_in_major mh addr value ==
+                   Some (Seq.upd mh i
+                     (write_word_in_chunk (Seq.index mh i) addr value)))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else if i = 0 then begin
+      assert (Seq.index mh 0 == Seq.head mh);
+      let c' = write_word_in_chunk (Seq.head mh) addr value in
+      assert (write_word_in_major mh addr value == Some (Seq.cons c' (Seq.tail mh)));
+      Seq.cons_head_tail mh;
+      assert (Seq.equal mh (Seq.cons (Seq.head mh) (Seq.tail mh)));
+      Seq.lemma_eq_elim mh (Seq.cons (Seq.head mh) (Seq.tail mh));
+      seq_upd_head mh c'
+    end else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (0 < i);
+      assert (Seq.index mh 0 == hd);
+      assert (~(word_in_chunk hd addr));
+      let im1 : j:nat{j < Seq.length tl} = i - 1 in
+      assert (Seq.index tl im1 == Seq.index mh i);
+      assert (forall k. k < im1 ==> ~(word_in_chunk (Seq.index tl k) addr));
+      write_word_in_major_at_index tl addr value im1;
+      let c' = write_word_in_chunk (Seq.index mh i) addr value in
+      assert (write_word_in_major tl addr value ==
+              Some (Seq.upd tl im1 c'));
+      assert (write_word_in_major mh addr value ==
+              Some (Seq.cons hd (Seq.upd tl im1 c')));
+      seq_upd_tail mh i c';
+      assert (Seq.upd mh i c' == Seq.cons hd (Seq.upd tl im1 c'))
+    end
+#pop-options
+
 let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_addr)
   (decreases chunk_end c - U64.v start)
   = if U64.v start < chunk_start c then Seq.empty

@@ -475,3 +475,23 @@ fn write_word_at_chunk_index (h: major_heap_t)
     (Seq.upd (Ghost.reveal mh) i
       (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
 }
+
+fn write_word_in_major_at_chunk_index
+  (h: major_heap_t)
+  (addr: Base.hp_addr)
+  (v: U64.t)
+  (i: nat)
+  (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                         MH.word_in_chunk (Seq.index mh0 i) addr /\
+                                         (forall (k:nat). k < i ==> ~(MH.word_in_chunk (Seq.index mh0 k) addr))}))
+  requires indexed_chunk_ranges h (Ghost.reveal mh)
+  ensures indexed_chunk_ranges h
+            (Seq.upd (Ghost.reveal mh) i
+              (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)) **
+          pure (MH.write_word_in_major (Ghost.reveal mh) addr v ==
+            Some (Seq.upd (Ghost.reveal mh) i
+              (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+{
+  MH.write_word_in_major_at_index (Ghost.reveal mh) addr v i;
+  write_word_at_chunk_index h addr v i #(Ghost.hide (Ghost.reveal mh));
+}
