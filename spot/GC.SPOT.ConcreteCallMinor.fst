@@ -28,6 +28,7 @@ module Postconditions = GC.SPOT.Postconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
 module Preconditions = GC.SPOT.Preconditions
 module SpecHeap = GC.Spec.Heap
+module ConcreteSetup = GC.SPOT.ConcreteSetup
 
 let spot_minor_collect_full_success_post_from_call_post
   (r: unit{ConcreteMajor.spot_major_room})
@@ -47,7 +48,7 @@ let spot_minor_collect_full_success_post_from_call_post
   ConcreteScenarios.spot_concrete_c_field_rewritten_from_no_oom r;
   ConcreteScenarios.spot_concrete_b_not_promoted r
 
-fn call_concrete_minor_collect_full_spot
+fn call_concrete_minor_collect_full_spot_borrowed
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
@@ -138,3 +139,52 @@ fn call_concrete_minor_collect_full_spot
   spot_minor_collect_full_success_post_from_call_post r post_major;
   ok
 }
+
+#push-options "--warn_error -288"
+fn call_concrete_minor_collect_full_spot
+  (r: unit{ConcreteMajor.spot_major_room})
+  (gh: gen_heap_t)
+  requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
+  returns ok: bool
+  ensures exists* d2 b2 post_major fp2.
+    is_gen_heap gh d2 b2 post_major fp2 **
+    pure (
+      U64.v b2 == 0 /\
+      spot_minor_collect_full_success_post r post_major)
+{
+  let c = ConcreteMajor.spot_c r;
+  let roots = alloc (c <: U64.t) 2sz;
+  roots.(1sz) <- Layout.a_minor;
+  with roots_init. assert (pts_to roots roots_init);
+  ConcreteSetup.spot_roots_alloc_seq c;
+  rewrite (pts_to roots roots_init) as
+          (pts_to roots (ThreeObjects.spot_roots c));
+
+  let fwd_arr = alloc 0UL CheneyImpl.queue_size_sz;
+  with fwd_init. assert (pts_to fwd_arr fwd_init);
+  ConcreteSetup.spot_fwd_alloc_seq ();
+  rewrite (pts_to fwd_arr fwd_init) as
+          (pts_to fwd_arr ConcreteScenarios.spot_fwd_array);
+
+  let queue = alloc 0UL CheneyImpl.queue_size_sz;
+
+  let slots = alloc ((ThreeObjects.spot_c_to_a_slot c) <: U64.t) 1sz;
+  with slots_init. assert (pts_to slots slots_init);
+  ConcreteSetup.spot_slots_alloc_seq c;
+  rewrite (pts_to slots slots_init) as
+          (pts_to slots (ThreeObjects.spot_slots c));
+
+  let ok = call_concrete_minor_collect_full_spot_borrowed
+    r gh roots 2sz fwd_arr queue slots 1sz;
+  with d2 b2 post_major fp2 roots_out farr_out qv_out. _;
+  assert (pure (
+    U64.v b2 == 0 /\
+    spot_minor_collect_full_success_post r post_major));
+  free roots;
+  free fwd_arr;
+  free queue;
+  free slots;
+  ok
+}
+#pop-options

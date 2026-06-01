@@ -55,6 +55,8 @@ SPOT_SRC = \
   GC.SPOT.ConcreteForwarding.fst \
   GC.SPOT.ConcreteScenarios.fsti \
   GC.SPOT.ConcreteScenarios.fst \
+  GC.SPOT.ConcreteSetup.fsti \
+  GC.SPOT.ConcreteSetup.fst \
   GC.SPOT.ConcreteFull.fsti \
   GC.SPOT.ConcreteFull.fst \
   GC.SPOT.CallMinor.fsti \

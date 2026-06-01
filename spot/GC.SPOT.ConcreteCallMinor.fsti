@@ -61,32 +61,11 @@ let spot_minor_collect_full_success_post
 fn call_concrete_minor_collect_full_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
-  (roots: array U64.t) (nroots: SZ.t)
-  (fwd_arr: array U64.t)
-  (queue: larray U64.t CheneyImpl.queue_size)
-  (slots: array U64.t) (nslots: SZ.t)
   requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
-             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r) **
-           pts_to roots (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) **
-           pts_to fwd_arr ConcreteScenarios.spot_fwd_array **
-           pts_to queue 'qv **
-           pts_to slots (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) **
-           pure (
-             SZ.v nroots == 2 /\
-             SZ.v nslots == 1)
+            (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
   returns ok: bool
-  ensures exists* d2 b2 post_major fp2 roots_out farr_out qv_out.
+  ensures exists* d2 b2 post_major fp2.
     is_gen_heap gh d2 b2 post_major fp2 **
-    pts_to roots roots_out **
-    pts_to fwd_arr farr_out **
-    pts_to queue qv_out **
-    pts_to slots (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) **
     pure (
       U64.v b2 == 0 /\
-      Postconditions.minor_collect_full_post
-        ConcreteMinor.spot_minor2
-        (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
-        (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        ok post_major roots_out /\
       spot_minor_collect_full_success_post r post_major)

@@ -29,6 +29,8 @@ module ConcreteFull = GC.SPOT.ConcreteFull
 module Postconditions = GC.SPOT.Postconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
 module CallFull = GC.SPOT.CallFull
+module ConcreteSetup = GC.SPOT.ConcreteSetup
+module V = Pulse.Lib.Vec
 
 let spot_gen_gc_success_post_from_gen_gc_post
   (r: unit{ConcreteMajor.spot_major_room})
@@ -65,7 +67,7 @@ let spot_gen_gc_success_post_from_gen_gc_post
       r d2 b2 roots_out ok final_major st cap
   end
 
-fn call_concrete_gen_gc_spot
+fn call_concrete_gen_gc_spot_borrowed
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)
@@ -151,3 +153,73 @@ fn call_concrete_gen_gc_spot
     r d2 b2 roots_out ok final_major Seq.empty (stack_capacity st);
   res
 }
+
+#push-options "--warn_error -288"
+fn call_concrete_gen_gc_spot
+  (r: unit{ConcreteMajor.spot_major_room})
+  (gh: gen_heap_t)
+  requires is_gen_heap gh ConcreteMinor.spot_minor2.data ConcreteMinor.spot_minor2.bump
+             (ConcreteMajor.spot_major_heap r) (ConcreteMajor.spot_major_fp r)
+  returns res: (U64.t & bool)
+  ensures exists* d2 b2 final_major.
+    is_gen_heap gh d2 b2 final_major (fst res) **
+    pure (
+      let ok = snd res in
+      GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
+      Postconditions.minor_not_promoted
+        ConcreteMinor.spot_minor2
+        (ConcreteMajor.spot_major_heap r)
+        (ConcreteMajor.spot_major_fp r)
+        (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
+        Layout.b_minor /\
+      spot_gen_gc_success_post r ok final_major)
+{
+  let c = ConcreteMajor.spot_c r;
+  let roots = alloc (c <: U64.t) 2sz;
+  roots.(1sz) <- Layout.a_minor;
+  with roots_init. assert (pts_to roots roots_init);
+  ConcreteSetup.spot_roots_alloc_seq c;
+  rewrite (pts_to roots roots_init) as
+          (pts_to roots (ThreeObjects.spot_roots c));
+
+  let fwd_arr = alloc 0UL CheneyImpl.queue_size_sz;
+  with fwd_init. assert (pts_to fwd_arr fwd_init);
+  ConcreteSetup.spot_fwd_alloc_seq ();
+  rewrite (pts_to fwd_arr fwd_init) as
+          (pts_to fwd_arr ConcreteScenarios.spot_fwd_array);
+
+  let queue = alloc 0UL CheneyImpl.queue_size_sz;
+
+  let slots = alloc ((ThreeObjects.spot_c_to_a_slot c) <: U64.t) 1sz;
+  with slots_init. assert (pts_to slots slots_init);
+  ConcreteSetup.spot_slots_alloc_seq c;
+  rewrite (pts_to slots slots_init) as
+          (pts_to slots (ThreeObjects.spot_slots c));
+
+  let stack_storage = V.alloc 0UL 2sz;
+  let st = create_stack stack_storage 2sz;
+  assert (pure (stack_capacity st == 2));
+
+  let res = call_concrete_gen_gc_spot_borrowed
+    r gh roots 2sz fwd_arr queue slots 1sz st;
+  with d2 b2 final_major roots_out farr_out qv_out st_out. _;
+  assert (pure (stack_capacity st == 2));
+  assert (pure (
+    GenImpl.gen_gc_heap_shape_post d2 b2 final_major /\
+    Postconditions.minor_not_promoted
+      ConcreteMinor.spot_minor2
+      (ConcreteMajor.spot_major_heap r)
+      (ConcreteMajor.spot_major_fp r)
+      (ThreeObjects.spot_roots c)
+      Layout.b_minor /\
+    spot_gen_gc_success_post r (snd res) final_major));
+  let stack_storage_out = destroy_stack st;
+  with stack_contents. assert (V.pts_to stack_storage_out stack_contents);
+  V.free stack_storage_out;
+  free roots;
+  free fwd_arr;
+  free queue;
+  free slots;
+  res
+}
+#pop-options
