@@ -314,6 +314,47 @@ let major_fl_valid_null (mh: MH.major_heap) (fuel: nat)
           (ensures major_fl_valid mh 0UL fuel)
   = ()
 
+#push-options "--z3rlimit 120"
+let rec expand_major_heap_preserves_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
+                                             (new_link: U64.t) (fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_valid mh fp fuel)
+          (ensures major_fl_valid (expand_major_heap mh c new_link).major_out fp fuel)
+          (decreases fuel)
+  = if fuel = 0 then ()
+    else begin
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then ()
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then
+        assert False
+      else begin
+        let obj : obj_addr = fp in
+        let r = init_fresh_chunk c new_link in
+        init_fresh_chunk_disjoint_from_all mh c new_link;
+        assert (major_fl_valid mh fp fuel);
+        assert (MH.is_major_pointer mh fp);
+        assert (Seq.mem obj (MH.major_objects mh));
+        MH.major_pointer_add_chunk_old mh r.chunk_out fp;
+        expand_major_heap_old_object mh c new_link obj;
+        match MH.read_word_in_major mh (hd_address obj) with
+        | None -> assert False
+        | Some hdr ->
+          MH.read_word_add_chunk_disjoint_old mh r.chunk_out (hd_address obj) hdr;
+          assert (MH.read_word_in_major (expand_major_heap mh c new_link).major_out (hd_address obj) ==
+                  Some hdr);
+        match MH.read_word_in_major mh obj with
+        | None -> assert False
+        | Some next ->
+          assert (next <> fp);
+          expand_major_heap_preserves_fl_valid mh c new_link next fuel';
+          MH.read_word_add_chunk_disjoint_old mh r.chunk_out obj next;
+          assert (MH.read_word_in_major (expand_major_heap mh c new_link).major_out obj ==
+                  Some next)
+      end
+    end
+#pop-options
+
 #push-options "--z3rlimit 80"
 let expand_major_heap_fresh_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
                                      (next_fp: U64.t) (fuel: nat)
@@ -346,3 +387,13 @@ let expand_major_heap_fresh_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
     assert (hd_address fp == c.base);
     assert (MH.read_word_in_major er.major_out fp == Some next_fp)
 #pop-options
+
+let expand_major_heap_links_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
+                                     (next_fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_valid mh next_fp fuel /\
+                    next_fp <> fresh_chunk_object c)
+          (ensures major_fl_valid (expand_major_heap mh c next_fp).major_out
+                    (fresh_chunk_object c) (fuel + 1))
+  = expand_major_heap_preserves_fl_valid mh c next_fp next_fp fuel;
+    expand_major_heap_fresh_fl_valid mh c next_fp fuel

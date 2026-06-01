@@ -202,6 +202,26 @@ let rec lookup_chunk_disjoint_none (mh: major_heap) (c: heap_chunk)
         lookup_chunk_disjoint_none (Seq.tail mh) c addr
       end
 
+let rec lookup_chunk_some_disjoint_miss (mh: major_heap) (c fresh: heap_chunk)
+                                        (addr: hp_addr)
+  : Lemma (requires chunk_disjoint_from_all fresh mh /\
+                    lookup_chunk mh addr == Some c)
+          (ensures ~(chunk_contains_addr fresh addr))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else
+      let hd = Seq.head mh in
+      if chunk_contains_addr hd addr then begin
+        assert (lookup_chunk mh addr == Some hd);
+        assert (hd == c);
+        chunks_disjoint_symmetric fresh hd;
+        chunks_disjoint_no_shared_addr hd fresh addr
+      end else begin
+        chunk_disjoint_from_all_tail fresh mh;
+        lookup_chunk_some_disjoint_miss (Seq.tail mh) c fresh addr
+      end
+
 let read_word_in_chunk (c: heap_chunk) (addr: hp_addr{word_in_chunk c addr}) : U64.t =
   let off = chunk_offset c addr in
   combine_bytes
@@ -302,6 +322,17 @@ let read_word_add_chunk_miss (mh: major_heap) (c: heap_chunk)
                              (addr: hp_addr{~(chunk_contains_addr c addr)})
   : Lemma (read_word_in_major (add_chunk mh c) addr == read_word_in_major mh addr)
   = lookup_add_chunk_miss mh c addr
+
+let read_word_add_chunk_disjoint_old (mh: major_heap) (fresh: heap_chunk)
+                                     (addr: hp_addr) (v: U64.t)
+  : Lemma (requires chunk_disjoint_from_all fresh mh /\
+                    read_word_in_major mh addr == Some v)
+          (ensures read_word_in_major (add_chunk mh fresh) addr == Some v)
+  = match lookup_chunk mh addr with
+    | None -> assert False
+    | Some c ->
+      lookup_chunk_some_disjoint_miss mh c fresh addr;
+      read_word_add_chunk_miss mh fresh addr
 
 let write_word_add_chunk_hit (mh: major_heap) (c: heap_chunk)
                              (addr: hp_addr{word_in_chunk c addr}) (value: U64.t)
