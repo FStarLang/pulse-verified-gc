@@ -1051,6 +1051,51 @@ let major_alloc_head_no_split (mh: MH.major_heap) (fp: obj_addr)
     major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
 #pop-options
 
+#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+let major_alloc_head_split (mh: MH.major_heap) (fp: obj_addr)
+                           (requested_wz fuel: nat) (hdr next_fp: U64.t)
+                           (rem_hd rem_obj: hp_addr)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v zero_addr + U64.v mword /\
+                    requested_wz > 0 /\
+                    MH.read_word_in_major mh (hd_address fp) == Some hdr /\
+                    MH.read_word_in_major mh fp == Some next_fp /\
+                    U64.v (Obj.getWosize hdr) >= requested_wz /\
+                    U64.v (Obj.getWosize hdr) - requested_wz >= 2 /\
+                    U64.v rem_hd == U64.v (hd_address fp) + (1 + requested_wz) * 8 /\
+                    U64.v rem_obj == U64.v rem_hd + U64.v mword)
+          (ensures (let alloc_hdr =
+                      Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+                    let mh1 = major_write_word_or_same mh (hd_address fp) alloc_hdr in
+                    let rem_wz = U64.v (Obj.getWosize hdr) - requested_wz - 1 in
+                    let rem_hdr =
+                      Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+                    let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
+                    let mh3 = major_write_word_or_same mh2 rem_obj next_fp in
+                    let r = major_alloc_spec_with_fuel mh fp requested_wz fuel in
+                    r.major_alloc_out == mh3 /\
+                    r.major_fp_out == rem_obj /\
+                    r.major_obj_out == fp))
+  = let wz = requested_wz in
+    let hd = hd_address fp in
+    major_spec_next_fp_some mh fp next_fp;
+    assert (major_spec_next_fp mh fp == next_fp);
+    assert (Alloc.normalized_wosize requested_wz == requested_wz);
+    assert (U64.v rem_hd < heap_size);
+    assert (U64.v rem_hd % U64.v mword == 0);
+    assert (U64.v rem_obj < heap_size);
+    assert (U64.v rem_obj % U64.v mword == 0);
+    assert (U64.v mword == 8);
+    assert (U64.v hd + (1 + wz) * 8 < heap_size);
+    assert (U64.v hd + (1 + wz) * 8 + 8 < heap_size);
+    assert ((U64.v hd + (1 + wz) * 8) % 8 == 0);
+    assert ((U64.v hd + (1 + wz) * 8 + 8) % 8 == 0);
+    major_alloc_from_block_split_normal mh fp wz next_fp hdr;
+    assert (U64.v rem_obj == U64.v hd + (1 + wz) * 8 + 8);
+    assert (U64.uint_to_t (U64.v hd + (1 + wz) * 8 + 8) == rem_obj);
+    major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
+#pop-options
+
 #push-options "--z3rlimit 80"
 let major_alloc_after_expand_returns_fresh (mh: MH.major_heap) (c: MH.heap_chunk)
                                            (next_fp: U64.t)
@@ -1236,6 +1281,26 @@ let seq_upd_overwrite_head (#a: Type) (s: Seq.seq a{Seq.length s > 0}) (v1 v2: a
     FStar.Classical.forall_intro prove_i;
     Seq.lemma_eq_intro (Seq.upd (Seq.upd s 0 v1) 0 v2) (Seq.upd s 0 v2);
     Seq.lemma_eq_elim (Seq.upd (Seq.upd s 0 v1) 0 v2) (Seq.upd s 0 v2)
+
+let seq_upd_overwrite_index (#a: Type) (s: Seq.seq a) (i: nat{i < Seq.length s})
+                             (v1 v2: a)
+  : Lemma (Seq.upd (Seq.upd s i v1) i v2 == Seq.upd s i v2)
+  = assert (Seq.length (Seq.upd (Seq.upd s i v1) i v2) ==
+            Seq.length (Seq.upd s i v2));
+    let prove_k (k: nat{k < Seq.length (Seq.upd s i v2)})
+      : Lemma (Seq.index (Seq.upd (Seq.upd s i v1) i v2) k ==
+               Seq.index (Seq.upd s i v2) k)
+      = if k = i then ()
+        else begin
+          assert (Seq.index (Seq.upd (Seq.upd s i v1) i v2) k ==
+                  Seq.index (Seq.upd s i v1) k);
+          assert (Seq.index (Seq.upd s i v1) k == Seq.index s k);
+          assert (Seq.index (Seq.upd s i v2) k == Seq.index s k)
+        end
+    in
+    FStar.Classical.forall_intro prove_k;
+    Seq.lemma_eq_intro (Seq.upd (Seq.upd s i v1) i v2) (Seq.upd s i v2);
+    Seq.lemma_eq_elim (Seq.upd (Seq.upd s i v1) i v2) (Seq.upd s i v2)
 
 #push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
 let fresh_chunk_split_remainder_fits (c: MH.heap_chunk) (next_fp: U64.t)

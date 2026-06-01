@@ -153,6 +153,51 @@ fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
                  fst res == r.major_fp_out /\
                  snd res == r.major_obj_out)
 
+/// Allocate from the current chunked-major free-list head by splitting it.
+/// The caller supplies the split remainder header/object addresses and proves
+/// they live in the same selected active chunk.
+fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
+                             (base: hp_addr) (fp: obj_addr)
+                             (block_wz requested_wz: wosize)
+                             (rem_hd rem_obj: hp_addr)
+                             (next_fp: U64.t)
+                             (#fuel: nat) (#idx: nat)
+                             (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (fuel > 0 /\
+                  idx < Seq.length (Ghost.reveal mh) /\
+                  base == SpecHeap.hd_address fp /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) rem_hd /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) rem_obj /\
+                  (forall (k:nat{k < idx /\ k < Seq.length (Ghost.reveal mh)}).
+                    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_hd)) /\
+                  (forall (k:nat{k < idx /\ k < Seq.length (Ghost.reveal mh)}).
+                    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_obj)) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base ==
+                    Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  U64.v fp >= U64.v zero_addr + U64.v mword /\
+                  U64.v requested_wz > 0 /\
+                  U64.v block_wz >= U64.v requested_wz /\
+                  U64.v block_wz - U64.v requested_wz >= 2 /\
+                  U64.v base + (1 + U64.v requested_wz) * 8 < pow2 64 /\
+                  U64.v rem_hd + U64.v mword < pow2 64 /\
+                  U64.v rem_hd == U64.v base + (1 + U64.v requested_wz) * 8 /\
+                  U64.v rem_obj == U64.v rem_hd + U64.v mword)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SpecMajorAlloc.major_alloc_spec_with_fuel
+                  (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                   SpecMajorAlloc.major_alloc_spec_with_fuel
+                     (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+
 /// Initialize an already-owned fresh chunk as one blue free-list block.
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (base: hp_addr) (fp_out: obj_addr)

@@ -754,6 +754,194 @@ fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
   (next_fp, fp)
 }
 
+fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
+                             (base: hp_addr) (fp: obj_addr)
+                             (block_wz requested_wz: wosize)
+                             (rem_hd rem_obj: hp_addr)
+                             (next_fp: U64.t)
+                             (#fuel: nat) (#idx: nat)
+                             (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (fuel > 0 /\
+                  idx < Seq.length (Ghost.reveal mh) /\
+                  base == SH.hd_address fp /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) rem_hd /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) rem_obj /\
+                  (forall (k:nat{k < idx /\ k < Seq.length (Ghost.reveal mh)}).
+                    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_hd)) /\
+                  (forall (k:nat{k < idx /\ k < Seq.length (Ghost.reveal mh)}).
+                    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_obj)) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base ==
+                    Some (SA.make_header block_wz SA.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  U64.v fp >= U64.v zero_addr + U64.v mword /\
+                  U64.v requested_wz > 0 /\
+                  U64.v block_wz >= U64.v requested_wz /\
+                  U64.v block_wz - U64.v requested_wz >= 2 /\
+                  U64.v base + (1 + U64.v requested_wz) * 8 < pow2 64 /\
+                  U64.v rem_hd + U64.v mword < pow2 64 /\
+                  U64.v rem_hd == U64.v base + (1 + U64.v requested_wz) * 8 /\
+                  U64.v rem_obj == U64.v rem_hd + U64.v mword)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SMA.major_alloc_spec_with_fuel
+                  (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                   SMA.major_alloc_spec_with_fuel
+                     (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+{
+  let block_hdr = SA.make_header block_wz SA.blue_bits 0UL;
+  let alloc_hdr = makeHeader requested_wz white 0UL;
+  assert (pure (SA.white_bits == 0UL));
+  assert (pure (pack_color white == 0UL));
+  assert (pure (U64.uint_to_t (U64.v requested_wz) == requested_wz));
+  assert (pure (alloc_hdr ==
+                SA.make_header (U64.uint_to_t (U64.v requested_wz))
+                  SA.white_bits 0UL));
+  AllocLemmas.make_header_getWosize block_wz SA.blue_bits 0UL;
+  assert (pure (SO.getWosize block_hdr == block_wz));
+
+  let leftover = U64.sub block_wz requested_wz;
+  let rem_wz_u = U64.sub leftover 1UL;
+  assert (pure (U64.v leftover == U64.v block_wz - U64.v requested_wz));
+  assert (pure (U64.v rem_wz_u == U64.v block_wz - U64.v requested_wz - 1));
+  assert (pure (U64.v rem_wz_u < pow2 54));
+  let rem_hdr = makeHeader rem_wz_u blue 0UL;
+  assert (pure (SA.blue_bits == 2UL));
+  assert (pure (pack_color blue == 2UL));
+  assert (pure (U64.uint_to_t (U64.v rem_wz_u) == rem_wz_u));
+  assert (pure (rem_hdr ==
+                SA.make_header
+                  (U64.uint_to_t (U64.v block_wz - U64.v requested_wz - 1))
+                  SA.blue_bits 0UL));
+
+  SMA.major_alloc_head_split
+    (Ghost.reveal mh) fp (U64.v requested_wz) fuel block_hdr next_fp
+    rem_hd rem_obj;
+
+  let c0 = Ghost.hide (Seq.index (Ghost.reveal mh) idx);
+  let c1 = Ghost.hide (MH.write_word_in_chunk (Ghost.reveal c0) base alloc_hdr);
+  let c2 = Ghost.hide (MH.write_word_in_chunk (Ghost.reveal c1) rem_hd rem_hdr);
+  let c3 = Ghost.hide (MH.write_word_in_chunk (Ghost.reveal c2) rem_obj next_fp);
+
+  MajorHeap.write_word_in_indexed_major_at_lookup_index heap base alloc_hdr idx
+    #(Ghost.hide (Ghost.reveal mh));
+  assert (pure (Seq.index (Ghost.reveal mh) idx == Ghost.reveal c0));
+  assert (pure (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) idx) base alloc_hdr ==
+                Ghost.reveal c1));
+  assert (pure (MH.write_word_in_major (Ghost.reveal mh) base alloc_hdr ==
+                Some (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c1))));
+  SMA.major_write_word_or_same_some
+    (Ghost.reveal mh) (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c1))
+    base alloc_hdr;
+
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) idx) base alloc_hdr)))
+  as
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c1)));
+
+  let mh1 = Ghost.hide (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c1));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c1)))
+  as
+    (MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh1));
+  assert (pure (Seq.length (Ghost.reveal mh1) == Seq.length (Ghost.reveal mh)));
+  assert (pure (idx < Seq.length (Ghost.reveal mh1)));
+  assert (pure (Seq.index (Ghost.reveal mh1) idx == Ghost.reveal c1));
+  MH.write_word_in_chunk_preserves_word (Ghost.reveal c0) base alloc_hdr rem_hd;
+  assert (pure (MH.word_in_chunk (Ghost.reveal c1) rem_hd));
+  assert (pure (MH.word_in_chunk (Seq.index (Ghost.reveal mh1) idx) rem_hd));
+  assert (pure (forall (k:nat). k < idx ==>
+    Seq.index (Ghost.reveal mh1) k == Seq.index (Ghost.reveal mh) k));
+  assert (pure (forall (k:nat). k < idx ==>
+    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh1) k) rem_hd)));
+  MajorHeap.write_word_in_indexed_major_at_chunk_index heap rem_hd rem_hdr idx
+    #(Ghost.hide (Ghost.reveal mh1));
+  assert (pure (MH.write_word_in_major (Ghost.reveal mh1) rem_hd rem_hdr ==
+                Some (Seq.upd (Ghost.reveal mh1) idx (Ghost.reveal c2))));
+  SMA.major_write_word_or_same_some
+    (Ghost.reveal mh1) (Seq.upd (Ghost.reveal mh1) idx (Ghost.reveal c2))
+    rem_hd rem_hdr;
+  SMA.seq_upd_overwrite_index (Ghost.reveal mh) idx (Ghost.reveal c1) (Ghost.reveal c2);
+  assert (pure (Seq.upd (Ghost.reveal mh1) idx (Ghost.reveal c2) ==
+                Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c2)));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh1) idx
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh1) idx) rem_hd rem_hdr)))
+  as
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c2)));
+
+  let mh2 = Ghost.hide (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c2));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c2)))
+  as
+    (MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh2));
+  assert (pure (Seq.length (Ghost.reveal mh2) == Seq.length (Ghost.reveal mh)));
+  assert (pure (idx < Seq.length (Ghost.reveal mh2)));
+  assert (pure (Seq.index (Ghost.reveal mh2) idx == Ghost.reveal c2));
+  MH.write_word_in_chunk_preserves_word (Ghost.reveal c1) rem_hd rem_hdr rem_obj;
+  assert (pure (MH.word_in_chunk (Ghost.reveal c2) rem_obj));
+  assert (pure (MH.word_in_chunk (Seq.index (Ghost.reveal mh2) idx) rem_obj));
+  assert (pure (forall (k:nat). k < idx ==>
+    Seq.index (Ghost.reveal mh2) k == Seq.index (Ghost.reveal mh) k));
+  assert (pure (forall (k:nat). k < idx ==>
+    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh2) k) rem_obj)));
+  MajorHeap.write_word_in_indexed_major_at_chunk_index heap rem_obj next_fp idx
+    #(Ghost.hide (Ghost.reveal mh2));
+  assert (pure (MH.write_word_in_major (Ghost.reveal mh2) rem_obj next_fp ==
+                Some (Seq.upd (Ghost.reveal mh2) idx (Ghost.reveal c3))));
+  SMA.major_write_word_or_same_some
+    (Ghost.reveal mh2) (Seq.upd (Ghost.reveal mh2) idx (Ghost.reveal c3))
+    rem_obj next_fp;
+  SMA.seq_upd_overwrite_index (Ghost.reveal mh) idx (Ghost.reveal c2) (Ghost.reveal c3);
+  assert (pure (Seq.upd (Ghost.reveal mh2) idx (Ghost.reveal c3) ==
+                Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c3)));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh2) idx
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh2) idx) rem_obj next_fp)))
+  as
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c3)));
+
+  assert (pure (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                r.major_alloc_out == Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c3) /\
+                r.major_fp_out == rem_obj /\
+                r.major_obj_out == fp));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx (Ghost.reveal c3)))
+  as
+    (MajorHeap.is_indexed_major_heap heap
+      (let r =
+         SMA.major_alloc_spec_with_fuel
+           (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+       r.major_alloc_out));
+  assert (pure (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                rem_obj == r.major_fp_out /\
+                fp == r.major_obj_out));
+  let out_fp : U64.t = rem_obj;
+  let out_obj : U64.t = fp;
+  (out_fp, out_obj)
+}
+
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (base: hp_addr) (fp_out: obj_addr)
                           (wz: wosize) (next_fp: U64.t)
