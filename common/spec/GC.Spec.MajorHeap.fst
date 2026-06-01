@@ -291,6 +291,18 @@ let major_objects_add_chunk (mh: major_heap) (c: heap_chunk)
   = assert (Seq.head (add_chunk mh c) == c);
     assert (Seq.equal (Seq.tail (add_chunk mh c)) mh)
 
+let major_objects_add_chunk_fresh (mh: major_heap) (c: heap_chunk) (x: obj_addr)
+  : Lemma (requires Seq.mem x (objects_in_chunk c))
+          (ensures Seq.mem x (major_objects (add_chunk mh c)))
+  = major_objects_add_chunk mh c;
+    SeqProps.lemma_mem_append (objects_in_chunk c) (major_objects mh)
+
+let major_objects_add_chunk_old (mh: major_heap) (c: heap_chunk) (x: obj_addr)
+  : Lemma (requires Seq.mem x (major_objects mh))
+          (ensures Seq.mem x (major_objects (add_chunk mh c)))
+  = major_objects_add_chunk mh c;
+    SeqProps.lemma_mem_append (objects_in_chunk c) (major_objects mh)
+
 let rec lookup_chunk_contains (mh: major_heap) (addr: hp_addr) (c: heap_chunk)
   : Lemma (requires lookup_chunk mh addr == Some c)
           (ensures chunk_contains_addr c addr)
