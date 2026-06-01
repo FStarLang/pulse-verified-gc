@@ -28,6 +28,23 @@ type heap_chunk = {
 
 type major_heap = seq heap_chunk
 
+let single_chunk_size : s:pos{s % U64.v mword == 0 /\ s >= 16 /\
+                              U64.v zero_addr + s <= heap_size} =
+  let s = heap_size - U64.v zero_addr in
+  FStar.Math.Lemmas.lemma_mod_sub_distr heap_size (U64.v zero_addr) (U64.v mword);
+  assert (s % U64.v mword == 0);
+  assert (s > U64.v mword);
+  assert (s >= 16);
+  s
+
+let single_chunk_of_heap (g: heap) : heap_chunk =
+  let bytes = Seq.slice g (U64.v zero_addr) heap_size in
+  assert (Seq.length bytes == single_chunk_size);
+  { base = zero_addr; size = single_chunk_size; bytes = bytes }
+
+let single_chunk_major_heap (g: heap) : major_heap =
+  Seq.cons (single_chunk_of_heap g) Seq.empty
+
 let chunk_start (c: heap_chunk) : nat = U64.v c.base
 
 let chunk_end (c: heap_chunk) : nat = U64.v c.base + c.size
