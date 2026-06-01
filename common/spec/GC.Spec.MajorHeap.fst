@@ -215,6 +215,25 @@ let read_word_add_chunk_miss (mh: major_heap) (c: heap_chunk)
   : Lemma (read_word_in_major (add_chunk mh c) addr == read_word_in_major mh addr)
   = lookup_add_chunk_miss mh c addr
 
+let write_word_add_chunk_hit (mh: major_heap) (c: heap_chunk)
+                             (addr: hp_addr{word_in_chunk c addr}) (value: U64.t)
+  : Lemma (write_word_in_major (add_chunk mh c) addr value ==
+           Some (add_chunk mh (write_word_in_chunk c addr value)))
+  = assert (Seq.head (add_chunk mh c) == c);
+    assert (Seq.equal (Seq.tail (add_chunk mh c)) mh);
+    Seq.lemma_eq_elim (Seq.tail (add_chunk mh c)) mh
+
+let write_word_add_chunk_miss (mh: major_heap) (c: heap_chunk)
+                              (addr: hp_addr{~(word_in_chunk c addr)}) (value: U64.t)
+  : Lemma (write_word_in_major (add_chunk mh c) addr value ==
+           (match write_word_in_major mh addr value with
+            | None -> None
+            | Some mh' -> Some (add_chunk mh' c)))
+  = assert (Seq.head (add_chunk mh c) == c);
+    assert (Seq.equal (Seq.tail (add_chunk mh c)) mh);
+    Seq.lemma_eq_elim (Seq.tail (add_chunk mh c)) mh;
+    if word_in_chunk c addr then assert False else ()
+
 let read_word_disjoint_none (mh: major_heap) (c: heap_chunk)
                             (addr: hp_addr{word_in_chunk c addr})
   : Lemma (requires chunk_disjoint_from_all c mh)
