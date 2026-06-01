@@ -552,3 +552,88 @@ let major_alloc_spec_with_fuel (mh: MH.major_heap) (fp: U64.t)
   : GTot major_alloc_result =
   let wz = Alloc.normalized_wosize requested_wz in
   major_alloc_search mh fp 0UL fp wz fuel
+
+let major_alloc_search_fuel_0 (mh: MH.major_heap) (head prev cur: U64.t) (wz: nat)
+  : Lemma (major_alloc_search mh head prev cur wz 0 ==
+           { major_alloc_out = mh; major_fp_out = head; major_obj_out = 0UL })
+  = ()
+
+let major_alloc_search_invalid (mh: MH.major_heap) (head prev cur: U64.t)
+                               (wz: nat) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    (U64.v cur < U64.v zero_addr + U64.v mword \/
+                     U64.v cur >= heap_size \/
+                     U64.v cur % U64.v mword <> 0))
+          (ensures major_alloc_search mh head prev cur wz fuel ==
+                   { major_alloc_out = mh; major_fp_out = head; major_obj_out = 0UL })
+  = ()
+
+let major_spec_next_fp_some (mh: MH.major_heap) (obj: obj_addr) (next: U64.t)
+  : Lemma (requires MH.read_word_in_major mh obj == Some next)
+          (ensures major_spec_next_fp mh obj == next)
+  = ()
+
+let major_spec_next_fp_none (mh: MH.major_heap) (obj: obj_addr)
+  : Lemma (requires MH.read_word_in_major mh obj == None)
+          (ensures major_spec_next_fp mh obj == 0UL)
+  = ()
+
+let major_alloc_search_missing_header (mh: MH.major_heap) (head prev cur: U64.t)
+                                      (wz: nat) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
+                    U64.v cur < heap_size /\
+                    U64.v cur % U64.v mword = 0 /\
+                    MH.read_word_in_major mh (hd_address (cur <: obj_addr)) == None)
+          (ensures major_alloc_search mh head prev cur wz fuel ==
+                   { major_alloc_out = mh; major_fp_out = head; major_obj_out = 0UL })
+  = ()
+
+let major_alloc_search_advance (mh: MH.major_heap) (head prev cur: U64.t)
+                               (wz: nat) (fuel: nat) (hdr: U64.t)
+  : Lemma (requires fuel > 0 /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
+                    U64.v cur < heap_size /\
+                    U64.v cur % U64.v mword = 0 /\
+                    MH.read_word_in_major mh (hd_address (cur <: obj_addr)) == Some hdr /\
+                    U64.v (Obj.getWosize hdr) < wz)
+          (ensures major_alloc_search mh head prev cur wz fuel ==
+                   major_alloc_search mh head cur
+                     (major_spec_next_fp mh (cur <: obj_addr)) wz (fuel - 1))
+  = ()
+
+let major_alloc_search_found_head (mh: MH.major_heap) (head prev cur: U64.t)
+                                  (wz: nat) (fuel: nat) (hdr: U64.t)
+  : Lemma (requires fuel > 0 /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
+                    U64.v cur < heap_size /\
+                    U64.v cur % U64.v mword = 0 /\
+                    prev = 0UL /\
+                    MH.read_word_in_major mh (hd_address (cur <: obj_addr)) == Some hdr /\
+                    U64.v (Obj.getWosize hdr) >= wz)
+          (ensures (let obj : obj_addr = cur in
+                    let next = major_spec_next_fp mh obj in
+                    let (mh', new_fp) = major_alloc_from_block mh obj wz next in
+                    major_alloc_search mh head prev cur wz fuel ==
+                    { major_alloc_out = mh'; major_fp_out = new_fp; major_obj_out = cur }))
+  = ()
+
+let major_alloc_search_found_prev (mh: MH.major_heap) (head prev cur: U64.t)
+                                  (wz: nat) (fuel: nat) (hdr: U64.t)
+  : Lemma (requires fuel > 0 /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
+                    U64.v cur < heap_size /\
+                    U64.v cur % U64.v mword = 0 /\
+                    prev <> 0UL /\
+                    U64.v prev >= U64.v mword /\
+                    U64.v prev < heap_size /\
+                    U64.v prev % U64.v mword = 0 /\
+                    MH.read_word_in_major mh (hd_address (cur <: obj_addr)) == Some hdr /\
+                    U64.v (Obj.getWosize hdr) >= wz)
+          (ensures (let obj : obj_addr = cur in
+                    let next = major_spec_next_fp mh obj in
+                    let (mh', new_fp) = major_alloc_from_block mh obj wz next in
+                    let mh2 = major_write_word_or_same mh' (prev <: hp_addr) new_fp in
+                    major_alloc_search mh head prev cur wz fuel ==
+                    { major_alloc_out = mh2; major_fp_out = head; major_obj_out = cur }))
+  = ()
