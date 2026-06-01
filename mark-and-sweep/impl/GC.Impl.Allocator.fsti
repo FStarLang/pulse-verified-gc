@@ -87,6 +87,30 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
 
+/// Single-chunk indexed-major compatibility entry point for promotion callers
+/// that only maintain the allocator-specific part of the heap invariant.
+fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires MajorHeap.inactive_prefix (MajorHeap.heap_as_major heap) 's **
+           MajorHeap.is_indexed_major_heap
+             (MajorHeap.heap_as_major heap)
+             (MH.single_chunk_major_heap 's) **
+           pure (SpecFields.well_formed_heap_part1 's /\
+                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
+  returns res: (U64.t & U64.t)
+  ensures exists* s2.
+    MajorHeap.inactive_prefix (MajorHeap.heap_as_major heap) s2 **
+    MajorHeap.is_indexed_major_heap
+      (MajorHeap.heap_as_major heap)
+      (MH.single_chunk_major_heap s2) **
+    pure (let spec_res =
+            SpecMajorAlloc.major_alloc_spec_with_fuel
+              (MH.single_chunk_major_heap 's) fp (U64.v wosize)
+              SpecAlloc.alloc_search_fuel in
+          MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
+          fst res == spec_res.major_fp_out /\
+          snd res == spec_res.major_obj_out)
+
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
