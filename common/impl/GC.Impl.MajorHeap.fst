@@ -41,6 +41,13 @@ let rec chunk_ranges (h: major_heap_t) (mh: MH.major_heap)
       let c = Seq.head mh in
       chunk_range h c ** chunk_ranges h (Seq.tail mh)
 
+let chunk_ranges_cons_eq (h: major_heap_t) (mh: MH.major_heap) (c: MH.heap_chunk)
+  : Lemma (chunk_ranges h (Seq.cons c mh) == chunk_range h c ** chunk_ranges h mh)
+  = assert (Seq.length (Seq.cons c mh) > 0);
+    assert (Seq.head (Seq.cons c mh) == c);
+    assert (Seq.equal (Seq.tail (Seq.cons c mh)) mh);
+    Seq.lemma_eq_elim (Seq.tail (Seq.cons c mh)) mh
+
 let is_major_heap (h: major_heap_t) (mh: MH.major_heap) : slprop =
   chunk_ranges h mh **
   pure (SZ.v h.size == Base.heap_size /\ MH.well_formed_major_heap mh)
@@ -83,6 +90,41 @@ fn heap_to_single_major (h: Heap.heap_t)
   fold (is_single_chunk_major mh 's);
   assert (pure (mh == heap_as_major h));
   rewrite each mh as heap_as_major h
+}
+
+ghost
+fn prepend_chunk_range (h: major_heap_t)
+                       (#mh: Ghost.erased MH.major_heap)
+                       (#c: Ghost.erased MH.heap_chunk)
+  requires chunk_range h (Ghost.reveal c) **
+           chunk_ranges h (Ghost.reveal mh)
+  ensures chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c))
+{
+  chunk_ranges_cons_eq h (Ghost.reveal mh) (Ghost.reveal c);
+  rewrite
+    (chunk_range h (Ghost.reveal c) **
+     chunk_ranges h (Ghost.reveal mh))
+  as
+    (chunk_ranges h (Seq.cons (Ghost.reveal c) (Ghost.reveal mh)));
+  assert (pure (Seq.cons (Ghost.reveal c) (Ghost.reveal mh) == MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)));
+  rewrite each (Seq.cons (Ghost.reveal c) (Ghost.reveal mh)) as MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)
+}
+
+ghost
+fn prepend_chunk_to_major (h: major_heap_t)
+                          (#mh: Ghost.erased MH.major_heap)
+                          (#c: Ghost.erased MH.heap_chunk)
+  requires chunk_range h (Ghost.reveal c) **
+           is_major_heap h (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal c) (Ghost.reveal mh))
+  ensures is_major_heap h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c))
+{
+  unfold (is_major_heap h (Ghost.reveal mh));
+  assert (pure (SZ.v h.size == Base.heap_size));
+  assert (pure (MH.well_formed_major_heap (Ghost.reveal mh)));
+  MH.add_chunk_preserves_wf (Ghost.reveal mh) (Ghost.reveal c);
+  prepend_chunk_range h #mh #c;
+  fold (is_major_heap h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)))
 }
 
 let offset_sizet (addr: Base.hp_addr) (k: nat{U64.v addr + k < Base.heap_size})
@@ -142,10 +184,7 @@ fn write_word_in_chunk (h: major_heap_t)
                        (v: U64.t)
                        (#c: Ghost.erased (c0:MH.heap_chunk{MH.word_in_chunk c0 addr}))
   requires chunk_range h (Ghost.reveal c)
-  ensures PTR.pts_to_range h.data
-            (MH.chunk_start (Ghost.reveal c))
-            (MH.chunk_end (Ghost.reveal c))
-            (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes
+  ensures chunk_range h (MH.write_word_in_chunk (Ghost.reveal c) addr v)
 {
   let i0 = offset_sizet addr 0;
   let i1 = offset_sizet addr 1;
@@ -217,9 +256,17 @@ fn write_word_in_chunk (h: major_heap_t)
     PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s8 **
     pure (s8 == Seq.upd s7 (MH.chunk_offset (Ghost.reveal c) addr + 7) b7));
   assert (pure (s8 == (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes));
+  MH.write_word_in_chunk_preserves_range (Ghost.reveal c) addr v;
   assert (pure (MH.chunk_start (MH.write_word_in_chunk (Ghost.reveal c) addr v) == MH.chunk_start (Ghost.reveal c)));
   assert (pure (MH.chunk_end (MH.write_word_in_chunk (Ghost.reveal c) addr v) == MH.chunk_end (Ghost.reveal c)));
   assert (pure (MH.chunk_start (Ghost.reveal c) == MH.chunk_start (MH.write_word_in_chunk (Ghost.reveal c) addr v)));
   assert (pure (MH.chunk_end (Ghost.reveal c) == MH.chunk_end (MH.write_word_in_chunk (Ghost.reveal c) addr v)));
-  rewrite each s8 as (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes
+  rewrite
+    (PTR.pts_to_range h.data (MH.chunk_start (Ghost.reveal c)) (MH.chunk_end (Ghost.reveal c)) s8)
+  as
+    (PTR.pts_to_range h.data
+       (MH.chunk_start (MH.write_word_in_chunk (Ghost.reveal c) addr v))
+       (MH.chunk_end (MH.write_word_in_chunk (Ghost.reveal c) addr v))
+       (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes);
+  fold (chunk_range h (MH.write_word_in_chunk (Ghost.reveal c) addr v))
 }
