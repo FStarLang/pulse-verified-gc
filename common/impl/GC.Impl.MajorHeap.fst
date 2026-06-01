@@ -16,8 +16,10 @@ module Base = GC.Spec.Base
 module MH = GC.Spec.MajorHeap
 module SpecHeap = GC.Spec.Heap
 module Heap = GC.Impl.Heap
+module OR = Pulse.Lib.OnRange
 module PTR = Pulse.Lib.Array.PtsToRange
 module SZ = FStar.SizeT
+module T = Pulse.Lib.Trade.Util
 module U8 = FStar.UInt8
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
@@ -40,6 +42,30 @@ let rec chunk_ranges (h: major_heap_t) (mh: MH.major_heap)
     else
       let c = Seq.head mh in
       chunk_range h c ** chunk_ranges h (Seq.tail mh)
+
+let chunk_range_at (h: major_heap_t) (mh: MH.major_heap) (i: nat) : slprop =
+  if i < Seq.length mh then chunk_range h (Seq.index mh i) else emp
+
+let indexed_chunk_ranges (h: major_heap_t) (mh: MH.major_heap) : slprop =
+  OR.on_range (chunk_range_at h mh) 0 (Seq.length mh)
+
+let chunk_range_at_in_bounds (h: major_heap_t) (mh: MH.major_heap) (i: nat)
+  : Lemma (requires i < Seq.length mh)
+          (ensures chunk_range_at h mh i == chunk_range h (Seq.index mh i))
+  = ()
+
+let chunk_range_at_update_same (h: major_heap_t) (mh: MH.major_heap)
+                               (i: nat{i < Seq.length mh}) (c: MH.heap_chunk)
+  : Lemma (chunk_range_at h (Seq.upd mh i c) i == chunk_range h c)
+  = assert (Seq.length (Seq.upd mh i c) == Seq.length mh);
+    assert (Seq.index (Seq.upd mh i c) i == c)
+
+let chunk_range_at_update_diff (h: major_heap_t) (mh: MH.major_heap)
+                               (i: nat{i < Seq.length mh}) (c: MH.heap_chunk)
+                               (k: nat{k < Seq.length mh /\ k <> i})
+  : Lemma (chunk_range_at h (Seq.upd mh i c) k == chunk_range_at h mh k)
+  = assert (Seq.length (Seq.upd mh i c) == Seq.length mh);
+    assert (Seq.index (Seq.upd mh i c) k == Seq.index mh k)
 
 let chunk_ranges_cons_eq (h: major_heap_t) (mh: MH.major_heap) (c: MH.heap_chunk)
   : Lemma (chunk_ranges h (Seq.cons c mh) == chunk_range h c ** chunk_ranges h mh)
@@ -318,4 +344,117 @@ fn write_word_in_prepended_chunk (h: major_heap_t)
   split_prepended_chunk_range h #mh #(Ghost.hide (Ghost.reveal c));
   write_word_in_chunk h addr v #c;
   prepend_chunk_range h #mh #(Ghost.hide (MH.write_word_in_chunk (Ghost.reveal c) addr v))
+}
+
+fn read_word_at_chunk_index (h: major_heap_t)
+                            (addr: Base.hp_addr)
+                            (i: nat)
+                            (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                                                   MH.word_in_chunk (Seq.index mh0 i) addr}))
+  requires indexed_chunk_ranges h (Ghost.reveal mh)
+  returns v: U64.t
+  ensures indexed_chunk_ranges h (Ghost.reveal mh) **
+          pure (v == MH.read_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr)
+{
+  unfold (indexed_chunk_ranges h (Ghost.reveal mh));
+  OR.on_range_focus i #(chunk_range_at h (Ghost.reveal mh)) #0 #(Seq.length (Ghost.reveal mh));
+  chunk_range_at_in_bounds h (Ghost.reveal mh) i;
+  rewrite
+    (chunk_range_at h (Ghost.reveal mh) i)
+  as
+    (chunk_range h (Seq.index (Ghost.reveal mh) i));
+  let v = read_word_in_chunk h addr #(Ghost.hide (Seq.index (Ghost.reveal mh) i));
+  chunk_range_at_in_bounds h (Ghost.reveal mh) i;
+  rewrite
+    (chunk_range h (Seq.index (Ghost.reveal mh) i))
+  as
+    (chunk_range_at h (Ghost.reveal mh) i);
+  T.elim _ _;
+  fold (indexed_chunk_ranges h (Ghost.reveal mh));
+  v
+}
+
+fn write_word_at_chunk_index (h: major_heap_t)
+                             (addr: Base.hp_addr)
+                             (v: U64.t)
+                             (i: nat)
+                             (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                                                    MH.word_in_chunk (Seq.index mh0 i) addr}))
+  requires indexed_chunk_ranges h (Ghost.reveal mh)
+  ensures indexed_chunk_ranges h
+            (Seq.upd (Ghost.reveal mh) i
+              (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v))
+{
+  assert (pure (Seq.length (Seq.upd (Ghost.reveal mh) i
+    (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)) ==
+    Seq.length (Ghost.reveal mh)));
+  unfold (indexed_chunk_ranges h (Ghost.reveal mh));
+  OR.on_range_get i #(chunk_range_at h (Ghost.reveal mh)) #0 #(Seq.length (Ghost.reveal mh));
+  chunk_range_at_in_bounds h (Ghost.reveal mh) i;
+  rewrite
+    (chunk_range_at h (Ghost.reveal mh) i)
+  as
+    (chunk_range h (Seq.index (Ghost.reveal mh) i));
+  write_word_in_chunk h addr v #(Ghost.hide (Seq.index (Ghost.reveal mh) i));
+  chunk_range_at_update_same h (Ghost.reveal mh) i
+    (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v);
+  rewrite
+    (chunk_range h (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v))
+  as
+    (chunk_range_at h
+      (Seq.upd (Ghost.reveal mh) i
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v))
+      i);
+  assert (pure (forall k. 0 <= k /\ k < i ==>
+    chunk_range_at h (Ghost.reveal mh) k ==
+    chunk_range_at h
+      (Seq.upd (Ghost.reveal mh) i
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v))
+      k));
+  OR.on_range_frame
+    (chunk_range_at h (Ghost.reveal mh))
+    (chunk_range_at h
+      (Seq.upd (Ghost.reveal mh) i
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+    0 i;
+  rewrite
+    (OR.on_range (chunk_range_at h (Ghost.reveal mh)) 0 i)
+  as
+    (OR.on_range
+      (chunk_range_at h
+        (Seq.upd (Ghost.reveal mh) i
+          (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+      0 i);
+  assert (pure (forall k. i + 1 <= k /\ k < Seq.length (Ghost.reveal mh) ==>
+    chunk_range_at h (Ghost.reveal mh) k ==
+    chunk_range_at h
+      (Seq.upd (Ghost.reveal mh) i
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v))
+      k));
+  OR.on_range_frame
+    (chunk_range_at h (Ghost.reveal mh))
+    (chunk_range_at h
+      (Seq.upd (Ghost.reveal mh) i
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+    (i + 1)
+    (Seq.length (Ghost.reveal mh));
+  rewrite
+    (OR.on_range (chunk_range_at h (Ghost.reveal mh)) (i + 1) (Seq.length (Ghost.reveal mh)))
+  as
+    (OR.on_range
+      (chunk_range_at h
+        (Seq.upd (Ghost.reveal mh) i
+          (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+      (i + 1)
+      (Seq.length (Ghost.reveal mh)));
+  OR.on_range_put 0 i (Seq.length (Ghost.reveal mh))
+    #(chunk_range_at h
+      (Seq.upd (Ghost.reveal mh) i
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)));
+  rewrite each (Seq.length (Ghost.reveal mh)) as
+    Seq.length (Seq.upd (Ghost.reveal mh) i
+      (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v));
+  fold (indexed_chunk_ranges h
+    (Seq.upd (Ghost.reveal mh) i
+      (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
 }
