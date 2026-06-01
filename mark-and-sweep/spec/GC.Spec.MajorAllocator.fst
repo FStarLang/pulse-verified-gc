@@ -568,6 +568,62 @@ let expand_major_heap_links_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
   = expand_major_heap_preserves_fl_valid mh c next_fp next_fp fuel;
     expand_major_heap_fresh_fl_valid mh c next_fp fuel
 
+type ensure_capacity_result = {
+  capacity_major_out: MH.major_heap;
+  capacity_fp_out: obj_addr;
+  capacity_fuel_out: nat;
+}
+
+let ensure_major_capacity_spec (mh: MH.major_heap) (fp: obj_addr)
+                               (fuel needed: nat) (fresh: MH.heap_chunk)
+  : GTot ensure_capacity_result =
+  if major_fl_capacity mh fp fuel >= needed then
+    { capacity_major_out = mh; capacity_fp_out = fp; capacity_fuel_out = fuel }
+  else
+    let er = expand_major_heap mh fresh fp in
+    { capacity_major_out = er.major_out;
+      capacity_fp_out = er.fp_out;
+      capacity_fuel_out = fuel + 1 }
+
+let ensure_major_capacity_has_capacity (mh: MH.major_heap) (fp: obj_addr)
+                                       (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma (requires major_fl_valid mh fp fuel /\
+                    (major_fl_capacity mh fp fuel < needed ==>
+                     MH.chunk_disjoint_from_all fresh mh /\
+                     fresh_chunk_wosize fresh + major_fl_capacity mh fp fuel >= needed))
+          (ensures (let r = ensure_major_capacity_spec mh fp fuel needed fresh in
+                    major_fl_capacity r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
+  = if major_fl_capacity mh fp fuel >= needed then ()
+    else begin
+      expand_major_heap_links_fl_capacity mh fresh fp fuel;
+      let r = ensure_major_capacity_spec mh fp fuel needed fresh in
+      assert (major_fl_capacity r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out ==
+              fresh_chunk_wosize fresh + major_fl_capacity mh fp fuel)
+    end
+
+let ensure_major_capacity_fl_valid (mh: MH.major_heap) (fp: obj_addr)
+                                  (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma (requires major_fl_valid mh fp fuel /\
+                    (major_fl_capacity mh fp fuel < needed ==>
+                     MH.chunk_disjoint_from_all fresh mh /\
+                     fp <> fresh_chunk_object fresh))
+          (ensures (let r = ensure_major_capacity_spec mh fp fuel needed fresh in
+                    major_fl_valid r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_capacity mh fp fuel >= needed then ()
+    else
+      expand_major_heap_links_fl_valid mh fresh fp fuel
+
+let ensure_major_capacity_wf (mh: MH.major_heap) (fp: obj_addr)
+                             (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma (requires MH.well_formed_major_heap mh /\
+                    (major_fl_capacity mh fp fuel < needed ==>
+                     MH.chunk_disjoint_from_all fresh mh))
+          (ensures MH.well_formed_major_heap
+                    (ensure_major_capacity_spec mh fp fuel needed fresh).capacity_major_out)
+  = if major_fl_capacity mh fp fuel >= needed then ()
+    else
+      expand_major_heap_wf mh fresh fp
+
 type major_alloc_result = {
   major_alloc_out: MH.major_heap;
   major_fp_out: U64.t;
