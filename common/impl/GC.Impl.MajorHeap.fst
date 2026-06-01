@@ -67,6 +67,18 @@ let chunk_range_at_update_diff (h: major_heap_t) (mh: MH.major_heap)
   = assert (Seq.length (Seq.upd mh i c) == Seq.length mh);
     assert (Seq.index (Seq.upd mh i c) k == Seq.index mh k)
 
+let chunk_range_at_add_chunk_head (h: major_heap_t) (mh: MH.major_heap) (c: MH.heap_chunk)
+  : Lemma (chunk_range_at h (MH.add_chunk mh c) 0 == chunk_range h c)
+  = assert (Seq.length (MH.add_chunk mh c) > 0);
+    assert (Seq.index (MH.add_chunk mh c) 0 == c)
+
+let chunk_range_at_add_chunk_tail (h: major_heap_t) (mh: MH.major_heap)
+                                  (c: MH.heap_chunk) (k: nat{k < Seq.length mh})
+  : Lemma (chunk_range_at h (MH.add_chunk mh c) (k + 1) == chunk_range_at h mh k)
+  = assert (Seq.length (MH.add_chunk mh c) == Seq.length mh + 1);
+    assert (k + 1 < Seq.length (MH.add_chunk mh c));
+    assert (Seq.index (MH.add_chunk mh c) (k + 1) == Seq.index mh k)
+
 let chunk_ranges_cons_eq (h: major_heap_t) (mh: MH.major_heap) (c: MH.heap_chunk)
   : Lemma (chunk_ranges h (Seq.cons c mh) == chunk_range h c ** chunk_ranges h mh)
   = assert (Seq.length (Seq.cons c mh) > 0);
@@ -201,6 +213,61 @@ fn prepend_chunk_to_major (h: major_heap_t)
   MH.add_chunk_preserves_wf (Ghost.reveal mh) (Ghost.reveal c);
   prepend_chunk_range h #mh #c;
   fold (is_major_heap h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)))
+}
+
+ghost
+fn shift_chunk_range_after_prepend (h: major_heap_t)
+                                   (#mh: Ghost.erased MH.major_heap)
+                                   (#c: Ghost.erased MH.heap_chunk)
+                                   (k: nat{k < Seq.length (Ghost.reveal mh)})
+  requires chunk_range_at h (Ghost.reveal mh) k
+  ensures chunk_range_at h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)) (k + 1)
+{
+  chunk_range_at_add_chunk_tail h (Ghost.reveal mh) (Ghost.reveal c) k;
+  rewrite
+    (chunk_range_at h (Ghost.reveal mh) k)
+  as
+    (chunk_range_at h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)) (k + 1))
+}
+
+ghost
+fn prepend_chunk_to_indexed_major (h: major_heap_t)
+                                  (#mh: Ghost.erased MH.major_heap)
+                                  (#c: Ghost.erased MH.heap_chunk)
+  requires chunk_range h (Ghost.reveal c) **
+           is_indexed_major_heap h (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal c) (Ghost.reveal mh))
+  ensures is_indexed_major_heap h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c))
+{
+  unfold (is_indexed_major_heap h (Ghost.reveal mh));
+  unfold (indexed_chunk_ranges h (Ghost.reveal mh));
+  assert (pure (SZ.v h.size == Base.heap_size));
+  assert (pure (MH.well_formed_major_heap (Ghost.reveal mh)));
+  MH.add_chunk_preserves_wf (Ghost.reveal mh) (Ghost.reveal c);
+  chunk_range_at_add_chunk_head h (Ghost.reveal mh) (Ghost.reveal c);
+  rewrite
+    (chunk_range h (Ghost.reveal c))
+  as
+    (chunk_range_at h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)) 0);
+  ghost
+  fn shift_old_chunk (k: nat{0 <= k /\ k < Seq.length (Ghost.reveal mh)})
+    requires chunk_range_at h (Ghost.reveal mh) k
+    ensures chunk_range_at h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)) (k + 1)
+  {
+    shift_chunk_range_after_prepend h #mh #c k
+  };
+  OR.on_range_weaken_and_shift
+    (chunk_range_at h (Ghost.reveal mh))
+    (chunk_range_at h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)))
+    1 0 (Seq.length (Ghost.reveal mh))
+    shift_old_chunk;
+  OR.on_range_cons
+    0
+    #(chunk_range_at h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)))
+    #_
+    #_;
+  fold (indexed_chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)));
+  fold (is_indexed_major_heap h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)))
 }
 
 let offset_sizet (addr: Base.hp_addr) (k: nat{U64.v addr + k < Base.heap_size})
