@@ -578,6 +578,67 @@ let major_spec_next_fp_none (mh: MH.major_heap) (obj: obj_addr)
           (ensures major_spec_next_fp mh obj == 0UL)
   = ()
 
+let major_write_word_or_same_some (mh mh': MH.major_heap) (addr: hp_addr) (value: U64.t)
+  : Lemma (requires MH.write_word_in_major mh addr value == Some mh')
+          (ensures major_write_word_or_same mh addr value == mh')
+  = ()
+
+let major_write_word_or_same_none (mh: MH.major_heap) (addr: hp_addr) (value: U64.t)
+  : Lemma (requires MH.write_word_in_major mh addr value == None)
+          (ensures major_write_word_or_same mh addr value == mh)
+  = ()
+
+let major_alloc_from_block_missing_header (mh: MH.major_heap) (obj: obj_addr)
+                                          (wz: nat) (next: U64.t)
+  : Lemma (requires MH.read_word_in_major mh (hd_address obj) == None)
+          (ensures major_alloc_from_block mh obj wz next == (mh, next))
+  = ()
+
+let major_alloc_from_block_too_small (mh: MH.major_heap) (obj: obj_addr)
+                                     (wz: nat) (next: U64.t) (hdr: U64.t)
+  : Lemma (requires MH.read_word_in_major mh (hd_address obj) == Some hdr /\
+                    U64.v (Obj.getWosize hdr) < wz)
+          (ensures major_alloc_from_block mh obj wz next == (mh, next))
+  = ()
+
+let major_alloc_from_block_exact (mh: MH.major_heap) (obj: obj_addr)
+                                 (wz: nat) (next: U64.t) (hdr: U64.t)
+  : Lemma (requires MH.read_word_in_major mh (hd_address obj) == Some hdr /\
+                    U64.v (Obj.getWosize hdr) >= wz /\
+                    U64.v (Obj.getWosize hdr) - wz < 2)
+          (ensures (let hd = hd_address obj in
+                    let bwz = U64.v (Obj.getWosize hdr) in
+                    let ahdr = Alloc.make_header (U64.uint_to_t bwz) Alloc.white_bits 0UL in
+                    let mh1 = major_write_word_or_same mh hd ahdr in
+                    major_alloc_from_block mh obj wz next == (mh1, next)))
+  = ()
+
+let major_alloc_from_block_split_normal (mh: MH.major_heap) (obj: obj_addr)
+                                        (wz: nat) (next: U64.t) (hdr: U64.t)
+  : Lemma (requires MH.read_word_in_major mh (hd_address obj) == Some hdr /\
+                    (let hd = hd_address obj in
+                     let bwz = U64.v (Obj.getWosize hdr) in
+                     bwz >= wz /\
+                     bwz - wz >= 2 /\
+                     U64.v hd + (1 + wz) * 8 < heap_size /\
+                     U64.v hd + (1 + wz) * 8 + 8 < heap_size /\
+                     (U64.v hd + (1 + wz) * 8) % 8 == 0 /\
+                     (U64.v hd + (1 + wz) * 8 + 8) % 8 == 0))
+          (ensures (let hd = hd_address obj in
+                    let bwz = U64.v (Obj.getWosize hdr) in
+                    let ahdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+                    let mh1 = major_write_word_or_same mh hd ahdr in
+                    let rhn = U64.v hd + (1 + wz) * 8 in
+                    let rh : hp_addr = U64.uint_to_t rhn in
+                    let rw = bwz - wz - 1 in
+                    let rhdr = Alloc.make_header (U64.uint_to_t rw) Alloc.blue_bits 0UL in
+                    let mh2 = major_write_word_or_same mh1 rh rhdr in
+                    let ron = rhn + 8 in
+                    let ro : hp_addr = U64.uint_to_t ron in
+                    let mh3 = major_write_word_or_same mh2 ro next in
+                    major_alloc_from_block mh obj wz next == (mh3, U64.uint_to_t ron)))
+  = ()
+
 let major_alloc_search_missing_header (mh: MH.major_heap) (head prev cur: U64.t)
                                       (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
