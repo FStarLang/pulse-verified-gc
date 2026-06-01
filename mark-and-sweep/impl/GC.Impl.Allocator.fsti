@@ -119,6 +119,38 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
           fst res == spec_res.major_fp_out /\
           snd res == spec_res.major_obj_out)
 
+/// Initialize an already-owned fresh chunk as one blue free-list block.
+fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
+                          (base: hp_addr) (fp_out: obj_addr)
+                          (wz: wosize) (next_fp: U64.t)
+                          (#fresh: Ghost.erased
+                            (c:MH.heap_chunk{c.base == base /\
+                                             fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                             U64.v wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh)
+  ensures MajorHeap.chunk_range heap
+            (SpecMajorAlloc.init_fresh_chunk (Ghost.reveal fresh) next_fp).chunk_out
+
+/// Initialize and prepend a fresh chunk, returning the new free-list head.
+fn expand_major_heap_owned (heap: MajorHeap.major_heap_t)
+                           (base: hp_addr) (fp_out: obj_addr)
+                           (wz: wosize) (next_fp: U64.t)
+                           (#mh: Ghost.erased MH.major_heap)
+                           (#fresh: Ghost.erased
+                             (c:MH.heap_chunk{c.base == base /\
+                                              fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                              U64.v wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh) **
+           MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh) (Ghost.reveal mh))
+  returns new_fp: U64.t
+  ensures MajorHeap.is_indexed_major_heap heap
+            (SpecMajorAlloc.expand_major_heap
+              (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).major_out **
+          pure (new_fp ==
+            (SpecMajorAlloc.expand_major_heap
+              (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).fp_out)
+
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.

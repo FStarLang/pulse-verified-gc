@@ -670,3 +670,73 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
   MajorHeap.heap_to_single_indexed_major heap;
   res
 }
+
+fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
+                          (base: hp_addr) (fp_out: obj_addr)
+                          (wz: wosize) (next_fp: U64.t)
+                          (#fresh: Ghost.erased
+                            (c:MH.heap_chunk{c.base == base /\
+                                             fp_out == SMA.fresh_chunk_object c /\
+                                             U64.v wz == SMA.fresh_chunk_wosize c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh)
+  ensures MajorHeap.chunk_range heap
+            (SMA.init_fresh_chunk (Ghost.reveal fresh) next_fp).chunk_out
+{
+  let hdr = makeHeader wz blue 0UL;
+  assert (pure (SA.blue_bits == 2UL));
+  assert (pure (pack_color blue == 2UL));
+  assert (pure (hdr == SA.make_header wz SA.blue_bits 0UL));
+  assert (pure (wz == SMA.fresh_chunk_wosize_u64 (Ghost.reveal fresh)));
+  assert (pure (hdr ==
+                SA.make_header (SMA.fresh_chunk_wosize_u64 (Ghost.reveal fresh))
+                  SA.blue_bits 0UL));
+  assert (pure (MH.word_in_chunk (Ghost.reveal fresh) base));
+  MajorHeap.write_word_in_chunk heap base hdr #(Ghost.hide (Ghost.reveal fresh));
+  SMA.fresh_chunk_object_word (Ghost.reveal fresh);
+  assert (pure (MH.word_in_chunk (Ghost.reveal fresh) fp_out));
+  MH.write_word_in_chunk_preserves_word (Ghost.reveal fresh) base hdr fp_out;
+  assert (pure (MH.word_in_chunk (MH.write_word_in_chunk (Ghost.reveal fresh) base hdr) fp_out));
+  MajorHeap.write_word_in_chunk heap fp_out next_fp
+    #(Ghost.hide (MH.write_word_in_chunk (Ghost.reveal fresh) base hdr));
+  assert (pure (MH.write_word_in_chunk
+                  (MH.write_word_in_chunk (Ghost.reveal fresh) base hdr)
+                  fp_out next_fp ==
+                (SMA.init_fresh_chunk (Ghost.reveal fresh) next_fp).chunk_out));
+  rewrite
+    (MajorHeap.chunk_range heap
+      (MH.write_word_in_chunk
+        (MH.write_word_in_chunk (Ghost.reveal fresh) base hdr)
+        fp_out next_fp))
+  as
+    (MajorHeap.chunk_range heap
+      (SMA.init_fresh_chunk (Ghost.reveal fresh) next_fp).chunk_out)
+}
+
+fn expand_major_heap_owned (heap: MajorHeap.major_heap_t)
+                           (base: hp_addr) (fp_out: obj_addr)
+                           (wz: wosize) (next_fp: U64.t)
+                           (#mh: Ghost.erased MH.major_heap)
+                           (#fresh: Ghost.erased
+                             (c:MH.heap_chunk{c.base == base /\
+                                              fp_out == SMA.fresh_chunk_object c /\
+                                              U64.v wz == SMA.fresh_chunk_wosize c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh) **
+           MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh) (Ghost.reveal mh))
+  returns new_fp: U64.t
+  ensures MajorHeap.is_indexed_major_heap heap
+            (SMA.expand_major_heap
+              (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).major_out **
+          pure (new_fp ==
+            (SMA.expand_major_heap
+              (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).fp_out)
+{
+  init_fresh_chunk_owned heap base fp_out wz next_fp #fresh;
+  SMA.init_fresh_chunk_disjoint_from_all (Ghost.reveal mh) (Ghost.reveal fresh) next_fp;
+  MajorHeap.prepend_chunk_to_indexed_major heap
+    #mh
+    #(Ghost.hide (SMA.init_fresh_chunk (Ghost.reveal fresh) next_fp).chunk_out);
+  assert (pure ((SMA.expand_major_heap (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).fp_out ==
+                fp_out));
+  fp_out
+}
