@@ -78,6 +78,10 @@ let is_major_heap (h: major_heap_t) (mh: MH.major_heap) : slprop =
   chunk_ranges h mh **
   pure (SZ.v h.size == Base.heap_size /\ MH.well_formed_major_heap mh)
 
+let is_indexed_major_heap (h: major_heap_t) (mh: MH.major_heap) : slprop =
+  indexed_chunk_ranges h mh **
+  pure (SZ.v h.size == Base.heap_size /\ MH.well_formed_major_heap mh)
+
 let inactive_prefix (h: major_heap_t) (s: Base.heap) : slprop =
   PTR.pts_to_range h.data 0 (U64.v Base.zero_addr) (Seq.slice s 0 (U64.v Base.zero_addr))
 
@@ -114,6 +118,31 @@ fn heap_to_single_major (h: Heap.heap_t)
   fold (chunk_range mh (MH.single_chunk_of_heap 's));
   MH.single_chunk_major_heap_wf 's;
   fold (is_single_chunk_major mh 's);
+  assert (pure (mh == heap_as_major h));
+  rewrite each mh as heap_as_major h
+}
+
+ghost
+fn heap_to_single_indexed_major (h: Heap.heap_t)
+  requires Heap.is_heap h 's
+  ensures inactive_prefix (heap_as_major h) 's **
+          is_indexed_major_heap (heap_as_major h) (MH.single_chunk_major_heap 's)
+{
+  heap_to_single_major h;
+  let mh = heap_as_major h;
+  assert (pure (mh == heap_as_major h));
+  rewrite each (heap_as_major h) as mh;
+  unfold (is_single_chunk_major mh 's);
+  assert (pure (Seq.length (MH.single_chunk_major_heap 's) == 1));
+  assert (pure (Seq.index (MH.single_chunk_major_heap 's) 0 == MH.single_chunk_of_heap 's));
+  chunk_range_at_in_bounds mh (MH.single_chunk_major_heap 's) 0;
+  rewrite
+    (chunk_range mh (MH.single_chunk_of_heap 's))
+  as
+    (chunk_range_at mh (MH.single_chunk_major_heap 's) 0);
+  OR.on_range_singleton_intro (chunk_range_at mh (MH.single_chunk_major_heap 's)) 0;
+  fold (indexed_chunk_ranges mh (MH.single_chunk_major_heap 's));
+  fold (is_indexed_major_heap mh (MH.single_chunk_major_heap 's));
   assert (pure (mh == heap_as_major h));
   rewrite each mh as heap_as_major h
 }
