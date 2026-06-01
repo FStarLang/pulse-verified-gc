@@ -1136,6 +1136,65 @@ let major_alloc_after_expand_exact (mh: MH.major_heap) (c: MH.heap_chunk)
     major_alloc_from_block_exact er.major_out fp wz next_fp hdr;
     major_alloc_search_found_head er.major_out fp 0UL fp wz (fuel + 1) hdr
 
+#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+let major_alloc_after_expand_no_split (mh: MH.major_heap) (c: MH.heap_chunk)
+                                      (next_fp: U64.t) (requested_wz fuel: nat)
+  : Lemma (requires U64.v c.base >= U64.v zero_addr /\
+                    requested_wz > 0 /\
+                    fresh_chunk_wosize c >= requested_wz /\
+                    fresh_chunk_wosize c - requested_wz < 2)
+          (ensures (let er = expand_major_heap mh c next_fp in
+                    let init = (init_fresh_chunk c next_fp).chunk_out in
+                    let alloc_hdr =
+                      Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.white_bits 0UL in
+                    let out =
+                      Seq.upd er.major_out 0 (MH.write_word_in_chunk init c.base alloc_hdr) in
+                    let r =
+                      major_alloc_spec_with_fuel
+                        er.major_out er.fp_out requested_wz (fuel + 1) in
+                    r.major_alloc_out == out /\
+                    r.major_fp_out == next_fp /\
+                    r.major_obj_out == er.fp_out))
+  = let er = expand_major_heap mh c next_fp in
+    let init = (init_fresh_chunk c next_fp).chunk_out in
+    let fp = er.fp_out in
+    let bwz = fresh_chunk_wosize c in
+    let bwz_u = fresh_chunk_wosize_u64 c in
+    let wz = requested_wz in
+    let hdr = Alloc.make_header bwz_u Alloc.blue_bits 0UL in
+    let alloc_hdr = Alloc.make_header bwz_u Alloc.white_bits 0UL in
+    expand_major_heap_header mh c next_fp;
+    expand_major_heap_header_fields mh c next_fp;
+    expand_major_heap_link mh c next_fp;
+    fresh_chunk_object_in_chunk c;
+    f_address_spec c.base;
+    assert (fp == fresh_chunk_object c);
+    assert (U64.v fp == U64.v c.base + U64.v mword);
+    assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    assert (U64.v c.base + U64.v mword < heap_size);
+    hd_f_roundtrip c.base;
+    assert (hd_address fp == c.base);
+    assert (Seq.length er.major_out > 0);
+    assert (Seq.index er.major_out 0 == init);
+    assert (MH.word_in_chunk init c.base);
+    assert (MH.read_word_in_major er.major_out (hd_address fp) == Some hdr);
+    assert (Obj.getWosize hdr == bwz_u);
+    assert (U64.v (Obj.getWosize hdr) == bwz);
+    assert (U64.v (Obj.getWosize hdr) >= wz);
+    assert (U64.v (Obj.getWosize hdr) - wz < 2);
+    assert (MH.read_word_in_major er.major_out fp == Some next_fp);
+    major_spec_next_fp_some er.major_out fp next_fp;
+    assert (major_spec_next_fp er.major_out fp == next_fp);
+    MH.write_word_in_major_at_index er.major_out c.base alloc_hdr 0;
+    major_write_word_or_same_some er.major_out
+      (Seq.upd er.major_out 0 (MH.write_word_in_chunk init c.base alloc_hdr))
+      c.base alloc_hdr;
+    major_alloc_from_block_exact er.major_out fp wz next_fp hdr;
+    major_alloc_search_found_head er.major_out fp 0UL fp wz (fuel + 1) hdr
+#pop-options
+
 let seq_upd_overwrite_head (#a: Type) (s: Seq.seq a{Seq.length s > 0}) (v1 v2: a)
   : Lemma (Seq.upd (Seq.upd s 0 v1) 0 v2 == Seq.upd s 0 v2)
   = assert (Seq.length (Seq.upd (Seq.upd s 0 v1) 0 v2) ==
