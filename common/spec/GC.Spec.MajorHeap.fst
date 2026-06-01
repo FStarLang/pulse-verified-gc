@@ -16,6 +16,7 @@ module U8 = FStar.UInt8
 module Seq = FStar.Seq
 module SeqProps = FStar.Seq.Properties
 module Obj = GC.Spec.Object
+module Fields = GC.Spec.Fields
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -215,14 +216,12 @@ let read_word_disjoint_none (mh: major_heap) (c: heap_chunk)
   = assert (chunk_contains_addr c addr);
     lookup_chunk_disjoint_none mh c addr
 
-let single_chunk_read_word_compat (g: heap)
-                                  (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
-                                                 U64.v addr + U64.v mword <= heap_size})
-  : Lemma (read_word_in_major (single_chunk_major_heap g) addr == Some (read_word g addr))
+let single_chunk_read_word_in_chunk_compat (g: heap)
+                                           (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
+                                                          U64.v addr + U64.v mword <= heap_size})
+  : Lemma (read_word_in_chunk (single_chunk_of_heap g) addr == read_word g addr)
   = let c = single_chunk_of_heap g in
     assert (word_in_chunk c addr);
-    assert (chunk_contains_addr c addr);
-    lookup_add_chunk_hit Seq.empty c addr;
     let off = chunk_offset c addr in
     assert (off + U64.v zero_addr == U64.v addr);
     read_word_spec g addr;
@@ -235,6 +234,16 @@ let single_chunk_read_word_compat (g: heap)
     assert (Seq.index c.bytes (off + 6) == Seq.index g (U64.v addr + 6));
     assert (Seq.index c.bytes (off + 7) == Seq.index g (U64.v addr + 7))
 
+let single_chunk_read_word_compat (g: heap)
+                                  (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
+                                                 U64.v addr + U64.v mword <= heap_size})
+  : Lemma (read_word_in_major (single_chunk_major_heap g) addr == Some (read_word g addr))
+  = let c = single_chunk_of_heap g in
+    assert (word_in_chunk c addr);
+    assert (chunk_contains_addr c addr);
+    lookup_add_chunk_hit Seq.empty c addr;
+    single_chunk_read_word_in_chunk_compat g addr
+
 let next_object_start_aligned (start: hp_addr) (obj_size_words: nat)
   : Lemma (requires U64.v start % U64.v mword == 0)
           (ensures (U64.v start + obj_size_words * U64.v mword) % U64.v mword == 0)
@@ -246,6 +255,14 @@ let next_object_start_aligned (start: hp_addr) (obj_size_words: nat)
     assert ((obj_size_words * 8) % 8 == 0);
     assert (((U64.v start % 8) + obj_size_words * 8) % 8 == 0);
     assert ((U64.v start + obj_size_words * 8) % 8 == 0)
+
+let append_empty_right (#a: Type) (s: seq a)
+  : Lemma (Seq.append s (Seq.empty #a) == s)
+  = Seq.lemma_len_append s (Seq.empty #a);
+    assert (Seq.length (Seq.append s (Seq.empty #a)) == Seq.length s);
+    assert (forall i. i < Seq.length s ==> Seq.index (Seq.append s (Seq.empty #a)) i == Seq.index s i);
+    Seq.lemma_eq_intro (Seq.append s (Seq.empty #a)) s;
+    Seq.lemma_eq_elim (Seq.append s (Seq.empty #a)) s
 
 let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_addr)
   (decreases chunk_end c - U64.v start)
@@ -327,6 +344,53 @@ let objects_in_chunk_member_in_chunk (c: heap_chunk) (x: obj_addr)
           (ensures obj_addr_in_chunk c x)
   = objects_in_chunk_from_member_in_chunk c c.base x
 
+let rec single_chunk_objects_from_compat
+  (g: heap) (start: hp_addr{U64.v start >= U64.v zero_addr})
+  : Lemma (ensures objects_in_chunk_from (single_chunk_of_heap g) start == Fields.objects start g)
+          (decreases heap_size - U64.v start)
+  = let c = single_chunk_of_heap g in
+    assert (chunk_end c == heap_size);
+    if U64.v start < chunk_start c then assert False
+    else if U64.v start + U64.v mword >= chunk_end c then begin
+      assert (U64.v start + 8 >= Seq.length g)
+    end else begin
+      single_chunk_read_word_in_chunk_compat g start;
+      let header = read_word_in_chunk c start in
+      let wz = Obj.getWosize header in
+      let obj_size_words = U64.v wz + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      assert (header == read_word g start);
+      assert (wz == Obj.getWosize (read_word g start));
+      assert_norm (U64.v mword == 8);
+      assert (next_start_nat == U64.v start + obj_size_words * 8);
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then begin
+        assert (next_start_nat > Seq.length g || next_start_nat >= pow2 64)
+      end else begin
+        f_address_spec start;
+        let obj_addr : obj_addr = f_address start in
+        assert (next_start_nat <= Seq.length g);
+        let next_start_raw = U64.uint_to_t next_start_nat in
+        assert (U64.v next_start_raw == next_start_nat);
+        if next_start_nat >= chunk_end c then begin
+          assert (next_start_nat >= heap_size)
+        end else begin
+          assert (next_start_nat < heap_size);
+          assert (next_start_nat < pow2 64);
+          next_object_start_aligned start obj_size_words;
+          assert (next_start_nat % U64.v mword == 0);
+          let next_start : hp_addr = next_start_raw in
+          assert (obj_size_words >= 1);
+          assert (U64.v next_start > U64.v start);
+          assert (U64.v next_start >= U64.v zero_addr);
+          single_chunk_objects_from_compat g next_start
+        end
+      end
+    end
+
+let single_chunk_objects_compat (g: heap)
+  : Lemma (objects_in_chunk (single_chunk_of_heap g) == Fields.objects zero_addr g)
+  = single_chunk_objects_from_compat g zero_addr
+
 let rec major_objects (mh: major_heap) : Tot (seq obj_addr)
   (decreases Seq.length mh)
   = if Seq.length mh = 0 then Seq.empty
@@ -350,6 +414,16 @@ let major_objects_add_chunk_old (mh: major_heap) (c: heap_chunk) (x: obj_addr)
           (ensures Seq.mem x (major_objects (add_chunk mh c)))
   = major_objects_add_chunk mh c;
     SeqProps.lemma_mem_append (objects_in_chunk c) (major_objects mh)
+
+let single_chunk_major_objects_compat (g: heap)
+  : Lemma (major_objects (single_chunk_major_heap g) == Fields.objects zero_addr g)
+  = single_chunk_objects_compat g;
+    assert (Seq.head (single_chunk_major_heap g) == single_chunk_of_heap g);
+    assert (Seq.length (Seq.tail (single_chunk_major_heap g)) == 0);
+    Seq.lemma_empty (Seq.tail (single_chunk_major_heap g));
+    assert (Seq.tail (single_chunk_major_heap g) == Seq.empty);
+    assert (major_objects (Seq.tail (single_chunk_major_heap g)) == Seq.empty);
+    append_empty_right (objects_in_chunk (single_chunk_of_heap g))
 
 let rec major_objects_disjoint_from_chunk (mh: major_heap) (c: heap_chunk) (x: obj_addr)
   : Lemma (requires chunk_disjoint_from_all c mh /\ Seq.mem x (major_objects mh))
