@@ -227,6 +227,21 @@ let write_word_in_chunk (c: heap_chunk) (addr: hp_addr{word_in_chunk c addr}) (v
   let bytes = Seq.upd bytes (off + 7) (uint64_to_uint8 (U64.shift_right value 56ul)) in
   { c with bytes = bytes }
 
+let write_word_in_chunk_preserves_range (c: heap_chunk)
+                                        (addr: hp_addr{word_in_chunk c addr})
+                                        (value: U64.t)
+  : Lemma (chunk_start (write_word_in_chunk c addr value) == chunk_start c /\
+           chunk_end (write_word_in_chunk c addr value) == chunk_end c)
+  = ()
+
+let write_word_in_chunk_preserves_word (c: heap_chunk)
+                                       (addr: hp_addr{word_in_chunk c addr})
+                                       (value: U64.t)
+                                       (other: hp_addr)
+  : Lemma (requires word_in_chunk c other)
+          (ensures word_in_chunk (write_word_in_chunk c addr value) other)
+  = write_word_in_chunk_preserves_range c addr value
+
 let read_word_in_major (mh: major_heap) (addr: hp_addr) : Tot (option U64.t) =
   match lookup_chunk mh addr with
   | None -> None
