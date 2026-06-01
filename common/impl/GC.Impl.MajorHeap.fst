@@ -420,6 +420,24 @@ fn read_word_in_major_at_chunk_index
   v
 }
 
+fn read_word_in_indexed_major_at_chunk_index
+  (h: major_heap_t)
+  (addr: Base.hp_addr)
+  (i: nat)
+  (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                         MH.word_in_chunk (Seq.index mh0 i) addr /\
+                                         (forall (k:nat). k < i ==> ~(MH.chunk_contains_addr (Seq.index mh0 k) addr))}))
+  requires is_indexed_major_heap h (Ghost.reveal mh)
+  returns v: U64.t
+  ensures is_indexed_major_heap h (Ghost.reveal mh) **
+          pure (MH.read_word_in_major (Ghost.reveal mh) addr == Some v)
+{
+  unfold (is_indexed_major_heap h (Ghost.reveal mh));
+  let v = read_word_in_major_at_chunk_index h addr i #mh;
+  fold (is_indexed_major_heap h (Ghost.reveal mh));
+  v
+}
+
 fn write_word_at_chunk_index (h: major_heap_t)
                              (addr: Base.hp_addr)
                              (v: U64.t)
@@ -523,4 +541,30 @@ fn write_word_in_major_at_chunk_index
 {
   MH.write_word_in_major_at_index (Ghost.reveal mh) addr v i;
   write_word_at_chunk_index h addr v i #(Ghost.hide (Ghost.reveal mh));
+}
+
+fn write_word_in_indexed_major_at_chunk_index
+  (h: major_heap_t)
+  (addr: Base.hp_addr)
+  (v: U64.t)
+  (i: nat)
+  (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                         MH.word_in_chunk (Seq.index mh0 i) addr /\
+                                         (forall (k:nat). k < i ==> ~(MH.word_in_chunk (Seq.index mh0 k) addr))}))
+  requires is_indexed_major_heap h (Ghost.reveal mh)
+  ensures is_indexed_major_heap h
+            (Seq.upd (Ghost.reveal mh) i
+              (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)) **
+          pure (MH.write_word_in_major (Ghost.reveal mh) addr v ==
+            Some (Seq.upd (Ghost.reveal mh) i
+              (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+{
+  unfold (is_indexed_major_heap h (Ghost.reveal mh));
+  assert (pure (SZ.v h.size == Base.heap_size));
+  assert (pure (MH.well_formed_major_heap (Ghost.reveal mh)));
+  MH.write_word_at_index_preserves_wf (Ghost.reveal mh) addr v i;
+  write_word_in_major_at_chunk_index h addr v i #mh;
+  fold (is_indexed_major_heap h
+    (Seq.upd (Ghost.reveal mh) i
+      (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
 }

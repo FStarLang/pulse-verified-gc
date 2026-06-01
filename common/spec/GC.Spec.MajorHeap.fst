@@ -92,6 +92,20 @@ let chunks_disjoint_symmetric (c1 c2: heap_chunk)
           (ensures chunks_disjoint c2 c1)
   = ()
 
+let chunks_disjoint_same_range_left (c c' other: heap_chunk)
+  : Lemma (requires chunk_start c' == chunk_start c /\
+                    chunk_end c' == chunk_end c /\
+                    chunks_disjoint c other)
+          (ensures chunks_disjoint c' other)
+  = ()
+
+let chunks_disjoint_same_range_right (other c c': heap_chunk)
+  : Lemma (requires chunk_start c' == chunk_start c /\
+                    chunk_end c' == chunk_end c /\
+                    chunks_disjoint other c)
+          (ensures chunks_disjoint other c')
+  = ()
+
 let chunks_disjoint_no_shared_addr (c1 c2: heap_chunk) (addr: U64.t)
   : Lemma (requires chunks_disjoint c1 c2 /\ chunk_contains_addr c1 addr)
           (ensures ~(chunk_contains_addr c2 addr))
@@ -507,6 +521,53 @@ let rec write_word_in_major_at_index (mh: major_heap) (addr: hp_addr)
       assert (Seq.upd mh i c' == Seq.cons hd (Seq.upd tl im1 c'))
     end
 #pop-options
+
+#push-options "--split_queries always"
+let rec chunks_pairwise_disjoint_upd_same_range (mh: major_heap) (i: nat)
+                                                (c': heap_chunk)
+  : Lemma (requires chunks_pairwise_disjoint mh /\
+                    i < Seq.length mh /\
+                    chunk_start c' == chunk_start (Seq.index mh i) /\
+                    chunk_end c' == chunk_end (Seq.index mh i))
+          (ensures chunks_pairwise_disjoint (Seq.upd mh i c'))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else if i = 0 then begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (Seq.index mh 0 == hd);
+      assert (forall j. j < Seq.length tl ==> chunks_disjoint hd (Seq.index tl j));
+      assert (chunks_pairwise_disjoint tl);
+      assert (forall j. j < Seq.length tl ==> chunks_disjoint c' (Seq.index tl j));
+      seq_upd_head mh c';
+      assert (Seq.upd mh 0 c' == Seq.cons c' tl)
+    end else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      let im1 : j:nat{j < Seq.length tl} = i - 1 in
+      assert (0 < i);
+      assert (Seq.index tl im1 == Seq.index mh i);
+      assert (forall j. j < Seq.length tl ==> chunks_disjoint hd (Seq.index tl j));
+      assert (chunks_pairwise_disjoint tl);
+      chunks_pairwise_disjoint_upd_same_range tl im1 c';
+      assert (forall j. j < Seq.length (Seq.upd tl im1 c') ==>
+                chunks_disjoint hd (Seq.index (Seq.upd tl im1 c') j));
+      seq_upd_tail mh i c';
+      assert (Seq.upd mh i c' == Seq.cons hd (Seq.upd tl im1 c'))
+    end
+#pop-options
+
+let write_word_at_index_preserves_wf (mh: major_heap) (addr: hp_addr) (value: U64.t)
+                                     (i: nat)
+  : Lemma (requires well_formed_major_heap mh /\
+                    i < Seq.length mh /\
+                    word_in_chunk (Seq.index mh i) addr)
+          (ensures well_formed_major_heap
+                    (Seq.upd mh i (write_word_in_chunk (Seq.index mh i) addr value)))
+  = write_word_in_chunk_preserves_range (Seq.index mh i) addr value;
+    chunks_pairwise_disjoint_upd_same_range mh i
+      (write_word_in_chunk (Seq.index mh i) addr value)
 
 let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_addr)
   (decreases chunk_end c - U64.v start)
