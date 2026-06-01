@@ -61,6 +61,11 @@ let word_in_chunk (c: heap_chunk) (addr: U64.t) : Tot bool =
 let obj_addr_in_chunk (c: heap_chunk) (obj: obj_addr) : Tot bool =
   U64.v obj >= chunk_start c + U64.v mword && U64.v obj < chunk_end c
 
+let pointer_in_chunk (c: heap_chunk) (v: U64.t) : Tot bool =
+  U64.v v >= chunk_start c + U64.v mword &&
+  U64.v v < chunk_end c &&
+  U64.v v % U64.v mword = 0
+
 let object_payload_end (obj: obj_addr) (wz: nat) : nat =
   U64.v obj + wz * U64.v mword
 
@@ -135,6 +140,37 @@ let lookup_add_chunk_miss (mh: major_heap) (c: heap_chunk)
   = assert (Seq.head (add_chunk mh c) == c);
     assert (Seq.equal (Seq.tail (add_chunk mh c)) mh);
     if chunk_contains_addr c addr then assert False else ()
+
+let rec is_major_pointer (mh: major_heap) (v: U64.t) : Tot bool
+  (decreases Seq.length mh)
+  = if Seq.length mh = 0 then false
+    else pointer_in_chunk (Seq.head mh) v || is_major_pointer (Seq.tail mh) v
+
+let major_pointer_add_chunk_hit (mh: major_heap) (c: heap_chunk) (v: U64.t)
+  : Lemma (requires pointer_in_chunk c v)
+          (ensures is_major_pointer (add_chunk mh c) v)
+  = assert (Seq.head (add_chunk mh c) == c)
+
+let major_pointer_add_chunk_old (mh: major_heap) (c: heap_chunk) (v: U64.t)
+  : Lemma (requires is_major_pointer mh v)
+          (ensures is_major_pointer (add_chunk mh c) v)
+  = assert (Seq.head (add_chunk mh c) == c);
+    assert (Seq.equal (Seq.tail (add_chunk mh c)) mh)
+
+let major_pointer_add_chunk_miss (mh: major_heap) (c: heap_chunk) (v: U64.t)
+  : Lemma (requires ~(pointer_in_chunk c v))
+          (ensures is_major_pointer (add_chunk mh c) v == is_major_pointer mh v)
+  = assert (Seq.head (add_chunk mh c) == c);
+    assert (Seq.equal (Seq.tail (add_chunk mh c)) mh);
+    if pointer_in_chunk c v then assert False else ()
+
+let single_chunk_major_pointer_compat (g: heap) (v: U64.t)
+  : Lemma (is_major_pointer (single_chunk_major_heap g) v == Fields.is_pointer v)
+  = assert (Seq.head (single_chunk_major_heap g) == single_chunk_of_heap g);
+    assert (chunk_start (single_chunk_of_heap g) == U64.v zero_addr);
+    assert (chunk_end (single_chunk_of_heap g) == heap_size);
+    assert (Seq.length (Seq.tail (single_chunk_major_heap g)) == 0);
+    Seq.lemma_empty (Seq.tail (single_chunk_major_heap g))
 
 let chunk_disjoint_from_all_tail (c: heap_chunk) (mh: major_heap{Seq.length mh > 0})
   : Lemma (requires chunk_disjoint_from_all c mh)
