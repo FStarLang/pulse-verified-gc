@@ -242,6 +242,65 @@ fn allocate_fresh_expanded_split (heap: MajorHeap.major_heap_t)
           pure (fst res == rem_obj /\
                 snd res == fp_out)
 
+/// Expand with a fresh chunk and allocate from it without splitting.
+fn expand_and_allocate_fresh_no_split (heap: MajorHeap.major_heap_t)
+                                      (base: hp_addr) (fp_out: obj_addr)
+                                      (fresh_wz requested_wz: wosize)
+                                      (next_fp: U64.t)
+                                      (#mh: Ghost.erased MH.major_heap)
+                                      (#fresh_chunk: Ghost.erased
+                                        (c:MH.heap_chunk{c.base == base /\
+                                                         fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                                         U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+           MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                 U64.v base >= U64.v zero_addr /\
+                 U64.v requested_wz > 0 /\
+                 SpecMajorAlloc.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                   U64.v requested_wz /\
+                 SpecMajorAlloc.fresh_chunk_wosize (Ghost.reveal fresh_chunk) -
+                   U64.v requested_wz < 2)
+  returns res: (U64.t & U64.t)
+  ensures MajorHeap.is_indexed_major_heap heap
+            (let er =
+              SpecMajorAlloc.expand_major_heap
+                (Ghost.reveal mh) (Ghost.reveal fresh_chunk) next_fp in
+             (SpecMajorAlloc.major_alloc_spec_with_fuel
+               er.major_out er.fp_out (U64.v requested_wz) 1).major_alloc_out) **
+          pure (fst res == next_fp /\
+                snd res == fp_out)
+
+/// Expand with a fresh chunk and allocate from it by splitting the fresh block.
+fn expand_and_allocate_fresh_split (heap: MajorHeap.major_heap_t)
+                                  (base: hp_addr) (fp_out: obj_addr)
+                                  (fresh_wz requested_wz: wosize)
+                                  (rem_hd rem_obj: hp_addr)
+                                  (next_fp: U64.t)
+                                  (#mh: Ghost.erased MH.major_heap)
+                                  (#fresh_chunk: Ghost.erased
+                                    (c:MH.heap_chunk{c.base == base /\
+                                                     fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                                     U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+           MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                 U64.v base >= U64.v zero_addr /\
+                 U64.v requested_wz > 0 /\
+                 SpecMajorAlloc.fresh_chunk_wosize (Ghost.reveal fresh_chunk) -
+                   U64.v requested_wz >= 2 /\
+                 U64.v rem_hd == U64.v base + (1 + U64.v requested_wz) * 8 /\
+                 U64.v rem_obj == U64.v rem_hd + U64.v mword)
+  returns res: (U64.t & U64.t)
+  ensures MajorHeap.is_indexed_major_heap heap
+            (let er =
+              SpecMajorAlloc.expand_major_heap
+                (Ghost.reveal mh) (Ghost.reveal fresh_chunk) next_fp in
+             (SpecMajorAlloc.major_alloc_spec_with_fuel
+               er.major_out er.fp_out (U64.v requested_wz) 1).major_alloc_out) **
+          pure (fst res == rem_obj /\
+                snd res == fp_out)
+
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
