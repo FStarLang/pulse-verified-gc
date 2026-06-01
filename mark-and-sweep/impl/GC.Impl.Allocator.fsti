@@ -301,6 +301,42 @@ fn expand_and_allocate_fresh_split (heap: MajorHeap.major_heap_t)
           pure (fst res == rem_obj /\
                 snd res == fp_out)
 
+/// Expand with a fresh chunk and allocate from it, choosing no-split vs split
+/// from the fresh block size.
+fn expand_and_allocate_fresh (heap: MajorHeap.major_heap_t)
+                             (base: hp_addr) (fp_out: obj_addr)
+                             (fresh_wz requested_wz: wosize)
+                             (next_fp: U64.t)
+                             (#mh: Ghost.erased MH.major_heap)
+                             (#fresh_chunk: Ghost.erased
+                               (c:MH.heap_chunk{c.base == base /\
+                                                fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                                U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+           MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                 U64.v base >= U64.v zero_addr /\
+                 U64.v requested_wz > 0 /\
+                 SpecMajorAlloc.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                   U64.v requested_wz)
+  returns res: (U64.t & U64.t)
+  ensures MajorHeap.is_indexed_major_heap heap
+            (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+             let er =
+              SpecMajorAlloc.expand_major_heap
+                (Ghost.reveal mh) fresh_c next_fp in
+             (SpecMajorAlloc.major_alloc_spec_with_fuel
+               er.major_out er.fp_out (U64.v requested_wz) 1).major_alloc_out) **
+          pure (let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+                let er =
+                  SpecMajorAlloc.expand_major_heap
+                    (Ghost.reveal mh) fresh_c next_fp in
+                let r =
+                  SpecMajorAlloc.major_alloc_spec_with_fuel
+                    er.major_out er.fp_out (U64.v requested_wz) 1 in
+                fst res == r.major_fp_out /\
+                snd res == r.major_obj_out)
+
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.

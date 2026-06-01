@@ -1283,6 +1283,53 @@ let fresh_chunk_split_remainder_fits (c: MH.heap_chunk) (next_fp: U64.t)
 #pop-options
 
 #push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+let fresh_chunk_split_remainder_addr_bounds (c: MH.heap_chunk)
+                                            (requested_wz: nat)
+  : Lemma (requires requested_wz > 0 /\
+                    fresh_chunk_wosize c - requested_wz >= 2)
+          (ensures (let rem_hd_nat = U64.v c.base + (1 + requested_wz) * 8 in
+                    let rem_obj_nat = rem_hd_nat + U64.v mword in
+                    rem_hd_nat < heap_size /\
+                    rem_hd_nat % U64.v mword == 0 /\
+                    rem_hd_nat < pow2 64 /\
+                    rem_obj_nat < heap_size /\
+                    rem_obj_nat % U64.v mword == 0 /\
+                    rem_obj_nat < pow2 64))
+  = let fw = fresh_chunk_wosize c in
+    let wz = requested_wz in
+    let rem_hd_nat = U64.v c.base + (1 + wz) * 8 in
+    let rem_obj_nat = rem_hd_nat + U64.v mword in
+    fresh_chunk_has_block c;
+    assert (U64.v mword == 8);
+    assert (c.size % U64.v mword == 0);
+    FStar.Math.Lemmas.lemma_div_exact c.size (U64.v mword);
+    assert (c.size == (c.size / U64.v mword) * U64.v mword);
+    assert (chunk_word_capacity c == c.size / U64.v mword);
+    assert (c.size == chunk_word_capacity c * U64.v mword);
+    assert (fw == chunk_word_capacity c - 1);
+    assert (chunk_word_capacity c == fw + 1);
+    assert (wz + 2 <= fw);
+    aligned_plus_word_product (U64.v c.base) (1 + wz);
+    assert (rem_hd_nat % U64.v mword == 0);
+    FStar.Math.Lemmas.distributivity_add_left (1 + wz) 1 8;
+    assert ((1 + wz) * 8 + 8 == (wz + 2) * 8);
+    FStar.Math.Lemmas.paren_add_right (U64.v c.base) ((1 + wz) * 8) 8;
+    assert (rem_obj_nat == U64.v c.base + (wz + 2) * 8);
+    aligned_plus_word_product (U64.v c.base) (wz + 2);
+    assert (rem_obj_nat % U64.v mword == 0);
+    assert (U64.v c.base + (wz + 2) * 8 <= U64.v c.base + fw * 8);
+    assert (U64.v c.base + fw * 8 < U64.v c.base + (fw + 1) * 8);
+    assert (U64.v c.base + (fw + 1) * 8 == MH.chunk_end c);
+    assert (rem_obj_nat < MH.chunk_end c);
+    assert (MH.chunk_end c <= heap_size);
+    assert (rem_hd_nat < rem_obj_nat);
+    assert (rem_hd_nat < heap_size);
+    assert (heap_size < pow2 64);
+    assert (rem_hd_nat < pow2 64);
+    assert (rem_obj_nat < pow2 64)
+#pop-options
+
+#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_after_expand_split (mh: MH.major_heap) (c: MH.heap_chunk)
                                    (next_fp: U64.t) (requested_wz fuel: nat)
                                    (rem_hd rem_obj: hp_addr)
