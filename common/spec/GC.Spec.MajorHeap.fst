@@ -76,6 +76,11 @@ let obj_addr_in_chunk_header_word (c: heap_chunk) (obj: obj_addr{obj_addr_in_chu
   : Lemma (word_in_chunk c (hd_address obj))
   = hd_address_spec obj
 
+let obj_addr_in_chunk_is_pointer (c: heap_chunk) (obj: obj_addr)
+  : Lemma (requires obj_addr_in_chunk c obj)
+          (ensures pointer_in_chunk c obj)
+  = ()
+
 let chunk_offset (c: heap_chunk) (addr: U64.t{chunk_contains_addr c addr}) : nat =
   U64.v addr - chunk_start c
 
@@ -519,6 +524,27 @@ let fresh_chunk_object_not_old (mh: major_heap) (c: heap_chunk) (x: obj_addr)
     if Seq.mem x (major_objects mh) then begin
       major_objects_disjoint_from_chunk mh c x;
       assert False
+    end
+
+let rec major_object_is_pointer (mh: major_heap) (x: obj_addr)
+  : Lemma (requires Seq.mem x (major_objects mh))
+          (ensures is_major_pointer mh x)
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then assert False
+    else begin
+      let c = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (major_objects mh == Seq.append (objects_in_chunk c) (major_objects tl));
+      SeqProps.lemma_mem_append (objects_in_chunk c) (major_objects tl);
+      if Seq.mem x (objects_in_chunk c) then begin
+        objects_in_chunk_member_in_chunk c x;
+        obj_addr_in_chunk_is_pointer c x;
+        major_pointer_add_chunk_hit tl c x
+      end else begin
+        assert (Seq.mem x (major_objects tl));
+        major_object_is_pointer tl x;
+        major_pointer_add_chunk_old tl c x
+      end
     end
 
 let rec lookup_chunk_contains (mh: major_heap) (addr: hp_addr) (c: heap_chunk)
