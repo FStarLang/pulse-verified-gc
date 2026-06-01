@@ -48,6 +48,43 @@ let is_major_heap (h: major_heap_t) (mh: MH.major_heap) : slprop =
 let inactive_prefix (h: major_heap_t) (s: Base.heap) : slprop =
   PTR.pts_to_range h.data 0 (U64.v Base.zero_addr) (Seq.slice s 0 (U64.v Base.zero_addr))
 
+let is_single_chunk_major (h: major_heap_t) (s: Base.heap) : slprop =
+  chunk_range h (MH.single_chunk_of_heap s) **
+  pure (SZ.v h.size == Base.heap_size /\
+        MH.well_formed_major_heap (MH.single_chunk_major_heap s))
+
+ghost
+fn heap_to_single_major (h: Heap.heap_t)
+  requires Heap.is_heap h 's
+  ensures inactive_prefix (heap_as_major h) 's **
+          is_single_chunk_major (heap_as_major h) 's
+{
+  let mh = heap_as_major h;
+  unfold (Heap.is_heap h 's);
+  PTR.pts_to_range_intro h.data 1.0R 's;
+  PTR.pts_to_range_prop h.data;
+  assert (pure (length h.data == Base.heap_size));
+  rewrite each (length h.data) as Base.heap_size;
+  PTR.pts_to_range_split h.data 0 (U64.v Base.zero_addr) Base.heap_size;
+  with prefix major. assert (
+    PTR.pts_to_range h.data 0 (U64.v Base.zero_addr) prefix **
+    PTR.pts_to_range h.data (U64.v Base.zero_addr) Base.heap_size major **
+    pure (prefix == Seq.slice 's 0 (U64.v Base.zero_addr) /\
+          major == Seq.slice 's (U64.v Base.zero_addr) (Seq.length 's)));
+  assert (pure (h.data == mh.data));
+  rewrite each h.data as mh.data;
+  rewrite each prefix as Seq.slice 's 0 (U64.v Base.zero_addr);
+  fold (inactive_prefix mh 's);
+  assert (pure (Seq.length 's == Base.heap_size));
+  assert (pure (major == (MH.single_chunk_of_heap 's).bytes));
+  rewrite each major as (MH.single_chunk_of_heap 's).bytes;
+  fold (chunk_range mh (MH.single_chunk_of_heap 's));
+  MH.single_chunk_major_heap_wf 's;
+  fold (is_single_chunk_major mh 's);
+  assert (pure (mh == heap_as_major h));
+  rewrite each mh as heap_as_major h
+}
+
 let offset_sizet (addr: Base.hp_addr) (k: nat{U64.v addr + k < Base.heap_size})
   : (r:SZ.t{SZ.v r == U64.v addr + k})
   = SZ.fits_u64_implies_fits (U64.v addr + k);

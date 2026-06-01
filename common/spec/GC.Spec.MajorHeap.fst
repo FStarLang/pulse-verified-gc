@@ -102,6 +102,12 @@ let rec chunks_pairwise_disjoint (chunks: major_heap) : Tot prop
 let well_formed_major_heap (mh: major_heap) : Tot prop =
   chunks_pairwise_disjoint mh
 
+let single_chunk_major_heap_wf (g: heap)
+  : Lemma (well_formed_major_heap (single_chunk_major_heap g))
+  = assert (Seq.head (single_chunk_major_heap g) == single_chunk_of_heap g);
+    assert (Seq.length (Seq.tail (single_chunk_major_heap g)) == 0);
+    Seq.lemma_empty (Seq.tail (single_chunk_major_heap g))
+
 let add_chunk (mh: major_heap) (c: heap_chunk) : major_heap =
   Seq.cons c mh
 
