@@ -76,6 +76,19 @@ let chunk_offset (c: heap_chunk) (addr: U64.t{chunk_contains_addr c addr}) : nat
 let chunks_disjoint (c1 c2: heap_chunk) : Tot prop =
   chunk_end c1 <= chunk_start c2 \/ chunk_end c2 <= chunk_start c1
 
+let chunks_disjoint_symmetric (c1 c2: heap_chunk)
+  : Lemma (requires chunks_disjoint c1 c2)
+          (ensures chunks_disjoint c2 c1)
+  = ()
+
+let chunks_disjoint_no_shared_addr (c1 c2: heap_chunk) (addr: U64.t)
+  : Lemma (requires chunks_disjoint c1 c2 /\ chunk_contains_addr c1 addr)
+          (ensures ~(chunk_contains_addr c2 addr))
+  = ()
+
+let chunk_disjoint_from_all (c: heap_chunk) (chunks: major_heap) : Tot prop =
+  forall i. i < Seq.length chunks ==> chunks_disjoint c (Seq.index chunks i)
+
 let rec chunks_pairwise_disjoint (chunks: major_heap) : Tot prop
   (decreases Seq.length chunks)
   = if Seq.length chunks = 0 then True
@@ -88,15 +101,21 @@ let rec chunks_pairwise_disjoint (chunks: major_heap) : Tot prop
 let well_formed_major_heap (mh: major_heap) : Tot prop =
   chunks_pairwise_disjoint mh
 
+let add_chunk (mh: major_heap) (c: heap_chunk) : major_heap =
+  Seq.cons c mh
+
+let add_chunk_preserves_wf (mh: major_heap) (c: heap_chunk)
+  : Lemma (requires well_formed_major_heap mh /\ chunk_disjoint_from_all c mh)
+          (ensures well_formed_major_heap (add_chunk mh c))
+  = assert (Seq.head (add_chunk mh c) == c);
+    assert (Seq.equal (Seq.tail (add_chunk mh c)) mh)
+
 let rec lookup_chunk (mh: major_heap) (addr: hp_addr) : Tot (option heap_chunk)
   (decreases Seq.length mh)
   = if Seq.length mh = 0 then None
     else
       let c = Seq.head mh in
       if chunk_contains_addr c addr then Some c else lookup_chunk (Seq.tail mh) addr
-
-let add_chunk (mh: major_heap) (c: heap_chunk) : major_heap =
-  Seq.cons c mh
 
 let lookup_add_chunk_hit (mh: major_heap) (c: heap_chunk)
                           (addr: hp_addr{chunk_contains_addr c addr})
