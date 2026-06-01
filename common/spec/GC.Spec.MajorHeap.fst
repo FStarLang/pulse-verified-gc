@@ -41,6 +41,16 @@ let word_in_chunk (c: heap_chunk) (addr: U64.t) : Tot bool =
 let obj_addr_in_chunk (c: heap_chunk) (obj: obj_addr) : Tot bool =
   U64.v obj >= chunk_start c + U64.v mword && U64.v obj < chunk_end c
 
+let object_payload_end (obj: obj_addr) (wz: nat) : nat =
+  U64.v obj + wz * U64.v mword
+
+let object_fits_in_chunk (c: heap_chunk) (obj: obj_addr) (wz: nat) : Tot bool =
+  obj_addr_in_chunk c obj && object_payload_end obj wz <= chunk_end c
+
+let obj_addr_in_chunk_header_word (c: heap_chunk) (obj: obj_addr{obj_addr_in_chunk c obj})
+  : Lemma (word_in_chunk c (hd_address obj))
+  = hd_address_spec obj
+
 let chunk_offset (c: heap_chunk) (addr: U64.t{chunk_contains_addr c addr}) : nat =
   U64.v addr - chunk_start c
 
