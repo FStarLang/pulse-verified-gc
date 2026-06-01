@@ -242,6 +242,38 @@ let write_word_in_chunk_preserves_word (c: heap_chunk)
           (ensures word_in_chunk (write_word_in_chunk c addr value) other)
   = write_word_in_chunk_preserves_range c addr value
 
+#push-options "--z3rlimit 50"
+let read_write_in_chunk_same (c: heap_chunk)
+                             (addr: hp_addr{word_in_chunk c addr})
+                             (value: U64.t)
+  : Lemma (read_word_in_chunk (write_word_in_chunk c addr value) addr == value)
+  = let c' = write_word_in_chunk c addr value in
+    let off = chunk_offset c addr in
+    assert (chunk_offset c' addr == off);
+    assert (Seq.index c'.bytes off == uint64_to_uint8 value);
+    assert (Seq.index c'.bytes (off + 1) == uint64_to_uint8 (U64.shift_right value 8ul));
+    assert (Seq.index c'.bytes (off + 2) == uint64_to_uint8 (U64.shift_right value 16ul));
+    assert (Seq.index c'.bytes (off + 3) == uint64_to_uint8 (U64.shift_right value 24ul));
+    assert (Seq.index c'.bytes (off + 4) == uint64_to_uint8 (U64.shift_right value 32ul));
+    assert (Seq.index c'.bytes (off + 5) == uint64_to_uint8 (U64.shift_right value 40ul));
+    assert (Seq.index c'.bytes (off + 6) == uint64_to_uint8 (U64.shift_right value 48ul));
+    assert (Seq.index c'.bytes (off + 7) == uint64_to_uint8 (U64.shift_right value 56ul));
+    combine_decompose_identity value
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+let read_write_in_chunk_different (c: heap_chunk)
+                                  (addr1: hp_addr{word_in_chunk c addr1})
+                                  (addr2: hp_addr{word_in_chunk c addr2})
+                                  (value: U64.t)
+  : Lemma (requires addr1 <> addr2 /\
+                    (U64.v addr1 + U64.v mword <= U64.v addr2 \/
+                     U64.v addr2 + U64.v mword <= U64.v addr1))
+          (ensures read_word_in_chunk (write_word_in_chunk c addr1 value) addr2 ==
+                   read_word_in_chunk c addr2)
+  = ()
+#pop-options
+
 let read_word_in_major (mh: major_heap) (addr: hp_addr) : Tot (option U64.t) =
   match lookup_chunk mh addr with
   | None -> None
