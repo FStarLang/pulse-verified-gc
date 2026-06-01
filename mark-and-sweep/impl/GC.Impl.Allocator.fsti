@@ -64,6 +64,10 @@ fn allocate_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t)
             SpecMajorAlloc.major_alloc_spec_with_fuel
               (MH.single_chunk_major_heap 's) fp (U64.v wosize)
               SpecAlloc.alloc_search_fuel in
+          let dense_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+          s2 == dense_res.heap_out /\
+          fst res == dense_res.fp_out /\
+          snd res == dense_res.obj_out /\
           MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
           fst res == spec_res.major_fp_out /\
           snd res == spec_res.major_obj_out)
@@ -107,6 +111,10 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
             SpecMajorAlloc.major_alloc_spec_with_fuel
               (MH.single_chunk_major_heap 's) fp (U64.v wosize)
               SpecAlloc.alloc_search_fuel in
+          let dense_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+          s2 == dense_res.heap_out /\
+          fst res == dense_res.fp_out /\
+          snd res == dense_res.obj_out /\
           MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
           fst res == spec_res.major_fp_out /\
           snd res == spec_res.major_obj_out)

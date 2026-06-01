@@ -29,6 +29,9 @@ module Obj = GC.Impl.Object
 module SpecObj = GC.Spec.Object
 module Header = GC.Lib.Header
 module SpecHeap = GC.Spec.Heap
+module MH = GC.Spec.MajorHeap
+module SMA = GC.Spec.MajorAllocator
+module MajorHeap = GC.Impl.MajorHeap
 
 /// Read the wosize from a minor object's header (header is at obj - 8)
 inline_for_extraction
@@ -234,9 +237,27 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     // Zero-sized object, nothing to copy
     0UL
   } else {
-    // Allocate space in major heap (using weak precondition variant)
+    // Allocate space in major heap through the single-chunk indexed-major bridge.
     let fp = R.op_Bang fp_ref;
-    let res = Alloc.allocate_part1 major fp wosize;
+    MajorHeap.heap_to_single_indexed_major major;
+    let res = Alloc.allocate_part1_single_indexed_major major fp wosize;
+    with ms_alloc. assert (
+      MajorHeap.inactive_prefix (MajorHeap.heap_as_major major) ms_alloc **
+      MajorHeap.is_indexed_major_heap
+        (MajorHeap.heap_as_major major)
+        (MH.single_chunk_major_heap ms_alloc) **
+      pure (let spec_res =
+              SMA.major_alloc_spec_with_fuel
+                (MH.single_chunk_major_heap 'ms) fp (U64.v wosize)
+                GC.Spec.Allocator.alloc_search_fuel in
+            let dense_res = GC.Spec.Allocator.alloc_spec 'ms fp (U64.v wosize) in
+            ms_alloc == dense_res.heap_out /\
+            fst res == dense_res.fp_out /\
+            snd res == dense_res.obj_out /\
+            MH.single_chunk_major_heap ms_alloc == spec_res.major_alloc_out /\
+            fst res == spec_res.major_fp_out /\
+            snd res == spec_res.major_obj_out));
+    MajorHeap.single_indexed_major_to_heap_as major ms_alloc;
     let new_fp = fst res;
     let new_obj = snd res;
     R.op_Colon_Equals fp_ref new_fp;
