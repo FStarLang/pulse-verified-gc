@@ -148,6 +148,91 @@ let rec lookup_chunk (mh: major_heap) (addr: hp_addr) : Tot (option heap_chunk)
       let c = Seq.head mh in
       if chunk_contains_addr c addr then Some c else lookup_chunk (Seq.tail mh) addr
 
+let rec lookup_chunk_index (mh: major_heap) (addr: hp_addr) : Tot (option nat)
+  (decreases Seq.length mh)
+  = if Seq.length mh = 0 then None
+    else
+      let c = Seq.head mh in
+      if chunk_contains_addr c addr then Some 0
+      else
+        match lookup_chunk_index (Seq.tail mh) addr with
+        | None -> None
+        | Some i -> Some (i + 1)
+
+#push-options "--split_queries always"
+let rec lookup_chunk_index_some (mh: major_heap) (addr: hp_addr) (i: nat)
+  : Lemma (requires lookup_chunk_index mh addr == Some i)
+          (ensures i < Seq.length mh /\
+                   chunk_contains_addr (Seq.index mh i) addr /\
+                   (forall k. k < i ==> ~(chunk_contains_addr (Seq.index mh k) addr)) /\
+                   lookup_chunk mh addr == Some (Seq.index mh i))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      if chunk_contains_addr hd addr then begin
+        assert (lookup_chunk_index mh addr == Some 0);
+        assert (i == 0);
+        assert (Seq.index mh 0 == hd);
+        assert (lookup_chunk mh addr == Some hd)
+      end else begin
+        match lookup_chunk_index tl addr with
+        | None -> assert False
+        | Some j ->
+          assert (i == j + 1);
+          lookup_chunk_index_some tl addr j;
+          assert (j < Seq.length tl);
+          assert (Seq.index mh i == Seq.index tl j);
+          assert (chunk_contains_addr (Seq.index mh i) addr);
+          let no_prior (k: nat{k < i})
+            : Lemma (~(chunk_contains_addr (Seq.index mh k) addr))
+            = if k = 0 then
+                assert (Seq.index mh k == hd)
+              else begin
+                let km1 : n:nat{n < j} = k - 1 in
+                assert (Seq.index mh k == Seq.index tl km1);
+                assert (~(chunk_contains_addr (Seq.index tl km1) addr))
+              end
+          in
+          FStar.Classical.forall_intro no_prior;
+          assert (forall k. k < i ==> ~(chunk_contains_addr (Seq.index mh k) addr));
+          assert (lookup_chunk mh addr == lookup_chunk tl addr);
+          assert (lookup_chunk tl addr == Some (Seq.index tl j))
+      end
+    end
+
+let rec lookup_chunk_index_none (mh: major_heap) (addr: hp_addr)
+  : Lemma (requires lookup_chunk_index mh addr == None)
+          (ensures lookup_chunk mh addr == None /\
+                   (forall k. k < Seq.length mh ==> ~(chunk_contains_addr (Seq.index mh k) addr)))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then ()
+    else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      if chunk_contains_addr hd addr then
+        assert False
+      else begin
+        lookup_chunk_index_none tl addr;
+        assert (lookup_chunk mh addr == lookup_chunk tl addr);
+        let no_member (k: nat{k < Seq.length mh})
+          : Lemma (~(chunk_contains_addr (Seq.index mh k) addr))
+          = if k = 0 then
+              assert (Seq.index mh k == hd)
+            else begin
+              let km1 : n:nat{n < Seq.length tl} = k - 1 in
+              assert (Seq.index mh k == Seq.index tl km1);
+              assert (~(chunk_contains_addr (Seq.index tl km1) addr))
+            end
+        in
+        FStar.Classical.forall_intro no_member;
+        assert (forall k. k < Seq.length mh ==> ~(chunk_contains_addr (Seq.index mh k) addr))
+      end
+    end
+#pop-options
+
 let lookup_add_chunk_hit (mh: major_heap) (c: heap_chunk)
                           (addr: hp_addr{chunk_contains_addr c addr})
   : Lemma (lookup_chunk (add_chunk mh c) addr == Some c)
@@ -376,6 +461,15 @@ let rec read_word_in_major_at_index (mh: major_heap) (addr: hp_addr) (i: nat)
       assert (read_word_in_major mh addr == read_word_in_major tl addr)
     end
 #pop-options
+
+let read_word_in_major_at_lookup_index (mh: major_heap) (addr: hp_addr)
+                                      (i: nat{i < Seq.length mh})
+  : Lemma (requires lookup_chunk_index mh addr == Some i /\
+                    word_in_chunk (Seq.index mh i) addr)
+          (ensures read_word_in_major mh addr ==
+                   Some (read_word_in_chunk (Seq.index mh i) addr))
+  = lookup_chunk_index_some mh addr i;
+    read_word_in_major_at_index mh addr i
 
 let write_word_add_chunk_hit (mh: major_heap) (c: heap_chunk)
                              (addr: hp_addr{word_in_chunk c addr}) (value: U64.t)
@@ -613,6 +707,17 @@ let rec write_word_in_major_at_index (mh: major_heap) (addr: hp_addr)
       assert (Seq.upd mh i c' == Seq.cons hd (Seq.upd tl im1 c'))
     end
 #pop-options
+
+let write_word_in_major_at_lookup_index (mh: major_heap) (addr: hp_addr)
+                                        (value: U64.t) (i: nat{i < Seq.length mh})
+  : Lemma (requires lookup_chunk_index mh addr == Some i /\
+                    word_in_chunk (Seq.index mh i) addr)
+          (ensures write_word_in_major mh addr value ==
+                   Some (Seq.upd mh i
+                     (write_word_in_chunk (Seq.index mh i) addr value)))
+  = lookup_chunk_index_some mh addr i;
+    assert (forall k. k < i ==> ~(word_in_chunk (Seq.index mh k) addr));
+    write_word_in_major_at_index mh addr value i
 
 #push-options "--split_queries always"
 let rec chunks_pairwise_disjoint_upd_same_range (mh: major_heap) (i: nat)
