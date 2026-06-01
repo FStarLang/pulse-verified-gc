@@ -209,6 +209,20 @@ fn single_indexed_major_to_heap (h: major_heap_t) (s: Base.heap)
 }
 
 ghost
+fn single_indexed_major_to_heap_as (h: Heap.heap_t) (s: Base.heap)
+  requires inactive_prefix (heap_as_major h) s **
+           is_indexed_major_heap (heap_as_major h) (MH.single_chunk_major_heap s)
+  ensures Heap.is_heap h s
+{
+  single_indexed_major_to_heap (heap_as_major h) s;
+  assert (pure (major_as_heap (heap_as_major h) == h));
+  rewrite
+    (Heap.is_heap (major_as_heap (heap_as_major h)) s)
+  as
+    (Heap.is_heap h s)
+}
+
+ghost
 fn prepend_chunk_range (h: major_heap_t)
                        (#mh: Ghost.erased MH.major_heap)
                        (#c: Ghost.erased MH.heap_chunk)

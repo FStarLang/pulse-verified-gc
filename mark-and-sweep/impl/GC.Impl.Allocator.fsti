@@ -15,11 +15,14 @@ open GC.Impl.Heap
 open GC.Impl.Object
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module MajorHeap = GC.Impl.MajorHeap
 
 /// Allocate an object of wosize words from the free list.
 ///
@@ -42,6 +45,28 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
           s2 == spec_res.heap_out /\
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
+
+/// Compatibility entry point for callers that already own the major heap through
+/// the indexed chunk predicate, but are still in the single-chunk migration path.
+fn allocate_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires MajorHeap.inactive_prefix (MajorHeap.heap_as_major heap) 's **
+           MajorHeap.is_indexed_major_heap
+             (MajorHeap.heap_as_major heap)
+             (MH.single_chunk_major_heap 's) **
+           pure (SpecFields.well_formed_heap 's)
+  returns res: (U64.t & U64.t)
+  ensures exists* s2.
+    MajorHeap.inactive_prefix (MajorHeap.heap_as_major heap) s2 **
+    MajorHeap.is_indexed_major_heap
+      (MajorHeap.heap_as_major heap)
+      (MH.single_chunk_major_heap s2) **
+    pure (let spec_res =
+            SpecMajorAlloc.major_alloc_spec_with_fuel
+              (MH.single_chunk_major_heap 's) fp (U64.v wosize)
+              SpecAlloc.alloc_search_fuel in
+          MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
+          fst res == spec_res.major_fp_out /\
+          snd res == spec_res.major_obj_out)
 
 /// Allocate with weaker precondition: only requires well_formed_heap_part1
 /// + fl_valid + fl_chain_terminates. Suitable for use during promotion where

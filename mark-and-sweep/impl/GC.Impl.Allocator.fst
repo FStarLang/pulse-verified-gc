@@ -19,12 +19,15 @@ module R = Pulse.Lib.Reference
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
+module MH = GC.Spec.MajorHeap
 module SA = GC.Spec.Allocator
+module SMA = GC.Spec.MajorAllocator
 module SF = GC.Spec.Fields
 module SO = GC.Spec.Object
 module SH = GC.Spec.Heap
 module SI = GC.Spec.SweepInv
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module MajorHeap = GC.Impl.MajorHeap
 
 /// ---------------------------------------------------------------------------
 /// Pure helper lemmas (all proven — no admits)
@@ -351,6 +354,54 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   (final_fp, final_obj)
 }
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Single-chunk indexed-major compatibility allocation
+/// ---------------------------------------------------------------------------
+
+fn allocate_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires MajorHeap.inactive_prefix (MajorHeap.heap_as_major heap) 's **
+           MajorHeap.is_indexed_major_heap
+             (MajorHeap.heap_as_major heap)
+             (MH.single_chunk_major_heap 's) **
+           pure (SF.well_formed_heap 's)
+  returns res: (U64.t & U64.t)
+  ensures exists* s2.
+    MajorHeap.inactive_prefix (MajorHeap.heap_as_major heap) s2 **
+    MajorHeap.is_indexed_major_heap
+      (MajorHeap.heap_as_major heap)
+      (MH.single_chunk_major_heap s2) **
+    pure (let spec_res =
+            SMA.major_alloc_spec_with_fuel
+              (MH.single_chunk_major_heap 's) fp (U64.v wosize)
+              SA.alloc_search_fuel in
+          MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
+          fst res == spec_res.major_fp_out /\
+          snd res == spec_res.major_obj_out)
+{
+  MajorHeap.single_indexed_major_to_heap_as heap 's;
+  let res = allocate heap fp wosize;
+  with s2. assert (
+    is_heap heap s2 **
+    pure (let spec_res = SA.alloc_spec 's fp (U64.v wosize) in
+          s2 == spec_res.heap_out /\
+          fst res == spec_res.fp_out /\
+          snd res == spec_res.obj_out));
+  SMA.major_alloc_spec_with_fuel_single_chunk_compat
+    's fp (U64.v wosize) SA.alloc_search_fuel;
+  assert (pure (SA.alloc_spec 's fp (U64.v wosize) ==
+                SA.alloc_spec_with_fuel 's fp (U64.v wosize) SA.alloc_search_fuel));
+  assert (pure (let dense_res = SA.alloc_spec 's fp (U64.v wosize) in
+                let spec_res =
+                  SMA.major_alloc_spec_with_fuel
+                    (MH.single_chunk_major_heap 's) fp (U64.v wosize)
+                    SA.alloc_search_fuel in
+                MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
+                fst res == spec_res.major_fp_out /\
+                snd res == spec_res.major_obj_out));
+  MajorHeap.heap_to_single_indexed_major heap;
+  res
+}
 
 /// ---------------------------------------------------------------------------
 /// Weak-precondition allocation (for use during promotion)
