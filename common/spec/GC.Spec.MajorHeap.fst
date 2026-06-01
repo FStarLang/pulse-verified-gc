@@ -106,6 +106,35 @@ let write_word_in_chunk (c: heap_chunk) (addr: hp_addr{word_in_chunk c addr}) (v
   let bytes = Seq.upd bytes (off + 7) (uint64_to_uint8 (U64.shift_right value 56ul)) in
   { c with bytes = bytes }
 
+let read_word_in_major (mh: major_heap) (addr: hp_addr) : Tot (option U64.t) =
+  match lookup_chunk mh addr with
+  | None -> None
+  | Some c ->
+    if word_in_chunk c addr then Some (read_word_in_chunk c addr) else None
+
+let rec write_word_in_major (mh: major_heap) (addr: hp_addr) (value: U64.t)
+  : Tot (option major_heap) (decreases Seq.length mh)
+  = if Seq.length mh = 0 then None
+    else
+      let c = Seq.head mh in
+      let tl = Seq.tail mh in
+      if word_in_chunk c addr then
+        Some (Seq.cons (write_word_in_chunk c addr value) tl)
+      else
+        match write_word_in_major tl addr value with
+        | None -> None
+        | Some tl' -> Some (Seq.cons c tl')
+
+let read_word_add_chunk_hit (mh: major_heap) (c: heap_chunk)
+                            (addr: hp_addr{word_in_chunk c addr})
+  : Lemma (read_word_in_major (add_chunk mh c) addr == Some (read_word_in_chunk c addr))
+  = lookup_add_chunk_hit mh c addr
+
+let read_word_add_chunk_miss (mh: major_heap) (c: heap_chunk)
+                             (addr: hp_addr{~(chunk_contains_addr c addr)})
+  : Lemma (read_word_in_major (add_chunk mh c) addr == read_word_in_major mh addr)
+  = lookup_add_chunk_miss mh c addr
+
 let rec lookup_chunk_contains (mh: major_heap) (addr: hp_addr) (c: heap_chunk)
   : Lemma (requires lookup_chunk mh addr == Some c)
           (ensures chunk_contains_addr c addr)
