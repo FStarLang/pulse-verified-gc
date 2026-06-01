@@ -10,14 +10,28 @@ full collections much more often than stock OCaml.
 This document reviews how stock OCaml 4.14 expands its major heap, how the
 current verified collector represents heap memory and OCaml values, and what has
 to change to support expansion without weakening the proofs. The recommendation
-is to add a chunked, non-moving major heap. Existing major objects should keep
-their addresses forever; expansion should only add fresh chunks and splice their
-free space into the verified free list.
+is to add a chunked, non-moving major heap, represented on the Pulse side as
+active ranges of one virtual address-space array. Existing major objects should
+keep their addresses forever; expansion should only add fresh chunks and splice
+their free space into the verified free list.
 
 ## Recommendation
 
 Use a chunked, non-moving major heap, modeled after stock OCaml's heap chunks.
 Do not resize or move one contiguous major array.
+
+At the Pulse implementation boundary, prefer a single virtual array plus
+`Pulse.Lib.Array.PtsToRange.pts_to_range` resources for active chunk intervals
+over a linked list of independent Pulse arrays. This keeps OCaml values as raw
+absolute addresses and lets verified reads and writes use ordinary address
+arithmetic, while still avoiding ownership of inactive gaps in the virtual
+address space.
+
+This should be treated as a representation of chunks, not as a way to eliminate
+chunk/range metadata. The pure model still needs active-range descriptors,
+disjointness, chunk-local object enumeration, and chunk-aware pointer
+classification, because inactive holes cannot be parsed as objects and cannot be
+read or written.
 
 The key design choice is address stability. OCaml values store object addresses
 directly in object fields, roots, stack slots, closures, and the remembered
@@ -87,6 +101,17 @@ The current F*/Pulse model has a deliberately simple heap abstraction:
   list cannot satisfy the request, the current specification returns `obj_out =
   0UL`, and the runtime reports out of memory rather than growing the heap.
 
+The runtime bridge already uses a crude version of the virtual-address-space
+idea for the single major heap. `alloc_gen.c` sets `major.data = NULL`,
+`zero_addr = major_base`, and `heap_size_u64 = major_base + major_bytes`, so an
+array access at logical index `addr` becomes an access to the absolute address
+`addr`. The mismatch is that the current Pulse predicate is still
+`pts_to h.data s`, which logically owns the entire interval `[0, heap_size)`,
+including unallocated prefix space before `zero_addr`. For a multi-chunk heap,
+that whole-array ownership would also include the inactive gaps between chunks;
+range ownership is the right way to make the logical ownership match the
+concrete active intervals.
+
 The runtime bridge mirrors this fixed model. `alloc_gen.c` keeps a single
 `major_heap` buffer and `major_heap_size_words`, initializes it as one blue
 block, calls extracted verified allocation and collection code, and uses
@@ -94,12 +119,61 @@ whole-heap scans for major roots and remembered minor references. The
 `runtime_gen.patch` redirects OCaml allocation paths to the verified bridge and
 keeps runtime statistics in sync with the fixed verified heap.
 
+## Virtual address-space ranges
+
+`Pulse.Lib.Array.PtsToRange` is the relevant library in this checkout. There is
+no separate `PtsRoRange` module; read-only sharing is provided through
+fractional permissions (`pts_to_range_share` and `pts_to_range_gather`).
+
+The core predicate is:
+
+```fstar
+pts_to_range x i j #p s
+```
+
+It is implemented as ownership of `gsub x i j` plus the pure bounds
+`i <= j /\ j <= length x`. The library provides split, join, index, update, and
+fractional sharing lemmas. This is a good fit for active chunks:
+
+```fstar
+let chunk_range (a: array U8.t) (c: heap_chunk) : slprop =
+  PtsToRange.pts_to_range a (U64.v c.base) (U64.v c.base + c.size) c.bytes
+```
+
+Disjoint active ranges can be owned independently, and expansion can add a fresh
+`pts_to_range a base limit bytes` resource without owning or materializing the
+inactive gaps between chunks.
+
+However, this does not by itself preserve the current fixed-heap API:
+
+- `pts_to_range` still needs `limit <= length a`. The virtual array therefore
+  needs a fixed address-space limit large enough for all active chunks, not a
+  length equal to the currently committed heap size. This should be a bounded
+  virtual limit, not `2^64`; the existing proofs already require major addresses
+  below `2^57`.
+- `hp_addr = addr < heap_size` cannot remain the only address validity
+  predicate. If `heap_size` becomes the virtual limit, `hp_addr` includes holes.
+  Read/write operations must require an active-range witness for
+  `[addr, addr + 8)`.
+- `objects zero_addr g` currently walks one dense interval until `heap_size`.
+  With holes, object enumeration must be per active range and concatenated over
+  the range table.
+- Pointer classification must be "belongs to some active major range", not
+  `zero_addr + mword <= v < heap_size`.
+- Sweep coalescing and `next_in_mem` must stop at active-range boundaries even
+  if two concrete chunks happen to be adjacent in virtual memory.
+
+So the simpler design is not "one giant seq and no chunks". It is a hybrid:
+one virtual address namespace and one Pulse array handle, plus explicit active
+range descriptors that play the role of stock OCaml heap chunks.
+
 ## Design alternatives
 
 | Design | Assessment |
 | --- | --- |
 | Reallocate one larger contiguous heap | Not recommended. Existing OCaml values are raw addresses; moving the base invalidates roots and fields unless every pointer is found and rewritten. It also breaks current address-identity proofs. |
 | Reserve a huge virtual range and commit pages on demand | Possible but less portable and harder to align with stock OCaml. It preserves simple range checks only if the full reserved range is treated as the heap, but proofs would still need committed/uncommitted memory and page-touch invariants. |
+| Single virtual array with active `PtsToRange` chunks | Recommended as the Pulse representation of the chunked design. It preserves absolute-address arithmetic and avoids owning inactive gaps, but still requires active-range descriptors and chunk-local traversal. |
 | Let C manage expansion outside the verified model | Too weak. C could append free blocks, but the verified allocator and collector would not know the expanded heap shape, so the main correctness theorem would no longer cover major allocation after expansion. |
 | Verified chunked major heap | Recommended. It preserves stable addresses, matches stock OCaml's chunked heap design, and admits a clean proof that fresh all-blue chunks do not affect existing live objects. |
 
@@ -121,6 +195,11 @@ type major_heap = {
   chunks : seq heap_chunk;
 }
 ```
+
+In Pulse, this model should be paired with one virtual `array U8.t`. Each
+`heap_chunk.bytes` sequence corresponds to one `pts_to_range` slice of that
+array. The verified heap invariant owns the separating conjunction of those
+range resources, not a whole-array `pts_to`.
 
 Core invariants:
 
