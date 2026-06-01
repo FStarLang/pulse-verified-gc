@@ -11,6 +11,9 @@ module GC.Spec.MajorAllocator
 module U64 = FStar.UInt64
 module MH = GC.Spec.MajorHeap
 module Alloc = GC.Spec.Allocator
+module AllocLemmas = GC.Spec.Allocator.Lemmas
+module Obj = GC.Spec.Object
+module Header = GC.Lib.Header
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -26,6 +29,11 @@ let fresh_chunk_wosize_fits (c: MH.heap_chunk)
   = assert (c.size < pow2 57);
     FStar.Math.Lemmas.lemma_div_lt c.size 57 3;
     assert (chunk_word_capacity c < pow2 54)
+
+let fresh_chunk_wosize_u64 (c: MH.heap_chunk)
+  : wz:U64.t{U64.v wz == fresh_chunk_wosize c /\ U64.v wz < pow2 54}
+  = fresh_chunk_wosize_fits c;
+    U64.uint_to_t (fresh_chunk_wosize c)
 
 let fresh_chunk_has_block (c: MH.heap_chunk)
   : Lemma (chunk_word_capacity c >= 2)
@@ -56,7 +64,7 @@ let init_fresh_chunk (c: MH.heap_chunk) (next_fp: U64.t)
   = fresh_chunk_wosize_fits c;
     fresh_chunk_has_block c;
     let wz = fresh_chunk_wosize c in
-    let hdr = Alloc.make_header (U64.uint_to_t wz) Alloc.blue_bits 0UL in
+    let hdr = Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL in
     assert (MH.word_in_chunk c c.base);
     let c1 = MH.write_word_in_chunk c c.base hdr in
     let obj = fresh_chunk_object c in
@@ -70,9 +78,9 @@ let init_fresh_chunk (c: MH.heap_chunk) (next_fp: U64.t)
 let init_fresh_chunk_header (c: MH.heap_chunk) (next_fp: U64.t)
   : Lemma (let r = init_fresh_chunk c next_fp in
            MH.read_word_in_chunk r.chunk_out c.base ==
-           Alloc.make_header (U64.uint_to_t (fresh_chunk_wosize c)) Alloc.blue_bits 0UL)
+           Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL)
   = fresh_chunk_wosize_fits c;
-    let hdr = Alloc.make_header (U64.uint_to_t (fresh_chunk_wosize c)) Alloc.blue_bits 0UL in
+    let hdr = Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL in
     let c1 = MH.write_word_in_chunk c c.base hdr in
     let obj = fresh_chunk_object c in
     fresh_chunk_object_word c;
@@ -88,9 +96,24 @@ let init_fresh_chunk_link (c: MH.heap_chunk) (next_fp: U64.t)
            r.fp_out == fresh_chunk_object c /\
            MH.read_word_in_chunk r.chunk_out r.fp_out == next_fp)
   = fresh_chunk_wosize_fits c;
-    let hdr = Alloc.make_header (U64.uint_to_t (fresh_chunk_wosize c)) Alloc.blue_bits 0UL in
+    let hdr = Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL in
     let c1 = MH.write_word_in_chunk c c.base hdr in
     let obj = fresh_chunk_object c in
     fresh_chunk_object_word c;
     MH.write_word_in_chunk_preserves_word c c.base hdr obj;
     MH.read_write_in_chunk_same c1 obj next_fp
+
+let init_fresh_chunk_header_fields (c: MH.heap_chunk) (next_fp: U64.t)
+  : Lemma (let r = init_fresh_chunk c next_fp in
+           let hdr = MH.read_word_in_chunk r.chunk_out c.base in
+           Obj.getWosize hdr == fresh_chunk_wosize_u64 c /\
+           Obj.getColor hdr == Header.Blue /\
+           U64.v (Obj.getTag hdr) == 0)
+  = fresh_chunk_wosize_fits c;
+    init_fresh_chunk_header c next_fp;
+    let wz = fresh_chunk_wosize_u64 c in
+    let hdr = Alloc.make_header wz Alloc.blue_bits 0UL in
+    AllocLemmas.make_header_getWosize wz Alloc.blue_bits 0UL;
+    AllocLemmas.make_header_getColor wz Alloc.blue_bits 0UL;
+    AllocLemmas.make_header_getTag wz Alloc.blue_bits 0UL;
+    Obj.getColor_raw hdr
