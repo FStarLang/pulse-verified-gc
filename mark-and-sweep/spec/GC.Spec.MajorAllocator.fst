@@ -66,6 +66,15 @@ let aligned_lt_heap_has_word_room (a: nat)
   = FStar.Math.Lemmas.lemma_div_exact a (U64.v mword);
     FStar.Math.Lemmas.lemma_div_exact heap_size (U64.v mword)
 
+let aligned_plus_word_product (a words: nat)
+  : Lemma (requires a % 8 == 0)
+          (ensures (a + words * 8) % 8 == 0)
+  = FStar.Math.Lemmas.lemma_mod_plus_distr_l a (words * 8) 8;
+    FStar.Math.Lemmas.cancel_mul_mod words 8;
+    assert ((words * 8) % 8 == 0);
+    assert (((a % 8) + words * 8) % 8 == 0);
+    assert ((a + words * 8) % 8 == 0)
+
 let fresh_chunk_object_in_chunk (c: MH.heap_chunk)
   : Lemma (MH.obj_addr_in_chunk c (fresh_chunk_object c) /\
            MH.pointer_in_chunk c (fresh_chunk_object c))
@@ -376,6 +385,103 @@ let major_fl_valid_step (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
                      | None -> False))
           (ensures major_fl_valid mh fp fuel)
   = ()
+#pop-options
+
+let rec major_fl_capacity (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot nat
+  (decreases fuel)
+  = if fuel = 0 then 0
+    else
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then 0
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then 0
+      else
+        let obj : obj_addr = fp in
+        match MH.read_word_in_major mh (hd_address obj), MH.read_word_in_major mh obj with
+        | Some hdr, Some next ->
+          U64.v (Obj.getWosize hdr) + major_fl_capacity mh next fuel'
+        | _, _ -> 0
+
+let major_fl_capacity_zero (mh: MH.major_heap) (fp: U64.t)
+  : Lemma (major_fl_capacity mh fp 0 == 0)
+  = ()
+
+let major_fl_capacity_null (mh: MH.major_heap) (fuel: nat)
+  : Lemma (requires fuel > 0)
+          (ensures major_fl_capacity mh 0UL fuel == 0)
+  = ()
+
+#push-options "--z3rlimit 120"
+let rec expand_major_heap_preserves_fl_capacity (mh: MH.major_heap) (c: MH.heap_chunk)
+                                                (new_link: U64.t) (fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_valid mh fp fuel)
+          (ensures major_fl_capacity (expand_major_heap mh c new_link).major_out fp fuel ==
+                   major_fl_capacity mh fp fuel)
+          (decreases fuel)
+  = if fuel = 0 then ()
+    else begin
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then ()
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then
+        assert False
+      else begin
+        let obj : obj_addr = fp in
+        let r = init_fresh_chunk c new_link in
+        init_fresh_chunk_disjoint_from_all mh c new_link;
+        match MH.read_word_in_major mh (hd_address obj) with
+        | None -> assert False
+        | Some hdr ->
+          MH.read_word_add_chunk_disjoint_old mh r.chunk_out (hd_address obj) hdr;
+          assert (MH.read_word_in_major (expand_major_heap mh c new_link).major_out (hd_address obj) ==
+                  Some hdr);
+        match MH.read_word_in_major mh obj with
+        | None -> assert False
+        | Some next ->
+          major_fl_valid_next mh fp fuel;
+          expand_major_heap_preserves_fl_capacity mh c new_link next fuel';
+          MH.read_word_add_chunk_disjoint_old mh r.chunk_out obj next;
+          assert (MH.read_word_in_major (expand_major_heap mh c new_link).major_out obj ==
+                  Some next)
+      end
+    end
+
+let expand_major_heap_fresh_capacity (mh: MH.major_heap) (c: MH.heap_chunk)
+                                     (next_fp: U64.t) (fuel: nat)
+  : Lemma (major_fl_capacity (expand_major_heap mh c next_fp).major_out
+             (fresh_chunk_object c) (fuel + 1) ==
+           fresh_chunk_wosize c +
+           major_fl_capacity (expand_major_heap mh c next_fp).major_out next_fp fuel)
+  = fresh_chunk_object_in_chunk c;
+    let er = expand_major_heap mh c next_fp in
+    let fp = fresh_chunk_object c in
+    expand_major_heap_header mh c next_fp;
+    expand_major_heap_header_fields mh c next_fp;
+    expand_major_heap_link mh c next_fp;
+    f_address_spec c.base;
+    assert (U64.v fp >= U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    assert (U64.v c.base + U64.v mword < heap_size);
+    hd_f_roundtrip c.base;
+    assert (hd_address fp == c.base);
+    assert (MH.read_word_in_major er.major_out (hd_address fp) ==
+            Some (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL));
+    assert (Obj.getWosize (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL) ==
+            fresh_chunk_wosize_u64 c);
+    assert (U64.v (fresh_chunk_wosize_u64 c) == fresh_chunk_wosize c);
+    assert (MH.read_word_in_major er.major_out fp == Some next_fp)
+
+let expand_major_heap_links_fl_capacity (mh: MH.major_heap) (c: MH.heap_chunk)
+                                        (next_fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_valid mh next_fp fuel)
+          (ensures major_fl_capacity (expand_major_heap mh c next_fp).major_out
+                     (fresh_chunk_object c) (fuel + 1) ==
+                   fresh_chunk_wosize c + major_fl_capacity mh next_fp fuel)
+  = expand_major_heap_preserves_fl_capacity mh c next_fp next_fp fuel;
+    expand_major_heap_fresh_capacity mh c next_fp fuel
 #pop-options
 
 #push-options "--z3rlimit 120"
@@ -693,8 +799,7 @@ let major_alloc_from_block_single_chunk_compat (g: heap)
       let mh1 = MH.single_chunk_major_heap g1 in
       assert (major_write_word_or_same mh hd alloc_hdr == mh1);
       let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
-      FStar.Math.Lemmas.cancel_mul_mod (1 + wz) 8;
-      FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v hd) ((1 + wz) * 8) 8;
+      aligned_plus_word_product (U64.v hd) (1 + wz);
       assert (rem_hd_nat % 8 == 0);
       if rem_hd_nat >= heap_size || rem_hd_nat >= pow2 64 ||
          rem_hd_nat % 8 <> 0 then begin
