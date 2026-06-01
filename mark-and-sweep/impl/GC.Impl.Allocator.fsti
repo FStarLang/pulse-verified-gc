@@ -19,6 +19,7 @@ module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecFields = GC.Spec.Fields
+module SpecHeap = GC.Spec.Heap
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
 module AllocLemmas = GC.Spec.Allocator.Lemmas
@@ -118,6 +119,39 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
           MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
           fst res == spec_res.major_fp_out /\
           snd res == spec_res.major_obj_out)
+
+/// Allocate from the current chunked-major free-list head without splitting it.
+/// This is the first old-block allocation wrapper; full free-list search can
+/// compose it after proving earlier blocks too small.
+fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
+                                (base: hp_addr) (fp: obj_addr)
+                                (block_wz requested_wz: wosize)
+                                (next_fp: U64.t)
+                                (#fuel: nat) (#idx: nat)
+                                (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (fuel > 0 /\
+                  idx < Seq.length (Ghost.reveal mh) /\
+                  base == SpecHeap.hd_address fp /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
+                  MH.read_word_in_major (Ghost.reveal mh) base ==
+                    Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  U64.v fp >= U64.v zero_addr + U64.v mword /\
+                  U64.v block_wz >= SpecAlloc.normalized_wosize (U64.v requested_wz) /\
+                  U64.v block_wz - SpecAlloc.normalized_wosize (U64.v requested_wz) < 2)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SpecMajorAlloc.major_alloc_spec_with_fuel
+                  (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                   SpecMajorAlloc.major_alloc_spec_with_fuel
+                     (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
 
 /// Initialize an already-owned fresh chunk as one blue free-list block.
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)

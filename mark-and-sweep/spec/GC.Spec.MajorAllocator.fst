@@ -1028,6 +1028,29 @@ let major_alloc_spec_with_fuel_single_chunk_compat (g: heap) (fp: U64.t)
            major_result_of_alloc_result (Alloc.alloc_spec_with_fuel g fp requested_wz fuel))
   = major_alloc_search_single_chunk_compat g fp 0UL fp (Alloc.normalized_wosize requested_wz) fuel
 
+#push-options "--z3rlimit 40 --split_queries always --fuel 0 --ifuel 0"
+let major_alloc_head_no_split (mh: MH.major_heap) (fp: obj_addr)
+                              (requested_wz fuel: nat) (hdr next_fp: U64.t)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v zero_addr + U64.v mword /\
+                    MH.read_word_in_major mh (hd_address fp) == Some hdr /\
+                    MH.read_word_in_major mh fp == Some next_fp /\
+                    U64.v (Obj.getWosize hdr) >= Alloc.normalized_wosize requested_wz /\
+                    U64.v (Obj.getWosize hdr) - Alloc.normalized_wosize requested_wz < 2)
+          (ensures (let alloc_hdr =
+                      Alloc.make_header (Obj.getWosize hdr) Alloc.white_bits 0UL in
+                    let out = major_write_word_or_same mh (hd_address fp) alloc_hdr in
+                    let r = major_alloc_spec_with_fuel mh fp requested_wz fuel in
+                    r.major_alloc_out == out /\
+                    r.major_fp_out == next_fp /\
+                    r.major_obj_out == fp))
+  = let wz = Alloc.normalized_wosize requested_wz in
+    major_spec_next_fp_some mh fp next_fp;
+    assert (major_spec_next_fp mh fp == next_fp);
+    major_alloc_from_block_exact mh fp wz next_fp hdr;
+    major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
+#pop-options
+
 #push-options "--z3rlimit 80"
 let major_alloc_after_expand_returns_fresh (mh: MH.major_heap) (c: MH.heap_chunk)
                                            (next_fp: U64.t)

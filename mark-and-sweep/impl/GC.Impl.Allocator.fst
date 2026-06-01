@@ -671,6 +671,89 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
   res
 }
 
+fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
+                                (base: hp_addr) (fp: obj_addr)
+                                (block_wz requested_wz: wosize)
+                                (next_fp: U64.t)
+                                (#fuel: nat) (#idx: nat)
+                                (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (fuel > 0 /\
+                  idx < Seq.length (Ghost.reveal mh) /\
+                  base == SH.hd_address fp /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
+                  MH.read_word_in_major (Ghost.reveal mh) base ==
+                    Some (SA.make_header block_wz SA.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  U64.v fp >= U64.v zero_addr + U64.v mword /\
+                  U64.v block_wz >= SA.normalized_wosize (U64.v requested_wz) /\
+                  U64.v block_wz - SA.normalized_wosize (U64.v requested_wz) < 2)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SMA.major_alloc_spec_with_fuel
+                  (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                   SMA.major_alloc_spec_with_fuel
+                     (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+{
+  let block_hdr = SA.make_header block_wz SA.blue_bits 0UL;
+  let alloc_hdr = makeHeader block_wz white 0UL;
+  assert (pure (SA.white_bits == 0UL));
+  assert (pure (pack_color white == 0UL));
+  assert (pure (alloc_hdr == SA.make_header block_wz SA.white_bits 0UL));
+  AllocLemmas.make_header_getWosize block_wz SA.blue_bits 0UL;
+  assert (pure (SO.getWosize block_hdr == block_wz));
+  assert (pure (base == SH.hd_address fp));
+  SMA.major_alloc_head_no_split
+    (Ghost.reveal mh) fp (U64.v requested_wz) fuel block_hdr next_fp;
+  MajorHeap.write_word_in_indexed_major_at_lookup_index heap base alloc_hdr idx
+    #(Ghost.hide (Ghost.reveal mh));
+  assert (pure (MH.write_word_in_major (Ghost.reveal mh) base alloc_hdr ==
+                Some (Seq.upd (Ghost.reveal mh) idx
+                  (MH.write_word_in_chunk
+                    (Seq.index (Ghost.reveal mh) idx) base alloc_hdr))));
+  SMA.major_write_word_or_same_some
+    (Ghost.reveal mh)
+    (Seq.upd (Ghost.reveal mh) idx
+      (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) idx) base alloc_hdr))
+    base alloc_hdr;
+  assert (pure (SMA.major_write_word_or_same
+                  (Ghost.reveal mh) (SH.hd_address fp) alloc_hdr ==
+                Seq.upd (Ghost.reveal mh) idx
+                  (MH.write_word_in_chunk
+                    (Seq.index (Ghost.reveal mh) idx) base alloc_hdr)));
+  assert (pure (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                r.major_alloc_out ==
+                  Seq.upd (Ghost.reveal mh) idx
+                    (MH.write_word_in_chunk
+                      (Seq.index (Ghost.reveal mh) idx) base alloc_hdr) /\
+                r.major_fp_out == next_fp /\
+                r.major_obj_out == fp));
+  rewrite
+    (MajorHeap.is_indexed_major_heap heap
+      (Seq.upd (Ghost.reveal mh) idx
+        (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) idx) base alloc_hdr)))
+  as
+    (MajorHeap.is_indexed_major_heap heap
+      (let r =
+         SMA.major_alloc_spec_with_fuel
+           (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+       r.major_alloc_out));
+  assert (pure (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                next_fp == r.major_fp_out /\
+                fp == r.major_obj_out));
+  (next_fp, fp)
+}
+
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (base: hp_addr) (fp_out: obj_addr)
                           (wz: wosize) (next_fp: U64.t)
