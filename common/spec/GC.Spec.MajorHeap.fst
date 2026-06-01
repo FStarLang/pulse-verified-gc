@@ -183,6 +183,26 @@ let read_word_add_chunk_miss (mh: major_heap) (c: heap_chunk)
   : Lemma (read_word_in_major (add_chunk mh c) addr == read_word_in_major mh addr)
   = lookup_add_chunk_miss mh c addr
 
+let single_chunk_read_word_compat (g: heap)
+                                  (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
+                                                 U64.v addr + U64.v mword <= heap_size})
+  : Lemma (read_word_in_major (single_chunk_major_heap g) addr == Some (read_word g addr))
+  = let c = single_chunk_of_heap g in
+    assert (word_in_chunk c addr);
+    assert (chunk_contains_addr c addr);
+    lookup_add_chunk_hit Seq.empty c addr;
+    let off = chunk_offset c addr in
+    assert (off + U64.v zero_addr == U64.v addr);
+    read_word_spec g addr;
+    assert (Seq.index c.bytes off == Seq.index g (U64.v addr));
+    assert (Seq.index c.bytes (off + 1) == Seq.index g (U64.v addr + 1));
+    assert (Seq.index c.bytes (off + 2) == Seq.index g (U64.v addr + 2));
+    assert (Seq.index c.bytes (off + 3) == Seq.index g (U64.v addr + 3));
+    assert (Seq.index c.bytes (off + 4) == Seq.index g (U64.v addr + 4));
+    assert (Seq.index c.bytes (off + 5) == Seq.index g (U64.v addr + 5));
+    assert (Seq.index c.bytes (off + 6) == Seq.index g (U64.v addr + 6));
+    assert (Seq.index c.bytes (off + 7) == Seq.index g (U64.v addr + 7))
+
 let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_addr)
   (decreases chunk_end c - U64.v start)
   = if U64.v start < chunk_start c then Seq.empty
@@ -207,6 +227,7 @@ let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_ad
             (U64.v start) (obj_size_words * 8) 8;
           FStar.Math.Lemmas.cancel_mul_mod obj_size_words 8;
           assert ((obj_size_words * 8) % 8 == 0);
+          assert (((U64.v start % 8) + obj_size_words * 8) % 8 == 0);
           assert ((U64.v start + obj_size_words * 8) % 8 == 0);
           assert (next_start_nat % 8 == 0);
           assert (next_start_nat % U64.v mword == 0);
