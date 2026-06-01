@@ -455,3 +455,100 @@ let expand_major_heap_links_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
                     (fresh_chunk_object c) (fuel + 1))
   = expand_major_heap_preserves_fl_valid mh c next_fp next_fp fuel;
     expand_major_heap_fresh_fl_valid mh c next_fp fuel
+
+type major_alloc_result = {
+  major_alloc_out: MH.major_heap;
+  major_fp_out: U64.t;
+  major_obj_out: U64.t;
+}
+
+let major_write_word_or_same (mh: MH.major_heap) (addr: hp_addr) (value: U64.t)
+  : GTot MH.major_heap =
+  match MH.write_word_in_major mh addr value with
+  | Some mh' -> mh'
+  | None -> mh
+
+let major_spec_next_fp (mh: MH.major_heap) (obj: obj_addr) : GTot U64.t =
+  match MH.read_word_in_major mh obj with
+  | Some next -> next
+  | None -> 0UL
+
+let major_alloc_from_block (mh: MH.major_heap) (obj: obj_addr)
+                           (requested_wz: nat) (next_fp: U64.t)
+  : GTot (MH.major_heap & U64.t) =
+  let hd = hd_address obj in
+  match MH.read_word_in_major mh hd with
+  | None -> (mh, next_fp)
+  | Some hdr ->
+    let block_wz = U64.v (Obj.getWosize hdr) in
+    let leftover = block_wz - requested_wz in
+    if block_wz < requested_wz then (mh, next_fp)
+    else if leftover >= 2 then begin
+      let alloc_hdr = Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+      let mh1 = major_write_word_or_same mh hd alloc_hdr in
+      let rem_hd_nat = U64.v hd + (1 + requested_wz) * 8 in
+      if rem_hd_nat >= heap_size || rem_hd_nat >= pow2 64 ||
+         rem_hd_nat % 8 <> 0 then
+        (mh1, next_fp)
+      else
+        let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+        let rem_wz = leftover - 1 in
+        let rem_hdr = Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+        let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
+        let rem_obj_nat = rem_hd_nat + 8 in
+        FStar.Math.Lemmas.pow2_lt_compat 64 57;
+        assert_norm (pow2 57 + 8 < pow2 64);
+        assert (rem_obj_nat < pow2 64);
+        if rem_obj_nat >= heap_size || rem_obj_nat >= pow2 64 ||
+           rem_obj_nat % 8 <> 0 then
+          (mh2, U64.uint_to_t rem_obj_nat)
+        else
+          let rem_field : hp_addr = U64.uint_to_t rem_obj_nat in
+          let mh3 = major_write_word_or_same mh2 rem_field next_fp in
+          (mh3, U64.uint_to_t rem_obj_nat)
+    end else begin
+      let alloc_hdr = Alloc.make_header (U64.uint_to_t block_wz) Alloc.white_bits 0UL in
+      let mh1 = major_write_word_or_same mh hd alloc_hdr in
+      (mh1, next_fp)
+    end
+
+let rec major_alloc_search (mh: MH.major_heap) (head_fp: U64.t) (prev_fp: U64.t)
+                           (cur_fp: U64.t) (requested_wz: nat) (fuel: nat)
+  : GTot major_alloc_result (decreases fuel)
+  = if fuel = 0 then { major_alloc_out = mh; major_fp_out = head_fp; major_obj_out = 0UL }
+    else
+    let fuel' : f:nat{f < fuel} = fuel - 1 in
+    if U64.v cur_fp < U64.v zero_addr + U64.v mword then
+      { major_alloc_out = mh; major_fp_out = head_fp; major_obj_out = 0UL }
+    else if U64.v cur_fp >= heap_size then
+      { major_alloc_out = mh; major_fp_out = head_fp; major_obj_out = 0UL }
+    else if U64.v cur_fp % U64.v mword <> 0 then
+      { major_alloc_out = mh; major_fp_out = head_fp; major_obj_out = 0UL }
+    else begin
+      let obj : obj_addr = cur_fp in
+      let hd = hd_address obj in
+      match MH.read_word_in_major mh hd with
+      | None -> { major_alloc_out = mh; major_fp_out = head_fp; major_obj_out = 0UL }
+      | Some hdr ->
+        let block_wz = U64.v (Obj.getWosize hdr) in
+        let next_fp = major_spec_next_fp mh obj in
+        if block_wz >= requested_wz then begin
+          let (mh', new_remainder_fp) = major_alloc_from_block mh obj requested_wz next_fp in
+          if prev_fp = 0UL then
+            { major_alloc_out = mh'; major_fp_out = new_remainder_fp; major_obj_out = cur_fp }
+          else if U64.v prev_fp >= U64.v mword &&
+                  U64.v prev_fp < heap_size &&
+                  U64.v prev_fp % U64.v mword = 0 then
+            let mh2 = major_write_word_or_same mh' (prev_fp <: hp_addr) new_remainder_fp in
+            { major_alloc_out = mh2; major_fp_out = head_fp; major_obj_out = cur_fp }
+          else
+            { major_alloc_out = mh'; major_fp_out = new_remainder_fp; major_obj_out = cur_fp }
+        end else
+          major_alloc_search mh head_fp cur_fp next_fp requested_wz fuel'
+    end
+
+let major_alloc_spec_with_fuel (mh: MH.major_heap) (fp: U64.t)
+                               (requested_wz: nat) (fuel: nat)
+  : GTot major_alloc_result =
+  let wz = Alloc.normalized_wosize requested_wz in
+  major_alloc_search mh fp 0UL fp wz fuel
