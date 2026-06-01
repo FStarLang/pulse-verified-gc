@@ -14,6 +14,8 @@ open FStar.Seq
 module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 module Seq = FStar.Seq
+module SeqProps = FStar.Seq.Properties
+module Obj = GC.Spec.Object
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -161,6 +163,114 @@ let read_word_add_chunk_miss (mh: major_heap) (c: heap_chunk)
                              (addr: hp_addr{~(chunk_contains_addr c addr)})
   : Lemma (read_word_in_major (add_chunk mh c) addr == read_word_in_major mh addr)
   = lookup_add_chunk_miss mh c addr
+
+let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_addr)
+  (decreases chunk_end c - U64.v start)
+  = if U64.v start < chunk_start c then Seq.empty
+    else if U64.v start + U64.v mword >= chunk_end c then Seq.empty
+    else
+      let header = read_word_in_chunk c start in
+      let wz = Obj.getWosize header in
+      let obj_size_words = U64.v wz + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then Seq.empty
+      else begin
+        assert (U64.v start + U64.v mword < heap_size);
+        let obj_addr = f_address start in
+        if next_start_nat >= chunk_end c then Seq.cons obj_addr Seq.empty
+        else begin
+          assert (next_start_nat < heap_size);
+          assert (next_start_nat < pow2 64);
+          assert_norm (U64.v mword == 8);
+          assert (U64.v start % 8 == 0);
+          assert (next_start_nat == U64.v start + obj_size_words * 8);
+          FStar.Math.Lemmas.lemma_mod_plus_distr_l
+            (U64.v start) (obj_size_words * 8) 8;
+          FStar.Math.Lemmas.cancel_mul_mod obj_size_words 8;
+          assert ((obj_size_words * 8) % 8 == 0);
+          assert ((U64.v start + obj_size_words * 8) % 8 == 0);
+          assert (next_start_nat % 8 == 0);
+          assert (next_start_nat % U64.v mword == 0);
+          let next_start : hp_addr = U64.uint_to_t next_start_nat in
+          Seq.cons obj_addr (objects_in_chunk_from c next_start)
+        end
+      end
+
+let objects_in_chunk (c: heap_chunk) : seq obj_addr =
+  objects_in_chunk_from c c.base
+
+let rec objects_in_chunk_from_member_in_chunk (c: heap_chunk) (start: hp_addr) (x: obj_addr)
+  : Lemma (requires Seq.mem x (objects_in_chunk_from c start))
+          (ensures obj_addr_in_chunk c x)
+          (decreases chunk_end c - U64.v start)
+  = if U64.v start < chunk_start c then
+      assert False
+    else if U64.v start + U64.v mword >= chunk_end c then
+      assert False
+    else begin
+      let header = read_word_in_chunk c start in
+      let wz = Obj.getWosize header in
+      let obj_size_words = U64.v wz + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then
+        assert False
+      else begin
+        let obj_addr = f_address start in
+        f_address_spec start;
+        assert (U64.v obj_addr == U64.v start + U64.v mword);
+        let tail =
+          if next_start_nat >= chunk_end c then Seq.empty
+          else begin
+            assert (next_start_nat < heap_size);
+            assert (next_start_nat < pow2 64);
+            assert_norm (U64.v mword == 8);
+            assert (U64.v start % 8 == 0);
+            assert (next_start_nat == U64.v start + obj_size_words * 8);
+            FStar.Math.Lemmas.lemma_mod_plus_distr_l
+              (U64.v start) (obj_size_words * 8) 8;
+            FStar.Math.Lemmas.cancel_mul_mod obj_size_words 8;
+            assert ((obj_size_words * 8) % 8 == 0);
+            assert ((U64.v start + obj_size_words * 8) % 8 == 0);
+            assert (next_start_nat % 8 == 0);
+            assert (next_start_nat % U64.v mword == 0);
+            let next_start : hp_addr = U64.uint_to_t next_start_nat in
+            objects_in_chunk_from c next_start
+          end
+        in
+        SeqProps.mem_cons obj_addr tail;
+        if x = obj_addr then begin
+          assert (U64.v x >= chunk_start c + U64.v mword);
+          assert (U64.v x < chunk_end c)
+        end else begin
+          assert (Seq.mem x tail);
+          if next_start_nat >= chunk_end c then
+            assert False
+          else begin
+            assert (obj_size_words >= 1);
+            assert (next_start_nat > U64.v start);
+            let next_start : hp_addr = U64.uint_to_t next_start_nat in
+            objects_in_chunk_from_member_in_chunk c next_start x
+          end
+        end
+      end
+    end
+
+let objects_in_chunk_member_in_chunk (c: heap_chunk) (x: obj_addr)
+  : Lemma (requires Seq.mem x (objects_in_chunk c))
+          (ensures obj_addr_in_chunk c x)
+  = objects_in_chunk_from_member_in_chunk c c.base x
+
+let rec major_objects (mh: major_heap) : Tot (seq obj_addr)
+  (decreases Seq.length mh)
+  = if Seq.length mh = 0 then Seq.empty
+    else
+      let c = Seq.head mh in
+      Seq.append (objects_in_chunk c) (major_objects (Seq.tail mh))
+
+let major_objects_add_chunk (mh: major_heap) (c: heap_chunk)
+  : Lemma (major_objects (add_chunk mh c) == Seq.append (objects_in_chunk c) (major_objects mh))
+  = assert (Seq.head (add_chunk mh c) == c);
+    assert (Seq.equal (Seq.tail (add_chunk mh c)) mh)
 
 let rec lookup_chunk_contains (mh: major_heap) (addr: hp_addr) (c: heap_chunk)
   : Lemma (requires lookup_chunk mh addr == Some c)
