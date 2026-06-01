@@ -568,6 +568,24 @@ fn read_word_in_indexed_major_at_chunk_index
   v
 }
 
+fn read_word_in_indexed_major_at_lookup_index
+  (h: major_heap_t)
+  (addr: Base.hp_addr)
+  (i: nat)
+  (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                        MH.lookup_chunk_index mh0 addr == Some i /\
+                                        MH.word_in_chunk (Seq.index mh0 i) addr}))
+  requires is_indexed_major_heap h (Ghost.reveal mh)
+  returns v: U64.t
+  ensures is_indexed_major_heap h (Ghost.reveal mh) **
+          pure (MH.read_word_in_major (Ghost.reveal mh) addr == Some v)
+{
+  MH.lookup_chunk_index_some (Ghost.reveal mh) addr i;
+  let v = read_word_in_indexed_major_at_chunk_index h addr i
+    #(Ghost.hide (Ghost.reveal mh));
+  v
+}
+
 fn write_word_at_chunk_index (h: major_heap_t)
                              (addr: Base.hp_addr)
                              (v: U64.t)
@@ -697,4 +715,28 @@ fn write_word_in_indexed_major_at_chunk_index
   fold (is_indexed_major_heap h
     (Seq.upd (Ghost.reveal mh) i
       (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+}
+
+fn write_word_in_indexed_major_at_lookup_index
+  (h: major_heap_t)
+  (addr: Base.hp_addr)
+  (v: U64.t)
+  (i: nat)
+  (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                        MH.lookup_chunk_index mh0 addr == Some i /\
+                                        MH.word_in_chunk (Seq.index mh0 i) addr}))
+  requires is_indexed_major_heap h (Ghost.reveal mh)
+  ensures is_indexed_major_heap h
+            (Seq.upd (Ghost.reveal mh) i
+              (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)) **
+          pure (MH.write_word_in_major (Ghost.reveal mh) addr v ==
+            Some (Seq.upd (Ghost.reveal mh) i
+              (MH.write_word_in_chunk (Seq.index (Ghost.reveal mh) i) addr v)))
+{
+  MH.lookup_chunk_index_some (Ghost.reveal mh) addr i;
+  assert (pure (forall (k:nat). k < i ==>
+    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) addr)));
+  MH.write_word_in_major_at_lookup_index (Ghost.reveal mh) addr v i;
+  write_word_in_indexed_major_at_chunk_index h addr v i
+    #(Ghost.hide (Ghost.reveal mh))
 }
