@@ -165,11 +165,11 @@ let rec alloc_search_preserves_wf
 
 let alloc_spec_preserves_wf (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword))
+                    fl_valid g fp alloc_search_fuel)
           (ensures (let r = alloc_spec g fp requested_wz in
                     well_formed_heap r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_wf g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_wf g fp 0UL fp wz alloc_search_fuel
 
 /// Re-export chain machinery required by Core.fsti (implemented in Chain)
 let fl_valid_transfer = AllocChain.fl_valid_transfer
@@ -413,7 +413,7 @@ let rec alloc_search_preserves_fl_valid
   : Lemma (requires well_formed_heap g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
-                    fl_valid g head_fp (heap_size / U64.v mword) /\
+                    fl_valid g head_fp alloc_search_fuel /\
                     wz >= 1 /\
                     (prev_fp <> 0UL ==>
                       (prev_fp <> cur_fp /\
@@ -425,9 +425,9 @@ let rec alloc_search_preserves_fl_valid
                        U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
                        read_word g (prev_fp <: obj_addr) = cur_fp)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
-                    fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+                    fl_valid r.heap_out r.fp_out alloc_search_fuel))
           (decreases fuel)
-  = let big_fuel = heap_size / U64.v mword in
+  = let big_fuel = alloc_search_fuel in
     if fuel = 0 then ()
     // Base cases: result = {g, head_fp, 0UL}. fl_valid g head_fp big_fuel from precondition.
     else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
@@ -794,12 +794,12 @@ let rec alloc_search_preserves_fl_valid
 
 let alloc_spec_preserves_fl_valid (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword) /\
-                    fl_chain_terminates g fp (heap_size / U64.v mword))
+                    fl_valid g fp alloc_search_fuel /\
+                    fl_chain_terminates g fp alloc_search_fuel)
           (ensures (let r = alloc_spec g fp requested_wz in
-                    fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+                    fl_valid r.heap_out r.fp_out alloc_search_fuel))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_fl_valid g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_fl_valid g fp 0UL fp wz alloc_search_fuel
 
 let chain_avoids_unfold_step = AllocChain.chain_avoids_unfold_step
 let chain_avoids_head_ne = AllocChain.chain_avoids_head_ne
@@ -833,12 +833,12 @@ let alloc_spec_preserves_fl_chain_terminates = AllocSearchChain.alloc_spec_prese
 
 let alloc_spec_preserves_objects (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword))
+                    fl_valid g fp alloc_search_fuel)
           (ensures (let r = alloc_spec g fp requested_wz in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       Seq.mem x (objects zero_addr r.heap_out))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_objects g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_objects g fp 0UL fp wz alloc_search_fuel
 
 
 /// ===========================================================================
@@ -1137,11 +1137,11 @@ let rec alloc_search_preserves_no_black
 let alloc_spec_preserves_no_black (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires no_black_objects g /\
                     well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword))
+                    fl_valid g fp alloc_search_fuel)
           (ensures (let r = alloc_spec g fp requested_wz in
                     no_black_objects r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_no_black g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_no_black g fp 0UL fp wz alloc_search_fuel
 
 
 /// ===========================================================================
@@ -1162,10 +1162,10 @@ let alloc_spec_obj_not_in_chain = AllocObjNotInChain.alloc_spec_obj_not_in_chain
 /// alloc_spec preserves objects membership under part1
 let alloc_spec_preserves_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp (heap_size / U64.v mword) /\
-                    fl_chain_terminates g fp (heap_size / U64.v mword))
+                    fl_valid g fp alloc_search_fuel /\
+                    fl_chain_terminates g fp alloc_search_fuel)
           (ensures (let r = alloc_spec g fp requested_wz in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       Seq.mem x (objects zero_addr r.heap_out))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_objects_part1 g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_objects_part1 g fp 0UL fp wz alloc_search_fuel
