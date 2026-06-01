@@ -1135,3 +1135,71 @@ let major_alloc_after_expand_exact (mh: MH.major_heap) (c: MH.heap_chunk)
       c.base alloc_hdr;
     major_alloc_from_block_exact er.major_out fp wz next_fp hdr;
     major_alloc_search_found_head er.major_out fp 0UL fp wz (fuel + 1) hdr
+
+#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+let fresh_chunk_split_remainder_fits (c: MH.heap_chunk) (next_fp: U64.t)
+                                     (requested_wz: nat) (rem_hd rem_obj: hp_addr)
+  : Lemma (requires requested_wz > 0 /\
+                    fresh_chunk_wosize c - requested_wz >= 2 /\
+                    U64.v rem_hd == U64.v c.base + (1 + requested_wz) * 8 /\
+                    U64.v rem_obj == U64.v rem_hd + U64.v mword)
+          (ensures (let init = (init_fresh_chunk c next_fp).chunk_out in
+                    let alloc_hdr =
+                      Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+                    let c1 = MH.write_word_in_chunk init c.base alloc_hdr in
+                    let rem_wz = fresh_chunk_wosize c - requested_wz - 1 in
+                    let rem_hdr =
+                      Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+                    let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+                    MH.word_in_chunk init rem_hd /\
+                    MH.word_in_chunk c1 rem_hd /\
+                    MH.word_in_chunk c1 rem_obj /\
+                    MH.word_in_chunk c2 rem_obj /\
+                    rem_wz < pow2 54))
+  = let init = (init_fresh_chunk c next_fp).chunk_out in
+    let fw = fresh_chunk_wosize c in
+    let wz = requested_wz in
+    let alloc_hdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+    let c1 = MH.write_word_in_chunk init c.base alloc_hdr in
+    init_fresh_chunk_preserves_range c next_fp;
+    fresh_chunk_wosize_fits c;
+    fresh_chunk_has_block c;
+    assert (MH.word_in_chunk init c.base);
+    let rem_hd_nat = U64.v c.base + (1 + wz) * 8 in
+    aligned_plus_word_product (U64.v c.base) (1 + wz);
+    assert (rem_hd_nat % 8 == 0);
+    assert (U64.v mword == 8);
+    assert (c.size % U64.v mword == 0);
+    FStar.Math.Lemmas.lemma_div_exact c.size (U64.v mword);
+    assert (c.size == (c.size / U64.v mword) * U64.v mword);
+    assert (chunk_word_capacity c == c.size / U64.v mword);
+    assert (c.size == chunk_word_capacity c * U64.v mword);
+    assert (fw == chunk_word_capacity c - 1);
+    assert (chunk_word_capacity c == fw + 1);
+    assert (wz + 2 <= fw);
+    FStar.Math.Lemmas.distributivity_add_left (1 + wz) 1 8;
+    assert ((1 + wz) * 8 + 8 == (wz + 2) * 8);
+    FStar.Math.Lemmas.paren_add_right (U64.v c.base) ((1 + wz) * 8) 8;
+    assert (rem_hd_nat + 8 == U64.v c.base + ((1 + wz) * 8 + 8));
+    assert (rem_hd_nat + 8 == U64.v c.base + (wz + 2) * 8);
+    assert (U64.v c.base + (wz + 2) * 8 <= U64.v c.base + fw * 8);
+    assert (U64.v c.base + fw * 8 < U64.v c.base + (fw + 1) * 8);
+    assert (U64.v c.base + (fw + 1) * 8 == MH.chunk_end c);
+    assert (rem_hd_nat + 8 < MH.chunk_end c);
+    assert (U64.v rem_hd == rem_hd_nat);
+    assert (MH.word_in_chunk init rem_hd);
+    MH.write_word_in_chunk_preserves_word init c.base alloc_hdr rem_hd;
+    assert (MH.word_in_chunk c1 rem_hd);
+    let rem_wz = fw - wz - 1 in
+    assert (rem_wz < fw);
+    assert (rem_wz < pow2 54);
+    let rem_hdr = Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+    let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+    let rem_obj_nat = rem_hd_nat + 8 in
+    sum_of_aligned_is_aligned rem_hd mword;
+    assert (rem_obj_nat == U64.v rem_hd + U64.v mword);
+    assert (U64.v rem_obj == rem_obj_nat);
+    assert (MH.word_in_chunk c1 rem_obj);
+    MH.write_word_in_chunk_preserves_word c1 rem_hd rem_hdr rem_obj;
+    assert (MH.word_in_chunk c2 rem_obj)
+#pop-options
