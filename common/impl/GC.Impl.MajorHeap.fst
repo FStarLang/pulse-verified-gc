@@ -374,6 +374,23 @@ fn read_word_at_chunk_index (h: major_heap_t)
   v
 }
 
+fn read_word_in_major_at_chunk_index
+  (h: major_heap_t)
+  (addr: Base.hp_addr)
+  (i: nat)
+  (#mh: Ghost.erased (mh0:MH.major_heap{i < Seq.length mh0 /\
+                                         MH.word_in_chunk (Seq.index mh0 i) addr /\
+                                         (forall (k:nat). k < i ==> ~(MH.chunk_contains_addr (Seq.index mh0 k) addr))}))
+  requires indexed_chunk_ranges h (Ghost.reveal mh)
+  returns v: U64.t
+  ensures indexed_chunk_ranges h (Ghost.reveal mh) **
+          pure (MH.read_word_in_major (Ghost.reveal mh) addr == Some v)
+{
+  let v = read_word_at_chunk_index h addr i #(Ghost.hide (Ghost.reveal mh));
+  MH.read_word_in_major_at_index (Ghost.reveal mh) addr i;
+  v
+}
+
 fn write_word_at_chunk_index (h: major_heap_t)
                              (addr: Base.hp_addr)
                              (v: U64.t)

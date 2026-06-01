@@ -334,6 +334,35 @@ let read_word_add_chunk_disjoint_old (mh: major_heap) (fresh: heap_chunk)
       lookup_chunk_some_disjoint_miss mh c fresh addr;
       read_word_add_chunk_miss mh fresh addr
 
+#push-options "--split_queries always"
+let rec read_word_in_major_at_index (mh: major_heap) (addr: hp_addr) (i: nat)
+  : Lemma (requires i < Seq.length mh /\
+                    word_in_chunk (Seq.index mh i) addr /\
+                    (forall k. k < i ==> ~(chunk_contains_addr (Seq.index mh k) addr)))
+          (ensures read_word_in_major mh addr ==
+                   Some (read_word_in_chunk (Seq.index mh i) addr))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else if i = 0 then begin
+      assert (Seq.index mh 0 == Seq.head mh);
+      assert (chunk_contains_addr (Seq.head mh) addr);
+      assert (lookup_chunk mh addr == Some (Seq.head mh))
+    end else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (0 < i);
+      assert (Seq.index mh 0 == hd);
+      assert (~(chunk_contains_addr hd addr));
+      assert (lookup_chunk mh addr == lookup_chunk tl addr);
+      let im1 : j:nat{j < Seq.length tl} = i - 1 in
+      assert (Seq.index tl im1 == Seq.index mh i);
+      assert (forall k. k < im1 ==> ~(chunk_contains_addr (Seq.index tl k) addr));
+      read_word_in_major_at_index tl addr im1;
+      assert (read_word_in_major mh addr == read_word_in_major tl addr)
+    end
+#pop-options
+
 let write_word_add_chunk_hit (mh: major_heap) (c: heap_chunk)
                              (addr: hp_addr{word_in_chunk c addr}) (value: U64.t)
   : Lemma (write_word_in_major (add_chunk mh c) addr value ==
