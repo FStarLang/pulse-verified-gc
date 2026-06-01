@@ -23,6 +23,7 @@ module T = Pulse.Lib.Trade.Util
 module U8 = FStar.UInt8
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module SeqProps = FStar.Seq.Properties
 
 noeq
 type major_heap_t = {
@@ -31,6 +32,9 @@ type major_heap_t = {
 }
 
 let heap_as_major (h: Heap.heap_t) : major_heap_t =
+  { data = h.data; size = h.size }
+
+let major_as_heap (h: major_heap_t) : Heap.heap_t =
   { data = h.data; size = h.size }
 
 let chunk_range (h: major_heap_t) (c: MH.heap_chunk) : slprop =
@@ -88,11 +92,15 @@ let chunk_ranges_cons_eq (h: major_heap_t) (mh: MH.major_heap) (c: MH.heap_chunk
 
 let is_major_heap (h: major_heap_t) (mh: MH.major_heap) : slprop =
   chunk_ranges h mh **
-  pure (SZ.v h.size == Base.heap_size /\ MH.well_formed_major_heap mh)
+  pure (SZ.v h.size == Base.heap_size /\
+        length h.data == Base.heap_size /\
+        MH.well_formed_major_heap mh)
 
 let is_indexed_major_heap (h: major_heap_t) (mh: MH.major_heap) : slprop =
   indexed_chunk_ranges h mh **
-  pure (SZ.v h.size == Base.heap_size /\ MH.well_formed_major_heap mh)
+  pure (SZ.v h.size == Base.heap_size /\
+        length h.data == Base.heap_size /\
+        MH.well_formed_major_heap mh)
 
 let inactive_prefix (h: major_heap_t) (s: Base.heap) : slprop =
   PTR.pts_to_range h.data 0 (U64.v Base.zero_addr) (Seq.slice s 0 (U64.v Base.zero_addr))
@@ -100,6 +108,7 @@ let inactive_prefix (h: major_heap_t) (s: Base.heap) : slprop =
 let is_single_chunk_major (h: major_heap_t) (s: Base.heap) : slprop =
   chunk_range h (MH.single_chunk_of_heap s) **
   pure (SZ.v h.size == Base.heap_size /\
+        length h.data == Base.heap_size /\
         MH.well_formed_major_heap (MH.single_chunk_major_heap s))
 
 ghost
@@ -157,6 +166,46 @@ fn heap_to_single_indexed_major (h: Heap.heap_t)
   fold (is_indexed_major_heap mh (MH.single_chunk_major_heap 's));
   assert (pure (mh == heap_as_major h));
   rewrite each mh as heap_as_major h
+}
+
+ghost
+fn single_indexed_major_to_heap (h: major_heap_t) (s: Base.heap)
+  requires inactive_prefix h s **
+           is_indexed_major_heap h (MH.single_chunk_major_heap s)
+  ensures Heap.is_heap (major_as_heap h) s
+{
+  unfold (is_indexed_major_heap h (MH.single_chunk_major_heap s));
+  assert (pure (SZ.v h.size == Base.heap_size));
+  assert (pure (Seq.length (MH.single_chunk_major_heap s) == 1));
+  unfold (indexed_chunk_ranges h (MH.single_chunk_major_heap s));
+  OR.on_range_singleton_elim ()
+    #(chunk_range_at h (MH.single_chunk_major_heap s))
+    #0
+    #1;
+  chunk_range_at_in_bounds h (MH.single_chunk_major_heap s) 0;
+  rewrite
+    (chunk_range_at h (MH.single_chunk_major_heap s) 0)
+  as
+    (chunk_range h (MH.single_chunk_of_heap s));
+  unfold (inactive_prefix h s);
+  unfold (chunk_range h (MH.single_chunk_of_heap s));
+  with prefix major. assert (
+    PTR.pts_to_range h.data 0 (U64.v Base.zero_addr) prefix **
+    PTR.pts_to_range h.data (U64.v Base.zero_addr) Base.heap_size major **
+    pure (prefix == Seq.slice s 0 (U64.v Base.zero_addr) /\
+          major == (MH.single_chunk_of_heap s).bytes));
+  assert (pure (major == Seq.slice s (U64.v Base.zero_addr) (Seq.length s)));
+  SeqProps.lemma_split s (U64.v Base.zero_addr);
+  assert (pure (Seq.append prefix major == s));
+  PTR.pts_to_range_join h.data 0 (U64.v Base.zero_addr) Base.heap_size;
+  rewrite
+    (PTR.pts_to_range h.data 0 Base.heap_size (Seq.append prefix major))
+  as
+    (PTR.pts_to_range h.data 0 (length h.data) s);
+  PTR.pts_to_range_elim h.data 1.0R s;
+  assert (pure ((major_as_heap h).data == h.data));
+  assert (pure ((major_as_heap h).size == h.size));
+  fold (Heap.is_heap (major_as_heap h) s)
 }
 
 ghost
