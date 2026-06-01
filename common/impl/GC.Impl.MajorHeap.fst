@@ -111,6 +111,27 @@ fn prepend_chunk_range (h: major_heap_t)
 }
 
 ghost
+fn split_prepended_chunk_range (h: major_heap_t)
+                              (#mh: Ghost.erased MH.major_heap)
+                              (#c: Ghost.erased MH.heap_chunk)
+  requires chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c))
+  ensures chunk_range h (Ghost.reveal c) **
+          chunk_ranges h (Ghost.reveal mh)
+{
+  assert (pure (Seq.cons (Ghost.reveal c) (Ghost.reveal mh) == MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)));
+  rewrite
+    (chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)))
+  as
+    (chunk_ranges h (Seq.cons (Ghost.reveal c) (Ghost.reveal mh)));
+  chunk_ranges_cons_eq h (Ghost.reveal mh) (Ghost.reveal c);
+  rewrite
+    (chunk_ranges h (Seq.cons (Ghost.reveal c) (Ghost.reveal mh)))
+  as
+    (chunk_range h (Ghost.reveal c) **
+     chunk_ranges h (Ghost.reveal mh))
+}
+
+ghost
 fn prepend_chunk_to_major (h: major_heap_t)
                           (#mh: Ghost.erased MH.major_heap)
                           (#c: Ghost.erased MH.heap_chunk)
@@ -269,4 +290,32 @@ fn write_word_in_chunk (h: major_heap_t)
        (MH.chunk_end (MH.write_word_in_chunk (Ghost.reveal c) addr v))
        (MH.write_word_in_chunk (Ghost.reveal c) addr v).bytes);
   fold (chunk_range h (MH.write_word_in_chunk (Ghost.reveal c) addr v))
+}
+
+fn read_word_in_prepended_chunk (h: major_heap_t)
+                                (addr: Base.hp_addr)
+                                (#mh: Ghost.erased MH.major_heap)
+                                (#c: Ghost.erased (c0:MH.heap_chunk{MH.word_in_chunk c0 addr}))
+  requires chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c))
+  returns v: U64.t
+  ensures chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c)) **
+          pure (v == MH.read_word_in_chunk (Ghost.reveal c) addr)
+{
+  split_prepended_chunk_range h #mh #(Ghost.hide (Ghost.reveal c));
+  let v = read_word_in_chunk h addr #c;
+  prepend_chunk_range h #mh #(Ghost.hide (Ghost.reveal c));
+  v
+}
+
+fn write_word_in_prepended_chunk (h: major_heap_t)
+                                 (addr: Base.hp_addr)
+                                 (v: U64.t)
+                                 (#mh: Ghost.erased MH.major_heap)
+                                 (#c: Ghost.erased (c0:MH.heap_chunk{MH.word_in_chunk c0 addr}))
+  requires chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (Ghost.reveal c))
+  ensures chunk_ranges h (MH.add_chunk (Ghost.reveal mh) (MH.write_word_in_chunk (Ghost.reveal c) addr v))
+{
+  split_prepended_chunk_range h #mh #(Ghost.hide (Ghost.reveal c));
+  write_word_in_chunk h addr v #c;
+  prepend_chunk_range h #mh #(Ghost.hide (MH.write_word_in_chunk (Ghost.reveal c) addr v))
 }
