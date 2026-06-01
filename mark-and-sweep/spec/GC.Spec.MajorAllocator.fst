@@ -60,6 +60,12 @@ let fresh_chunk_object_word (c: MH.heap_chunk)
     assert (U64.v (fresh_chunk_object c) == U64.v c.base + U64.v mword);
     assert (U64.v (fresh_chunk_object c) + U64.v mword <= MH.chunk_end c)
 
+let aligned_lt_heap_has_word_room (a: nat)
+  : Lemma (requires a < heap_size /\ a % U64.v mword == 0)
+          (ensures a + U64.v mword <= heap_size)
+  = FStar.Math.Lemmas.lemma_div_exact a (U64.v mword);
+    FStar.Math.Lemmas.lemma_div_exact heap_size (U64.v mword)
+
 let fresh_chunk_object_in_chunk (c: MH.heap_chunk)
   : Lemma (MH.obj_addr_in_chunk c (fresh_chunk_object c) /\
            MH.pointer_in_chunk c (fresh_chunk_object c))
@@ -588,6 +594,26 @@ let major_write_word_or_same_none (mh: MH.major_heap) (addr: hp_addr) (value: U6
           (ensures major_write_word_or_same mh addr value == mh)
   = ()
 
+#push-options "--split_queries always"
+let major_write_word_or_same_single_chunk_compat (g: heap)
+                                               (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
+                                                              U64.v addr + U64.v mword <= heap_size})
+                                               (value: U64.t)
+  : Lemma (major_write_word_or_same (MH.single_chunk_major_heap g) addr value ==
+           MH.single_chunk_major_heap (write_word g addr value))
+  = MH.single_chunk_write_word_compat g addr value;
+    match MH.write_word_in_major (MH.single_chunk_major_heap g) addr value with
+    | None -> assert False
+    | Some mh' -> assert (mh' == MH.single_chunk_major_heap (write_word g addr value))
+#pop-options
+
+let major_spec_next_fp_single_chunk_compat (g: heap)
+                                          (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma (major_spec_next_fp (MH.single_chunk_major_heap g) obj == Alloc.spec_next_fp g obj)
+  = MH.single_chunk_read_word_compat g obj;
+    Alloc.spec_next_fp_eq g obj;
+    major_spec_next_fp_some (MH.single_chunk_major_heap g) obj (read_word g obj)
+
 let major_alloc_from_block_missing_header (mh: MH.major_heap) (obj: obj_addr)
                                           (wz: nat) (next: U64.t)
   : Lemma (requires MH.read_word_in_major mh (hd_address obj) == None)
@@ -639,8 +665,82 @@ let major_alloc_from_block_split_normal (mh: MH.major_heap) (obj: obj_addr)
                     major_alloc_from_block mh obj wz next == (mh3, U64.uint_to_t ron)))
   = ()
 
+#push-options "--split_queries always"
+let major_alloc_from_block_single_chunk_compat (g: heap)
+                                             (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+                                             (wz: nat) (next: U64.t)
+  : Lemma (requires (let hdr = read_word g (hd_address obj) in
+                     U64.v (Obj.getWosize hdr) >= wz))
+          (ensures major_alloc_from_block (MH.single_chunk_major_heap g) obj wz next ==
+           (let (g', fp') = Alloc.alloc_from_block g obj wz next in
+            (MH.single_chunk_major_heap g', fp')))
+  = let mh = MH.single_chunk_major_heap g in
+    let hd = hd_address obj in
+    hd_address_spec obj;
+    assert (U64.v hd >= U64.v zero_addr);
+    hd_address_bounds obj;
+    MH.single_chunk_read_word_compat g hd;
+    let hdr = read_word g hd in
+    assert (MH.read_word_in_major mh hd == Some hdr);
+    let block_wz = U64.v (Obj.getWosize hdr) in
+    let leftover = block_wz - wz in
+    if block_wz < wz then begin
+      assert False
+    end else if leftover >= 2 then begin
+      let alloc_hdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+      let g1 = write_word g hd alloc_hdr in
+      major_write_word_or_same_single_chunk_compat g hd alloc_hdr;
+      let mh1 = MH.single_chunk_major_heap g1 in
+      assert (major_write_word_or_same mh hd alloc_hdr == mh1);
+      let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
+      FStar.Math.Lemmas.cancel_mul_mod (1 + wz) 8;
+      FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v hd) ((1 + wz) * 8) 8;
+      assert (rem_hd_nat % 8 == 0);
+      if rem_hd_nat >= heap_size || rem_hd_nat >= pow2 64 ||
+         rem_hd_nat % 8 <> 0 then begin
+        assert (rem_hd_nat >= heap_size);
+        Alloc.alloc_from_block_split_rem_hd_oob g obj wz next
+      end else begin
+        let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+        assert (U64.v rem_hd >= U64.v zero_addr);
+        aligned_lt_heap_has_word_room rem_hd_nat;
+        let rem_wz = leftover - 1 in
+        let rem_hdr = Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+        let g2 = write_word g1 rem_hd rem_hdr in
+        major_write_word_or_same_single_chunk_compat g1 rem_hd rem_hdr;
+        let mh2 = MH.single_chunk_major_heap g2 in
+        assert (major_write_word_or_same mh1 rem_hd rem_hdr == mh2);
+        let rem_obj_nat = rem_hd_nat + 8 in
+        FStar.Math.Lemmas.pow2_lt_compat 64 57;
+        assert_norm (pow2 57 + 8 < pow2 64);
+        assert (rem_obj_nat < pow2 64);
+        sum_of_aligned_is_aligned rem_hd mword;
+        assert (rem_obj_nat == U64.v rem_hd + U64.v mword);
+        assert (rem_obj_nat % U64.v mword == 0);
+        if rem_obj_nat >= heap_size || rem_obj_nat >= pow2 64 ||
+           rem_obj_nat % 8 <> 0 then begin
+          assert (rem_obj_nat >= heap_size);
+          Alloc.alloc_from_block_split_rem_obj_oob g obj wz next
+        end else begin
+          let rem_field : hp_addr = U64.uint_to_t rem_obj_nat in
+          assert (U64.v rem_field >= U64.v zero_addr);
+          aligned_lt_heap_has_word_room rem_obj_nat;
+          let g3 = write_word g2 rem_field next in
+          major_write_word_or_same_single_chunk_compat g2 rem_field next;
+          major_alloc_from_block_split_normal mh obj wz next hdr;
+          Alloc.alloc_from_block_split_normal g obj wz next
+        end
+      end
+    end else begin
+      let alloc_hdr = Alloc.make_header (U64.uint_to_t block_wz) Alloc.white_bits 0UL in
+      major_write_word_or_same_single_chunk_compat g hd alloc_hdr;
+      major_alloc_from_block_exact mh obj wz next hdr;
+      Alloc.alloc_from_block_exact g obj wz next
+    end
+#pop-options
+
 let major_alloc_search_missing_header (mh: MH.major_heap) (head prev cur: U64.t)
-                                      (wz: nat) (fuel: nat)
+                                     (wz: nat) (fuel: nat)
   : Lemma (requires fuel > 0 /\
                     U64.v cur >= U64.v zero_addr + U64.v mword /\
                     U64.v cur < heap_size /\
@@ -698,6 +798,74 @@ let major_alloc_search_found_prev (mh: MH.major_heap) (head prev cur: U64.t)
                     major_alloc_search mh head prev cur wz fuel ==
                     { major_alloc_out = mh2; major_fp_out = head; major_obj_out = cur }))
   = ()
+
+let major_result_of_alloc_result (r: Alloc.alloc_result) : major_alloc_result =
+  { major_alloc_out = MH.single_chunk_major_heap r.heap_out;
+    major_fp_out = r.fp_out;
+    major_obj_out = r.obj_out }
+
+#push-options "--split_queries always"
+let rec major_alloc_search_single_chunk_compat (g: heap) (head prev cur: U64.t)
+                                              (wz: nat) (fuel: nat)
+  : Lemma (requires prev = 0UL \/
+                    (U64.v prev >= U64.v zero_addr + U64.v mword /\
+                    U64.v prev < heap_size /\
+                    U64.v prev % U64.v mword = 0))
+          (ensures major_alloc_search (MH.single_chunk_major_heap g) head prev cur wz fuel ==
+                   major_result_of_alloc_result (Alloc.alloc_search g head prev cur wz fuel))
+          (decreases fuel)
+  = let mh = MH.single_chunk_major_heap g in
+    if fuel = 0 then begin
+      major_alloc_search_fuel_0 mh head prev cur wz;
+      Alloc.alloc_search_fuel_0 g head prev cur wz
+    end else if U64.v cur < U64.v zero_addr + U64.v mword ||
+                U64.v cur >= heap_size ||
+                U64.v cur % U64.v mword <> 0 then begin
+      major_alloc_search_invalid mh head prev cur wz fuel;
+      Alloc.alloc_search_invalid g head prev cur wz fuel
+    end else begin
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      let obj : obj_addr = cur in
+      let hd = hd_address obj in
+      hd_address_spec obj;
+      assert (U64.v hd >= U64.v zero_addr);
+      hd_address_bounds obj;
+      MH.single_chunk_read_word_compat g hd;
+      let hdr = read_word g hd in
+      assert (MH.read_word_in_major mh hd == Some hdr);
+      let block_wz = U64.v (Obj.getWosize hdr) in
+      if block_wz < wz then begin
+        major_alloc_search_advance mh head prev cur wz fuel hdr;
+        Alloc.alloc_search_advance g head prev cur wz fuel;
+        major_spec_next_fp_single_chunk_compat g obj;
+        major_alloc_search_single_chunk_compat g head cur (Alloc.spec_next_fp g obj) wz fuel'
+      end else if prev = 0UL then begin
+        major_alloc_search_found_head mh head prev cur wz fuel hdr;
+        Alloc.alloc_search_found_head g head prev cur wz fuel;
+        major_spec_next_fp_single_chunk_compat g obj;
+        major_alloc_from_block_single_chunk_compat g obj wz (Alloc.spec_next_fp g obj)
+      end else begin
+        assert (U64.v prev >= U64.v zero_addr + U64.v mword);
+        assert (U64.v prev < heap_size);
+        assert (U64.v prev % U64.v mword == 0);
+        assert (U64.v prev >= U64.v mword);
+        major_alloc_search_found_prev mh head prev cur wz fuel hdr;
+        Alloc.alloc_search_found_prev g head prev cur wz fuel;
+        major_spec_next_fp_single_chunk_compat g obj;
+        major_alloc_from_block_single_chunk_compat g obj wz (Alloc.spec_next_fp g obj);
+        let (g', new_fp) = Alloc.alloc_from_block g obj wz (Alloc.spec_next_fp g obj) in
+        let prev_addr : hp_addr = prev in
+        aligned_lt_heap_has_word_room (U64.v prev);
+        major_write_word_or_same_single_chunk_compat g' prev_addr new_fp
+      end
+    end
+#pop-options
+
+let major_alloc_spec_with_fuel_single_chunk_compat (g: heap) (fp: U64.t)
+                                                  (requested_wz fuel: nat)
+  : Lemma (major_alloc_spec_with_fuel (MH.single_chunk_major_heap g) fp requested_wz fuel ==
+           major_result_of_alloc_result (Alloc.alloc_spec_with_fuel g fp requested_wz fuel))
+  = major_alloc_search_single_chunk_compat g fp 0UL fp (Alloc.normalized_wosize requested_wz) fuel
 
 #push-options "--z3rlimit 80"
 let major_alloc_after_expand_returns_fresh (mh: MH.major_heap) (c: MH.heap_chunk)

@@ -431,6 +431,98 @@ let single_chunk_read_word_compat (g: heap)
     lookup_add_chunk_hit Seq.empty c addr;
     single_chunk_read_word_in_chunk_compat g addr
 
+#push-options "--split_queries always"
+let single_chunk_write_word_in_chunk_compat (g: heap)
+                                            (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
+                                                           U64.v addr + U64.v mword <= heap_size})
+                                            (value: U64.t)
+  : Lemma (write_word_in_chunk (single_chunk_of_heap g) addr value ==
+           single_chunk_of_heap (write_word g addr value))
+  = let c = single_chunk_of_heap g in
+    assert (word_in_chunk c addr);
+    let c' = write_word_in_chunk c addr value in
+    let g' = write_word g addr value in
+  write_word_spec g addr value;
+  let off = chunk_offset c addr in
+    assert (off + U64.v zero_addr == U64.v addr);
+    assert (c'.base == (single_chunk_of_heap g').base);
+    assert (c'.size == (single_chunk_of_heap g').size);
+    assert (Seq.length c'.bytes == Seq.length (single_chunk_of_heap g').bytes);
+    let prove_i (i: nat{i < Seq.length c'.bytes})
+      : Lemma (Seq.index c'.bytes i == Seq.index (single_chunk_of_heap g').bytes i)
+      = let a = U64.v addr in
+        Seq.lemma_index_slice g' (U64.v zero_addr) heap_size i;
+        assert (i + U64.v zero_addr == U64.v zero_addr + i);
+        assert (Seq.index (single_chunk_of_heap g').bytes i == Seq.index g' (i + U64.v zero_addr));
+        assert (Seq.index (single_chunk_of_heap g').bytes i == Seq.index g' (U64.v zero_addr + i));
+        if i = off then begin
+          assert (U64.v zero_addr + i == a);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 value);
+          assert (Seq.index g' a == uint64_to_uint8 value)
+        end else if i = off + 1 then begin
+          assert (U64.v zero_addr + i == a + 1);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 8ul));
+          assert (Seq.index g' (a + 1) == uint64_to_uint8 (U64.shift_right value 8ul))
+        end else if i = off + 2 then begin
+          assert (U64.v zero_addr + i == a + 2);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 16ul));
+          assert (Seq.index g' (a + 2) == uint64_to_uint8 (U64.shift_right value 16ul))
+        end else if i = off + 3 then begin
+          assert (U64.v zero_addr + i == a + 3);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 24ul));
+          assert (Seq.index g' (a + 3) == uint64_to_uint8 (U64.shift_right value 24ul))
+        end else if i = off + 4 then begin
+          assert (U64.v zero_addr + i == a + 4);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 32ul));
+          assert (Seq.index g' (a + 4) == uint64_to_uint8 (U64.shift_right value 32ul))
+        end else if i = off + 5 then begin
+          assert (U64.v zero_addr + i == a + 5);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 40ul));
+          assert (Seq.index g' (a + 5) == uint64_to_uint8 (U64.shift_right value 40ul))
+        end else if i = off + 6 then begin
+          assert (U64.v zero_addr + i == a + 6);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 48ul));
+          assert (Seq.index g' (a + 6) == uint64_to_uint8 (U64.shift_right value 48ul))
+        end else if i = off + 7 then begin
+          assert (U64.v zero_addr + i == a + 7);
+          assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 56ul));
+          assert (Seq.index g' (a + 7) == uint64_to_uint8 (U64.shift_right value 56ul))
+        end else begin
+          assert (i <> off /\ i <> off + 1 /\ i <> off + 2 /\ i <> off + 3 /\
+                  i <> off + 4 /\ i <> off + 5 /\ i <> off + 6 /\ i <> off + 7);
+          assert (U64.v zero_addr + i <> a /\
+                  U64.v zero_addr + i <> a + 1 /\
+                  U64.v zero_addr + i <> a + 2 /\
+                  U64.v zero_addr + i <> a + 3 /\
+                  U64.v zero_addr + i <> a + 4 /\
+                  U64.v zero_addr + i <> a + 5 /\
+                  U64.v zero_addr + i <> a + 6 /\
+                  U64.v zero_addr + i <> a + 7);
+          assert (Seq.index c'.bytes i == Seq.index c.bytes i);
+          assert (Seq.index g' (U64.v zero_addr + i) == Seq.index g (U64.v zero_addr + i));
+          Seq.lemma_index_slice g (U64.v zero_addr) heap_size i;
+          assert (Seq.index c.bytes i == Seq.index g (i + U64.v zero_addr));
+          assert (Seq.index c.bytes i == Seq.index g (U64.v zero_addr + i))
+        end
+    in
+    FStar.Classical.forall_intro prove_i;
+    assert (forall i. i < Seq.length c'.bytes ==>
+              Seq.index c'.bytes i == Seq.index (single_chunk_of_heap g').bytes i);
+    Seq.lemma_eq_intro c'.bytes (single_chunk_of_heap g').bytes;
+    Seq.lemma_eq_elim c'.bytes (single_chunk_of_heap g').bytes
+#pop-options
+
+let single_chunk_write_word_compat (g: heap)
+                                   (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
+                                                  U64.v addr + U64.v mword <= heap_size})
+                                   (value: U64.t)
+  : Lemma (write_word_in_major (single_chunk_major_heap g) addr value ==
+           Some (single_chunk_major_heap (write_word g addr value)))
+  = let c = single_chunk_of_heap g in
+    assert (word_in_chunk c addr);
+    write_word_add_chunk_hit Seq.empty c addr value;
+    single_chunk_write_word_in_chunk_compat g addr value
+
 let next_object_start_aligned (start: hp_addr) (obj_size_words: nat)
   : Lemma (requires U64.v start % U64.v mword == 0)
           (ensures (U64.v start + obj_size_words * U64.v mword) % U64.v mword == 0)
