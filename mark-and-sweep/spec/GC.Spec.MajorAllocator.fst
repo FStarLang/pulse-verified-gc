@@ -874,6 +874,21 @@ let ensure_major_capacity_wf (mh: MH.major_heap) (fp: obj_addr)
     else
       expand_major_heap_wf mh fresh fp
 
+let ensure_major_capacity_preserves_old_read
+  (mh: MH.major_heap) (fp: obj_addr) (fuel needed: nat)
+  (fresh: MH.heap_chunk) (addr: hp_addr)
+  : Lemma
+      (requires (major_fl_capacity mh fp fuel < needed ==>
+                ~(MH.chunk_contains_addr fresh addr)))
+      (ensures MH.read_word_in_major
+                (ensure_major_capacity_spec
+                  mh fp fuel needed fresh).capacity_major_out
+                addr ==
+              MH.read_word_in_major mh addr)
+  = if major_fl_capacity mh fp fuel >= needed then ()
+    else
+      expand_major_heap_old_read mh fresh fp addr
+
 type major_alloc_result = {
   major_alloc_out: MH.major_heap;
   major_fp_out: U64.t;

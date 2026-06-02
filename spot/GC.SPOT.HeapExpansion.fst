@@ -50,3 +50,43 @@ let spot_expand_on_oom_allocates_fresh_and_preserves_old_read
   assert (U64.v (SpecMajorAlloc.fresh_chunk_object fresh) >= U64.v fresh.base + U64.v mword);
   assert (U64.v (SpecMajorAlloc.fresh_chunk_object fresh) >= U64.v mword);
   assert (SpecMajorAlloc.fresh_chunk_object fresh <> 0UL)
+
+let spot_ensure_capacity_pre
+  (mh: MH.major_heap) (fp: obj_addr) (fuel needed: nat)
+  (fresh: MH.heap_chunk) (old_addr: hp_addr) (old_value: U64.t) : Tot prop =
+  MH.well_formed_major_heap mh /\
+  SpecMajorAlloc.major_fl_valid mh fp fuel /\
+  SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+  SpecMajorAlloc.major_fl_capacity mh fp fuel < needed /\
+  MH.chunk_disjoint_from_all fresh mh /\
+  SpecMajorAlloc.fresh_chunk_wosize fresh +
+    SpecMajorAlloc.major_fl_capacity mh fp fuel >= needed /\
+  fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+  U64.v fresh.base >= U64.v zero_addr /\
+  ~(MH.chunk_contains_addr fresh old_addr) /\
+  MH.read_word_in_major mh old_addr == Some old_value
+
+let spot_ensure_capacity_expands_and_preserves_old_read
+  (mh: MH.major_heap) (fp: obj_addr) (fuel needed: nat)
+  (fresh: MH.heap_chunk) (old_addr: hp_addr) (old_value: U64.t)
+  : Lemma
+      (requires spot_ensure_capacity_pre
+        mh fp fuel needed fresh old_addr old_value)
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_capacity_spec
+             mh fp fuel needed fresh in
+         SpecMajorAlloc.major_fl_capacity
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed /\
+         SpecMajorAlloc.major_fl_valid
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_above_zero
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         MH.well_formed_major_heap r.capacity_major_out /\
+         MH.read_word_in_major r.capacity_major_out old_addr == Some old_value))
+  =
+  SpecMajorAlloc.ensure_major_capacity_has_capacity mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_fl_valid mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_fl_above_zero mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_wf mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_preserves_old_read mh fp fuel needed fresh old_addr

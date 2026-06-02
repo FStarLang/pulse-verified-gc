@@ -28,3 +28,26 @@ val spot_expand_on_oom_allocates_fresh_and_preserves_old_read
          ~(FStar.Seq.mem
             (SpecMajorAlloc.fresh_chunk_object fresh)
             (MH.major_objects mh))))
+
+val spot_ensure_capacity_pre
+  : mh:MH.major_heap -> fp:obj_addr -> fuel:nat -> needed:nat ->
+    fresh:MH.heap_chunk -> old_addr:hp_addr -> old_value:U64.t -> Tot prop
+
+val spot_ensure_capacity_expands_and_preserves_old_read
+  : mh:MH.major_heap -> fp:obj_addr -> fuel:nat -> needed:nat ->
+    fresh:MH.heap_chunk -> old_addr:hp_addr -> old_value:U64.t ->
+    Lemma
+      (requires spot_ensure_capacity_pre
+        mh fp fuel needed fresh old_addr old_value)
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh in
+         SpecMajorAlloc.major_fl_capacity
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed /\
+         SpecMajorAlloc.major_fl_valid
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_above_zero
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         MH.well_formed_major_heap r.capacity_major_out /\
+         MH.read_word_in_major r.capacity_major_out old_addr == Some old_value))
