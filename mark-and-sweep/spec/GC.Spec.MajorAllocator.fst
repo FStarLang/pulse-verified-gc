@@ -1096,6 +1096,56 @@ let major_alloc_head_split (mh: MH.major_heap) (fp: obj_addr)
     major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
 #pop-options
 
+#push-options "--z3rlimit 50 --split_queries always --fuel 0 --ifuel 0"
+let indexed_chunk_write_preserves_word_no_prior
+  (mh: MH.major_heap)
+  (write_idx target_idx: nat)
+  (write_addr target_addr: hp_addr)
+  (value: U64.t)
+  : Lemma (requires write_idx < Seq.length mh /\
+                    target_idx < Seq.length mh /\
+                    MH.word_in_chunk (Seq.index mh write_idx) write_addr /\
+                    MH.word_in_chunk (Seq.index mh target_idx) target_addr /\
+                    (forall (k:nat). k < target_idx ==>
+                      ~(MH.word_in_chunk (Seq.index mh k) target_addr)))
+          (ensures (let c' =
+                      MH.write_word_in_chunk
+                        (Seq.index mh write_idx) write_addr value in
+                    let mh' = Seq.upd mh write_idx c' in
+                    target_idx < Seq.length mh' /\
+                    MH.word_in_chunk (Seq.index mh' target_idx) target_addr /\
+                    (forall (k:nat). k < target_idx ==>
+                      ~(MH.word_in_chunk (Seq.index mh' k) target_addr))))
+  = let c = Seq.index mh write_idx in
+    let c' = MH.write_word_in_chunk c write_addr value in
+    let mh' = Seq.upd mh write_idx c' in
+    assert (Seq.length mh' == Seq.length mh);
+    MH.write_word_in_chunk_preserves_range c write_addr value;
+    if target_idx = write_idx then begin
+      assert (Seq.index mh' target_idx == c');
+      MH.write_word_in_chunk_preserves_word c write_addr value target_addr
+    end else
+      assert (Seq.index mh' target_idx == Seq.index mh target_idx);
+    let no_prior (k: nat{k < target_idx})
+      : Lemma (~(MH.word_in_chunk (Seq.index mh' k) target_addr))
+      = if k = write_idx then begin
+          assert (Seq.index mh' k == c');
+          if MH.word_in_chunk (Seq.index mh' k) target_addr then begin
+            assert (MH.word_in_chunk c' target_addr);
+            assert (MH.chunk_start c' == MH.chunk_start c);
+            assert (MH.chunk_end c' == MH.chunk_end c);
+            assert (MH.word_in_chunk c target_addr);
+            assert (MH.word_in_chunk (Seq.index mh k) target_addr);
+            assert False
+          end
+        end else begin
+          assert (Seq.index mh' k == Seq.index mh k);
+          assert (~(MH.word_in_chunk (Seq.index mh k) target_addr))
+        end
+    in
+    FStar.Classical.forall_intro no_prior
+#pop-options
+
 #push-options "--z3rlimit 60 --split_queries always"
 let rec chunks_pairwise_index_disjoint (mh: MH.major_heap) (i j: nat)
   : Lemma (requires MH.chunks_pairwise_disjoint mh /\

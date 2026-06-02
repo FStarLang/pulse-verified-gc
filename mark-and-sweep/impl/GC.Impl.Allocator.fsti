@@ -10,6 +10,8 @@ module GC.Impl.Allocator
 
 #lang-pulse
 
+#set-options "--split_queries always"
+
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -264,6 +266,49 @@ fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
                  SpecMajorAlloc.major_alloc_search
                   (Ghost.reveal mh) head cur next_fp
                   (SpecAlloc.normalized_wosize (U64.v requested_wz)) (fuel - 1))
+
+/// Allocate a too-large/sufficient current free block reached after at least one
+/// previous free-list node, in the no-split case. The previous node's link is
+/// updated to the successor/remainder returned by allocation.
+fn allocate_major_found_prev_no_split (heap: MajorHeap.major_heap_t)
+                                     (head: U64.t) (prev: obj_addr)
+                                     (base: hp_addr) (cur: obj_addr)
+                                     (block_wz requested_wz: wosize)
+                                     (next_fp: U64.t)
+                                     (#fuel: (f:nat{f > 0}))
+                                     (#cur_idx: nat) (#prev_idx: nat)
+                                     (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (cur_idx < Seq.length (Ghost.reveal mh) /\
+                  prev_idx < Seq.length (Ghost.reveal mh) /\
+                  base == SpecHeap.hd_address cur /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) base == Some cur_idx /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) cur_idx) base /\
+                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) prev_idx) prev /\
+                  (forall (k:nat). k < prev_idx ==>
+                   ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) prev)) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base ==
+                   Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) cur == Some next_fp /\
+                  U64.v prev > 0 /\
+                  U64.v cur >= U64.v zero_addr + U64.v mword /\
+                  U64.v block_wz >=
+                   SpecAlloc.normalized_wosize (U64.v requested_wz) /\
+                  U64.v block_wz -
+                   SpecAlloc.normalized_wosize (U64.v requested_wz) < 2)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SpecMajorAlloc.major_alloc_search
+                  (Ghost.reveal mh) head prev cur
+                  (SpecAlloc.normalized_wosize (U64.v requested_wz)) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                  SpecMajorAlloc.major_alloc_search
+                    (Ghost.reveal mh) head prev cur
+                    (SpecAlloc.normalized_wosize (U64.v requested_wz)) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
 
 /// Initialize an already-owned fresh chunk as one blue free-list block.
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
