@@ -2444,6 +2444,94 @@ fn allocate_major_found_prev_from_read_above_zero
     #fuel #cur_header_idx #cur_link_idx #prev_idx #mh
 }
 
+let major_found_prev_alloc_at (heap: MajorHeap.major_heap_t)
+                              (head: U64.t)
+                              (prev: obj_addr)
+                              (base: hp_addr)
+                              (cur: obj_addr)
+                              (requested_wz: wosize)
+                              (fuel cur_header_idx cur_link_idx prev_idx: nat)
+                              (mh: MH.major_heap)
+  : slprop =
+  MajorHeap.is_indexed_major_heap heap mh **
+  pure (fuel > 0 /\
+        cur_header_idx < Seq.length mh /\
+        cur_link_idx < Seq.length mh /\
+        prev_idx < Seq.length mh /\
+        base == SH.hd_address cur /\
+        MH.lookup_chunk_index mh base == Some cur_header_idx /\
+        MH.lookup_chunk_index mh cur == Some cur_link_idx /\
+        MH.word_in_chunk (Seq.index mh cur_header_idx) base /\
+        MH.word_in_chunk (Seq.index mh cur_link_idx) cur /\
+        MH.word_in_chunk (Seq.index mh prev_idx) prev /\
+        (forall (k:nat). k < prev_idx ==>
+          ~(MH.word_in_chunk (Seq.index mh k) prev)) /\
+        SMA.major_fl_valid mh cur fuel /\
+        SMA.major_fl_above_zero mh cur fuel /\
+        U64.v requested_wz > 0 /\
+        (match MH.read_word_in_major mh base with
+         | Some hdr ->
+           U64.v (SO.getWosize hdr) >= U64.v requested_wz /\
+           U64.v base + (1 + U64.v (SO.getWosize hdr)) * 8 <=
+             MH.chunk_end (Seq.index mh cur_header_idx)
+         | None -> False))
+
+let major_found_prev_alloc_witnesses (heap: MajorHeap.major_heap_t)
+                                     (head: U64.t)
+                                     (prev: obj_addr)
+                                     (base: hp_addr)
+                                     (cur: obj_addr)
+                                     (requested_wz: wosize)
+                                     (fuel: nat)
+                                     (mh: MH.major_heap)
+  : slprop =
+  exists* (cur_header_idx:nat) (cur_link_idx:nat) (prev_idx:nat).
+    major_found_prev_alloc_at
+      heap head prev base cur requested_wz fuel
+      cur_header_idx cur_link_idx prev_idx mh
+
+fn allocate_major_found_prev_from_read_exists (heap: MajorHeap.major_heap_t)
+                                             (head: U64.t)
+                                             (prev: obj_addr)
+                                             (base: hp_addr)
+                                             (cur: obj_addr)
+                                             (requested_wz: wosize)
+                                             (#fuel: (f:nat{f > 0}))
+                                             (#mh: Ghost.erased MH.major_heap)
+   requires major_found_prev_alloc_witnesses
+              heap head prev base cur requested_wz fuel (Ghost.reveal mh)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SMA.major_alloc_search
+                  (Ghost.reveal mh) head prev cur
+                  (SA.normalized_wosize (U64.v requested_wz)) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                  SMA.major_alloc_search
+                    (Ghost.reveal mh) head prev cur
+                    (SA.normalized_wosize (U64.v requested_wz)) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+{
+  unfold (major_found_prev_alloc_witnesses
+            heap head prev base cur requested_wz fuel (Ghost.reveal mh));
+  with cur_header_idx cur_link_idx prev_idx. assert (
+    major_found_prev_alloc_at
+      heap head prev base cur requested_wz fuel
+      cur_header_idx cur_link_idx prev_idx (Ghost.reveal mh)
+  );
+  unfold (major_found_prev_alloc_at
+    heap head prev base cur requested_wz fuel
+    cur_header_idx cur_link_idx prev_idx (Ghost.reveal mh));
+  allocate_major_found_prev_from_read_above_zero
+    heap head prev base cur requested_wz #fuel
+    #(Ghost.hide cur_header_idx)
+    #(Ghost.hide cur_link_idx)
+    #(Ghost.hide prev_idx)
+    #mh
+}
+
 fn allocate_major_after_advance_from_read (heap: MajorHeap.major_heap_t)
                                          (head prev: U64.t)
                                          (cur_base: hp_addr) (cur: obj_addr)
