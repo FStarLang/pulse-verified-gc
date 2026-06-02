@@ -169,6 +169,221 @@ let chunked_classify_major_field_preserved_by_expansion
     chunked_major_member_preserved_by_expansion mh fresh fp (v <: obj_addr)
   else ()
 
+let chunked_classify_minor_field_preserved_by_expansion_guarded
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (v: U64.t)
+  : Lemma
+      (requires
+        MH.chunk_disjoint_from_all fresh mh /\
+        (let vo = to_minor_offset v in
+         ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms)) ==>
+           ~(MH.pointer_in_chunk fresh v)))
+      (ensures
+        chunked_classify_minor_field ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        chunked_classify_minor_field ms mh v)
+  =
+  let vo = to_minor_offset v in
+  if is_minor_addr vo && Seq.mem vo (minor_objects ms) then ()
+  else if is_val_addr v then begin
+    assert (~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms)));
+    assert (~(MH.pointer_in_chunk fresh v));
+    chunked_major_member_preserved_by_expansion mh fresh fp (v <: obj_addr)
+  end
+  else ()
+
+let rec chunked_minor_field_edges (ms: minor_state) (mh: MH.major_heap)
+                                   (src: U64.t) (wz: nat) (i: nat)
+  : GTot (seq combined_edge) (decreases (wz - i))
+  = if i >= wz then Seq.empty
+    else
+      let v = minor_read_field ms src i in
+      let rest = chunked_minor_field_edges ms mh src wz (i + 1) in
+      match chunked_classify_minor_field ms mh v with
+      | Some dst -> Seq.cons (MinorV src, dst) rest
+      | None -> rest
+
+let chunked_minor_field_expansion_safe
+  (ms: minor_state) (fresh: MH.heap_chunk) (src: U64.t) (wz: nat) (i: nat)
+  : Tot prop =
+  forall (j:nat).
+    i <= j /\ j < wz ==> (
+      let v = minor_read_field ms src j in
+      let vo = to_minor_offset v in
+      ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms)) ==>
+        ~(MH.pointer_in_chunk fresh v))
+
+let chunked_minor_field_expansion_safe_intro
+  (ms: minor_state) (fresh: MH.heap_chunk) (src: U64.t) (wz: nat) (i: nat)
+  : Lemma
+      (requires
+        (forall (j:nat).
+          i <= j /\ j < wz ==> (
+            let v = minor_read_field ms src j in
+            let vo = to_minor_offset v in
+            ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms)) ==>
+              ~(MH.pointer_in_chunk fresh v))))
+      (ensures chunked_minor_field_expansion_safe ms fresh src wz i)
+  = ()
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_minor_field_expansion_safe_at
+  (ms: minor_state) (fresh: MH.heap_chunk) (src: U64.t)
+  (wz i j: nat)
+  : Lemma
+      (requires chunked_minor_field_expansion_safe ms fresh src wz i /\
+                i <= j /\ j < wz)
+      (ensures (
+        let v = minor_read_field ms src j in
+        let vo = to_minor_offset v in
+        ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms)) ==>
+          ~(MH.pointer_in_chunk fresh v)))
+  = ()
+#pop-options
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_minor_field_expansion_safe_tail
+  (ms: minor_state) (fresh: MH.heap_chunk) (src: U64.t) (wz: nat) (i: nat)
+  : Lemma
+      (requires i < wz /\
+                chunked_minor_field_expansion_safe ms fresh src wz i)
+      (ensures chunked_minor_field_expansion_safe ms fresh src wz (i + 1))
+  =
+  assert (i <= i + 1);
+  assert (forall (j:nat).
+    i + 1 <= j /\ j < wz ==> i <= j /\ j < wz)
+#pop-options
+
+let rec chunked_minor_field_edges_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (src: U64.t) (wz: nat) (i: nat)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_minor_field_expansion_safe ms fresh src wz i)
+      (ensures
+        chunked_minor_field_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out src wz i ==
+        chunked_minor_field_edges ms mh src wz i)
+      (decreases (wz - i))
+  =
+  if i >= wz then ()
+  else begin
+    chunked_minor_field_expansion_safe_tail ms fresh src wz i;
+    chunked_minor_field_edges_preserved_by_expansion
+      ms mh fresh fp src wz (i + 1);
+    assert (i <= i);
+    assert (i < wz);
+    chunked_minor_field_expansion_safe_at ms fresh src wz i i;
+    chunked_classify_minor_field_preserved_by_expansion_guarded
+      ms mh fresh fp (minor_read_field ms src i)
+  end
+
+let chunked_minor_object_edges
+  (ms: minor_state) (mh: MH.major_heap) (obj: U64.t)
+  : GTot (seq combined_edge)
+  = chunked_minor_field_edges ms mh obj (minor_wosize ms obj) 0
+
+let chunked_minor_object_expansion_safe
+  (ms: minor_state) (fresh: MH.heap_chunk) (obj: U64.t)
+  : Tot prop =
+  chunked_minor_field_expansion_safe ms fresh obj (minor_wosize ms obj) 0
+
+let chunked_minor_object_expansion_safe_intro
+  (ms: minor_state) (fresh: MH.heap_chunk) (obj: U64.t)
+  : Lemma
+      (requires
+        chunked_minor_field_expansion_safe
+          ms fresh obj (minor_wosize ms obj) 0)
+      (ensures chunked_minor_object_expansion_safe ms fresh obj)
+  = ()
+
+let chunked_minor_object_expansion_safe_fields
+  (ms: minor_state) (fresh: MH.heap_chunk) (obj: U64.t)
+  : Lemma
+      (requires chunked_minor_object_expansion_safe ms fresh obj)
+      (ensures
+        chunked_minor_field_expansion_safe
+          ms fresh obj (minor_wosize ms obj) 0)
+  = ()
+
+let chunked_minor_object_edges_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (obj: U64.t)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_minor_object_expansion_safe ms fresh obj)
+      (ensures
+        chunked_minor_object_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_minor_object_edges ms mh obj)
+  =
+  chunked_minor_object_expansion_safe_fields ms fresh obj;
+  chunked_minor_field_edges_preserved_by_expansion
+    ms mh fresh fp obj (minor_wosize ms obj) 0
+
+let rec chunked_all_minor_edges
+  (ms: minor_state) (mh: MH.major_heap) (objs: seq U64.t) (idx: nat)
+  : GTot (seq combined_edge) (decreases (Seq.length objs - idx))
+  = if idx >= Seq.length objs then Seq.empty
+    else
+      let obj = Seq.index objs idx in
+      Seq.append
+        (chunked_minor_object_edges ms mh obj)
+        (chunked_all_minor_edges ms mh objs (idx + 1))
+
+let chunked_all_minor_expansion_safe
+  (ms: minor_state) (fresh: MH.heap_chunk) (objs: seq U64.t) (idx: nat)
+  : Tot prop =
+  forall (k:nat).
+    idx <= k /\ k < Seq.length objs ==>
+      chunked_minor_object_expansion_safe ms fresh (Seq.index objs k)
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_all_minor_expansion_safe_at
+  (ms: minor_state) (fresh: MH.heap_chunk) (objs: seq U64.t) (idx k: nat)
+  : Lemma
+      (requires chunked_all_minor_expansion_safe ms fresh objs idx /\
+                idx <= k /\ k < Seq.length objs)
+      (ensures
+        chunked_minor_object_expansion_safe ms fresh (Seq.index objs k))
+  = ()
+#pop-options
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_all_minor_expansion_safe_tail
+  (ms: minor_state) (fresh: MH.heap_chunk) (objs: seq U64.t) (idx: nat)
+  : Lemma
+      (requires idx < Seq.length objs /\
+                chunked_all_minor_expansion_safe ms fresh objs idx)
+      (ensures chunked_all_minor_expansion_safe ms fresh objs (idx + 1))
+  =
+  assert (idx <= idx + 1);
+  assert (forall (k:nat).
+    idx + 1 <= k /\ k < Seq.length objs ==> idx <= k /\ k < Seq.length objs)
+#pop-options
+
+let rec chunked_all_minor_edges_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (objs: seq U64.t) (idx: nat)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_minor_expansion_safe ms fresh objs idx)
+      (ensures
+        chunked_all_minor_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out objs idx ==
+        chunked_all_minor_edges ms mh objs idx)
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then ()
+  else begin
+    let obj = Seq.index objs idx in
+    chunked_all_minor_expansion_safe_at ms fresh objs idx idx;
+    chunked_minor_object_edges_preserved_by_expansion ms mh fresh fp obj;
+    chunked_all_minor_expansion_safe_tail ms fresh objs idx;
+    chunked_all_minor_edges_preserved_by_expansion
+      ms mh fresh fp objs (idx + 1)
+  end
+
 let chunked_header_of_object (mh: MH.major_heap) (obj: obj_addr)
   : GTot (option U64.t)
   = MH.read_word_in_major mh (hd_address obj)
