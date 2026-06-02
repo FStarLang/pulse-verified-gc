@@ -2017,6 +2017,51 @@ fn expand_major_heap_owned (heap: MajorHeap.major_heap_t)
   fp_out
 }
 
+fn expand_major_heap_owned_above_zero (heap: MajorHeap.major_heap_t)
+                                      (base: hp_addr) (fp_out: obj_addr)
+                                      (wz: wosize) (next_fp: U64.t)
+                                      (#fuel: nat)
+                                      (#mh: Ghost.erased MH.major_heap)
+                                      (#fresh: Ghost.erased
+                                        (c:MH.heap_chunk{c.base == base /\
+                                                         fp_out == SMA.fresh_chunk_object c /\
+                                                         wz == SMA.fresh_chunk_wosize_u64 c}))
+  requires MajorHeap.chunk_range heap (Ghost.reveal fresh) **
+           MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh) (Ghost.reveal mh) /\
+                 U64.v base >= U64.v zero_addr /\
+                 next_fp <> fp_out /\
+                 SMA.major_fl_valid (Ghost.reveal mh) next_fp fuel /\
+                 SMA.major_fl_above_zero (Ghost.reveal mh) next_fp fuel)
+  returns new_fp: U64.t
+  ensures MajorHeap.is_indexed_major_heap heap
+            (SMA.expand_major_heap
+              (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).major_out **
+          pure (let er =
+                  SMA.expand_major_heap
+                    (Ghost.reveal mh) (Ghost.reveal fresh) next_fp in
+                new_fp == er.fp_out /\
+                SMA.major_fl_valid er.major_out new_fp (fuel + 1) /\
+                SMA.major_fl_above_zero er.major_out new_fp (fuel + 1))
+{
+  let new_fp =
+    expand_major_heap_owned heap base fp_out wz next_fp #mh #fresh;
+  assert (pure (new_fp == fp_out));
+  assert (pure (fp_out == SMA.fresh_chunk_object (Ghost.reveal fresh)));
+  assert (pure (next_fp <> SMA.fresh_chunk_object (Ghost.reveal fresh)));
+  SMA.expand_major_heap_links_fl_valid
+    (Ghost.reveal mh) (Ghost.reveal fresh) next_fp fuel;
+  SMA.expand_major_heap_links_fl_above_zero
+    (Ghost.reveal mh) (Ghost.reveal fresh) next_fp fuel;
+  assert (pure (let er =
+                  SMA.expand_major_heap
+                    (Ghost.reveal mh) (Ghost.reveal fresh) next_fp in
+                new_fp == er.fp_out /\
+                SMA.major_fl_valid er.major_out new_fp (fuel + 1) /\
+                SMA.major_fl_above_zero er.major_out new_fp (fuel + 1)));
+  new_fp
+}
+
 fn allocate_fresh_expanded_exact (heap: MajorHeap.major_heap_t)
                                  (base: hp_addr) (fp_out: obj_addr)
                                  (wz: wosize) (next_fp: U64.t)
