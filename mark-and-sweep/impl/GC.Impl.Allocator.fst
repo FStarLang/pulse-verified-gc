@@ -87,6 +87,11 @@ let u64_positive_not_zero (x: U64.t)
          (ensures x <> 0UL)
   = assert_norm (U64.v 0UL == 0)
 
+let u64_sub_one_value (x: U64.t)
+  : Lemma (requires U64.v x > 0)
+          (ensures U64.v (U64.sub x 1UL) == U64.v x - 1)
+  = assert_norm (U64.v 1UL == 1)
+
 /// wosize bounds from heap arithmetic
 let wosize_from_heap_lemma (wz: U64.t)
   : Lemma (requires U64.v wz <= heap_size / U64.v mword - 1 /\ heap_size <= pow2 57)
@@ -2152,9 +2157,18 @@ fn advance_major_search_from_read_above_zero (heap: MajorHeap.major_heap_t)
                   (Ghost.reveal mh) head cur next
                   (SA.normalized_wosize (U64.v requested_wz)) (fuel - 1))
 {
+  let block =
+    read_major_free_block heap cur #fuel #header_idx #link_idx #mh;
+  let hdr = fst block;
+  let next_fp = snd block;
+  let block_wz = SO.getWosize hdr;
+  assert (pure (MH.read_word_in_major (Ghost.reveal mh) base == Some hdr));
+  assert (pure (U64.v block_wz <
+                SA.normalized_wosize (U64.v requested_wz)));
   let next =
-    advance_major_search_from_read
-      heap head prev base cur requested_wz #fuel #header_idx #link_idx #mh;
+    advance_major_search_too_small
+      heap head prev base cur hdr block_wz requested_wz next_fp
+      #fuel #header_idx #mh;
   SMA.major_fl_above_zero_next (Ghost.reveal mh) cur fuel next;
   assert (pure (SMA.major_fl_above_zero
                   (Ghost.reveal mh) next (fuel - 1)));
@@ -2916,6 +2930,257 @@ fn allocate_major_after_advance_from_read_above_zero
                 snd res == r.major_obj_out));
   res
 }
+
+#push-options "--z3rlimit 120"
+fn allocate_major_with_fuel_loop (heap: MajorHeap.major_heap_t)
+                                (fp: U64.t)
+                                (requested_wz: wosize)
+                                (fuel: U64.t)
+                                (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (U64.v requested_wz > 0 /\
+                  SMA.major_fl_valid (Ghost.reveal mh) fp (U64.v fuel) /\
+                  SMA.major_fl_above_zero (Ghost.reveal mh) fp (U64.v fuel) /\
+                  SMA.major_fl_blocks_fit (Ghost.reveal mh) fp (U64.v fuel))
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SMA.major_alloc_spec_with_fuel
+                  (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+              r.major_alloc_out) **
+           pure (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+{
+  assert (pure (SA.normalized_wosize (U64.v requested_wz) ==
+               U64.v requested_wz));
+  let mut head_fp = fp;
+  let mut prev_fp = 0UL;
+  let mut cur_fp = fp;
+  let mut found = false;
+  let mut go = true;
+  let mut fuel_ref = fuel;
+
+  while (!go)
+   invariant exists* vgo vfuel vhead vprev vcur vfound.
+     R.pts_to go vgo **
+     R.pts_to fuel_ref vfuel **
+     R.pts_to head_fp vhead **
+     R.pts_to prev_fp vprev **
+     R.pts_to cur_fp vcur **
+     R.pts_to found vfound **
+     MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+     pure (
+       U64.v vfuel <= U64.v fuel /\
+       vhead == fp /\
+       (if vgo then
+         vfound == false /\
+         SMA.major_fl_valid (Ghost.reveal mh) vcur (U64.v vfuel) /\
+         SMA.major_fl_above_zero (Ghost.reveal mh) vcur (U64.v vfuel) /\
+         SMA.major_fl_blocks_fit (Ghost.reveal mh) vcur (U64.v vfuel) /\
+          (vprev == 0UL ==> vcur == vhead) /\
+          (vprev <> 0UL ==>
+            U64.v vprev >= U64.v zero_addr + U64.v mword /\
+            U64.v vprev < heap_size /\
+            U64.v vprev % U64.v mword == 0 /\
+            MH.read_word_in_major (Ghost.reveal mh) (vprev <: obj_addr) ==
+              Some vcur) /\
+          SMA.major_alloc_search
+            (Ghost.reveal mh) vhead vprev vcur
+            (SA.normalized_wosize (U64.v requested_wz)) (U64.v vfuel) ==
+          SMA.major_alloc_spec_with_fuel
+            (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel)
+        else
+          if vfound then
+            U64.v vfuel > 0 /\
+            U64.v vcur >= U64.v zero_addr + U64.v mword /\
+            U64.v vcur >= U64.v mword /\
+            U64.v vcur < heap_size /\
+            U64.v vcur % U64.v mword == 0 /\
+            SMA.major_fl_valid (Ghost.reveal mh) vcur (U64.v vfuel) /\
+            SMA.major_fl_above_zero (Ghost.reveal mh) vcur (U64.v vfuel) /\
+            SMA.major_fl_blocks_fit (Ghost.reveal mh) vcur (U64.v vfuel) /\
+            (vprev == 0UL ==> vcur == vhead) /\
+            (vprev <> 0UL ==>
+              U64.v vprev >= U64.v zero_addr + U64.v mword /\
+              U64.v vprev < heap_size /\
+              U64.v vprev % U64.v mword == 0 /\
+              MH.read_word_in_major (Ghost.reveal mh) (vprev <: obj_addr) ==
+                Some vcur) /\
+            (match MH.read_word_in_major (Ghost.reveal mh) (SH.hd_address (vcur <: obj_addr)) with
+             | Some hdr -> U64.v (SO.getWosize hdr) >= U64.v requested_wz
+             | None -> False) /\
+            SMA.major_alloc_search
+              (Ghost.reveal mh) vhead vprev vcur
+              (SA.normalized_wosize (U64.v requested_wz)) (U64.v vfuel) ==
+            SMA.major_alloc_spec_with_fuel
+              (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel)
+          else
+            (let r =
+               SMA.major_alloc_spec_with_fuel
+                 (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+             r.major_alloc_out == Ghost.reveal mh /\
+             r.major_fp_out == vhead /\
+             r.major_obj_out == 0UL))
+      )
+  {
+    let vfuel = !fuel_ref;
+    if U64.eq vfuel 0UL {
+      let vh = !head_fp;
+      let vp = !prev_fp;
+      let vc = !cur_fp;
+      SMA.major_alloc_search_fuel_0
+        (Ghost.reveal mh) vh vp vc
+        (SA.normalized_wosize (U64.v requested_wz));
+      assert (pure (let r =
+                      SMA.major_alloc_spec_with_fuel
+                        (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                    r.major_alloc_out == Ghost.reveal mh /\
+                    r.major_fp_out == vh /\
+                    r.major_obj_out == 0UL));
+      go := false
+    } else {
+      let vcur = !cur_fp;
+      let valid = is_valid_fp vcur;
+      if not valid {
+        let vh = !head_fp;
+        let vp = !prev_fp;
+        SMA.major_alloc_search_invalid
+          (Ghost.reveal mh) vh vp vcur
+          (SA.normalized_wosize (U64.v requested_wz)) (U64.v vfuel);
+        assert (pure (let r =
+                        SMA.major_alloc_spec_with_fuel
+                          (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                      r.major_alloc_out == Ghost.reveal mh /\
+                      r.major_fp_out == vh /\
+                      r.major_obj_out == 0UL));
+        go := false
+      } else {
+        let cur_obj : obj_addr = vcur;
+        let block =
+          read_major_free_block_by_valid
+            heap cur_obj #(U64.v vfuel) #mh;
+        let hdr = fst block;
+        let block_wz = getWosize hdr;
+        getWosize_eq hdr;
+        assert (pure (MH.read_word_in_major
+                        (Ghost.reveal mh) (SH.hd_address cur_obj) == Some hdr));
+        if U64.gte block_wz requested_wz {
+          assert (pure (U64.v (SO.getWosize hdr) >= U64.v requested_wz));
+          found := true;
+          go := false
+        } else {
+          assert (pure (U64.v (SO.getWosize hdr) <
+                        SA.normalized_wosize (U64.v requested_wz)));
+          let vh = !head_fp;
+          let vp = !prev_fp;
+          let next =
+            advance_major_search_by_valid
+              heap vh vp cur_obj requested_wz #(U64.v vfuel) #mh;
+          u64_sub_one_value vfuel;
+          assert (pure (U64.v (U64.sub vfuel 1UL) == U64.v vfuel - 1));
+          prev_fp := vcur;
+          cur_fp := next;
+          fuel_ref := U64.sub vfuel 1UL
+        }
+      }
+    }
+  };
+
+  let final_found = !found;
+  let final_head = !head_fp;
+  let final_prev = !prev_fp;
+  let final_cur = !cur_fp;
+  let final_fuel = !fuel_ref;
+  if final_found {
+    let cur_obj : obj_addr = final_cur;
+    if U64.eq final_prev 0UL {
+      let res =
+        allocate_major_head_by_valid
+          heap cur_obj requested_wz #(U64.v final_fuel) #mh;
+      assert (pure (SMA.major_alloc_spec_with_fuel
+                     (Ghost.reveal mh) cur_obj
+                     (U64.v requested_wz) (U64.v final_fuel) ==
+                    SMA.major_alloc_search
+                     (Ghost.reveal mh) fp 0UL cur_obj
+                     (SA.normalized_wosize (U64.v requested_wz))
+                     (U64.v final_fuel)));
+      assert (pure (let r =
+                     SMA.major_alloc_spec_with_fuel
+                       (Ghost.reveal mh) fp
+                       (U64.v requested_wz) (U64.v fuel) in
+                    (SMA.major_alloc_spec_with_fuel
+                     (Ghost.reveal mh) cur_obj
+                     (U64.v requested_wz)
+                     (U64.v final_fuel)).major_alloc_out ==
+                    r.major_alloc_out /\
+                    fst res == r.major_fp_out /\
+                    snd res == r.major_obj_out));
+      rewrite
+        (MajorHeap.is_indexed_major_heap heap
+          (SMA.major_alloc_spec_with_fuel
+            (Ghost.reveal mh) cur_obj
+            (U64.v requested_wz)
+            (U64.v final_fuel)).major_alloc_out)
+      as
+        (MajorHeap.is_indexed_major_heap heap
+          (let r =
+             SMA.major_alloc_spec_with_fuel
+               (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+           r.major_alloc_out));
+      res
+    } else {
+      let prev_obj : obj_addr = final_prev;
+      let res =
+        allocate_major_found_prev_by_valid
+          heap final_head prev_obj cur_obj requested_wz #(U64.v final_fuel) #mh;
+      assert (pure (let r =
+                     SMA.major_alloc_spec_with_fuel
+                       (Ghost.reveal mh) fp
+                       (U64.v requested_wz) (U64.v fuel) in
+                    (SMA.major_alloc_search
+                     (Ghost.reveal mh) final_head prev_obj cur_obj
+                     (SA.normalized_wosize (U64.v requested_wz))
+                     (U64.v final_fuel)).major_alloc_out ==
+                    r.major_alloc_out /\
+                    fst res == r.major_fp_out /\
+                    snd res == r.major_obj_out));
+      rewrite
+        (MajorHeap.is_indexed_major_heap heap
+          (SMA.major_alloc_search
+            (Ghost.reveal mh) final_head prev_obj cur_obj
+            (SA.normalized_wosize (U64.v requested_wz))
+            (U64.v final_fuel)).major_alloc_out)
+      as
+        (MajorHeap.is_indexed_major_heap heap
+          (let r =
+             SMA.major_alloc_spec_with_fuel
+               (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+           r.major_alloc_out));
+      res
+    }
+  } else {
+    assert (pure (let r =
+                   SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp
+                    (U64.v requested_wz) (U64.v fuel) in
+                  r.major_alloc_out == Ghost.reveal mh /\
+                  r.major_fp_out == final_head /\
+                  r.major_obj_out == 0UL));
+    rewrite
+      (MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh))
+    as
+      (MajorHeap.is_indexed_major_heap heap
+        (let r =
+           SMA.major_alloc_spec_with_fuel
+             (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+         r.major_alloc_out));
+    (final_head, 0UL)
+  }
+}
+#pop-options
 
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (base: hp_addr) (fp_out: obj_addr)
