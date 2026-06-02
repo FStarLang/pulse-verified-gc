@@ -296,6 +296,77 @@ let rec chunked_major_field_edges_preserved_by_expansion
         chunked_classify_major_field_preserved_by_expansion ms mh fresh fp v
     end
 
+let rec chunked_all_major_field_edges
+  (ms: minor_state) (mh: MH.major_heap) (objs: seq obj_addr)
+  (wz_of: obj_addr -> GTot nat) (idx: nat)
+  : GTot (seq combined_edge) (decreases (Seq.length objs - idx))
+  = if idx >= Seq.length objs then Seq.empty
+    else
+      let obj = Seq.index objs idx in
+      Seq.append
+        (chunked_major_field_edges ms mh obj (wz_of obj) 0)
+        (chunked_all_major_field_edges ms mh objs wz_of (idx + 1))
+
+let chunked_all_major_field_expansion_safe
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (objs: seq obj_addr)
+  (wz_of: obj_addr -> GTot nat) (idx: nat)
+  : Tot prop =
+  forall (k:nat).
+    idx <= k /\ k < Seq.length objs ==>
+      chunked_major_field_expansion_safe
+        mh fresh (Seq.index objs k) (wz_of (Seq.index objs k)) 0
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_all_major_field_expansion_safe_at
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (objs: seq obj_addr)
+  (wz_of: obj_addr -> GTot nat) (idx k: nat)
+  : Lemma
+      (requires chunked_all_major_field_expansion_safe mh fresh objs wz_of idx /\
+                idx <= k /\ k < Seq.length objs)
+      (ensures
+        chunked_major_field_expansion_safe
+          mh fresh (Seq.index objs k) (wz_of (Seq.index objs k)) 0)
+  = ()
+#pop-options
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_all_major_field_expansion_safe_tail
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (objs: seq obj_addr)
+  (wz_of: obj_addr -> GTot nat) (idx: nat)
+  : Lemma
+      (requires idx < Seq.length objs /\
+                chunked_all_major_field_expansion_safe mh fresh objs wz_of idx)
+      (ensures
+        chunked_all_major_field_expansion_safe mh fresh objs wz_of (idx + 1))
+  =
+  assert (idx <= idx + 1);
+  assert (forall (k:nat).
+    idx + 1 <= k /\ k < Seq.length objs ==> idx <= k /\ k < Seq.length objs)
+#pop-options
+
+let rec chunked_all_major_field_edges_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (objs: seq obj_addr) (wz_of: obj_addr -> GTot nat) (idx: nat)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_major_field_expansion_safe mh fresh objs wz_of idx)
+      (ensures
+        chunked_all_major_field_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out objs wz_of idx ==
+        chunked_all_major_field_edges ms mh objs wz_of idx)
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then ()
+  else begin
+    let obj = Seq.index objs idx in
+    chunked_all_major_field_expansion_safe_at mh fresh objs wz_of idx idx;
+    chunked_major_field_edges_preserved_by_expansion
+      ms mh fresh fp obj (wz_of obj) 0;
+    chunked_all_major_field_expansion_safe_tail mh fresh objs wz_of idx;
+    chunked_all_major_field_edges_preserved_by_expansion
+      ms mh fresh fp objs wz_of (idx + 1)
+  end
+
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas
 /// ---------------------------------------------------------------------------

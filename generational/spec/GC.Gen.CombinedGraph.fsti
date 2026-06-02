@@ -222,6 +222,47 @@ val chunked_major_field_edges_preserved_by_expansion
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out src wz i ==
         chunked_major_field_edges ms mh src wz i)
 
+/// Collect chunked major field edges from an explicit old-object sequence. The
+/// `wz_of` parameter lets future clients instantiate this with header-derived
+/// old sizes after proving those headers are preserved by expansion.
+val chunked_all_major_field_edges
+  : ms:minor_state -> mh:MH.major_heap -> objs:seq obj_addr ->
+    wz_of:(obj_addr -> GTot nat) -> idx:nat -> GTot (seq combined_edge)
+
+val chunked_all_major_field_expansion_safe
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> objs:seq obj_addr ->
+    wz_of:(obj_addr -> GTot nat) -> idx:nat -> Tot prop
+
+val chunked_all_major_field_expansion_safe_at
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> objs:seq obj_addr ->
+    wz_of:(obj_addr -> GTot nat) -> idx:nat -> k:nat ->
+    Lemma
+      (requires chunked_all_major_field_expansion_safe mh fresh objs wz_of idx /\
+                idx <= k /\ k < Seq.length objs)
+      (ensures
+        chunked_major_field_expansion_safe
+          mh fresh (Seq.index objs k) (wz_of (Seq.index objs k)) 0)
+
+val chunked_all_major_field_expansion_safe_tail
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> objs:seq obj_addr ->
+    wz_of:(obj_addr -> GTot nat) -> idx:nat ->
+    Lemma
+      (requires idx < Seq.length objs /\
+                chunked_all_major_field_expansion_safe mh fresh objs wz_of idx)
+      (ensures
+        chunked_all_major_field_expansion_safe mh fresh objs wz_of (idx + 1))
+
+val chunked_all_major_field_edges_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> objs:seq obj_addr -> wz_of:(obj_addr -> GTot nat) -> idx:nat ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_major_field_expansion_safe mh fresh objs wz_of idx)
+      (ensures
+        chunked_all_major_field_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out objs wz_of idx ==
+        chunked_all_major_field_edges ms mh objs wz_of idx)
+
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas
 /// ---------------------------------------------------------------------------
