@@ -303,7 +303,7 @@ fn read_major_free_block (heap: MajorHeap.major_heap_t)
 fn allocate_major_found_prev_no_split (heap: MajorHeap.major_heap_t)
                                      (head: U64.t) (prev: obj_addr)
                                      (base: hp_addr) (cur: obj_addr)
-                                     (block_wz requested_wz: wosize)
+                                     (hdr: U64.t) (block_wz requested_wz: wosize)
                                      (next_fp: U64.t)
                                      (#fuel: (f:nat{f > 0}))
                                      (#cur_idx: nat) (#prev_idx: nat)
@@ -317,9 +317,9 @@ fn allocate_major_found_prev_no_split (heap: MajorHeap.major_heap_t)
                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) prev_idx) prev /\
                   (forall (k:nat). k < prev_idx ==>
                    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) prev)) /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                   Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) cur == Some next_fp /\
+                  block_wz == SpecObject.getWosize hdr /\
                   U64.v prev > 0 /\
                   U64.v cur >= U64.v zero_addr + U64.v mword /\
                   U64.v block_wz >=
@@ -345,7 +345,7 @@ fn allocate_major_found_prev_no_split (heap: MajorHeap.major_heap_t)
 fn allocate_major_found_prev_split (heap: MajorHeap.major_heap_t)
                                    (head: U64.t) (prev: obj_addr)
                                    (base: hp_addr) (cur: obj_addr)
-                                   (block_wz requested_wz: wosize)
+                                   (hdr: U64.t) (block_wz requested_wz: wosize)
                                    (rem_hd rem_obj: hp_addr)
                                    (next_fp: U64.t)
                                    (#fuel: (f:nat{f > 0}))
@@ -366,9 +366,9 @@ fn allocate_major_found_prev_split (heap: MajorHeap.major_heap_t)
                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) prev_idx) prev /\
                   (forall (k:nat). k < prev_idx ==>
                     ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) prev)) /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) cur == Some next_fp /\
+                  block_wz == SpecObject.getWosize hdr /\
                   U64.v prev > 0 /\
                   U64.v cur >= U64.v zero_addr + U64.v mword /\
                   U64.v requested_wz > 0 /\
@@ -397,7 +397,7 @@ fn allocate_major_found_prev_split (heap: MajorHeap.major_heap_t)
 fn allocate_major_found_prev (heap: MajorHeap.major_heap_t)
                              (head: U64.t) (prev: obj_addr)
                              (base: hp_addr) (cur: obj_addr)
-                             (block_wz requested_wz: wosize)
+                             (hdr: U64.t) (block_wz requested_wz: wosize)
                              (next_fp: U64.t)
                              (#fuel: (f:nat{f > 0}))
                              (#cur_idx: nat) (#prev_idx: nat)
@@ -411,9 +411,9 @@ fn allocate_major_found_prev (heap: MajorHeap.major_heap_t)
                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) prev_idx) prev /\
                   (forall (k:nat). k < prev_idx ==>
                     ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) prev)) /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) cur == Some next_fp /\
+                  block_wz == SpecObject.getWosize hdr /\
                   U64.v prev > 0 /\
                   U64.v cur >= U64.v zero_addr + U64.v mword /\
                   U64.v requested_wz > 0 /\
@@ -441,7 +441,7 @@ fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (#fresh: Ghost.erased
                             (c:MH.heap_chunk{c.base == base /\
                                              fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                             U64.v wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                             wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.chunk_range heap (Ghost.reveal fresh)
   ensures MajorHeap.chunk_range heap
             (SpecMajorAlloc.init_fresh_chunk (Ghost.reveal fresh) next_fp).chunk_out
@@ -454,7 +454,7 @@ fn expand_major_heap_owned (heap: MajorHeap.major_heap_t)
                            (#fresh: Ghost.erased
                              (c:MH.heap_chunk{c.base == base /\
                                               fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                              U64.v wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                              wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.chunk_range heap (Ghost.reveal fresh) **
            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh) (Ghost.reveal mh))
@@ -474,7 +474,7 @@ fn allocate_fresh_expanded_exact (heap: MajorHeap.major_heap_t)
                                  (#fresh: Ghost.erased
                                    (c:MH.heap_chunk{c.base == base /\
                                                     fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                                    U64.v wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                                    wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.is_indexed_major_heap heap
             (SpecMajorAlloc.expand_major_heap
               (Ghost.reveal mh) (Ghost.reveal fresh) next_fp).major_out **
@@ -504,7 +504,7 @@ fn allocate_fresh_expanded_no_split (heap: MajorHeap.major_heap_t)
                                     (#fresh_chunk: Ghost.erased
                                       (c:MH.heap_chunk{c.base == base /\
                                                        fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                                       U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                                       fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.is_indexed_major_heap heap
             (SpecMajorAlloc.expand_major_heap
               (Ghost.reveal mh) (Ghost.reveal fresh_chunk) next_fp).major_out **
@@ -536,7 +536,7 @@ fn allocate_fresh_expanded_split (heap: MajorHeap.major_heap_t)
                                  (#fresh_chunk: Ghost.erased
                                    (c:MH.heap_chunk{c.base == base /\
                                                     fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                                    U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                                    fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.is_indexed_major_heap heap
             (SpecMajorAlloc.expand_major_heap
               (Ghost.reveal mh) (Ghost.reveal fresh_chunk) next_fp).major_out **
@@ -566,7 +566,7 @@ fn expand_and_allocate_fresh_no_split (heap: MajorHeap.major_heap_t)
                                       (#fresh_chunk: Ghost.erased
                                         (c:MH.heap_chunk{c.base == base /\
                                                          fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                                         U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                                         fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
@@ -596,7 +596,7 @@ fn expand_and_allocate_fresh_split (heap: MajorHeap.major_heap_t)
                                   (#fresh_chunk: Ghost.erased
                                     (c:MH.heap_chunk{c.base == base /\
                                                      fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                                     U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                                     fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
@@ -626,7 +626,7 @@ fn expand_and_allocate_fresh (heap: MajorHeap.major_heap_t)
                              (#fresh_chunk: Ghost.erased
                                (c:MH.heap_chunk{c.base == base /\
                                                 fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                                U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                                fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
   requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
            MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
            pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
@@ -664,7 +664,7 @@ fn expand_and_allocate_fresh_with_fuel (heap: MajorHeap.major_heap_t)
                                        (#fresh_chunk: Ghost.erased
                                          (c:MH.heap_chunk{c.base == base /\
                                                           fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                                          U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                                          fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
    requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
             MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
             pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
@@ -695,7 +695,7 @@ fn expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
                             (#fresh_chunk: Ghost.erased
                               (c:MH.heap_chunk{c.base == base /\
                                                fp_out == SpecMajorAlloc.fresh_chunk_object c /\
-                                               U64.v fresh_wz == SpecMajorAlloc.fresh_chunk_wosize c}))
+                                               fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
    requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
             MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
             pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
