@@ -1267,7 +1267,14 @@ fn expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
               SpecMajorAlloc.major_alloc_spec_expand_on_oom
                 old_mh fp (U64.v requested_wz)
                 fuel fresh_c).major_alloc_out **
-           pure (snd res == fp_out)
+           pure (let old_mh : MH.major_heap = Ghost.reveal mh in
+                 let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+                 let r =
+                   SpecMajorAlloc.major_alloc_spec_expand_on_oom
+                     old_mh fp (U64.v requested_wz)
+                     fuel fresh_c in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
 
 /// Initialize the heap as one large free block.
 ///
