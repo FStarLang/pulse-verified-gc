@@ -51,6 +51,8 @@ SPOT_SRC = \
   GC.SPOT.Postconditions.fst \
   GC.SPOT.ThreeObjects.fsti \
   GC.SPOT.ThreeObjects.fst \
+  GC.SPOT.HeapExpansion.fsti \
+  GC.SPOT.HeapExpansion.fst \
   GC.SPOT.ConcreteForwarding.fsti \
   GC.SPOT.ConcreteForwarding.fst \
   GC.SPOT.ConcreteScenarios.fsti \

@@ -1975,6 +1975,36 @@ let seq_upd_overwrite_index (#a: Type) (s: Seq.seq a) (i: nat{i < Seq.length s})
     Seq.lemma_eq_elim (Seq.upd (Seq.upd s i v1) i v2) (Seq.upd s i v2)
 
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let read_word_update_expanded_head_same_range_miss
+  (mh: MH.major_heap) (fresh_head replacement: MH.heap_chunk) (addr: hp_addr)
+  : Lemma (requires MH.chunk_start replacement == MH.chunk_start fresh_head /\
+                    MH.chunk_end replacement == MH.chunk_end fresh_head /\
+                    ~(MH.chunk_contains_addr fresh_head addr))
+          (ensures MH.read_word_in_major
+                    (Seq.upd (MH.add_chunk mh fresh_head) 0 replacement) addr ==
+                  MH.read_word_in_major mh addr)
+  = let out = Seq.upd (MH.add_chunk mh fresh_head) 0 replacement in
+    assert (Seq.length out == Seq.length (MH.add_chunk mh fresh_head));
+    assert (Seq.index out 0 == replacement);
+    assert (Seq.length out == Seq.length (MH.add_chunk mh replacement));
+    let same (i: nat{i < Seq.length out})
+      : Lemma (Seq.index out i == Seq.index (MH.add_chunk mh replacement) i)
+      = if i = 0 then ()
+        else begin
+          let im1 : n:nat{n < Seq.length mh} = i - 1 in
+          assert (Seq.index out i == Seq.index (MH.add_chunk mh fresh_head) i);
+          assert (Seq.index (MH.add_chunk mh fresh_head) i == Seq.index mh im1);
+          assert (Seq.index (MH.add_chunk mh replacement) i == Seq.index mh im1)
+        end
+    in
+    FStar.Classical.forall_intro same;
+    Seq.lemma_eq_intro out (MH.add_chunk mh replacement);
+    Seq.lemma_eq_elim out (MH.add_chunk mh replacement);
+    assert (~(MH.chunk_contains_addr replacement addr));
+    MH.read_word_add_chunk_miss mh replacement addr
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let fresh_chunk_split_remainder_fits (c: MH.heap_chunk) (next_fp: U64.t)
                                      (requested_wz: nat) (rem_hd rem_obj: hp_addr)
   : Lemma (requires requested_wz > 0 /\
@@ -2221,5 +2251,67 @@ let major_alloc_after_expand_fuel_irrelevant (mh: MH.major_heap) (c: MH.heap_chu
       assert (r1.major_alloc_out == rf.major_alloc_out);
       assert (r1.major_fp_out == rf.major_fp_out);
       assert (r1.major_obj_out == rf.major_obj_out)
+    end
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let major_alloc_expand_on_oom_preserves_old_read
+  (mh: MH.major_heap) (fp: U64.t) (requested_wz fuel: nat)
+  (fresh: MH.heap_chunk) (addr: hp_addr)
+  : Lemma (requires (major_alloc_spec_with_fuel mh fp requested_wz fuel).major_obj_out == 0UL /\
+                    U64.v fresh.base >= U64.v zero_addr /\
+                    requested_wz > 0 /\
+                    fresh_chunk_wosize fresh >= requested_wz /\
+                    ~(MH.chunk_contains_addr fresh addr))
+          (ensures MH.read_word_in_major
+                    (major_alloc_spec_expand_on_oom
+                      mh fp requested_wz fuel fresh).major_alloc_out addr ==
+                  MH.read_word_in_major mh addr)
+  = let er = expand_major_heap mh fresh fp in
+    let init = (init_fresh_chunk fresh fp).chunk_out in
+    assert (major_alloc_spec_expand_on_oom mh fp requested_wz fuel fresh ==
+            major_alloc_spec_with_fuel er.major_out er.fp_out requested_wz (fuel + 1));
+    init_fresh_chunk_preserves_range fresh fp;
+    assert (~(MH.chunk_contains_addr init addr));
+    if fresh_chunk_wosize fresh - requested_wz >= 2 then begin
+      fresh_chunk_split_remainder_addr_bounds fresh requested_wz;
+      let rem_hd_nat = U64.v fresh.base + (1 + requested_wz) * 8 in
+      let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+      let rem_obj_nat = rem_hd_nat + U64.v mword in
+      let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+      assert (U64.v rem_hd == U64.v fresh.base + (1 + requested_wz) * 8);
+      assert (U64.v rem_obj == U64.v rem_hd + U64.v mword);
+      major_alloc_after_expand_split
+        mh fresh fp requested_wz fuel rem_hd rem_obj;
+      let alloc_hdr =
+        Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+      let c1 = MH.write_word_in_chunk init fresh.base alloc_hdr in
+      let rem_wz = fresh_chunk_wosize fresh - requested_wz - 1 in
+      let rem_hdr =
+        Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+      let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+      let c3 = MH.write_word_in_chunk c2 rem_obj fp in
+      MH.write_word_in_chunk_preserves_range init fresh.base alloc_hdr;
+      MH.write_word_in_chunk_preserves_range c1 rem_hd rem_hdr;
+      MH.write_word_in_chunk_preserves_range c2 rem_obj fp;
+      assert (MH.chunk_start c3 == MH.chunk_start init);
+      assert (MH.chunk_end c3 == MH.chunk_end init);
+      read_word_update_expanded_head_same_range_miss mh init c3 addr;
+      assert (MH.read_word_in_major
+                (major_alloc_spec_expand_on_oom
+                  mh fp requested_wz fuel fresh).major_alloc_out addr ==
+              MH.read_word_in_major mh addr)
+    end else begin
+      assert (fresh_chunk_wosize fresh - requested_wz < 2);
+      major_alloc_after_expand_no_split mh fresh fp requested_wz fuel;
+      let alloc_hdr =
+        Alloc.make_header (fresh_chunk_wosize_u64 fresh) Alloc.white_bits 0UL in
+      let c1 = MH.write_word_in_chunk init fresh.base alloc_hdr in
+      MH.write_word_in_chunk_preserves_range init fresh.base alloc_hdr;
+      read_word_update_expanded_head_same_range_miss mh init c1 addr;
+      assert (MH.read_word_in_major
+                (major_alloc_spec_expand_on_oom
+                  mh fp requested_wz fuel fresh).major_alloc_out addr ==
+              MH.read_word_in_major mh addr)
     end
 #pop-options
