@@ -1096,6 +1096,85 @@ let major_alloc_head_split (mh: MH.major_heap) (fp: obj_addr)
     major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
 #pop-options
 
+#push-options "--z3rlimit 60 --split_queries always"
+let rec chunks_pairwise_index_disjoint (mh: MH.major_heap) (i j: nat)
+  : Lemma (requires MH.chunks_pairwise_disjoint mh /\
+                    i < j /\ j < Seq.length mh)
+          (ensures MH.chunks_disjoint (Seq.index mh i) (Seq.index mh j))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else if i = 0 then begin
+      let tl = Seq.tail mh in
+      let jm1 : n:nat{n < Seq.length tl} = j - 1 in
+      assert (Seq.index mh 0 == Seq.head mh);
+      assert (Seq.index mh j == Seq.index tl jm1);
+      assert (forall (k:nat). k < Seq.length tl ==> MH.chunks_disjoint (Seq.head mh) (Seq.index tl k))
+    end else begin
+      let tl = Seq.tail mh in
+      let im1 : n:nat{n < j - 1} = i - 1 in
+      let jm1 : n:nat{n < Seq.length tl} = j - 1 in
+      assert (Seq.index mh i == Seq.index tl im1);
+      assert (Seq.index mh j == Seq.index tl jm1);
+      assert (MH.chunks_pairwise_disjoint tl);
+      chunks_pairwise_index_disjoint tl im1 jm1
+    end
+#pop-options
+
+#push-options "--z3rlimit 40 --split_queries always --fuel 0 --ifuel 0"
+let well_formed_no_prior_word_in_selected_chunk (mh: MH.major_heap)
+                                                (idx: nat) (addr: hp_addr)
+  : Lemma (requires MH.well_formed_major_heap mh /\
+                    idx < Seq.length mh /\
+                    MH.word_in_chunk (Seq.index mh idx) addr)
+          (ensures forall (k:nat). k < idx ==> ~(MH.word_in_chunk (Seq.index mh k) addr))
+  = let no_prior (k: nat{k < idx})
+      : Lemma (~(MH.word_in_chunk (Seq.index mh k) addr))
+      = chunks_pairwise_index_disjoint mh k idx;
+        MH.chunks_disjoint_symmetric (Seq.index mh k) (Seq.index mh idx);
+        if MH.word_in_chunk (Seq.index mh k) addr then begin
+          assert (MH.chunk_contains_addr (Seq.index mh idx) addr);
+          assert (MH.chunk_contains_addr (Seq.index mh k) addr);
+          MH.chunks_disjoint_no_shared_addr (Seq.index mh idx) (Seq.index mh k) addr;
+          assert False
+        end
+    in
+    FStar.Classical.forall_intro no_prior
+#pop-options
+
+#push-options "--z3rlimit 40 --split_queries always --fuel 0 --ifuel 0"
+let active_head_split_remainder_words_in_chunk (c: MH.heap_chunk)
+                                               (base: hp_addr)
+                                               (block_wz requested_wz: nat)
+                                               (rem_hd rem_obj: hp_addr)
+  : Lemma (requires MH.word_in_chunk c base /\
+                    requested_wz > 0 /\
+                    block_wz >= requested_wz /\
+                    block_wz - requested_wz >= 2 /\
+                    U64.v rem_hd == U64.v base + (1 + requested_wz) * 8 /\
+                    U64.v rem_obj == U64.v rem_hd + U64.v mword /\
+                    U64.v base + (1 + block_wz) * 8 <= MH.chunk_end c)
+          (ensures MH.word_in_chunk c rem_hd /\
+                   MH.word_in_chunk c rem_obj)
+  = assert (U64.v mword == 8);
+    let fw = block_wz in
+    let wz = requested_wz in
+    assert (wz + 2 <= fw);
+    FStar.Math.Lemmas.distributivity_add_left (1 + wz) 1 8;
+    assert ((1 + wz) * 8 + 8 == (wz + 2) * 8);
+    FStar.Math.Lemmas.paren_add_right (U64.v base) ((1 + wz) * 8) 8;
+    assert (U64.v rem_obj == U64.v base + (wz + 2) * 8);
+    assert (U64.v base + (wz + 2) * 8 <= U64.v base + (1 + fw) * 8);
+    assert (U64.v rem_obj <= U64.v base + (1 + fw) * 8);
+    assert (U64.v rem_obj <= MH.chunk_end c);
+    assert (U64.v rem_hd + U64.v mword == U64.v rem_obj);
+    assert (U64.v rem_hd + U64.v mword <= MH.chunk_end c);
+    assert (U64.v rem_hd >= MH.chunk_start c);
+    assert (U64.v rem_obj >= MH.chunk_start c);
+    assert (U64.v rem_obj + U64.v mword <= U64.v base + (1 + fw) * 8);
+    assert (U64.v rem_obj + U64.v mword <= MH.chunk_end c)
+#pop-options
+
 #push-options "--z3rlimit 80"
 let major_alloc_after_expand_returns_fresh (mh: MH.major_heap) (c: MH.heap_chunk)
                                            (next_fp: U64.t)

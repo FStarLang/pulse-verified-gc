@@ -942,6 +942,100 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
   (out_fp, out_obj)
 }
 
+fn allocate_major_head (heap: MajorHeap.major_heap_t)
+                       (base: hp_addr) (fp: obj_addr)
+                       (block_wz requested_wz: wosize)
+                       (next_fp: U64.t)
+                       (#fuel: nat) (#idx: nat)
+                       (#mh: Ghost.erased MH.major_heap)
+    requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+             pure (fuel > 0 /\
+                   idx < Seq.length (Ghost.reveal mh) /\
+                   base == SH.hd_address fp /\
+                   MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
+                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
+                   MH.read_word_in_major (Ghost.reveal mh) base ==
+                     Some (SA.make_header block_wz SA.blue_bits 0UL) /\
+                   MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                   U64.v fp >= U64.v zero_addr + U64.v mword /\
+                   U64.v requested_wz > 0 /\
+                   U64.v block_wz >= U64.v requested_wz /\
+                   U64.v base + (1 + U64.v block_wz) * 8 <=
+                     MH.chunk_end (Seq.index (Ghost.reveal mh) idx))
+    returns res: (U64.t & U64.t)
+    ensures MajorHeap.is_indexed_major_heap heap
+              (let r =
+                 SMA.major_alloc_spec_with_fuel
+                   (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+               r.major_alloc_out) **
+            pure (let r =
+                    SMA.major_alloc_spec_with_fuel
+                      (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                  fst res == r.major_fp_out /\
+                  snd res == r.major_obj_out)
+{
+  let leftover = U64.sub block_wz requested_wz;
+  assert (pure (U64.v leftover == U64.v block_wz - U64.v requested_wz));
+  if U64.gte leftover 2UL {
+    assert (pure (U64.v block_wz - U64.v requested_wz >= 2));
+    wosize_bound_lemma requested_wz block_wz;
+    split_offset_fits requested_wz;
+    split_no_overflow base requested_wz;
+
+    let wz_plus_1 = U64.add requested_wz 1UL;
+    assert (pure (U64.v wz_plus_1 == U64.v requested_wz + 1));
+    let offset = U64.mul wz_plus_1 mword;
+    assert (pure (U64.v offset == (1 + U64.v requested_wz) * U64.v mword));
+    assert (pure (U64.v offset == (1 + U64.v requested_wz) * 8));
+    let rem_hd = U64.add base offset;
+    assert (pure (U64.v rem_hd == U64.v base + (1 + U64.v requested_wz) * 8));
+    assert (pure (U64.v rem_hd < heap_size));
+    assert (pure (U64.v rem_hd % U64.v mword == 0));
+    let rem_obj = U64.add rem_hd mword;
+    assert (pure (U64.v rem_obj == U64.v rem_hd + U64.v mword));
+    assert (pure (U64.v rem_obj < heap_size));
+    assert (pure (U64.v rem_obj % U64.v mword == 0));
+
+    unfold (MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh));
+    assert (pure (MH.well_formed_major_heap (Ghost.reveal mh)));
+    fold (MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh));
+
+    SMA.active_head_split_remainder_words_in_chunk
+      (Seq.index (Ghost.reveal mh) idx) base
+      (U64.v block_wz) (U64.v requested_wz) rem_hd rem_obj;
+    assert (pure (MH.well_formed_major_heap (Ghost.reveal mh)));
+    assert (pure (idx < Seq.length (Ghost.reveal mh)));
+    assert (pure (MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) rem_hd));
+    assert (pure (MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) rem_obj));
+    SMA.well_formed_no_prior_word_in_selected_chunk
+      (Ghost.reveal mh) idx rem_hd;
+    SMA.well_formed_no_prior_word_in_selected_chunk
+      (Ghost.reveal mh) idx rem_obj;
+    let res =
+      allocate_major_head_split
+        heap base fp block_wz requested_wz rem_hd rem_obj next_fp
+        #fuel #idx #mh;
+    assert (pure (let r =
+                    SMA.major_alloc_spec_with_fuel
+                      (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                  fst res == r.major_fp_out /\
+                  snd res == r.major_obj_out));
+    res
+  } else {
+    assert (pure (U64.v block_wz -
+                  SA.normalized_wosize (U64.v requested_wz) < 2));
+    let res =
+      allocate_major_head_no_split
+        heap base fp block_wz requested_wz next_fp #fuel #idx #mh;
+    assert (pure (let r =
+                    SMA.major_alloc_spec_with_fuel
+                      (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                  fst res == r.major_fp_out /\
+                  snd res == r.major_obj_out));
+    res
+  }
+}
+
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (base: hp_addr) (fp_out: obj_addr)
                           (wz: wosize) (next_fp: U64.t)
