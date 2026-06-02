@@ -232,7 +232,7 @@ let chunked_major_field_expansion_safe_intro
       (ensures chunked_major_field_expansion_safe mh fresh src wz i)
   = ()
 
-#push-options "--split_queries always --z3rlimit 10"
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
 let chunked_major_field_expansion_safe_at
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr)
   (wz i j: nat) (field_addr: hp_addr) (v: U64.t)
@@ -249,7 +249,7 @@ let chunked_major_field_expansion_safe_at
   assert (chunked_major_field_values_miss_fresh mh fresh src wz i)
 #pop-options
 
-#push-options "--split_queries always --z3rlimit 10"
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
 let chunked_major_field_expansion_safe_tail
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr) (wz: nat) (i: nat)
   : Lemma
@@ -631,7 +631,7 @@ private let rec minor_field_edges_wf (ms: minor_state) (major: heap)
 #pop-options
 
 /// Every edge from major_field_edges has endpoints in the combined graph
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edges_wf (ms: minor_state) (major: heap)
   (src: obj_addr) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem src (objects zero_addr major))
@@ -661,7 +661,7 @@ private let rec major_field_edges_wf (ms: minor_state) (major: heap)
 #pop-options
 
 /// Every edge from all_minor_edges has endpoints in the combined graph
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec all_minor_edges_wf (ms: minor_state) (major: heap)
   (objs: seq U64.t) (idx: nat) (e: combined_edge)
   : Lemma (requires objs == minor_objects ms)
@@ -684,7 +684,7 @@ private let rec all_minor_edges_wf (ms: minor_state) (major: heap)
 #pop-options
 
 /// Every edge from all_major_edges has endpoints in the combined graph
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec all_major_edges_wf (ms: minor_state) (major: heap)
   (objs: seq obj_addr) (idx: nat) (e: combined_edge)
   : Lemma (requires objs == objects zero_addr major)
@@ -786,7 +786,7 @@ private let rec find_index_from (objs: seq U64.t) (src: U64.t) (idx: nat)
     else find_index_from objs src (idx + 1)
 
 /// If e is in all_minor_edges from some index k, then e is in all_minor_edges from 0
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_minor_edges_suffix
   (ms: minor_state) (major: heap) (objs: seq U64.t) (idx: nat) (e: combined_edge)
   : Lemma (requires idx <= Seq.length objs /\
@@ -804,7 +804,7 @@ private let rec all_minor_edges_suffix
 
 /// Given that src appears at index k in objs, and e is in minor_object_edges of src,
 /// then e is in all_minor_edges from 0
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let all_minor_edges_includes_object
   (ms: minor_state) (major: heap) (objs: seq U64.t) (src: U64.t) (k: nat)
   (e: combined_edge)
@@ -821,7 +821,7 @@ private let all_minor_edges_includes_object
 #pop-options
 
 /// Main edge introduction lemma for minor fields
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let minor_field_edge_intro (ms: minor_state) (major: heap)
   (src: U64.t) (i: nat) (dst: combined_vertex)
   : Lemma (requires Seq.mem src (minor_objects ms) /\
@@ -850,7 +850,7 @@ let minor_field_edge_intro (ms: minor_state) (major: heap)
 /// ---------------------------------------------------------------------------
 
 /// If classify produces dst at field i, edge is in major_field_edges from i
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let major_field_edge_at
   (ms: minor_state) (major: heap) (src: obj_addr) (wz: nat) (i: nat)
   (dst: combined_vertex)
@@ -866,7 +866,7 @@ private let major_field_edge_at
 #pop-options
 
 /// If the edge is in major_field_edges from a later index, it's also in from earlier
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edge_later
   (ms: minor_state) (major: heap) (src: obj_addr) (wz: nat) (start: nat) (target_idx: nat)
   (dst: combined_vertex)
@@ -989,7 +989,7 @@ private let rec minor_field_edges_source (ms: minor_state) (major: heap)
 #pop-options
 
 /// Source characterization: every edge in major_field_edges has source MajorV src
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edges_source (ms: minor_state) (major: heap)
   (src: obj_addr) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem e (major_field_edges ms major src wz i))
@@ -1016,7 +1016,7 @@ private let rec major_field_edges_source (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: if edge is in minor_field_edges, there exists a field index with classification
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec minor_field_edges_elim (ms: minor_state) (major: heap)
   (src: U64.t) (wz: nat) (i: nat) (dst: combined_vertex)
   : Lemma (requires Seq.mem (MinorV src, dst) (minor_field_edges ms major src wz i))
@@ -1036,7 +1036,7 @@ private let rec minor_field_edges_elim (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: if edge is in major_field_edges, there exists a field index with classification
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edges_elim (ms: minor_state) (major: heap)
   (src: obj_addr) (wz: nat) (i: nat) (dst: combined_vertex)
   : Lemma (requires Seq.mem (MajorV src, dst) (major_field_edges ms major src wz i))
