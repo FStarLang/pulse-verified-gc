@@ -154,7 +154,7 @@ ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_MODULES))) \
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Impl+GC.Impl.Allocator+GC.Impl.MajorHeap=GC.Impl.*[rename=GC_Impl]' \
+  -bundle 'GC.Impl+GC.Impl.Allocator=GC.Impl.*[rename=GC_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
