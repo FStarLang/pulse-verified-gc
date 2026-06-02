@@ -3182,6 +3182,31 @@ fn allocate_major_with_fuel_loop (heap: MajorHeap.major_heap_t)
 }
 #pop-options
 
+fn allocate_major_with_fuel (heap: MajorHeap.major_heap_t)
+                            (fp: U64.t)
+                            (requested_wz: wosize)
+                            (fuel: U64.t)
+                            (#mh: Ghost.erased MH.major_heap)
+  requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (U64.v requested_wz > 0 /\
+                 SMA.major_fl_valid (Ghost.reveal mh) fp (U64.v fuel) /\
+                 SMA.major_fl_above_zero (Ghost.reveal mh) fp (U64.v fuel) /\
+                 SMA.major_fl_blocks_fit (Ghost.reveal mh) fp (U64.v fuel))
+  returns res: (U64.t & U64.t)
+  ensures MajorHeap.is_indexed_major_heap heap
+            (let r =
+               SMA.major_alloc_spec_with_fuel
+                 (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+             r.major_alloc_out) **
+          pure (let r =
+                 SMA.major_alloc_spec_with_fuel
+                   (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                fst res == r.major_fp_out /\
+                snd res == r.major_obj_out)
+{
+  allocate_major_with_fuel_loop heap fp requested_wz fuel #mh
+}
+
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (base: hp_addr) (fp_out: obj_addr)
                           (wz: wosize) (next_fp: U64.t)
