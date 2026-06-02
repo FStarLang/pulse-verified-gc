@@ -590,6 +590,46 @@ fn allocate_major_head_from_read (heap: MajorHeap.major_heap_t)
                  fst res == r.major_fp_out /\
                  snd res == r.major_obj_out)
 
+/// Read and allocate from the active free-list head, deriving the head lower
+/// bound from `major_fl_above_zero`.
+fn allocate_major_head_from_read_above_zero (heap: MajorHeap.major_heap_t)
+                                           (base: hp_addr) (fp: obj_addr)
+                                           (requested_wz: wosize)
+                                           (#fuel: (f:nat{f > 0}))
+                                           (#header_idx: nat) (#link_idx: nat)
+                                           (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (header_idx < Seq.length (Ghost.reveal mh) /\
+                 link_idx < Seq.length (Ghost.reveal mh) /\
+                 base == SpecHeap.hd_address fp /\
+                 MH.lookup_chunk_index (Ghost.reveal mh) base == Some header_idx /\
+                 MH.lookup_chunk_index (Ghost.reveal mh) fp == Some link_idx /\
+                 MH.word_in_chunk
+                   (Seq.index (Ghost.reveal mh) header_idx) base /\
+                 MH.word_in_chunk
+                   (Seq.index (Ghost.reveal mh) link_idx) fp /\
+                 SpecMajorAlloc.major_fl_valid (Ghost.reveal mh) fp fuel /\
+                 SpecMajorAlloc.major_fl_above_zero (Ghost.reveal mh) fp fuel /\
+                 U64.v requested_wz > 0 /\
+                 (match MH.read_word_in_major (Ghost.reveal mh) base with
+                  | Some hdr ->
+                    U64.v (SpecObject.getWosize hdr) >= U64.v requested_wz /\
+                    U64.v base +
+                      (1 + U64.v (SpecObject.getWosize hdr)) * 8 <=
+                      MH.chunk_end (Seq.index (Ghost.reveal mh) header_idx)
+                  | None -> False))
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SpecMajorAlloc.major_alloc_spec_with_fuel
+                 (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                 SpecMajorAlloc.major_alloc_spec_with_fuel
+                   (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+
 /// Read and allocate from a later free-list node once the header proves the
 /// block is large enough, relinking the already-read previous node.
 fn allocate_major_found_prev_from_read (heap: MajorHeap.major_heap_t)
@@ -639,6 +679,59 @@ fn allocate_major_found_prev_from_read (heap: MajorHeap.major_heap_t)
                  SpecMajorAlloc.major_alloc_search
                    (Ghost.reveal mh) head prev cur
                    (SpecAlloc.normalized_wosize (U64.v requested_wz)) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+
+/// Read and allocate from a later free-list node, deriving current-node bounds
+/// from `major_fl_above_zero` and the non-null previous-node fact from its
+/// `obj_addr` type.
+fn allocate_major_found_prev_from_read_above_zero
+     (heap: MajorHeap.major_heap_t)
+     (head: U64.t) (prev: obj_addr)
+     (base: hp_addr) (cur: obj_addr)
+     (requested_wz: wosize)
+     (#fuel: (f:nat{f > 0}))
+     (#cur_header_idx: nat) (#cur_link_idx: nat)
+     (#prev_idx: nat)
+     (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (cur_header_idx < Seq.length (Ghost.reveal mh) /\
+                 cur_link_idx < Seq.length (Ghost.reveal mh) /\
+                 prev_idx < Seq.length (Ghost.reveal mh) /\
+                 base == SpecHeap.hd_address cur /\
+                 MH.lookup_chunk_index (Ghost.reveal mh) base ==
+                   Some cur_header_idx /\
+                 MH.lookup_chunk_index (Ghost.reveal mh) cur ==
+                   Some cur_link_idx /\
+                 MH.word_in_chunk
+                   (Seq.index (Ghost.reveal mh) cur_header_idx) base /\
+                 MH.word_in_chunk
+                   (Seq.index (Ghost.reveal mh) cur_link_idx) cur /\
+                 MH.word_in_chunk
+                   (Seq.index (Ghost.reveal mh) prev_idx) prev /\
+                 (forall (k:nat). k < prev_idx ==>
+                   ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) prev)) /\
+                 SpecMajorAlloc.major_fl_valid (Ghost.reveal mh) cur fuel /\
+                 SpecMajorAlloc.major_fl_above_zero (Ghost.reveal mh) cur fuel /\
+                 U64.v requested_wz > 0 /\
+                 (match MH.read_word_in_major (Ghost.reveal mh) base with
+                  | Some hdr ->
+                    U64.v (SpecObject.getWosize hdr) >= U64.v requested_wz /\
+                    U64.v base +
+                      (1 + U64.v (SpecObject.getWosize hdr)) * 8 <=
+                      MH.chunk_end (Seq.index (Ghost.reveal mh) cur_header_idx)
+                  | None -> False))
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SpecMajorAlloc.major_alloc_search
+                 (Ghost.reveal mh) head prev cur
+                 (SpecAlloc.normalized_wosize (U64.v requested_wz)) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                 SpecMajorAlloc.major_alloc_search
+                  (Ghost.reveal mh) head prev cur
+                  (SpecAlloc.normalized_wosize (U64.v requested_wz)) fuel in
                  fst res == r.major_fp_out /\
                  snd res == r.major_obj_out)
 

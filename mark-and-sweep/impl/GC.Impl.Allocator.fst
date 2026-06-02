@@ -1866,6 +1866,49 @@ fn allocate_major_head_from_read (heap: MajorHeap.major_heap_t)
   res
 }
 
+fn allocate_major_head_from_read_above_zero (heap: MajorHeap.major_heap_t)
+                                            (base: hp_addr) (fp: obj_addr)
+                                            (requested_wz: wosize)
+                                            (#fuel: (f:nat{f > 0}))
+                                            (#header_idx: nat) (#link_idx: nat)
+                                            (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (header_idx < Seq.length (Ghost.reveal mh) /\
+                  link_idx < Seq.length (Ghost.reveal mh) /\
+                  base == SH.hd_address fp /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) base == Some header_idx /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) fp == Some link_idx /\
+                  MH.word_in_chunk
+                    (Seq.index (Ghost.reveal mh) header_idx) base /\
+                  MH.word_in_chunk
+                    (Seq.index (Ghost.reveal mh) link_idx) fp /\
+                  SMA.major_fl_valid (Ghost.reveal mh) fp fuel /\
+                  SMA.major_fl_above_zero (Ghost.reveal mh) fp fuel /\
+                  U64.v requested_wz > 0 /\
+                  (match MH.read_word_in_major (Ghost.reveal mh) base with
+                   | Some hdr ->
+                     U64.v (SO.getWosize hdr) >= U64.v requested_wz /\
+                     U64.v base + (1 + U64.v (SO.getWosize hdr)) * 8 <=
+                       MH.chunk_end (Seq.index (Ghost.reveal mh) header_idx)
+                   | None -> False))
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SMA.major_alloc_spec_with_fuel
+                  (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+{
+  SMA.major_fl_above_zero_current (Ghost.reveal mh) fp fuel;
+  assert (pure (U64.v fp >= U64.v zero_addr + U64.v mword));
+  allocate_major_head_from_read
+    heap base fp requested_wz #fuel #header_idx #link_idx #mh
+}
+
 fn allocate_major_found_prev_from_read (heap: MajorHeap.major_heap_t)
                                       (head: U64.t) (prev: obj_addr)
                                       (base: hp_addr) (cur: obj_addr)
@@ -1935,6 +1978,63 @@ fn allocate_major_found_prev_from_read (heap: MajorHeap.major_heap_t)
                 fst res == r.major_fp_out /\
                 snd res == r.major_obj_out));
   res
+}
+
+fn allocate_major_found_prev_from_read_above_zero
+     (heap: MajorHeap.major_heap_t)
+     (head: U64.t) (prev: obj_addr)
+     (base: hp_addr) (cur: obj_addr)
+     (requested_wz: wosize)
+     (#fuel: (f:nat{f > 0}))
+     (#cur_header_idx: nat) (#cur_link_idx: nat)
+     (#prev_idx: nat)
+     (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (cur_header_idx < Seq.length (Ghost.reveal mh) /\
+                  cur_link_idx < Seq.length (Ghost.reveal mh) /\
+                  prev_idx < Seq.length (Ghost.reveal mh) /\
+                  base == SH.hd_address cur /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) base ==
+                    Some cur_header_idx /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) cur ==
+                    Some cur_link_idx /\
+                  MH.word_in_chunk
+                    (Seq.index (Ghost.reveal mh) cur_header_idx) base /\
+                  MH.word_in_chunk
+                    (Seq.index (Ghost.reveal mh) cur_link_idx) cur /\
+                  MH.word_in_chunk
+                    (Seq.index (Ghost.reveal mh) prev_idx) prev /\
+                  (forall (k:nat). k < prev_idx ==>
+                    ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) prev)) /\
+                  SMA.major_fl_valid (Ghost.reveal mh) cur fuel /\
+                  SMA.major_fl_above_zero (Ghost.reveal mh) cur fuel /\
+                  U64.v requested_wz > 0 /\
+                  (match MH.read_word_in_major (Ghost.reveal mh) base with
+                   | Some hdr ->
+                     U64.v (SO.getWosize hdr) >= U64.v requested_wz /\
+                     U64.v base + (1 + U64.v (SO.getWosize hdr)) * 8 <=
+                       MH.chunk_end (Seq.index (Ghost.reveal mh) cur_header_idx)
+                   | None -> False))
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap
+             (let r =
+                SMA.major_alloc_search
+                  (Ghost.reveal mh) head prev cur
+                  (SA.normalized_wosize (U64.v requested_wz)) fuel in
+              r.major_alloc_out) **
+           pure (let r =
+                  SMA.major_alloc_search
+                    (Ghost.reveal mh) head prev cur
+                    (SA.normalized_wosize (U64.v requested_wz)) fuel in
+                 fst res == r.major_fp_out /\
+                 snd res == r.major_obj_out)
+{
+  u64_positive_not_zero prev;
+  SMA.major_fl_above_zero_current (Ghost.reveal mh) cur fuel;
+  assert (pure (U64.v cur >= U64.v zero_addr + U64.v mword));
+  allocate_major_found_prev_from_read
+    heap head prev base cur requested_wz
+    #fuel #cur_header_idx #cur_link_idx #prev_idx #mh
 }
 
 fn allocate_major_after_advance_from_read (heap: MajorHeap.major_heap_t)
