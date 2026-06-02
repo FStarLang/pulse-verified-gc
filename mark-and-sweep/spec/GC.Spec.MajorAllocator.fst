@@ -436,6 +436,65 @@ let major_fl_valid_step (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   = ()
 #pop-options
 
+let rec major_fl_above_zero (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot prop
+  (decreases fuel)
+  = if fuel = 0 then True
+    else
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then True
+      else if U64.v fp < U64.v zero_addr + U64.v mword ||
+             U64.v fp >= heap_size ||
+             U64.v fp % U64.v mword <> 0 then False
+      else
+        let obj : obj_addr = fp in
+        match MH.read_word_in_major mh obj with
+        | Some next -> major_fl_above_zero mh next fuel'
+        | None -> False
+
+let major_fl_above_zero_fuel_0 (mh: MH.major_heap) (fp: U64.t)
+  : Lemma (major_fl_above_zero mh fp 0)
+  = ()
+
+let major_fl_above_zero_null (mh: MH.major_heap) (fuel: nat)
+  : Lemma (requires fuel > 0)
+          (ensures major_fl_above_zero mh 0UL fuel)
+  = ()
+
+let major_fl_above_zero_current (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                   fp <> 0UL /\
+                   major_fl_above_zero mh fp fuel)
+          (ensures U64.v fp >= U64.v zero_addr + U64.v mword /\
+                  U64.v fp < heap_size /\
+                  U64.v fp % U64.v mword == 0)
+  = ()
+
+let major_fl_above_zero_next (mh: MH.major_heap) (fp: obj_addr)
+                           (fuel: nat) (next: U64.t)
+  : Lemma (requires fuel > 0 /\
+                   U64.v fp >= U64.v zero_addr + U64.v mword /\
+                   major_fl_above_zero mh fp fuel /\
+                   MH.read_word_in_major mh fp == Some next)
+          (ensures major_fl_above_zero mh next (fuel - 1))
+  = ()
+
+let major_fl_valid_above_zero_next (mh: MH.major_heap) (fp: obj_addr)
+                                 (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                   U64.v fp >= U64.v zero_addr + U64.v mword /\
+                   major_fl_valid mh fp fuel /\
+                   major_fl_above_zero mh fp fuel)
+          (ensures (match MH.read_word_in_major mh fp with
+                   | Some next ->
+                     next <> fp /\
+                     major_fl_valid mh next (fuel - 1) /\
+                     major_fl_above_zero mh next (fuel - 1)
+                   | None -> False))
+  = major_fl_valid_next mh fp fuel;
+    match MH.read_word_in_major mh fp with
+    | None -> assert False
+    | Some next -> major_fl_above_zero_next mh fp fuel next
+
 let rec major_fl_capacity (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot nat
   (decreases fuel)
   = if fuel = 0 then 0
@@ -617,6 +676,71 @@ let expand_major_heap_links_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
   = expand_major_heap_preserves_fl_valid mh c next_fp next_fp fuel;
     expand_major_heap_fresh_fl_valid mh c next_fp fuel
 
+#push-options "--z3rlimit 80"
+let rec expand_major_heap_preserves_fl_above_zero (mh: MH.major_heap) (c: MH.heap_chunk)
+                                                 (new_link: U64.t) (fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_valid mh fp fuel /\
+                    major_fl_above_zero mh fp fuel)
+          (ensures major_fl_above_zero
+                    (expand_major_heap mh c new_link).major_out fp fuel)
+          (decreases fuel)
+  = if fuel = 0 then ()
+    else begin
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then ()
+      else if U64.v fp < U64.v zero_addr + U64.v mword ||
+              U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then
+        assert False
+      else begin
+        let obj : obj_addr = fp in
+        let r = init_fresh_chunk c new_link in
+        init_fresh_chunk_disjoint_from_all mh c new_link;
+        match MH.read_word_in_major mh obj with
+        | None -> assert False
+        | Some next ->
+          major_fl_valid_next mh fp fuel;
+          expand_major_heap_preserves_fl_above_zero mh c new_link next fuel';
+          MH.read_word_add_chunk_disjoint_old mh r.chunk_out obj next;
+          assert (MH.read_word_in_major
+                    (expand_major_heap mh c new_link).major_out obj ==
+                  Some next)
+      end
+    end
+#pop-options
+
+let expand_major_heap_fresh_fl_above_zero (mh: MH.major_heap) (c: MH.heap_chunk)
+                                         (next_fp: U64.t) (fuel: nat)
+  : Lemma (requires U64.v c.base >= U64.v zero_addr /\
+                    major_fl_above_zero
+                      (expand_major_heap mh c next_fp).major_out next_fp fuel)
+          (ensures major_fl_above_zero
+                    (expand_major_heap mh c next_fp).major_out
+                    (fresh_chunk_object c) (fuel + 1))
+  = fresh_chunk_object_in_chunk c;
+    let er = expand_major_heap mh c next_fp in
+    let fp = fresh_chunk_object c in
+    expand_major_heap_link mh c next_fp;
+    f_address_spec c.base;
+    assert (U64.v fp == U64.v c.base + U64.v mword);
+    assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    assert (MH.read_word_in_major er.major_out fp == Some next_fp)
+
+let expand_major_heap_links_fl_above_zero (mh: MH.major_heap) (c: MH.heap_chunk)
+                                         (next_fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_valid mh next_fp fuel /\
+                    major_fl_above_zero mh next_fp fuel /\
+                    U64.v c.base >= U64.v zero_addr)
+          (ensures major_fl_above_zero
+                    (expand_major_heap mh c next_fp).major_out
+                    (fresh_chunk_object c) (fuel + 1))
+  = expand_major_heap_preserves_fl_above_zero mh c next_fp next_fp fuel;
+    expand_major_heap_fresh_fl_above_zero mh c next_fp fuel
+
 type ensure_capacity_result = {
   capacity_major_out: MH.major_heap;
   capacity_fp_out: obj_addr;
@@ -661,6 +785,20 @@ let ensure_major_capacity_fl_valid (mh: MH.major_heap) (fp: obj_addr)
   = if major_fl_capacity mh fp fuel >= needed then ()
     else
       expand_major_heap_links_fl_valid mh fresh fp fuel
+
+let ensure_major_capacity_fl_above_zero (mh: MH.major_heap) (fp: obj_addr)
+                                       (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma (requires major_fl_valid mh fp fuel /\
+                    major_fl_above_zero mh fp fuel /\
+                    (major_fl_capacity mh fp fuel < needed ==>
+                     MH.chunk_disjoint_from_all fresh mh /\
+                     U64.v fresh.base >= U64.v zero_addr))
+          (ensures (let r = ensure_major_capacity_spec mh fp fuel needed fresh in
+                    major_fl_above_zero
+                      r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_capacity mh fp fuel >= needed then ()
+    else
+      expand_major_heap_links_fl_above_zero mh fresh fp fuel
 
 let ensure_major_capacity_wf (mh: MH.major_heap) (fp: obj_addr)
                              (fuel needed: nat) (fresh: MH.heap_chunk)
