@@ -1,6 +1,7 @@
 module GC.SPOT.HeapExpansion
 
 module U64 = FStar.UInt64
+module Seq = FStar.Seq
 
 open GC.Spec.Base
 
@@ -93,3 +94,19 @@ val spot_chunked_classify_major_field_preserved_by_expansion
         spot_chunked_classify_major_field ms
          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
         spot_chunked_classify_major_field ms mh v)
+
+val spot_chunked_major_field_edges
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    src:obj_addr -> wz:nat -> i:nat -> GTot (Seq.seq CG.combined_edge)
+
+val spot_chunked_major_field_edges_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state ->
+    mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    src:obj_addr -> wz:nat -> i:nat ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_major_field_expansion_safe mh fresh src wz i)
+      (ensures
+        spot_chunked_major_field_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out src wz i ==
+        spot_chunked_major_field_edges ms mh src wz i)

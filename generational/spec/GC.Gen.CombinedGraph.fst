@@ -169,6 +169,133 @@ let chunked_classify_major_field_preserved_by_expansion
     chunked_major_member_preserved_by_expansion mh fresh fp (v <: obj_addr)
   else ()
 
+let chunked_major_field_slot (src: obj_addr) (i: nat)
+  : GTot (option hp_addr)
+  = let field_offset = U64.v src + i * 8 in
+    if field_offset + 8 > heap_size || field_offset % 8 <> 0 then
+      None
+    else
+      Some (U64.uint_to_t field_offset <: hp_addr)
+
+let rec chunked_major_field_edges (ms: minor_state) (mh: MH.major_heap)
+                                  (src: obj_addr) (wz: nat) (i: nat)
+  : GTot (seq combined_edge) (decreases (wz - i))
+  = if i >= wz then Seq.empty
+    else
+      let rest = chunked_major_field_edges ms mh src wz (i + 1) in
+      match chunked_major_field_slot src i with
+      | None -> rest
+      | Some field_addr ->
+        match MH.read_word_in_major mh field_addr with
+        | None -> rest
+        | Some v ->
+          match chunked_classify_major_field ms mh v with
+          | Some dst -> Seq.cons (MajorV src, dst) rest
+          | None -> rest
+
+let chunked_major_field_slots_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr) (wz: nat) (i: nat)
+  : Tot prop =
+  forall (j:nat) (field_addr:hp_addr).
+    i <= j /\ j < wz /\
+    chunked_major_field_slot src j == Some field_addr ==>
+      ~(MH.chunk_contains_addr fresh field_addr)
+
+let chunked_major_field_values_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr) (wz: nat) (i: nat)
+  : Tot prop =
+  forall (j:nat) (field_addr:hp_addr) (v:U64.t).
+    i <= j /\ j < wz /\
+    chunked_major_field_slot src j == Some field_addr /\
+    MH.read_word_in_major mh field_addr == Some v ==>
+      ~(MH.pointer_in_chunk fresh v)
+
+let chunked_major_field_expansion_safe
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr) (wz: nat) (i: nat)
+  : Tot prop =
+  chunked_major_field_slots_miss_fresh mh fresh src wz i /\
+  chunked_major_field_values_miss_fresh mh fresh src wz i
+
+let chunked_major_field_expansion_safe_intro
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr) (wz: nat) (i: nat)
+  : Lemma
+      (requires
+        (forall (j:nat) (field_addr:hp_addr).
+          i <= j /\ j < wz /\
+          chunked_major_field_slot src j == Some field_addr ==>
+            ~(MH.chunk_contains_addr fresh field_addr)) /\
+        (forall (j:nat) (field_addr:hp_addr) (v:U64.t).
+          i <= j /\ j < wz /\
+          chunked_major_field_slot src j == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some v ==>
+            ~(MH.pointer_in_chunk fresh v)))
+      (ensures chunked_major_field_expansion_safe mh fresh src wz i)
+  = ()
+
+#push-options "--split_queries always --z3rlimit 10"
+let chunked_major_field_expansion_safe_at
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr)
+  (wz i j: nat) (field_addr: hp_addr) (v: U64.t)
+  : Lemma
+      (requires chunked_major_field_expansion_safe mh fresh src wz i /\
+                i <= j /\ j < wz /\
+                chunked_major_field_slot src j == Some field_addr)
+      (ensures
+        ~(MH.chunk_contains_addr fresh field_addr) /\
+        (MH.read_word_in_major mh field_addr == Some v ==>
+         ~(MH.pointer_in_chunk fresh v)))
+  =
+  assert (chunked_major_field_slots_miss_fresh mh fresh src wz i);
+  assert (chunked_major_field_values_miss_fresh mh fresh src wz i)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10"
+let chunked_major_field_expansion_safe_tail
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (src: obj_addr) (wz: nat) (i: nat)
+  : Lemma
+      (requires i < wz /\
+                chunked_major_field_expansion_safe mh fresh src wz i)
+      (ensures chunked_major_field_expansion_safe mh fresh src wz (i + 1))
+  =
+  assert (i <= i + 1);
+  assert (forall (j:nat) (field_addr:hp_addr) (v:U64.t).
+    i + 1 <= j /\ j < wz /\
+    chunked_major_field_slot src j == Some field_addr ==>
+      i <= j /\ j < wz /\
+      chunked_major_field_slot src j == Some field_addr)
+#pop-options
+
+let rec chunked_major_field_edges_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (src: obj_addr) (wz: nat) (i: nat)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_major_field_expansion_safe mh fresh src wz i)
+      (ensures
+        chunked_major_field_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out src wz i ==
+        chunked_major_field_edges ms mh src wz i)
+      (decreases (wz - i))
+  =
+  if i >= wz then ()
+  else begin
+    chunked_major_field_expansion_safe_tail mh fresh src wz i;
+    chunked_major_field_edges_preserved_by_expansion ms mh fresh fp src wz (i + 1);
+    match chunked_major_field_slot src i with
+    | None -> ()
+    | Some field_addr ->
+      assert (i <= i);
+      assert (i < wz);
+      assert (chunked_major_field_slot src i == Some field_addr);
+      chunked_major_field_expansion_safe_at mh fresh src wz i i field_addr 0UL;
+      SpecMajorAlloc.expand_major_heap_old_read mh fresh fp field_addr;
+      match MH.read_word_in_major mh field_addr with
+      | None -> ()
+      | Some v ->
+        chunked_major_field_expansion_safe_at mh fresh src wz i i field_addr v;
+        chunked_classify_major_field_preserved_by_expansion ms mh fresh fp v
+    end
+
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas
 /// ---------------------------------------------------------------------------

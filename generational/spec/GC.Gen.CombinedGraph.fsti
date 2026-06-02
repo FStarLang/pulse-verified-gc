@@ -162,6 +162,66 @@ val chunked_classify_major_field_preserved_by_expansion
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
         chunked_classify_major_field ms mh v)
 
+/// Checked major field slot address used by chunked edge construction.
+val chunked_major_field_slot (src: obj_addr) (i: nat)
+  : GTot (option hp_addr)
+
+/// Build field edges for a major object in a chunked major heap.
+val chunked_major_field_edges
+  : ms:minor_state -> mh:MH.major_heap -> src:obj_addr -> wz:nat -> i:nat ->
+    GTot (seq combined_edge)
+
+/// The old major field slots from `i` onward, and any old field values read
+/// there, do not point into the newly registered chunk.
+val chunked_major_field_expansion_safe
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> src:obj_addr -> wz:nat -> i:nat ->
+    Tot prop
+
+val chunked_major_field_expansion_safe_intro
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> src:obj_addr -> wz:nat -> i:nat ->
+    Lemma
+      (requires
+        (forall (j:nat) (field_addr:hp_addr).
+          i <= j /\ j < wz /\
+          chunked_major_field_slot src j == Some field_addr ==>
+            ~(MH.chunk_contains_addr fresh field_addr)) /\
+        (forall (j:nat) (field_addr:hp_addr) (v:U64.t).
+          i <= j /\ j < wz /\
+          chunked_major_field_slot src j == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some v ==>
+            ~(MH.pointer_in_chunk fresh v)))
+      (ensures chunked_major_field_expansion_safe mh fresh src wz i)
+
+val chunked_major_field_expansion_safe_at
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> src:obj_addr ->
+    wz:nat -> i:nat -> j:nat -> field_addr:hp_addr -> v:U64.t ->
+    Lemma
+      (requires chunked_major_field_expansion_safe mh fresh src wz i /\
+                i <= j /\ j < wz /\
+                chunked_major_field_slot src j == Some field_addr)
+      (ensures
+        ~(MH.chunk_contains_addr fresh field_addr) /\
+        (MH.read_word_in_major mh field_addr == Some v ==>
+         ~(MH.pointer_in_chunk fresh v)))
+
+val chunked_major_field_expansion_safe_tail
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> src:obj_addr -> wz:nat -> i:nat ->
+    Lemma
+      (requires i < wz /\
+                chunked_major_field_expansion_safe mh fresh src wz i)
+      (ensures chunked_major_field_expansion_safe mh fresh src wz (i + 1))
+
+val chunked_major_field_edges_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> src:obj_addr -> wz:nat -> i:nat ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_major_field_expansion_safe mh fresh src wz i)
+      (ensures
+        chunked_major_field_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out src wz i ==
+        chunked_major_field_edges ms mh src wz i)
+
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas
 /// ---------------------------------------------------------------------------
