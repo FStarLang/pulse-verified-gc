@@ -144,6 +144,7 @@ EXTRACT_MODULES = \
   GC.Impl.Coalesce \
   GC.Impl.FusedSweepCoalesce GC.Impl \
   GC.Impl.Allocator \
+  GC.Impl.MajorHeap \
   GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
 
@@ -153,12 +154,13 @@ ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_MODULES))) \
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Impl+GC.Impl.Allocator=GC.Impl.*[rename=GC_Impl]' \
+  -bundle 'GC.Impl+GC.Impl.Allocator+GC.Impl.MajorHeap=GC.Impl.*[rename=GC_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
     GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+    GC.Impl.MajorHeap \
     GC.Impl.ArrayWord GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce GC.Spec.ZeroAddr) \
   -warn-error -2-9-15
 
