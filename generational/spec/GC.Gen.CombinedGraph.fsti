@@ -162,6 +162,32 @@ val chunked_classify_major_field_preserved_by_expansion
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
         chunked_classify_major_field ms mh v)
 
+val chunked_header_of_object
+  : mh:MH.major_heap -> obj:obj_addr -> GTot (option U64.t)
+
+val chunked_wosize_of_object
+  : mh:MH.major_heap -> obj:obj_addr -> GTot (option U64.t)
+
+val chunked_header_of_object_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_header_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_header_of_object mh obj)
+
+val chunked_wosize_of_object_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_wosize_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_wosize_of_object mh obj)
+
 /// Checked major field slot address used by chunked edge construction.
 val chunked_major_field_slot (src: obj_addr) (i: nat)
   : GTot (option hp_addr)

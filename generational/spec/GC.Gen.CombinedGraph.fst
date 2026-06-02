@@ -169,6 +169,38 @@ let chunked_classify_major_field_preserved_by_expansion
     chunked_major_member_preserved_by_expansion mh fresh fp (v <: obj_addr)
   else ()
 
+let chunked_header_of_object (mh: MH.major_heap) (obj: obj_addr)
+  : GTot (option U64.t)
+  = MH.read_word_in_major mh (hd_address obj)
+
+let chunked_wosize_of_object (mh: MH.major_heap) (obj: obj_addr)
+  : GTot (option U64.t)
+  = match chunked_header_of_object mh obj with
+    | Some hdr -> Some (getWosize hdr)
+    | None -> None
+
+let chunked_header_of_object_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_header_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_header_of_object mh obj)
+  = SpecMajorAlloc.expand_major_heap_old_read mh fresh fp (hd_address obj)
+
+let chunked_wosize_of_object_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_wosize_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_wosize_of_object mh obj)
+  = chunked_header_of_object_preserved_by_expansion mh fresh fp obj
+
 let chunked_major_field_slot (src: obj_addr) (i: nat)
   : GTot (option hp_addr)
   = let field_offset = U64.v src + i * 8 in

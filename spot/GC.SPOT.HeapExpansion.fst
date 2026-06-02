@@ -4,6 +4,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Heap
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
@@ -138,6 +139,28 @@ let spot_chunked_classify_major_field_preserved_by_expansion
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
         spot_chunked_classify_major_field ms mh v)
   = CG.chunked_classify_major_field_preserved_by_expansion ms mh fresh fp v
+
+let spot_chunked_header_of_object_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        CG.chunked_header_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        CG.chunked_header_of_object mh obj)
+  = CG.chunked_header_of_object_preserved_by_expansion mh fresh fp obj
+
+let spot_chunked_wosize_of_object_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        CG.chunked_wosize_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        CG.chunked_wosize_of_object mh obj)
+  = CG.chunked_wosize_of_object_preserved_by_expansion mh fresh fp obj
 
 let spot_chunked_major_field_edges
   (ms: minor_state) (mh: MH.major_heap) (src: obj_addr) (wz: nat) (i: nat)
