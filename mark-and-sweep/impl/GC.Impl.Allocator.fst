@@ -4084,3 +4084,172 @@ fn expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
   assert (pure (snd res == fp_out));
   res
 }
+
+fn allocate_major_expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
+                                           (base: hp_addr) (fp_out: obj_addr)
+                                           (fresh_wz requested_wz: wosize)
+                                           (fp: U64.t) (fuel: U64.t)
+                                           (#mh: Ghost.erased MH.major_heap)
+                                           (#fresh_chunk: Ghost.erased
+                                             (c:MH.heap_chunk{c.base == base /\
+                                                              fp_out == SMA.fresh_chunk_object c /\
+                                                              fresh_wz == SMA.fresh_chunk_wosize_u64 c}))
+    requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+             MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+             pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                   U64.v base >= U64.v zero_addr /\
+                   U64.v requested_wz > 0 /\
+                   SMA.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                     U64.v requested_wz /\
+                   SMA.major_fl_valid (Ghost.reveal mh) fp (U64.v fuel) /\
+                   SMA.major_fl_above_zero (Ghost.reveal mh) fp (U64.v fuel) /\
+                   SMA.major_fl_blocks_fit (Ghost.reveal mh) fp (U64.v fuel))
+    returns res: (U64.t & U64.t)
+    ensures (let old_r =
+               SMA.major_alloc_spec_with_fuel
+                 (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+             let final_r =
+               SMA.major_alloc_spec_expand_on_oom
+                 (Ghost.reveal mh) fp (U64.v requested_wz)
+                 (U64.v fuel) (Ghost.reveal fresh_chunk) in
+             if U64.eq old_r.major_obj_out 0UL then
+               MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out
+             else
+               (MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+                MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out)) **
+            pure (let old_r =
+                    SMA.major_alloc_spec_with_fuel
+                      (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                  let final_r =
+                    SMA.major_alloc_spec_expand_on_oom
+                      (Ghost.reveal mh) fp (U64.v requested_wz)
+                      (U64.v fuel) (Ghost.reveal fresh_chunk) in
+                  fst res == final_r.major_fp_out /\
+                  snd res == final_r.major_obj_out /\
+                  MH.chunk_disjoint_from_all
+                    (Ghost.reveal fresh_chunk) old_r.major_alloc_out)
+{
+  let old_res =
+    allocate_major_with_fuel_preserve_oom
+      heap fp requested_wz fuel #mh;
+  SMA.major_alloc_spec_with_fuel_preserves_chunk_disjoint
+    (Ghost.reveal fresh_chunk) (Ghost.reveal mh) fp
+    (U64.v requested_wz) (U64.v fuel);
+  if U64.eq (snd old_res) 0UL {
+    assert (pure (snd old_res == 0UL));
+    assert (pure ((SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz)
+                    (U64.v fuel)).major_obj_out == 0UL));
+    assert (pure (U64.eq
+                    ((SMA.major_alloc_spec_with_fuel
+                       (Ghost.reveal mh) fp (U64.v requested_wz)
+                       (U64.v fuel)).major_obj_out)
+                    0UL == true));
+    let res =
+      expand_on_oom_with_fresh
+        heap base fp_out fresh_wz requested_wz fp #(U64.v fuel)
+        #mh #fresh_chunk;
+    assert (pure (let old_r =
+                    SMA.major_alloc_spec_with_fuel
+                      (Ghost.reveal mh) fp (U64.v requested_wz)
+                      (U64.v fuel) in
+                  U64.eq old_r.major_obj_out 0UL == true));
+    rewrite
+      (MajorHeap.is_indexed_major_heap heap
+        (let old_mh : MH.major_heap = Ghost.reveal mh in
+         let fresh_c : MH.heap_chunk = Ghost.reveal fresh_chunk in
+         SMA.major_alloc_spec_expand_on_oom
+           old_mh fp (U64.v requested_wz)
+           (U64.v fuel) fresh_c).major_alloc_out)
+    as
+      (let old_r =
+         SMA.major_alloc_spec_with_fuel
+           (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+       let final_r =
+         SMA.major_alloc_spec_expand_on_oom
+           (Ghost.reveal mh) fp (U64.v requested_wz)
+           (U64.v fuel) (Ghost.reveal fresh_chunk) in
+       if U64.eq old_r.major_obj_out 0UL then
+         MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out
+       else
+         (MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+          MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out));
+    assert (pure (let old_r =
+                    SMA.major_alloc_spec_with_fuel
+                      (Ghost.reveal mh) fp (U64.v requested_wz)
+                      (U64.v fuel) in
+                  let final_r =
+                    SMA.major_alloc_spec_expand_on_oom
+                      (Ghost.reveal mh) fp (U64.v requested_wz)
+                      (U64.v fuel) (Ghost.reveal fresh_chunk) in
+                  fst res == final_r.major_fp_out /\
+                  snd res == final_r.major_obj_out /\
+                  MH.chunk_disjoint_from_all
+                    (Ghost.reveal fresh_chunk) old_r.major_alloc_out));
+    res
+  } else {
+    assert (pure (snd old_res <> 0UL));
+    assert (pure (U64.eq (snd old_res) 0UL == false));
+    assert (pure ((SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz)
+                    (U64.v fuel)).major_obj_out <> 0UL));
+    assert (pure (U64.eq
+                    ((SMA.major_alloc_spec_with_fuel
+                       (Ghost.reveal mh) fp (U64.v requested_wz)
+                       (U64.v fuel)).major_obj_out)
+                    0UL == false));
+    assert (pure (SMA.major_alloc_spec_expand_on_oom
+                    (Ghost.reveal mh) fp (U64.v requested_wz)
+                    (U64.v fuel) (Ghost.reveal fresh_chunk) ==
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz)
+                    (U64.v fuel)));
+    rewrite
+      (MajorHeap.is_indexed_major_heap heap
+        (let r =
+           SMA.major_alloc_spec_with_fuel
+             (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+         r.major_alloc_out))
+    as
+      (MajorHeap.is_indexed_major_heap heap
+        (let final_r =
+           SMA.major_alloc_spec_expand_on_oom
+             (Ghost.reveal mh) fp (U64.v requested_wz)
+             (U64.v fuel) (Ghost.reveal fresh_chunk) in
+         final_r.major_alloc_out));
+    rewrite
+      (MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+       MajorHeap.is_indexed_major_heap heap
+        (let final_r =
+           SMA.major_alloc_spec_expand_on_oom
+             (Ghost.reveal mh) fp (U64.v requested_wz)
+             (U64.v fuel) (Ghost.reveal fresh_chunk) in
+         final_r.major_alloc_out))
+    as
+      (let old_r =
+         SMA.major_alloc_spec_with_fuel
+           (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+       let final_r =
+         SMA.major_alloc_spec_expand_on_oom
+           (Ghost.reveal mh) fp (U64.v requested_wz)
+           (U64.v fuel) (Ghost.reveal fresh_chunk) in
+       if U64.eq old_r.major_obj_out 0UL then
+         MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out
+       else
+         (MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+          MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out));
+    assert (pure (let old_r =
+                    SMA.major_alloc_spec_with_fuel
+                      (Ghost.reveal mh) fp (U64.v requested_wz)
+                      (U64.v fuel) in
+                  let final_r =
+                    SMA.major_alloc_spec_expand_on_oom
+                      (Ghost.reveal mh) fp (U64.v requested_wz)
+                      (U64.v fuel) (Ghost.reveal fresh_chunk) in
+                  fst old_res == final_r.major_fp_out /\
+                  snd old_res == final_r.major_obj_out /\
+                  MH.chunk_disjoint_from_all
+                    (Ghost.reveal fresh_chunk) old_r.major_alloc_out));
+    old_res
+  }
+}

@@ -1308,6 +1308,58 @@ fn expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
                  fst res == r.major_fp_out /\
                  snd res == r.major_obj_out)
 
+/// Compose a non-expanding allocation attempt with the verified expand-on-OOM
+/// path.  If the old free-list allocation succeeds, the reserved fresh chunk is
+/// returned unchanged and remains disjoint from the updated old heap.  If the old
+/// attempt returns OOM, the fresh chunk is consumed to expand the indexed major
+/// heap and allocate from the fresh head.
+fn allocate_major_expand_on_oom_with_fresh (heap: MajorHeap.major_heap_t)
+                                          (base: hp_addr) (fp_out: obj_addr)
+                                          (fresh_wz requested_wz: wosize)
+                                          (fp: U64.t) (fuel: U64.t)
+                                          (#mh: Ghost.erased MH.major_heap)
+                                          (#fresh_chunk: Ghost.erased
+                                            (c:MH.heap_chunk{c.base == base /\
+                                                             fp_out == SpecMajorAlloc.fresh_chunk_object c /\
+                                                             fresh_wz == SpecMajorAlloc.fresh_chunk_wosize_u64 c}))
+    requires MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+             MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+             pure (MH.chunk_disjoint_from_all (Ghost.reveal fresh_chunk) (Ghost.reveal mh) /\
+                  U64.v base >= U64.v zero_addr /\
+                  U64.v requested_wz > 0 /\
+                  SpecMajorAlloc.fresh_chunk_wosize (Ghost.reveal fresh_chunk) >=
+                    U64.v requested_wz /\
+                  SpecMajorAlloc.major_fl_valid
+                    (Ghost.reveal mh) fp (U64.v fuel) /\
+                  SpecMajorAlloc.major_fl_above_zero
+                    (Ghost.reveal mh) fp (U64.v fuel) /\
+                  SpecMajorAlloc.major_fl_blocks_fit
+                    (Ghost.reveal mh) fp (U64.v fuel))
+    returns res: (U64.t & U64.t)
+    ensures (let old_r =
+               SpecMajorAlloc.major_alloc_spec_with_fuel
+                 (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+             let final_r =
+               SpecMajorAlloc.major_alloc_spec_expand_on_oom
+                 (Ghost.reveal mh) fp (U64.v requested_wz)
+                 (U64.v fuel) (Ghost.reveal fresh_chunk) in
+             if U64.eq old_r.major_obj_out 0UL then
+               MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out
+             else
+               (MajorHeap.chunk_range heap (Ghost.reveal fresh_chunk) **
+                MajorHeap.is_indexed_major_heap heap final_r.major_alloc_out)) **
+            pure (let old_r =
+                   SpecMajorAlloc.major_alloc_spec_with_fuel
+                     (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                 let final_r =
+                   SpecMajorAlloc.major_alloc_spec_expand_on_oom
+                     (Ghost.reveal mh) fp (U64.v requested_wz)
+                     (U64.v fuel) (Ghost.reveal fresh_chunk) in
+                 fst res == final_r.major_fp_out /\
+                 snd res == final_r.major_obj_out /\
+                 MH.chunk_disjoint_from_all
+                   (Ghost.reveal fresh_chunk) old_r.major_alloc_out)
+
 /// Initialize the heap as one large free block.
 ///
 /// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
