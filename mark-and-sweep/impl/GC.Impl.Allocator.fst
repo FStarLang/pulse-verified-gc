@@ -1039,7 +1039,7 @@ fn allocate_major_head (heap: MajorHeap.major_heap_t)
 fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
                                   (head prev: U64.t)
                                   (base: hp_addr) (cur: obj_addr)
-                                  (block_wz requested_wz: wosize)
+                                  (hdr: U64.t) (block_wz requested_wz: wosize)
                                   (next_fp: U64.t)
                                   (#fuel: (f:nat{f > 0})) (#idx: nat)
                                   (#mh: Ghost.erased MH.major_heap)
@@ -1048,9 +1048,9 @@ fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
                   base == SH.hd_address cur /\
                   MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SA.make_header block_wz SA.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) cur == Some next_fp /\
+                  block_wz == SO.getWosize hdr /\
                   U64.v cur >= U64.v zero_addr + U64.v mword /\
                   U64.v block_wz <
                     SA.normalized_wosize (U64.v requested_wz))
@@ -1064,19 +1064,16 @@ fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
                    (Ghost.reveal mh) head cur next_fp
                    (SA.normalized_wosize (U64.v requested_wz)) (fuel - 1))
 {
-  let block_hdr = SA.make_header block_wz SA.blue_bits 0UL;
-  AllocLemmas.make_header_getWosize block_wz SA.blue_bits 0UL;
-  assert (pure (SO.getWosize block_hdr == block_wz));
   assert (pure (base == SH.hd_address cur));
   assert (pure (MH.read_word_in_major (Ghost.reveal mh) (SH.hd_address cur) ==
-                Some block_hdr));
+                Some hdr));
   SMA.major_spec_next_fp_some (Ghost.reveal mh) cur next_fp;
   assert (pure (SMA.major_spec_next_fp (Ghost.reveal mh) cur == next_fp));
-  assert (pure (U64.v (SO.getWosize block_hdr) <
+  assert (pure (U64.v (SO.getWosize hdr) <
                 SA.normalized_wosize (U64.v requested_wz)));
   SMA.major_alloc_search_advance
     (Ghost.reveal mh) head prev cur
-    (SA.normalized_wosize (U64.v requested_wz)) fuel block_hdr;
+    (SA.normalized_wosize (U64.v requested_wz)) fuel hdr;
   assert (pure (SMA.major_alloc_search
                   (Ghost.reveal mh) head prev cur
                   (SA.normalized_wosize (U64.v requested_wz)) fuel ==

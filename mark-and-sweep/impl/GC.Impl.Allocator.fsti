@@ -242,7 +242,7 @@ fn allocate_major_head (heap: MajorHeap.major_heap_t)
 fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
                                  (head prev: U64.t)
                                  (base: hp_addr) (cur: obj_addr)
-                                 (block_wz requested_wz: wosize)
+                                 (hdr: U64.t) (block_wz requested_wz: wosize)
                                  (next_fp: U64.t)
                                  (#fuel: (f:nat{f > 0})) (#idx: nat)
                                  (#mh: Ghost.erased MH.major_heap)
@@ -251,9 +251,9 @@ fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
                  base == SpecHeap.hd_address cur /\
                  MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
                  MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
-                 MH.read_word_in_major (Ghost.reveal mh) base ==
-                   Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                 MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                  MH.read_word_in_major (Ghost.reveal mh) cur == Some next_fp /\
+                 block_wz == SpecObject.getWosize hdr /\
                  U64.v cur >= U64.v zero_addr + U64.v mword /\
                  U64.v block_wz <
                    SpecAlloc.normalized_wosize (U64.v requested_wz))
