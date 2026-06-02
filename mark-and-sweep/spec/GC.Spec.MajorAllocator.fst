@@ -495,6 +495,63 @@ let major_fl_valid_above_zero_next (mh: MH.major_heap) (fp: obj_addr)
     | None -> assert False
     | Some next -> major_fl_above_zero_next mh fp fuel next
 
+let rec major_fl_blocks_fit (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot prop
+  (decreases fuel)
+  = if fuel = 0 then True
+    else
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then True
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then False
+      else
+        let obj : obj_addr = fp in
+        let base = hd_address obj in
+        let idx = MH.lookup_chunk_index_value mh base in
+        MH.lookup_chunk_index mh base == Some idx /\
+        idx < Seq.length mh /\
+        MH.word_in_chunk (Seq.index mh idx) base /\
+        (match MH.read_word_in_major mh base with
+         | Some hdr ->
+           U64.v base + (1 + U64.v (Obj.getWosize hdr)) * U64.v mword <=
+             MH.chunk_end (Seq.index mh idx)
+         | None -> False) /\
+        (match MH.read_word_in_major mh obj with
+         | Some next -> major_fl_blocks_fit mh next fuel'
+         | None -> False)
+
+let major_fl_blocks_fit_null (mh: MH.major_heap) (fuel: nat)
+  : Lemma (requires fuel > 0)
+          (ensures major_fl_blocks_fit mh 0UL fuel)
+  = ()
+
+let major_fl_blocks_fit_current (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                   U64.v fp >= U64.v mword /\
+                   U64.v fp < heap_size /\
+                   U64.v fp % U64.v mword == 0 /\
+                   major_fl_blocks_fit mh fp fuel)
+          (ensures (let obj : obj_addr = fp in
+                    let base = hd_address obj in
+                    let idx = MH.lookup_chunk_index_value mh base in
+                    MH.lookup_chunk_index mh base == Some idx /\
+                    idx < Seq.length mh /\
+                    MH.word_in_chunk (Seq.index mh idx) base /\
+                    (match MH.read_word_in_major mh base with
+                     | Some hdr ->
+                       U64.v base +
+                         (1 + U64.v (Obj.getWosize hdr)) * U64.v mword <=
+                         MH.chunk_end (Seq.index mh idx)
+                     | None -> False)))
+  = ()
+
+let major_fl_blocks_fit_next (mh: MH.major_heap) (fp: obj_addr)
+                             (fuel: nat) (next: U64.t)
+  : Lemma (requires fuel > 0 /\
+                   major_fl_blocks_fit mh fp fuel /\
+                   MH.read_word_in_major mh fp == Some next)
+          (ensures major_fl_blocks_fit mh next (fuel - 1))
+  = ()
+
 let rec major_fl_capacity (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot nat
   (decreases fuel)
   = if fuel = 0 then 0

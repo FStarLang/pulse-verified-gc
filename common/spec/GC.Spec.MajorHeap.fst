@@ -875,6 +875,71 @@ let objects_in_chunk_member_in_chunk (c: heap_chunk) (x: obj_addr)
           (ensures obj_addr_in_chunk c x)
   = objects_in_chunk_from_member_in_chunk c c.base x
 
+let object_header_size_fits_in_chunk (c: heap_chunk) (x: obj_addr) : Tot prop =
+  if word_in_chunk c (hd_address x) then
+    let hdr = read_word_in_chunk c (hd_address x) in
+    U64.v (hd_address x) + (1 + U64.v (Obj.getWosize hdr)) * U64.v mword <=
+      chunk_end c
+  else False
+
+let rec objects_in_chunk_from_member_header_fits
+  (c: heap_chunk) (start: hp_addr) (x: obj_addr)
+  : Lemma (requires Seq.mem x (objects_in_chunk_from c start))
+          (ensures object_header_size_fits_in_chunk c x)
+          (decreases chunk_end c - U64.v start)
+  = if U64.v start < chunk_start c then
+      assert False
+    else if U64.v start + U64.v mword >= chunk_end c then
+      assert False
+    else begin
+      let header = read_word_in_chunk c start in
+      let wz = Obj.getWosize header in
+      let obj_size_words = U64.v wz + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then
+        assert False
+      else begin
+        let obj_addr = f_address start in
+        let tail =
+          if next_start_nat >= chunk_end c then Seq.empty
+          else begin
+            assert (next_start_nat < heap_size);
+            assert (next_start_nat < pow2 64);
+            next_object_start_aligned start obj_size_words;
+            assert (next_start_nat % U64.v mword == 0);
+            let next_start : hp_addr = U64.uint_to_t next_start_nat in
+            objects_in_chunk_from c next_start
+          end
+        in
+        SeqProps.mem_cons obj_addr tail;
+        if x = obj_addr then begin
+          hd_f_roundtrip start;
+          assert (hd_address x == start);
+          assert (word_in_chunk c (hd_address x));
+          assert (read_word_in_chunk c (hd_address x) == header);
+          assert (U64.v (hd_address x) +
+                  (1 + U64.v (Obj.getWosize header)) * U64.v mword ==
+                  next_start_nat);
+          assert (object_header_size_fits_in_chunk c x)
+        end else begin
+          assert (Seq.mem x tail);
+          if next_start_nat >= chunk_end c then
+            assert False
+          else begin
+            assert (obj_size_words >= 1);
+            assert (next_start_nat > U64.v start);
+            let next_start : hp_addr = U64.uint_to_t next_start_nat in
+            objects_in_chunk_from_member_header_fits c next_start x
+          end
+        end
+      end
+    end
+
+let objects_in_chunk_member_header_fits (c: heap_chunk) (x: obj_addr)
+  : Lemma (requires Seq.mem x (objects_in_chunk c))
+          (ensures object_header_size_fits_in_chunk c x)
+  = objects_in_chunk_from_member_header_fits c c.base x
+
 let rec single_chunk_objects_from_compat
   (g: heap) (start: hp_addr{U64.v start >= U64.v zero_addr})
   : Lemma (ensures objects_in_chunk_from (single_chunk_of_heap g) start == Fields.objects start g)
