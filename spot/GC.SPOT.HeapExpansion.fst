@@ -4,10 +4,15 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Gen.Base
+open GC.Gen.MinorHeap
+open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
+module SeqMem = GC.Spec.SeqMemLemmas
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module CG = GC.Gen.CombinedGraph
 
 let spot_expand_on_oom_pre
   (mh: MH.major_heap) (fp: U64.t) (requested_wz fuel: nat)
@@ -90,3 +95,89 @@ let spot_ensure_capacity_expands_and_preserves_old_read
   SpecMajorAlloc.ensure_major_capacity_fl_above_zero mh fp fuel needed fresh;
   SpecMajorAlloc.ensure_major_capacity_wf mh fp fuel needed fresh;
   SpecMajorAlloc.ensure_major_capacity_preserves_old_read mh fp fuel needed fresh old_addr
+
+let spot_chunked_classify_minor_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : GTot (option CG.combined_vertex)
+  = let vo = to_minor_offset v in
+    if is_minor_addr vo && Seq.mem vo (minor_objects ms) then
+      Some (CG.MinorV vo)
+    else if is_val_addr v && Seq.mem (v <: obj_addr) (MH.major_objects mh) then
+      Some (CG.MajorV v)
+    else
+      None
+
+let spot_chunked_classify_major_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : GTot (option CG.combined_vertex)
+  = let vo = to_minor_offset v in
+    if is_minor_pointer vo && Seq.mem vo (minor_objects ms) then
+      Some (CG.MinorV vo)
+    else if is_val_addr v && Seq.mem (v <: obj_addr) (MH.major_objects mh) then
+      Some (CG.MajorV v)
+    else
+      None
+
+let spot_major_member_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (v: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        Seq.mem v
+          (MH.major_objects
+            (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out) ==
+        Seq.mem v (MH.major_objects mh))
+  =
+  SpecMajorAlloc.expand_major_heap_objects mh fresh fp;
+  if Seq.mem v (MH.major_objects mh) then
+    SeqMem.seq_mem_cons_tail
+      (SpecMajorAlloc.fresh_chunk_object fresh)
+      v
+      (MH.major_objects mh)
+  else if
+    Seq.mem v
+      (MH.major_objects
+        (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  then begin
+    SeqMem.seq_mem_cons_not_mem_implies_eq
+      (SpecMajorAlloc.fresh_chunk_object fresh)
+      v
+      (MH.major_objects mh);
+    SpecMajorAlloc.fresh_chunk_object_in_chunk fresh;
+    assert (v == SpecMajorAlloc.fresh_chunk_object fresh);
+    assert (MH.pointer_in_chunk fresh v);
+    assert False
+  end
+
+let spot_chunked_classify_minor_field_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (v: U64.t)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        spot_chunked_classify_minor_field ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        spot_chunked_classify_minor_field ms mh v)
+  =
+  let vo = to_minor_offset v in
+  if is_minor_addr vo && Seq.mem vo (minor_objects ms) then ()
+  else if is_val_addr v then
+    spot_major_member_preserved_by_expansion mh fresh fp (v <: obj_addr)
+  else ()
+
+let spot_chunked_classify_major_field_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (v: U64.t)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        spot_chunked_classify_major_field ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        spot_chunked_classify_major_field ms mh v)
+  =
+  let vo = to_minor_offset v in
+  if is_minor_pointer vo && Seq.mem vo (minor_objects ms) then ()
+  else if is_val_addr v then
+    spot_major_member_preserved_by_expansion mh fresh fp (v <: obj_addr)
+  else ()

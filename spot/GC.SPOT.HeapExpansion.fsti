@@ -7,6 +7,7 @@ open GC.Spec.Base
 module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module CG = GC.Gen.CombinedGraph
 
 val spot_expand_on_oom_pre
   : mh:MH.major_heap -> fp:U64.t -> requested_wz:nat -> fuel:nat ->
@@ -51,3 +52,44 @@ val spot_ensure_capacity_expands_and_preserves_old_read
            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
          MH.well_formed_major_heap r.capacity_major_out /\
          MH.read_word_in_major r.capacity_major_out old_addr == Some old_value))
+
+val spot_chunked_classify_minor_field
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap -> v:U64.t ->
+    GTot (option CG.combined_vertex)
+
+val spot_chunked_classify_major_field
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap -> v:U64.t ->
+    GTot (option CG.combined_vertex)
+
+val spot_major_member_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> v:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+               ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        Seq.mem v
+         (MH.major_objects
+           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out) ==
+        Seq.mem v (MH.major_objects mh))
+
+val spot_chunked_classify_minor_field_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state ->
+    mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> v:U64.t ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+               ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        spot_chunked_classify_minor_field ms
+         (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        spot_chunked_classify_minor_field ms mh v)
+
+val spot_chunked_classify_major_field_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state ->
+    mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> v:U64.t ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+               ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        spot_chunked_classify_major_field ms
+         (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        spot_chunked_classify_major_field ms mh v)
