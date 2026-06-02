@@ -27,6 +27,9 @@ open GC.Gen.Reachability
 open GC.Gen.Remembered
 open GC.Gen.Promote
 
+module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
+
 /// ---------------------------------------------------------------------------
 /// Tagged Vertex Type
 /// ---------------------------------------------------------------------------
@@ -112,6 +115,52 @@ val classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
              let vo = to_minor_offset v in
              is_minor_pointer vo /\ Seq.mem vo (minor_objects ms)))
           (ensures classify_major_field ms major v == Some (MinorV (to_minor_offset v)))
+
+/// Chunked-major analogue of `classify_minor_field`, used while porting the
+/// generational graph/shape proof from dense `heap` to expandable `major_heap`.
+val chunked_classify_minor_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : GTot (option combined_vertex)
+
+/// Chunked-major analogue of `classify_major_field`.
+val chunked_classify_major_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : GTot (option combined_vertex)
+
+/// Fresh expansion preserves membership for an old value that cannot point into
+/// the newly registered chunk. This is the classification-side obligation that
+/// prevents registering a fresh chunk from turning old raw field data into a
+/// new major pointer.
+val chunked_major_member_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> v:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        Seq.mem v
+          (MH.major_objects
+            (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out) ==
+        Seq.mem v (MH.major_objects mh))
+
+val chunked_classify_minor_field_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> v:U64.t ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        chunked_classify_minor_field ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        chunked_classify_minor_field ms mh v)
+
+val chunked_classify_major_field_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> v:U64.t ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        chunked_classify_major_field ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        chunked_classify_major_field ms mh v)
 
 /// ---------------------------------------------------------------------------
 /// Classification Inversion Lemmas
