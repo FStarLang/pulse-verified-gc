@@ -151,6 +151,38 @@ fn allocate_major_with_fuel (heap: MajorHeap.major_heap_t)
                 fst res == r.major_fp_out /\
                 snd res == r.major_obj_out)
 
+/// Same allocation primitive, but when it returns OOM the heap ownership is
+/// rewritten back to the original major heap.  This is the old-allocation phase
+/// expected by expand-on-OOM callers before they acquire a fresh chunk.
+fn allocate_major_with_fuel_preserve_oom (heap: MajorHeap.major_heap_t)
+                                        (fp: U64.t)
+                                        (requested_wz: wosize)
+                                        (fuel: U64.t)
+                                        (#mh: Ghost.erased MH.major_heap)
+  requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (U64.v requested_wz > 0 /\
+                 SpecMajorAlloc.major_fl_valid
+                   (Ghost.reveal mh) fp (U64.v fuel) /\
+                 SpecMajorAlloc.major_fl_above_zero
+                   (Ghost.reveal mh) fp (U64.v fuel) /\
+                 SpecMajorAlloc.major_fl_blocks_fit
+                   (Ghost.reveal mh) fp (U64.v fuel))
+  returns res: (U64.t & U64.t)
+  ensures (if U64.eq (snd res) 0UL
+           then MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh)
+           else
+             MajorHeap.is_indexed_major_heap heap
+               (let r =
+                  SpecMajorAlloc.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                r.major_alloc_out)) **
+          pure (let r =
+                 SpecMajorAlloc.major_alloc_spec_with_fuel
+                   (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                fst res == r.major_fp_out /\
+                snd res == r.major_obj_out /\
+                (snd res == 0UL ==> r.major_alloc_out == Ghost.reveal mh))
+
 /// Allocate from the current chunked-major free-list head without splitting it.
 /// This is the first old-block allocation wrapper; full free-list search can
 /// compose it after proving earlier blocks too small.

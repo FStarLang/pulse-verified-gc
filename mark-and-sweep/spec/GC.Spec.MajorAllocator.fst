@@ -24,6 +24,12 @@ open GC.Spec.Heap
 let chunk_word_capacity (c: MH.heap_chunk) : nat =
   c.size / U64.v mword
 
+let chunk_size_capacity_mul (c: MH.heap_chunk)
+  : Lemma (c.size == chunk_word_capacity c * U64.v mword)
+  = assert (U64.v mword == 8);
+    assert (c.size % 8 == 0);
+    FStar.Math.Lemmas.lemma_div_exact c.size 8
+
 let fresh_chunk_wosize (c: MH.heap_chunk) : nat =
   chunk_word_capacity c - 1
 
@@ -171,7 +177,7 @@ let init_fresh_chunk_disjoint_from_all (mh: MH.major_heap) (c: MH.heap_chunk) (n
     assert (forall i. i < Seq.length mh ==>
              MH.chunks_disjoint r.chunk_out (Seq.index mh i))
 
-#push-options "--z3rlimit 80"
+#push-options "--z3rlimit 10"
 let init_fresh_chunk_objects (c: MH.heap_chunk) (next_fp: U64.t)
   : Lemma (let r = init_fresh_chunk c next_fp in
            MH.objects_in_chunk r.chunk_out == Seq.cons r.fp_out Seq.empty)
@@ -192,9 +198,9 @@ let init_fresh_chunk_objects (c: MH.heap_chunk) (next_fp: U64.t)
     let wz = Obj.getWosize header in
     assert (wz == fresh_chunk_wosize_u64 c);
     assert (U64.v wz == fresh_chunk_wosize c);
-    FStar.Math.Lemmas.lemma_div_exact c.size (U64.v mword);
-    assert (c.size == chunk_word_capacity c * U64.v mword);
     assert (U64.v mword == 8);
+    chunk_size_capacity_mul c;
+    assert (c.size == chunk_word_capacity c * U64.v mword);
     let obj_size_words = U64.v wz + 1 in
     assert (obj_size_words == chunk_word_capacity c);
     let next_start_nat = U64.v start + obj_size_words * U64.v mword in
@@ -329,7 +335,7 @@ let major_fl_valid_null (mh: MH.major_heap) (fuel: nat)
           (ensures major_fl_valid mh 0UL fuel)
   = ()
 
-#push-options "--z3rlimit 40"
+#push-options "--z3rlimit 10"
 let major_fl_valid_gives_pointer (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   : Lemma (requires fuel > 0 /\
                     U64.v fp >= U64.v mword /\
@@ -576,7 +582,7 @@ let major_fl_capacity_null (mh: MH.major_heap) (fuel: nat)
           (ensures major_fl_capacity mh 0UL fuel == 0)
   = ()
 
-#push-options "--z3rlimit 120"
+#push-options "--z3rlimit 10"
 let rec expand_major_heap_preserves_fl_capacity (mh: MH.major_heap) (c: MH.heap_chunk)
                                                 (new_link: U64.t) (fp: U64.t) (fuel: nat)
   : Lemma (requires MH.chunk_disjoint_from_all c mh /\
@@ -584,8 +590,7 @@ let rec expand_major_heap_preserves_fl_capacity (mh: MH.major_heap) (c: MH.heap_
           (ensures major_fl_capacity (expand_major_heap mh c new_link).major_out fp fuel ==
                    major_fl_capacity mh fp fuel)
           (decreases fuel)
-  = if fuel = 0 then ()
-    else begin
+  = if fuel > 0 then begin
       let fuel' : f:nat{f < fuel} = fuel - 1 in
       if fp = 0UL then ()
       else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
@@ -611,6 +616,7 @@ let rec expand_major_heap_preserves_fl_capacity (mh: MH.major_heap) (c: MH.heap_
                   Some next)
       end
     end
+    else ()
 
 let expand_major_heap_fresh_capacity (mh: MH.major_heap) (c: MH.heap_chunk)
                                      (next_fp: U64.t) (fuel: nat)
@@ -649,15 +655,14 @@ let expand_major_heap_links_fl_capacity (mh: MH.major_heap) (c: MH.heap_chunk)
     expand_major_heap_fresh_capacity mh c next_fp fuel
 #pop-options
 
-#push-options "--z3rlimit 120"
+#push-options "--z3rlimit 10"
 let rec expand_major_heap_preserves_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
                                              (new_link: U64.t) (fp: U64.t) (fuel: nat)
   : Lemma (requires MH.chunk_disjoint_from_all c mh /\
                     major_fl_valid mh fp fuel)
           (ensures major_fl_valid (expand_major_heap mh c new_link).major_out fp fuel)
           (decreases fuel)
-  = if fuel = 0 then ()
-    else begin
+  = if fuel > 0 then begin
       let fuel' : f:nat{f < fuel} = fuel - 1 in
       if fp = 0UL then ()
       else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
@@ -688,9 +693,10 @@ let rec expand_major_heap_preserves_fl_valid (mh: MH.major_heap) (c: MH.heap_chu
                   Some next)
       end
     end
+    else ()
 #pop-options
 
-#push-options "--z3rlimit 80"
+#push-options "--z3rlimit 10"
 let expand_major_heap_fresh_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
                                      (next_fp: U64.t) (fuel: nat)
   : Lemma (requires major_fl_valid (expand_major_heap mh c next_fp).major_out next_fp fuel /\
@@ -733,7 +739,7 @@ let expand_major_heap_links_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
   = expand_major_heap_preserves_fl_valid mh c next_fp next_fp fuel;
     expand_major_heap_fresh_fl_valid mh c next_fp fuel
 
-#push-options "--z3rlimit 80"
+#push-options "--z3rlimit 10"
 let rec expand_major_heap_preserves_fl_above_zero (mh: MH.major_heap) (c: MH.heap_chunk)
                                                  (new_link: U64.t) (fp: U64.t) (fuel: nat)
   : Lemma (requires MH.chunk_disjoint_from_all c mh /\
@@ -742,8 +748,7 @@ let rec expand_major_heap_preserves_fl_above_zero (mh: MH.major_heap) (c: MH.hea
           (ensures major_fl_above_zero
                     (expand_major_heap mh c new_link).major_out fp fuel)
           (decreases fuel)
-  = if fuel = 0 then ()
-    else begin
+  = if fuel > 0 then begin
       let fuel' : f:nat{f < fuel} = fuel - 1 in
       if fp = 0UL then ()
       else if U64.v fp < U64.v zero_addr + U64.v mword ||
@@ -765,6 +770,7 @@ let rec expand_major_heap_preserves_fl_above_zero (mh: MH.major_heap) (c: MH.hea
                   Some next)
       end
     end
+    else ()
 #pop-options
 
 let expand_major_heap_fresh_fl_above_zero (mh: MH.major_heap) (c: MH.heap_chunk)
@@ -1204,6 +1210,78 @@ let major_alloc_search_found_prev (mh: MH.major_heap) (head prev cur: U64.t)
                     { major_alloc_out = mh2; major_fp_out = head; major_obj_out = cur }))
   = ()
 
+let major_alloc_search_found_prev_invalid (mh: MH.major_heap) (head prev cur: U64.t)
+                                          (wz: nat) (fuel: nat) (hdr: U64.t)
+  : Lemma (requires fuel > 0 /\
+                    U64.v cur >= U64.v zero_addr + U64.v mword /\
+                    U64.v cur < heap_size /\
+                    U64.v cur % U64.v mword = 0 /\
+                    prev <> 0UL /\
+                    ~(U64.v prev >= U64.v mword /\
+                      U64.v prev < heap_size /\
+                      U64.v prev % U64.v mword = 0) /\
+                    MH.read_word_in_major mh (hd_address (cur <: obj_addr)) == Some hdr /\
+                    U64.v (Obj.getWosize hdr) >= wz)
+          (ensures (let obj : obj_addr = cur in
+                    let next = major_spec_next_fp mh obj in
+                    let (mh', new_fp) = major_alloc_from_block mh obj wz next in
+                    major_alloc_search mh head prev cur wz fuel ==
+                    { major_alloc_out = mh'; major_fp_out = new_fp; major_obj_out = cur }))
+  = ()
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let rec major_alloc_search_oom_unchanged (mh: MH.major_heap)
+                                        (head prev cur: U64.t)
+                                        (wz fuel: nat)
+  : Lemma (requires (major_alloc_search mh head prev cur wz fuel).major_obj_out == 0UL)
+          (ensures (major_alloc_search mh head prev cur wz fuel).major_alloc_out == mh)
+          (decreases fuel)
+  = if fuel > 0 then begin
+      if U64.v cur < U64.v zero_addr + U64.v mword ||
+         U64.v cur >= heap_size ||
+         U64.v cur % U64.v mword <> 0 then
+        major_alloc_search_invalid mh head prev cur wz fuel
+      else begin
+        let fuel' : f:nat{f < fuel} = fuel - 1 in
+        let obj : obj_addr = cur in
+        let hd = hd_address obj in
+        match MH.read_word_in_major mh hd with
+        | None ->
+          major_alloc_search_missing_header mh head prev cur wz fuel
+        | Some hdr ->
+          let block_wz = U64.v (Obj.getWosize hdr) in
+          if block_wz < wz then begin
+            major_alloc_search_advance mh head prev cur wz fuel hdr;
+            major_alloc_search_oom_unchanged
+              mh head cur (major_spec_next_fp mh obj) wz fuel'
+          end else begin
+            zero_addr_above_2048 ();
+            assert (U64.v mword == 8);
+            assert (U64.v cur > 0);
+            assert (cur <> 0UL);
+            if prev = 0UL then
+              major_alloc_search_found_head mh head prev cur wz fuel hdr
+            else if U64.v prev >= U64.v mword &&
+                    U64.v prev < heap_size &&
+                    U64.v prev % U64.v mword = 0 then
+              major_alloc_search_found_prev mh head prev cur wz fuel hdr
+            else
+              major_alloc_search_found_prev_invalid mh head prev cur wz fuel hdr;
+            assert False
+          end
+      end
+    end else
+      major_alloc_search_fuel_0 mh head prev cur wz
+
+let major_alloc_spec_with_fuel_oom_unchanged (mh: MH.major_heap)
+                                            (fp: U64.t)
+                                            (requested_wz fuel: nat)
+  : Lemma (requires (major_alloc_spec_with_fuel mh fp requested_wz fuel).major_obj_out == 0UL)
+          (ensures (major_alloc_spec_with_fuel mh fp requested_wz fuel).major_alloc_out == mh)
+  = major_alloc_search_oom_unchanged
+      mh fp 0UL fp (Alloc.normalized_wosize requested_wz) fuel
+#pop-options
+
 let major_result_of_alloc_result (r: Alloc.alloc_result) : major_alloc_result =
   { major_alloc_out = MH.single_chunk_major_heap r.heap_out;
     major_fp_out = r.fp_out;
@@ -1272,7 +1350,7 @@ let major_alloc_spec_with_fuel_single_chunk_compat (g: heap) (fp: U64.t)
            major_result_of_alloc_result (Alloc.alloc_spec_with_fuel g fp requested_wz fuel))
   = major_alloc_search_single_chunk_compat g fp 0UL fp (Alloc.normalized_wosize requested_wz) fuel
 
-#push-options "--z3rlimit 40 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_head_no_split (mh: MH.major_heap) (fp: obj_addr)
                               (requested_wz fuel: nat) (hdr next_fp: U64.t)
   : Lemma (requires fuel > 0 /\
@@ -1295,7 +1373,7 @@ let major_alloc_head_no_split (mh: MH.major_heap) (fp: obj_addr)
     major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
 #pop-options
 
-#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_head_split (mh: MH.major_heap) (fp: obj_addr)
                            (requested_wz fuel: nat) (hdr next_fp: U64.t)
                            (rem_hd rem_obj: hp_addr)
@@ -1340,7 +1418,7 @@ let major_alloc_head_split (mh: MH.major_heap) (fp: obj_addr)
     major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
 #pop-options
 
-#push-options "--z3rlimit 50 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let indexed_chunk_replace_same_range_preserves_word_no_prior
   (mh: MH.major_heap)
   (write_idx target_idx: nat)
@@ -1387,7 +1465,7 @@ let indexed_chunk_replace_same_range_preserves_word_no_prior
     FStar.Classical.forall_intro no_prior
 #pop-options
 
-#push-options "--z3rlimit 50 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let indexed_chunk_write_preserves_word_no_prior
   (mh: MH.major_heap)
   (write_idx target_idx: nat)
@@ -1437,7 +1515,7 @@ let indexed_chunk_write_preserves_word_no_prior
     FStar.Classical.forall_intro no_prior
 #pop-options
 
-#push-options "--z3rlimit 60 --split_queries always"
+#push-options "--z3rlimit 20 --split_queries always"
 let rec chunks_pairwise_index_disjoint (mh: MH.major_heap) (i j: nat)
   : Lemma (requires MH.chunks_pairwise_disjoint mh /\
                     i < j /\ j < Seq.length mh)
@@ -1462,7 +1540,7 @@ let rec chunks_pairwise_index_disjoint (mh: MH.major_heap) (i j: nat)
     end
 #pop-options
 
-#push-options "--z3rlimit 40 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let well_formed_no_prior_word_in_selected_chunk (mh: MH.major_heap)
                                                 (idx: nat) (addr: hp_addr)
   : Lemma (requires MH.well_formed_major_heap mh /\
@@ -1483,7 +1561,7 @@ let well_formed_no_prior_word_in_selected_chunk (mh: MH.major_heap)
     FStar.Classical.forall_intro no_prior
 #pop-options
 
-#push-options "--z3rlimit 40 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let active_head_split_remainder_words_in_chunk (c: MH.heap_chunk)
                                                (base: hp_addr)
                                                (block_wz requested_wz: nat)
@@ -1516,7 +1594,7 @@ let active_head_split_remainder_words_in_chunk (c: MH.heap_chunk)
     assert (U64.v rem_obj + U64.v mword <= MH.chunk_end c)
 #pop-options
 
-#push-options "--z3rlimit 80"
+#push-options "--z3rlimit 10"
 let major_alloc_after_expand_returns_fresh (mh: MH.major_heap) (c: MH.heap_chunk)
                                            (next_fp: U64.t)
                                            (requested_wz fuel: nat)
@@ -1624,7 +1702,7 @@ let major_alloc_after_expand_exact (mh: MH.major_heap) (c: MH.heap_chunk)
     major_alloc_from_block_exact er.major_out fp wz next_fp hdr;
     major_alloc_search_found_head er.major_out fp 0UL fp wz (fuel + 1) hdr
 
-#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_after_expand_no_split (mh: MH.major_heap) (c: MH.heap_chunk)
                                       (next_fp: U64.t) (requested_wz fuel: nat)
   : Lemma (requires U64.v c.base >= U64.v zero_addr /\
@@ -1722,7 +1800,7 @@ let seq_upd_overwrite_index (#a: Type) (s: Seq.seq a) (i: nat{i < Seq.length s})
     Seq.lemma_eq_intro (Seq.upd (Seq.upd s i v1) i v2) (Seq.upd s i v2);
     Seq.lemma_eq_elim (Seq.upd (Seq.upd s i v1) i v2) (Seq.upd s i v2)
 
-#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let fresh_chunk_split_remainder_fits (c: MH.heap_chunk) (next_fp: U64.t)
                                      (requested_wz: nat) (rem_hd rem_obj: hp_addr)
   : Lemma (requires requested_wz > 0 /\
@@ -1790,7 +1868,7 @@ let fresh_chunk_split_remainder_fits (c: MH.heap_chunk) (next_fp: U64.t)
     assert (MH.word_in_chunk c2 rem_obj)
 #pop-options
 
-#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let fresh_chunk_split_remainder_addr_bounds (c: MH.heap_chunk)
                                             (requested_wz: nat)
   : Lemma (requires requested_wz > 0 /\
@@ -1837,7 +1915,7 @@ let fresh_chunk_split_remainder_addr_bounds (c: MH.heap_chunk)
     assert (rem_obj_nat < pow2 64)
 #pop-options
 
-#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_after_expand_split (mh: MH.major_heap) (c: MH.heap_chunk)
                                    (next_fp: U64.t) (requested_wz fuel: nat)
                                    (rem_hd rem_obj: hp_addr)
@@ -1936,7 +2014,7 @@ let major_alloc_after_expand_split (mh: MH.major_heap) (c: MH.heap_chunk)
     major_alloc_search_found_head er.major_out fp 0UL fp wz (fuel + 1) hdr
 #pop-options
 
-#push-options "--z3rlimit 80 --split_queries always --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_after_expand_fuel_irrelevant (mh: MH.major_heap) (c: MH.heap_chunk)
                                              (next_fp: U64.t)
                                              (requested_wz fuel: nat)

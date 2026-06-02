@@ -3207,6 +3207,85 @@ fn allocate_major_with_fuel (heap: MajorHeap.major_heap_t)
   allocate_major_with_fuel_loop heap fp requested_wz fuel #mh
 }
 
+fn allocate_major_with_fuel_preserve_oom (heap: MajorHeap.major_heap_t)
+                                        (fp: U64.t)
+                                        (requested_wz: wosize)
+                                        (fuel: U64.t)
+                                        (#mh: Ghost.erased MH.major_heap)
+  requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (U64.v requested_wz > 0 /\
+                 SMA.major_fl_valid (Ghost.reveal mh) fp (U64.v fuel) /\
+                 SMA.major_fl_above_zero (Ghost.reveal mh) fp (U64.v fuel) /\
+                 SMA.major_fl_blocks_fit (Ghost.reveal mh) fp (U64.v fuel))
+  returns res: (U64.t & U64.t)
+  ensures (if U64.eq (snd res) 0UL
+           then MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh)
+           else
+             MajorHeap.is_indexed_major_heap heap
+               (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                r.major_alloc_out)) **
+          pure (let r =
+                 SMA.major_alloc_spec_with_fuel
+                   (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+                fst res == r.major_fp_out /\
+                snd res == r.major_obj_out /\
+                (snd res == 0UL ==> r.major_alloc_out == Ghost.reveal mh))
+{
+  let res =
+    allocate_major_with_fuel heap fp requested_wz fuel #mh;
+  if U64.eq (snd res) 0UL {
+    assert (pure (snd res == 0UL));
+    assert (pure (U64.eq (snd res) 0UL == true));
+    assert (pure ((SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz)
+                    (U64.v fuel)).major_obj_out == 0UL));
+    SMA.major_alloc_spec_with_fuel_oom_unchanged
+      (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel);
+    assert (pure ((SMA.major_alloc_spec_with_fuel
+                    (Ghost.reveal mh) fp (U64.v requested_wz)
+                    (U64.v fuel)).major_alloc_out == Ghost.reveal mh));
+    rewrite
+      (MajorHeap.is_indexed_major_heap heap
+        (SMA.major_alloc_spec_with_fuel
+          (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel)).major_alloc_out)
+    as
+      (MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh));
+    rewrite
+      (MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh))
+    as
+      (if U64.eq (snd res) 0UL
+       then MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh)
+       else
+         MajorHeap.is_indexed_major_heap heap
+           (let r =
+              SMA.major_alloc_spec_with_fuel
+                (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+            r.major_alloc_out));
+    res
+  } else {
+    assert (pure (snd res <> 0UL));
+    assert (pure (U64.eq (snd res) 0UL == false));
+    rewrite
+      (MajorHeap.is_indexed_major_heap heap
+        (let r =
+           SMA.major_alloc_spec_with_fuel
+             (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+         r.major_alloc_out))
+    as
+      (if U64.eq (snd res) 0UL
+       then MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh)
+       else
+         MajorHeap.is_indexed_major_heap heap
+           (let r =
+              SMA.major_alloc_spec_with_fuel
+                (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel) in
+            r.major_alloc_out));
+    res
+  }
+}
+
 fn init_fresh_chunk_owned (heap: MajorHeap.major_heap_t)
                           (base: hp_addr) (fp_out: obj_addr)
                           (wz: wosize) (next_fp: U64.t)
