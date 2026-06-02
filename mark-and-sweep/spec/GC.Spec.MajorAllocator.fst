@@ -1097,6 +1097,53 @@ let major_alloc_head_split (mh: MH.major_heap) (fp: obj_addr)
 #pop-options
 
 #push-options "--z3rlimit 50 --split_queries always --fuel 0 --ifuel 0"
+let indexed_chunk_replace_same_range_preserves_word_no_prior
+  (mh: MH.major_heap)
+  (write_idx target_idx: nat)
+  (replacement: MH.heap_chunk)
+  (target_addr: hp_addr)
+  : Lemma (requires write_idx < Seq.length mh /\
+                    target_idx < Seq.length mh /\
+                    MH.chunk_start replacement == MH.chunk_start (Seq.index mh write_idx) /\
+                    MH.chunk_end replacement == MH.chunk_end (Seq.index mh write_idx) /\
+                    MH.word_in_chunk (Seq.index mh target_idx) target_addr /\
+                    (forall (k:nat). k < target_idx ==>
+                      ~(MH.word_in_chunk (Seq.index mh k) target_addr)))
+          (ensures (let mh' = Seq.upd mh write_idx replacement in
+                    target_idx < Seq.length mh' /\
+                    MH.word_in_chunk (Seq.index mh' target_idx) target_addr /\
+                    (forall (k:nat). k < target_idx ==>
+                      ~(MH.word_in_chunk (Seq.index mh' k) target_addr))))
+  = let old = Seq.index mh write_idx in
+    let mh' = Seq.upd mh write_idx replacement in
+    assert (Seq.length mh' == Seq.length mh);
+    if target_idx = write_idx then begin
+      assert (Seq.index mh' target_idx == replacement);
+      assert (Seq.index mh target_idx == old);
+      assert (MH.word_in_chunk old target_addr);
+      assert (MH.word_in_chunk replacement target_addr)
+    end else
+      assert (Seq.index mh' target_idx == Seq.index mh target_idx);
+    let no_prior (k: nat{k < target_idx})
+      : Lemma (~(MH.word_in_chunk (Seq.index mh' k) target_addr))
+      = if k = write_idx then begin
+          assert (Seq.index mh' k == replacement);
+          if MH.word_in_chunk (Seq.index mh' k) target_addr then begin
+            assert (MH.word_in_chunk replacement target_addr);
+            assert (MH.word_in_chunk old target_addr);
+            assert (Seq.index mh k == old);
+            assert (MH.word_in_chunk (Seq.index mh k) target_addr);
+            assert False
+          end
+        end else begin
+          assert (Seq.index mh' k == Seq.index mh k);
+          assert (~(MH.word_in_chunk (Seq.index mh k) target_addr))
+        end
+    in
+    FStar.Classical.forall_intro no_prior
+#pop-options
+
+#push-options "--z3rlimit 50 --split_queries always --fuel 0 --ifuel 0"
 let indexed_chunk_write_preserves_word_no_prior
   (mh: MH.major_heap)
   (write_idx target_idx: nat)
