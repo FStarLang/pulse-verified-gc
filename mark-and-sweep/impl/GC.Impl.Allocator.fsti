@@ -272,19 +272,22 @@ fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
 fn read_major_free_block (heap: MajorHeap.major_heap_t)
                          (cur: obj_addr)
                          (#fuel: (f:nat{f > 0}))
-                         (#header_idx: nat) (#link_idx: nat)
+                         (#header_idx: Ghost.erased nat)
+                         (#link_idx: Ghost.erased nat)
                          (#mh: Ghost.erased MH.major_heap)
    requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
-            pure (header_idx < Seq.length (Ghost.reveal mh) /\
-                  link_idx < Seq.length (Ghost.reveal mh) /\
+            pure (Ghost.reveal header_idx < Seq.length (Ghost.reveal mh) /\
+                  Ghost.reveal link_idx < Seq.length (Ghost.reveal mh) /\
                   MH.lookup_chunk_index
-                    (Ghost.reveal mh) (SpecHeap.hd_address cur) == Some header_idx /\
-                  MH.lookup_chunk_index (Ghost.reveal mh) cur == Some link_idx /\
+                    (Ghost.reveal mh) (SpecHeap.hd_address cur) ==
+                    Some (Ghost.reveal header_idx) /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) cur ==
+                    Some (Ghost.reveal link_idx) /\
                   MH.word_in_chunk
-                    (Seq.index (Ghost.reveal mh) header_idx)
+                    (Seq.index (Ghost.reveal mh) (Ghost.reveal header_idx))
                     (SpecHeap.hd_address cur) /\
                   MH.word_in_chunk
-                    (Seq.index (Ghost.reveal mh) link_idx) cur /\
+                    (Seq.index (Ghost.reveal mh) (Ghost.reveal link_idx)) cur /\
                   SpecMajorAlloc.major_fl_valid (Ghost.reveal mh) cur fuel)
    returns res: (U64.t & U64.t)
    ensures MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **

@@ -28,6 +28,8 @@ module SH = GC.Spec.Heap
 module SI = GC.Spec.SweepInv
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module MajorHeap = GC.Impl.MajorHeap
+module OR = Pulse.Lib.OnRange
+module T = Pulse.Lib.Trade.Util
 
 /// ---------------------------------------------------------------------------
 /// Pure helper lemmas (all proven — no admits)
@@ -1091,22 +1093,67 @@ fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
   next_fp
 }
 
+fn read_word_in_indexed_major_at_erased_lookup_index
+  (h: MajorHeap.major_heap_t)
+  (addr: hp_addr)
+  (#idx: Ghost.erased nat)
+  (#mh: Ghost.erased (mh0:MH.major_heap{
+    Ghost.reveal idx < Seq.length mh0 /\
+    MH.lookup_chunk_index mh0 addr == Some (Ghost.reveal idx) /\
+    MH.word_in_chunk (Seq.index mh0 (Ghost.reveal idx)) addr}))
+  requires MajorHeap.is_indexed_major_heap h (Ghost.reveal mh)
+  returns v: U64.t
+  ensures MajorHeap.is_indexed_major_heap h (Ghost.reveal mh) **
+          pure (MH.read_word_in_major (Ghost.reveal mh) addr == Some v)
+{
+  unfold (MajorHeap.is_indexed_major_heap h (Ghost.reveal mh));
+  unfold (MajorHeap.indexed_chunk_ranges h (Ghost.reveal mh));
+  OR.on_range_focus (Ghost.reveal idx)
+    #(MajorHeap.chunk_range_at h (Ghost.reveal mh))
+    #0
+    #(Seq.length (Ghost.reveal mh));
+  MajorHeap.chunk_range_at_in_bounds h (Ghost.reveal mh) (Ghost.reveal idx);
+  rewrite
+    (MajorHeap.chunk_range_at h (Ghost.reveal mh) (Ghost.reveal idx))
+  as
+    (MajorHeap.chunk_range h
+      (Seq.index (Ghost.reveal mh) (Ghost.reveal idx)));
+  let v =
+    MajorHeap.read_word_in_chunk h addr
+      #(Ghost.hide (Seq.index (Ghost.reveal mh) (Ghost.reveal idx)));
+  MajorHeap.chunk_range_at_in_bounds h (Ghost.reveal mh) (Ghost.reveal idx);
+  rewrite
+    (MajorHeap.chunk_range h
+      (Seq.index (Ghost.reveal mh) (Ghost.reveal idx)))
+  as
+    (MajorHeap.chunk_range_at h (Ghost.reveal mh) (Ghost.reveal idx));
+  T.elim _ _;
+  fold (MajorHeap.indexed_chunk_ranges h (Ghost.reveal mh));
+  MH.read_word_in_major_at_lookup_index
+    (Ghost.reveal mh) addr (Ghost.reveal idx);
+  fold (MajorHeap.is_indexed_major_heap h (Ghost.reveal mh));
+  v
+}
+
 fn read_major_free_block (heap: MajorHeap.major_heap_t)
                          (cur: obj_addr)
                          (#fuel: (f:nat{f > 0}))
-                         (#header_idx: nat) (#link_idx: nat)
+                         (#header_idx: Ghost.erased nat)
+                         (#link_idx: Ghost.erased nat)
                          (#mh: Ghost.erased MH.major_heap)
    requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
-            pure (header_idx < Seq.length (Ghost.reveal mh) /\
-                  link_idx < Seq.length (Ghost.reveal mh) /\
+            pure (Ghost.reveal header_idx < Seq.length (Ghost.reveal mh) /\
+                  Ghost.reveal link_idx < Seq.length (Ghost.reveal mh) /\
                   MH.lookup_chunk_index
-                    (Ghost.reveal mh) (SH.hd_address cur) == Some header_idx /\
-                  MH.lookup_chunk_index (Ghost.reveal mh) cur == Some link_idx /\
+                    (Ghost.reveal mh) (SH.hd_address cur) ==
+                    Some (Ghost.reveal header_idx) /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) cur ==
+                    Some (Ghost.reveal link_idx) /\
                   MH.word_in_chunk
-                    (Seq.index (Ghost.reveal mh) header_idx)
+                    (Seq.index (Ghost.reveal mh) (Ghost.reveal header_idx))
                     (SH.hd_address cur) /\
                   MH.word_in_chunk
-                    (Seq.index (Ghost.reveal mh) link_idx) cur /\
+                    (Seq.index (Ghost.reveal mh) (Ghost.reveal link_idx)) cur /\
                   SMA.major_fl_valid (Ghost.reveal mh) cur fuel)
    returns res: (U64.t & U64.t)
    ensures MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
@@ -1128,24 +1175,78 @@ fn read_major_free_block (heap: MajorHeap.major_heap_t)
   SMA.major_fl_valid_link_lookup_index (Ghost.reveal mh) cur fuel;
 
   let base = SH.hd_address cur;
-  assert (pure (header_idx < Seq.length (Ghost.reveal mh)));
+  assert (pure (Ghost.reveal header_idx < Seq.length (Ghost.reveal mh)));
   assert (pure (MH.word_in_chunk
-                  (Seq.index (Ghost.reveal mh) header_idx) base));
+                  (Seq.index (Ghost.reveal mh) (Ghost.reveal header_idx)) base));
   let hdr =
-    MajorHeap.read_word_in_indexed_major_at_lookup_index
-      heap base header_idx #(Ghost.hide (Ghost.reveal mh));
+    read_word_in_indexed_major_at_erased_lookup_index
+      heap base #header_idx #(Ghost.hide (Ghost.reveal mh));
   assert (pure (MH.read_word_in_major (Ghost.reveal mh) base == Some hdr));
 
-  assert (pure (link_idx < Seq.length (Ghost.reveal mh)));
+  assert (pure (Ghost.reveal link_idx < Seq.length (Ghost.reveal mh)));
   assert (pure (MH.word_in_chunk
-                  (Seq.index (Ghost.reveal mh) link_idx) cur));
+                  (Seq.index (Ghost.reveal mh) (Ghost.reveal link_idx)) cur));
   let next =
-    MajorHeap.read_word_in_indexed_major_at_lookup_index
-      heap cur link_idx #(Ghost.hide (Ghost.reveal mh));
+    read_word_in_indexed_major_at_erased_lookup_index
+      heap cur #link_idx #(Ghost.hide (Ghost.reveal mh));
   assert (pure (MH.read_word_in_major (Ghost.reveal mh) cur == Some next));
   assert (pure (next <> cur));
   assert (pure (SMA.major_fl_valid (Ghost.reveal mh) next (fuel - 1)));
   (hdr, next)
+}
+
+let major_free_block_at (heap: MajorHeap.major_heap_t)
+                        (cur: obj_addr)
+                        (fuel: nat)
+                        (mh: MH.major_heap)
+                        (header_idx link_idx: nat)
+  : slprop =
+  MajorHeap.is_indexed_major_heap heap mh **
+  pure (header_idx < Seq.length mh /\
+        link_idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (SH.hd_address cur) == Some header_idx /\
+        MH.lookup_chunk_index mh cur == Some link_idx /\
+        MH.word_in_chunk
+          (Seq.index mh header_idx)
+          (SH.hd_address cur) /\
+        MH.word_in_chunk (Seq.index mh link_idx) cur /\
+        SMA.major_fl_valid mh cur fuel)
+
+let major_free_block_witnesses (heap: MajorHeap.major_heap_t)
+                               (cur: obj_addr)
+                               (fuel: nat)
+                               (mh: MH.major_heap)
+  : slprop =
+  exists* (header_idx:nat) (link_idx:nat).
+    major_free_block_at heap cur fuel mh header_idx link_idx
+
+fn read_major_free_block_exists (heap: MajorHeap.major_heap_t)
+                                (cur: obj_addr)
+                                (#fuel: (f:nat{f > 0}))
+                                (#mh: Ghost.erased MH.major_heap)
+   requires major_free_block_witnesses heap cur fuel (Ghost.reveal mh)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (let hdr = fst res in
+                 let next = snd res in
+                 MH.read_word_in_major (Ghost.reveal mh) (SH.hd_address cur) ==
+                   Some hdr /\
+                 MH.read_word_in_major (Ghost.reveal mh) cur == Some next /\
+                 U64.v (SO.getWosize hdr) >= 1 /\
+                 next <> cur /\
+                 SMA.major_fl_valid (Ghost.reveal mh) next (fuel - 1))
+{
+  unfold (major_free_block_witnesses heap cur fuel (Ghost.reveal mh));
+  with header_idx link_idx. assert (
+    major_free_block_at heap cur fuel (Ghost.reveal mh) header_idx link_idx
+  );
+  unfold (major_free_block_at heap cur fuel (Ghost.reveal mh) header_idx link_idx);
+  let block =
+    read_major_free_block heap cur #fuel
+      #(Ghost.hide header_idx)
+      #(Ghost.hide link_idx)
+      #mh;
+  block
 }
 
 fn read_major_free_block_above_zero (heap: MajorHeap.major_heap_t)
