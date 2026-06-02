@@ -678,7 +678,7 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
 
 fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
                                 (base: hp_addr) (fp: obj_addr)
-                                (block_wz requested_wz: wosize)
+                                (hdr: U64.t) (block_wz requested_wz: wosize)
                                 (next_fp: U64.t)
                                 (#fuel: nat) (#idx: nat)
                                 (#mh: Ghost.erased MH.major_heap)
@@ -688,9 +688,9 @@ fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
                   base == SH.hd_address fp /\
                   MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SA.make_header block_wz SA.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  block_wz == SO.getWosize hdr /\
                   U64.v fp >= U64.v zero_addr + U64.v mword /\
                   U64.v block_wz >= SA.normalized_wosize (U64.v requested_wz) /\
                   U64.v block_wz - SA.normalized_wosize (U64.v requested_wz) < 2)
@@ -706,16 +706,14 @@ fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
                  fst res == r.major_fp_out /\
                  snd res == r.major_obj_out)
 {
-  let block_hdr = SA.make_header block_wz SA.blue_bits 0UL;
   let alloc_hdr = makeHeader block_wz white 0UL;
   assert (pure (SA.white_bits == 0UL));
   assert (pure (pack_color white == 0UL));
   assert (pure (alloc_hdr == SA.make_header block_wz SA.white_bits 0UL));
-  AllocLemmas.make_header_getWosize block_wz SA.blue_bits 0UL;
-  assert (pure (SO.getWosize block_hdr == block_wz));
+  assert (pure (alloc_hdr == SA.make_header (SO.getWosize hdr) SA.white_bits 0UL));
   assert (pure (base == SH.hd_address fp));
   SMA.major_alloc_head_no_split
-    (Ghost.reveal mh) fp (U64.v requested_wz) fuel block_hdr next_fp;
+    (Ghost.reveal mh) fp (U64.v requested_wz) fuel hdr next_fp;
   MajorHeap.write_word_in_indexed_major_at_lookup_index heap base alloc_hdr idx
     #(Ghost.hide (Ghost.reveal mh));
   assert (pure (MH.write_word_in_major (Ghost.reveal mh) base alloc_hdr ==
@@ -761,7 +759,7 @@ fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
 
 fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
                              (base: hp_addr) (fp: obj_addr)
-                             (block_wz requested_wz: wosize)
+                             (hdr: U64.t) (block_wz requested_wz: wosize)
                              (rem_hd rem_obj: hp_addr)
                              (next_fp: U64.t)
                              (#fuel: nat) (#idx: nat)
@@ -778,9 +776,9 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
                     ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_hd)) /\
                   (forall (k:nat{k < idx /\ k < Seq.length (Ghost.reveal mh)}).
                     ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_obj)) /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SA.make_header block_wz SA.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  block_wz == SO.getWosize hdr /\
                   U64.v fp >= U64.v zero_addr + U64.v mword /\
                   U64.v requested_wz > 0 /\
                   U64.v block_wz >= U64.v requested_wz /\
@@ -801,7 +799,6 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
                  fst res == r.major_fp_out /\
                  snd res == r.major_obj_out)
 {
-  let block_hdr = SA.make_header block_wz SA.blue_bits 0UL;
   let alloc_hdr = makeHeader requested_wz white 0UL;
   assert (pure (SA.white_bits == 0UL));
   assert (pure (pack_color white == 0UL));
@@ -809,8 +806,6 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
   assert (pure (alloc_hdr ==
                 SA.make_header (U64.uint_to_t (U64.v requested_wz))
                   SA.white_bits 0UL));
-  AllocLemmas.make_header_getWosize block_wz SA.blue_bits 0UL;
-  assert (pure (SO.getWosize block_hdr == block_wz));
 
   let leftover = U64.sub block_wz requested_wz;
   let rem_wz_u = U64.sub leftover 1UL;
@@ -827,7 +822,7 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
                   SA.blue_bits 0UL));
 
   SMA.major_alloc_head_split
-    (Ghost.reveal mh) fp (U64.v requested_wz) fuel block_hdr next_fp
+    (Ghost.reveal mh) fp (U64.v requested_wz) fuel hdr next_fp
     rem_hd rem_obj;
 
   let c0 = Ghost.hide (Seq.index (Ghost.reveal mh) idx);
@@ -949,7 +944,7 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
 
 fn allocate_major_head (heap: MajorHeap.major_heap_t)
                        (base: hp_addr) (fp: obj_addr)
-                       (block_wz requested_wz: wosize)
+                       (hdr: U64.t) (block_wz requested_wz: wosize)
                        (next_fp: U64.t)
                        (#fuel: nat) (#idx: nat)
                        (#mh: Ghost.erased MH.major_heap)
@@ -959,9 +954,9 @@ fn allocate_major_head (heap: MajorHeap.major_heap_t)
                    base == SH.hd_address fp /\
                    MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
                    MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
-                   MH.read_word_in_major (Ghost.reveal mh) base ==
-                     Some (SA.make_header block_wz SA.blue_bits 0UL) /\
+                   MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                    MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                   block_wz == SO.getWosize hdr /\
                    U64.v fp >= U64.v zero_addr + U64.v mword /\
                    U64.v requested_wz > 0 /\
                    U64.v block_wz >= U64.v requested_wz /\
@@ -1018,7 +1013,7 @@ fn allocate_major_head (heap: MajorHeap.major_heap_t)
       (Ghost.reveal mh) idx rem_obj;
     let res =
       allocate_major_head_split
-        heap base fp block_wz requested_wz rem_hd rem_obj next_fp
+        heap base fp hdr block_wz requested_wz rem_hd rem_obj next_fp
         #fuel #idx #mh;
     assert (pure (let r =
                     SMA.major_alloc_spec_with_fuel
@@ -1031,7 +1026,7 @@ fn allocate_major_head (heap: MajorHeap.major_heap_t)
                   SA.normalized_wosize (U64.v requested_wz) < 2));
     let res =
       allocate_major_head_no_split
-        heap base fp block_wz requested_wz next_fp #fuel #idx #mh;
+        heap base fp hdr block_wz requested_wz next_fp #fuel #idx #mh;
     assert (pure (let r =
                     SMA.major_alloc_spec_with_fuel
                       (Ghost.reveal mh) fp (U64.v requested_wz) fuel in

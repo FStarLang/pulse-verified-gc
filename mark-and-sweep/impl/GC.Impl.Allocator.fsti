@@ -127,7 +127,7 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
 /// compose it after proving earlier blocks too small.
 fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
                                 (base: hp_addr) (fp: obj_addr)
-                                (block_wz requested_wz: wosize)
+                                (hdr: U64.t) (block_wz requested_wz: wosize)
                                 (next_fp: U64.t)
                                 (#fuel: nat) (#idx: nat)
                                 (#mh: Ghost.erased MH.major_heap)
@@ -137,9 +137,9 @@ fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
                   base == SpecHeap.hd_address fp /\
                   MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  block_wz == SpecObject.getWosize hdr /\
                   U64.v fp >= U64.v zero_addr + U64.v mword /\
                   U64.v block_wz >= SpecAlloc.normalized_wosize (U64.v requested_wz) /\
                   U64.v block_wz - SpecAlloc.normalized_wosize (U64.v requested_wz) < 2)
@@ -160,7 +160,7 @@ fn allocate_major_head_no_split (heap: MajorHeap.major_heap_t)
 /// they live in the same selected active chunk.
 fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
                              (base: hp_addr) (fp: obj_addr)
-                             (block_wz requested_wz: wosize)
+                             (hdr: U64.t) (block_wz requested_wz: wosize)
                              (rem_hd rem_obj: hp_addr)
                              (next_fp: U64.t)
                              (#fuel: nat) (#idx: nat)
@@ -177,9 +177,9 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
                     ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_hd)) /\
                   (forall (k:nat{k < idx /\ k < Seq.length (Ghost.reveal mh)}).
                     ~(MH.word_in_chunk (Seq.index (Ghost.reveal mh) k) rem_obj)) /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  block_wz == SpecObject.getWosize hdr /\
                   U64.v fp >= U64.v zero_addr + U64.v mword /\
                   U64.v requested_wz > 0 /\
                   U64.v block_wz >= U64.v requested_wz /\
@@ -205,7 +205,7 @@ fn allocate_major_head_split (heap: MajorHeap.major_heap_t)
 /// internally.
 fn allocate_major_head (heap: MajorHeap.major_heap_t)
                        (base: hp_addr) (fp: obj_addr)
-                       (block_wz requested_wz: wosize)
+                       (hdr: U64.t) (block_wz requested_wz: wosize)
                        (next_fp: U64.t)
                        (#fuel: nat) (#idx: nat)
                        (#mh: Ghost.erased MH.major_heap)
@@ -215,9 +215,9 @@ fn allocate_major_head (heap: MajorHeap.major_heap_t)
                   base == SpecHeap.hd_address fp /\
                   MH.lookup_chunk_index (Ghost.reveal mh) base == Some idx /\
                   MH.word_in_chunk (Seq.index (Ghost.reveal mh) idx) base /\
-                  MH.read_word_in_major (Ghost.reveal mh) base ==
-                    Some (SpecAlloc.make_header block_wz SpecAlloc.blue_bits 0UL) /\
+                  MH.read_word_in_major (Ghost.reveal mh) base == Some hdr /\
                   MH.read_word_in_major (Ghost.reveal mh) fp == Some next_fp /\
+                  block_wz == SpecObject.getWosize hdr /\
                   U64.v fp >= U64.v zero_addr + U64.v mword /\
                   U64.v requested_wz > 0 /\
                   U64.v block_wz >= U64.v requested_wz /\
