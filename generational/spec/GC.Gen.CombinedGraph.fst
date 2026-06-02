@@ -892,6 +892,64 @@ let rec tag_major (objs: seq obj_addr) (idx: nat)
   = if idx >= Seq.length objs then Seq.empty
     else Seq.cons (MajorV (Seq.index objs idx)) (tag_major objs (idx + 1))
 
+let build_chunked_combined_graph_from_major_objects
+  (ms: minor_state) (mh: MH.major_heap) (major_objs: seq obj_addr)
+  : GTot combined_graph
+  = let minor_objs = minor_objects ms in
+    let verts = Seq.append (tag_minor minor_objs 0) (tag_major major_objs 0) in
+    let edges = Seq.append (chunked_all_minor_edges ms mh minor_objs 0)
+                           (chunked_all_major_object_edges ms mh major_objs 0) in
+    { cg_vertices = verts; cg_edges = edges }
+
+let build_chunked_combined_graph (ms: minor_state) (mh: MH.major_heap)
+  : GTot combined_graph
+  = build_chunked_combined_graph_from_major_objects ms mh (MH.major_objects mh)
+
+#push-options "--z3rlimit 5"
+let chunked_combined_graph_old_view_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (major_objs: seq obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_minor_expansion_safe
+                  ms fresh (minor_objects ms) 0 /\
+                chunked_all_major_object_expansion_safe
+                  mh fresh major_objs 0)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        let g' =
+          build_chunked_combined_graph_from_major_objects ms mh' major_objs in
+        let g = build_chunked_combined_graph_from_major_objects ms mh major_objs in
+        g'.cg_vertices == g.cg_vertices /\ g'.cg_edges == g.cg_edges))
+  =
+  let minor_objs = minor_objects ms in
+  let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  chunked_all_minor_edges_preserved_by_expansion ms mh fresh fp minor_objs 0;
+  chunked_all_major_object_edges_preserved_by_expansion
+    ms mh fresh fp major_objs 0
+#pop-options
+
+#push-options "--z3rlimit 5"
+let chunked_build_combined_graph_old_view_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_minor_expansion_safe
+                  ms fresh (minor_objects ms) 0 /\
+                chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        let g' =
+          build_chunked_combined_graph_from_major_objects
+            ms mh' (MH.major_objects mh) in
+        let g = build_chunked_combined_graph ms mh in
+        g'.cg_vertices == g.cg_vertices /\ g'.cg_edges == g.cg_edges))
+  =
+  chunked_combined_graph_old_view_preserved_by_expansion
+    ms mh fresh fp (MH.major_objects mh)
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Graph Construction
 /// ---------------------------------------------------------------------------

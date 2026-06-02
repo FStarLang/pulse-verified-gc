@@ -144,6 +144,51 @@ val spot_chunked_all_minor_edges_preserved_by_expansion
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out objs idx ==
         spot_chunked_all_minor_edges ms mh objs idx)
 
+val spot_build_chunked_combined_graph_from_major_objects
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    major_objs:Seq.seq obj_addr -> GTot CG.combined_graph
+
+val spot_build_chunked_combined_graph
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    GTot CG.combined_graph
+
+val spot_chunked_combined_graph_old_view_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state ->
+    mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    major_objs:Seq.seq obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_all_minor_expansion_safe
+        ms fresh (GC.Gen.MinorHeap.minor_objects ms) 0 /\
+                CG.chunked_all_major_object_expansion_safe
+                  mh fresh major_objs 0)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        let g' =
+          spot_build_chunked_combined_graph_from_major_objects
+            ms mh' major_objs in
+        let g =
+          spot_build_chunked_combined_graph_from_major_objects
+            ms mh major_objs in
+        g'.cg_vertices == g.cg_vertices /\ g'.cg_edges == g.cg_edges))
+
+val spot_chunked_build_combined_graph_old_view_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state ->
+    mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_all_minor_expansion_safe
+        ms fresh (GC.Gen.MinorHeap.minor_objects ms) 0 /\
+                CG.chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        let g' =
+          spot_build_chunked_combined_graph_from_major_objects
+            ms mh' (MH.major_objects mh) in
+        let g = spot_build_chunked_combined_graph ms mh in
+        g'.cg_vertices == g.cg_vertices /\ g'.cg_edges == g.cg_edges))
+
 val spot_chunked_header_of_object_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
     Lemma

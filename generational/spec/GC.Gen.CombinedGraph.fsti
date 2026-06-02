@@ -557,6 +557,50 @@ val classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x
 ///
 /// NOTE: Uses ALL minor objects (not just reachable ones) as vertices.
 /// The reachability analysis happens at a higher level via combined_reachable.
+val build_chunked_combined_graph_from_major_objects
+  : ms:minor_state -> mh:MH.major_heap -> major_objs:seq obj_addr ->
+    GTot combined_graph
+
+val build_chunked_combined_graph
+  : ms:minor_state -> mh:MH.major_heap -> GTot combined_graph
+
+/// Fresh expansion preserves the graph induced by an explicit old major-object
+/// list. The full expanded graph is not equal to the old graph: expansion
+/// prepends a fresh major object, so clients should use this old-view theorem
+/// when preserving old reachability/edge facts.
+val chunked_combined_graph_old_view_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> major_objs:seq obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_minor_expansion_safe
+                  ms fresh (minor_objects ms) 0 /\
+                chunked_all_major_object_expansion_safe
+                  mh fresh major_objs 0)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        let g' =
+          build_chunked_combined_graph_from_major_objects ms mh' major_objs in
+        let g = build_chunked_combined_graph_from_major_objects ms mh major_objs in
+        g'.cg_vertices == g.cg_vertices /\ g'.cg_edges == g.cg_edges))
+
+val chunked_build_combined_graph_old_view_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_minor_expansion_safe
+                  ms fresh (minor_objects ms) 0 /\
+                chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        let g' =
+          build_chunked_combined_graph_from_major_objects
+            ms mh' (MH.major_objects mh) in
+        let g = build_chunked_combined_graph ms mh in
+        g'.cg_vertices == g.cg_vertices /\ g'.cg_edges == g.cg_edges))
+
 val build_combined_graph (ms: minor_state) (major: heap)
   : GTot combined_graph
 
