@@ -168,6 +168,15 @@ val chunked_header_of_object
 val chunked_wosize_of_object
   : mh:MH.major_heap -> obj:obj_addr -> GTot (option U64.t)
 
+val chunked_wosize_nat_of_object
+  : mh:MH.major_heap -> obj:obj_addr -> GTot nat
+
+val chunked_tag_of_object
+  : mh:MH.major_heap -> obj:obj_addr -> GTot (option U64.t)
+
+val chunked_is_no_scan
+  : mh:MH.major_heap -> obj:obj_addr -> GTot bool
+
 val chunked_header_of_object_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
     Lemma
@@ -187,6 +196,36 @@ val chunked_wosize_of_object_preserved_by_expansion
         chunked_wosize_of_object
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
         chunked_wosize_of_object mh obj)
+
+val chunked_wosize_nat_of_object_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_wosize_nat_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_wosize_nat_of_object mh obj)
+
+val chunked_tag_of_object_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_tag_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_tag_of_object mh obj)
+
+val chunked_is_no_scan_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_is_no_scan
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_is_no_scan mh obj)
 
 /// Checked major field slot address used by chunked edge construction.
 val chunked_major_field_slot (src: obj_addr) (i: nat)
@@ -247,6 +286,73 @@ val chunked_major_field_edges_preserved_by_expansion
         chunked_major_field_edges ms
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out src wz i ==
         chunked_major_field_edges ms mh src wz i)
+
+val chunked_major_object_edges
+  : ms:minor_state -> mh:MH.major_heap -> obj:obj_addr ->
+    GTot (seq combined_edge)
+
+val chunked_major_object_expansion_safe
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> obj:obj_addr -> Tot prop
+
+val chunked_major_object_expansion_safe_header
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> obj:obj_addr ->
+    Lemma
+      (requires chunked_major_object_expansion_safe mh fresh obj)
+      (ensures ~(MH.chunk_contains_addr fresh (hd_address obj)))
+
+val chunked_major_object_expansion_safe_fields
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> obj:obj_addr ->
+    Lemma
+      (requires chunked_major_object_expansion_safe mh fresh obj)
+      (ensures
+        chunked_major_field_expansion_safe
+          mh fresh obj (chunked_wosize_nat_of_object mh obj) 0)
+
+val chunked_major_object_edges_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_major_object_expansion_safe mh fresh obj)
+      (ensures
+        chunked_major_object_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_major_object_edges ms mh obj)
+
+val chunked_all_major_object_edges
+  : ms:minor_state -> mh:MH.major_heap -> objs:seq obj_addr ->
+    idx:nat -> GTot (seq combined_edge)
+
+val chunked_all_major_object_expansion_safe
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> objs:seq obj_addr ->
+    idx:nat -> Tot prop
+
+val chunked_all_major_object_expansion_safe_at
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> objs:seq obj_addr ->
+    idx:nat -> k:nat ->
+    Lemma
+      (requires chunked_all_major_object_expansion_safe mh fresh objs idx /\
+                idx <= k /\ k < Seq.length objs)
+      (ensures
+        chunked_major_object_expansion_safe mh fresh (Seq.index objs k))
+
+val chunked_all_major_object_expansion_safe_tail
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> objs:seq obj_addr -> idx:nat ->
+    Lemma
+      (requires idx < Seq.length objs /\
+                chunked_all_major_object_expansion_safe mh fresh objs idx)
+      (ensures chunked_all_major_object_expansion_safe mh fresh objs (idx + 1))
+
+val chunked_all_major_object_edges_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> objs:seq obj_addr -> idx:nat ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_major_object_expansion_safe mh fresh objs idx)
+      (ensures
+        chunked_all_major_object_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out objs idx ==
+        chunked_all_major_object_edges ms mh objs idx)
 
 /// Collect chunked major field edges from an explicit old-object sequence. The
 /// `wz_of` parameter lets future clients instantiate this with header-derived

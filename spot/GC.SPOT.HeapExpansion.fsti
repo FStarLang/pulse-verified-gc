@@ -117,6 +117,36 @@ val spot_chunked_wosize_of_object_preserved_by_expansion
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
         CG.chunked_wosize_of_object mh obj)
 
+val spot_chunked_wosize_nat_of_object_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        CG.chunked_wosize_nat_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        CG.chunked_wosize_nat_of_object mh obj)
+
+val spot_chunked_tag_of_object_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        CG.chunked_tag_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        CG.chunked_tag_of_object mh obj)
+
+val spot_chunked_is_no_scan_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        CG.chunked_is_no_scan
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        CG.chunked_is_no_scan mh obj)
+
 val spot_chunked_major_field_edges
   : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
     src:obj_addr -> wz:nat -> i:nat -> GTot (Seq.seq CG.combined_edge)
@@ -132,6 +162,37 @@ val spot_chunked_major_field_edges_preserved_by_expansion
         spot_chunked_major_field_edges ms
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out src wz i ==
         spot_chunked_major_field_edges ms mh src wz i)
+
+val spot_chunked_major_object_edges
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap -> obj:obj_addr ->
+    GTot (Seq.seq CG.combined_edge)
+
+val spot_chunked_major_object_edges_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state ->
+    mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_major_object_expansion_safe mh fresh obj)
+      (ensures
+        spot_chunked_major_object_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        spot_chunked_major_object_edges ms mh obj)
+
+val spot_chunked_all_major_object_edges
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    objs:Seq.seq obj_addr -> idx:nat -> GTot (Seq.seq CG.combined_edge)
+
+val spot_chunked_all_major_object_edges_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state ->
+    mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    objs:Seq.seq obj_addr -> idx:nat ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_all_major_object_expansion_safe mh fresh objs idx)
+      (ensures
+        spot_chunked_all_major_object_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out objs idx ==
+        spot_chunked_all_major_object_edges ms mh objs idx)
 
 val spot_chunked_all_major_field_edges
   : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->

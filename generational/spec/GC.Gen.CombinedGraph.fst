@@ -179,6 +179,24 @@ let chunked_wosize_of_object (mh: MH.major_heap) (obj: obj_addr)
     | Some hdr -> Some (getWosize hdr)
     | None -> None
 
+let chunked_wosize_nat_of_object (mh: MH.major_heap) (obj: obj_addr)
+  : GTot nat
+  = match chunked_wosize_of_object mh obj with
+    | Some wz -> U64.v wz
+    | None -> 0
+
+let chunked_tag_of_object (mh: MH.major_heap) (obj: obj_addr)
+  : GTot (option U64.t)
+  = match chunked_header_of_object mh obj with
+    | Some hdr -> Some (getTag hdr)
+    | None -> None
+
+let chunked_is_no_scan (mh: MH.major_heap) (obj: obj_addr)
+  : GTot bool
+  = match chunked_tag_of_object mh obj with
+    | Some tag -> U64.v tag >= U64.v no_scan_tag
+    | None -> false
+
 let chunked_header_of_object_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
   : Lemma
@@ -200,6 +218,39 @@ let chunked_wosize_of_object_preserved_by_expansion
           (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
         chunked_wosize_of_object mh obj)
   = chunked_header_of_object_preserved_by_expansion mh fresh fp obj
+
+let chunked_wosize_nat_of_object_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_wosize_nat_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_wosize_nat_of_object mh obj)
+  = chunked_wosize_of_object_preserved_by_expansion mh fresh fp obj
+
+let chunked_tag_of_object_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_tag_of_object
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_tag_of_object mh obj)
+  = chunked_header_of_object_preserved_by_expansion mh fresh fp obj
+
+let chunked_is_no_scan_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        chunked_is_no_scan
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_is_no_scan mh obj)
+  = chunked_tag_of_object_preserved_by_expansion mh fresh fp obj
 
 let chunked_major_field_slot (src: obj_addr) (i: nat)
   : GTot (option hp_addr)
@@ -327,6 +378,119 @@ let rec chunked_major_field_edges_preserved_by_expansion
         chunked_major_field_expansion_safe_at mh fresh src wz i i field_addr v;
         chunked_classify_major_field_preserved_by_expansion ms mh fresh fp v
     end
+
+let chunked_major_object_edges (ms: minor_state) (mh: MH.major_heap) (obj: obj_addr)
+  : GTot (seq combined_edge)
+  = if chunked_is_no_scan mh obj then Seq.empty
+    else chunked_major_field_edges
+      ms mh obj (chunked_wosize_nat_of_object mh obj) 0
+
+let chunked_major_object_expansion_safe
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (obj: obj_addr)
+  : Tot prop =
+  ~(MH.chunk_contains_addr fresh (hd_address obj)) /\
+  chunked_major_field_expansion_safe
+    mh fresh obj (chunked_wosize_nat_of_object mh obj) 0
+
+let chunked_major_object_expansion_safe_header
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (obj: obj_addr)
+  : Lemma
+      (requires chunked_major_object_expansion_safe mh fresh obj)
+      (ensures ~(MH.chunk_contains_addr fresh (hd_address obj)))
+  = ()
+
+let chunked_major_object_expansion_safe_fields
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (obj: obj_addr)
+  : Lemma
+      (requires chunked_major_object_expansion_safe mh fresh obj)
+      (ensures
+        chunked_major_field_expansion_safe
+          mh fresh obj (chunked_wosize_nat_of_object mh obj) 0)
+  = ()
+
+let chunked_major_object_edges_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_major_object_expansion_safe mh fresh obj)
+      (ensures
+        chunked_major_object_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_major_object_edges ms mh obj)
+  =
+  chunked_major_object_expansion_safe_header mh fresh obj;
+  chunked_is_no_scan_preserved_by_expansion mh fresh fp obj;
+  if chunked_is_no_scan mh obj then ()
+  else begin
+    chunked_wosize_nat_of_object_preserved_by_expansion mh fresh fp obj;
+    chunked_major_object_expansion_safe_fields mh fresh obj;
+    chunked_major_field_edges_preserved_by_expansion
+      ms mh fresh fp obj (chunked_wosize_nat_of_object mh obj) 0
+  end
+
+let rec chunked_all_major_object_edges
+  (ms: minor_state) (mh: MH.major_heap) (objs: seq obj_addr) (idx: nat)
+  : GTot (seq combined_edge) (decreases (Seq.length objs - idx))
+  = if idx >= Seq.length objs then Seq.empty
+    else
+      let obj = Seq.index objs idx in
+      Seq.append
+        (chunked_major_object_edges ms mh obj)
+        (chunked_all_major_object_edges ms mh objs (idx + 1))
+
+let chunked_all_major_object_expansion_safe
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (objs: seq obj_addr) (idx: nat)
+  : Tot prop =
+  forall (k:nat).
+    idx <= k /\ k < Seq.length objs ==>
+      chunked_major_object_expansion_safe mh fresh (Seq.index objs k)
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_all_major_object_expansion_safe_at
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (objs: seq obj_addr) (idx k: nat)
+  : Lemma
+      (requires chunked_all_major_object_expansion_safe mh fresh objs idx /\
+                idx <= k /\ k < Seq.length objs)
+      (ensures
+        chunked_major_object_expansion_safe mh fresh (Seq.index objs k))
+  = ()
+#pop-options
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 1"
+let chunked_all_major_object_expansion_safe_tail
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (objs: seq obj_addr) (idx: nat)
+  : Lemma
+      (requires idx < Seq.length objs /\
+                chunked_all_major_object_expansion_safe mh fresh objs idx)
+      (ensures chunked_all_major_object_expansion_safe mh fresh objs (idx + 1))
+  =
+  assert (idx <= idx + 1);
+  assert (forall (k:nat).
+    idx + 1 <= k /\ k < Seq.length objs ==> idx <= k /\ k < Seq.length objs)
+#pop-options
+
+let rec chunked_all_major_object_edges_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (objs: seq obj_addr) (idx: nat)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_major_object_expansion_safe mh fresh objs idx)
+      (ensures
+        chunked_all_major_object_edges ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out objs idx ==
+        chunked_all_major_object_edges ms mh objs idx)
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then ()
+  else begin
+    let obj = Seq.index objs idx in
+    chunked_all_major_object_expansion_safe_at mh fresh objs idx idx;
+    chunked_major_object_edges_preserved_by_expansion ms mh fresh fp obj;
+    chunked_all_major_object_expansion_safe_tail mh fresh objs idx;
+    chunked_all_major_object_edges_preserved_by_expansion
+      ms mh fresh fp objs (idx + 1)
+  end
 
 let rec chunked_all_major_field_edges
   (ms: minor_state) (mh: MH.major_heap) (objs: seq obj_addr)
