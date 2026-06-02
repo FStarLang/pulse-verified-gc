@@ -370,6 +370,55 @@ let major_fl_valid_next (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
                     | None -> False))
   = ()
 
+let major_fl_valid_header_lookup_index (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    major_fl_valid mh fp fuel)
+          (ensures (let obj : obj_addr = fp in
+                    let addr = hd_address obj in
+                    let i = MH.lookup_chunk_index_value mh addr in
+                    MH.lookup_chunk_index mh addr == Some i /\
+                    i < Seq.length mh /\
+                    MH.word_in_chunk (Seq.index mh i) addr /\
+                    (match MH.read_word_in_major mh addr with
+                     | Some hdr ->
+                       MH.read_word_in_chunk (Seq.index mh i) addr == hdr /\
+                       U64.v (Obj.getWosize hdr) >= 1
+                     | None -> False)))
+  = major_fl_valid_gives_wosize mh fp fuel;
+    let obj : obj_addr = fp in
+    let addr = hd_address obj in
+    match MH.read_word_in_major mh addr with
+    | None -> assert False
+    | Some hdr ->
+      MH.read_word_in_major_lookup_index mh addr hdr
+
+let major_fl_valid_link_lookup_index (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    U64.v fp >= U64.v mword /\
+                    U64.v fp < heap_size /\
+                    U64.v fp % U64.v mword = 0 /\
+                    major_fl_valid mh fp fuel)
+          (ensures (let obj : obj_addr = fp in
+                    let i = MH.lookup_chunk_index_value mh obj in
+                    MH.lookup_chunk_index mh obj == Some i /\
+                    i < Seq.length mh /\
+                    MH.word_in_chunk (Seq.index mh i) obj /\
+                    (match MH.read_word_in_major mh obj with
+                     | Some next ->
+                       MH.read_word_in_chunk (Seq.index mh i) obj == next /\
+                       next <> fp /\
+                       major_fl_valid mh next (fuel - 1)
+                     | None -> False)))
+  = major_fl_valid_next mh fp fuel;
+    let obj : obj_addr = fp in
+    match MH.read_word_in_major mh obj with
+    | None -> assert False
+    | Some next ->
+      MH.read_word_in_major_lookup_index mh obj next
+
 let major_fl_valid_step (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   : Lemma (requires fuel > 0 /\
                     U64.v fp >= U64.v mword /\

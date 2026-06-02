@@ -267,6 +267,36 @@ fn advance_major_search_too_small (heap: MajorHeap.major_heap_t)
                   (Ghost.reveal mh) head cur next_fp
                   (SpecAlloc.normalized_wosize (U64.v requested_wz)) (fuel - 1))
 
+/// Read the header and next-link words for a valid chunked-major free-list node.
+/// Lookup indices are proof-only witnesses for the selected header/link chunks.
+fn read_major_free_block (heap: MajorHeap.major_heap_t)
+                         (cur: obj_addr)
+                         (#fuel: (f:nat{f > 0}))
+                         (#header_idx: nat) (#link_idx: nat)
+                         (#mh: Ghost.erased MH.major_heap)
+   requires MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+            pure (header_idx < Seq.length (Ghost.reveal mh) /\
+                  link_idx < Seq.length (Ghost.reveal mh) /\
+                  MH.lookup_chunk_index
+                    (Ghost.reveal mh) (SpecHeap.hd_address cur) == Some header_idx /\
+                  MH.lookup_chunk_index (Ghost.reveal mh) cur == Some link_idx /\
+                  MH.word_in_chunk
+                    (Seq.index (Ghost.reveal mh) header_idx)
+                    (SpecHeap.hd_address cur) /\
+                  MH.word_in_chunk
+                    (Seq.index (Ghost.reveal mh) link_idx) cur /\
+                  SpecMajorAlloc.major_fl_valid (Ghost.reveal mh) cur fuel)
+   returns res: (U64.t & U64.t)
+   ensures MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
+           pure (let hdr = fst res in
+                 let next = snd res in
+                 MH.read_word_in_major (Ghost.reveal mh) (SpecHeap.hd_address cur) ==
+                  Some hdr /\
+                 MH.read_word_in_major (Ghost.reveal mh) cur == Some next /\
+                 U64.v (SpecObject.getWosize hdr) >= 1 /\
+                 next <> cur /\
+                 SpecMajorAlloc.major_fl_valid (Ghost.reveal mh) next (fuel - 1))
+
 /// Allocate a too-large/sufficient current free block reached after at least one
 /// previous free-list node, in the no-split case. The previous node's link is
 /// updated to the successor/remainder returned by allocation.

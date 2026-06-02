@@ -471,6 +471,35 @@ let read_word_in_major_at_lookup_index (mh: major_heap) (addr: hp_addr)
   = lookup_chunk_index_some mh addr i;
     read_word_in_major_at_index mh addr i
 
+let lookup_chunk_index_value (mh: major_heap) (addr: hp_addr) : nat =
+  match lookup_chunk_index mh addr with
+  | Some i -> i
+  | None -> 0
+
+let read_word_in_major_lookup_index (mh: major_heap) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires read_word_in_major mh addr == Some v)
+          (ensures (let i = lookup_chunk_index_value mh addr in
+                    lookup_chunk_index mh addr == Some i /\
+                    i < Seq.length mh /\
+                    word_in_chunk (Seq.index mh i) addr /\
+                    read_word_in_chunk (Seq.index mh i) addr == v))
+  = match lookup_chunk_index mh addr with
+    | None ->
+      lookup_chunk_index_none mh addr;
+      assert (lookup_chunk mh addr == None);
+      assert False
+    | Some i ->
+      lookup_chunk_index_some mh addr i;
+      assert (lookup_chunk mh addr == Some (Seq.index mh i));
+      assert (read_word_in_major mh addr ==
+              (if word_in_chunk (Seq.index mh i) addr then
+                 Some (read_word_in_chunk (Seq.index mh i) addr)
+               else None));
+      if word_in_chunk (Seq.index mh i) addr then
+        assert (read_word_in_chunk (Seq.index mh i) addr == v)
+      else
+        assert False
+
 let write_word_add_chunk_hit (mh: major_heap) (c: heap_chunk)
                              (addr: hp_addr{word_in_chunk c addr}) (value: U64.t)
   : Lemma (write_word_in_major (add_chunk mh c) addr value ==
