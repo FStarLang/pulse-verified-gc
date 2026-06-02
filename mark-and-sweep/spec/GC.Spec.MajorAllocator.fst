@@ -886,6 +886,81 @@ let major_write_word_or_same (mh: MH.major_heap) (addr: hp_addr) (value: U64.t)
   | Some mh' -> mh'
   | None -> mh
 
+#push-options "--z3rlimit 10 --split_queries always"
+let rec write_word_in_major_preserves_chunk_disjoint
+  (fresh: MH.heap_chunk) (mh: MH.major_heap) (addr: hp_addr) (value: U64.t)
+  : Lemma (requires MH.chunk_disjoint_from_all fresh mh)
+          (ensures (match MH.write_word_in_major mh addr value with
+                    | None -> True
+                    | Some mh' -> MH.chunk_disjoint_from_all fresh mh'))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then ()
+    else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (Seq.index mh 0 == hd);
+      assert (Seq.equal mh (Seq.cons hd tl));
+      Seq.lemma_eq_elim mh (Seq.cons hd tl);
+      assert (MH.chunks_disjoint fresh hd);
+      if MH.word_in_chunk hd addr then begin
+        let hd' = MH.write_word_in_chunk hd addr value in
+        MH.write_word_in_chunk_preserves_range hd addr value;
+        MH.chunks_disjoint_same_range_right fresh hd hd';
+        assert (MH.chunks_disjoint fresh hd');
+        assert (MH.write_word_in_major mh addr value == Some (Seq.cons hd' tl));
+        let out = Seq.cons hd' tl in
+        assert (Seq.length out == Seq.length mh);
+        let disj (i: nat{i < Seq.length out})
+          : Lemma (MH.chunks_disjoint fresh (Seq.index out i))
+          = if i > 0 then begin
+              assert (i < Seq.length mh);
+              assert (i - 1 < Seq.length tl);
+              let im1 : n:nat{n < Seq.length tl} = i - 1 in
+              assert (Seq.index out i == Seq.index tl im1);
+              assert (Seq.index mh i == Seq.index tl im1);
+              assert (MH.chunks_disjoint fresh (Seq.index mh i))
+            end else begin
+              assert (i == 0);
+              assert (Seq.index out i == hd')
+            end
+        in
+        FStar.Classical.forall_intro disj
+      end else begin
+        MH.chunk_disjoint_from_all_tail fresh mh;
+        write_word_in_major_preserves_chunk_disjoint fresh tl addr value;
+        match MH.write_word_in_major tl addr value with
+        | None -> ()
+        | Some tl' ->
+          assert (MH.chunk_disjoint_from_all fresh tl');
+          assert (MH.write_word_in_major mh addr value == Some (Seq.cons hd tl'));
+          let out = Seq.cons hd tl' in
+          let disj (i: nat{i < Seq.length out})
+            : Lemma (MH.chunks_disjoint fresh (Seq.index out i))
+            = if i > 0 then begin
+                assert (i - 1 < Seq.length tl');
+                let im1 : n:nat{n < Seq.length tl'} = i - 1 in
+                assert (Seq.index out i == Seq.index tl' im1);
+                assert (MH.chunks_disjoint fresh (Seq.index tl' im1))
+              end else begin
+                assert (i == 0);
+                assert (Seq.index out i == hd)
+              end
+          in
+          FStar.Classical.forall_intro disj
+      end
+    end
+
+let major_write_word_or_same_preserves_chunk_disjoint
+  (fresh: MH.heap_chunk) (mh: MH.major_heap) (addr: hp_addr) (value: U64.t)
+  : Lemma (requires MH.chunk_disjoint_from_all fresh mh)
+          (ensures MH.chunk_disjoint_from_all fresh
+                    (major_write_word_or_same mh addr value))
+  = write_word_in_major_preserves_chunk_disjoint fresh mh addr value;
+    match MH.write_word_in_major mh addr value with
+    | None -> ()
+    | Some _ -> ()
+#pop-options
+
 let major_spec_next_fp (mh: MH.major_heap) (obj: obj_addr) : GTot U64.t =
   match MH.read_word_in_major mh obj with
   | Some next -> next
@@ -1416,6 +1491,105 @@ let major_alloc_head_split (mh: MH.major_heap) (fp: obj_addr)
     assert (U64.v rem_obj == U64.v hd + (1 + wz) * 8 + 8);
     assert (U64.uint_to_t (U64.v hd + (1 + wz) * 8 + 8) == rem_obj);
     major_alloc_search_found_head mh fp 0UL fp wz fuel hdr
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always"
+let major_alloc_from_block_preserves_chunk_disjoint
+  (fresh: MH.heap_chunk) (mh: MH.major_heap) (obj: obj_addr)
+  (requested_wz: nat) (next_fp: U64.t)
+  : Lemma (requires MH.chunk_disjoint_from_all fresh mh)
+          (ensures MH.chunk_disjoint_from_all fresh
+                    (fst (major_alloc_from_block mh obj requested_wz next_fp)))
+  = let hd = hd_address obj in
+    match MH.read_word_in_major mh hd with
+    | None -> ()
+    | Some hdr ->
+      let block_wz = U64.v (Obj.getWosize hdr) in
+      let leftover = block_wz - requested_wz in
+      if block_wz < requested_wz then ()
+      else if leftover >= 2 then begin
+        let alloc_hdr =
+          Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+        let mh1 = major_write_word_or_same mh hd alloc_hdr in
+        major_write_word_or_same_preserves_chunk_disjoint fresh mh hd alloc_hdr;
+        let rem_hd_nat = U64.v hd + (1 + requested_wz) * 8 in
+        if rem_hd_nat >= heap_size || rem_hd_nat >= pow2 64 ||
+           rem_hd_nat % 8 <> 0 then ()
+        else begin
+          let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+          let rem_wz = leftover - 1 in
+          let rem_hdr =
+            Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+          let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
+          major_write_word_or_same_preserves_chunk_disjoint fresh mh1 rem_hd rem_hdr;
+          let rem_obj_nat = rem_hd_nat + 8 in
+          FStar.Math.Lemmas.pow2_lt_compat 64 57;
+          assert_norm (pow2 57 + 8 < pow2 64);
+          assert (rem_obj_nat < pow2 64);
+          if rem_obj_nat >= heap_size || rem_obj_nat >= pow2 64 ||
+             rem_obj_nat % 8 <> 0 then ()
+          else begin
+            let rem_field : hp_addr = U64.uint_to_t rem_obj_nat in
+            major_write_word_or_same_preserves_chunk_disjoint
+              fresh mh2 rem_field next_fp
+          end
+        end
+      end else begin
+        let alloc_hdr =
+          Alloc.make_header (U64.uint_to_t block_wz) Alloc.white_bits 0UL in
+        major_write_word_or_same_preserves_chunk_disjoint fresh mh hd alloc_hdr
+      end
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always"
+let rec major_alloc_search_preserves_chunk_disjoint
+  (fresh: MH.heap_chunk) (mh: MH.major_heap)
+  (head prev cur: U64.t) (wz fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all fresh mh)
+          (ensures MH.chunk_disjoint_from_all fresh
+                    (major_alloc_search mh head prev cur wz fuel).major_alloc_out)
+          (decreases fuel)
+  = if fuel > 0 then begin
+      if U64.v cur < U64.v zero_addr + U64.v mword ||
+         U64.v cur >= heap_size ||
+         U64.v cur % U64.v mword <> 0 then ()
+      else begin
+        let fuel' : f:nat{f < fuel} = fuel - 1 in
+        let obj : obj_addr = cur in
+        let hd = hd_address obj in
+        match MH.read_word_in_major mh hd with
+        | None -> ()
+        | Some hdr ->
+          let block_wz = U64.v (Obj.getWosize hdr) in
+          let next_fp = major_spec_next_fp mh obj in
+          if block_wz >= wz then begin
+            let (mh', new_remainder_fp) =
+              major_alloc_from_block mh obj wz next_fp in
+            major_alloc_from_block_preserves_chunk_disjoint
+              fresh mh obj wz next_fp;
+            if prev = 0UL then ()
+            else if U64.v prev >= U64.v mword &&
+                    U64.v prev < heap_size &&
+                    U64.v prev % U64.v mword = 0 then begin
+              let prev_addr : hp_addr = prev in
+              major_write_word_or_same_preserves_chunk_disjoint
+                fresh mh' prev_addr new_remainder_fp
+            end else ()
+          end else
+            major_alloc_search_preserves_chunk_disjoint
+              fresh mh head cur next_fp wz fuel'
+      end
+    end else ()
+
+let major_alloc_spec_with_fuel_preserves_chunk_disjoint
+  (fresh: MH.heap_chunk) (mh: MH.major_heap)
+  (fp: U64.t) (requested_wz fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all fresh mh)
+          (ensures MH.chunk_disjoint_from_all fresh
+                    (major_alloc_spec_with_fuel
+                      mh fp requested_wz fuel).major_alloc_out)
+  = major_alloc_search_preserves_chunk_disjoint
+      fresh mh fp 0UL fp (Alloc.normalized_wosize requested_wz) fuel
 #pop-options
 
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
