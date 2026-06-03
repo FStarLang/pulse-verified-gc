@@ -78,6 +78,18 @@ let chunked_is_blue (mh: MH.major_heap) (obj: obj_addr)
     | Some Header.Blue -> true
     | _ -> false
 
+let chunked_is_black (mh: MH.major_heap) (obj: obj_addr)
+  : GTot bool
+  = match chunked_color_of_object mh obj with
+    | Some Header.Black -> true
+    | _ -> false
+
+[@@"opaque_to_smt"]
+let chunked_no_black_objects (mh: MH.major_heap) : Tot prop =
+  forall (obj: obj_addr).
+    Seq.mem obj (MH.major_objects mh) ==>
+    ~(chunked_is_black mh obj)
+
 [@@"opaque_to_smt"]
 let chunked_minor_major_fields_no_blue
   (minor: minor_state) (mh: MH.major_heap) : Tot prop =
@@ -156,6 +168,7 @@ let chunked_collection_heap_shape
   (minor: minor_state) (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   : Tot prop =
   chunked_major_alloc_shape mh fp fuel /\
+  chunked_no_black_objects mh /\
   minor_heap_shape minor /\
   chunked_minor_major_fields_no_blue minor mh /\
   chunked_major_minor_fields_no_infix_targets minor mh
@@ -321,6 +334,106 @@ let chunked_minor_major_fields_no_blue_elim
             ((minor_read_field minor obj j) <: obj_addr)))
   = reveal_opaque (`%chunked_minor_major_fields_no_blue)
       (chunked_minor_major_fields_no_blue minor mh)
+
+let chunked_no_black_objects_intro (mh: MH.major_heap)
+  : Lemma
+      (requires
+        (forall (obj: obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==>
+          ~(chunked_is_black mh obj)))
+      (ensures chunked_no_black_objects mh)
+  =
+  reveal_opaque (`%chunked_no_black_objects)
+    (chunked_no_black_objects mh)
+
+let chunked_no_black_objects_elim (mh: MH.major_heap) (obj: obj_addr)
+  : Lemma
+      (requires chunked_no_black_objects mh /\
+                Seq.mem obj (MH.major_objects mh))
+      (ensures ~(chunked_is_black mh obj))
+  =
+  reveal_opaque (`%chunked_no_black_objects)
+    (chunked_no_black_objects mh)
+
+let chunked_is_black_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                Seq.mem obj (MH.major_objects mh))
+      (ensures
+        chunked_is_black
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_is_black mh obj)
+  =
+  MH.major_object_header_disjoint_from_chunk mh fresh obj;
+  SpecMajorAlloc.expand_major_heap_old_read mh fresh fp (hd_address obj)
+
+private let chunked_fresh_object_not_black
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (ensures
+        ~(chunked_is_black
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out
+          (SpecMajorAlloc.fresh_chunk_object fresh)))
+  =
+  SpecMajorAlloc.fresh_chunk_has_block fresh;
+  SpecMajorAlloc.expand_major_heap_header_fields mh fresh fp;
+  hd_f_roundtrip fresh.base;
+  assert (hd_address (SpecMajorAlloc.fresh_chunk_object fresh) == fresh.base)
+
+let chunked_no_black_objects_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires chunked_no_black_objects mh /\
+                MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        chunked_no_black_objects
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  let fresh_obj = SpecMajorAlloc.fresh_chunk_object fresh in
+  let aux_obj (obj: obj_addr)
+    : Lemma
+        (ensures
+          Seq.mem obj (MH.major_objects expanded) ==>
+          ~(chunked_is_black expanded obj))
+    =
+    if Seq.mem obj (MH.major_objects expanded) then begin
+      SpecMajorAlloc.expand_major_heap_objects mh fresh fp;
+      if obj == fresh_obj then
+        chunked_fresh_object_not_black mh fresh fp
+      else begin
+        if ~(Seq.mem obj (MH.major_objects mh)) then begin
+          GC.Spec.SeqMemLemmas.seq_mem_cons_not_mem_implies_eq
+            fresh_obj obj (MH.major_objects mh);
+          assert False
+        end;
+        assert (Seq.mem obj (MH.major_objects mh));
+        chunked_no_black_objects_elim mh obj;
+        chunked_is_black_preserved_by_expansion mh fresh fp obj;
+        assert (~(chunked_is_black expanded obj))
+      end
+    end
+  in
+  FStar.Classical.forall_intro aux_obj;
+  chunked_no_black_objects_intro expanded
+
+let chunked_no_black_objects_ensure_capacity
+  (mh: MH.major_heap) (fp: obj_addr) (fuel needed: nat)
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires chunked_no_black_objects mh /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        chunked_no_black_objects
+          (SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+  =
+  if SpecMajorAlloc.major_fl_capacity mh fp fuel >= needed then ()
+  else
+    chunked_no_black_objects_preserved_by_expansion mh fresh fp
 
 let chunked_major_minor_fields_no_infix_targets_intro
   (minor: minor_state) (mh: MH.major_heap)
@@ -590,6 +703,7 @@ let chunked_collection_heap_shape_intro
   (minor: minor_state) (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   : Lemma
       (requires chunked_major_alloc_shape mh fp fuel /\
+                chunked_no_black_objects mh /\
                 minor_heap_shape minor /\
                 chunked_minor_major_fields_no_blue minor mh /\
                 chunked_major_minor_fields_no_infix_targets minor mh)
@@ -603,6 +717,7 @@ let chunked_collection_heap_shape_elim
   : Lemma
       (requires chunked_collection_heap_shape minor mh fp fuel)
       (ensures chunked_major_alloc_shape mh fp fuel /\
+               chunked_no_black_objects mh /\
                minor_heap_shape minor /\
                chunked_minor_major_fields_no_blue minor mh /\
                chunked_major_minor_fields_no_infix_targets minor mh)
@@ -626,6 +741,7 @@ let chunked_collection_heap_shape_preserved_by_expansion
   =
   chunked_collection_heap_shape_elim minor mh fp fuel;
   chunked_major_alloc_shape_preserved_by_expansion mh fresh fp fuel;
+  chunked_no_black_objects_preserved_by_expansion mh fresh fp;
   chunked_minor_major_fields_no_blue_preserved_by_expansion
     minor mh fresh fp;
   chunked_major_minor_fields_no_infix_targets_preserved_by_expansion
@@ -657,6 +773,7 @@ let chunked_collection_heap_shape_ensure_capacity
   =
   chunked_collection_heap_shape_elim minor mh fp fuel;
   chunked_major_alloc_shape_ensure_capacity mh fp fuel needed fresh;
+  chunked_no_black_objects_ensure_capacity mh fp fuel needed fresh;
   chunked_minor_major_fields_no_blue_ensure_capacity
     minor mh fp fuel needed fresh;
   chunked_major_minor_fields_no_infix_targets_ensure_capacity

@@ -55,6 +55,15 @@ val chunked_color_of_object
 val chunked_is_blue
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
 
+val chunked_is_black
+  : mh:MH.major_heap -> obj:obj_addr -> GTot bool
+
+/// Chunked-major counterpart of `Mark.no_black_objects`: no active major object
+/// is black at the start of collection/promotion.
+[@@"opaque_to_smt"]
+val chunked_no_black_objects
+  : mh:MH.major_heap -> Tot prop
+
 /// Chunked-major counterpart of `minor_major_fields_no_blue`: any minor field
 /// that looks like a major pointer must target an active non-blue major object.
 [@@"opaque_to_smt"]
@@ -242,6 +251,54 @@ val chunked_minor_major_fields_no_blue_elim
         ~(chunked_is_blue mh
             ((minor_read_field minor obj j) <: obj_addr)))
 
+val chunked_no_black_objects_intro
+  : mh:MH.major_heap ->
+    Lemma
+      (requires
+        (forall (obj:obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==>
+          ~(chunked_is_black mh obj)))
+      (ensures chunked_no_black_objects mh)
+
+val chunked_no_black_objects_elim
+  : mh:MH.major_heap -> obj:obj_addr ->
+    Lemma
+      (requires chunked_no_black_objects mh /\
+                Seq.mem obj (MH.major_objects mh))
+      (ensures ~(chunked_is_black mh obj))
+
+val chunked_is_black_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                Seq.mem obj (MH.major_objects mh))
+      (ensures
+        chunked_is_black
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_is_black mh obj)
+
+val chunked_no_black_objects_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    Lemma
+      (requires chunked_no_black_objects mh /\
+                MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        chunked_no_black_objects
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+
+val chunked_no_black_objects_ensure_capacity
+  : mh:MH.major_heap ->
+    fp:obj_addr -> fuel:nat -> needed:nat -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires chunked_no_black_objects mh /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        chunked_no_black_objects
+          (SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+
 val chunked_major_minor_fields_no_infix_targets_intro
   : minor:minor_state -> mh:MH.major_heap ->
     Lemma
@@ -335,6 +392,7 @@ val chunked_collection_heap_shape_intro
   : minor:minor_state -> mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
     Lemma
       (requires chunked_major_alloc_shape mh fp fuel /\
+                chunked_no_black_objects mh /\
                 minor_heap_shape minor /\
                 chunked_minor_major_fields_no_blue minor mh /\
                 chunked_major_minor_fields_no_infix_targets minor mh)
@@ -345,6 +403,7 @@ val chunked_collection_heap_shape_elim
     Lemma
       (requires chunked_collection_heap_shape minor mh fp fuel)
       (ensures chunked_major_alloc_shape mh fp fuel /\
+               chunked_no_black_objects mh /\
                minor_heap_shape minor /\
                chunked_minor_major_fields_no_blue minor mh /\
                chunked_major_minor_fields_no_infix_targets minor mh)
