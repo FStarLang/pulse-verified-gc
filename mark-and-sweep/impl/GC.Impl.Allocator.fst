@@ -3070,6 +3070,33 @@ fn allocate_major_with_fuel_loop (heap: MajorHeap.major_heap_t)
                         (Ghost.reveal mh) (SH.hd_address cur_obj) == Some hdr));
         if U64.gte block_wz requested_wz {
           assert (pure (U64.v (SO.getWosize hdr) >= U64.v requested_wz));
+          let vh = !head_fp;
+          let vp = !prev_fp;
+          assert (pure (U64.v vfuel > 0));
+          assert (pure (U64.v vcur >= U64.v zero_addr + U64.v mword));
+          assert (pure (U64.v vcur >= U64.v mword));
+          assert (pure (U64.v vcur < heap_size));
+          assert (pure (U64.v vcur % U64.v mword == 0));
+          assert (pure (SMA.major_fl_valid (Ghost.reveal mh) vcur (U64.v vfuel)));
+          assert (pure (SMA.major_fl_above_zero (Ghost.reveal mh) vcur (U64.v vfuel)));
+          assert (pure (SMA.major_fl_blocks_fit (Ghost.reveal mh) vcur (U64.v vfuel)));
+          assert (pure (vh == fp));
+          assert (pure (vp == 0UL ==> vcur == vh));
+          assert (pure (vp <> 0UL ==>
+            U64.v vp >= U64.v zero_addr + U64.v mword /\
+            U64.v vp < heap_size /\
+            U64.v vp % U64.v mword == 0 /\
+            MH.read_word_in_major (Ghost.reveal mh) (vp <: obj_addr) ==
+              Some vcur));
+          assert (pure (
+            match MH.read_word_in_major (Ghost.reveal mh) (SH.hd_address cur_obj) with
+            | Some hdr' -> U64.v (SO.getWosize hdr') >= U64.v requested_wz
+            | None -> False));
+          assert (pure (SMA.major_alloc_search
+                          (Ghost.reveal mh) vh vp vcur
+                          (SA.normalized_wosize (U64.v requested_wz)) (U64.v vfuel) ==
+                        SMA.major_alloc_spec_with_fuel
+                          (Ghost.reveal mh) fp (U64.v requested_wz) (U64.v fuel)));
           found := true;
           go := false
         } else {
