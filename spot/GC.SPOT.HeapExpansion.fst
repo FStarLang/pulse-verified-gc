@@ -170,6 +170,33 @@ let spot_chunked_no_black_objects_ensure_capacity
             mh fp fuel needed fresh).capacity_major_out)
   = GenInv.chunked_no_black_objects_ensure_capacity mh fp fuel needed fresh
 
+let spot_chunked_no_scan_invariant_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires GenInv.chunked_no_scan_invariant mh /\
+                MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0)
+      (ensures
+        GenInv.chunked_no_scan_invariant
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  = GenInv.chunked_no_scan_invariant_preserved_by_expansion mh fresh fp
+
+let spot_chunked_no_scan_invariant_ensure_capacity
+  (mh: MH.major_heap) (fp: obj_addr) (fuel needed: nat)
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires GenInv.chunked_no_scan_invariant mh /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 CG.chunked_all_major_object_expansion_safe
+                   mh fresh (MH.major_objects mh) 0))
+      (ensures
+        GenInv.chunked_no_scan_invariant
+          (SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+  = GenInv.chunked_no_scan_invariant_ensure_capacity mh fp fuel needed fresh
+
 let spot_chunked_major_minor_fields_no_infix_targets_preserved_by_expansion
   (ms: minor_state) (mh: MH.major_heap)
   (fresh: MH.heap_chunk) (fp: U64.t)
