@@ -266,6 +266,28 @@ let spot_major_alloc_head_split_link_not_self
   = SpecMajorAlloc.major_alloc_head_split_link_not_self
       mh fp requested_wz fuel
 
+let spot_chunked_major_alloc_shape_active_head_split
+  (mh: MH.major_heap) (fp: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                requested_wz > 0 /\
+                GenInv.chunked_major_alloc_shape mh fp fuel /\
+                SpecMajorAlloc.major_fl_head_wosize mh fp >=
+                  requested_wz + 2)
+      (ensures
+        (let r =
+           SpecMajorAlloc.major_alloc_spec_with_fuel
+             mh fp requested_wz fuel in
+         r.major_obj_out == fp /\
+         r.major_fp_out <> 0UL /\
+         SpecMajorAlloc.major_alloc_result_fp_in_objects r /\
+         GenInv.chunked_major_alloc_shape
+           r.major_alloc_out r.major_fp_out fuel))
+  = GenInv.chunked_major_alloc_shape_active_head_split
+      mh fp requested_wz fuel
+
 let spot_chunked_is_blue_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
   (obj: obj_addr)

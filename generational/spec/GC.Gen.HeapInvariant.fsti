@@ -244,6 +244,26 @@ val chunked_major_alloc_shape_ensure_head_capacity
         SpecMajorAlloc.major_fl_head_wosize
           r.capacity_major_out r.capacity_fp_out >= needed))
 
+val chunked_major_alloc_shape_active_head_split
+  : mh:MH.major_heap -> fp:U64.t ->
+    requested_wz:nat -> fuel:nat ->
+    Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                requested_wz > 0 /\
+                chunked_major_alloc_shape mh fp fuel /\
+                SpecMajorAlloc.major_fl_head_wosize mh fp >=
+                  requested_wz + 2)
+      (ensures
+        (let r =
+           SpecMajorAlloc.major_alloc_spec_with_fuel
+             mh fp requested_wz fuel in
+         r.major_obj_out == fp /\
+         r.major_fp_out <> 0UL /\
+         SpecMajorAlloc.major_alloc_result_fp_in_objects r /\
+         chunked_major_alloc_shape
+           r.major_alloc_out r.major_fp_out fuel))
+
 val chunked_minor_major_fields_no_blue_intro
   : minor:minor_state -> mh:MH.major_heap ->
     Lemma

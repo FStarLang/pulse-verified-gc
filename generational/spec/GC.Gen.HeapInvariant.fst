@@ -26,6 +26,7 @@ module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
 module MH = GC.Spec.MajorHeap
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module Header = GC.Lib.Header
 module CG = GC.Gen.CombinedGraph
 
@@ -347,6 +348,34 @@ let chunked_major_alloc_shape_ensure_head_capacity
             mh fp fuel needed fresh in
   chunked_major_alloc_shape_intro
     r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out
+
+let chunked_major_alloc_shape_active_head_split
+  (mh: MH.major_heap) (fp: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                requested_wz > 0 /\
+                chunked_major_alloc_shape mh fp fuel /\
+                SpecMajorAlloc.major_fl_head_wosize mh fp >= requested_wz + 2)
+      (ensures
+        (let r =
+           SpecMajorAlloc.major_alloc_spec_with_fuel
+             mh fp requested_wz fuel in
+         r.major_obj_out == fp /\
+         r.major_fp_out <> 0UL /\
+         SpecMajorAlloc.major_alloc_result_fp_in_objects r /\
+         chunked_major_alloc_shape
+           r.major_alloc_out r.major_fp_out fuel))
+  =
+  chunked_major_alloc_shape_elim mh fp fuel;
+  SpecMajorAllocSplitShape.major_alloc_head_split_preserves_alloc_shape
+    mh fp requested_wz fuel;
+  let r =
+    SpecMajorAlloc.major_alloc_spec_with_fuel
+      mh fp requested_wz fuel in
+  chunked_major_alloc_shape_intro
+    r.major_alloc_out r.major_fp_out fuel
 
 let chunked_minor_major_fields_no_blue_intro
   (minor: minor_state) (mh: MH.major_heap)
