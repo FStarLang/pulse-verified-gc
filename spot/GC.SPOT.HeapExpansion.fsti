@@ -472,6 +472,37 @@ val spot_cheney_forwarded_dense_alloc_list_single_chunk_no_oom
          SpecMajorAllocMultiAlloc.allocated_objects_nonzero
           r.dense_list_objs_out))
 
+val spot_cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
+  : minor:GC.Gen.MinorHeap.minor_state -> major:heap ->
+    fp:U64.t -> roots:Seq.seq U64.t ->
+    Lemma
+      (requires GC.Gen.MinorHeap.minor_wf minor /\
+               SpecAlloc.alloc_search_fuel > 1 /\
+               fp <> 0UL /\
+               MH.well_formed_major_heap
+                 (MH.single_chunk_major_heap major) /\
+               SpecMajorAlloc.major_fl_valid
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_above_zero
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_head_wosize
+                 (MH.single_chunk_major_heap major) fp >=
+                 PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let requests =
+          CheneyPreservation.cheney_forwarded_minor_requests
+            minor major fp roots in
+         let r =
+          SpecMajorAllocMultiAlloc.dense_alloc_list_default_spec
+            major fp requests in
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+          r.dense_list_objs_out))
+
 val spot_chunked_is_blue_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
     obj:obj_addr ->

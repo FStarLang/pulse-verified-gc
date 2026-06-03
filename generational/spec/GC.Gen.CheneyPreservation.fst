@@ -39,6 +39,7 @@ module BlueAlloc = GC.Gen.PromoteUpdate.BlueAlloc
 module NoBlueUtil = GC.Gen.NoBlueUtil
 module PromotionDemand = GC.Gen.PromotionDemand
 module MH = GC.Spec.MajorHeap
+module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module IndDesc = FStar.IndefiniteDescription
@@ -113,6 +114,43 @@ let cheney_forwarded_dense_alloc_list_single_chunk_no_oom
   let requests = cheney_forwarded_minor_requests minor major fp roots in
   SpecMajorAllocMultiAlloc.dense_alloc_list_head_split_nonzero_single_chunk_with_budget
     major fp fuel requests (PromotionDemand.minor_promotion_demand minor)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+      (requires minor_wf minor /\
+                SpecAlloc.alloc_search_fuel > 1 /\
+                fp <> 0UL /\
+                MH.well_formed_major_heap
+                  (MH.single_chunk_major_heap major) /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let requests =
+           cheney_forwarded_minor_requests minor major fp roots in
+         let r =
+           SpecMajorAllocMultiAlloc.dense_alloc_list_default_spec
+             major fp requests in
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+           r.dense_list_objs_out))
+  =
+  cheney_forwarded_minor_requests_positive minor major fp roots;
+  cheney_forwarded_minor_requests_demand_bound minor major fp roots;
+  let requests = cheney_forwarded_minor_requests minor major fp roots in
+  SpecMajorAllocMultiAlloc.dense_alloc_list_default_head_split_nonzero_single_chunk_with_budget
+    major fp requests (PromotionDemand.minor_promotion_demand minor)
 #pop-options
 
 /// ---------------------------------------------------------------------------

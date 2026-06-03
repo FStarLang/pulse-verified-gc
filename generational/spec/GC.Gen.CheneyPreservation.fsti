@@ -29,6 +29,7 @@ module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
 module PromotionDemand = GC.Gen.PromotionDemand
 module MH = GC.Spec.MajorHeap
+module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 
@@ -83,6 +84,35 @@ val cheney_forwarded_dense_alloc_list_single_chunk_no_oom
          let r =
            SpecMajorAllocMultiAlloc.dense_alloc_list_spec
              major fp fuel requests in
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+           r.dense_list_objs_out))
+
+val cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (requires minor_wf minor /\
+                SpecAlloc.alloc_search_fuel > 1 /\
+                fp <> 0UL /\
+                MH.well_formed_major_heap
+                  (MH.single_chunk_major_heap major) /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let requests =
+           cheney_forwarded_minor_requests minor major fp roots in
+         let r =
+           SpecMajorAllocMultiAlloc.dense_alloc_list_default_spec
+             major fp requests in
          SpecMajorAllocMultiAlloc.allocated_objects_nonzero
            r.dense_list_objs_out))
 
