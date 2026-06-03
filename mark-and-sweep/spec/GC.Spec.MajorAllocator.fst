@@ -2279,6 +2279,78 @@ let well_formed_no_prior_contains_selected_chunk (mh: MH.major_heap)
     FStar.Classical.forall_intro no_prior
 #pop-options
 
+#push-options "--z3rlimit 20 --split_queries always --fuel 0 --ifuel 0"
+let selected_chunk_contains_read_word
+  (mh: MH.major_heap) (idx: nat) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires MH.well_formed_major_heap mh /\
+                    idx < Seq.length mh /\
+                    MH.chunk_contains_addr (Seq.index mh idx) addr /\
+                    MH.read_word_in_major mh addr == Some v)
+          (ensures MH.word_in_chunk (Seq.index mh idx) addr)
+  =
+  MH.read_word_in_major_lookup_index mh addr v;
+  let read_idx = MH.lookup_chunk_index_value mh addr in
+  if read_idx = idx then ()
+  else begin
+    assert (read_idx < Seq.length mh);
+    assert (MH.word_in_chunk (Seq.index mh read_idx) addr);
+    assert (MH.chunk_contains_addr (Seq.index mh read_idx) addr);
+    if idx < read_idx then begin
+      chunks_pairwise_index_disjoint mh idx read_idx;
+      MH.chunks_disjoint_no_shared_addr
+        (Seq.index mh idx) (Seq.index mh read_idx) addr
+    end else begin
+      assert (read_idx < idx);
+      chunks_pairwise_index_disjoint mh read_idx idx;
+      MH.chunks_disjoint_no_shared_addr
+        (Seq.index mh read_idx) (Seq.index mh idx) addr
+    end;
+    assert False
+  end
+
+let selected_chunk_read_word_safety
+  (mh: MH.major_heap) (idx: nat) (addr: hp_addr) (v: U64.t)
+  : Lemma (requires MH.well_formed_major_heap mh /\
+                    idx < Seq.length mh /\
+                    MH.read_word_in_major mh addr == Some v)
+          (ensures MH.word_in_chunk (Seq.index mh idx) addr \/
+                   ~(MH.chunk_contains_addr (Seq.index mh idx) addr))
+  =
+  if MH.chunk_contains_addr (Seq.index mh idx) addr then
+    selected_chunk_contains_read_word mh idx addr v
+  else
+    ()
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let major_fl_blocks_fit_link_in_header_chunk
+  (mh: MH.major_heap) (fp: obj_addr) (fuel: nat)
+  : Lemma (requires fuel > 0 /\
+                    major_fl_valid mh fp fuel /\
+                    major_fl_blocks_fit mh fp fuel)
+          (ensures (let hd = hd_address fp in
+                    let idx = MH.lookup_chunk_index_value mh hd in
+                    idx < Seq.length mh /\
+                    MH.word_in_chunk (Seq.index mh idx) fp))
+  =
+  major_fl_valid_gives_wosize mh fp fuel;
+  major_fl_blocks_fit_current mh fp fuel;
+  let hd = hd_address fp in
+  let idx = MH.lookup_chunk_index_value mh hd in
+  match MH.read_word_in_major mh hd with
+  | None -> assert False
+  | Some hdr ->
+    assert (U64.v (Obj.getWosize hdr) >= 1);
+    assert (MH.word_in_chunk (Seq.index mh idx) hd);
+    assert (U64.v hd + (1 + U64.v (Obj.getWosize hdr)) * U64.v mword <=
+            MH.chunk_end (Seq.index mh idx));
+    hd_address_spec fp;
+    assert (U64.v fp == U64.v hd + U64.v mword);
+    assert (U64.v fp + U64.v mword <=
+            U64.v hd + (1 + U64.v (Obj.getWosize hdr)) * U64.v mword);
+    assert (MH.word_in_chunk (Seq.index mh idx) fp)
+#pop-options
+
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let active_head_split_remainder_words_in_chunk (c: MH.heap_chunk)
                                                (base: hp_addr)
