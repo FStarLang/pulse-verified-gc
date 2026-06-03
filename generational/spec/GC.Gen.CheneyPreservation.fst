@@ -37,7 +37,46 @@ module NoBlue = GC.Gen.CheneyPreservation.NoBlue
 module BlueProm = GC.Gen.PromoteUpdate.BlueProm
 module BlueAlloc = GC.Gen.PromoteUpdate.BlueAlloc
 module NoBlueUtil = GC.Gen.NoBlueUtil
+module PromotionDemand = GC.Gen.PromotionDemand
+module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module IndDesc = FStar.IndefiniteDescription
+
+private let cheney_forwarded_minor_request_filter
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (obj: U64.t)
+  : GTot bool =
+  (cheney_promote minor major fp roots).fwd_map obj <> 0UL
+
+let cheney_forwarded_minor_requests
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : GTot (list nat)
+  =
+  PromotionDemand.minor_promotion_filtered_requests
+    minor (cheney_forwarded_minor_request_filter minor major fp roots)
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+let cheney_forwarded_minor_requests_positive
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+      (requires minor_wf minor)
+      (ensures
+        SpecMajorAllocMultiAlloc.all_requests_positive
+          (cheney_forwarded_minor_requests minor major fp roots))
+  =
+  PromotionDemand.minor_promotion_filtered_requests_positive
+    minor (cheney_forwarded_minor_request_filter minor major fp roots)
+
+let cheney_forwarded_minor_requests_demand_bound
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+      (ensures
+        SpecMajorAllocMultiAlloc.allocation_list_demand
+          (cheney_forwarded_minor_requests minor major fp roots) <=
+        PromotionDemand.minor_promotion_demand minor)
+  =
+  PromotionDemand.minor_promotion_filtered_requests_demand_bound
+    minor (cheney_forwarded_minor_request_filter minor major fp roots)
+#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Core sub-lemma: promote_object preserves no_black_objects

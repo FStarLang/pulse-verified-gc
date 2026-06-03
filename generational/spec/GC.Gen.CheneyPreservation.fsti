@@ -27,6 +27,35 @@ module Mark = GC.Spec.Mark
 module MarkBounded = GC.Spec.MarkBounded
 module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
+module PromotionDemand = GC.Gen.PromotionDemand
+module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
+
+/// Size-only allocation request trace induced by Cheney's final forwarding map.
+///
+/// The list is ordered by `minor_objects`, not BFS discovery order.  It is meant
+/// as a conservative bridge to the preflight demand bound: it includes exactly
+/// those normal minor-object starts that ended up forwarded, excludes infix
+/// interior entries because those are not members of `minor_objects`, and is a
+/// filtered sub-demand of `minor_promotion_requests`.
+val cheney_forwarded_minor_requests
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    GTot (list nat)
+
+val cheney_forwarded_minor_requests_positive
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (requires minor_wf minor)
+      (ensures
+        SpecMajorAllocMultiAlloc.all_requests_positive
+          (cheney_forwarded_minor_requests minor major fp roots))
+
+val cheney_forwarded_minor_requests_demand_bound
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (ensures
+        SpecMajorAllocMultiAlloc.allocation_list_demand
+          (cheney_forwarded_minor_requests minor major fp roots) <=
+        PromotionDemand.minor_promotion_demand minor)
 
 /// Cheney promotion preserves no_black_objects.
 ///

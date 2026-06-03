@@ -14,6 +14,7 @@ module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module PromotionDemand = GC.Gen.PromotionDemand
+module CheneyPreservation = GC.Gen.CheneyPreservation
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
 
@@ -481,6 +482,23 @@ let spot_chunked_collection_shape_ensure_minor_promotion_budget_alloc_list
           a.list_objs_out))
   = GenInv.chunked_collection_heap_shape_ensure_minor_promotion_budget_alloc_list
       minor mh fp fuel fresh requests
+
+let spot_cheney_forwarded_minor_requests_budget
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  : Lemma
+      (requires minor_wf minor)
+      (ensures
+        (let requests =
+           CheneyPreservation.cheney_forwarded_minor_requests
+             minor major fp roots in
+         SpecMajorAllocMultiAlloc.all_requests_positive requests /\
+         SpecMajorAllocMultiAlloc.allocation_list_demand requests <=
+           PromotionDemand.minor_promotion_demand minor))
+  =
+  CheneyPreservation.cheney_forwarded_minor_requests_positive
+    minor major fp roots;
+  CheneyPreservation.cheney_forwarded_minor_requests_demand_bound
+    minor major fp roots
 
 let spot_chunked_is_blue_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
