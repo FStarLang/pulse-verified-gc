@@ -135,3 +135,33 @@ let rec major_alloc_list_head_split_preserves_alloc_shape
     assert (allocated_objects_nonzero
               (step.major_obj_out :: tail.list_objs_out))
 #pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let major_alloc_list_head_split_preserves_alloc_shape_with_budget
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (requests: list nat) (budget: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                MH.well_formed_major_heap mh /\
+                MA.major_fl_valid mh fp fuel /\
+                MA.major_fl_above_zero mh fp fuel /\
+                MA.major_fl_blocks_fit mh fp fuel /\
+                all_requests_positive requests /\
+                allocation_list_demand requests <= budget /\
+                MA.major_fl_head_wosize mh fp >= budget + 1)
+      (ensures
+        (let r = major_alloc_list_spec mh fp fuel requests in
+         r.list_fp_out <> 0UL /\
+         MH.well_formed_major_heap r.list_major_out /\
+         MA.major_fl_valid r.list_major_out r.list_fp_out fuel /\
+         MA.major_fl_above_zero r.list_major_out r.list_fp_out fuel /\
+         MA.major_fl_blocks_fit r.list_major_out r.list_fp_out fuel /\
+         MA.major_fl_head_wosize r.list_major_out r.list_fp_out >= 1 /\
+         allocated_objects_nonzero r.list_objs_out))
+  =
+  assert (MA.major_fl_head_wosize mh fp >=
+          allocation_list_demand requests + 1);
+  major_alloc_list_head_split_preserves_alloc_shape
+    mh fp fuel requests
+#pop-options
