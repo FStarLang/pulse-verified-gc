@@ -153,6 +153,71 @@ let cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
     major fp requests (PromotionDemand.minor_promotion_demand minor)
 #pop-options
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let promote_object_head_no_oom_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize)
+      (ensures
+        (promote_object minor major obj fp wosize).new_addr <> 0UL)
+  =
+  assert (SpecAlloc.normalized_wosize wosize == wosize);
+  SpecMajorAlloc.major_alloc_spec_with_fuel_head_no_oom
+    (MH.single_chunk_major_heap major) fp wosize SpecAlloc.alloc_search_fuel;
+  SpecMajorAlloc.major_alloc_spec_with_fuel_single_chunk_compat
+    major fp wosize SpecAlloc.alloc_search_fuel;
+  assert ((SpecAlloc.alloc_spec_with_fuel
+            major fp wosize SpecAlloc.alloc_search_fuel).obj_out <> 0UL);
+  assert ((SpecAlloc.alloc_spec major fp wosize).obj_out <> 0UL);
+  promote_object_success minor major obj fp wosize
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let promote_minor_object_head_no_oom_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma
+      (requires minor_wf minor /\
+                Seq.mem obj (minor_objects minor) /\
+                wosize == minor_wosize minor obj /\
+                SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (promote_object minor major obj fp wosize).new_addr <> 0UL)
+  =
+  minor_objects_body_bound minor obj;
+  PromotionDemand.minor_promotion_object_wosize_demand_bound minor obj;
+  assert (SpecMajorAlloc.major_fl_head_wosize
+            (MH.single_chunk_major_heap major) fp >=
+          wosize);
+  promote_object_head_no_oom_single_chunk minor major obj fp wosize
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Core sub-lemma: promote_object preserves no_black_objects
 /// ---------------------------------------------------------------------------

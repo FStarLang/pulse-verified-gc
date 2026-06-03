@@ -116,6 +116,54 @@ val cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
          SpecMajorAllocMultiAlloc.allocated_objects_nonzero
            r.dense_list_objs_out))
 
+/// If the active single-chunk free-list head can satisfy the request, the
+/// actual promotion boundary cannot observe allocator OOM.
+val promote_object_head_no_oom_single_chunk
+  : minor:minor_state -> major:heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+               fp <> 0UL /\
+               SpecMajorAlloc.major_fl_valid
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_above_zero
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_head_wosize
+                 (MH.single_chunk_major_heap major) fp >= wosize)
+      (ensures
+        (promote_object minor major obj fp wosize).new_addr <> 0UL)
+
+/// Preflight for the full conservative minor-promotion demand is enough for
+/// any single normal minor-object promotion request at the initial head.
+val promote_minor_object_head_no_oom_single_chunk
+  : minor:minor_state -> major:heap -> obj:U64.t -> fp:U64.t ->
+    wosize:nat{wosize > 0} ->
+    Lemma
+      (requires minor_wf minor /\
+                Seq.mem obj (minor_objects minor) /\
+                wosize == minor_wosize minor obj /\
+                SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (promote_object minor major obj fp wosize).new_addr <> 0UL)
+
 /// Cheney promotion preserves no_black_objects.
 ///
 /// Promoted objects get white_bits headers; pre-existing objects' colors are

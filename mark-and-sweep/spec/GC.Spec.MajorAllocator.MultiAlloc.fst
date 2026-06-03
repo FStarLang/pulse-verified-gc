@@ -112,6 +112,14 @@ let request_split_demand_positive_identity (requested_wz: nat)
   assert (Alloc.normalized_wosize requested_wz == requested_wz);
   assert (MA.major_alloc_demand_wosize requested_wz == requested_wz)
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let request_split_demand_lower_bound (requested_wz: nat)
+  : Lemma (ensures requested_wz <= request_split_demand requested_wz)
+  =
+  if requested_wz = 0 then ()
+  else request_split_demand_positive_identity requested_wz
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
 let rec major_alloc_list_head_split_preserves_alloc_shape
   (mh: MH.major_heap) (fp: U64.t) (fuel: nat)

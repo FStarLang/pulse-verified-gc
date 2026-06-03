@@ -593,6 +593,56 @@ let spot_cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
   CheneyPreservation.cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
     minor major fp roots
 
+let spot_promote_object_head_no_oom_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize)
+      (ensures
+        (promote_object minor major obj fp wosize).new_addr <> 0UL)
+  =
+  CheneyPreservation.promote_object_head_no_oom_single_chunk
+    minor major obj fp wosize
+
+let spot_promote_minor_object_head_no_oom_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
+  (wosize: nat{wosize > 0})
+  : Lemma
+      (requires minor_wf minor /\
+                Seq.mem obj (minor_objects minor) /\
+                wosize == minor_wosize minor obj /\
+                SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (promote_object minor major obj fp wosize).new_addr <> 0UL)
+  =
+  CheneyPreservation.promote_minor_object_head_no_oom_single_chunk
+    minor major obj fp wosize
+
 let spot_chunked_is_blue_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
   (obj: obj_addr)

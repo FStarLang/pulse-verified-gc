@@ -56,6 +56,22 @@ let minor_promotion_demand_eq (minor: minor_state)
         MultiAlloc.allocation_list_demand (minor_promotion_requests minor))
   = ()
 
+private let rec seq_index_of (#a:eqtype) (s: seq a) (x: a{Seq.mem x s})
+  : GTot (n:nat{n < Seq.length s /\ Seq.index s n == x})
+  (decreases Seq.length s) =
+  if Seq.index s 0 = x then 0
+  else begin
+    Seq.lemma_index_is_nth s 0;
+    let tl = Seq.tail s in
+    Seq.lemma_mem_append (Seq.create 1 (Seq.index s 0)) tl;
+    1 + seq_index_of tl x
+  end
+
+private let nat_le_not_lt_eq (i k: nat)
+  : Lemma (requires i <= k /\ ~(i < k))
+          (ensures k == i)
+  = ()
+
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"
 let rec minor_promotion_requests_from_positive
   (minor: minor_state) (objs: seq U64.t) (idx: nat)
@@ -108,6 +124,57 @@ let minor_promotion_requests_positive (minor: minor_state)
     0 <= j /\ j < Seq.length objs ==>
     Seq.mem (Seq.index objs j) (minor_objects minor));
   minor_promotion_requests_from_positive minor objs 0
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let rec minor_promotion_requests_from_index_demand_bound
+  (minor: minor_state) (objs: seq U64.t) (idx: nat) (k: nat)
+  : Lemma
+      (requires idx <= k /\ k < Seq.length objs)
+      (ensures
+        minor_wosize minor (Seq.index objs k) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_requests_from minor objs idx))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then
+    assert False
+  else begin
+    let obj = Seq.index objs idx in
+    let tail = minor_promotion_requests_from minor objs (idx + 1) in
+    if idx < k then begin
+      assert (idx + 1 <= k);
+      minor_promotion_requests_from_index_demand_bound
+        minor objs (idx + 1) k;
+      assert (minor_wosize minor (Seq.index objs k) <=
+              MultiAlloc.allocation_list_demand tail);
+      assert (minor_wosize minor (Seq.index objs k) <=
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from minor objs idx))
+    end else begin
+      nat_le_not_lt_eq idx k;
+      assert (k = idx);
+      MultiAlloc.request_split_demand_lower_bound (minor_wosize minor obj);
+      assert (Seq.index objs k == obj);
+      assert (minor_wosize minor obj <=
+              MultiAlloc.request_split_demand (minor_wosize minor obj));
+      assert (minor_wosize minor (Seq.index objs k) <=
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from minor objs idx))
+    end
+  end
+
+let minor_promotion_object_wosize_demand_bound
+  (minor: minor_state) (obj: U64.t)
+  : Lemma
+      (requires Seq.mem obj (minor_objects minor))
+      (ensures minor_wosize minor obj <= minor_promotion_demand minor)
+  =
+  let objs = minor_objects minor in
+  let k = seq_index_of objs obj in
+  assert (Seq.index objs k == obj);
+  minor_promotion_requests_from_index_demand_bound minor objs 0 k;
+  minor_promotion_demand_eq minor
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"

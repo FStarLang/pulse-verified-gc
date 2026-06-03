@@ -13,6 +13,7 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
+module Promote = GC.Gen.Promote
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
 
@@ -502,6 +503,50 @@ val spot_cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
             major fp requests in
          SpecMajorAllocMultiAlloc.allocated_objects_nonzero
           r.dense_list_objs_out))
+
+val spot_promote_object_head_no_oom_single_chunk
+  : minor:GC.Gen.MinorHeap.minor_state -> major:heap ->
+    obj:U64.t -> fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+               fp <> 0UL /\
+               SpecMajorAlloc.major_fl_valid
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_above_zero
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_head_wosize
+                 (MH.single_chunk_major_heap major) fp >= wosize)
+      (ensures
+        (Promote.promote_object minor major obj fp wosize).new_addr <> 0UL)
+
+val spot_promote_minor_object_head_no_oom_single_chunk
+  : minor:GC.Gen.MinorHeap.minor_state -> major:heap ->
+    obj:U64.t -> fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires GC.Gen.MinorHeap.minor_wf minor /\
+                Seq.mem obj (GC.Gen.MinorHeap.minor_objects minor) /\
+                wosize == GC.Gen.MinorHeap.minor_wosize minor obj /\
+                SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (Promote.promote_object minor major obj fp wosize).new_addr <> 0UL)
 
 val spot_chunked_is_blue_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
