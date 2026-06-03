@@ -13,6 +13,7 @@ module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
+module PromotionDemand = GC.Gen.PromotionDemand
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
 
@@ -311,6 +312,30 @@ let spot_chunked_major_alloc_shape_alloc_list_head_split
            r.list_objs_out))
   = GenInv.chunked_major_alloc_shape_alloc_list_head_split
       mh fp fuel requests
+
+let spot_chunked_major_alloc_shape_alloc_minor_objects_head_split
+  (minor: minor_state) (mh: MH.major_heap) (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                minor_wf minor /\
+                fp <> 0UL /\
+                GenInv.chunked_major_alloc_shape mh fp fuel /\
+                SpecMajorAlloc.major_fl_head_wosize mh fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let requests = PromotionDemand.minor_promotion_requests minor in
+         let r =
+           SpecMajorAllocMultiAlloc.major_alloc_list_spec
+             mh fp fuel requests in
+         r.list_fp_out <> 0UL /\
+         GenInv.chunked_major_alloc_shape r.list_major_out r.list_fp_out fuel /\
+         SpecMajorAlloc.major_fl_head_wosize
+           r.list_major_out r.list_fp_out >= 1 /\
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+           r.list_objs_out))
+  = GenInv.chunked_major_alloc_shape_alloc_minor_objects_head_split
+      minor mh fp fuel
 
 let spot_chunked_is_blue_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
