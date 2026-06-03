@@ -38,6 +38,8 @@ module BlueProm = GC.Gen.PromoteUpdate.BlueProm
 module BlueAlloc = GC.Gen.PromoteUpdate.BlueAlloc
 module NoBlueUtil = GC.Gen.NoBlueUtil
 module PromotionDemand = GC.Gen.PromotionDemand
+module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module IndDesc = FStar.IndefiniteDescription
 
@@ -76,6 +78,41 @@ let cheney_forwarded_minor_requests_demand_bound
   =
   PromotionDemand.minor_promotion_filtered_requests_demand_bound
     minor (cheney_forwarded_minor_request_filter minor major fp roots)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let cheney_forwarded_dense_alloc_list_single_chunk_no_oom
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires minor_wf minor /\
+                fuel > 1 /\
+                fp <> 0UL /\
+                MH.well_formed_major_heap
+                  (MH.single_chunk_major_heap major) /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let requests =
+           cheney_forwarded_minor_requests minor major fp roots in
+         let r =
+           SpecMajorAllocMultiAlloc.dense_alloc_list_spec
+             major fp fuel requests in
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+           r.dense_list_objs_out))
+  =
+  cheney_forwarded_minor_requests_positive minor major fp roots;
+  cheney_forwarded_minor_requests_demand_bound minor major fp roots;
+  let requests = cheney_forwarded_minor_requests minor major fp roots in
+  SpecMajorAllocMultiAlloc.dense_alloc_list_head_split_nonzero_single_chunk_with_budget
+    major fp fuel requests (PromotionDemand.minor_promotion_demand minor)
 #pop-options
 
 /// ---------------------------------------------------------------------------

@@ -43,6 +43,13 @@ type major_alloc_list_result = {
   list_objs_out: list U64.t;
 }
 
+noeq
+type dense_alloc_list_result = {
+  dense_list_heap_out: heap;
+  dense_list_fp_out: U64.t;
+  dense_list_objs_out: list U64.t;
+}
+
 let rec major_alloc_list_spec
   (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   (requests: list nat)
@@ -59,6 +66,23 @@ let rec major_alloc_list_spec
       major_alloc_list_spec
         r.major_alloc_out r.major_fp_out fuel rest in
     { tail with list_objs_out = r.major_obj_out :: tail.list_objs_out }
+
+let rec dense_alloc_list_spec
+  (g: heap) (fp: U64.t) (fuel: nat)
+  (requests: list nat)
+  : GTot dense_alloc_list_result
+  (decreases requests) =
+  match requests with
+  | [] ->
+    { dense_list_heap_out = g;
+      dense_list_fp_out = fp;
+      dense_list_objs_out = [] }
+  | requested_wz :: rest ->
+    let r = Alloc.alloc_spec_with_fuel g fp requested_wz fuel in
+    let tail =
+      dense_alloc_list_spec
+        r.heap_out r.fp_out fuel rest in
+    { tail with dense_list_objs_out = r.obj_out :: tail.dense_list_objs_out }
 
 let rec allocated_objects_nonzero (objs: list U64.t) : Tot prop =
   match objs with
@@ -164,4 +188,109 @@ let major_alloc_list_head_split_preserves_alloc_shape_with_budget
           allocation_list_demand requests + 1);
   major_alloc_list_head_split_preserves_alloc_shape
     mh fp fuel requests
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let rec major_alloc_list_spec_single_chunk_compat
+  (g: heap) (fp: U64.t) (fuel: nat) (requests: list nat)
+  : Lemma
+      (ensures
+        (let major_r =
+           major_alloc_list_spec
+             (MH.single_chunk_major_heap g) fp fuel requests in
+         let dense_r =
+           dense_alloc_list_spec g fp fuel requests in
+         major_r.list_major_out ==
+           MH.single_chunk_major_heap dense_r.dense_list_heap_out /\
+         major_r.list_fp_out == dense_r.dense_list_fp_out /\
+         major_r.list_objs_out == dense_r.dense_list_objs_out))
+      (decreases (length requests))
+  =
+  match requests with
+  | [] ->
+    ()
+  | requested_wz :: rest ->
+    MA.major_alloc_spec_with_fuel_single_chunk_compat
+      g fp requested_wz fuel;
+    let major_step =
+      MA.major_alloc_spec_with_fuel
+        (MH.single_chunk_major_heap g) fp requested_wz fuel in
+    let dense_step =
+      Alloc.alloc_spec_with_fuel g fp requested_wz fuel in
+    assert (major_step.major_alloc_out ==
+            MH.single_chunk_major_heap dense_step.heap_out);
+    assert (major_step.major_fp_out == dense_step.fp_out);
+    assert (major_step.major_obj_out == dense_step.obj_out);
+    major_alloc_list_spec_single_chunk_compat
+      dense_step.heap_out dense_step.fp_out fuel rest;
+    let major_tail =
+      major_alloc_list_spec
+        major_step.major_alloc_out major_step.major_fp_out fuel rest in
+    let dense_tail =
+      dense_alloc_list_spec
+        dense_step.heap_out dense_step.fp_out fuel rest in
+    assert (major_tail.list_major_out ==
+            MH.single_chunk_major_heap dense_tail.dense_list_heap_out);
+    assert (major_tail.list_fp_out == dense_tail.dense_list_fp_out);
+    assert (major_tail.list_objs_out == dense_tail.dense_list_objs_out)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let dense_alloc_list_head_split_nonzero_single_chunk
+  (g: heap) (fp: U64.t) (fuel: nat)
+  (requests: list nat)
+  : Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                MH.well_formed_major_heap
+                  (MH.single_chunk_major_heap g) /\
+                MA.major_fl_valid
+                  (MH.single_chunk_major_heap g) fp fuel /\
+                MA.major_fl_above_zero
+                  (MH.single_chunk_major_heap g) fp fuel /\
+                MA.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap g) fp fuel /\
+                all_requests_positive requests /\
+                MA.major_fl_head_wosize
+                  (MH.single_chunk_major_heap g) fp >=
+                  allocation_list_demand requests + 1)
+      (ensures
+        (let r = dense_alloc_list_spec g fp fuel requests in
+         allocated_objects_nonzero r.dense_list_objs_out))
+  =
+  major_alloc_list_head_split_preserves_alloc_shape
+    (MH.single_chunk_major_heap g) fp fuel requests;
+  major_alloc_list_spec_single_chunk_compat g fp fuel requests;
+  let major_r =
+    major_alloc_list_spec (MH.single_chunk_major_heap g) fp fuel requests in
+  let dense_r = dense_alloc_list_spec g fp fuel requests in
+  assert (allocated_objects_nonzero major_r.list_objs_out);
+  assert (major_r.list_objs_out == dense_r.dense_list_objs_out)
+
+let dense_alloc_list_head_split_nonzero_single_chunk_with_budget
+  (g: heap) (fp: U64.t) (fuel: nat)
+  (requests: list nat) (budget: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                MH.well_formed_major_heap
+                  (MH.single_chunk_major_heap g) /\
+                MA.major_fl_valid
+                  (MH.single_chunk_major_heap g) fp fuel /\
+                MA.major_fl_above_zero
+                  (MH.single_chunk_major_heap g) fp fuel /\
+                MA.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap g) fp fuel /\
+                all_requests_positive requests /\
+                allocation_list_demand requests <= budget /\
+                MA.major_fl_head_wosize
+                  (MH.single_chunk_major_heap g) fp >= budget + 1)
+      (ensures
+        (let r = dense_alloc_list_spec g fp fuel requests in
+         allocated_objects_nonzero r.dense_list_objs_out))
+  =
+  assert (MA.major_fl_head_wosize (MH.single_chunk_major_heap g) fp >=
+          allocation_list_demand requests + 1);
+  dense_alloc_list_head_split_nonzero_single_chunk
+    g fp fuel requests
 #pop-options

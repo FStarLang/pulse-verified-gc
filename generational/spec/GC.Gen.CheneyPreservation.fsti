@@ -28,6 +28,8 @@ module MarkBounded = GC.Spec.MarkBounded
 module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
 module PromotionDemand = GC.Gen.PromotionDemand
+module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 
 /// Size-only allocation request trace induced by Cheney's final forwarding map.
@@ -56,6 +58,33 @@ val cheney_forwarded_minor_requests_demand_bound
         SpecMajorAllocMultiAlloc.allocation_list_demand
           (cheney_forwarded_minor_requests minor major fp roots) <=
         PromotionDemand.minor_promotion_demand minor)
+
+val cheney_forwarded_dense_alloc_list_single_chunk_no_oom
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    fuel:nat ->
+    Lemma
+      (requires minor_wf minor /\
+                fuel > 1 /\
+                fp <> 0UL /\
+                MH.well_formed_major_heap
+                  (MH.single_chunk_major_heap major) /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                  PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let requests =
+           cheney_forwarded_minor_requests minor major fp roots in
+         let r =
+           SpecMajorAllocMultiAlloc.dense_alloc_list_spec
+             major fp fuel requests in
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+           r.dense_list_objs_out))
 
 /// Cheney promotion preserves no_black_objects.
 ///

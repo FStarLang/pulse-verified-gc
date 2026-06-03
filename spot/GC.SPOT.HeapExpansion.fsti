@@ -268,6 +268,32 @@ val spot_chunked_major_alloc_shape_alloc_list_with_budget
          SpecMajorAllocMultiAlloc.allocated_objects_nonzero
           r.list_objs_out))
 
+val spot_dense_alloc_list_single_chunk_with_budget_no_oom
+  : g:heap -> fp:U64.t -> fuel:nat ->
+    requests:list nat -> budget:nat ->
+    Lemma
+      (requires fuel > 1 /\
+               fp <> 0UL /\
+               MH.well_formed_major_heap
+                 (MH.single_chunk_major_heap g) /\
+               SpecMajorAlloc.major_fl_valid
+                 (MH.single_chunk_major_heap g) fp fuel /\
+               SpecMajorAlloc.major_fl_above_zero
+                 (MH.single_chunk_major_heap g) fp fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit
+                 (MH.single_chunk_major_heap g) fp fuel /\
+               SpecMajorAllocMultiAlloc.all_requests_positive requests /\
+               SpecMajorAllocMultiAlloc.allocation_list_demand requests <=
+                 budget /\
+               SpecMajorAlloc.major_fl_head_wosize
+                 (MH.single_chunk_major_heap g) fp >= budget + 1)
+      (ensures
+        (let r =
+          SpecMajorAllocMultiAlloc.dense_alloc_list_spec
+            g fp fuel requests in
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+          r.dense_list_objs_out))
+
 val spot_chunked_major_alloc_shape_alloc_minor_objects_head_split
   : minor:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
     fp:U64.t -> fuel:nat ->
@@ -417,6 +443,34 @@ val spot_cheney_forwarded_minor_requests_budget
          SpecMajorAllocMultiAlloc.all_requests_positive requests /\
          SpecMajorAllocMultiAlloc.allocation_list_demand requests <=
            PromotionDemand.minor_promotion_demand minor))
+
+val spot_cheney_forwarded_dense_alloc_list_single_chunk_no_oom
+  : minor:GC.Gen.MinorHeap.minor_state -> major:heap ->
+    fp:U64.t -> roots:Seq.seq U64.t -> fuel:nat ->
+    Lemma
+      (requires GC.Gen.MinorHeap.minor_wf minor /\
+               fuel > 1 /\
+               fp <> 0UL /\
+               MH.well_formed_major_heap
+                 (MH.single_chunk_major_heap major) /\
+               SpecMajorAlloc.major_fl_valid
+                 (MH.single_chunk_major_heap major) fp fuel /\
+               SpecMajorAlloc.major_fl_above_zero
+                 (MH.single_chunk_major_heap major) fp fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit
+                 (MH.single_chunk_major_heap major) fp fuel /\
+               SpecMajorAlloc.major_fl_head_wosize
+                 (MH.single_chunk_major_heap major) fp >=
+                 PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let requests =
+          CheneyPreservation.cheney_forwarded_minor_requests
+            minor major fp roots in
+         let r =
+          SpecMajorAllocMultiAlloc.dense_alloc_list_spec
+            major fp fuel requests in
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+          r.dense_list_objs_out))
 
 val spot_chunked_is_blue_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
