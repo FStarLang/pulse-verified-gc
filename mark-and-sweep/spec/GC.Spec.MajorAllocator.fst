@@ -2619,6 +2619,84 @@ let major_alloc_after_expand_split (mh: MH.major_heap) (c: MH.heap_chunk)
 #pop-options
 
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let major_alloc_after_expand_split_preserves_head_wosize
+  (mh: MH.major_heap) (c: MH.heap_chunk) (next_fp: U64.t)
+  (requested_wz fuel: nat) (remaining: nat)
+  : Lemma
+      (requires U64.v c.base >= U64.v zero_addr /\
+                requested_wz > 0 /\
+                remaining > 0 /\
+                fresh_chunk_wosize c >= requested_wz + 1 + remaining)
+      (ensures
+        (let er = expand_major_heap mh c next_fp in
+         let r =
+           major_alloc_spec_with_fuel
+             er.major_out er.fp_out requested_wz (fuel + 1) in
+         r.major_obj_out == er.fp_out /\
+         r.major_fp_out <> 0UL /\
+         major_fl_head_wosize r.major_alloc_out r.major_fp_out >= remaining))
+  =
+  let fw = fresh_chunk_wosize c in
+  let wz = requested_wz in
+  assert (fw - wz >= 1 + remaining);
+  assert (fw - wz >= 2);
+  fresh_chunk_split_remainder_addr_bounds c wz;
+  let rem_hd_nat = U64.v c.base + (1 + wz) * 8 in
+  let rem_obj_nat = rem_hd_nat + U64.v mword in
+  let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+  let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+  assert (U64.v rem_hd == rem_hd_nat);
+  assert (U64.v rem_obj == rem_obj_nat);
+  assert (U64.v rem_obj == U64.v rem_hd + U64.v mword);
+  major_alloc_after_expand_split mh c next_fp wz fuel rem_hd rem_obj;
+  let er = expand_major_heap mh c next_fp in
+  let init = (init_fresh_chunk c next_fp).chunk_out in
+  let fp = er.fp_out in
+  let alloc_hdr = Alloc.make_header (U64.uint_to_t wz) Alloc.white_bits 0UL in
+  let c1 = MH.write_word_in_chunk init c.base alloc_hdr in
+  let rem_wz = fw - wz - 1 in
+  let rem_hdr = Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
+  let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+  let c3 = MH.write_word_in_chunk c2 rem_obj next_fp in
+  let out = Seq.upd er.major_out 0 c3 in
+  let r = major_alloc_spec_with_fuel er.major_out fp wz (fuel + 1) in
+  assert (r.major_alloc_out == out);
+  assert (r.major_fp_out == rem_obj);
+  assert (r.major_obj_out == fp);
+  fresh_chunk_split_remainder_fits c next_fp wz rem_hd rem_obj;
+  assert (MH.word_in_chunk c1 rem_hd);
+  assert (MH.word_in_chunk c1 rem_obj);
+  assert (MH.word_in_chunk c2 rem_obj);
+  MH.write_word_in_chunk_preserves_word c1 rem_hd rem_hdr rem_hd;
+  assert (MH.word_in_chunk c2 rem_hd);
+  MH.write_word_in_chunk_preserves_word c2 rem_obj next_fp rem_hd;
+  assert (MH.word_in_chunk c3 rem_hd);
+  MH.read_write_in_chunk_same c1 rem_hd rem_hdr;
+  assert (MH.read_word_in_chunk c2 rem_hd == rem_hdr);
+  assert (rem_hd <> rem_obj);
+  assert (U64.v rem_hd + U64.v mword <= U64.v rem_obj);
+  MH.read_write_in_chunk_different c2 rem_obj rem_hd next_fp;
+  assert (MH.read_word_in_chunk c3 rem_hd == rem_hdr);
+  assert (Seq.length out == Seq.length er.major_out);
+  assert (Seq.length out > 0);
+  assert (Seq.index out 0 == c3);
+  MH.read_word_in_major_at_index out rem_hd 0;
+  assert (MH.read_word_in_major out rem_hd == Some rem_hdr);
+  assert (U64.v rem_obj >= U64.v zero_addr + U64.v mword);
+  assert (U64.v rem_obj < heap_size);
+  assert (U64.v rem_obj % U64.v mword == 0);
+  assert (U64.v rem_hd + U64.v mword < heap_size);
+  f_address_spec rem_hd;
+  assert (f_address rem_hd == rem_obj);
+  hd_f_roundtrip rem_hd;
+  assert (hd_address rem_obj == rem_hd);
+  AllocHeader.make_header_getWosize (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL;
+  assert (Obj.getWosize rem_hdr == U64.uint_to_t rem_wz);
+  assert (U64.v (Obj.getWosize rem_hdr) == rem_wz);
+  assert (rem_wz >= remaining)
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_after_expand_fuel_irrelevant (mh: MH.major_heap) (c: MH.heap_chunk)
                                              (next_fp: U64.t)
                                              (requested_wz fuel: nat)

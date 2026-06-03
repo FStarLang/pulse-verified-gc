@@ -196,6 +196,27 @@ let spot_ensure_head_capacity_alloc_no_oom
   = SpecMajorAlloc.ensure_major_head_capacity_alloc_no_oom
       mh fp fuel requested_wz fresh
 
+let spot_major_alloc_after_expand_split_preserves_head_wosize
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (requested_wz fuel remaining: nat)
+  : Lemma
+      (requires U64.v fresh.base >= U64.v zero_addr /\
+                requested_wz > 0 /\
+                remaining > 0 /\
+                SpecMajorAlloc.fresh_chunk_wosize fresh >=
+                  requested_wz + 1 + remaining)
+      (ensures
+        (let er = SpecMajorAlloc.expand_major_heap mh fresh fp in
+         let r =
+           SpecMajorAlloc.major_alloc_spec_with_fuel
+             er.major_out er.fp_out requested_wz (fuel + 1) in
+         r.major_obj_out == er.fp_out /\
+         r.major_fp_out <> 0UL /\
+         SpecMajorAlloc.major_fl_head_wosize
+           r.major_alloc_out r.major_fp_out >= remaining))
+  = SpecMajorAlloc.major_alloc_after_expand_split_preserves_head_wosize
+      mh fresh fp requested_wz fuel remaining
+
 let spot_chunked_is_blue_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
   (obj: obj_addr)
