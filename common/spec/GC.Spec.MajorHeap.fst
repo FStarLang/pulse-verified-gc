@@ -885,6 +885,11 @@ let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_ad
 let objects_in_chunk (c: heap_chunk) : seq obj_addr =
   objects_in_chunk_from c c.base
 
+let object_wosize_in_chunk (c: heap_chunk) (x: obj_addr) : nat =
+  if word_in_chunk c (hd_address x) then
+    U64.v (Obj.getWosize (read_word_in_chunk c (hd_address x)))
+  else 0
+
 let rec objects_in_chunk_from_member_in_chunk (c: heap_chunk) (start: hp_addr) (x: obj_addr)
   : Lemma (requires Seq.mem x (objects_in_chunk_from c start))
           (ensures obj_addr_in_chunk c x)
@@ -1184,6 +1189,84 @@ let rec objects_in_chunk_from_later_in_earlier
         end
       end
     end
+#pop-options
+
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 20 --split_queries always"
+let rec objects_in_chunk_from_separated
+  (c: heap_chunk) (start: hp_addr) (src y: obj_addr)
+  : Lemma (requires Seq.mem src (objects_in_chunk_from c start) /\
+                    Seq.mem y (objects_in_chunk_from c start) /\
+                    U64.v src < U64.v y)
+          (ensures U64.v y >
+                     U64.v src + object_wosize_in_chunk c src * U64.v mword)
+          (decreases chunk_end c - U64.v start)
+  = if U64.v start < chunk_start c then ()
+    else if U64.v start + U64.v mword >= chunk_end c then ()
+    else begin
+      let header = read_word_in_chunk c start in
+      let wz = Obj.getWosize header in
+      let obj_size_words = U64.v wz + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then ()
+      else begin
+        f_address_spec start;
+        let first : obj_addr = f_address start in
+        if next_start_nat >= chunk_end c then begin
+          Fields.mem_cons_lemma src first Seq.empty;
+          Fields.mem_cons_lemma y first Seq.empty
+        end else begin
+          assert (next_start_nat < heap_size);
+          assert (next_start_nat < pow2 64);
+          next_object_start_aligned start obj_size_words;
+          assert (next_start_nat % U64.v mword == 0);
+          let next_start : hp_addr = U64.uint_to_t next_start_nat in
+          let rest = objects_in_chunk_from c next_start in
+          Fields.mem_cons_lemma src first rest;
+          Fields.mem_cons_lemma y first rest;
+          if src = first then begin
+            assert (y <> first);
+            assert (Seq.mem y rest);
+            objects_in_chunk_from_addresses_gt_start c next_start y;
+            hd_f_roundtrip start;
+            assert (hd_address first == start);
+            assert (word_in_chunk c (hd_address first));
+            assert (read_word_in_chunk c (hd_address first) == header);
+            assert (object_wosize_in_chunk c first == U64.v wz);
+            assert (U64.v first == U64.v start + U64.v mword);
+            FStar.Math.Lemmas.distributivity_add_left
+              (U64.v wz) 1 (U64.v mword);
+            assert ((U64.v wz + 1) * U64.v mword ==
+                    U64.v wz * U64.v mword + U64.v mword);
+            FStar.Math.Lemmas.paren_add_right
+              (U64.v start) (U64.v mword) (U64.v wz * U64.v mword);
+            assert (U64.v next_start ==
+                    U64.v first + U64.v wz * U64.v mword)
+          end else begin
+            assert (src <> first);
+            assert (Seq.mem src rest);
+            if y = first then begin
+              objects_in_chunk_from_addresses_gt_start c next_start src;
+              assert (U64.v src > U64.v next_start);
+              assert (U64.v first == U64.v start + U64.v mword);
+              assert (U64.v next_start > U64.v first);
+              assert False
+            end else begin
+              assert (y <> first);
+              assert (Seq.mem y rest);
+              objects_in_chunk_from_separated c next_start src y
+            end
+          end
+        end
+      end
+    end
+
+let objects_in_chunk_separated (c: heap_chunk) (src y: obj_addr)
+  : Lemma (requires Seq.mem src (objects_in_chunk c) /\
+                    Seq.mem y (objects_in_chunk c) /\
+                    U64.v src < U64.v y)
+          (ensures U64.v y >
+                     U64.v src + object_wosize_in_chunk c src * U64.v mword)
+  = objects_in_chunk_from_separated c c.base src y
 #pop-options
 
 #push-options "--split_queries always"
