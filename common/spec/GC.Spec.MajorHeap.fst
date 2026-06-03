@@ -885,6 +885,46 @@ let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_ad
 let objects_in_chunk (c: heap_chunk) : seq obj_addr =
   objects_in_chunk_from c c.base
 
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 20 --split_queries always"
+let rec objects_in_chunk_from_write_before_preserves
+  (c: heap_chunk) (start: hp_addr)
+  (addr: hp_addr{word_in_chunk c addr}) (value: U64.t)
+  : Lemma (requires U64.v addr + U64.v mword <= U64.v start)
+          (ensures objects_in_chunk_from
+                     (write_word_in_chunk c addr value) start ==
+                   objects_in_chunk_from c start)
+          (decreases chunk_end c - U64.v start)
+  = let c' = write_word_in_chunk c addr value in
+    write_word_in_chunk_preserves_range c addr value;
+    if U64.v start < chunk_start c then ()
+    else if U64.v start + U64.v mword >= chunk_end c then ()
+    else begin
+      assert (word_in_chunk c start);
+      assert (word_in_chunk c' start);
+      assert (addr <> start);
+      read_write_in_chunk_different c addr start value;
+      assert (read_word_in_chunk c' start == read_word_in_chunk c start);
+      let header = read_word_in_chunk c start in
+      let wz = Obj.getWosize header in
+      let obj_size_words = U64.v wz + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then ()
+      else if next_start_nat >= chunk_end c then begin
+        assert (next_start_nat >= chunk_end c')
+      end else begin
+        assert (next_start_nat < heap_size);
+        assert (next_start_nat < pow2 64);
+        next_object_start_aligned start obj_size_words;
+        assert (next_start_nat % U64.v mword == 0);
+        let next_start : hp_addr = U64.uint_to_t next_start_nat in
+        assert (U64.v addr + U64.v mword <= U64.v next_start);
+        objects_in_chunk_from_write_before_preserves c next_start addr value;
+        assert (objects_in_chunk_from c' next_start ==
+                objects_in_chunk_from c next_start)
+      end
+    end
+#pop-options
+
 let object_wosize_in_chunk (c: heap_chunk) (x: obj_addr) : nat =
   if word_in_chunk c (hd_address x) then
     U64.v (Obj.getWosize (read_word_in_chunk c (hd_address x)))
