@@ -804,6 +804,108 @@ let expand_major_heap_links_fl_above_zero (mh: MH.major_heap) (c: MH.heap_chunk)
   = expand_major_heap_preserves_fl_above_zero mh c next_fp next_fp fuel;
     expand_major_heap_fresh_fl_above_zero mh c next_fp fuel
 
+#push-options "--z3rlimit 10 --split_queries always"
+let rec expand_major_heap_preserves_fl_blocks_fit
+  (mh: MH.major_heap) (c: MH.heap_chunk)
+  (new_link: U64.t) (fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_blocks_fit mh fp fuel)
+          (ensures major_fl_blocks_fit
+                    (expand_major_heap mh c new_link).major_out fp fuel)
+          (decreases fuel)
+  = if fuel > 0 then begin
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then ()
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then
+        assert False
+      else begin
+        let obj : obj_addr = fp in
+        let base = hd_address obj in
+        let r = init_fresh_chunk c new_link in
+        init_fresh_chunk_disjoint_from_all mh c new_link;
+        major_fl_blocks_fit_current mh fp fuel;
+        let idx = MH.lookup_chunk_index_value mh base in
+        MH.lookup_chunk_index_some mh base idx;
+        MH.lookup_chunk_some_disjoint_miss mh (Seq.index mh idx) r.chunk_out base;
+        assert (~(MH.chunk_contains_addr r.chunk_out base));
+        MH.lookup_chunk_index_add_chunk_miss mh r.chunk_out base idx;
+        match MH.read_word_in_major mh base with
+        | None -> assert False
+        | Some hdr ->
+          MH.read_word_add_chunk_disjoint_old mh r.chunk_out base hdr;
+          assert (MH.read_word_in_major
+                    (expand_major_heap mh c new_link).major_out base ==
+                  Some hdr);
+        match MH.read_word_in_major mh obj with
+        | None -> assert False
+        | Some next ->
+          expand_major_heap_preserves_fl_blocks_fit mh c new_link next fuel';
+          MH.read_word_add_chunk_disjoint_old mh r.chunk_out obj next;
+          assert (MH.read_word_in_major
+                    (expand_major_heap mh c new_link).major_out obj ==
+                  Some next)
+      end
+    end
+    else ()
+#pop-options
+
+#push-options "--z3rlimit 10"
+let expand_major_heap_fresh_fl_blocks_fit
+  (mh: MH.major_heap) (c: MH.heap_chunk) (next_fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires major_fl_blocks_fit
+                  (expand_major_heap mh c next_fp).major_out next_fp fuel)
+      (ensures major_fl_blocks_fit
+                (expand_major_heap mh c next_fp).major_out
+                (fresh_chunk_object c) (fuel + 1))
+  = fresh_chunk_object_in_chunk c;
+    fresh_chunk_wosize_nonzero c;
+    fresh_chunk_wosize_fits c;
+    chunk_size_capacity_mul c;
+    let er = expand_major_heap mh c next_fp in
+    let fp = fresh_chunk_object c in
+    expand_major_heap_fresh_object mh c next_fp;
+    expand_major_heap_header mh c next_fp;
+    expand_major_heap_header_fields mh c next_fp;
+    expand_major_heap_link mh c next_fp;
+    init_fresh_chunk_preserves_range c next_fp;
+    f_address_spec c.base;
+    assert (U64.v fp >= U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    hd_f_roundtrip c.base;
+    assert (hd_address fp == c.base);
+    assert (Seq.head er.major_out == er.major_out `Seq.index` 0);
+    assert (MH.word_in_chunk (Seq.index er.major_out 0) c.base);
+    assert (MH.lookup_chunk_index er.major_out c.base == Some 0);
+    assert (MH.lookup_chunk_index_value er.major_out c.base == 0);
+    assert (MH.read_word_in_major er.major_out c.base ==
+            Some (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL));
+    assert (Obj.getWosize
+              (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL) ==
+            fresh_chunk_wosize_u64 c);
+    assert (U64.v (fresh_chunk_wosize_u64 c) == fresh_chunk_wosize c);
+    assert (fresh_chunk_wosize c == chunk_word_capacity c - 1);
+    assert (chunk_word_capacity c >= 2);
+    assert ((1 + U64.v (fresh_chunk_wosize_u64 c)) == chunk_word_capacity c);
+    assert (c.size == chunk_word_capacity c * U64.v mword);
+    assert (U64.v c.base +
+            (1 + U64.v (fresh_chunk_wosize_u64 c)) * U64.v mword <=
+            MH.chunk_end (Seq.index er.major_out 0));
+    assert (MH.read_word_in_major er.major_out fp == Some next_fp)
+#pop-options
+
+let expand_major_heap_links_fl_blocks_fit
+  (mh: MH.major_heap) (c: MH.heap_chunk) (next_fp: U64.t) (fuel: nat)
+  : Lemma (requires MH.chunk_disjoint_from_all c mh /\
+                    major_fl_blocks_fit mh next_fp fuel)
+          (ensures major_fl_blocks_fit
+                    (expand_major_heap mh c next_fp).major_out
+                    (fresh_chunk_object c) (fuel + 1))
+  = expand_major_heap_preserves_fl_blocks_fit mh c next_fp next_fp fuel;
+    expand_major_heap_fresh_fl_blocks_fit mh c next_fp fuel
+
 type ensure_capacity_result = {
   capacity_major_out: MH.major_heap;
   capacity_fp_out: obj_addr;
@@ -873,6 +975,18 @@ let ensure_major_capacity_wf (mh: MH.major_heap) (fp: obj_addr)
   = if major_fl_capacity mh fp fuel >= needed then ()
     else
       expand_major_heap_wf mh fresh fp
+
+let ensure_major_capacity_fl_blocks_fit (mh: MH.major_heap) (fp: obj_addr)
+                                        (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma (requires major_fl_blocks_fit mh fp fuel /\
+                    (major_fl_capacity mh fp fuel < needed ==>
+                     MH.chunk_disjoint_from_all fresh mh))
+          (ensures (let r = ensure_major_capacity_spec mh fp fuel needed fresh in
+                    major_fl_blocks_fit
+                      r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_capacity mh fp fuel >= needed then ()
+    else
+      expand_major_heap_links_fl_blocks_fit mh fresh fp fuel
 
 let ensure_major_capacity_preserves_old_read
   (mh: MH.major_heap) (fp: obj_addr) (fuel needed: nat)

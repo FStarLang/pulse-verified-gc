@@ -245,6 +245,22 @@ let lookup_add_chunk_miss (mh: major_heap) (c: heap_chunk)
     assert (Seq.equal (Seq.tail (add_chunk mh c)) mh);
     if chunk_contains_addr c addr then assert False else ()
 
+let lookup_chunk_index_add_chunk_miss (mh: major_heap) (c: heap_chunk)
+                                      (addr: hp_addr) (i: nat)
+  : Lemma (requires ~(chunk_contains_addr c addr) /\
+                    lookup_chunk_index mh addr == Some i)
+          (ensures lookup_chunk_index (add_chunk mh c) addr == Some (i + 1) /\
+                   i + 1 < Seq.length (add_chunk mh c) /\
+                   Seq.index (add_chunk mh c) (i + 1) == Seq.index mh i /\
+                   chunk_end (Seq.index (add_chunk mh c) (i + 1)) ==
+                   chunk_end (Seq.index mh i))
+  = lookup_chunk_index_some mh addr i;
+    assert (Seq.head (add_chunk mh c) == c);
+    assert (Seq.equal (Seq.tail (add_chunk mh c)) mh);
+    Seq.lemma_eq_elim (Seq.tail (add_chunk mh c)) mh;
+    assert (lookup_chunk_index (Seq.tail (add_chunk mh c)) addr == Some i);
+    assert (lookup_chunk_index (add_chunk mh c) addr == Some (i + 1))
+
 let rec is_major_pointer (mh: major_heap) (v: U64.t) : Tot bool
   (decreases Seq.length mh)
   = if Seq.length mh = 0 then false
@@ -554,7 +570,7 @@ let single_chunk_read_word_compat (g: heap)
     lookup_add_chunk_hit Seq.empty c addr;
     single_chunk_read_word_in_chunk_compat g addr
 
-#push-options "--split_queries always"
+#push-options "--split_queries always --z3rlimit 10"
 let single_chunk_write_word_in_chunk_compat (g: heap)
                                             (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
                                                            U64.v addr + U64.v mword <= heap_size})
@@ -578,35 +594,52 @@ let single_chunk_write_word_in_chunk_compat (g: heap)
         assert (i + U64.v zero_addr == U64.v zero_addr + i);
         assert (Seq.index (single_chunk_of_heap g').bytes i == Seq.index g' (i + U64.v zero_addr));
         assert (Seq.index (single_chunk_of_heap g').bytes i == Seq.index g' (U64.v zero_addr + i));
+        assert (U64.v zero_addr + off == a);
         if i = off then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + off);
+          assert (a + 0 == a);
           assert (U64.v zero_addr + i == a);
           assert (Seq.index c'.bytes i == uint64_to_uint8 value);
           assert (Seq.index g' a == uint64_to_uint8 value)
         end else if i = off + 1 then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + (off + 1));
+          assert (U64.v zero_addr + (off + 1) == (U64.v zero_addr + off) + 1);
           assert (U64.v zero_addr + i == a + 1);
           assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 8ul));
           assert (Seq.index g' (a + 1) == uint64_to_uint8 (U64.shift_right value 8ul))
         end else if i = off + 2 then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + (off + 2));
+          assert (U64.v zero_addr + (off + 2) == (U64.v zero_addr + off) + 2);
           assert (U64.v zero_addr + i == a + 2);
           assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 16ul));
           assert (Seq.index g' (a + 2) == uint64_to_uint8 (U64.shift_right value 16ul))
         end else if i = off + 3 then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + (off + 3));
+          assert (U64.v zero_addr + (off + 3) == (U64.v zero_addr + off) + 3);
           assert (U64.v zero_addr + i == a + 3);
           assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 24ul));
           assert (Seq.index g' (a + 3) == uint64_to_uint8 (U64.shift_right value 24ul))
         end else if i = off + 4 then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + (off + 4));
+          assert (U64.v zero_addr + (off + 4) == (U64.v zero_addr + off) + 4);
           assert (U64.v zero_addr + i == a + 4);
           assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 32ul));
           assert (Seq.index g' (a + 4) == uint64_to_uint8 (U64.shift_right value 32ul))
         end else if i = off + 5 then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + (off + 5));
+          assert (U64.v zero_addr + (off + 5) == (U64.v zero_addr + off) + 5);
           assert (U64.v zero_addr + i == a + 5);
           assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 40ul));
           assert (Seq.index g' (a + 5) == uint64_to_uint8 (U64.shift_right value 40ul))
         end else if i = off + 6 then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + (off + 6));
+          assert (U64.v zero_addr + (off + 6) == (U64.v zero_addr + off) + 6);
           assert (U64.v zero_addr + i == a + 6);
           assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 48ul));
           assert (Seq.index g' (a + 6) == uint64_to_uint8 (U64.shift_right value 48ul))
         end else if i = off + 7 then begin
+          assert (U64.v zero_addr + i == U64.v zero_addr + (off + 7));
+          assert (U64.v zero_addr + (off + 7) == (U64.v zero_addr + off) + 7);
           assert (U64.v zero_addr + i == a + 7);
           assert (Seq.index c'.bytes i == uint64_to_uint8 (U64.shift_right value 56ul));
           assert (Seq.index g' (a + 7) == uint64_to_uint8 (U64.shift_right value 56ul))

@@ -29,12 +29,22 @@ module HeapModel = GC.Spec.HeapModel
 module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
+module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 /// Major-heap shape needed by both minor collection and the following major GC:
 /// object layout/infix well-formedness, free-list validity, color invariants,
 /// and the no-scan/no-pointer-to-blue safety conditions.
 [@@"opaque_to_smt"]
 val major_heap_shape (major: heap) (fp: U64.t) : prop
+
+/// Chunked allocator-facing major-heap shape. This is the growable-heap
+/// counterpart of the free-list portion of `major_heap_shape`; color/mark/sweep
+/// invariants are lifted separately as the collector is ported to chunked
+/// object enumeration.
+[@@"opaque_to_smt"]
+val chunked_major_alloc_shape
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat -> Tot prop
 
 /// Cross-generation safety: any field of an allocated minor object that already
 /// looks like a major-heap pointer must target a live non-blue major object.
@@ -114,6 +124,55 @@ val major_heap_shape_elim (major: heap) (fp: U64.t)
                    Mark.no_black_objects major /\
                    Mark.no_pointer_to_blue major /\
                    no_scan_invariant major)
+
+val chunked_major_alloc_shape_intro
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
+    Lemma
+      (requires MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit mh fp fuel)
+      (ensures chunked_major_alloc_shape mh fp fuel)
+
+val chunked_major_alloc_shape_elim
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
+    Lemma
+      (requires chunked_major_alloc_shape mh fp fuel)
+      (ensures MH.well_formed_major_heap mh /\
+               SpecMajorAlloc.major_fl_valid mh fp fuel /\
+               SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit mh fp fuel)
+
+val chunked_major_alloc_shape_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:obj_addr -> fuel:nat ->
+    Lemma
+      (requires chunked_major_alloc_shape mh fp fuel /\
+                MH.chunk_disjoint_from_all fresh mh /\
+                fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                U64.v fresh.base >= U64.v zero_addr)
+      (ensures (
+        let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+        chunked_major_alloc_shape r.major_out r.fp_out (fuel + 1)))
+
+val chunked_major_alloc_shape_ensure_capacity
+  : mh:MH.major_heap -> fp:obj_addr -> fuel:nat -> needed:nat ->
+    fresh:MH.heap_chunk ->
+    Lemma
+      (requires chunked_major_alloc_shape mh fp fuel /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh +
+                   SpecMajorAlloc.major_fl_capacity mh fp fuel >= needed))
+      (ensures (
+        let r =
+          SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh in
+        chunked_major_alloc_shape
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_capacity
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)

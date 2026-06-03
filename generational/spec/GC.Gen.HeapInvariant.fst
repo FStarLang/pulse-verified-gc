@@ -24,6 +24,8 @@ module HeapModel = GC.Spec.HeapModel
 module HeapGraph = GC.Spec.HeapGraph
 module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
+module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 [@@"opaque_to_smt"]
 let major_heap_shape (major: heap) (fp: U64.t) : prop =
@@ -40,6 +42,14 @@ let major_heap_shape (major: heap) (fp: U64.t) : prop =
   Mark.no_black_objects major /\
   Mark.no_pointer_to_blue major /\
   no_scan_invariant major
+
+[@@"opaque_to_smt"]
+let chunked_major_alloc_shape
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot prop =
+  MH.well_formed_major_heap mh /\
+  SpecMajorAlloc.major_fl_valid mh fp fuel /\
+  SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+  SpecMajorAlloc.major_fl_blocks_fit mh fp fuel
 
 [@@"opaque_to_smt"]
 let minor_major_fields_no_blue (minor: minor_state) (major: heap) : prop =
@@ -136,6 +146,77 @@ let major_heap_shape_elim (major: heap) (fp: U64.t)
                    Mark.no_pointer_to_blue major /\
                    no_scan_invariant major)
   = reveal_opaque (`%major_heap_shape) (major_heap_shape major fp)
+
+let chunked_major_alloc_shape_intro
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit mh fp fuel)
+      (ensures chunked_major_alloc_shape mh fp fuel)
+  = reveal_opaque (`%chunked_major_alloc_shape)
+      (chunked_major_alloc_shape mh fp fuel)
+
+let chunked_major_alloc_shape_elim
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires chunked_major_alloc_shape mh fp fuel)
+      (ensures MH.well_formed_major_heap mh /\
+               SpecMajorAlloc.major_fl_valid mh fp fuel /\
+               SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit mh fp fuel)
+  = reveal_opaque (`%chunked_major_alloc_shape)
+      (chunked_major_alloc_shape mh fp fuel)
+
+let chunked_major_alloc_shape_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: obj_addr) (fuel: nat)
+  : Lemma
+      (requires chunked_major_alloc_shape mh fp fuel /\
+                MH.chunk_disjoint_from_all fresh mh /\
+                fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                U64.v fresh.base >= U64.v zero_addr)
+      (ensures (
+        let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+        chunked_major_alloc_shape r.major_out r.fp_out (fuel + 1)))
+  =
+  chunked_major_alloc_shape_elim mh fp fuel;
+  SpecMajorAlloc.expand_major_heap_wf mh fresh fp;
+  SpecMajorAlloc.expand_major_heap_links_fl_valid mh fresh fp fuel;
+  SpecMajorAlloc.expand_major_heap_links_fl_above_zero mh fresh fp fuel;
+  SpecMajorAlloc.expand_major_heap_links_fl_blocks_fit mh fresh fp fuel;
+  let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+  chunked_major_alloc_shape_intro r.major_out r.fp_out (fuel + 1)
+
+let chunked_major_alloc_shape_ensure_capacity
+  (mh: MH.major_heap) (fp: obj_addr) (fuel needed: nat)
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires chunked_major_alloc_shape mh fp fuel /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh +
+                   SpecMajorAlloc.major_fl_capacity mh fp fuel >= needed))
+      (ensures (
+        let r =
+          SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh in
+        chunked_major_alloc_shape
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_capacity
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
+  =
+  chunked_major_alloc_shape_elim mh fp fuel;
+  SpecMajorAlloc.ensure_major_capacity_wf mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_fl_valid mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_fl_above_zero mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_fl_blocks_fit mh fp fuel needed fresh;
+  SpecMajorAlloc.ensure_major_capacity_has_capacity mh fp fuel needed fresh;
+  let r = SpecMajorAlloc.ensure_major_capacity_spec mh fp fuel needed fresh in
+  chunked_major_alloc_shape_intro
+    r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out
 
 let minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)
