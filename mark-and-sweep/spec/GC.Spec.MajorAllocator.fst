@@ -2616,6 +2616,8 @@ let head_split_chunk_preserves_read_at
                 U64.v rem_obj == U64.v rem_hd + U64.v mword /\
                 (addr = hd_address obj \/
                  U64.v addr + U64.v mword <= U64.v (hd_address obj) \/
+                 (U64.v (hd_address obj) + U64.v mword <= U64.v addr /\
+                  U64.v addr + U64.v mword <= U64.v rem_hd) \/
                  U64.v rem_obj + U64.v mword <= U64.v addr))
        (ensures
          (let hd = hd_address obj in
@@ -2660,6 +2662,12 @@ let head_split_chunk_preserves_read_at
     MH.read_write_in_chunk_different c2 rem_obj hd next_fp;
     assert (MH.read_word_in_chunk c3 addr == alloc_hdr)
   end else if U64.v addr + U64.v mword <= U64.v hd then begin
+    MH.read_write_in_chunk_different c hd addr alloc_hdr;
+    MH.read_write_in_chunk_different c1 rem_hd addr rem_hdr;
+    MH.read_write_in_chunk_different c2 rem_obj addr next_fp
+  end else if U64.v hd + U64.v mword <= U64.v addr /\
+              U64.v addr + U64.v mword <= U64.v rem_hd then begin
+    assert (U64.v addr + U64.v mword <= U64.v rem_obj);
     MH.read_write_in_chunk_different c hd addr alloc_hdr;
     MH.read_write_in_chunk_different c1 rem_hd addr rem_hdr;
     MH.read_write_in_chunk_different c2 rem_obj addr next_fp
@@ -2873,6 +2881,8 @@ let head_split_major_preserves_read_at
                 ((MH.word_in_chunk (Seq.index mh idx) addr /\
                   (addr = hd_address obj \/
                    U64.v addr + U64.v mword <= U64.v (hd_address obj) \/
+                   (U64.v (hd_address obj) + U64.v mword <= U64.v addr /\
+                    U64.v addr + U64.v mword <= U64.v rem_hd) \/
                    U64.v rem_obj + U64.v mword <= U64.v addr)) \/
                  ~(MH.chunk_contains_addr (Seq.index mh idx) addr)))
        (ensures
