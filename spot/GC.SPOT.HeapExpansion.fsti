@@ -316,6 +316,58 @@ val spot_chunked_collection_heap_shape_ensure_capacity
         SpecMajorAlloc.major_fl_capacity
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
 
+val spot_chunked_collection_heap_shape_ensure_head_capacity
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    fp:U64.t -> fuel:nat -> needed:nat{needed > 0} -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires GenInv.chunked_collection_heap_shape ms mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+                 CG.chunked_all_major_object_expansion_safe
+                   mh fresh (MH.major_objects mh) 0))
+      (ensures (
+        let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+        GenInv.chunked_collection_heap_shape
+          ms r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          r.capacity_major_out r.capacity_fp_out >= needed))
+
+val spot_chunked_collection_heap_shape_ensure_head_capacity_alloc_no_oom
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    fp:U64.t -> fuel:nat -> requested_wz:nat -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires fuel > 0 /\
+                GenInv.chunked_collection_heap_shape ms mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp <
+                   SpecMajorAlloc.major_alloc_demand_wosize requested_wz ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >=
+                   SpecMajorAlloc.major_alloc_demand_wosize requested_wz /\
+                 CG.chunked_all_major_object_expansion_safe
+                   mh fresh (MH.major_objects mh) 0))
+      (ensures (
+        let needed = SpecMajorAlloc.major_alloc_demand_wosize requested_wz in
+        let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+        let a =
+          SpecMajorAlloc.major_alloc_spec_with_fuel
+            r.capacity_major_out r.capacity_fp_out requested_wz
+            r.capacity_fuel_out in
+        GenInv.chunked_collection_heap_shape
+          ms r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          r.capacity_major_out r.capacity_fp_out >= needed /\
+        a.major_obj_out == r.capacity_fp_out /\
+        a.major_obj_out <> 0UL))
+
 val spot_chunked_classify_minor_field
   : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap -> v:U64.t ->
     GTot (option CG.combined_vertex)

@@ -225,6 +225,25 @@ val chunked_major_alloc_shape_ensure_capacity
         SpecMajorAlloc.major_fl_capacity
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
 
+val chunked_major_alloc_shape_ensure_head_capacity
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat -> needed:nat{needed > 0} ->
+    fresh:MH.heap_chunk ->
+    Lemma
+      (requires chunked_major_alloc_shape mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >= needed))
+      (ensures (
+        let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+        chunked_major_alloc_shape
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          r.capacity_major_out r.capacity_fp_out >= needed))
+
 val chunked_minor_major_fields_no_blue_intro
   : minor:minor_state -> mh:MH.major_heap ->
     Lemma
@@ -567,6 +586,58 @@ val chunked_collection_heap_shape_ensure_capacity
           minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
         SpecMajorAlloc.major_fl_capacity
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
+
+val chunked_collection_heap_shape_ensure_head_capacity
+  : minor:minor_state -> mh:MH.major_heap ->
+    fp:U64.t -> fuel:nat -> needed:nat{needed > 0} -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires chunked_collection_heap_shape minor mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+                 CG.chunked_all_major_object_expansion_safe
+                   mh fresh (MH.major_objects mh) 0))
+      (ensures (
+        let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+        chunked_collection_heap_shape
+          minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          r.capacity_major_out r.capacity_fp_out >= needed))
+
+val chunked_collection_heap_shape_ensure_head_capacity_alloc_no_oom
+  : minor:minor_state -> mh:MH.major_heap ->
+    fp:U64.t -> fuel:nat -> requested_wz:nat -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires fuel > 0 /\
+                chunked_collection_heap_shape minor mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp <
+                   SpecMajorAlloc.major_alloc_demand_wosize requested_wz ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >=
+                   SpecMajorAlloc.major_alloc_demand_wosize requested_wz /\
+                 CG.chunked_all_major_object_expansion_safe
+                   mh fresh (MH.major_objects mh) 0))
+      (ensures (
+        let needed = SpecMajorAlloc.major_alloc_demand_wosize requested_wz in
+        let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+        let a =
+          SpecMajorAlloc.major_alloc_spec_with_fuel
+            r.capacity_major_out r.capacity_fp_out requested_wz
+            r.capacity_fuel_out in
+        chunked_collection_heap_shape
+          minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          r.capacity_major_out r.capacity_fp_out >= needed /\
+        a.major_obj_out == r.capacity_fp_out /\
+        a.major_obj_out <> 0UL))
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)
