@@ -1096,6 +1096,36 @@ let objects_in_chunk_from_head_mem
 #pop-options
 
 #push-options "--fuel 3 --ifuel 1 --z3rlimit 10 --split_queries always"
+let objects_in_chunk_from_tail_mem
+  (c: heap_chunk) (start: hp_addr{U64.v start + U64.v mword < heap_size})
+  (next_start: hp_addr) (x: obj_addr)
+  : Lemma
+      (requires U64.v start >= chunk_start c /\
+                U64.v start + U64.v mword < chunk_end c /\
+                (let header = read_word_in_chunk c start in
+                 let wz = Obj.getWosize header in
+                 let obj_size_words = U64.v wz + 1 in
+                 let next_start_nat =
+                   U64.v start + obj_size_words * U64.v mword in
+                 U64.v next_start == next_start_nat /\
+                 next_start_nat < chunk_end c /\
+                 next_start_nat < pow2 64 /\
+                 Seq.mem x (objects_in_chunk_from c next_start)))
+      (ensures Seq.mem x (objects_in_chunk_from c start))
+  = let header = read_word_in_chunk c start in
+    let wz = Obj.getWosize header in
+    let obj_size_words = U64.v wz + 1 in
+    let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+    assert (next_start_nat < chunk_end c);
+    assert (next_start_nat < heap_size);
+    next_object_start_aligned start obj_size_words;
+    assert (next_start_nat % U64.v mword == 0);
+    f_address_spec start;
+    let first : obj_addr = f_address start in
+    Fields.mem_cons_lemma x first (objects_in_chunk_from c next_start)
+#pop-options
+
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 10 --split_queries always"
 let rec objects_in_chunk_from_later_in_earlier
   (c: heap_chunk) (start: hp_addr)
   (later: hp_addr{U64.v later + U64.v mword < heap_size})

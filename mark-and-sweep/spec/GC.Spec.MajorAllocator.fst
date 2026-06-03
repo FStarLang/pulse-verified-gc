@@ -2214,6 +2214,7 @@ let active_head_split_remainder_words_in_chunk (c: MH.heap_chunk)
   : Lemma (requires MH.word_in_chunk c base /\
                     requested_wz > 0 /\
                     block_wz >= requested_wz /\
+                    block_wz < pow2 54 /\
                     block_wz - requested_wz >= 2 /\
                     U64.v rem_hd == U64.v base + (1 + requested_wz) * 8 /\
                     U64.v rem_obj == U64.v rem_hd + U64.v mword /\
@@ -2237,6 +2238,159 @@ let active_head_split_remainder_words_in_chunk (c: MH.heap_chunk)
     assert (U64.v rem_obj >= MH.chunk_start c);
     assert (U64.v rem_obj + U64.v mword <= U64.v base + (1 + fw) * 8);
     assert (U64.v rem_obj + U64.v mword <= MH.chunk_end c)
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let object_member_header_at_or_after_start (c: MH.heap_chunk)
+                                           (start: hp_addr)
+                                           (obj: obj_addr)
+  : Lemma (requires Seq.mem obj (MH.objects_in_chunk_from c start))
+          (ensures U64.v start <= U64.v (hd_address obj))
+  = MH.objects_in_chunk_from_addresses_gt_start c start obj;
+    assert (U64.v start % U64.v mword == 0);
+    assert (U64.v obj % U64.v mword == 0);
+    MH.word_aligned_gt_at_least_mword (U64.v obj) (U64.v start);
+    hd_address_spec obj;
+    assert (U64.v obj >= U64.v start + U64.v mword);
+    assert (U64.v (hd_address obj) == U64.v obj - U64.v mword)
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 3 --ifuel 1"
+let rec objects_in_chunk_from_head_split_preserves_object
+  (c: MH.heap_chunk) (start: hp_addr) (obj: obj_addr)
+  (requested_wz block_wz: nat) (next_fp: U64.t)
+  (rem_wz_u: U64.t) (rem_hd: hp_addr) (rem_obj: obj_addr)
+  : Lemma
+      (requires Seq.mem obj (MH.objects_in_chunk_from c start) /\
+                requested_wz > 0 /\
+                block_wz >= requested_wz /\
+                block_wz < pow2 54 /\
+                block_wz - requested_wz >= 2 /\
+                U64.v rem_wz_u == block_wz - requested_wz - 1 /\
+                U64.v rem_wz_u < pow2 54 /\
+                MH.word_in_chunk c (hd_address obj) /\
+                MH.word_in_chunk c rem_hd /\
+                MH.word_in_chunk c rem_obj /\
+                U64.v rem_hd == U64.v (hd_address obj) + (1 + requested_wz) * U64.v mword /\
+                U64.v rem_obj == U64.v rem_hd + U64.v mword /\
+                U64.v (hd_address obj) + (1 + block_wz) * U64.v mword <=
+                  MH.chunk_end c)
+       (ensures
+         (let hd = hd_address obj in
+          let alloc_hdr =
+            Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+          let c1 = MH.write_word_in_chunk c hd alloc_hdr in
+          let rem_hdr =
+            Alloc.make_header rem_wz_u Alloc.blue_bits 0UL in
+          let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+          let c3 = MH.write_word_in_chunk c2 rem_obj next_fp in
+          Seq.mem obj (MH.objects_in_chunk_from c3 start)))
+      (decreases MH.chunk_end c - U64.v start)
+  =
+  let hd = hd_address obj in
+  let alloc_hdr =
+    Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+  let c1 = MH.write_word_in_chunk c hd alloc_hdr in
+  let rem_hdr =
+    Alloc.make_header rem_wz_u Alloc.blue_bits 0UL in
+  let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+  let c3 = MH.write_word_in_chunk c2 rem_obj next_fp in
+  if U64.v start < MH.chunk_start c then
+    assert False
+  else if U64.v start + U64.v mword >= MH.chunk_end c then
+    assert False
+  else begin
+    assert (MH.word_in_chunk c start);
+    let header = MH.read_word_in_chunk c start in
+    let wz = Obj.getWosize header in
+    let obj_size_words = U64.v wz + 1 in
+    let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+    if next_start_nat > MH.chunk_end c || next_start_nat >= pow2 64 then
+      assert False
+    else begin
+      f_address_spec start;
+      let first : obj_addr = f_address start in
+      if first = obj then begin
+        hd_f_roundtrip start;
+        assert (hd == start);
+        AllocHeader.make_header_getWosize
+          (U64.uint_to_t requested_wz) Alloc.white_bits 0UL;
+        assert (Obj.getWosize alloc_hdr == U64.uint_to_t requested_wz);
+        assert (U64.v (Obj.getWosize alloc_hdr) == requested_wz);
+        assert (U64.v start + (1 + requested_wz) * U64.v mword == U64.v rem_hd);
+        assert (U64.v start + U64.v mword <= U64.v rem_hd);
+        assert (U64.v start + U64.v mword <= U64.v rem_obj);
+        MH.write_word_in_chunk_preserves_word c hd alloc_hdr rem_hd;
+        MH.write_word_in_chunk_preserves_word c hd alloc_hdr rem_obj;
+        MH.write_word_in_chunk_preserves_word c hd alloc_hdr start;
+        MH.read_write_in_chunk_same c hd alloc_hdr;
+        MH.write_word_in_chunk_preserves_word c1 rem_hd rem_hdr start;
+        MH.write_word_in_chunk_preserves_word c1 rem_hd rem_hdr rem_obj;
+        MH.read_write_in_chunk_different c1 rem_hd start rem_hdr;
+        MH.write_word_in_chunk_preserves_word c2 rem_obj next_fp start;
+        MH.read_write_in_chunk_different c2 rem_obj start next_fp;
+        assert (MH.read_word_in_chunk c3 start == alloc_hdr);
+        assert (U64.v rem_hd < MH.chunk_end c3);
+        MH.objects_in_chunk_from_head_mem c3 start;
+        assert (Seq.mem obj (MH.objects_in_chunk_from c3 start))
+      end else begin
+        let tail =
+          if next_start_nat >= MH.chunk_end c then Seq.empty
+          else begin
+            assert (next_start_nat < heap_size);
+            MH.next_object_start_aligned start obj_size_words;
+            assert (next_start_nat % U64.v mword == 0);
+            let next_start : hp_addr = U64.uint_to_t next_start_nat in
+            MH.objects_in_chunk_from c next_start
+          end
+        in
+        GC.Spec.Fields.mem_cons_lemma obj first tail;
+        assert (Seq.mem obj tail);
+        if next_start_nat >= MH.chunk_end c then
+          assert False
+        else begin
+          assert (next_start_nat < heap_size);
+          MH.next_object_start_aligned start obj_size_words;
+          assert (next_start_nat % U64.v mword == 0);
+          let next_start : hp_addr = U64.uint_to_t next_start_nat in
+          assert (Seq.mem obj (MH.objects_in_chunk_from c next_start));
+          object_member_header_at_or_after_start c next_start obj;
+          assert (U64.v next_start <= U64.v hd);
+          assert (U64.v start + U64.v mword <= U64.v next_start);
+          assert (U64.v start + U64.v mword <= U64.v hd);
+          assert (U64.v start + U64.v mword <= U64.v rem_hd);
+          assert (U64.v start + U64.v mword <= U64.v rem_obj);
+          MH.write_word_in_chunk_preserves_word c hd alloc_hdr start;
+          MH.read_write_in_chunk_different c hd start alloc_hdr;
+          MH.write_word_in_chunk_preserves_word c hd alloc_hdr rem_hd;
+          MH.write_word_in_chunk_preserves_word c hd alloc_hdr rem_obj;
+          MH.write_word_in_chunk_preserves_word c1 rem_hd rem_hdr start;
+          MH.read_write_in_chunk_different c1 rem_hd start rem_hdr;
+          MH.write_word_in_chunk_preserves_word c1 rem_hd rem_hdr rem_obj;
+          MH.write_word_in_chunk_preserves_word c2 rem_obj next_fp start;
+          MH.read_write_in_chunk_different c2 rem_obj start next_fp;
+          assert (MH.read_word_in_chunk c3 start == header);
+          objects_in_chunk_from_head_split_preserves_object
+            c next_start obj requested_wz block_wz next_fp rem_wz_u rem_hd rem_obj;
+          assert (Seq.mem obj (MH.objects_in_chunk_from c3 next_start));
+          assert (MH.chunk_start c3 == MH.chunk_start c);
+          assert (MH.chunk_end c3 == MH.chunk_end c);
+          assert (U64.v start >= MH.chunk_start c3);
+          assert (U64.v start + U64.v mword < MH.chunk_end c3);
+          assert (MH.read_word_in_chunk c3 start == header);
+          assert (Obj.getWosize (MH.read_word_in_chunk c3 start) == wz);
+          assert (U64.v start +
+                  (U64.v (Obj.getWosize (MH.read_word_in_chunk c3 start)) + 1) *
+                    U64.v mword == next_start_nat);
+          assert (next_start_nat < MH.chunk_end c3);
+          assert (MH.objects_in_chunk_from c3 start ==
+                  Seq.cons first (MH.objects_in_chunk_from c3 next_start));
+          GC.Spec.Fields.mem_cons_lemma obj first (MH.objects_in_chunk_from c3 next_start);
+          assert (Seq.mem obj (MH.objects_in_chunk_from c3 start))
+        end
+      end
+    end
+  end
 #pop-options
 
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
@@ -2275,6 +2429,7 @@ let major_alloc_head_split_preserves_head_wosize
   | Some hdr ->
     let block_wz = U64.v (Obj.getWosize hdr) in
     assert (major_fl_head_wosize mh fp == block_wz);
+    assert (block_wz < pow2 54);
     assert (block_wz >= requested_wz + 1 + remaining);
     assert (block_wz - requested_wz >= 2);
     match MH.read_word_in_major mh obj with
@@ -2300,13 +2455,14 @@ let major_alloc_head_split_preserves_head_wosize
       assert (heap_size < pow2 64);
       assert (rem_hd_nat < pow2 64);
       assert (rem_obj_nat < pow2 64);
+      assert (rem_obj_nat >= U64.v mword);
       hd_address_spec obj;
       aligned_plus_word_product (U64.v hd) (1 + requested_wz);
       assert (rem_hd_nat % U64.v mword == 0);
       aligned_plus_word_product (U64.v hd) (requested_wz + 2);
       assert (rem_obj_nat % U64.v mword == 0);
       let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
-      let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+      let rem_obj : obj_addr = U64.uint_to_t rem_obj_nat in
       assert (U64.v rem_hd == rem_hd_nat);
       assert (U64.v rem_obj == rem_obj_nat);
       assert (U64.v rem_obj == U64.v rem_hd + U64.v mword);
@@ -2329,6 +2485,8 @@ let major_alloc_head_split_preserves_head_wosize
       indexed_chunk_write_preserves_contains_no_prior
         mh idx idx hd rem_hd alloc_hdr;
       let rem_wz = block_wz - requested_wz - 1 in
+      assert (rem_wz >= 0);
+      assert (rem_wz < pow2 54);
       let rem_hdr =
         Alloc.make_header (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL in
       let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
@@ -2358,6 +2516,88 @@ let major_alloc_head_split_preserves_head_wosize
       assert (U64.v rem_hd + U64.v mword <= U64.v rem_obj);
       MH.read_write_in_chunk_different c2 rem_obj rem_hd next_fp;
       assert (MH.read_word_in_chunk c3 rem_hd == rem_hdr);
+      assert (U64.v hd + U64.v mword <= U64.v rem_hd);
+      assert (U64.v hd + U64.v mword <= U64.v rem_obj);
+      MH.write_word_in_chunk_preserves_word c hd alloc_hdr hd;
+      MH.read_write_in_chunk_same c hd alloc_hdr;
+      assert (MH.read_word_in_chunk c1 hd == alloc_hdr);
+      MH.write_word_in_chunk_preserves_word c1 rem_hd rem_hdr hd;
+      MH.read_write_in_chunk_different c1 rem_hd hd rem_hdr;
+      assert (MH.read_word_in_chunk c2 hd == alloc_hdr);
+      MH.write_word_in_chunk_preserves_word c2 rem_obj next_fp hd;
+      MH.read_write_in_chunk_different c2 rem_obj hd next_fp;
+      assert (MH.read_word_in_chunk c3 hd == alloc_hdr);
+      major_fl_valid_gives_mem mh fp fuel;
+      assert (Seq.mem obj (MH.major_objects mh));
+      MH.major_objects_member_in_lookup_chunk mh idx obj;
+      assert (Seq.mem obj (MH.objects_in_chunk c));
+      objects_in_chunk_from_head_split_preserves_object
+        c c.base obj requested_wz block_wz next_fp
+        (U64.uint_to_t rem_wz) rem_hd rem_obj;
+      assert (Seq.mem obj (MH.objects_in_chunk_from c3 c3.base));
+      AllocHeader.make_header_getWosize
+        (U64.uint_to_t requested_wz) Alloc.white_bits 0UL;
+      assert (Obj.getWosize alloc_hdr == U64.uint_to_t requested_wz);
+      assert (U64.v (Obj.getWosize alloc_hdr) == requested_wz);
+      assert (U64.v hd +
+              (U64.v (Obj.getWosize alloc_hdr) + 1) * U64.v mword ==
+              U64.v rem_hd);
+      AllocHeader.make_header_getWosize
+        (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL;
+      assert (Obj.getWosize rem_hdr == U64.uint_to_t rem_wz);
+      assert (U64.v (Obj.getWosize rem_hdr) == rem_wz);
+      let diff = block_wz - requested_wz in
+      assert (diff >= 2);
+      assert (rem_wz == diff - 1);
+      assert (rem_wz + 1 <= diff);
+      assert (rem_wz + 1 <= block_wz - requested_wz);
+      assert ((1 + requested_wz) + (rem_wz + 1) <= 1 + block_wz);
+      assert (U64.v mword > 0);
+      FStar.Math.Lemmas.lemma_mult_le_right
+        (U64.v mword) ((1 + requested_wz) + (rem_wz + 1)) (1 + block_wz);
+      assert (((1 + requested_wz) + (rem_wz + 1)) * U64.v mword <=
+              (1 + block_wz) * U64.v mword);
+      FStar.Math.Lemmas.distributivity_add_left
+        (1 + requested_wz) (rem_wz + 1) (U64.v mword);
+      assert (((1 + requested_wz) + (rem_wz + 1)) * U64.v mword ==
+              (1 + requested_wz) * U64.v mword +
+              (rem_wz + 1) * U64.v mword);
+      assert ((1 + requested_wz) * U64.v mword +
+              (rem_wz + 1) * U64.v mword <=
+              (1 + block_wz) * U64.v mword);
+      FStar.Math.Lemmas.paren_add_right
+        (U64.v hd) ((1 + requested_wz) * U64.v mword)
+        ((rem_wz + 1) * U64.v mword);
+      assert (U64.v rem_hd +
+              (U64.v (Obj.getWosize rem_hdr) + 1) * U64.v mword <=
+              U64.v hd + (1 + block_wz) * U64.v mword);
+      assert (U64.v rem_hd +
+              (U64.v (Obj.getWosize rem_hdr) + 1) * U64.v mword <=
+              MH.chunk_end c3);
+      assert (U64.v rem_hd + U64.v mword < heap_size);
+      f_address_spec rem_hd;
+      assert (f_address rem_hd == rem_obj);
+      MH.objects_in_chunk_from_head_mem c3 rem_hd;
+      assert (Seq.mem rem_obj (MH.objects_in_chunk_from c3 rem_hd));
+      f_hd_roundtrip obj;
+      assert (f_address hd == obj);
+      assert (U64.v hd >= MH.chunk_start c3);
+      assert (U64.v hd + U64.v mword < MH.chunk_end c3);
+      assert (MH.read_word_in_chunk c3 hd == alloc_hdr);
+      assert (U64.v hd +
+              (U64.v (Obj.getWosize (MH.read_word_in_chunk c3 hd)) + 1) *
+                U64.v mword == U64.v rem_hd);
+      assert (U64.v rem_hd < pow2 64);
+      assert (U64.v rem_hd % U64.v mword == 0);
+      assert (U64.uint_to_t (U64.v rem_hd) == rem_hd);
+      assert (U64.v rem_hd < MH.chunk_end c3);
+      MH.objects_in_chunk_from_tail_mem c3 hd rem_hd rem_obj;
+      assert (Seq.mem rem_obj (MH.objects_in_chunk_from c3 hd));
+      assert (U64.v c3.base <= U64.v hd);
+      MH.objects_in_chunk_from_later_in_earlier c3 c3.base hd rem_obj;
+      assert (Seq.mem rem_obj (MH.objects_in_chunk c3));
+      MH.major_objects_member_at_index mh3 idx rem_obj;
+      assert (Seq.mem rem_obj (MH.major_objects mh3));
       MH.read_word_in_major_at_index mh3 rem_hd idx;
       assert (MH.read_word_in_major mh3 rem_hd == Some rem_hdr);
       let r = major_alloc_spec_with_fuel mh fp requested_wz fuel in
@@ -2374,7 +2614,13 @@ let major_alloc_head_split_preserves_head_wosize
         (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL;
       assert (Obj.getWosize rem_hdr == U64.uint_to_t rem_wz);
       assert (U64.v (Obj.getWosize rem_hdr) == rem_wz);
-      assert (rem_wz >= remaining)
+      assert (diff >= remaining + 1);
+      assert (diff - 1 >= remaining);
+      assert (rem_wz == diff - 1);
+      if rem_wz < remaining then assert False;
+      assert (rem_wz >= remaining);
+      assert (major_fl_head_wosize mh3 rem_obj == rem_wz);
+      assert (major_fl_head_wosize r.major_alloc_out r.major_fp_out >= remaining)
 #pop-options
 
 #push-options "--z3rlimit 10"
