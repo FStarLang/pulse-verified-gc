@@ -2849,6 +2849,129 @@ let rec objects_in_chunk_from_head_split_preserves_member
   end
 #pop-options
 
+#push-options "--z3rlimit 20 --split_queries always --fuel 0 --ifuel 0"
+let head_split_major_preserves_read_at
+  (mh: MH.major_heap) (idx: nat) (obj: obj_addr) (addr: hp_addr)
+  (old: U64.t) (requested_wz block_wz: nat) (next_fp: U64.t)
+  (rem_wz_u: U64.t) (rem_hd: hp_addr) (rem_obj: obj_addr)
+  : Lemma
+      (requires MH.well_formed_major_heap mh /\
+                idx < Seq.length mh /\
+                MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+                MH.read_word_in_major mh addr == Some old /\
+                requested_wz > 0 /\
+                requested_wz < pow2 54 /\
+                block_wz >= requested_wz /\
+                block_wz < pow2 54 /\
+                block_wz - requested_wz >= 2 /\
+                U64.v rem_wz_u == block_wz - requested_wz - 1 /\
+                U64.v rem_wz_u < pow2 54 /\
+                MH.word_in_chunk (Seq.index mh idx) rem_hd /\
+                MH.word_in_chunk (Seq.index mh idx) rem_obj /\
+                U64.v rem_hd == U64.v (hd_address obj) + (1 + requested_wz) * U64.v mword /\
+                U64.v rem_obj == U64.v rem_hd + U64.v mword /\
+                ((MH.word_in_chunk (Seq.index mh idx) addr /\
+                  (addr = hd_address obj \/
+                   U64.v addr + U64.v mword <= U64.v (hd_address obj) \/
+                   U64.v rem_obj + U64.v mword <= U64.v addr)) \/
+                 ~(MH.chunk_contains_addr (Seq.index mh idx) addr)))
+       (ensures
+         (let hd = hd_address obj in
+          let alloc_hdr =
+            Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+          let mh1 = major_write_word_or_same mh hd alloc_hdr in
+          let rem_hdr =
+            Alloc.make_header rem_wz_u Alloc.blue_bits 0UL in
+          let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
+          let mh3 = major_write_word_or_same mh2 rem_obj next_fp in
+          if addr = hd then
+            MH.read_word_in_major mh3 addr == Some alloc_hdr
+          else
+            MH.read_word_in_major mh3 addr == Some old))
+  =
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  assert (requested_wz < pow2 64);
+  let c = Seq.index mh idx in
+  let hd = hd_address obj in
+  let alloc_hdr =
+    Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+  let c1 = MH.write_word_in_chunk c hd alloc_hdr in
+  well_formed_no_prior_word_in_selected_chunk mh idx hd;
+  well_formed_no_prior_word_in_selected_chunk mh idx rem_hd;
+  well_formed_no_prior_word_in_selected_chunk mh idx rem_obj;
+  MH.write_word_in_major_at_index mh hd alloc_hdr idx;
+  let mh1 = major_write_word_or_same mh hd alloc_hdr in
+  assert (mh1 == Seq.upd mh idx c1);
+  indexed_chunk_write_preserves_word_no_prior mh idx idx hd rem_hd alloc_hdr;
+  indexed_chunk_write_preserves_word_no_prior mh idx idx hd rem_obj alloc_hdr;
+  let rem_hdr =
+    Alloc.make_header rem_wz_u Alloc.blue_bits 0UL in
+  let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+  assert (Seq.index mh1 idx == c1);
+  MH.write_word_in_major_at_index mh1 rem_hd rem_hdr idx;
+  let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
+  assert (mh2 == Seq.upd mh1 idx c2);
+  indexed_chunk_write_preserves_word_no_prior mh1 idx idx rem_hd rem_obj rem_hdr;
+  let c3 = MH.write_word_in_chunk c2 rem_obj next_fp in
+  assert (Seq.index mh2 idx == c2);
+  MH.write_word_in_major_at_index mh2 rem_obj next_fp idx;
+  let mh3 = major_write_word_or_same mh2 rem_obj next_fp in
+  assert (mh3 == Seq.upd mh2 idx c3);
+  if MH.word_in_chunk c addr then begin
+    well_formed_no_prior_word_in_selected_chunk mh idx addr;
+    well_formed_no_prior_contains_selected_chunk mh idx addr;
+    MH.read_word_in_major_at_index mh addr idx;
+    assert (MH.read_word_in_chunk c addr == old);
+    head_split_chunk_preserves_read_at
+      c obj addr requested_wz block_wz next_fp rem_wz_u rem_hd rem_obj;
+    indexed_chunk_write_preserves_word_no_prior mh idx idx hd addr alloc_hdr;
+    indexed_chunk_write_preserves_contains_no_prior mh idx idx hd addr alloc_hdr;
+    assert (forall k. k < idx ==> ~(MH.word_in_chunk (Seq.index mh1 k) addr));
+    assert (forall k. k < idx ==> ~(MH.chunk_contains_addr (Seq.index mh1 k) addr));
+    indexed_chunk_write_preserves_word_no_prior mh1 idx idx rem_hd addr rem_hdr;
+    indexed_chunk_write_preserves_contains_no_prior mh1 idx idx rem_hd addr rem_hdr;
+    assert (forall k. k < idx ==> ~(MH.word_in_chunk (Seq.index mh2 k) addr));
+    assert (forall k. k < idx ==> ~(MH.chunk_contains_addr (Seq.index mh2 k) addr));
+    indexed_chunk_write_preserves_word_no_prior mh2 idx idx rem_obj addr next_fp;
+    indexed_chunk_write_preserves_contains_no_prior mh2 idx idx rem_obj addr next_fp;
+    assert (forall k. k < idx ==> ~(MH.word_in_chunk (Seq.index mh3 k) addr));
+    assert (forall k. k < idx ==> ~(MH.chunk_contains_addr (Seq.index mh3 k) addr));
+    assert (Seq.index mh3 idx == c3);
+    MH.read_word_in_major_at_index mh3 addr idx;
+    if addr = hd then
+      assert (MH.read_word_in_major mh3 addr == Some alloc_hdr)
+    else
+      assert (MH.read_word_in_major mh3 addr == Some old)
+  end else begin
+    assert (~(MH.chunk_contains_addr c addr));
+    MH.read_word_in_major_lookup_index mh addr old;
+    let target_idx = MH.lookup_chunk_index_value mh addr in
+    assert (target_idx < Seq.length mh);
+    assert (MH.word_in_chunk (Seq.index mh target_idx) addr);
+    assert (MH.read_word_in_chunk (Seq.index mh target_idx) addr == old);
+    MH.lookup_chunk_index_some mh addr target_idx;
+    assert (forall k. k < target_idx ==> ~(MH.word_in_chunk (Seq.index mh k) addr));
+    assert (forall k. k < target_idx ==> ~(MH.chunk_contains_addr (Seq.index mh k) addr));
+    if target_idx = idx then begin
+      assert (Seq.index mh target_idx == c);
+      assert (MH.chunk_contains_addr c addr);
+      assert False
+    end;
+    indexed_chunk_write_preserves_word_no_prior mh idx target_idx hd addr alloc_hdr;
+    indexed_chunk_write_preserves_contains_no_prior mh idx target_idx hd addr alloc_hdr;
+    indexed_chunk_write_preserves_word_no_prior mh1 idx target_idx rem_hd addr rem_hdr;
+    indexed_chunk_write_preserves_contains_no_prior mh1 idx target_idx rem_hd addr rem_hdr;
+    indexed_chunk_write_preserves_word_no_prior mh2 idx target_idx rem_obj addr next_fp;
+    indexed_chunk_write_preserves_contains_no_prior mh2 idx target_idx rem_obj addr next_fp;
+    assert (forall k. k < target_idx ==> ~(MH.chunk_contains_addr (Seq.index mh3 k) addr));
+    assert (Seq.index mh1 target_idx == Seq.index mh target_idx);
+    assert (Seq.index mh2 target_idx == Seq.index mh target_idx);
+    assert (Seq.index mh3 target_idx == Seq.index mh target_idx);
+    MH.read_word_in_major_at_index mh3 addr target_idx;
+    assert (MH.read_word_in_major mh3 addr == Some old)
+  end
+#pop-options
+
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_head_split_preserves_head_wosize
   (mh: MH.major_heap) (fp: U64.t)
