@@ -3360,6 +3360,127 @@ let head_split_preserves_free_node_object
   end
 #pop-options
 
+#push-options "--z3rlimit 10 --split_queries always --fuel 1 --ifuel 0"
+let rec lookup_chunk_index_from_contains_no_prior
+  (mh: MH.major_heap) (addr: hp_addr) (i: nat)
+  : Lemma (requires i < Seq.length mh /\
+                    MH.chunk_contains_addr (Seq.index mh i) addr /\
+                    (forall k. k < i ==>
+                      ~(MH.chunk_contains_addr (Seq.index mh k) addr)))
+          (ensures MH.lookup_chunk_index mh addr == Some i)
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else if i = 0 then begin
+      assert (Seq.index mh i == Seq.index mh 0);
+      assert (MH.chunk_contains_addr (Seq.index mh 0) addr);
+      assert (Seq.index mh 0 == Seq.head mh);
+      assert (MH.chunk_contains_addr (Seq.head mh) addr);
+      assert (MH.lookup_chunk_index mh addr == Some 0)
+    end else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (0 < i);
+      assert (Seq.index mh 0 == hd);
+      assert (~(MH.chunk_contains_addr hd addr));
+      let im1 : j:nat{j < Seq.length tl} = i - 1 in
+      assert (Seq.index tl im1 == Seq.index mh i);
+      assert (MH.chunk_contains_addr (Seq.index tl im1) addr);
+      assert (forall k. k < im1 ==>
+        ~(MH.chunk_contains_addr (Seq.index tl k) addr));
+      lookup_chunk_index_from_contains_no_prior tl addr im1;
+      assert (MH.lookup_chunk_index tl addr == Some im1);
+      assert (i == im1 + 1);
+      assert (MH.lookup_chunk_index mh addr == Some i)
+    end
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let indexed_chunk_replace_same_range_preserves_contains_no_prior
+  (mh: MH.major_heap)
+  (write_idx target_idx: nat)
+  (replacement: MH.heap_chunk)
+  (target_addr: hp_addr)
+  : Lemma (requires write_idx < Seq.length mh /\
+                    target_idx < Seq.length mh /\
+                    MH.chunk_start replacement == MH.chunk_start (Seq.index mh write_idx) /\
+                    MH.chunk_end replacement == MH.chunk_end (Seq.index mh write_idx) /\
+                    MH.chunk_contains_addr (Seq.index mh target_idx) target_addr /\
+                    (forall (k:nat). k < target_idx ==>
+                      ~(MH.chunk_contains_addr (Seq.index mh k) target_addr)))
+          (ensures (let mh' = Seq.upd mh write_idx replacement in
+                    target_idx < Seq.length mh' /\
+                    MH.chunk_contains_addr (Seq.index mh' target_idx) target_addr /\
+                    (forall (k:nat). k < target_idx ==>
+                      ~(MH.chunk_contains_addr (Seq.index mh' k) target_addr))))
+  = let old = Seq.index mh write_idx in
+    let mh' = Seq.upd mh write_idx replacement in
+    assert (Seq.length mh' == Seq.length mh);
+    if target_idx = write_idx then begin
+      assert (Seq.index mh' target_idx == replacement);
+      assert (Seq.index mh target_idx == old)
+    end else
+      assert (Seq.index mh' target_idx == Seq.index mh target_idx);
+    let no_prior (k: nat{k < target_idx})
+      : Lemma (~(MH.chunk_contains_addr (Seq.index mh' k) target_addr))
+      = if k = write_idx then begin
+          assert (Seq.index mh' k == replacement);
+          if MH.chunk_contains_addr (Seq.index mh' k) target_addr then begin
+            assert (MH.chunk_contains_addr replacement target_addr);
+            assert (MH.chunk_start replacement == MH.chunk_start old);
+            assert (MH.chunk_end replacement == MH.chunk_end old);
+            assert (MH.chunk_contains_addr old target_addr);
+            assert (MH.chunk_contains_addr (Seq.index mh k) target_addr);
+            assert False
+          end
+        end else begin
+          assert (Seq.index mh' k == Seq.index mh k);
+          assert (~(MH.chunk_contains_addr (Seq.index mh k) target_addr))
+        end
+    in
+    FStar.Classical.forall_intro no_prior
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let indexed_chunk_replace_same_range_preserves_lookup_word
+  (mh: MH.major_heap)
+  (write_idx target_idx: nat)
+  (replacement: MH.heap_chunk)
+  (target_addr: hp_addr)
+  : Lemma (requires write_idx < Seq.length mh /\
+                    target_idx < Seq.length mh /\
+                    MH.chunk_start replacement == MH.chunk_start (Seq.index mh write_idx) /\
+                    MH.chunk_end replacement == MH.chunk_end (Seq.index mh write_idx) /\
+                    MH.lookup_chunk_index mh target_addr == Some target_idx /\
+                    MH.word_in_chunk (Seq.index mh target_idx) target_addr)
+          (ensures (let mh' = Seq.upd mh write_idx replacement in
+                    MH.lookup_chunk_index mh' target_addr == Some target_idx /\
+                    target_idx < Seq.length mh' /\
+                    MH.word_in_chunk (Seq.index mh' target_idx) target_addr /\
+                    MH.chunk_end (Seq.index mh' target_idx) ==
+                      MH.chunk_end (Seq.index mh target_idx)))
+  =
+  MH.lookup_chunk_index_some mh target_addr target_idx;
+  assert (forall k. k < target_idx ==>
+    ~(MH.chunk_contains_addr (Seq.index mh k) target_addr));
+  indexed_chunk_replace_same_range_preserves_word_no_prior
+    mh write_idx target_idx replacement target_addr;
+  let mh' = Seq.upd mh write_idx replacement in
+  assert (target_idx < Seq.length mh');
+  assert (MH.word_in_chunk (Seq.index mh' target_idx) target_addr);
+  assert (MH.chunk_contains_addr (Seq.index mh' target_idx) target_addr);
+  indexed_chunk_replace_same_range_preserves_contains_no_prior
+    mh write_idx target_idx replacement target_addr;
+  assert (forall k. k < target_idx ==>
+    ~(MH.chunk_contains_addr (Seq.index mh' k) target_addr));
+  lookup_chunk_index_from_contains_no_prior mh' target_addr target_idx;
+  if target_idx = write_idx then begin
+    assert (Seq.index mh' target_idx == replacement);
+    assert (Seq.index mh target_idx == Seq.index mh write_idx)
+  end else
+    assert (Seq.index mh' target_idx == Seq.index mh target_idx)
+#pop-options
+
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_head_split_preserves_head_wosize
   (mh: MH.major_heap) (fp: U64.t)
