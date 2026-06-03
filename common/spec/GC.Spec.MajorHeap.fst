@@ -1003,6 +1003,160 @@ let objects_in_chunk_member_header_fits (c: heap_chunk) (x: obj_addr)
           (ensures object_header_size_fits_in_chunk c x)
   = objects_in_chunk_from_member_header_fits c c.base x
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+let word_aligned_gt_at_least_mword (a b: nat)
+  : Lemma (requires a % U64.v mword == 0 /\
+                    b % U64.v mword == 0 /\
+                    a > b)
+          (ensures a >= b + U64.v mword)
+  = assert (U64.v mword == 8)
+#pop-options
+
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 10 --split_queries always"
+let rec objects_in_chunk_from_addresses_gt_start
+  (c: heap_chunk) (start: hp_addr) (x: obj_addr)
+  : Lemma (requires Seq.mem x (objects_in_chunk_from c start))
+          (ensures U64.v x > U64.v start)
+          (decreases chunk_end c - U64.v start)
+  = if U64.v start < chunk_start c then
+      assert False
+    else if U64.v start + U64.v mword >= chunk_end c then
+      assert False
+    else begin
+      let header = read_word_in_chunk c start in
+      let wz = Obj.getWosize header in
+      let obj_size_words = U64.v wz + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then
+        assert False
+      else begin
+        f_address_spec start;
+        let obj_addr : obj_addr = f_address start in
+        assert (U64.v obj_addr == U64.v start + U64.v mword);
+        let tail =
+          if next_start_nat >= chunk_end c then Seq.empty
+          else begin
+            assert (next_start_nat < heap_size);
+            assert (next_start_nat < pow2 64);
+            next_object_start_aligned start obj_size_words;
+            assert (next_start_nat % U64.v mword == 0);
+            let next_start : hp_addr = U64.uint_to_t next_start_nat in
+            objects_in_chunk_from c next_start
+          end
+        in
+        SeqProps.mem_cons obj_addr tail;
+        if x = obj_addr then
+          assert (U64.v x > U64.v start)
+        else begin
+          assert (Seq.mem x tail);
+          if next_start_nat >= chunk_end c then
+            assert False
+          else begin
+            let next_start : hp_addr = U64.uint_to_t next_start_nat in
+            assert (obj_size_words >= 1);
+            assert (next_start_nat > U64.v start);
+            objects_in_chunk_from_addresses_gt_start c next_start x
+          end
+        end
+      end
+    end
+#pop-options
+
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 10 --split_queries always"
+let objects_in_chunk_from_head_mem
+  (c: heap_chunk) (start: hp_addr{U64.v start + U64.v mword < heap_size})
+  : Lemma (requires U64.v start >= chunk_start c /\
+                    U64.v start + U64.v mword < chunk_end c /\
+                    (let header = read_word_in_chunk c start in
+                     let wz = Obj.getWosize header in
+                     let obj_size_words = U64.v wz + 1 in
+                     let next_start_nat =
+                       U64.v start + obj_size_words * U64.v mword in
+                     next_start_nat <= chunk_end c /\
+                     next_start_nat < pow2 64))
+          (ensures Seq.mem (f_address start) (objects_in_chunk_from c start))
+  = let header = read_word_in_chunk c start in
+    let wz = Obj.getWosize header in
+    let obj_size_words = U64.v wz + 1 in
+    let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+    assert (U64.v start + U64.v mword < chunk_end c);
+    assert (next_start_nat <= chunk_end c);
+    assert (next_start_nat < pow2 64);
+    f_address_spec start;
+    let first : obj_addr = f_address start in
+    if next_start_nat >= chunk_end c then
+      SeqProps.mem_cons first (Seq.empty #obj_addr)
+    else begin
+      assert (next_start_nat < heap_size);
+      next_object_start_aligned start obj_size_words;
+      assert (next_start_nat % U64.v mword == 0);
+      let next_start : hp_addr = U64.uint_to_t next_start_nat in
+      SeqProps.mem_cons first (objects_in_chunk_from c next_start)
+    end
+#pop-options
+
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 10 --split_queries always"
+let rec objects_in_chunk_from_later_in_earlier
+  (c: heap_chunk) (start: hp_addr)
+  (later: hp_addr{U64.v later + U64.v mword < heap_size})
+  (h: obj_addr)
+  : Lemma (requires U64.v start <= U64.v later /\
+                    Seq.mem h (objects_in_chunk_from c later) /\
+                    (U64.v start == U64.v later \/
+                     Seq.mem (f_address later) (objects_in_chunk_from c start)))
+          (ensures Seq.mem h (objects_in_chunk_from c start))
+          (decreases chunk_end c - U64.v start)
+  = if U64.v start = U64.v later then
+      ()
+    else if U64.v start < chunk_start c then
+      assert False
+    else if U64.v start + U64.v mword >= chunk_end c then
+      assert False
+    else begin
+      let header = read_word_in_chunk c start in
+      let wz_start = Obj.getWosize header in
+      let obj_size_words = U64.v wz_start + 1 in
+      let next_start_nat = U64.v start + obj_size_words * U64.v mword in
+      if next_start_nat > chunk_end c || next_start_nat >= pow2 64 then
+        assert False
+      else begin
+        f_address_spec start;
+        let first : obj_addr = f_address start in
+        if next_start_nat >= chunk_end c then begin
+          Fields.mem_cons_lemma (f_address later) first (Seq.empty #obj_addr);
+          f_address_spec later;
+          assert (f_address later = first);
+          assert (U64.v later = U64.v start)
+        end else begin
+          assert (next_start_nat < heap_size);
+          next_object_start_aligned start obj_size_words;
+          assert (next_start_nat % U64.v mword == 0);
+          let next_start : hp_addr = U64.uint_to_t next_start_nat in
+          Fields.mem_cons_lemma (f_address later) first (objects_in_chunk_from c next_start);
+          if f_address later = first then begin
+            f_address_spec later;
+            assert (U64.v later = U64.v start)
+          end else begin
+            objects_in_chunk_from_addresses_gt_start c next_start (f_address later);
+            f_address_spec later;
+            assert (U64.v next_start % U64.v mword == 0);
+            assert (U64.v later % U64.v mword == 0);
+            if U64.v next_start > U64.v later then begin
+              word_aligned_gt_at_least_mword (U64.v next_start) (U64.v later);
+              assert (U64.v next_start >= U64.v later + U64.v mword);
+              assert (U64.v (f_address later) <= U64.v next_start);
+              assert False
+            end;
+            assert (U64.v next_start <= U64.v later);
+            objects_in_chunk_from_later_in_earlier c next_start later h;
+            Fields.mem_cons_lemma h first (objects_in_chunk_from c next_start)
+          end
+        end
+      end
+    end
+#pop-options
+
+#push-options "--split_queries always"
 let rec single_chunk_objects_from_compat
   (g: heap) (start: hp_addr{U64.v start >= U64.v zero_addr})
   : Lemma (ensures objects_in_chunk_from (single_chunk_of_heap g) start == Fields.objects start g)
@@ -1045,6 +1199,7 @@ let rec single_chunk_objects_from_compat
         end
       end
     end
+#pop-options
 
 let single_chunk_objects_compat (g: heap)
   : Lemma (objects_in_chunk (single_chunk_of_heap g) == Fields.objects zero_addr g)
@@ -1073,6 +1228,28 @@ let major_objects_add_chunk_old (mh: major_heap) (c: heap_chunk) (x: obj_addr)
           (ensures Seq.mem x (major_objects (add_chunk mh c)))
   = major_objects_add_chunk mh c;
     SeqProps.lemma_mem_append (objects_in_chunk c) (major_objects mh)
+
+let rec major_objects_member_at_index (mh: major_heap) (i: nat) (x: obj_addr)
+  : Lemma (requires i < Seq.length mh /\
+                    Seq.mem x (objects_in_chunk (Seq.index mh i)))
+          (ensures Seq.mem x (major_objects mh))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else begin
+      let c = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (major_objects mh == Seq.append (objects_in_chunk c) (major_objects tl));
+      if i = 0 then begin
+        assert (Seq.index mh i == c);
+        SeqProps.lemma_mem_append (objects_in_chunk c) (major_objects tl)
+      end else begin
+        let im1 : n:nat{n < Seq.length tl} = i - 1 in
+        assert (Seq.index mh i == Seq.index tl im1);
+        major_objects_member_at_index tl im1 x;
+        SeqProps.lemma_mem_append (objects_in_chunk c) (major_objects tl)
+      end
+    end
 
 let single_chunk_major_objects_compat (g: heap)
   : Lemma (major_objects (single_chunk_major_heap g) == Fields.objects zero_addr g)
