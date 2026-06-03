@@ -3195,6 +3195,69 @@ let selected_free_node_split_read_regions
 #pop-options
 
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let head_split_materialize_writes
+  (mh: MH.major_heap) (idx: nat) (obj: obj_addr)
+  (requested_wz: nat) (next_fp: U64.t) (rem_wz_u: U64.t)
+  (rem_hd: hp_addr) (rem_obj: obj_addr)
+  : Lemma
+      (requires MH.well_formed_major_heap mh /\
+                idx < Seq.length mh /\
+                MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+                MH.word_in_chunk (Seq.index mh idx) rem_hd /\
+                MH.word_in_chunk (Seq.index mh idx) rem_obj)
+       (ensures
+        (let c = Seq.index mh idx in
+         let hd = hd_address obj in
+         let alloc_hdr =
+           Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+         let c1 = MH.write_word_in_chunk c hd alloc_hdr in
+         let mh1 = major_write_word_or_same mh hd alloc_hdr in
+         let rem_hdr =
+           Alloc.make_header rem_wz_u Alloc.blue_bits 0UL in
+         let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+         let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
+         let c3 = MH.write_word_in_chunk c2 rem_obj next_fp in
+         let mh3 = major_write_word_or_same mh2 rem_obj next_fp in
+         mh1 == Seq.upd mh idx c1 /\
+         mh2 == Seq.upd mh1 idx c2 /\
+         mh3 == Seq.upd mh2 idx c3 /\
+         Seq.length mh1 == Seq.length mh /\
+         Seq.length mh2 == Seq.length mh /\
+         Seq.length mh3 == Seq.length mh /\
+         idx < Seq.length mh3 /\
+         Seq.index mh1 idx == c1 /\
+         Seq.index mh2 idx == c2 /\
+         Seq.index mh3 idx == c3))
+  =
+  let c = Seq.index mh idx in
+  let hd = hd_address obj in
+  let alloc_hdr =
+    Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
+  well_formed_no_prior_word_in_selected_chunk mh idx hd;
+  well_formed_no_prior_word_in_selected_chunk mh idx rem_hd;
+  well_formed_no_prior_word_in_selected_chunk mh idx rem_obj;
+  MH.write_word_in_major_at_index mh hd alloc_hdr idx;
+  let c1 = MH.write_word_in_chunk c hd alloc_hdr in
+  let mh1 = major_write_word_or_same mh hd alloc_hdr in
+  assert (mh1 == Seq.upd mh idx c1);
+  indexed_chunk_write_preserves_word_no_prior mh idx idx hd rem_hd alloc_hdr;
+  indexed_chunk_write_preserves_word_no_prior mh idx idx hd rem_obj alloc_hdr;
+  let rem_hdr =
+    Alloc.make_header rem_wz_u Alloc.blue_bits 0UL in
+  let c2 = MH.write_word_in_chunk c1 rem_hd rem_hdr in
+  assert (Seq.index mh1 idx == c1);
+  MH.write_word_in_major_at_index mh1 rem_hd rem_hdr idx;
+  let mh2 = major_write_word_or_same mh1 rem_hd rem_hdr in
+  assert (mh2 == Seq.upd mh1 idx c2);
+  indexed_chunk_write_preserves_word_no_prior mh1 idx idx rem_hd rem_obj rem_hdr;
+  let c3 = MH.write_word_in_chunk c2 rem_obj next_fp in
+  assert (Seq.index mh2 idx == c2);
+  MH.write_word_in_major_at_index mh2 rem_obj next_fp idx;
+  let mh3 = major_write_word_or_same mh2 rem_obj next_fp in
+  assert (mh3 == Seq.upd mh2 idx c3)
+#pop-options
+
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_head_split_preserves_head_wosize
   (mh: MH.major_heap) (fp: U64.t)
   (requested_wz fuel remaining: nat)
