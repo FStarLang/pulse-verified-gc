@@ -764,6 +764,37 @@ val combined_reachable_ind_with_reach
       (forall u w. combined_reachable g roots u /\ p u /\ mem_ce (u, w) g ==> p w))
     (ensures p v)
 
+/// Reachability transfers across graph views with identical vertex and edge
+/// sequences. This is the generic bridge used by chunked old-view expansion
+/// theorems, where the full expanded graph has an extra fresh vertex but the
+/// old-object view is graph-equal to the pre-expansion graph.
+val combined_reachable_preserved_by_graph_equality
+  : g1:combined_graph -> g2:combined_graph ->
+    roots:seq combined_vertex -> v:combined_vertex ->
+    Lemma
+      (requires combined_reachable g1 roots v /\
+                g1.cg_vertices == g2.cg_vertices /\
+                g1.cg_edges == g2.cg_edges)
+      (ensures combined_reachable g2 roots v)
+
+val chunked_old_view_reachable_preserved_by_expansion
+  : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t -> roots:seq combined_vertex -> v:combined_vertex ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_minor_expansion_safe
+                  ms fresh (minor_objects ms) 0 /\
+                chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0 /\
+                combined_reachable
+                  (build_chunked_combined_graph ms mh) roots v)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        combined_reachable
+          (build_chunked_combined_graph_from_major_objects
+            ms mh' (MH.major_objects mh))
+          roots v))
+
 /// ---------------------------------------------------------------------------
 /// Root Classification
 /// ---------------------------------------------------------------------------

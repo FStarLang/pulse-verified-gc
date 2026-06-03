@@ -1948,6 +1948,71 @@ let combined_reachable_ind_with_reach
     in
     aux d
 
+#push-options "--z3rlimit 5"
+let combined_reachable_preserved_by_graph_equality
+  (g1 g2: combined_graph) (roots: seq combined_vertex) (v: combined_vertex)
+  : Lemma
+      (requires combined_reachable g1 roots v /\
+                g1.cg_vertices == g2.cg_vertices /\
+                g1.cg_edges == g2.cg_edges)
+      (ensures combined_reachable g2 roots v)
+  =
+  let open FStar.IndefiniteDescription in
+  let d = indefinite_description_ghost (combined_reach g1 roots v) (fun _ -> True) in
+  let rec aux (#v: combined_vertex) (d: combined_reach g1 roots v)
+    : Lemma
+        (requires g1.cg_vertices == g2.cg_vertices /\
+                  g1.cg_edges == g2.cg_edges)
+        (ensures combined_reachable g2 roots v)
+        (decreases d) =
+    match d with
+    | CR_root rv ->
+      assert (Seq.mem rv roots);
+      assert (mem_cv rv g1);
+      assert (mem_cv rv g2);
+      combined_reachable_root g2 roots rv
+    | CR_step u w du _ ->
+      aux du;
+      assert (mem_ce (u, w) g1);
+      assert (mem_ce (u, w) g2);
+      combined_reachable_step g2 roots u w
+  in
+  aux d
+#pop-options
+
+#push-options "--z3rlimit 5"
+let chunked_old_view_reachable_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (roots: seq combined_vertex) (v: combined_vertex)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                chunked_all_minor_expansion_safe
+                  ms fresh (minor_objects ms) 0 /\
+                chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0 /\
+                combined_reachable
+                  (build_chunked_combined_graph ms mh) roots v)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        combined_reachable
+          (build_chunked_combined_graph_from_major_objects
+            ms mh' (MH.major_objects mh))
+          roots v))
+  =
+  let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  let g = build_chunked_combined_graph ms mh in
+  let g' =
+    build_chunked_combined_graph_from_major_objects
+      ms mh' (MH.major_objects mh) in
+  chunked_build_combined_graph_old_view_preserved_by_expansion
+    ms mh fresh fp;
+  assert (g'.cg_vertices == g.cg_vertices);
+  assert (g'.cg_edges == g.cg_edges);
+  assert (g.cg_vertices == g'.cg_vertices);
+  assert (g.cg_edges == g'.cg_edges);
+  combined_reachable_preserved_by_graph_equality g g' roots v
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Root Classification
 /// ---------------------------------------------------------------------------

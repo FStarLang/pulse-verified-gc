@@ -242,6 +242,26 @@ let spot_chunked_build_combined_graph_old_view_preserved_by_expansion
   = CG.chunked_build_combined_graph_old_view_preserved_by_expansion
       ms mh fresh fp
 
+let spot_chunked_old_view_reachable_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (roots: Seq.seq CG.combined_vertex) (v: CG.combined_vertex)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_all_minor_expansion_safe
+                  ms fresh (minor_objects ms) 0 /\
+                CG.chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0 /\
+                CG.combined_reachable
+                  (spot_build_chunked_combined_graph ms mh) roots v)
+      (ensures (
+        let mh' = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+        CG.combined_reachable
+          (spot_build_chunked_combined_graph_from_major_objects
+            ms mh' (MH.major_objects mh))
+          roots v))
+  = CG.chunked_old_view_reachable_preserved_by_expansion
+      ms mh fresh fp roots v
+
 let spot_chunked_header_of_object_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (obj: obj_addr)
   : Lemma
