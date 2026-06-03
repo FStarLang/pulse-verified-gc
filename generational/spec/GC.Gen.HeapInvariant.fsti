@@ -31,6 +31,7 @@ module Graph = GC.Spec.Graph
 module FreeListShape = GC.Gen.FreeListShape
 module MH = GC.Spec.MajorHeap
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module CG = GC.Gen.CombinedGraph
 
 /// Major-heap shape needed by both minor collection and the following major GC:
@@ -263,6 +264,27 @@ val chunked_major_alloc_shape_active_head_split
          SpecMajorAlloc.major_alloc_result_fp_in_objects r /\
          chunked_major_alloc_shape
            r.major_alloc_out r.major_fp_out fuel))
+
+val chunked_major_alloc_shape_alloc_list_head_split
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
+    requests:list nat ->
+    Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                chunked_major_alloc_shape mh fp fuel /\
+                SpecMajorAllocMultiAlloc.all_requests_positive requests /\
+                SpecMajorAlloc.major_fl_head_wosize mh fp >=
+                  SpecMajorAllocMultiAlloc.allocation_list_demand requests + 1)
+      (ensures
+        (let r =
+           SpecMajorAllocMultiAlloc.major_alloc_list_spec
+             mh fp fuel requests in
+         r.list_fp_out <> 0UL /\
+         chunked_major_alloc_shape r.list_major_out r.list_fp_out fuel /\
+         SpecMajorAlloc.major_fl_head_wosize
+           r.list_major_out r.list_fp_out >= 1 /\
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+           r.list_objs_out))
 
 val chunked_minor_major_fields_no_blue_intro
   : minor:minor_state -> mh:MH.major_heap ->
