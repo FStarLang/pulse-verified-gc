@@ -3097,6 +3097,103 @@ let head_split_remainder_not_old_in_chunk
   end
 #pop-options
 
+#push-options "--z3rlimit 20 --split_queries always --fuel 0 --ifuel 0"
+let selected_free_node_split_read_regions
+  (c: MH.heap_chunk) (obj x: obj_addr)
+  (requested_wz block_wz: nat) (rem_hd: hp_addr) (rem_obj: obj_addr)
+  : Lemma
+      (requires Seq.mem obj (MH.objects_in_chunk c) /\
+                Seq.mem x (MH.objects_in_chunk c) /\
+                MH.word_in_chunk c (hd_address obj) /\
+                MH.object_wosize_in_chunk c obj == block_wz /\
+                (x = obj \/ MH.object_wosize_in_chunk c x >= 1) /\
+                requested_wz > 0 /\
+                block_wz - requested_wz >= 2 /\
+                U64.v rem_hd ==
+                  U64.v (hd_address obj) + (1 + requested_wz) * U64.v mword /\
+                U64.v rem_obj == U64.v rem_hd + U64.v mword)
+       (ensures
+        (let hd = hd_address obj in
+         let xhd = hd_address x in
+         (xhd = hd \/
+          U64.v xhd + U64.v mword <= U64.v hd \/
+          (U64.v hd + U64.v mword <= U64.v xhd /\
+           U64.v xhd + U64.v mword <= U64.v rem_hd) \/
+          U64.v rem_obj + U64.v mword <= U64.v xhd) /\
+         (x = hd \/
+          U64.v x + U64.v mword <= U64.v hd \/
+          (U64.v hd + U64.v mword <= U64.v x /\
+           U64.v x + U64.v mword <= U64.v rem_hd) \/
+          U64.v rem_obj + U64.v mword <= U64.v x)))
+  =
+  let hd = hd_address obj in
+  let xhd = hd_address x in
+  assert (U64.v mword == 8);
+  hd_address_spec obj;
+  hd_address_spec x;
+  assert (U64.v obj == U64.v hd + U64.v mword);
+  assert (U64.v x == U64.v xhd + U64.v mword);
+  if x = obj then begin
+    assert (xhd == hd);
+    assert (U64.v hd + U64.v mword <= U64.v x);
+    assert (U64.v x == U64.v hd + U64.v mword);
+    assert (U64.v rem_hd == U64.v hd + (1 + requested_wz) * U64.v mword);
+    assert (requested_wz >= 1);
+    assert (1 + requested_wz >= 2);
+    assert (U64.v x + U64.v mword <= U64.v rem_hd)
+  end else if U64.v x < U64.v obj then begin
+    MH.objects_in_chunk_separated c x obj;
+    assert (MH.object_wosize_in_chunk c x >= 1);
+    assert (U64.v obj >
+            U64.v x + MH.object_wosize_in_chunk c x * U64.v mword);
+    assert (U64.v x + U64.v mword <=
+            U64.v x + MH.object_wosize_in_chunk c x * U64.v mword);
+    assert (U64.v x + U64.v mword < U64.v obj);
+    assert (U64.v obj == U64.v hd + U64.v mword);
+    assert (U64.v x + U64.v mword <= U64.v hd);
+    assert (U64.v xhd + U64.v mword == U64.v x);
+    assert (U64.v xhd + U64.v mword <= U64.v hd)
+  end else begin
+    assert (U64.v obj < U64.v x);
+    MH.objects_in_chunk_separated c obj x;
+    assert (U64.v x >
+            U64.v obj + MH.object_wosize_in_chunk c obj * U64.v mword);
+    assert (MH.object_wosize_in_chunk c obj == block_wz);
+    assert (U64.v x > U64.v obj + block_wz * U64.v mword);
+    assert (U64.v obj == U64.v hd + U64.v mword);
+    FStar.Math.Lemmas.paren_add_right
+      (U64.v hd) (U64.v mword) (block_wz * U64.v mword);
+    FStar.Math.Lemmas.distributivity_add_left block_wz 1 (U64.v mword);
+    assert (U64.v obj + block_wz * U64.v mword ==
+            U64.v hd + (1 + block_wz) * U64.v mword);
+    let old_end = U64.v hd + (1 + block_wz) * U64.v mword in
+    aligned_plus_word_product (U64.v hd) (1 + block_wz);
+    assert (old_end % U64.v mword == 0);
+    assert (U64.v x % U64.v mword == 0);
+    word_aligned_gt_at_least_mword (U64.v x) old_end;
+    assert (U64.v x >= old_end + U64.v mword);
+    assert (U64.v xhd + U64.v mword == U64.v x);
+    assert (U64.v xhd >= old_end);
+    assert (block_wz >= requested_wz + 2);
+    assert (1 + block_wz >= requested_wz + 3);
+    FStar.Math.Lemmas.lemma_mult_le_right
+      (U64.v mword) (requested_wz + 3) (1 + block_wz);
+    assert ((requested_wz + 3) * U64.v mword <=
+            (1 + block_wz) * U64.v mword);
+    FStar.Math.Lemmas.distributivity_add_left (1 + requested_wz) 1 (U64.v mword);
+    assert ((1 + requested_wz) * U64.v mword + U64.v mword ==
+            (requested_wz + 2) * U64.v mword);
+    FStar.Math.Lemmas.paren_add_right
+      (U64.v hd) ((1 + requested_wz) * U64.v mword) (U64.v mword);
+    assert (U64.v rem_obj == U64.v hd + (requested_wz + 2) * U64.v mword);
+    assert (U64.v rem_obj + U64.v mword ==
+            U64.v hd + (requested_wz + 3) * U64.v mword);
+    assert (U64.v rem_obj + U64.v mword <= old_end);
+    assert (U64.v rem_obj + U64.v mword <= U64.v xhd);
+    assert (U64.v rem_obj + U64.v mword <= U64.v x)
+  end
+#pop-options
+
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_head_split_preserves_head_wosize
   (mh: MH.major_heap) (fp: U64.t)
