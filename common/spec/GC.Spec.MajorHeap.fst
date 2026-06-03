@@ -1313,6 +1313,56 @@ let rec major_object_header_disjoint_from_chunk
       end
     end
 
+#push-options "--z3rlimit 10 --split_queries always"
+let rec major_objects_member_in_lookup_chunk
+  (mh: major_heap) (i: nat) (x: obj_addr)
+  : Lemma (requires well_formed_major_heap mh /\
+                    i < Seq.length mh /\
+                    chunk_contains_addr (Seq.index mh i) (hd_address x) /\
+                    Seq.mem x (major_objects mh))
+          (ensures Seq.mem x (objects_in_chunk (Seq.index mh i)))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then
+      assert False
+    else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (major_objects mh == Seq.append (objects_in_chunk hd) (major_objects tl));
+      SeqProps.lemma_mem_append (objects_in_chunk hd) (major_objects tl);
+      if i = 0 then begin
+        assert (Seq.index mh i == hd);
+        if Seq.mem x (objects_in_chunk hd) then
+          ()
+        else begin
+          assert (Seq.mem x (major_objects tl));
+          assert (chunk_disjoint_from_all hd tl);
+          major_object_header_disjoint_from_chunk tl hd x;
+          assert False
+        end
+      end else begin
+        assert (i > 0);
+        assert (i >= 1);
+        assert (i - 1 >= 0);
+        assert (i - 1 < Seq.length tl);
+        let im1 : n:nat{n < Seq.length tl} = i - 1 in
+        assert (Seq.index mh i == Seq.index tl im1);
+        if Seq.mem x (objects_in_chunk hd) then begin
+          objects_in_chunk_member_header_fits hd x;
+          assert (object_header_size_fits_in_chunk hd x);
+          assert (word_in_chunk hd (hd_address x));
+          assert (chunk_contains_addr hd (hd_address x));
+          assert (chunks_disjoint hd (Seq.index tl im1));
+          chunks_disjoint_no_shared_addr hd (Seq.index tl im1) (hd_address x);
+          assert False
+        end else begin
+          assert (Seq.mem x (major_objects tl));
+          assert (well_formed_major_heap tl);
+          major_objects_member_in_lookup_chunk tl im1 x
+        end
+      end
+    end
+#pop-options
+
 let fresh_chunk_object_not_old (mh: major_heap) (c: heap_chunk) (x: obj_addr)
   : Lemma (requires chunk_disjoint_from_all c mh /\ Seq.mem x (objects_in_chunk c))
           (ensures ~(Seq.mem x (major_objects mh)))
