@@ -2884,9 +2884,12 @@ let rec objects_in_chunk_from_head_split_preserves_member
                     (U64.v (Obj.getWosize (MH.read_word_in_chunk c3 start)) + 1) *
                       U64.v mword == next_start_nat);
             assert (next_start_nat < MH.chunk_end c3);
-            assert (MH.objects_in_chunk_from c3 start ==
-                    Seq.cons first (MH.objects_in_chunk_from c3 next_start));
-            GC.Spec.Fields.mem_cons_lemma x first (MH.objects_in_chunk_from c3 next_start)
+            assert (next_start_nat < pow2 64);
+            assert (U64.v start + U64.v mword < heap_size);
+            assert (U64.v start >= MH.chunk_start c3);
+            assert (U64.v start + U64.v mword < MH.chunk_end c3);
+            MH.objects_in_chunk_from_head_mem c3 start;
+            assert (Seq.mem first (MH.objects_in_chunk_from c3 start))
           end
         end else begin
           assert (Seq.mem obj tail);
@@ -2919,9 +2922,12 @@ let rec objects_in_chunk_from_head_split_preserves_member
                     (U64.v (Obj.getWosize (MH.read_word_in_chunk c3 start)) + 1) *
                       U64.v mword == next_start_nat);
             assert (next_start_nat < MH.chunk_end c3);
-            assert (MH.objects_in_chunk_from c3 start ==
-                    Seq.cons first (MH.objects_in_chunk_from c3 next_start));
-            GC.Spec.Fields.mem_cons_lemma x first (MH.objects_in_chunk_from c3 next_start)
+            assert (next_start_nat < pow2 64);
+            assert (U64.v start + U64.v mword < heap_size);
+            assert (U64.v start >= MH.chunk_start c3);
+            assert (U64.v start + U64.v mword < MH.chunk_end c3);
+            MH.objects_in_chunk_from_tail_mem c3 start next_start x;
+            assert (Seq.mem x (MH.objects_in_chunk_from c3 start))
           end
         end
       end
@@ -3170,7 +3176,7 @@ let selected_free_node_split_read_regions
     aligned_plus_word_product (U64.v hd) (1 + block_wz);
     assert (old_end % U64.v mword == 0);
     assert (U64.v x % U64.v mword == 0);
-    word_aligned_gt_at_least_mword (U64.v x) old_end;
+    MH.word_aligned_gt_at_least_mword (U64.v x) old_end;
     assert (U64.v x >= old_end + U64.v mword);
     assert (U64.v xhd + U64.v mword == U64.v x);
     assert (U64.v xhd >= old_end);
@@ -3197,14 +3203,16 @@ let selected_free_node_split_read_regions
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let head_split_materialize_writes
   (mh: MH.major_heap) (idx: nat) (obj: obj_addr)
-  (requested_wz: nat) (next_fp: U64.t) (rem_wz_u: U64.t)
+  (requested_wz: nat{requested_wz < pow2 54 /\ FStar.UInt.size requested_wz 64})
+  (next_fp: U64.t) (rem_wz_u: U64.t)
   (rem_hd: hp_addr) (rem_obj: obj_addr)
   : Lemma
       (requires MH.well_formed_major_heap mh /\
                 idx < Seq.length mh /\
                 MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
                 MH.word_in_chunk (Seq.index mh idx) rem_hd /\
-                MH.word_in_chunk (Seq.index mh idx) rem_obj)
+                MH.word_in_chunk (Seq.index mh idx) rem_obj /\
+                U64.v rem_wz_u < pow2 54)
        (ensures
         (let c = Seq.index mh idx in
          let hd = hd_address obj in
@@ -3231,6 +3239,8 @@ let head_split_materialize_writes
   =
   let c = Seq.index mh idx in
   let hd = hd_address obj in
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  assert (requested_wz < pow2 64);
   let alloc_hdr =
     Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
   well_formed_no_prior_word_in_selected_chunk mh idx hd;
