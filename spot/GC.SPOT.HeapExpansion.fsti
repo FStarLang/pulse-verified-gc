@@ -90,6 +90,32 @@ val spot_chunked_minor_major_fields_no_blue_ensure_capacity
          (SpecMajorAlloc.ensure_major_capacity_spec
            mh fp fuel needed fresh).capacity_major_out)
 
+val spot_chunked_major_minor_fields_no_infix_targets_preserved_by_expansion
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    fresh:MH.heap_chunk -> fp:U64.t ->
+    Lemma
+      (requires GenInv.chunked_major_minor_fields_no_infix_targets ms mh /\
+               MH.chunk_disjoint_from_all fresh mh /\
+               CG.chunked_all_major_object_expansion_safe
+                 mh fresh (MH.major_objects mh) 0)
+      (ensures
+        GenInv.chunked_major_minor_fields_no_infix_targets ms
+         (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+
+val spot_chunked_major_minor_fields_no_infix_targets_ensure_capacity
+  : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap ->
+    fp:obj_addr -> fuel:nat -> needed:nat -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires GenInv.chunked_major_minor_fields_no_infix_targets ms mh /\
+               (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                MH.chunk_disjoint_from_all fresh mh /\
+                CG.chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0))
+      (ensures
+        GenInv.chunked_major_minor_fields_no_infix_targets ms
+         (SpecMajorAlloc.ensure_major_capacity_spec
+           mh fp fuel needed fresh).capacity_major_out)
+
 val spot_chunked_classify_minor_field
   : ms:GC.Gen.MinorHeap.minor_state -> mh:MH.major_heap -> v:U64.t ->
     GTot (option CG.combined_vertex)

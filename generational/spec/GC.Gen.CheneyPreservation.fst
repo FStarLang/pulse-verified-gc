@@ -251,6 +251,8 @@ private let cheney_forward_one_preserves_no_black
       cheney_forward_normal_noop_wz0 minor cs parent
     else begin
       let wz = minor_wosize minor parent in
+      assert (wz <> 0);
+      assert (wz > 0);
       let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs parent
@@ -268,14 +270,18 @@ private let cheney_forward_one_preserves_no_black
       cheney_forward_normal_noop_wz0 minor cs addr
     else begin
       let wz = minor_wosize minor addr in
+      assert (wz <> 0);
+      assert (wz > 0);
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
       if res.new_addr = 0UL then begin
+        assert (minor_wosize minor addr == wz);
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
                   (minor_wosize minor addr)).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs addr
       end
       else begin
+        assert (minor_wosize minor addr == wz);
         assert (minor_wosize minor addr > 0);
         assert ((promote_object minor cs.cs_major addr cs.cs_fp
                   (minor_wosize minor addr)).new_addr <> 0UL);
