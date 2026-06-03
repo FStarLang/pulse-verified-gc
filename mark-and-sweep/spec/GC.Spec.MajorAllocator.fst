@@ -1199,6 +1199,11 @@ type major_alloc_result = {
   major_obj_out: U64.t;
 }
 
+let major_alloc_result_fp_in_objects (r: major_alloc_result) : Tot prop =
+  exists (new_fp: obj_addr).
+    new_fp == r.major_fp_out /\
+    Seq.mem new_fp (MH.major_objects r.major_alloc_out)
+
 let major_write_word_or_same (mh: MH.major_heap) (addr: hp_addr) (value: U64.t)
   : GTot MH.major_heap =
   match MH.write_word_in_major mh addr value with
@@ -2255,7 +2260,7 @@ let object_member_header_at_or_after_start (c: MH.heap_chunk)
     assert (U64.v (hd_address obj) == U64.v obj - U64.v mword)
 #pop-options
 
-#push-options "--z3rlimit 10 --split_queries always --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 20 --split_queries always --fuel 3 --ifuel 1"
 let rec objects_in_chunk_from_head_split_preserves_object
   (c: MH.heap_chunk) (start: hp_addr) (obj: obj_addr)
   (requested_wz block_wz: nat) (next_fp: U64.t)
@@ -2411,6 +2416,7 @@ let major_alloc_head_split_preserves_head_wosize
         (let r = major_alloc_spec_with_fuel mh fp requested_wz fuel in
          r.major_obj_out == fp /\
          r.major_fp_out <> 0UL /\
+         major_alloc_result_fp_in_objects r /\
          major_fl_head_wosize r.major_alloc_out r.major_fp_out >= remaining))
   =
   major_fl_above_zero_current mh fp fuel;
@@ -2614,6 +2620,12 @@ let major_alloc_head_split_preserves_head_wosize
         (U64.uint_to_t rem_wz) Alloc.blue_bits 0UL;
       assert (Obj.getWosize rem_hdr == U64.uint_to_t rem_wz);
       assert (U64.v (Obj.getWosize rem_hdr) == rem_wz);
+      FStar.Classical.exists_intro
+        (fun (new_fp: obj_addr) ->
+          new_fp == r.major_fp_out /\
+          Seq.mem new_fp (MH.major_objects r.major_alloc_out))
+        rem_obj;
+      assert (major_alloc_result_fp_in_objects r);
       assert (diff >= remaining + 1);
       assert (diff - 1 >= remaining);
       assert (rem_wz == diff - 1);

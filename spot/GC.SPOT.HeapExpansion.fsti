@@ -177,6 +177,7 @@ val spot_major_alloc_head_split_preserves_head_wosize
              mh fp requested_wz fuel in
          r.major_obj_out == fp /\
          r.major_fp_out <> 0UL /\
+         SpecMajorAlloc.major_alloc_result_fp_in_objects r /\
          SpecMajorAlloc.major_fl_head_wosize
            r.major_alloc_out r.major_fp_out >= remaining))
 
