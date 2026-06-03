@@ -2416,6 +2416,7 @@ let major_alloc_head_split_preserves_head_wosize
         (let r = major_alloc_spec_with_fuel mh fp requested_wz fuel in
          r.major_obj_out == fp /\
          r.major_fp_out <> 0UL /\
+         MH.well_formed_major_heap r.major_alloc_out /\
          major_alloc_result_fp_in_objects r /\
          major_fl_head_wosize r.major_alloc_out r.major_fp_out >= remaining))
   =
@@ -2484,6 +2485,8 @@ let major_alloc_head_split_preserves_head_wosize
       let c1 = MH.write_word_in_chunk c hd alloc_hdr in
       MH.write_word_in_major_at_lookup_index mh hd alloc_hdr idx;
       assert (mh1 == Seq.upd mh idx c1);
+      MH.write_word_at_index_preserves_wf mh hd alloc_hdr idx;
+      assert (MH.well_formed_major_heap mh1);
       indexed_chunk_write_preserves_word_no_prior
         mh idx idx hd rem_hd alloc_hdr;
       indexed_chunk_write_preserves_word_no_prior
@@ -2500,6 +2503,8 @@ let major_alloc_head_split_preserves_head_wosize
       assert (Seq.index mh1 idx == c1);
       MH.write_word_in_major_at_index mh1 rem_hd rem_hdr idx;
       assert (mh2 == Seq.upd mh1 idx c2);
+      MH.write_word_at_index_preserves_wf mh1 rem_hd rem_hdr idx;
+      assert (MH.well_formed_major_heap mh2);
       indexed_chunk_write_preserves_word_no_prior
         mh1 idx idx rem_hd rem_hd rem_hdr;
       indexed_chunk_write_preserves_word_no_prior
@@ -2511,6 +2516,8 @@ let major_alloc_head_split_preserves_head_wosize
       assert (Seq.index mh2 idx == c2);
       MH.write_word_in_major_at_index mh2 rem_obj next_fp idx;
       assert (mh3 == Seq.upd mh2 idx c3);
+      MH.write_word_at_index_preserves_wf mh2 rem_obj next_fp idx;
+      assert (MH.well_formed_major_heap mh3);
       indexed_chunk_write_preserves_word_no_prior
         mh2 idx idx rem_obj rem_hd next_fp;
       indexed_chunk_write_preserves_contains_no_prior
