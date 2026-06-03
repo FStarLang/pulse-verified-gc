@@ -152,6 +152,15 @@ let major_stack_shape (major: heap) (st: seq obj_addr) (cap: nat) : prop =
    Graph.subset_vertices roots' graph.vertices)
 
 [@@"opaque_to_smt"]
+let chunked_collection_heap_shape
+  (minor: minor_state) (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Tot prop =
+  chunked_major_alloc_shape mh fp fuel /\
+  minor_heap_shape minor /\
+  chunked_minor_major_fields_no_blue minor mh /\
+  chunked_major_minor_fields_no_infix_targets minor mh
+
+[@@"opaque_to_smt"]
 let collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop =
   major_heap_shape major fp /\
   minor_heap_shape minor /\
@@ -576,6 +585,85 @@ let chunked_major_minor_fields_no_infix_targets_ensure_capacity
   else
     chunked_major_minor_fields_no_infix_targets_preserved_by_expansion
       minor mh fresh fp
+
+let chunked_collection_heap_shape_intro
+  (minor: minor_state) (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires chunked_major_alloc_shape mh fp fuel /\
+                minor_heap_shape minor /\
+                chunked_minor_major_fields_no_blue minor mh /\
+                chunked_major_minor_fields_no_infix_targets minor mh)
+      (ensures chunked_collection_heap_shape minor mh fp fuel)
+  =
+  reveal_opaque (`%chunked_collection_heap_shape)
+    (chunked_collection_heap_shape minor mh fp fuel)
+
+let chunked_collection_heap_shape_elim
+  (minor: minor_state) (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires chunked_collection_heap_shape minor mh fp fuel)
+      (ensures chunked_major_alloc_shape mh fp fuel /\
+               minor_heap_shape minor /\
+               chunked_minor_major_fields_no_blue minor mh /\
+               chunked_major_minor_fields_no_infix_targets minor mh)
+  =
+  reveal_opaque (`%chunked_collection_heap_shape)
+    (chunked_collection_heap_shape minor mh fp fuel)
+
+let chunked_collection_heap_shape_preserved_by_expansion
+  (minor: minor_state) (mh: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: obj_addr) (fuel: nat)
+  : Lemma
+      (requires chunked_collection_heap_shape minor mh fp fuel /\
+                MH.chunk_disjoint_from_all fresh mh /\
+                fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                U64.v fresh.base >= U64.v zero_addr /\
+                CG.chunked_all_major_object_expansion_safe
+                  mh fresh (MH.major_objects mh) 0)
+      (ensures (
+        let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+        chunked_collection_heap_shape minor r.major_out r.fp_out (fuel + 1)))
+  =
+  chunked_collection_heap_shape_elim minor mh fp fuel;
+  chunked_major_alloc_shape_preserved_by_expansion mh fresh fp fuel;
+  chunked_minor_major_fields_no_blue_preserved_by_expansion
+    minor mh fresh fp;
+  chunked_major_minor_fields_no_infix_targets_preserved_by_expansion
+    minor mh fresh fp;
+  let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+  chunked_collection_heap_shape_intro minor r.major_out r.fp_out (fuel + 1)
+
+let chunked_collection_heap_shape_ensure_capacity
+  (minor: minor_state) (mh: MH.major_heap)
+  (fp: obj_addr) (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires chunked_collection_heap_shape minor mh fp fuel /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh +
+                   SpecMajorAlloc.major_fl_capacity mh fp fuel >= needed /\
+                 CG.chunked_all_major_object_expansion_safe
+                   mh fresh (MH.major_objects mh) 0))
+      (ensures (
+        let r =
+          SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh in
+        chunked_collection_heap_shape
+          minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_capacity
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
+  =
+  chunked_collection_heap_shape_elim minor mh fp fuel;
+  chunked_major_alloc_shape_ensure_capacity mh fp fuel needed fresh;
+  chunked_minor_major_fields_no_blue_ensure_capacity
+    minor mh fp fuel needed fresh;
+  chunked_major_minor_fields_no_infix_targets_ensure_capacity
+    minor mh fp fuel needed fresh;
+  let r = SpecMajorAlloc.ensure_major_capacity_spec mh fp fuel needed fresh in
+  chunked_collection_heap_shape_intro
+    minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out
 
 let minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)

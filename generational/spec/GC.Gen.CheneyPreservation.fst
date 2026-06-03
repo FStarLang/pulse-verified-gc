@@ -225,7 +225,7 @@ private let promote_object_preserves_no_black
 /// cheney_forward_one preserves no_black_objects
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
 
 private let cheney_forward_one_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
@@ -251,8 +251,6 @@ private let cheney_forward_one_preserves_no_black
       cheney_forward_normal_noop_wz0 minor cs parent
     else begin
       let wz = minor_wosize minor parent in
-      assert (wz <> 0);
-      assert (wz > 0);
       let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
       if res.new_addr = 0UL then
         cheney_forward_normal_noop_oom minor cs parent
@@ -297,7 +295,7 @@ private let cheney_forward_one_preserves_no_black
 /// cheney_forward_fields preserves no_black_objects (recursive)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
 
 private let rec cheney_forward_fields_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
@@ -711,7 +709,7 @@ private let promote_object_preserves_gray_black_objects_on_stack
   end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let cheney_forward_one_preserves_gray_black_objects_on_stack
   (minor: minor_state) (cs: cheney_state) (addr: U64.t) (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
@@ -735,10 +733,21 @@ private let cheney_forward_one_preserves_gray_black_objects_on_stack
       cheney_forward_normal_noop_wz0 minor cs parent
     else begin
       let wz = minor_wosize minor parent in
+      assert (wz <> 0);
+      assert (wz > 0);
       let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
-      if res.new_addr = 0UL then
+      if res.new_addr = 0UL then begin
+        assert (minor_wosize minor parent == wz);
+        assert (minor_wosize minor parent > 0);
+        assert ((promote_object minor cs.cs_major parent cs.cs_fp
+                  (minor_wosize minor parent)).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs parent
+      end
       else begin
+        assert (minor_wosize minor parent == wz);
+        assert (minor_wosize minor parent > 0);
+        assert ((promote_object minor cs.cs_major parent cs.cs_fp
+                  (minor_wosize minor parent)).new_addr <> 0UL);
         cheney_forward_normal_success minor cs parent;
         promote_object_preserves_gray_black_objects_on_stack minor cs.cs_major parent cs.cs_fp wz st
       end
@@ -752,10 +761,21 @@ private let cheney_forward_one_preserves_gray_black_objects_on_stack
       cheney_forward_normal_noop_wz0 minor cs addr
     else begin
       let wz = minor_wosize minor addr in
+      assert (wz <> 0);
+      assert (wz > 0);
       let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-      if res.new_addr = 0UL then
+      if res.new_addr = 0UL then begin
+        assert (minor_wosize minor addr == wz);
+        assert (minor_wosize minor addr > 0);
+        assert ((promote_object minor cs.cs_major addr cs.cs_fp
+                  (minor_wosize minor addr)).new_addr = 0UL);
         cheney_forward_normal_noop_oom minor cs addr
+      end
       else begin
+        assert (minor_wosize minor addr == wz);
+        assert (minor_wosize minor addr > 0);
+        assert ((promote_object minor cs.cs_major addr cs.cs_fp
+                  (minor_wosize minor addr)).new_addr <> 0UL);
         cheney_forward_normal_success minor cs addr;
         promote_object_preserves_gray_black_objects_on_stack minor cs.cs_major addr cs.cs_fp wz st
       end
@@ -935,7 +955,7 @@ private let chain_objects_blue_implies_allocated_avoid_chain
 
 #restart-solver
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
 private let cheney_forward_one_preserves_no_scan_invariant
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
