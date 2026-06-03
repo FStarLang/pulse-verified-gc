@@ -219,7 +219,7 @@ let promote_minor_object_head_no_oom_single_chunk
   promote_object_head_no_oom_single_chunk minor major obj fp wosize
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let alloc_spec_head_split_alloc_wosize_single_chunk
   (major: heap) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma
@@ -336,7 +336,7 @@ let alloc_spec_head_split_alloc_wosize_single_chunk
       wosize_of_object_spec dst_obj r.heap_out
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let promote_object_head_split_padding_noop_single_chunk
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
