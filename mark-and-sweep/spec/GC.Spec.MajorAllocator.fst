@@ -558,6 +558,64 @@ let major_fl_blocks_fit_next (mh: MH.major_heap) (fp: obj_addr)
           (ensures major_fl_blocks_fit mh next (fuel - 1))
   = ()
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let major_fl_above_zero_step (mh: MH.major_heap) (fp: obj_addr)
+                            (fuel: nat) (next: U64.t)
+  : Lemma (requires fuel > 0 /\
+                   U64.v fp >= U64.v zero_addr + U64.v mword /\
+                   U64.v fp < heap_size /\
+                   U64.v fp % U64.v mword == 0 /\
+                   MH.read_word_in_major mh fp == Some next /\
+                   major_fl_above_zero mh next (fuel - 1))
+          (ensures major_fl_above_zero mh fp fuel)
+  =
+  assert (U64.v mword == 8);
+  assert (U64.v mword <> 0);
+  assert (fuel - 1 >= 0);
+  assert (fp <> 0UL);
+  assert (~ (U64.v fp < U64.v zero_addr + U64.v mword));
+  assert (~ (U64.v fp >= heap_size));
+  assert (~ (U64.v fp % U64.v mword <> 0))
+
+let major_fl_blocks_fit_step (mh: MH.major_heap) (fp: obj_addr)
+                            (fuel: nat) (hdr next: U64.t)
+  : Lemma (requires fuel > 0 /\
+                   U64.v fp >= U64.v mword /\
+                   U64.v fp < heap_size /\
+                   U64.v fp % U64.v mword == 0 /\
+                   (let base = hd_address fp in
+                    let idx = MH.lookup_chunk_index_value mh base in
+                    MH.lookup_chunk_index mh base == Some idx /\
+                    idx < Seq.length mh /\
+                    MH.word_in_chunk (Seq.index mh idx) base /\
+                    MH.read_word_in_major mh base == Some hdr /\
+                    U64.v base +
+                      (1 + U64.v (Obj.getWosize hdr)) * U64.v mword <=
+                      MH.chunk_end (Seq.index mh idx)) /\
+                   MH.read_word_in_major mh fp == Some next /\
+                   major_fl_blocks_fit mh next (fuel - 1))
+          (ensures major_fl_blocks_fit mh fp fuel)
+  =
+  assert (fuel - 1 >= 0)
+
+let major_fl_valid_step_from_mem (mh: MH.major_heap) (fp: obj_addr)
+                                (fuel: nat) (hdr next: U64.t)
+  : Lemma (requires fuel > 0 /\
+                   U64.v fp >= U64.v mword /\
+                   U64.v fp < heap_size /\
+                   U64.v fp % U64.v mword == 0 /\
+                   Seq.mem fp (MH.major_objects mh) /\
+                   MH.read_word_in_major mh (hd_address fp) == Some hdr /\
+                   U64.v (Obj.getWosize hdr) >= 1 /\
+                   MH.read_word_in_major mh fp == Some next /\
+                   next <> fp /\
+                   major_fl_valid mh next (fuel - 1))
+          (ensures major_fl_valid mh fp fuel)
+  =
+  MH.major_object_is_pointer mh fp;
+  major_fl_valid_step mh fp fuel
+#pop-options
+
 let major_fl_head_wosize (mh: MH.major_heap) (fp: U64.t) : Tot nat =
   if fp = 0UL then 0
   else if U64.v fp < U64.v zero_addr + U64.v mword ||
@@ -2278,6 +2336,7 @@ let rec objects_in_chunk_from_head_split_preserves_object
   : Lemma
       (requires Seq.mem obj (MH.objects_in_chunk_from c start) /\
                 requested_wz > 0 /\
+                requested_wz < pow2 54 /\
                 block_wz >= requested_wz /\
                 block_wz < pow2 54 /\
                 block_wz - requested_wz >= 2 /\
@@ -2302,6 +2361,8 @@ let rec objects_in_chunk_from_head_split_preserves_object
           Seq.mem obj (MH.objects_in_chunk_from c3 start)))
       (decreases MH.chunk_end c - U64.v start)
   =
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  assert (requested_wz < pow2 64);
   let hd = hd_address obj in
   let alloc_hdr =
     Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
@@ -2424,6 +2485,7 @@ let objects_in_chunk_from_head_split_preserves_tail_member
   (rem_wz_u: U64.t) (rem_hd old_next: hp_addr) (rem_obj: obj_addr)
   : Lemma
       (requires requested_wz > 0 /\
+                requested_wz < pow2 54 /\
                 block_wz >= requested_wz /\
                 block_wz < pow2 54 /\
                 block_wz - requested_wz >= 2 /\
