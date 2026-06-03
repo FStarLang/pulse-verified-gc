@@ -57,6 +57,87 @@ val spot_ensure_capacity_expands_and_preserves_old_read
          MH.well_formed_major_heap r.capacity_major_out /\
          MH.read_word_in_major r.capacity_major_out old_addr == Some old_value))
 
+val spot_expand_major_heap_head_wosize
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    Lemma
+      (requires U64.v fresh.base >= U64.v zero_addr)
+      (ensures
+        (let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+         SpecMajorAlloc.major_fl_head_wosize r.major_out r.fp_out ==
+         SpecMajorAlloc.fresh_chunk_wosize fresh))
+
+val spot_head_preflight_alloc_no_oom
+  : mh:MH.major_heap -> fp:U64.t -> requested_wz:nat -> fuel:nat ->
+    Lemma
+      (requires fuel > 0 /\
+               fp <> 0UL /\
+               SpecMajorAlloc.major_fl_valid mh fp fuel /\
+               SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+               SpecMajorAlloc.major_fl_blocks_fit mh fp fuel /\
+               SpecMajorAlloc.major_fl_head_wosize mh fp >=
+                 SpecAlloc.normalized_wosize requested_wz)
+      (ensures
+        (let r =
+          SpecMajorAlloc.major_alloc_spec_with_fuel
+            mh fp requested_wz fuel in
+         r.major_obj_out == fp /\ r.major_obj_out <> 0UL))
+
+val spot_ensure_head_capacity_preserves_shape_and_old_read
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat -> needed:nat{needed > 0} ->
+    fresh:MH.heap_chunk -> old_addr:hp_addr -> old_value:U64.t ->
+    Lemma
+      (requires MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit mh fp fuel /\
+                MH.read_word_in_major mh old_addr == Some old_value /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+                 ~(MH.chunk_contains_addr fresh old_addr)))
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             mh fp fuel needed fresh in
+         SpecMajorAlloc.major_fl_head_wosize
+           r.capacity_major_out r.capacity_fp_out >= needed /\
+         SpecMajorAlloc.major_fl_valid
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_above_zero
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_blocks_fit
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         MH.well_formed_major_heap r.capacity_major_out /\
+         MH.read_word_in_major r.capacity_major_out old_addr == Some old_value))
+
+val spot_ensure_head_capacity_alloc_no_oom
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
+    requested_wz:nat -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires fuel > 0 /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp <
+                   SpecMajorAlloc.major_alloc_demand_wosize requested_wz ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >=
+                   SpecMajorAlloc.major_alloc_demand_wosize requested_wz))
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             mh fp fuel
+             (SpecMajorAlloc.major_alloc_demand_wosize requested_wz) fresh in
+         let a =
+           SpecMajorAlloc.major_alloc_spec_with_fuel
+             r.capacity_major_out r.capacity_fp_out requested_wz
+             r.capacity_fuel_out in
+         a.major_obj_out == r.capacity_fp_out /\ a.major_obj_out <> 0UL))
+
 val spot_chunked_is_blue_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
     obj:obj_addr ->

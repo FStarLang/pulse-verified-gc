@@ -558,6 +558,88 @@ let major_fl_blocks_fit_next (mh: MH.major_heap) (fp: obj_addr)
           (ensures major_fl_blocks_fit mh next (fuel - 1))
   = ()
 
+let major_fl_head_wosize (mh: MH.major_heap) (fp: U64.t) : Tot nat =
+  if fp = 0UL then 0
+  else if U64.v fp < U64.v zero_addr + U64.v mword ||
+          U64.v fp >= heap_size ||
+          U64.v fp % U64.v mword <> 0 then 0
+  else
+    match MH.read_word_in_major mh (hd_address (fp <: obj_addr)) with
+    | Some hdr -> U64.v (Obj.getWosize hdr)
+    | None -> 0
+
+let major_fl_head_wosize_current (mh: MH.major_heap) (fp: U64.t)
+                                (fuel: nat)
+  : Lemma
+      (requires fuel > 0 /\
+               fp <> 0UL /\
+               major_fl_valid mh fp fuel /\
+               major_fl_above_zero mh fp fuel)
+      (ensures
+        (match MH.read_word_in_major mh (hd_address (fp <: obj_addr)) with
+         | Some hdr -> major_fl_head_wosize mh fp == U64.v (Obj.getWosize hdr)
+         | None -> False))
+  =
+  major_fl_above_zero_current mh fp fuel;
+  major_fl_valid_gives_wosize mh fp fuel
+
+let major_fl_head_block_fits_current (mh: MH.major_heap) (fp: U64.t)
+                                    (fuel: nat)
+  : Lemma
+      (requires fuel > 0 /\
+               fp <> 0UL /\
+               major_fl_above_zero mh fp fuel /\
+               major_fl_blocks_fit mh fp fuel)
+      (ensures
+        (let obj : obj_addr = fp in
+         let base = hd_address obj in
+         let idx = MH.lookup_chunk_index_value mh base in
+         MH.lookup_chunk_index mh base == Some idx /\
+         idx < Seq.length mh /\
+         MH.word_in_chunk (Seq.index mh idx) base /\
+         (match MH.read_word_in_major mh base with
+          | Some hdr ->
+           U64.v base + (1 + U64.v (Obj.getWosize hdr)) * U64.v mword <=
+             MH.chunk_end (Seq.index mh idx)
+          | None -> False)))
+  =
+  major_fl_above_zero_current mh fp fuel;
+  major_fl_blocks_fit_current mh fp fuel
+
+let expand_major_heap_head_wosize (mh: MH.major_heap) (c: MH.heap_chunk)
+                                  (next_fp: U64.t)
+  : Lemma
+      (requires U64.v c.base >= U64.v zero_addr)
+      (ensures
+        (let r = expand_major_heap mh c next_fp in
+         major_fl_head_wosize r.major_out r.fp_out == fresh_chunk_wosize c))
+  =
+  fresh_chunk_object_in_chunk c;
+  expand_major_heap_header_fields mh c next_fp;
+  f_address_spec c.base;
+  let r = expand_major_heap mh c next_fp in
+  let fp = r.fp_out in
+  assert (fp == fresh_chunk_object c);
+  assert (U64.v fp == U64.v c.base + U64.v mword);
+  assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+  assert (U64.v fp < heap_size);
+  assert (U64.v fp % U64.v mword == 0);
+  assert (U64.v c.base + U64.v mword < heap_size);
+  hd_f_roundtrip c.base;
+  assert (hd_address fp == c.base);
+  expand_major_heap_header mh c next_fp;
+  assert (MH.read_word_in_major r.major_out (hd_address fp) ==
+          Some (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL));
+  AllocHeader.make_header_getWosize
+    (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL;
+  assert (Obj.getWosize
+            (Alloc.make_header (fresh_chunk_wosize_u64 c) Alloc.blue_bits 0UL) ==
+          fresh_chunk_wosize_u64 c);
+  assert (U64.v (fresh_chunk_wosize_u64 c) == fresh_chunk_wosize c)
+
+let major_alloc_demand_wosize (requested_wz: nat) : n:nat{n > 0} =
+  Alloc.normalized_wosize requested_wz
+
 let rec major_fl_capacity (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot nat
   (decreases fuel)
   = if fuel = 0 then 0
@@ -1003,6 +1085,114 @@ let ensure_major_capacity_preserves_old_read
     else
       expand_major_heap_old_read mh fresh fp addr
 
+let ensure_major_head_capacity_spec (mh: MH.major_heap) (fp: U64.t)
+                                    (fuel: nat) (needed: nat{needed > 0})
+                                    (fresh: MH.heap_chunk)
+  : GTot ensure_capacity_result =
+  if major_fl_head_wosize mh fp >= needed then begin
+    assert (fp <> 0UL);
+    assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    { capacity_major_out = mh; capacity_fp_out = fp; capacity_fuel_out = fuel }
+  end
+  else
+    let er = expand_major_heap mh fresh fp in
+    { capacity_major_out = er.major_out;
+      capacity_fp_out = er.fp_out;
+      capacity_fuel_out = fuel + 1 }
+
+let ensure_major_head_capacity_has_head_wosize
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        (major_fl_head_wosize mh fp < needed ==>
+         U64.v fresh.base >= U64.v zero_addr /\
+         fresh_chunk_wosize fresh >= needed))
+      (ensures
+        (let r = ensure_major_head_capacity_spec mh fp fuel needed fresh in
+         major_fl_head_wosize r.capacity_major_out r.capacity_fp_out >= needed))
+  = if major_fl_head_wosize mh fp >= needed then ()
+    else
+      expand_major_heap_head_wosize mh fresh fp
+
+let ensure_major_head_capacity_fl_valid
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires major_fl_valid mh fp fuel /\
+                (major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> fresh_chunk_object fresh))
+      (ensures
+        (let r = ensure_major_head_capacity_spec mh fp fuel needed fresh in
+         major_fl_valid r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_head_wosize mh fp >= needed then ()
+    else
+      expand_major_heap_links_fl_valid mh fresh fp fuel
+
+let ensure_major_head_capacity_fl_above_zero
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires major_fl_valid mh fp fuel /\
+                major_fl_above_zero mh fp fuel /\
+                (major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 U64.v fresh.base >= U64.v zero_addr))
+      (ensures
+        (let r = ensure_major_head_capacity_spec mh fp fuel needed fresh in
+         major_fl_above_zero
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_head_wosize mh fp >= needed then ()
+    else
+      expand_major_heap_links_fl_above_zero mh fresh fp fuel
+
+let ensure_major_head_capacity_fl_blocks_fit
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires major_fl_blocks_fit mh fp fuel /\
+                (major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        (let r = ensure_major_head_capacity_spec mh fp fuel needed fresh in
+         major_fl_blocks_fit
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_head_wosize mh fp >= needed then ()
+    else
+      expand_major_heap_links_fl_blocks_fit mh fresh fp fuel
+
+let ensure_major_head_capacity_wf
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires MH.well_formed_major_heap mh /\
+                (major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures MH.well_formed_major_heap
+        (ensure_major_head_capacity_spec mh fp fuel needed fresh).capacity_major_out)
+  = if major_fl_head_wosize mh fp >= needed then ()
+    else
+      expand_major_heap_wf mh fresh fp
+
+let ensure_major_head_capacity_preserves_old_read
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk) (addr: hp_addr)
+  : Lemma
+      (requires
+        (major_fl_head_wosize mh fp < needed ==>
+         ~(MH.chunk_contains_addr fresh addr)))
+      (ensures MH.read_word_in_major
+                (ensure_major_head_capacity_spec
+                  mh fp fuel needed fresh).capacity_major_out
+                addr ==
+              MH.read_word_in_major mh addr)
+  = if major_fl_head_wosize mh fp >= needed then ()
+    else
+      expand_major_heap_old_read mh fresh fp addr
+
 type major_alloc_result = {
   major_alloc_out: MH.major_heap;
   major_fp_out: U64.t;
@@ -1393,6 +1583,87 @@ let major_alloc_search_found_head (mh: MH.major_heap) (head prev cur: U64.t)
                     major_alloc_search mh head prev cur wz fuel ==
                     { major_alloc_out = mh'; major_fp_out = new_fp; major_obj_out = cur }))
   = ()
+
+let major_alloc_spec_with_fuel_head_no_oom
+  (mh: MH.major_heap) (fp: U64.t) (requested_wz: nat) (fuel: nat)
+  : Lemma
+      (requires fuel > 0 /\
+                fp <> 0UL /\
+                major_fl_valid mh fp fuel /\
+                major_fl_above_zero mh fp fuel /\
+                major_fl_blocks_fit mh fp fuel /\
+                major_fl_head_wosize mh fp >= Alloc.normalized_wosize requested_wz)
+      (ensures
+        (let r = major_alloc_spec_with_fuel mh fp requested_wz fuel in
+         r.major_obj_out == fp /\ r.major_obj_out <> 0UL))
+  =
+  let wz = Alloc.normalized_wosize requested_wz in
+  major_fl_above_zero_current mh fp fuel;
+  major_fl_head_wosize_current mh fp fuel;
+  major_fl_head_block_fits_current mh fp fuel;
+  match MH.read_word_in_major mh (hd_address (fp <: obj_addr)) with
+  | None -> assert False
+  | Some hdr ->
+    assert (major_fl_head_wosize mh fp == U64.v (Obj.getWosize hdr));
+    assert (U64.v (Obj.getWosize hdr) >= wz);
+    major_alloc_search_found_head mh fp 0UL fp wz fuel hdr;
+    assert (major_alloc_spec_with_fuel mh fp requested_wz fuel ==
+            major_alloc_search mh fp 0UL fp wz fuel)
+
+let ensure_major_head_capacity_alloc_no_oom
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (requested_wz: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires fuel > 0 /\
+                major_fl_valid mh fp fuel /\
+                major_fl_above_zero mh fp fuel /\
+                major_fl_blocks_fit mh fp fuel /\
+                (major_fl_head_wosize mh fp <
+                   major_alloc_demand_wosize requested_wz ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 fresh_chunk_wosize fresh >=
+                   major_alloc_demand_wosize requested_wz))
+      (ensures
+        (let r =
+           ensure_major_head_capacity_spec
+             mh fp fuel (major_alloc_demand_wosize requested_wz) fresh in
+         let a =
+           major_alloc_spec_with_fuel
+             r.capacity_major_out r.capacity_fp_out requested_wz
+             r.capacity_fuel_out in
+         a.major_obj_out == r.capacity_fp_out /\
+         a.major_obj_out <> 0UL))
+  =
+  let needed = major_alloc_demand_wosize requested_wz in
+  ensure_major_head_capacity_has_head_wosize mh fp fuel needed fresh;
+  ensure_major_head_capacity_fl_valid mh fp fuel needed fresh;
+  ensure_major_head_capacity_fl_above_zero mh fp fuel needed fresh;
+  ensure_major_head_capacity_fl_blocks_fit mh fp fuel needed fresh;
+  let r = ensure_major_head_capacity_spec mh fp fuel needed fresh in
+  if major_fl_head_wosize mh fp >= needed then begin
+    assert (r.capacity_major_out == mh);
+    assert (r.capacity_fp_out == fp);
+    assert (r.capacity_fuel_out == fuel);
+    assert (fp <> 0UL);
+    assert (U64.v fp >= U64.v mword);
+    major_alloc_spec_with_fuel_head_no_oom
+      r.capacity_major_out r.capacity_fp_out requested_wz r.capacity_fuel_out
+  end else begin
+    let er = expand_major_heap mh fresh fp in
+    assert (r.capacity_major_out == er.major_out);
+    assert (r.capacity_fp_out == er.fp_out);
+    assert (r.capacity_fuel_out == fuel + 1);
+    fresh_chunk_object_in_chunk fresh;
+    f_address_spec fresh.base;
+    assert (U64.v r.capacity_fp_out == U64.v fresh.base + U64.v mword);
+    assert (U64.v r.capacity_fp_out >= U64.v mword);
+    assert (r.capacity_fp_out <> 0UL);
+    assert (r.capacity_fuel_out > 0);
+    major_alloc_spec_with_fuel_head_no_oom
+      r.capacity_major_out r.capacity_fp_out requested_wz r.capacity_fuel_out
+  end
 
 let major_alloc_search_found_prev (mh: MH.major_heap) (head prev cur: U64.t)
                                   (wz: nat) (fuel: nat) (hdr: U64.t)

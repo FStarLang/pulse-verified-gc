@@ -2973,6 +2973,7 @@ fn allocate_major_with_fuel_loop (heap: MajorHeap.major_heap_t)
      R.pts_to found vfound **
      MajorHeap.is_indexed_major_heap heap (Ghost.reveal mh) **
      pure (
+       SA.normalized_wosize (U64.v requested_wz) == U64.v requested_wz /\
        U64.v vfuel <= U64.v fuel /\
        vhead == fp /\
        (if vgo then
