@@ -2972,6 +2972,49 @@ let head_split_major_preserves_read_at
   end
 #pop-options
 
+#push-options "--z3rlimit 20 --split_queries always --fuel 0 --ifuel 0"
+let head_split_remainder_not_old_in_chunk
+  (c: MH.heap_chunk) (obj rem_obj: obj_addr)
+  (requested_wz block_wz: nat)
+  : Lemma
+      (requires Seq.mem obj (MH.objects_in_chunk c) /\
+                MH.word_in_chunk c (hd_address obj) /\
+                MH.object_wosize_in_chunk c obj == block_wz /\
+                requested_wz > 0 /\
+                block_wz - requested_wz >= 2 /\
+                U64.v rem_obj ==
+                  U64.v (hd_address obj) + (requested_wz + 2) * U64.v mword)
+       (ensures ~(Seq.mem rem_obj (MH.objects_in_chunk c)))
+  =
+  if Seq.mem rem_obj (MH.objects_in_chunk c) then begin
+    hd_address_spec obj;
+    assert (U64.v mword == 8);
+    assert (U64.v obj == U64.v (hd_address obj) + U64.v mword);
+    assert (requested_wz + 1 < block_wz);
+    assert (U64.v obj < U64.v rem_obj);
+    MH.objects_in_chunk_separated c obj rem_obj;
+    assert (U64.v rem_obj >
+            U64.v obj + MH.object_wosize_in_chunk c obj * U64.v mword);
+    assert (MH.object_wosize_in_chunk c obj == block_wz);
+    FStar.Math.Lemmas.distributivity_add_left
+      (requested_wz + 1) 1 (U64.v mword);
+    assert ((requested_wz + 1) * U64.v mword + U64.v mword ==
+            (requested_wz + 2) * U64.v mword);
+    FStar.Math.Lemmas.paren_add_right
+      (U64.v (hd_address obj)) (U64.v mword)
+      ((requested_wz + 1) * U64.v mword);
+    assert (U64.v rem_obj ==
+            U64.v obj + (requested_wz + 1) * U64.v mword);
+    FStar.Math.Lemmas.lemma_mult_lt_right
+      (U64.v mword) (requested_wz + 1) block_wz;
+    assert ((requested_wz + 1) * U64.v mword <
+            block_wz * U64.v mword);
+    assert (U64.v rem_obj <
+            U64.v obj + block_wz * U64.v mword);
+    assert False
+  end
+#pop-options
+
 #push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
 let major_alloc_head_split_preserves_head_wosize
   (mh: MH.major_heap) (fp: U64.t)
