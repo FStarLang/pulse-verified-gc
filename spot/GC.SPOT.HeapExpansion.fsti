@@ -14,6 +14,7 @@ module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module Promote = GC.Gen.Promote
+module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
 
@@ -547,6 +548,51 @@ val spot_promote_minor_object_head_no_oom_single_chunk
                   PromotionDemand.minor_promotion_demand minor + 1)
       (ensures
         (Promote.promote_object minor major obj fp wosize).new_addr <> 0UL)
+
+val spot_alloc_spec_head_split_alloc_wosize_single_chunk
+  : major:heap -> fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let r = SpecAlloc.alloc_spec major fp wosize in
+         r.obj_out == fp /\
+         r.fp_out <> 0UL /\
+         U64.v (wosize_of_object (fp <: obj_addr) r.heap_out) == wosize /\
+         U64.v fp + (wosize - 1) * U64.v mword + U64.v mword <= heap_size))
+
+val spot_promote_object_head_split_padding_noop_single_chunk
+  : minor:GC.Gen.MinorHeap.minor_state -> major:heap ->
+    obj:U64.t -> fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let r = SpecAlloc.alloc_spec major fp wosize in
+         let copied = WriteBody.copy_fields minor r.heap_out obj fp 0 wosize in
+         Promote.zero_promote_padding copied (fp <: obj_addr) wosize == copied))
 
 val spot_chunked_is_blue_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->

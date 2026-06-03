@@ -19,6 +19,7 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
+open GC.Gen.WriteBodyLemmas
 open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
 
@@ -163,6 +164,55 @@ val promote_minor_object_head_no_oom_single_chunk
                   PromotionDemand.minor_promotion_demand minor + 1)
       (ensures
         (promote_object minor major obj fp wosize).new_addr <> 0UL)
+
+/// A head block with at least two spare words forces dense `alloc_spec` down
+/// the split path, so the allocated object's wosize is exactly the request.
+val alloc_spec_head_split_alloc_wosize_single_chunk
+  : major:heap -> fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let r = SpecAlloc.alloc_spec major fp wosize in
+         r.obj_out == fp /\
+         r.fp_out <> 0UL /\
+         U64.v (wosize_of_object (fp <: obj_addr) r.heap_out) == wosize /\
+         U64.v fp + (wosize - 1) * U64.v mword + U64.v mword <= heap_size))
+
+/// In the guaranteed split case, promotion's padding phase is a no-op; the
+/// split remainder header at the new free-list head is therefore not clobbered.
+val promote_object_head_split_padding_noop_single_chunk
+  : minor:minor_state -> major:heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let r = SpecAlloc.alloc_spec major fp wosize in
+         let copied = copy_fields minor r.heap_out obj fp 0 wosize in
+         zero_promote_padding copied (fp <: obj_addr) wosize == copied))
 
 /// Cheney promotion preserves no_black_objects.
 ///
