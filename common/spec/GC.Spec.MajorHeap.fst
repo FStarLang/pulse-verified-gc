@@ -542,6 +542,27 @@ let read_word_disjoint_none (mh: major_heap) (c: heap_chunk)
   = assert (chunk_contains_addr c addr);
     lookup_chunk_disjoint_none mh c addr
 
+#push-options "--z3rlimit 10 --split_queries always"
+let single_chunk_byte_index_compat (g: heap)
+                                   (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
+                                                  U64.v addr + U64.v mword <= heap_size})
+                                   (k: nat{k < U64.v mword})
+  : Lemma (Seq.index (single_chunk_of_heap g).bytes
+             (chunk_offset (single_chunk_of_heap g) addr + k) ==
+           Seq.index g (U64.v addr + k))
+  =
+  let c = single_chunk_of_heap g in
+  assert (word_in_chunk c addr);
+  let off = chunk_offset c addr in
+  assert (off + U64.v zero_addr == U64.v addr);
+  assert (off + k < Seq.length c.bytes);
+  assert (U64.v addr + k < heap_size);
+  assert (Seq.index c.bytes (off + k) ==
+          Seq.index (Seq.slice g (U64.v zero_addr) heap_size) (off + k));
+  assert (Seq.index (Seq.slice g (U64.v zero_addr) heap_size) (off + k) ==
+          Seq.index g (U64.v zero_addr + (off + k)));
+  assert (U64.v zero_addr + (off + k) == U64.v addr + k)
+
 let single_chunk_read_word_in_chunk_compat (g: heap)
                                            (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
                                                           U64.v addr + U64.v mword <= heap_size})
@@ -551,6 +572,14 @@ let single_chunk_read_word_in_chunk_compat (g: heap)
     let off = chunk_offset c addr in
     assert (off + U64.v zero_addr == U64.v addr);
     read_word_spec g addr;
+    single_chunk_byte_index_compat g addr 0;
+    single_chunk_byte_index_compat g addr 1;
+    single_chunk_byte_index_compat g addr 2;
+    single_chunk_byte_index_compat g addr 3;
+    single_chunk_byte_index_compat g addr 4;
+    single_chunk_byte_index_compat g addr 5;
+    single_chunk_byte_index_compat g addr 6;
+    single_chunk_byte_index_compat g addr 7;
     assert (Seq.index c.bytes off == Seq.index g (U64.v addr));
     assert (Seq.index c.bytes (off + 1) == Seq.index g (U64.v addr + 1));
     assert (Seq.index c.bytes (off + 2) == Seq.index g (U64.v addr + 2));
@@ -559,6 +588,7 @@ let single_chunk_read_word_in_chunk_compat (g: heap)
     assert (Seq.index c.bytes (off + 5) == Seq.index g (U64.v addr + 5));
     assert (Seq.index c.bytes (off + 6) == Seq.index g (U64.v addr + 6));
     assert (Seq.index c.bytes (off + 7) == Seq.index g (U64.v addr + 7))
+#pop-options
 
 let single_chunk_read_word_compat (g: heap)
                                   (addr: hp_addr{U64.v addr >= U64.v zero_addr /\
@@ -1077,6 +1107,32 @@ let rec major_objects_disjoint_from_chunk (mh: major_heap) (c: heap_chunk) (x: o
         assert (Seq.mem x (major_objects tl));
         chunk_disjoint_from_all_tail c mh;
         major_objects_disjoint_from_chunk tl c x
+      end
+    end
+
+let rec major_object_header_disjoint_from_chunk
+  (mh: major_heap) (c: heap_chunk) (x: obj_addr)
+  : Lemma (requires chunk_disjoint_from_all c mh /\
+                    Seq.mem x (major_objects mh))
+          (ensures ~(chunk_contains_addr c (hd_address x)))
+          (decreases Seq.length mh)
+  = if Seq.length mh = 0 then assert False
+    else begin
+      let hd = Seq.head mh in
+      let tl = Seq.tail mh in
+      assert (major_objects mh == Seq.append (objects_in_chunk hd) (major_objects tl));
+      SeqProps.lemma_mem_append (objects_in_chunk hd) (major_objects tl);
+      if Seq.mem x (objects_in_chunk hd) then begin
+        objects_in_chunk_member_header_fits hd x;
+        assert (object_header_size_fits_in_chunk hd x);
+        assert (word_in_chunk hd (hd_address x));
+        assert (chunk_contains_addr hd (hd_address x));
+        chunks_disjoint_symmetric c hd;
+        chunks_disjoint_no_shared_addr hd c (hd_address x)
+      end else begin
+        assert (Seq.mem x (major_objects tl));
+        chunk_disjoint_from_all_tail c mh;
+        major_object_header_disjoint_from_chunk tl c x
       end
     end
 

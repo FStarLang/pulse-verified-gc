@@ -46,6 +46,20 @@ val major_heap_shape (major: heap) (fp: U64.t) : prop
 val chunked_major_alloc_shape
   : mh:MH.major_heap -> fp:U64.t -> fuel:nat -> Tot prop
 
+/// Read the color of an object header through the chunked-major heap, if the
+/// header word is currently in an active chunk.
+val chunked_color_of_object
+  : mh:MH.major_heap -> obj:obj_addr -> GTot (option color)
+
+val chunked_is_blue
+  : mh:MH.major_heap -> obj:obj_addr -> GTot bool
+
+/// Chunked-major counterpart of `minor_major_fields_no_blue`: any minor field
+/// that looks like a major pointer must target an active non-blue major object.
+[@@"opaque_to_smt"]
+val chunked_minor_major_fields_no_blue
+  : minor:minor_state -> mh:MH.major_heap -> Tot prop
+
 /// Cross-generation safety: any field of an allocated minor object that already
 /// looks like a major-heap pointer must target a live non-blue major object.
 /// This is what lets promotion preserve `Mark.no_pointer_to_blue`.
@@ -173,6 +187,77 @@ val chunked_major_alloc_shape_ensure_capacity
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
         SpecMajorAlloc.major_fl_capacity
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out >= needed))
+
+val chunked_minor_major_fields_no_blue_intro
+  : minor:minor_state -> mh:MH.major_heap ->
+    Lemma
+      (requires
+        (forall (obj: U64.t) (j: nat).
+          Seq.mem obj (minor_objects minor) /\
+          j < minor_wosize minor obj /\
+          is_pointer_field (minor_read_field minor obj j) ==>
+          Seq.mem ((minor_read_field minor obj j) <: obj_addr)
+                  (MH.major_objects mh) /\
+          ~(chunked_is_blue mh
+              ((minor_read_field minor obj j) <: obj_addr))))
+      (ensures chunked_minor_major_fields_no_blue minor mh)
+
+val chunked_minor_major_fields_no_blue_no_pointer_fields
+  : minor:minor_state -> mh:MH.major_heap ->
+    Lemma
+      (requires
+        (forall (obj:U64.t) (j:nat).
+          Seq.mem obj (minor_objects minor) /\
+          j < minor_wosize minor obj ==>
+          ~(is_pointer_field (minor_read_field minor obj j))))
+      (ensures chunked_minor_major_fields_no_blue minor mh)
+
+val chunked_minor_major_fields_no_blue_elim
+  : minor:minor_state -> mh:MH.major_heap ->
+    obj:U64.t -> j:nat ->
+    Lemma
+      (requires chunked_minor_major_fields_no_blue minor mh /\
+                Seq.mem obj (minor_objects minor) /\
+                j < minor_wosize minor obj /\
+                is_pointer_field (minor_read_field minor obj j))
+      (ensures
+        Seq.mem ((minor_read_field minor obj j) <: obj_addr)
+                (MH.major_objects mh) /\
+        ~(chunked_is_blue mh
+            ((minor_read_field minor obj j) <: obj_addr)))
+
+val chunked_is_blue_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    obj:obj_addr ->
+    Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                Seq.mem obj (MH.major_objects mh))
+      (ensures
+        chunked_is_blue
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        chunked_is_blue mh obj)
+
+val chunked_minor_major_fields_no_blue_preserved_by_expansion
+  : minor:minor_state -> mh:MH.major_heap ->
+    fresh:MH.heap_chunk -> fp:U64.t ->
+    Lemma
+      (requires chunked_minor_major_fields_no_blue minor mh /\
+                MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        chunked_minor_major_fields_no_blue minor
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+
+val chunked_minor_major_fields_no_blue_ensure_capacity
+  : minor:minor_state -> mh:MH.major_heap ->
+    fp:obj_addr -> fuel:nat -> needed:nat -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires chunked_minor_major_fields_no_blue minor mh /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        chunked_minor_major_fields_no_blue minor
+          (SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
 
 val minor_heap_shape_elim (minor: minor_state)
   : Lemma (requires minor_heap_shape minor)

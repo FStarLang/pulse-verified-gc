@@ -13,6 +13,7 @@ module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module CG = GC.Gen.CombinedGraph
+module GenInv = GC.Gen.HeapInvariant
 
 let spot_expand_on_oom_pre
   (mh: MH.major_heap) (fp: U64.t) (requested_wz fuel: nat)
@@ -95,6 +96,44 @@ let spot_ensure_capacity_expands_and_preserves_old_read
   SpecMajorAlloc.ensure_major_capacity_fl_above_zero mh fp fuel needed fresh;
   SpecMajorAlloc.ensure_major_capacity_wf mh fp fuel needed fresh;
   SpecMajorAlloc.ensure_major_capacity_preserves_old_read mh fp fuel needed fresh old_addr
+
+let spot_chunked_is_blue_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (obj: obj_addr)
+  : Lemma
+      (requires MH.chunk_disjoint_from_all fresh mh /\
+                Seq.mem obj (MH.major_objects mh))
+      (ensures
+        GenInv.chunked_is_blue
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        GenInv.chunked_is_blue mh obj)
+  = GenInv.chunked_is_blue_preserved_by_expansion mh fresh fp obj
+
+let spot_chunked_minor_major_fields_no_blue_preserved_by_expansion
+  (ms: minor_state) (mh: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires GenInv.chunked_minor_major_fields_no_blue ms mh /\
+                MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        GenInv.chunked_minor_major_fields_no_blue ms
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  = GenInv.chunked_minor_major_fields_no_blue_preserved_by_expansion
+      ms mh fresh fp
+
+let spot_chunked_minor_major_fields_no_blue_ensure_capacity
+  (ms: minor_state) (mh: MH.major_heap)
+  (fp: obj_addr) (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires GenInv.chunked_minor_major_fields_no_blue ms mh /\
+                (SpecMajorAlloc.major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        GenInv.chunked_minor_major_fields_no_blue ms
+          (SpecMajorAlloc.ensure_major_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+  = GenInv.chunked_minor_major_fields_no_blue_ensure_capacity
+      ms mh fp fuel needed fresh
 
 let spot_chunked_classify_minor_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
   : GTot (option CG.combined_vertex)
