@@ -1575,6 +1575,65 @@ let rec cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_ch
       minor cs' parent (idx + 1) wosize
   end
 
+let rec cheney_forward_fields_budget_ready_single_chunk
+  (minor: minor_state) (cs: cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (remaining: nat)
+  : GTot prop
+  (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then
+    remaining > 0 /\
+    SpecMajorAlloc.major_fl_head_wosize
+      (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >= remaining
+  else
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_one_budget_ready_single_chunk minor cs field_val remaining /\
+    cheney_forward_fields_budget_ready_single_chunk
+      minor cs' parent (idx + 1) wosize remaining
+
+let rec cheney_forward_fields_head_split_preserves_remaining_head_wosize_single_chunk
+  (minor: minor_state) (cs: cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_forward_fields_budget_ready_single_chunk
+                  minor cs parent idx wosize remaining)
+      (ensures
+        (let cs' = cheney_forward_fields minor cs parent idx wosize in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then
+    cheney_forward_fields_base minor cs parent idx wosize
+  else begin
+    cheney_forward_fields_step minor cs parent idx wosize;
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' = cheney_forward_one minor cs field_val in
+    assert (cheney_forward_one_budget_ready_single_chunk
+              minor cs field_val remaining);
+    assert (cheney_forward_fields_budget_ready_single_chunk
+              minor cs' parent (idx + 1) wosize remaining);
+    cheney_forward_one_head_split_preserves_remaining_head_wosize_single_chunk
+      minor cs field_val remaining;
+    cheney_forward_fields_head_split_preserves_remaining_head_wosize_single_chunk
+      minor cs' parent (idx + 1) wosize remaining
+  end
+
 let rec cheney_scan_split_ready_single_chunk
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : GTot prop
@@ -1636,6 +1695,81 @@ let rec cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
     cheney_scan_base minor cs scan fuel
   end
 
+let rec cheney_scan_budget_ready_single_chunk
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  (remaining: nat)
+  : GTot prop
+  (decreases fuel)
+  =
+  if fuel > 0 then
+    if scan >= Seq.length cs.cs_queue then
+      remaining > 0 /\
+      SpecMajorAlloc.major_fl_head_wosize
+        (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >= remaining
+    else
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' = cheney_forward_fields minor cs obj 0 wz in
+      cheney_forward_fields_budget_ready_single_chunk
+        minor cs obj 0 wz remaining /\
+      cheney_scan_budget_ready_single_chunk
+        minor cs' (scan + 1) fuel' remaining
+  else
+    remaining > 0 /\
+    SpecMajorAlloc.major_fl_head_wosize
+      (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >= remaining
+
+let rec cheney_scan_head_split_preserves_remaining_head_wosize_single_chunk
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_scan_budget_ready_single_chunk
+                  minor cs scan fuel remaining)
+      (ensures
+        (let cs' = cheney_scan minor cs scan fuel in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
+      (decreases fuel)
+  =
+  if fuel > 0 then
+    if scan >= Seq.length cs.cs_queue then
+      cheney_scan_base minor cs scan fuel
+    else begin
+      assert (scan < Seq.length cs.cs_queue);
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      cheney_scan_step minor cs scan fuel;
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' = cheney_forward_fields minor cs obj 0 wz in
+      assert (cheney_forward_fields_budget_ready_single_chunk
+                minor cs obj 0 wz remaining);
+      assert (cheney_scan_budget_ready_single_chunk
+                minor cs' (scan + 1) fuel' remaining);
+      cheney_forward_fields_head_split_preserves_remaining_head_wosize_single_chunk
+        minor cs obj 0 wz remaining;
+      cheney_scan_head_split_preserves_remaining_head_wosize_single_chunk
+        minor cs' (scan + 1) fuel' remaining
+    end
+  else begin
+    assert (fuel = 0);
+    cheney_scan_base minor cs scan fuel
+  end
+
 let cheney_promote_split_ready_single_chunk
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : GTot prop =
@@ -1691,6 +1825,74 @@ let cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
             minor cs1 0 (cheney_fuel minor));
   cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
     minor cs1 0 (cheney_fuel minor);
+  let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
+  let res = cheney_promote minor major fp roots in
+  assert (res.major_final == cs2.cs_major);
+  assert (res.fp_final == cs2.cs_fp)
+
+let cheney_promote_budget_ready_single_chunk
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (remaining: nat)
+  : GTot prop =
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_forward_roots_budget_ready_single_chunk minor cs0 roots 0 remaining /\
+  cheney_scan_budget_ready_single_chunk minor cs1 0 (cheney_fuel minor) remaining
+
+let cheney_promote_head_split_preserves_remaining_head_wosize_single_chunk
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_promote_budget_ready_single_chunk
+                  minor major fp roots remaining)
+      (ensures
+        (let res = cheney_promote minor major fp roots in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap res.major_final) res.fp_final >=
+         remaining))
+  =
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  assert (GenInv.chunked_major_alloc_shape
+            (MH.single_chunk_major_heap cs0.cs_major) cs0.cs_fp
+            SpecAlloc.alloc_search_fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            (MH.single_chunk_major_heap cs0.cs_major) cs0.cs_fp
+            SpecAlloc.alloc_search_fuel = true);
+  assert (cheney_forward_roots_budget_ready_single_chunk
+            minor cs0 roots 0 remaining);
+  cheney_forward_roots_head_split_preserves_remaining_head_wosize_single_chunk
+    minor cs0 roots 0 remaining;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  assert (GenInv.chunked_major_alloc_shape
+            (MH.single_chunk_major_heap cs1.cs_major) cs1.cs_fp
+            SpecAlloc.alloc_search_fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            (MH.single_chunk_major_heap cs1.cs_major) cs1.cs_fp
+            SpecAlloc.alloc_search_fuel = true);
+  assert (SpecMajorAlloc.major_fl_head_wosize
+            (MH.single_chunk_major_heap cs1.cs_major) cs1.cs_fp >=
+          remaining);
+  assert (cheney_scan_budget_ready_single_chunk
+            minor cs1 0 (cheney_fuel minor) remaining);
+  cheney_scan_head_split_preserves_remaining_head_wosize_single_chunk
+    minor cs1 0 (cheney_fuel minor) remaining;
   let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
   let res = cheney_promote minor major fp roots in
   assert (res.major_final == cs2.cs_major);

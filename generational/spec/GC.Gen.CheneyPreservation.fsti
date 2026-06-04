@@ -445,6 +445,36 @@ val cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_chunk
            (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
            SpecAlloc.alloc_search_fuel = true))
 
+/// Field-loop version of local budget readiness.
+val cheney_forward_fields_budget_ready_single_chunk
+  : minor:minor_state -> cs:cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> remaining:nat -> GTot prop
+
+val cheney_forward_fields_head_split_preserves_remaining_head_wosize_single_chunk
+  : minor:minor_state -> cs:cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> remaining:nat ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_forward_fields_budget_ready_single_chunk
+                  minor cs parent idx wosize remaining)
+      (ensures
+        (let cs' = cheney_forward_fields minor cs parent idx wosize in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
+
 /// Exact trace-readiness predicate for Cheney's BFS scan loop.
 val cheney_scan_split_ready_single_chunk
   : minor:minor_state -> cs:cheney_state -> scan:nat -> fuel:nat ->
@@ -469,6 +499,36 @@ val cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
          SpecMajorAlloc.major_fl_chain_terminates
            (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
            SpecAlloc.alloc_search_fuel = true))
+
+/// Scan-loop version of local budget readiness.
+val cheney_scan_budget_ready_single_chunk
+  : minor:minor_state -> cs:cheney_state -> scan:nat -> fuel:nat ->
+    remaining:nat -> GTot prop
+
+val cheney_scan_head_split_preserves_remaining_head_wosize_single_chunk
+  : minor:minor_state -> cs:cheney_state -> scan:nat -> fuel:nat ->
+    remaining:nat ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+               GenInv.chunked_major_alloc_shape
+                 (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_chain_terminates
+                 (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                 SpecAlloc.alloc_search_fuel = true /\
+               cheney_scan_budget_ready_single_chunk
+                 minor cs scan fuel remaining)
+      (ensures
+        (let cs' = cheney_scan minor cs scan fuel in
+         GenInv.chunked_major_alloc_shape
+          (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+          SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+          SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+          (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
 
 /// Exact trace-readiness predicate for full Cheney promotion: roots are ready
 /// from the initial state, and scanning is ready after root forwarding.
@@ -496,6 +556,36 @@ val cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
          SpecMajorAlloc.major_fl_chain_terminates
            (MH.single_chunk_major_heap res.major_final) res.fp_final
            SpecAlloc.alloc_search_fuel = true))
+
+/// Full-promotion version of local budget readiness.
+val cheney_promote_budget_ready_single_chunk
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    remaining:nat -> GTot prop
+
+val cheney_promote_head_split_preserves_remaining_head_wosize_single_chunk
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    remaining:nat ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_promote_budget_ready_single_chunk
+                  minor major fp roots remaining)
+      (ensures
+        (let res = cheney_promote minor major fp roots in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap res.major_final) res.fp_final >=
+         remaining))
 
 /// Budgeted audit wrapper: the global minor-promotion preflight budget proves
 /// the conservative allocation trace is non-OOM, while exact Cheney
