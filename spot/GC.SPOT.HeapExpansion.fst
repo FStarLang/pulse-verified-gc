@@ -834,6 +834,22 @@ let spot_cheney_forward_one_head_split_preserves_remaining_head_wosize_single_ch
   CheneyPreservation.cheney_forward_one_head_split_preserves_remaining_head_wosize_single_chunk
     minor cs addr remaining
 
+let spot_cheney_forward_one_budget_ready_from_split_demand_single_chunk
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (remaining: nat)
+  : Lemma
+      (requires remaining > 0 /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                CheneyPreservation.cheney_forward_one_split_demand
+                  minor cs addr + remaining)
+      (ensures
+        CheneyPreservation.cheney_forward_one_budget_ready_single_chunk
+          minor cs addr remaining)
+  =
+  CheneyPreservation.cheney_forward_one_budget_ready_from_split_demand_single_chunk
+    minor cs addr remaining
+
 let spot_cheney_forward_roots_head_split_preserves_chunked_alloc_shape_single_chunk
   (minor: minor_state) (cs: cheney_state) (roots: Seq.seq U64.t) (idx: nat)
   : Lemma
@@ -884,6 +900,29 @@ let spot_cheney_forward_roots_head_split_preserves_remaining_head_wosize_single_
          remaining))
   =
   CheneyPreservation.cheney_forward_roots_head_split_preserves_remaining_head_wosize_single_chunk
+    minor cs roots idx remaining
+
+let spot_cheney_forward_roots_budget_ready_from_split_demand_single_chunk
+  (minor: minor_state) (cs: cheney_state) (roots: Seq.seq U64.t) (idx: nat)
+  (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                remaining > 0 /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                CheneyPreservation.cheney_forward_roots_split_demand
+                  minor cs roots idx + remaining)
+      (ensures
+        CheneyPreservation.cheney_forward_roots_budget_ready_single_chunk
+          minor cs roots idx remaining)
+  =
+  CheneyPreservation.cheney_forward_roots_budget_ready_from_split_demand_single_chunk
     minor cs roots idx remaining
 
 let spot_cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_chunk
@@ -939,6 +978,29 @@ let spot_cheney_forward_fields_head_split_preserves_remaining_head_wosize_single
   CheneyPreservation.cheney_forward_fields_head_split_preserves_remaining_head_wosize_single_chunk
     minor cs parent idx wosize remaining
 
+let spot_cheney_forward_fields_budget_ready_from_split_demand_single_chunk
+  (minor: minor_state) (cs: cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                remaining > 0 /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                CheneyPreservation.cheney_forward_fields_split_demand
+                  minor cs parent idx wosize + remaining)
+      (ensures
+        CheneyPreservation.cheney_forward_fields_budget_ready_single_chunk
+          minor cs parent idx wosize remaining)
+  =
+  CheneyPreservation.cheney_forward_fields_budget_ready_from_split_demand_single_chunk
+    minor cs parent idx wosize remaining
+
 let spot_cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
   (minor: minor_state) (cs: cheney_state) (scan fuel: nat)
   : Lemma
@@ -988,6 +1050,28 @@ let spot_cheney_scan_head_split_preserves_remaining_head_wosize_single_chunk
          remaining))
   =
   CheneyPreservation.cheney_scan_head_split_preserves_remaining_head_wosize_single_chunk
+    minor cs scan fuel remaining
+
+let spot_cheney_scan_budget_ready_from_split_demand_single_chunk
+  (minor: minor_state) (cs: cheney_state) (scan fuel remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                remaining > 0 /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                CheneyPreservation.cheney_scan_split_demand
+                  minor cs scan fuel + remaining)
+      (ensures
+        CheneyPreservation.cheney_scan_budget_ready_single_chunk
+          minor cs scan fuel remaining)
+  =
+  CheneyPreservation.cheney_scan_budget_ready_from_split_demand_single_chunk
     minor cs scan fuel remaining
 
 let spot_cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
@@ -1040,6 +1124,29 @@ let spot_cheney_promote_head_split_preserves_remaining_head_wosize_single_chunk
          remaining))
   =
   CheneyPreservation.cheney_promote_head_split_preserves_remaining_head_wosize_single_chunk
+    minor major fp roots remaining
+
+let spot_cheney_promote_budget_ready_from_split_demand_single_chunk
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                remaining > 0 /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                CheneyPreservation.cheney_promote_split_demand
+                  minor major fp roots + remaining)
+      (ensures
+        CheneyPreservation.cheney_promote_budget_ready_single_chunk
+          minor major fp roots remaining)
+  =
+  CheneyPreservation.cheney_promote_budget_ready_from_split_demand_single_chunk
     minor major fp roots remaining
 
 let spot_cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chunk
