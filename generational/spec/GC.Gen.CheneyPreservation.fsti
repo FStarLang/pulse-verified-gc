@@ -245,6 +245,32 @@ val promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
            (MH.single_chunk_major_heap res.major_out) res.fp_out
            SpecAlloc.alloc_search_fuel = true))
 
+/// In the active-head split case, promotion leaves the split remainder head
+/// with at least the requested positive remaining budget.
+val promote_object_head_split_preserves_remaining_head_wosize_single_chunk
+  : minor:minor_state -> major:heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} -> remaining:nat ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                fp <> 0UL /\
+                remaining > 0 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                wosize + 1 + remaining)
+      (ensures
+        (let res = promote_object minor major obj fp wosize in
+         res.new_addr == fp /\
+         res.fp_out <> 0UL /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap res.major_out) res.fp_out >=
+         remaining))
+
 /// One Cheney forwarding step preserves the chunked allocator shape and chain
 /// termination, assuming the normal object that may be promoted by that step
 /// has enough active-head capacity to split.
