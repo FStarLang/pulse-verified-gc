@@ -67,7 +67,7 @@ let promote_object_read_other
 
 /// Helper: read_word through copy_fields + zero_promote_padding + set_promoted_tag = read_word original
 /// for objects other than dst_obj.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
 private let promote_transfer_read
   (minor: minor_state) (new_major: heap) (obj: U64.t)
   (dst_obj: obj_addr) (wosize: nat{wosize > 0})

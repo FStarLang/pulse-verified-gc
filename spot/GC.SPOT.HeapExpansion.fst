@@ -17,6 +17,7 @@ module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module ChunkedPromote = GC.Gen.ChunkedPromote
+module ChunkedCheney = GC.Gen.ChunkedCheney
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -704,6 +705,19 @@ let spot_chunked_promote_object_default_single_chunk_compat
   =
   CheneyPreservation.chunked_promote_object_default_single_chunk_compat
     minor major obj fp wosize
+
+let spot_chunked_cheney_forward_one_default_single_chunk_compat
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_one
+          minor (ChunkedCheney.single_chunk_cheney_state cs) addr
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_forward_one minor cs addr))
+  =
+  CheneyPreservation.chunked_cheney_forward_one_default_single_chunk_compat
+    minor cs addr
 
 let spot_alloc_spec_head_split_alloc_wosize_single_chunk
   (major: heap) (fp: U64.t) (wosize: nat{wosize > 0})

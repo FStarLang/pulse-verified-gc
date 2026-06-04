@@ -15,6 +15,7 @@ module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module Promote = GC.Gen.Promote
 module ChunkedPromote = GC.Gen.ChunkedPromote
+module ChunkedCheney = GC.Gen.ChunkedCheney
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -594,6 +595,17 @@ val spot_chunked_promote_object_default_single_chunk_compat
          chunked.major_out == MH.single_chunk_major_heap dense.major_out /\
          chunked.fp_out == dense.fp_out /\
          chunked.new_addr == dense.new_addr))
+
+val spot_chunked_cheney_forward_one_default_single_chunk_compat
+  : minor:GC.Gen.MinorHeap.minor_state -> cs:GC.Gen.Cheney.cheney_state ->
+    addr:U64.t ->
+    Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_one
+          minor (ChunkedCheney.single_chunk_cheney_state cs) addr
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (GC.Gen.Cheney.cheney_forward_one minor cs addr))
 
 val spot_alloc_spec_head_split_alloc_wosize_single_chunk
   : major:heap -> fp:U64.t -> wosize:nat{wosize > 0} ->

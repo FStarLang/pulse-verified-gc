@@ -35,6 +35,7 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module ChunkedPromote = GC.Gen.ChunkedPromote
+module ChunkedCheney = GC.Gen.ChunkedCheney
 
 /// Size-only allocation request trace induced by Cheney's final forwarding map.
 ///
@@ -200,6 +201,28 @@ val chunked_promote_object_default_single_chunk_compat
          chunked.major_out == MH.single_chunk_major_heap dense.major_out /\
          chunked.fp_out == dense.fp_out /\
          chunked.new_addr == dense.new_addr))
+
+/// The first chunked Cheney forwarding step agrees with the dense Cheney step
+/// in the single active-chunk compatibility instance.
+val chunked_cheney_forward_normal_default_single_chunk_compat
+  : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
+    Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_normal
+          minor (ChunkedCheney.single_chunk_cheney_state cs) addr
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_forward_normal minor cs addr))
+
+val chunked_cheney_forward_one_default_single_chunk_compat
+  : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
+    Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_one
+          minor (ChunkedCheney.single_chunk_cheney_state cs) addr
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_forward_one minor cs addr))
 
 /// A head block with at least two spare words forces dense `alloc_spec` down
 /// the split path, so the allocated object's wosize is exactly the request.

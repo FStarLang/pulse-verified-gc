@@ -44,6 +44,7 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module ChunkedPromote = GC.Gen.ChunkedPromote
+module ChunkedCheney = GC.Gen.ChunkedCheney
 module AllocHeader = GC.Spec.Allocator.Lemmas.Header
 module IndDesc = FStar.IndefiniteDescription
 
@@ -430,6 +431,34 @@ let chunked_promote_object_default_single_chunk_compat
   =
   ChunkedPromote.chunked_promote_object_with_fuel_single_chunk_compat
     minor major obj fp wosize SpecAlloc.alloc_search_fuel
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_cheney_forward_normal_default_single_chunk_compat
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_normal
+          minor (ChunkedCheney.single_chunk_cheney_state cs) addr
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_forward_normal minor cs addr))
+  =
+  ChunkedCheney.chunked_cheney_forward_normal_default_single_chunk_compat
+    minor cs addr
+
+let chunked_cheney_forward_one_default_single_chunk_compat
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  : Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_one
+          minor (ChunkedCheney.single_chunk_cheney_state cs) addr
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_forward_one minor cs addr))
+  =
+  ChunkedCheney.chunked_cheney_forward_one_default_single_chunk_compat
+    minor cs addr
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"

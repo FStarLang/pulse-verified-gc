@@ -21,12 +21,12 @@ open GC.Lib.Header
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
-/// When alloc_spec succeeds, the returned obj_out is a valid obj_addr
+/// When alloc_spec succeeds, the returned obj_out is a valid major obj_addr
 /// ---------------------------------------------------------------------------
 
 /// The allocator only returns cur_fp after checking:
-///   U64.v cur_fp >= U64.v mword, < heap_size, % mword == 0
-/// So obj_out satisfies the obj_addr refinement.
+///   U64.v cur_fp >= U64.v zero_addr + U64.v mword, < heap_size, % mword == 0
+/// So obj_out satisfies the major single-chunk object bounds.
 ///
 /// Proof strategy: unfold alloc_spec into alloc_search and observe that
 /// obj_out is set to cur_fp which already passed all guard checks.
@@ -37,7 +37,7 @@ let rec alloc_search_obj_valid
   : Lemma
     (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
               r.obj_out <> 0UL ==>
-              (U64.v r.obj_out >= U64.v mword /\
+              (U64.v r.obj_out >= U64.v zero_addr + U64.v mword /\
                U64.v r.obj_out < heap_size /\
                U64.v r.obj_out % U64.v mword == 0)))
     (decreases fuel)
@@ -61,11 +61,11 @@ let rec alloc_search_obj_valid
   end
 #pop-options
 
-/// Top-level: alloc_spec returns a valid obj_addr when successful
+/// Top-level: alloc_spec returns a valid major object address when successful
 let alloc_spec_obj_valid (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (ensures (let r = alloc_spec g fp requested_wz in
                     r.obj_out <> 0UL ==>
-                    (U64.v r.obj_out >= U64.v mword /\
+                    (U64.v r.obj_out >= U64.v zero_addr + U64.v mword /\
                      U64.v r.obj_out < heap_size /\
                      U64.v r.obj_out % U64.v mword == 0)))
   =
