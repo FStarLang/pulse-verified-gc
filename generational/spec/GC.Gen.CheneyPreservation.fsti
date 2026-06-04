@@ -588,9 +588,9 @@ val cheney_promote_head_split_preserves_remaining_head_wosize_single_chunk
          remaining))
 
 /// Budgeted audit wrapper: the global minor-promotion preflight budget proves
-/// the conservative allocation trace is non-OOM, while exact Cheney
-/// split-readiness still supplies the per-step state obligations needed to
-/// preserve the chunked allocator shape.
+/// the conservative allocation trace is non-OOM, while Cheney-order budget
+/// readiness supplies the per-step state obligations needed to preserve the
+/// chunked allocator shape.
 val cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chunk
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     Lemma
@@ -606,8 +606,8 @@ val cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chun
                SpecMajorAlloc.major_fl_head_wosize
                  (MH.single_chunk_major_heap major) fp >=
                  PromotionDemand.minor_promotion_demand minor + 1 /\
-               cheney_promote_split_ready_single_chunk
-                 minor major fp roots)
+               cheney_promote_budget_ready_single_chunk
+                 minor major fp roots 1)
       (ensures
         (let res = cheney_promote minor major fp roots in
          let requests =

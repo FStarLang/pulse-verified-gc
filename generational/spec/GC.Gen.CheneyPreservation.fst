@@ -1915,8 +1915,8 @@ let cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chun
                 SpecMajorAlloc.major_fl_head_wosize
                   (MH.single_chunk_major_heap major) fp >=
                   PromotionDemand.minor_promotion_demand minor + 1 /\
-                cheney_promote_split_ready_single_chunk
-                  minor major fp roots)
+                cheney_promote_budget_ready_single_chunk
+                  minor major fp roots 1)
       (ensures
         (let res = cheney_promote minor major fp roots in
          let requests =
@@ -1937,8 +1937,8 @@ let cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chun
     (MH.single_chunk_major_heap major) fp SpecAlloc.alloc_search_fuel;
   cheney_forwarded_dense_alloc_list_default_single_chunk_no_oom
     minor major fp roots;
-  cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
-    minor major fp roots
+  cheney_promote_head_split_preserves_remaining_head_wosize_single_chunk
+    minor major fp roots 1
 #pop-options
 
 /// ---------------------------------------------------------------------------

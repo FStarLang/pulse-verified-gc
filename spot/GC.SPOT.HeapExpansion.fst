@@ -1057,8 +1057,8 @@ let spot_cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single
                 SpecMajorAlloc.major_fl_head_wosize
                   (MH.single_chunk_major_heap major) fp >=
                   PromotionDemand.minor_promotion_demand minor + 1 /\
-                CheneyPreservation.cheney_promote_split_ready_single_chunk
-                  minor major fp roots)
+                CheneyPreservation.cheney_promote_budget_ready_single_chunk
+                  minor major fp roots 1)
       (ensures
         (let res = cheney_promote minor major fp roots in
          let requests =
