@@ -837,6 +837,30 @@ let spot_cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
   CheneyPreservation.cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
     minor cs scan fuel
 
+let spot_cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                CheneyPreservation.cheney_promote_split_ready_single_chunk
+                  minor major fp roots)
+      (ensures
+        (let res = cheney_promote minor major fp roots in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel = true))
+  =
+  CheneyPreservation.cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
+    minor major fp roots
+
 let spot_chunked_is_blue_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
   (obj: obj_addr)

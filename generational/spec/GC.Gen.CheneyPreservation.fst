@@ -1257,6 +1257,66 @@ let rec cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
     assert (fuel = 0);
     cheney_scan_base minor cs scan fuel
   end
+
+let cheney_promote_split_ready_single_chunk
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : GTot prop =
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  cheney_forward_roots_split_ready_single_chunk minor cs0 roots 0 /\
+  cheney_scan_split_ready_single_chunk minor cs1 0 (cheney_fuel minor)
+
+let cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_promote_split_ready_single_chunk
+                  minor major fp roots)
+      (ensures
+        (let res = cheney_promote minor major fp roots in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel = true))
+  =
+  let cs0 : cheney_state =
+    { cs_major = major; cs_fp = fp;
+      cs_fwd = empty_forwarding; cs_queue = Seq.empty } in
+  assert (GenInv.chunked_major_alloc_shape
+            (MH.single_chunk_major_heap cs0.cs_major) cs0.cs_fp
+            SpecAlloc.alloc_search_fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            (MH.single_chunk_major_heap cs0.cs_major) cs0.cs_fp
+            SpecAlloc.alloc_search_fuel = true);
+  assert (cheney_forward_roots_split_ready_single_chunk
+            minor cs0 roots 0);
+  cheney_forward_roots_head_split_preserves_chunked_alloc_shape_single_chunk
+    minor cs0 roots 0;
+  let cs1 = cheney_forward_roots minor cs0 roots 0 in
+  assert (GenInv.chunked_major_alloc_shape
+            (MH.single_chunk_major_heap cs1.cs_major) cs1.cs_fp
+            SpecAlloc.alloc_search_fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            (MH.single_chunk_major_heap cs1.cs_major) cs1.cs_fp
+            SpecAlloc.alloc_search_fuel = true);
+  assert (cheney_scan_split_ready_single_chunk
+            minor cs1 0 (cheney_fuel minor));
+  cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
+    minor cs1 0 (cheney_fuel minor);
+  let cs2 = cheney_scan minor cs1 0 (cheney_fuel minor) in
+  let res = cheney_promote minor major fp roots in
+  assert (res.major_final == cs2.cs_major);
+  assert (res.fp_final == cs2.cs_fp)
 #pop-options
 
 /// ---------------------------------------------------------------------------

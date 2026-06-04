@@ -368,6 +368,33 @@ val cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
            (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
            SpecAlloc.alloc_search_fuel = true))
 
+/// Exact trace-readiness predicate for full Cheney promotion: roots are ready
+/// from the initial state, and scanning is ready after root forwarding.
+val cheney_promote_split_ready_single_chunk
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    GTot prop
+
+val cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_promote_split_ready_single_chunk
+                  minor major fp roots)
+      (ensures
+        (let res = cheney_promote minor major fp roots in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap res.major_final) res.fp_final
+           SpecAlloc.alloc_search_fuel = true))
+
 /// Cheney promotion preserves no_black_objects.
 ///
 /// Promoted objects get white_bits headers; pre-existing objects' colors are
