@@ -654,6 +654,33 @@ val spot_chunked_cheney_promote_default_single_chunk_compat
          chunked.fp_final == dense.fp_final /\
          chunked.fwd_map == dense.fwd_map))
 
+val spot_chunked_cheney_forward_normal_noalloc_preserves_chunked_alloc_shape
+  : minor:GC.Gen.MinorHeap.minor_state ->
+    cs:ChunkedCheney.chunked_cheney_state -> addr:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        ((~(Seq.mem addr (GC.Gen.MinorHeap.minor_objects minor)) \/
+          cs.ccs_fwd addr <> 0UL) \/
+         (Seq.mem addr (GC.Gen.MinorHeap.minor_objects minor) /\
+          cs.ccs_fwd addr = 0UL /\
+          GC.Gen.MinorHeap.minor_wosize minor addr = 0) \/
+         (Seq.mem addr (GC.Gen.MinorHeap.minor_objects minor) /\
+          cs.ccs_fwd addr = 0UL /\
+          GC.Gen.MinorHeap.minor_wosize minor addr > 0 /\
+          (ChunkedPromote.chunked_promote_object_with_fuel
+            minor cs.ccs_major addr cs.ccs_fp
+            (GC.Gen.MinorHeap.minor_wosize minor addr) fuel).new_addr = 0UL)))
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_normal
+             minor cs addr fuel in
+         GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp fuel = true))
+
 val spot_alloc_spec_head_split_alloc_wosize_single_chunk
   : major:heap -> fp:U64.t -> wosize:nat{wosize > 0} ->
     Lemma

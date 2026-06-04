@@ -269,6 +269,38 @@ val chunked_cheney_promote_default_single_chunk_compat
          chunked.fp_final == dense.fp_final /\
          chunked.fwd_map == dense.fwd_map))
 
+/// Direct chunked preservation for the no-allocation branches of normal Cheney
+/// forwarding.  This is the reusable case split for future full chunked
+/// allocator-shape preservation: when forwarding returns the input state
+/// (already forwarded, not a minor object, zero-sized object, or promotion OOM),
+/// allocator shape and free-list chain termination carry over unchanged.
+val chunked_cheney_forward_normal_noalloc_preserves_chunked_alloc_shape
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        ((~(Seq.mem addr (minor_objects minor)) \/
+          cs.ccs_fwd addr <> 0UL) \/
+         (Seq.mem addr (minor_objects minor) /\
+          cs.ccs_fwd addr = 0UL /\
+          minor_wosize minor addr = 0) \/
+         (Seq.mem addr (minor_objects minor) /\
+          cs.ccs_fwd addr = 0UL /\
+          minor_wosize minor addr > 0 /\
+          (ChunkedPromote.chunked_promote_object_with_fuel
+            minor cs.ccs_major addr cs.ccs_fp
+            (minor_wosize minor addr) fuel).new_addr = 0UL)))
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_normal
+             minor cs addr fuel in
+         GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp fuel = true))
+
 /// A head block with at least two spare words forces dense `alloc_spec` down
 /// the split path, so the allocated object's wosize is exactly the request.
 val alloc_spec_head_split_alloc_wosize_single_chunk
