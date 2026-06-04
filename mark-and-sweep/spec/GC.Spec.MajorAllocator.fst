@@ -393,8 +393,9 @@ let rec major_fl_chain_avoids
     else if fuel = 0 then true
     else if fp = excl then false
     else
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
       match MH.read_word_in_major mh (fp <: obj_addr) with
-      | Some next -> major_fl_chain_avoids mh next excl (fuel - 1)
+      | Some next -> major_fl_chain_avoids mh next excl fuel'
       | None -> true
 
 let major_fl_chain_avoids_null
@@ -444,6 +445,7 @@ let major_fl_walk_chain_zero (mh: MH.major_heap) (fp: U64.t)
   : Lemma (ensures major_fl_walk_chain mh fp 0 = fp)
   = ()
 
+#push-options "--split_queries always"
 let rec major_fl_walk_chain_valid
   (mh: MH.major_heap) (fp: U64.t) (steps: nat) : Tot prop
   (decreases steps)
@@ -455,6 +457,7 @@ let rec major_fl_walk_chain_valid
       (match MH.read_word_in_major mh (fp <: obj_addr) with
        | Some next -> major_fl_walk_chain_valid mh next (steps - 1)
        | None -> False)
+#pop-options
 
 let major_fl_walk_chain_valid_zero (mh: MH.major_heap) (fp: U64.t)
   : Lemma (ensures major_fl_walk_chain_valid mh fp 0)
@@ -469,6 +472,9 @@ let rec major_fl_walk_chain_valid_prefix
           (decreases prefix)
   = if prefix = 0 then ()
     else begin
+      assert (prefix > 0);
+      assert (steps > 0);
+      assert (prefix - 1 <= steps - 1);
       match MH.read_word_in_major mh (fp <: obj_addr) with
       | Some next ->
         major_fl_walk_chain_valid_prefix mh next (steps - 1) (prefix - 1)
@@ -490,6 +496,9 @@ let rec major_fl_walk_chain_valid_at
       (decreases pos)
   = if pos = 0 then ()
     else begin
+      assert (pos > 0);
+      assert (steps > 0);
+      assert (pos - 1 < steps - 1);
       match MH.read_word_in_major mh (fp <: obj_addr) with
       | Some next ->
         major_fl_walk_chain_valid_at mh next (steps - 1) (pos - 1)
@@ -540,6 +549,44 @@ let rec major_fl_chain_kcycle_not_terminates
     end else begin
       major_fl_chain_terminates_unfold_steps mh fp cycle_len fuel;
       major_fl_chain_kcycle_not_terminates mh fp cycle_len (fuel - cycle_len)
+    end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec major_fl_first_hit
+  (mh: MH.major_heap) (fp dst: U64.t) (fuel: nat) : Tot nat
+  (decreases fuel)
+  = if fuel = 0 then 0
+    else if fp = 0UL then 0
+    else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+            U64.v fp % U64.v mword <> 0 then 0
+    else if fp = dst then 0
+    else
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next -> 1 + major_fl_first_hit mh next dst (fuel - 1)
+      | None -> 0
+
+let rec major_fl_first_hit_spec
+  (mh: MH.major_heap) (fp dst: U64.t) (fuel: nat)
+  : Lemma
+      (requires major_fl_chain_avoids mh fp dst fuel = false)
+      (ensures major_fl_walk_chain
+                 mh fp (major_fl_first_hit mh fp dst fuel) = dst /\
+               major_fl_first_hit mh fp dst fuel <= fuel /\
+               major_fl_walk_chain_valid
+                 mh fp (major_fl_first_hit mh fp dst fuel))
+      (decreases fuel)
+  = if fuel = 0 then ()
+    else if fp = 0UL then ()
+    else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+            U64.v fp % U64.v mword <> 0 then ()
+    else if fp = dst then ()
+    else begin
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | None -> ()
+      | Some next ->
+        assert (major_fl_chain_avoids mh next dst (fuel - 1) = false);
+        major_fl_first_hit_spec mh next dst (fuel - 1)
     end
 #pop-options
 
@@ -1066,8 +1113,7 @@ let rec expand_major_heap_preserves_fl_chain_terminates
     reveal_opaque (`%major_fl_chain_terminates)
       (major_fl_chain_terminates mh fp fuel);
     assert False
-  end else begin
-    assert (fuel > 0);
+  end else if fuel > 0 then begin
     let fuel' : f:nat{f < fuel} = fuel - 1 in
     let obj : obj_addr = fp in
     let r = init_fresh_chunk c new_link in
@@ -1082,7 +1128,8 @@ let rec expand_major_heap_preserves_fl_chain_terminates
       MH.read_word_add_chunk_disjoint_old mh r.chunk_out obj next;
       assert (MH.read_word_in_major mh' obj == Some next);
       major_fl_chain_terminates_step mh' fp fuel
-  end
+  end else
+    assert False
 #pop-options
 
 #push-options "--z3rlimit 10"
@@ -2860,9 +2907,7 @@ let rec objects_in_chunk_from_head_split_preserves_object
                   (U64.v (Obj.getWosize (MH.read_word_in_chunk c3 start)) + 1) *
                     U64.v mword == next_start_nat);
           assert (next_start_nat < MH.chunk_end c3);
-          assert (MH.objects_in_chunk_from c3 start ==
-                  Seq.cons first (MH.objects_in_chunk_from c3 next_start));
-          GC.Spec.Fields.mem_cons_lemma obj first (MH.objects_in_chunk_from c3 next_start);
+          MH.objects_in_chunk_from_tail_mem c3 start next_start obj;
           assert (Seq.mem obj (MH.objects_in_chunk_from c3 start))
         end
       end
@@ -3247,8 +3292,6 @@ let rec objects_in_chunk_from_head_split_preserves_member
             assert (U64.v start >= MH.chunk_start c3);
             assert (U64.v start + U64.v mword < MH.chunk_end c3);
             MH.objects_in_chunk_from_tail_mem c3 start next_start x;
-            GC.Spec.Fields.mem_cons_lemma
-              x (f_address start) (MH.objects_in_chunk_from c3 next_start);
             assert (Seq.mem x (MH.objects_in_chunk_from c3 start))
           end
         end
