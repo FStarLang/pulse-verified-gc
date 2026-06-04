@@ -41,6 +41,7 @@ module PromotionDemand = GC.Gen.PromotionDemand
 module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module AllocHeader = GC.Spec.Allocator.Lemmas.Header
 module IndDesc = FStar.IndefiniteDescription
@@ -240,6 +241,7 @@ let alloc_spec_head_split_alloc_wosize_single_chunk
         (let r = SpecAlloc.alloc_spec major fp wosize in
          r.obj_out == fp /\
          r.fp_out <> 0UL /\
+         Seq.mem (fp <: obj_addr) (objects zero_addr r.heap_out) /\
          U64.v (wosize_of_object (fp <: obj_addr) r.heap_out) == wosize /\
          U64.v fp + (wosize - 1) * U64.v mword + U64.v mword <= heap_size))
   =
@@ -331,6 +333,57 @@ let alloc_spec_head_split_alloc_wosize_single_chunk
       assert (U64.v hd + U64.v mword <= U64.v rem_obj);
       read_write_different g2 rem_obj hd next_fp;
       assert (read_word g3 hd == alloc_hdr);
+      // The allocated head remains an object in the post-split heap.  Prove it
+      // in the chunked single-chunk model and bridge back to the dense objects
+      // enumeration used by the promotion frame lemmas.
+      let c = Seq.index mh idx in
+      MH.single_chunk_major_heap_wf major;
+      SpecMajorAlloc.major_fl_valid_gives_mem
+        mh fp SpecAlloc.alloc_search_fuel;
+      MH.read_word_in_major_at_lookup_index mh hd idx;
+      assert (MH.read_word_in_chunk c hd == hdr);
+      MH.major_objects_member_in_lookup_chunk mh idx dst_obj;
+      assert (Seq.mem dst_obj (MH.objects_in_chunk c));
+      assert (MH.object_wosize_in_chunk c dst_obj == block_wz);
+      FStar.Math.Lemmas.pow2_lt_compat 64 54;
+      assert (FStar.UInt.size wosize 64);
+      let req : rreq:nat{rreq == wosize /\
+                         rreq < pow2 54 /\ FStar.UInt.size rreq 64} =
+        wosize in
+      let rem_wz_u : rw:U64.t{U64.v rw == rem_wz /\ U64.v rw < pow2 54} =
+        U64.uint_to_t rem_wz in
+      assert (U64.v rem_wz_u == block_wz - wosize - 1);
+      assert (wosize + 3 <= 1 + block_wz);
+      FStar.Math.Lemmas.distributivity_add_left (wosize + 2) 1 8;
+      assert ((wosize + 2) * 8 + 8 == (wosize + 3) * 8);
+      FStar.Math.Lemmas.paren_add_right
+        (U64.v hd) ((wosize + 2) * 8) 8;
+      assert (rem_obj_nat + 8 == U64.v hd + (wosize + 3) * 8);
+      assert (rem_obj_nat + 8 <= U64.v hd + (1 + block_wz) * 8);
+      assert (rem_obj_nat + 8 <= heap_size);
+      assert (MH.word_in_chunk c rem_hd);
+      assert (MH.word_in_chunk c rem_obj);
+      SpecMajorAlloc.major_alloc_head_split
+        mh dst_obj req SpecAlloc.alloc_search_fuel hdr next_fp rem_hd rem_obj;
+      let mr =
+        SpecMajorAlloc.major_alloc_spec_with_fuel
+          mh fp wosize SpecAlloc.alloc_search_fuel in
+      assert (mr.major_alloc_out ==
+              SpecMajorAllocSplitShape.head_split_heap
+                mh dst_obj req next_fp rem_wz_u rem_hd rem_obj);
+      SpecMajorAllocSplitShape.head_split_preserves_allocated_head_node_facts
+        mh idx dst_obj hdr next_fp req block_wz next_fp rem_wz_u rem_hd rem_obj;
+      assert (Seq.mem dst_obj (MH.major_objects mr.major_alloc_out));
+      SpecMajorAlloc.major_alloc_spec_with_fuel_single_chunk_compat
+        major fp wosize SpecAlloc.alloc_search_fuel;
+      assert (SpecAlloc.alloc_spec major fp wosize ==
+              SpecAlloc.alloc_spec_with_fuel
+                major fp wosize SpecAlloc.alloc_search_fuel);
+      assert (mr.major_alloc_out == MH.single_chunk_major_heap r.heap_out);
+      assert (Seq.mem dst_obj
+        (MH.major_objects (MH.single_chunk_major_heap r.heap_out)));
+      MH.single_chunk_major_objects_compat r.heap_out;
+      assert (Seq.mem dst_obj (objects zero_addr r.heap_out));
       AllocHeader.make_header_getWosize
         (U64.uint_to_t wosize) SpecAlloc.white_bits 0UL;
       wosize_of_object_spec dst_obj r.heap_out
@@ -373,6 +426,511 @@ let promote_object_head_split_padding_noop_single_chunk
           wosize_of_object dst_obj r.heap_out);
   assert (U64.v (wosize_of_object dst_obj copied) <= wosize);
   zero_promote_padding_noop copied dst_obj wosize
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Active-head split promotion frames from the post-allocation heap
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let copy_fields_frame_other_header
+  (minor: minor_state) (g: heap) (src_obj: U64.t)
+  (dst src: obj_addr) (wz: nat{wz > 0})
+  : Lemma
+      (requires Seq.mem dst (objects zero_addr g) /\
+                Seq.mem src (objects zero_addr g) /\
+                src <> dst /\
+                U64.v dst % 8 == 0 /\
+                U64.v (wosize_of_object dst g) >= wz /\
+                dst_fields_valid dst wz)
+      (ensures
+        read_word (copy_fields minor g src_obj dst 0 wz) (hd_address src) ==
+        read_word g (hd_address src))
+  =
+  hd_address_spec src;
+  hd_address_spec dst;
+  assert (U64.v mword == 8);
+  if U64.v src < U64.v dst then begin
+    assert (U64.v (hd_address src) + 8 == U64.v src);
+    assert (U64.v (hd_address src) + 8 <= U64.v dst);
+    copy_fields_frame minor g src_obj dst 0 wz (hd_address src)
+  end else if U64.v dst < U64.v src then begin
+    objects_separated zero_addr g dst src;
+    assert (U64.v (wosize_of_object_as_wosize dst g) ==
+            U64.v (wosize_of_object dst g));
+    assert (U64.v src >
+            U64.v dst + U64.v (wosize_of_object dst g) * 8);
+    FStar.Math.Lemmas.lemma_mult_le_right
+      8 wz (U64.v (wosize_of_object dst g));
+    assert (U64.v dst + wz * 8 <=
+            U64.v dst + U64.v (wosize_of_object dst g) * 8);
+    assert (U64.v src > U64.v dst + wz * 8);
+    SpecMajorAlloc.aligned_plus_word_product (U64.v dst) wz;
+    assert ((U64.v dst + wz * 8) % U64.v mword == 0);
+    MH.word_aligned_gt_at_least_mword
+      (U64.v src) (U64.v dst + wz * 8);
+    assert (U64.v src >= U64.v dst + wz * 8 + 8);
+    assert (U64.v (hd_address src) >= U64.v dst + wz * 8);
+    copy_fields_frame minor g src_obj dst 0 wz (hd_address src)
+  end else begin
+    assert (U64.v src == U64.v dst);
+    assert (src == dst);
+    assert False
+  end
+
+private let copy_fields_frame_other_field0
+  (minor: minor_state) (g: heap) (src_obj: U64.t)
+  (dst src: obj_addr) (wz: nat{wz > 0})
+  : Lemma
+      (requires Seq.mem dst (objects zero_addr g) /\
+                Seq.mem src (objects zero_addr g) /\
+                src <> dst /\
+                U64.v dst % 8 == 0 /\
+                U64.v (wosize_of_object dst g) >= wz /\
+                U64.v (wosize_of_object src g) >= 1 /\
+                dst_fields_valid dst wz)
+      (ensures
+        read_word (copy_fields minor g src_obj dst 0 wz) src ==
+        read_word g src)
+  =
+  assert (U64.v mword == 8);
+  if U64.v src < U64.v dst then begin
+    objects_separated zero_addr g src dst;
+    assert (U64.v (wosize_of_object_as_wosize src g) ==
+            U64.v (wosize_of_object src g));
+    assert (U64.v dst >
+            U64.v src + U64.v (wosize_of_object src g) * 8);
+    assert (U64.v src + 8 <=
+            U64.v src + U64.v (wosize_of_object src g) * 8);
+    assert (U64.v src + 8 <= U64.v dst);
+    copy_fields_frame minor g src_obj dst 0 wz src
+  end else if U64.v dst < U64.v src then begin
+    objects_separated zero_addr g dst src;
+    assert (U64.v (wosize_of_object_as_wosize dst g) ==
+            U64.v (wosize_of_object dst g));
+    assert (U64.v src >
+            U64.v dst + U64.v (wosize_of_object dst g) * 8);
+    FStar.Math.Lemmas.lemma_mult_le_right
+      8 wz (U64.v (wosize_of_object dst g));
+    assert (U64.v dst + wz * 8 <=
+            U64.v dst + U64.v (wosize_of_object dst g) * 8);
+    assert (U64.v src > U64.v dst + wz * 8);
+    assert (U64.v src >= U64.v dst + wz * 8);
+    copy_fields_frame minor g src_obj dst 0 wz src
+  end else begin
+    assert (U64.v src == U64.v dst);
+    assert (src == dst);
+    assert False
+  end
+
+private let set_promoted_tag_frame_other_header
+  (g: heap) (dst src: obj_addr) (tag: nat{tag < 256})
+  : Lemma
+      (requires src <> dst)
+      (ensures
+        read_word (set_promoted_tag g dst tag) (hd_address src) ==
+        read_word g (hd_address src))
+  =
+  hd_address_spec src;
+  hd_address_spec dst;
+  assert (U64.v mword == 8);
+  if U64.v src < U64.v dst then begin
+    MH.word_aligned_gt_at_least_mword (U64.v dst) (U64.v src);
+    assert (U64.v dst >= U64.v src + 8);
+    assert (U64.v (hd_address dst) >= U64.v src);
+    assert (U64.v (hd_address src) + U64.v mword <=
+            U64.v (hd_address dst));
+    set_promoted_tag_read_frame g dst tag (hd_address src)
+  end else if U64.v dst < U64.v src then begin
+    MH.word_aligned_gt_at_least_mword (U64.v src) (U64.v dst);
+    assert (U64.v src >= U64.v dst + 8);
+    assert (U64.v (hd_address dst) + U64.v mword <=
+            U64.v (hd_address src));
+    set_promoted_tag_read_frame g dst tag (hd_address src)
+  end else begin
+    assert (U64.v src == U64.v dst);
+    assert (src == dst);
+    assert False
+  end
+
+private let set_promoted_tag_frame_other_field0
+  (g: heap) (dst src: obj_addr) (tag: nat{tag < 256})
+  : Lemma
+      (requires Seq.mem dst (objects zero_addr g) /\
+                Seq.mem src (objects zero_addr g) /\
+                src <> dst /\
+                U64.v (wosize_of_object src g) >= 1)
+      (ensures
+        read_word (set_promoted_tag g dst tag) src ==
+        read_word g src)
+  =
+  hd_address_spec dst;
+  assert (U64.v mword == 8);
+  if U64.v src < U64.v dst then begin
+    objects_separated zero_addr g src dst;
+    assert (U64.v (wosize_of_object_as_wosize src g) ==
+            U64.v (wosize_of_object src g));
+    assert (U64.v dst >
+            U64.v src + U64.v (wosize_of_object src g) * 8);
+    assert (U64.v dst > U64.v src + 8);
+    SpecMajorAlloc.aligned_plus_word_product (U64.v src) 1;
+    assert ((U64.v src + 8) % U64.v mword == 0);
+    MH.word_aligned_gt_at_least_mword (U64.v dst) (U64.v src + 8);
+    assert (U64.v dst >= U64.v src + 16);
+    assert (U64.v src + U64.v mword <= U64.v (hd_address dst));
+    set_promoted_tag_read_frame g dst tag src
+  end else if U64.v dst < U64.v src then begin
+    assert (U64.v (hd_address dst) + U64.v mword <= U64.v src);
+    set_promoted_tag_read_frame g dst tag src
+  end else begin
+    assert (U64.v src == U64.v dst);
+    assert (src == dst);
+    assert False
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let promote_object_head_split_preserves_objects_from_alloc_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+         let res = promote_object minor major obj fp wosize in
+         objects zero_addr res.major_out == objects zero_addr alloc_res.heap_out))
+  =
+  alloc_spec_head_split_alloc_wosize_single_chunk major fp wosize;
+  promote_object_head_split_padding_noop_single_chunk minor major obj fp wosize;
+  let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+  let dst : obj_addr = fp in
+  promote_object_success minor major obj fp wosize;
+  let copied = copy_fields minor alloc_res.heap_out obj dst 0 wosize in
+  dst_fields_valid_from_bounds fp wosize;
+  copy_fields_preserves_objects_aux
+    minor alloc_res.heap_out obj dst 0 wosize;
+  assert (objects zero_addr copied == objects zero_addr alloc_res.heap_out);
+  assert (Seq.mem dst (objects zero_addr copied));
+  let tag = minor_tag minor obj in
+  minor_tag_bound minor obj;
+  set_promoted_tag_preserves_objects copied dst tag
+
+private let promote_object_head_split_frame_header_from_alloc_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (src: obj_addr)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2 /\
+                (let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+                 Seq.mem src (objects zero_addr alloc_res.heap_out) /\
+                 src <> (fp <: obj_addr)))
+      (ensures
+        (let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+         let res = promote_object minor major obj fp wosize in
+         read_word res.major_out (hd_address src) ==
+         read_word alloc_res.heap_out (hd_address src)))
+  =
+  alloc_spec_head_split_alloc_wosize_single_chunk major fp wosize;
+  promote_object_head_split_padding_noop_single_chunk minor major obj fp wosize;
+  promote_object_success minor major obj fp wosize;
+  let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+  let dst : obj_addr = fp in
+  let copied = copy_fields minor alloc_res.heap_out obj dst 0 wosize in
+  dst_fields_valid_from_bounds fp wosize;
+  copy_fields_frame_other_header minor alloc_res.heap_out obj dst src wosize;
+  copy_fields_preserves_objects_aux
+    minor alloc_res.heap_out obj dst 0 wosize;
+  assert (objects zero_addr copied == objects zero_addr alloc_res.heap_out);
+  assert (Seq.mem dst (objects zero_addr copied));
+  assert (Seq.mem src (objects zero_addr copied));
+  let tag = minor_tag minor obj in
+  minor_tag_bound minor obj;
+  set_promoted_tag_frame_other_header copied dst src tag
+
+private let promote_object_head_split_frame_field0_from_alloc_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (src: obj_addr)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 0 /\
+                fp <> 0UL /\
+                SpecMajorAlloc.major_fl_valid
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_above_zero
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2 /\
+                (let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+                 Seq.mem src (objects zero_addr alloc_res.heap_out) /\
+                 src <> (fp <: obj_addr) /\
+                 U64.v (wosize_of_object src alloc_res.heap_out) >= 1))
+      (ensures
+        (let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+         let res = promote_object minor major obj fp wosize in
+         read_word res.major_out src ==
+         read_word alloc_res.heap_out src))
+  =
+  alloc_spec_head_split_alloc_wosize_single_chunk major fp wosize;
+  promote_object_head_split_padding_noop_single_chunk minor major obj fp wosize;
+  promote_object_success minor major obj fp wosize;
+  let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+  let dst : obj_addr = fp in
+  let copied = copy_fields minor alloc_res.heap_out obj dst 0 wosize in
+  dst_fields_valid_from_bounds fp wosize;
+  copy_fields_frame_other_field0 minor alloc_res.heap_out obj dst src wosize;
+  copy_fields_frame_other_header minor alloc_res.heap_out obj dst src wosize;
+  copy_fields_preserves_objects_aux
+    minor alloc_res.heap_out obj dst 0 wosize;
+  assert (objects zero_addr copied == objects zero_addr alloc_res.heap_out);
+  assert (Seq.mem dst (objects zero_addr copied));
+  assert (Seq.mem src (objects zero_addr copied));
+  wosize_of_object_spec src alloc_res.heap_out;
+  wosize_of_object_spec src copied;
+  assert (read_word copied (hd_address src) ==
+          read_word alloc_res.heap_out (hd_address src));
+  assert (wosize_of_object src copied ==
+          wosize_of_object src alloc_res.heap_out);
+  let tag = minor_tag minor obj in
+  minor_tag_bound minor obj;
+  set_promoted_tag_frame_other_field0 copied dst src tag
+#pop-options
+
+/// Transfer the three chunked free-list shape predicates across a dense
+/// single-chunk frame that preserves object enumeration and every live chain
+/// node's header/link word.  The old chain must avoid the allocation target.
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+private let rec single_chunk_fl_shape_transfer_avoids
+  (g0 g1: heap) (dst: obj_addr) (cur: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        SpecMajorAlloc.major_fl_valid
+          (MH.single_chunk_major_heap g0) cur fuel /\
+        SpecMajorAlloc.major_fl_above_zero
+          (MH.single_chunk_major_heap g0) cur fuel /\
+        SpecMajorAlloc.major_fl_blocks_fit
+          (MH.single_chunk_major_heap g0) cur fuel /\
+        SpecMajorAlloc.major_fl_chain_avoids
+          (MH.single_chunk_major_heap g0) cur dst fuel = true /\
+        objects zero_addr g1 == objects zero_addr g0 /\
+        (forall (src: obj_addr).
+          Seq.mem src (objects zero_addr g0) /\ src <> dst ==>
+          read_word g1 (hd_address src) == read_word g0 (hd_address src)) /\
+        (forall (src: obj_addr).
+          Seq.mem src (objects zero_addr g0) /\
+          src <> dst /\
+          U64.v (wosize_of_object src g0) >= 1 ==>
+          read_word g1 src == read_word g0 src))
+      (ensures
+        SpecMajorAlloc.major_fl_valid
+          (MH.single_chunk_major_heap g1) cur fuel /\
+        SpecMajorAlloc.major_fl_above_zero
+          (MH.single_chunk_major_heap g1) cur fuel /\
+        SpecMajorAlloc.major_fl_blocks_fit
+          (MH.single_chunk_major_heap g1) cur fuel)
+      (decreases fuel)
+  =
+  let mh0 = MH.single_chunk_major_heap g0 in
+  let mh1 = MH.single_chunk_major_heap g1 in
+  if fuel = 0 then begin
+    SpecMajorAlloc.major_fl_valid_zero mh1 cur;
+    SpecMajorAlloc.major_fl_above_zero_fuel_0 mh1 cur
+  end else if cur = 0UL then begin
+    SpecMajorAlloc.major_fl_valid_null mh1 fuel;
+    SpecMajorAlloc.major_fl_above_zero_null mh1 fuel;
+    SpecMajorAlloc.major_fl_blocks_fit_null mh1 fuel
+  end else begin
+    assert (fuel > 0);
+    SpecMajorAlloc.major_fl_above_zero_current mh0 cur fuel;
+    assert (U64.v cur >= U64.v zero_addr + U64.v mword);
+    assert (U64.v cur >= U64.v mword);
+    assert (U64.v cur < heap_size);
+    assert (U64.v cur % U64.v mword == 0);
+    assert (fuel - 1 >= 0);
+    let fuel' : f:nat{f < fuel} = fuel - 1 in
+    let x : obj_addr = cur in
+    let xhd = hd_address x in
+    hd_address_spec x;
+    hd_address_bounds x;
+    SpecMajorAlloc.major_fl_chain_avoids_head_ne mh0 cur dst fuel;
+    assert (x <> dst);
+    SpecMajorAlloc.major_fl_valid_gives_mem mh0 cur fuel;
+    MH.single_chunk_major_objects_compat g0;
+    assert (Seq.mem x (objects zero_addr g0));
+    assert (Seq.mem x (objects zero_addr g1));
+    MH.single_chunk_major_objects_compat g1;
+    SpecMajorAlloc.major_fl_valid_gives_wosize mh0 cur fuel;
+    SpecMajorAlloc.major_fl_valid_link_lookup_index mh0 cur fuel;
+    SpecMajorAlloc.major_fl_blocks_fit_current mh0 cur fuel;
+    match MH.read_word_in_major mh0 xhd with
+    | None -> assert False
+    | Some hdr0 ->
+      match MH.read_word_in_major mh0 x with
+      | None -> assert False
+      | Some next ->
+        wosize_of_object_spec x g0;
+        MH.single_chunk_read_word_compat g0 xhd;
+        assert (read_word g0 xhd == hdr0);
+        assert (U64.v (wosize_of_object x g0) >= 1);
+        MH.single_chunk_read_word_compat g0 x;
+        assert (read_word g0 x == next);
+        assert (read_word g1 xhd == read_word g0 xhd);
+        assert (read_word g1 x == read_word g0 x);
+        MH.single_chunk_read_word_compat g1 xhd;
+        MH.single_chunk_read_word_compat g1 x;
+        assert (MH.read_word_in_major mh1 xhd == Some hdr0);
+        assert (MH.read_word_in_major mh1 x == Some next);
+        SpecMajorAlloc.major_fl_valid_next mh0 cur fuel;
+        SpecMajorAlloc.major_fl_above_zero_next mh0 x fuel next;
+        SpecMajorAlloc.major_fl_blocks_fit_next mh0 x fuel next;
+        SpecMajorAlloc.major_fl_chain_avoids_tail mh0 cur dst fuel;
+        assert (SpecMajorAlloc.major_fl_chain_avoids
+                  mh0 next dst fuel' = true);
+        single_chunk_fl_shape_transfer_avoids
+          g0 g1 dst next fuel';
+        assert (SpecMajorAlloc.major_fl_valid mh1 next fuel');
+        assert (SpecMajorAlloc.major_fl_above_zero mh1 next fuel');
+        assert (SpecMajorAlloc.major_fl_blocks_fit mh1 next fuel');
+        MH.read_word_in_major_lookup_index mh1 xhd hdr0;
+        assert (MH.lookup_chunk_index mh1 xhd ==
+                Some (MH.lookup_chunk_index_value mh1 xhd));
+        assert (MH.chunk_end
+                  (Seq.index mh1 (MH.lookup_chunk_index_value mh1 xhd)) ==
+                heap_size);
+        assert (MH.chunk_end
+                  (Seq.index mh0 (MH.lookup_chunk_index_value mh0 xhd)) ==
+                heap_size);
+        assert (U64.v xhd + (1 + U64.v (getWosize hdr0)) *
+                  U64.v mword <= heap_size);
+        assert (next <> cur);
+        SpecMajorAlloc.major_fl_valid_step_from_mem mh1 x fuel hdr0 next;
+        SpecMajorAlloc.major_fl_above_zero_step mh1 x fuel next;
+        SpecMajorAlloc.major_fl_blocks_fit_step mh1 x fuel hdr0 next
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                fp <> 0UL /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let res = promote_object minor major obj fp wosize in
+         res.new_addr == fp /\
+         res.fp_out <> 0UL /\
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_out) res.fp_out
+           SpecAlloc.alloc_search_fuel))
+  =
+  let fuel = SpecAlloc.alloc_search_fuel in
+  let mh = MH.single_chunk_major_heap major in
+  GenInv.chunked_major_alloc_shape_elim mh fp fuel;
+  alloc_spec_head_split_alloc_wosize_single_chunk major fp wosize;
+  promote_object_head_split_padding_noop_single_chunk minor major obj fp wosize;
+  let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+  promote_object_success minor major obj fp wosize;
+  let res = promote_object minor major obj fp wosize in
+  assert (res.new_addr == fp);
+  assert (res.fp_out == alloc_res.fp_out);
+  assert (res.fp_out <> 0UL);
+  SpecMajorAlloc.major_alloc_spec_with_fuel_single_chunk_compat
+    major fp wosize fuel;
+  assert (SpecAlloc.alloc_spec major fp wosize ==
+          SpecAlloc.alloc_spec_with_fuel major fp wosize fuel);
+  let ma =
+    SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+  assert (ma.major_alloc_out == MH.single_chunk_major_heap alloc_res.heap_out);
+  assert (ma.major_fp_out == alloc_res.fp_out);
+  assert (ma.major_obj_out == alloc_res.obj_out);
+  SpecMajorAllocSplitShape.major_alloc_head_split_preserves_alloc_shape
+    mh fp wosize fuel;
+  SpecMajorAllocSplitShape.major_alloc_head_split_remainder_avoids_allocated_head
+    mh fp wosize fuel;
+  assert (SpecMajorAlloc.major_fl_valid
+            (MH.single_chunk_major_heap alloc_res.heap_out)
+            alloc_res.fp_out fuel);
+  assert (SpecMajorAlloc.major_fl_above_zero
+            (MH.single_chunk_major_heap alloc_res.heap_out)
+            alloc_res.fp_out fuel);
+  assert (SpecMajorAlloc.major_fl_blocks_fit
+            (MH.single_chunk_major_heap alloc_res.heap_out)
+            alloc_res.fp_out fuel);
+  assert (SpecMajorAlloc.major_fl_chain_avoids
+            (MH.single_chunk_major_heap alloc_res.heap_out)
+            alloc_res.fp_out (fp <: obj_addr) fuel = true);
+  promote_object_head_split_preserves_objects_from_alloc_single_chunk
+    minor major obj fp wosize;
+  let header_frame (src: obj_addr)
+    : Lemma
+        (requires Seq.mem src (objects zero_addr alloc_res.heap_out) /\
+                  src <> (fp <: obj_addr))
+        (ensures read_word res.major_out (hd_address src) ==
+                 read_word alloc_res.heap_out (hd_address src))
+    =
+    promote_object_head_split_frame_header_from_alloc_single_chunk
+      minor major obj fp wosize src
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires header_frame);
+  let link_frame (src: obj_addr)
+    : Lemma
+        (requires Seq.mem src (objects zero_addr alloc_res.heap_out) /\
+                  src <> (fp <: obj_addr) /\
+                  U64.v (wosize_of_object src alloc_res.heap_out) >= 1)
+        (ensures read_word res.major_out src ==
+                 read_word alloc_res.heap_out src)
+    =
+    promote_object_head_split_frame_field0_from_alloc_single_chunk
+      minor major obj fp wosize src
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires link_frame);
+  single_chunk_fl_shape_transfer_avoids
+    alloc_res.heap_out res.major_out (fp <: obj_addr) alloc_res.fp_out fuel;
+  assert (res.fp_out == alloc_res.fp_out);
+  assert (SpecMajorAlloc.major_fl_valid
+            (MH.single_chunk_major_heap res.major_out) res.fp_out fuel);
+  assert (SpecMajorAlloc.major_fl_above_zero
+            (MH.single_chunk_major_heap res.major_out) res.fp_out fuel);
+  assert (SpecMajorAlloc.major_fl_blocks_fit
+            (MH.single_chunk_major_heap res.major_out) res.fp_out fuel);
+  MH.single_chunk_major_heap_wf res.major_out;
+  GenInv.chunked_major_alloc_shape_intro
+    (MH.single_chunk_major_heap res.major_out) res.fp_out fuel
 #pop-options
 
 /// ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ module PromotionDemand = GC.Gen.PromotionDemand
 module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 
 /// Size-only allocation request trace induced by Cheney's final forwarding map.
@@ -187,6 +188,7 @@ val alloc_spec_head_split_alloc_wosize_single_chunk
         (let r = SpecAlloc.alloc_spec major fp wosize in
          r.obj_out == fp /\
          r.fp_out <> 0UL /\
+         Seq.mem (fp <: obj_addr) (objects zero_addr r.heap_out) /\
          U64.v (wosize_of_object (fp <: obj_addr) r.heap_out) == wosize /\
          U64.v fp + (wosize - 1) * U64.v mword + U64.v mword <= heap_size))
 
@@ -213,6 +215,32 @@ val promote_object_head_split_padding_noop_single_chunk
         (let r = SpecAlloc.alloc_spec major fp wosize in
          let copied = copy_fields minor r.heap_out obj fp 0 wosize in
          zero_promote_padding copied (fp <: obj_addr) wosize == copied))
+
+/// In the active-head split case, the allocation creates a post-split
+/// remainder head.  The subsequent promotion writes (field copy + tag update;
+/// padding is a no-op in this case) preserve the chunked allocator shape rooted
+/// at that remainder head for the single dense-heap compatibility chunk.
+val promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
+  : minor:minor_state -> major:heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                fp <> 0UL /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let res = promote_object minor major obj fp wosize in
+         res.new_addr == fp /\
+         res.fp_out <> 0UL /\
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_out) res.fp_out
+           SpecAlloc.alloc_search_fuel))
 
 /// Cheney promotion preserves no_black_objects.
 ///
