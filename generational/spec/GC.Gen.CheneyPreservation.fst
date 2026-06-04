@@ -1196,6 +1196,67 @@ let rec cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_ch
     cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_chunk
       minor cs' parent (idx + 1) wosize
   end
+
+let rec cheney_scan_split_ready_single_chunk
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : GTot prop
+  (decreases fuel)
+  =
+  if fuel > 0 then
+    if scan >= Seq.length cs.cs_queue then True
+    else
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' = cheney_forward_fields minor cs obj 0 wz in
+      cheney_forward_fields_split_ready_single_chunk minor cs obj 0 wz /\
+      cheney_scan_split_ready_single_chunk minor cs' (scan + 1) fuel'
+  else True
+
+let rec cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
+  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_scan_split_ready_single_chunk minor cs scan fuel)
+      (ensures
+        (let cs' = cheney_scan minor cs scan fuel in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true))
+      (decreases fuel)
+  =
+  if fuel > 0 then
+    if scan >= Seq.length cs.cs_queue then
+      cheney_scan_base minor cs scan fuel
+    else begin
+      assert (scan < Seq.length cs.cs_queue);
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      cheney_scan_step minor cs scan fuel;
+      let obj = Seq.index cs.cs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' = cheney_forward_fields minor cs obj 0 wz in
+      assert (cheney_forward_fields_split_ready_single_chunk
+                minor cs obj 0 wz);
+      assert (cheney_scan_split_ready_single_chunk
+                minor cs' (scan + 1) fuel');
+      cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_chunk
+        minor cs obj 0 wz;
+      cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
+        minor cs' (scan + 1) fuel'
+    end
+  else begin
+    assert (fuel = 0);
+    cheney_scan_base minor cs scan fuel
+  end
 #pop-options
 
 /// ---------------------------------------------------------------------------

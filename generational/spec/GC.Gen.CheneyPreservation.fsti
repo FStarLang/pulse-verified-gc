@@ -343,6 +343,31 @@ val cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_chunk
            (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
            SpecAlloc.alloc_search_fuel = true))
 
+/// Exact trace-readiness predicate for Cheney's BFS scan loop.
+val cheney_scan_split_ready_single_chunk
+  : minor:minor_state -> cs:cheney_state -> scan:nat -> fuel:nat ->
+    GTot prop
+
+val cheney_scan_head_split_preserves_chunked_alloc_shape_single_chunk
+  : minor:minor_state -> cs:cheney_state -> scan:nat -> fuel:nat ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_scan_split_ready_single_chunk minor cs scan fuel)
+      (ensures
+        (let cs' = cheney_scan minor cs scan fuel in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true))
+
 /// Cheney promotion preserves no_black_objects.
 ///
 /// Promoted objects get white_bits headers; pre-existing objects' colors are
