@@ -43,6 +43,7 @@ module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
+module ChunkedPromote = GC.Gen.ChunkedPromote
 module AllocHeader = GC.Spec.Allocator.Lemmas.Header
 module IndDesc = FStar.IndefiniteDescription
 
@@ -404,6 +405,31 @@ let promote_minor_object_head_no_oom_single_chunk
             (MH.single_chunk_major_heap major) fp >=
           wosize);
   promote_object_head_no_oom_single_chunk minor major obj fp wosize
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_promote_object_default_single_chunk_compat
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma
+      (requires
+        (let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+         alloc_res.obj_out <> 0UL ==>
+         U64.v alloc_res.obj_out >= U64.v zero_addr + U64.v mword /\
+         U64.v alloc_res.obj_out < heap_size /\
+         U64.v alloc_res.obj_out % U64.v mword == 0))
+      (ensures
+        (let chunked =
+           ChunkedPromote.chunked_promote_object_with_fuel
+             minor (MH.single_chunk_major_heap major) obj fp wosize
+             SpecAlloc.alloc_search_fuel in
+         let dense = promote_object minor major obj fp wosize in
+         chunked.major_out == MH.single_chunk_major_heap dense.major_out /\
+         chunked.fp_out == dense.fp_out /\
+         chunked.new_addr == dense.new_addr))
+  =
+  ChunkedPromote.chunked_promote_object_with_fuel_single_chunk_compat
+    minor major obj fp wosize SpecAlloc.alloc_search_fuel
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"

@@ -34,6 +34,7 @@ module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
+module ChunkedPromote = GC.Gen.ChunkedPromote
 
 /// Size-only allocation request trace induced by Cheney's final forwarding map.
 ///
@@ -177,6 +178,28 @@ val promote_minor_object_head_no_oom_single_chunk
                   PromotionDemand.minor_promotion_demand minor + 1)
       (ensures
         (promote_object minor major obj fp wosize).new_addr <> 0UL)
+
+/// The chunked-major promotion primitive agrees with dense promotion in the
+/// single active-chunk compatibility instance.
+val chunked_promote_object_default_single_chunk_compat
+  : minor:minor_state -> major:heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} ->
+    Lemma
+      (requires
+        (let alloc_res = SpecAlloc.alloc_spec major fp wosize in
+         alloc_res.obj_out <> 0UL ==>
+         U64.v alloc_res.obj_out >= U64.v zero_addr + U64.v mword /\
+         U64.v alloc_res.obj_out < heap_size /\
+         U64.v alloc_res.obj_out % U64.v mword == 0))
+      (ensures
+        (let chunked =
+           ChunkedPromote.chunked_promote_object_with_fuel
+             minor (MH.single_chunk_major_heap major) obj fp wosize
+             SpecAlloc.alloc_search_fuel in
+         let dense = promote_object minor major obj fp wosize in
+         chunked.major_out == MH.single_chunk_major_heap dense.major_out /\
+         chunked.fp_out == dense.fp_out /\
+         chunked.new_addr == dense.new_addr))
 
 /// A head block with at least two spare words forces dense `alloc_spec` down
 /// the split path, so the allocated object's wosize is exactly the request.
