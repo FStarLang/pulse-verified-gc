@@ -429,6 +429,20 @@ let major_fl_chain_avoids_tail
          | None -> True))
   = ()
 
+let major_fl_chain_avoids_step
+  (mh: MH.major_heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma
+      (requires fuel > 0 /\
+                U64.v fp >= U64.v mword /\
+                U64.v fp < heap_size /\
+                U64.v fp % U64.v mword == 0 /\
+                fp <> excl /\
+                (match MH.read_word_in_major mh (fp <: obj_addr) with
+                 | Some next -> major_fl_chain_avoids mh next excl (fuel - 1) = true
+                 | None -> True))
+      (ensures major_fl_chain_avoids mh fp excl fuel = true)
+  = ()
+
 let rec major_fl_walk_chain
   (mh: MH.major_heap) (fp: U64.t) (steps: nat) : Tot U64.t
   (decreases steps)
@@ -450,13 +464,16 @@ let rec major_fl_walk_chain_valid
   (mh: MH.major_heap) (fp: U64.t) (steps: nat) : Tot prop
   (decreases steps)
   = if steps = 0 then True
-    else
+    else if steps > 0 then
+      let steps' : s:nat{s < steps} = steps - 1 in
       U64.v fp >= U64.v mword /\
       U64.v fp < heap_size /\
       U64.v fp % U64.v mword == 0 /\
       (match MH.read_word_in_major mh (fp <: obj_addr) with
-       | Some next -> major_fl_walk_chain_valid mh next (steps - 1)
+       | Some next -> major_fl_walk_chain_valid mh next steps'
        | None -> False)
+    else
+      True
 #pop-options
 
 let major_fl_walk_chain_valid_zero (mh: MH.major_heap) (fp: U64.t)
