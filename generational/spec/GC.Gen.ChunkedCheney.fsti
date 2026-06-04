@@ -12,6 +12,7 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
@@ -41,6 +42,33 @@ val chunked_cheney_forward_normal
 val chunked_cheney_forward_one
   : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
     fuel:nat -> GTot chunked_cheney_state
+
+val chunked_cheney_forward_fields
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
+    GTot chunked_cheney_state
+
+val chunked_cheney_forward_roots
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    roots:seq U64.t -> idx:nat -> alloc_fuel:nat ->
+    GTot chunked_cheney_state
+
+val chunked_cheney_scan
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat ->
+    GTot chunked_cheney_state
+
+noeq
+type chunked_promote_all_result = {
+  major_final : MH.major_heap;
+  fp_final    : U64.t;
+  fwd_map     : forwarding_map;
+}
+
+val chunked_cheney_promote
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    GTot chunked_promote_all_result
 
 val chunked_cheney_forward_normal_noop
   : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
@@ -169,6 +197,65 @@ val chunked_cheney_forward_one_infix_guard_fail
             chunked_cheney_forward_normal minor cs
               (infix_parent minor addr) fuel)
 
+val chunked_cheney_forward_fields_base
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
+    Lemma (requires idx >= wosize)
+          (ensures
+            chunked_cheney_forward_fields
+              minor cs parent idx wosize alloc_fuel == cs)
+
+val chunked_cheney_forward_fields_step
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
+    Lemma (requires idx < wosize)
+          (ensures
+            chunked_cheney_forward_fields
+              minor cs parent idx wosize alloc_fuel ==
+            (let field_val = to_minor_offset (minor_read_field minor parent idx) in
+             let cs' =
+               chunked_cheney_forward_one minor cs field_val alloc_fuel in
+             chunked_cheney_forward_fields
+               minor cs' parent (idx + 1) wosize alloc_fuel))
+
+val chunked_cheney_forward_roots_base
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    roots:seq U64.t -> idx:nat -> alloc_fuel:nat ->
+    Lemma (requires idx >= Seq.length roots)
+          (ensures
+            chunked_cheney_forward_roots
+              minor cs roots idx alloc_fuel == cs)
+
+val chunked_cheney_forward_roots_step
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    roots:seq U64.t -> idx:nat -> alloc_fuel:nat ->
+    Lemma (requires idx < Seq.length roots)
+          (ensures
+            chunked_cheney_forward_roots
+              minor cs roots idx alloc_fuel ==
+            (let r = Seq.index roots idx in
+             let cs' = chunked_cheney_forward_one minor cs r alloc_fuel in
+             chunked_cheney_forward_roots minor cs' roots (idx + 1) alloc_fuel))
+
+val chunked_cheney_scan_base
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat ->
+    Lemma (requires scan_fuel = 0 \/ scan >= Seq.length cs.ccs_queue)
+          (ensures chunked_cheney_scan minor cs scan scan_fuel alloc_fuel == cs)
+
+val chunked_cheney_scan_step
+  : minor:minor_state -> cs:chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat ->
+    Lemma (requires scan_fuel > 0 /\ scan < Seq.length cs.ccs_queue)
+          (ensures
+            chunked_cheney_scan minor cs scan scan_fuel alloc_fuel ==
+            (let obj = Seq.index cs.ccs_queue scan in
+             let wz = minor_wosize minor obj in
+             let cs' =
+               chunked_cheney_forward_fields minor cs obj 0 wz alloc_fuel in
+             chunked_cheney_scan minor cs' (scan + 1) (scan_fuel - 1)
+               alloc_fuel))
+
 val chunked_cheney_forward_normal_default_single_chunk_compat
   : minor:minor_state -> cs:Dense.cheney_state -> addr:U64.t ->
     Lemma
@@ -188,3 +275,49 @@ val chunked_cheney_forward_one_default_single_chunk_compat
           SpecAlloc.alloc_search_fuel ==
         single_chunk_cheney_state
           (Dense.cheney_forward_one minor cs addr))
+
+val chunked_cheney_forward_fields_default_single_chunk_compat
+  : minor:minor_state -> cs:Dense.cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat ->
+    Lemma
+      (ensures
+        chunked_cheney_forward_fields
+          minor (single_chunk_cheney_state cs) parent idx wosize
+          SpecAlloc.alloc_search_fuel ==
+        single_chunk_cheney_state
+          (Dense.cheney_forward_fields minor cs parent idx wosize))
+
+val chunked_cheney_forward_roots_default_single_chunk_compat
+  : minor:minor_state -> cs:Dense.cheney_state ->
+    roots:seq U64.t -> idx:nat ->
+    Lemma
+      (ensures
+        chunked_cheney_forward_roots
+          minor (single_chunk_cheney_state cs) roots idx
+          SpecAlloc.alloc_search_fuel ==
+        single_chunk_cheney_state
+          (Dense.cheney_forward_roots minor cs roots idx))
+
+val chunked_cheney_scan_default_single_chunk_compat
+  : minor:minor_state -> cs:Dense.cheney_state ->
+    scan:nat -> scan_fuel:nat ->
+    Lemma
+      (ensures
+        chunked_cheney_scan
+          minor (single_chunk_cheney_state cs) scan scan_fuel
+          SpecAlloc.alloc_search_fuel ==
+        single_chunk_cheney_state
+          (Dense.cheney_scan minor cs scan scan_fuel))
+
+val chunked_cheney_promote_default_single_chunk_compat
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (ensures
+        (let chunked =
+           chunked_cheney_promote
+             minor (MH.single_chunk_major_heap major) fp roots
+             SpecAlloc.alloc_search_fuel in
+         let dense = Dense.cheney_promote minor major fp roots in
+         chunked.major_final == MH.single_chunk_major_heap dense.major_final /\
+         chunked.fp_final == dense.fp_final /\
+         chunked.fwd_map == dense.fwd_map))

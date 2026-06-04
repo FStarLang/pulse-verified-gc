@@ -8,6 +8,7 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
@@ -63,6 +64,62 @@ let chunked_cheney_forward_one
     else cs'
   else
     chunked_cheney_forward_normal minor cs addr fuel
+
+let rec chunked_cheney_forward_fields
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
+  : GTot chunked_cheney_state
+    (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then cs
+  else
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' = chunked_cheney_forward_one minor cs field_val alloc_fuel in
+    chunked_cheney_forward_fields minor cs' parent (idx + 1) wosize alloc_fuel
+
+let rec chunked_cheney_forward_roots
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (roots: seq U64.t) (idx: nat) (alloc_fuel: nat)
+  : GTot chunked_cheney_state
+    (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then cs
+  else
+    let r = Seq.index roots idx in
+    let cs' = chunked_cheney_forward_one minor cs r alloc_fuel in
+    chunked_cheney_forward_roots minor cs' roots (idx + 1) alloc_fuel
+
+let rec chunked_cheney_scan
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (scan: nat) (scan_fuel: nat) (alloc_fuel: nat)
+  : GTot chunked_cheney_state
+    (decreases scan_fuel)
+  =
+  if scan_fuel = 0 || scan >= Seq.length cs.ccs_queue then cs
+  else begin
+    assert (scan_fuel > 0);
+    let next_fuel : nat = scan_fuel - 1 in
+    let obj = Seq.index cs.ccs_queue scan in
+    let wz = minor_wosize minor obj in
+    let cs' =
+      chunked_cheney_forward_fields minor cs obj 0 wz alloc_fuel in
+    chunked_cheney_scan minor cs' (scan + 1) next_fuel alloc_fuel
+  end
+
+let chunked_cheney_promote
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  : GTot chunked_promote_all_result =
+  let cs0 : chunked_cheney_state =
+    { ccs_major = major;
+      ccs_fp = fp;
+      ccs_fwd = empty_forwarding;
+      ccs_queue = Seq.empty } in
+  let cs1 = chunked_cheney_forward_roots minor cs0 roots 0 alloc_fuel in
+  let cs2 = chunked_cheney_scan minor cs1 0 (Dense.cheney_fuel minor) alloc_fuel in
+  { major_final = cs2.ccs_major;
+    fp_final = cs2.ccs_fp;
+    fwd_map = cs2.ccs_fwd }
 
 let chunked_cheney_forward_normal_noop
   (minor: minor_state) (cs: chunked_cheney_state) (addr: U64.t)
@@ -201,6 +258,71 @@ let chunked_cheney_forward_one_infix_guard_fail
               (infix_parent minor addr) fuel)
   = ()
 
+let chunked_cheney_forward_fields_base
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
+  : Lemma (requires idx >= wosize)
+          (ensures
+            chunked_cheney_forward_fields
+              minor cs parent idx wosize alloc_fuel == cs)
+  = ()
+
+let chunked_cheney_forward_fields_step
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
+  : Lemma (requires idx < wosize)
+          (ensures
+            chunked_cheney_forward_fields
+              minor cs parent idx wosize alloc_fuel ==
+            (let field_val = to_minor_offset (minor_read_field minor parent idx) in
+             let cs' =
+               chunked_cheney_forward_one minor cs field_val alloc_fuel in
+             chunked_cheney_forward_fields
+               minor cs' parent (idx + 1) wosize alloc_fuel))
+  = ()
+
+let chunked_cheney_forward_roots_base
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (roots: seq U64.t) (idx: nat) (alloc_fuel: nat)
+  : Lemma (requires idx >= Seq.length roots)
+          (ensures
+            chunked_cheney_forward_roots
+              minor cs roots idx alloc_fuel == cs)
+  = ()
+
+let chunked_cheney_forward_roots_step
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (roots: seq U64.t) (idx: nat) (alloc_fuel: nat)
+  : Lemma (requires idx < Seq.length roots)
+          (ensures
+            chunked_cheney_forward_roots
+              minor cs roots idx alloc_fuel ==
+            (let r = Seq.index roots idx in
+             let cs' = chunked_cheney_forward_one minor cs r alloc_fuel in
+             chunked_cheney_forward_roots minor cs' roots (idx + 1) alloc_fuel))
+  = ()
+
+let chunked_cheney_scan_base
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (scan: nat) (scan_fuel: nat) (alloc_fuel: nat)
+  : Lemma (requires scan_fuel = 0 \/ scan >= Seq.length cs.ccs_queue)
+          (ensures chunked_cheney_scan minor cs scan scan_fuel alloc_fuel == cs)
+  = ()
+
+let chunked_cheney_scan_step
+  (minor: minor_state) (cs: chunked_cheney_state)
+  (scan: nat) (scan_fuel: nat) (alloc_fuel: nat)
+  : Lemma (requires scan_fuel > 0 /\ scan < Seq.length cs.ccs_queue)
+          (ensures
+            chunked_cheney_scan minor cs scan scan_fuel alloc_fuel ==
+            (let obj = Seq.index cs.ccs_queue scan in
+             let wz = minor_wosize minor obj in
+             let cs' =
+               chunked_cheney_forward_fields minor cs obj 0 wz alloc_fuel in
+             chunked_cheney_scan minor cs' (scan + 1) (scan_fuel - 1)
+               alloc_fuel))
+  = ()
+
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_cheney_forward_normal_default_single_chunk_compat
   (minor: minor_state) (cs: Dense.cheney_state) (addr: U64.t)
@@ -316,4 +438,153 @@ let chunked_cheney_forward_one_default_single_chunk_compat
       SpecAlloc.alloc_search_fuel;
     chunked_cheney_forward_normal_default_single_chunk_compat minor cs addr
   end
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+let rec chunked_cheney_forward_fields_default_single_chunk_compat
+  (minor: minor_state) (cs: Dense.cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma
+      (ensures
+        chunked_cheney_forward_fields
+          minor (single_chunk_cheney_state cs) parent idx wosize
+          SpecAlloc.alloc_search_fuel ==
+        single_chunk_cheney_state
+          (Dense.cheney_forward_fields minor cs parent idx wosize))
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then begin
+    Dense.cheney_forward_fields_base minor cs parent idx wosize;
+    chunked_cheney_forward_fields_base
+      minor (single_chunk_cheney_state cs) parent idx wosize
+      SpecAlloc.alloc_search_fuel
+  end
+  else begin
+    Dense.cheney_forward_fields_step minor cs parent idx wosize;
+    chunked_cheney_forward_fields_step
+      minor (single_chunk_cheney_state cs) parent idx wosize
+      SpecAlloc.alloc_search_fuel;
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    chunked_cheney_forward_one_default_single_chunk_compat minor cs field_val;
+    let dense_cs' = Dense.cheney_forward_one minor cs field_val in
+    let chunked_cs' =
+      chunked_cheney_forward_one
+        minor (single_chunk_cheney_state cs) field_val
+        SpecAlloc.alloc_search_fuel in
+    assert (chunked_cs' == single_chunk_cheney_state dense_cs');
+    chunked_cheney_forward_fields_default_single_chunk_compat
+      minor dense_cs' parent (idx + 1) wosize
+  end
+
+let rec chunked_cheney_forward_roots_default_single_chunk_compat
+  (minor: minor_state) (cs: Dense.cheney_state)
+  (roots: seq U64.t) (idx: nat)
+  : Lemma
+      (ensures
+        chunked_cheney_forward_roots
+          minor (single_chunk_cheney_state cs) roots idx
+          SpecAlloc.alloc_search_fuel ==
+        single_chunk_cheney_state
+          (Dense.cheney_forward_roots minor cs roots idx))
+      (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then begin
+    Dense.cheney_forward_roots_base minor cs roots idx;
+    chunked_cheney_forward_roots_base
+      minor (single_chunk_cheney_state cs) roots idx
+      SpecAlloc.alloc_search_fuel
+  end
+  else begin
+    Dense.cheney_forward_roots_step minor cs roots idx;
+    chunked_cheney_forward_roots_step
+      minor (single_chunk_cheney_state cs) roots idx
+      SpecAlloc.alloc_search_fuel;
+    let r = Seq.index roots idx in
+    chunked_cheney_forward_one_default_single_chunk_compat minor cs r;
+    let dense_cs' = Dense.cheney_forward_one minor cs r in
+    let chunked_cs' =
+      chunked_cheney_forward_one
+        minor (single_chunk_cheney_state cs) r
+        SpecAlloc.alloc_search_fuel in
+    assert (chunked_cs' == single_chunk_cheney_state dense_cs');
+    chunked_cheney_forward_roots_default_single_chunk_compat
+      minor dense_cs' roots (idx + 1)
+  end
+
+let rec chunked_cheney_scan_default_single_chunk_compat
+  (minor: minor_state) (cs: Dense.cheney_state)
+  (scan: nat) (scan_fuel: nat)
+  : Lemma
+      (ensures
+        chunked_cheney_scan
+          minor (single_chunk_cheney_state cs) scan scan_fuel
+          SpecAlloc.alloc_search_fuel ==
+        single_chunk_cheney_state
+          (Dense.cheney_scan minor cs scan scan_fuel))
+      (decreases scan_fuel)
+  =
+  if scan_fuel = 0 || scan >= Seq.length cs.cs_queue then begin
+    Dense.cheney_scan_base minor cs scan scan_fuel;
+    chunked_cheney_scan_base
+      minor (single_chunk_cheney_state cs) scan scan_fuel
+      SpecAlloc.alloc_search_fuel
+  end
+  else begin
+    assert (scan_fuel > 0);
+    assert (scan < Seq.length cs.cs_queue);
+    assert (scan < Seq.length (single_chunk_cheney_state cs).ccs_queue);
+    Dense.cheney_scan_step minor cs scan scan_fuel;
+    chunked_cheney_scan_step
+      minor (single_chunk_cheney_state cs) scan scan_fuel
+      SpecAlloc.alloc_search_fuel;
+    let next_fuel : nat = scan_fuel - 1 in
+    let obj = Seq.index cs.cs_queue scan in
+    let wz = minor_wosize minor obj in
+    chunked_cheney_forward_fields_default_single_chunk_compat
+      minor cs obj 0 wz;
+    let dense_cs' = Dense.cheney_forward_fields minor cs obj 0 wz in
+    let chunked_cs' =
+      chunked_cheney_forward_fields
+        minor (single_chunk_cheney_state cs) obj 0 wz
+        SpecAlloc.alloc_search_fuel in
+    assert (chunked_cs' == single_chunk_cheney_state dense_cs');
+    chunked_cheney_scan_default_single_chunk_compat
+      minor dense_cs' (scan + 1) next_fuel
+  end
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_cheney_promote_default_single_chunk_compat
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+      (ensures
+        (let chunked =
+           chunked_cheney_promote
+             minor (MH.single_chunk_major_heap major) fp roots
+             SpecAlloc.alloc_search_fuel in
+         let dense = Dense.cheney_promote minor major fp roots in
+         chunked.major_final == MH.single_chunk_major_heap dense.major_final /\
+         chunked.fp_final == dense.fp_final /\
+         chunked.fwd_map == dense.fwd_map))
+  =
+  let cs0 : Dense.cheney_state =
+    { cs_major = major;
+      cs_fp = fp;
+      cs_fwd = empty_forwarding;
+      cs_queue = Seq.empty } in
+  chunked_cheney_forward_roots_default_single_chunk_compat minor cs0 roots 0;
+  let dense_cs1 = Dense.cheney_forward_roots minor cs0 roots 0 in
+  let chunked_cs1 =
+    chunked_cheney_forward_roots
+      minor (single_chunk_cheney_state cs0) roots 0
+      SpecAlloc.alloc_search_fuel in
+  assert (chunked_cs1 == single_chunk_cheney_state dense_cs1);
+  chunked_cheney_scan_default_single_chunk_compat
+    minor dense_cs1 0 (Dense.cheney_fuel minor);
+  let dense_cs2 = Dense.cheney_scan minor dense_cs1 0 (Dense.cheney_fuel minor) in
+  let chunked_cs2 =
+    chunked_cheney_scan
+      minor chunked_cs1 0 (Dense.cheney_fuel minor)
+      SpecAlloc.alloc_search_fuel in
+  assert (chunked_cs2 == single_chunk_cheney_state dense_cs2)
 #pop-options

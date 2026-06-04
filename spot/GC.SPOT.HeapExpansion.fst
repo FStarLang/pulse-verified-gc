@@ -719,6 +719,62 @@ let spot_chunked_cheney_forward_one_default_single_chunk_compat
   CheneyPreservation.chunked_cheney_forward_one_default_single_chunk_compat
     minor cs addr
 
+let spot_chunked_cheney_forward_fields_default_single_chunk_compat
+  (minor: minor_state) (cs: cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor (ChunkedCheney.single_chunk_cheney_state cs) parent idx wosize
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_forward_fields minor cs parent idx wosize))
+  =
+  CheneyPreservation.chunked_cheney_forward_fields_default_single_chunk_compat
+    minor cs parent idx wosize
+
+let spot_chunked_cheney_forward_roots_default_single_chunk_compat
+  (minor: minor_state) (cs: cheney_state) (roots: Seq.seq U64.t) (idx: nat)
+  : Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_forward_roots
+          minor (ChunkedCheney.single_chunk_cheney_state cs) roots idx
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_forward_roots minor cs roots idx))
+  =
+  CheneyPreservation.chunked_cheney_forward_roots_default_single_chunk_compat
+    minor cs roots idx
+
+let spot_chunked_cheney_scan_default_single_chunk_compat
+  (minor: minor_state) (cs: cheney_state) (scan scan_fuel: nat)
+  : Lemma
+      (ensures
+        ChunkedCheney.chunked_cheney_scan
+          minor (ChunkedCheney.single_chunk_cheney_state cs) scan scan_fuel
+          SpecAlloc.alloc_search_fuel ==
+        ChunkedCheney.single_chunk_cheney_state
+          (cheney_scan minor cs scan scan_fuel))
+  =
+  CheneyPreservation.chunked_cheney_scan_default_single_chunk_compat
+    minor cs scan scan_fuel
+
+let spot_chunked_cheney_promote_default_single_chunk_compat
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  : Lemma
+      (ensures
+        (let chunked =
+           ChunkedCheney.chunked_cheney_promote
+             minor (MH.single_chunk_major_heap major) fp roots
+             SpecAlloc.alloc_search_fuel in
+         let dense = cheney_promote minor major fp roots in
+         chunked.major_final == MH.single_chunk_major_heap dense.major_final /\
+         chunked.fp_final == dense.fp_final /\
+         chunked.fwd_map == dense.fwd_map))
+  =
+  CheneyPreservation.chunked_cheney_promote_default_single_chunk_compat
+    minor major fp roots
+
 let spot_alloc_spec_head_split_alloc_wosize_single_chunk
   (major: heap) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma
