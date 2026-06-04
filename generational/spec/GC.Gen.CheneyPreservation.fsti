@@ -766,6 +766,55 @@ val cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chun
          SpecMajorAllocMultiAlloc.allocated_objects_nonzero
           alloc_trace.dense_list_objs_out))
 
+/// Compatibility bridge from the minor-promotion head preflight to actual
+/// dense Cheney promotion in the no-expansion branch.
+///
+/// This deliberately does not claim Cheney can run on a freshly expanded
+/// multi-chunk major heap: today's Cheney spec still consumes a dense `heap`.
+val cheney_promote_after_minor_promotion_head_preflight_no_expansion_single_chunk
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    fresh:MH.heap_chunk ->
+    Lemma
+      (requires minor_wf minor /\
+               SpecAlloc.alloc_search_fuel > 1 /\
+               fp <> 0UL /\
+               GenInv.chunked_collection_heap_shape
+                 minor (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_chain_terminates
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel = true /\
+               SpecMajorAlloc.major_fl_head_wosize
+                 (MH.single_chunk_major_heap major) fp >=
+                 PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            (MH.single_chunk_major_heap major) fp
+            SpecAlloc.alloc_search_fuel needed fresh in
+         let res = cheney_promote minor major fp roots in
+         let requests =
+          cheney_forwarded_minor_requests minor major fp roots in
+         let alloc_trace =
+          SpecMajorAllocMultiAlloc.dense_alloc_list_default_spec
+            major fp requests in
+         r.capacity_major_out == MH.single_chunk_major_heap major /\
+         r.capacity_fp_out == fp /\
+         r.capacity_fuel_out == SpecAlloc.alloc_search_fuel /\
+         GenInv.chunked_collection_heap_shape
+          minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
+         GenInv.chunked_major_alloc_shape
+          (MH.single_chunk_major_heap res.major_final) res.fp_final
+          SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap res.major_final) res.fp_final
+          SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+          alloc_trace.dense_list_objs_out))
+
 /// Cheney promotion preserves no_black_objects.
 ///
 /// Promoted objects get white_bits headers; pre-existing objects' colors are
