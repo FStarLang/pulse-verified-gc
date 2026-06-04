@@ -428,6 +428,76 @@ let major_fl_chain_avoids_tail
          | None -> True))
   = ()
 
+let rec major_fl_walk_chain
+  (mh: MH.major_heap) (fp: U64.t) (steps: nat) : Tot U64.t
+  (decreases steps)
+  = if steps = 0 then fp
+    else if fp = 0UL then fp
+    else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+            U64.v fp % U64.v mword <> 0 then fp
+    else
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next -> major_fl_walk_chain mh next (steps - 1)
+      | None -> fp
+
+let major_fl_walk_chain_zero (mh: MH.major_heap) (fp: U64.t)
+  : Lemma (ensures major_fl_walk_chain mh fp 0 = fp)
+  = ()
+
+let rec major_fl_walk_chain_valid
+  (mh: MH.major_heap) (fp: U64.t) (steps: nat) : Tot prop
+  (decreases steps)
+  = if steps = 0 then True
+    else
+      U64.v fp >= U64.v mword /\
+      U64.v fp < heap_size /\
+      U64.v fp % U64.v mword == 0 /\
+      (match MH.read_word_in_major mh (fp <: obj_addr) with
+       | Some next -> major_fl_walk_chain_valid mh next (steps - 1)
+       | None -> False)
+
+let major_fl_walk_chain_valid_zero (mh: MH.major_heap) (fp: U64.t)
+  : Lemma (ensures major_fl_walk_chain_valid mh fp 0)
+  = ()
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let rec major_fl_walk_chain_valid_prefix
+  (mh: MH.major_heap) (fp: U64.t) (steps prefix: nat)
+  : Lemma (requires major_fl_walk_chain_valid mh fp steps /\
+                    prefix <= steps)
+          (ensures major_fl_walk_chain_valid mh fp prefix)
+          (decreases prefix)
+  = if prefix = 0 then ()
+    else begin
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next ->
+        major_fl_walk_chain_valid_prefix mh next (steps - 1) (prefix - 1)
+      | None -> assert False
+    end
+
+let rec major_fl_walk_chain_valid_at
+  (mh: MH.major_heap) (fp: U64.t) (steps pos: nat)
+  : Lemma
+      (requires major_fl_walk_chain_valid mh fp steps /\ pos < steps)
+      (ensures
+        (let node = major_fl_walk_chain mh fp pos in
+         U64.v node >= U64.v mword /\
+         U64.v node < heap_size /\
+         U64.v node % U64.v mword == 0 /\
+         (match MH.read_word_in_major mh (node <: obj_addr) with
+          | Some _ -> True
+          | None -> False)))
+      (decreases pos)
+  = if pos = 0 then ()
+    else begin
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next ->
+        major_fl_walk_chain_valid_at mh next (steps - 1) (pos - 1)
+      | None -> assert False
+    end
+
+#pop-options
+
 #push-options "--z3rlimit 10"
 let major_fl_valid_gives_pointer (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   : Lemma (requires fuel > 0 /\
@@ -2676,6 +2746,10 @@ let rec objects_in_chunk_from_head_split_preserves_object
         assert (Obj.getWosize alloc_hdr == U64.uint_to_t requested_wz);
         assert (U64.v (Obj.getWosize alloc_hdr) == requested_wz);
         assert (U64.v start + (1 + requested_wz) * U64.v mword == U64.v rem_hd);
+        assert (1 <= 1 + requested_wz);
+        FStar.Math.Lemmas.lemma_mult_le_right
+          (U64.v mword) 1 (1 + requested_wz);
+        assert (U64.v mword <= (1 + requested_wz) * U64.v mword);
         assert (U64.v start + U64.v mword <= U64.v rem_hd);
         assert (U64.v start + U64.v mword <= U64.v rem_obj);
         MH.write_word_in_chunk_preserves_word c hd alloc_hdr rem_hd;
