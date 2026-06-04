@@ -251,6 +251,20 @@ val promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
 val cheney_forward_one_split_ready_single_chunk
   : minor:minor_state -> cs:cheney_state -> addr:U64.t -> GTot prop
 
+/// The preflight minor-promotion demand budget gives the split capacity needed
+/// for any single Cheney forwarding step performed at a state whose active
+/// head still carries that whole budget.
+val cheney_forward_one_split_ready_from_minor_demand_single_chunk
+  : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
+    Lemma
+      (requires minor_wf minor /\
+                cs.cs_fp <> 0UL /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        cheney_forward_one_split_ready_single_chunk minor cs addr)
+
 val cheney_forward_one_head_split_preserves_chunked_alloc_shape_single_chunk
   : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
     Lemma
@@ -394,6 +408,43 @@ val cheney_promote_head_split_preserves_chunked_alloc_shape_single_chunk
          SpecMajorAlloc.major_fl_chain_terminates
            (MH.single_chunk_major_heap res.major_final) res.fp_final
            SpecAlloc.alloc_search_fuel = true))
+
+/// Budgeted audit wrapper: the global minor-promotion preflight budget proves
+/// the conservative allocation trace is non-OOM, while exact Cheney
+/// split-readiness still supplies the per-step state obligations needed to
+/// preserve the chunked allocator shape.
+val cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chunk
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (requires minor_wf minor /\
+               SpecAlloc.alloc_search_fuel > 1 /\
+               fp <> 0UL /\
+               GenInv.chunked_major_alloc_shape
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel /\
+               SpecMajorAlloc.major_fl_chain_terminates
+                 (MH.single_chunk_major_heap major) fp
+                 SpecAlloc.alloc_search_fuel = true /\
+               SpecMajorAlloc.major_fl_head_wosize
+                 (MH.single_chunk_major_heap major) fp >=
+                 PromotionDemand.minor_promotion_demand minor + 1 /\
+               cheney_promote_split_ready_single_chunk
+                 minor major fp roots)
+      (ensures
+        (let res = cheney_promote minor major fp roots in
+         let requests =
+          cheney_forwarded_minor_requests minor major fp roots in
+         let alloc_trace =
+          SpecMajorAllocMultiAlloc.dense_alloc_list_default_spec
+            major fp requests in
+         GenInv.chunked_major_alloc_shape
+          (MH.single_chunk_major_heap res.major_final) res.fp_final
+          SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap res.major_final) res.fp_final
+          SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+          alloc_trace.dense_list_objs_out))
 
 /// Cheney promotion preserves no_black_objects.
 ///

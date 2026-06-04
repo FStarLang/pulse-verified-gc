@@ -72,6 +72,14 @@ val minor_promotion_object_wosize_demand_bound
       (requires Seq.mem obj (minor_objects minor))
       (ensures minor_wosize minor obj <= minor_promotion_demand minor)
 
+val minor_promotion_object_split_demand_bound
+  : minor:minor_state -> obj:U64.t ->
+    Lemma
+      (requires Seq.mem obj (minor_objects minor))
+      (ensures
+        MultiAlloc.request_split_demand (minor_wosize minor obj) <=
+        minor_promotion_demand minor)
+
 val minor_promotion_requests_from_filter_positive
   : minor:minor_state -> objs:seq U64.t -> idx:nat ->
     include_obj:(U64.t -> GTot bool) ->
