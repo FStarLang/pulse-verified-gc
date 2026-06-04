@@ -1464,6 +1464,65 @@ let rec cheney_forward_roots_head_split_preserves_chunked_alloc_shape_single_chu
       minor cs' roots (idx + 1)
   end
 
+let rec cheney_forward_roots_budget_ready_single_chunk
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  (remaining: nat)
+  : GTot prop
+  (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then
+    remaining > 0 /\
+    SpecMajorAlloc.major_fl_head_wosize
+      (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >= remaining
+  else
+    let r = Seq.index roots idx in
+    let cs' = cheney_forward_one minor cs r in
+    cheney_forward_one_budget_ready_single_chunk minor cs r remaining /\
+    cheney_forward_roots_budget_ready_single_chunk
+      minor cs' roots (idx + 1) remaining
+
+let rec cheney_forward_roots_head_split_preserves_remaining_head_wosize_single_chunk
+  (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
+  (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_forward_roots_budget_ready_single_chunk
+                  minor cs roots idx remaining)
+      (ensures
+        (let cs' = cheney_forward_roots minor cs roots idx in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
+      (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then
+    cheney_forward_roots_base minor cs roots idx
+  else begin
+    cheney_forward_roots_step minor cs roots idx;
+    let r = Seq.index roots idx in
+    let cs' = cheney_forward_one minor cs r in
+    assert (cheney_forward_one_budget_ready_single_chunk
+              minor cs r remaining);
+    assert (cheney_forward_roots_budget_ready_single_chunk
+              minor cs' roots (idx + 1) remaining);
+    cheney_forward_one_head_split_preserves_remaining_head_wosize_single_chunk
+      minor cs r remaining;
+    cheney_forward_roots_head_split_preserves_remaining_head_wosize_single_chunk
+      minor cs' roots (idx + 1) remaining
+  end
+
 let rec cheney_forward_fields_split_ready_single_chunk
   (minor: minor_state) (cs: cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat)
