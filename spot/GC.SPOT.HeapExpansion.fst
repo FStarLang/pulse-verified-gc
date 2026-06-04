@@ -695,6 +695,31 @@ let spot_promote_object_head_split_padding_noop_single_chunk
   CheneyPreservation.promote_object_head_split_padding_noop_single_chunk
     minor major obj fp wosize
 
+let spot_promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
+  (minor: minor_state) (major: heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0})
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                fp <> 0UL /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >= wosize + 2)
+      (ensures
+        (let res = promote_object minor major obj fp wosize in
+         res.new_addr == fp /\
+         res.fp_out <> 0UL /\
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap res.major_out) res.fp_out
+           SpecAlloc.alloc_search_fuel))
+  =
+  CheneyPreservation.promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
+    minor major obj fp wosize
+
 let spot_chunked_is_blue_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
   (obj: obj_addr)
