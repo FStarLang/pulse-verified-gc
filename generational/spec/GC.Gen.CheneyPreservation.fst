@@ -1144,6 +1144,58 @@ let rec cheney_forward_roots_head_split_preserves_chunked_alloc_shape_single_chu
     cheney_forward_roots_head_split_preserves_chunked_alloc_shape_single_chunk
       minor cs' roots (idx + 1)
   end
+
+let rec cheney_forward_fields_split_ready_single_chunk
+  (minor: minor_state) (cs: cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat)
+  : GTot prop
+  (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then True
+  else
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' = cheney_forward_one minor cs field_val in
+    cheney_forward_one_split_ready_single_chunk minor cs field_val /\
+    cheney_forward_fields_split_ready_single_chunk
+      minor cs' parent (idx + 1) wosize
+
+let rec cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_chunk
+  (minor: minor_state) (cs: cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_forward_fields_split_ready_single_chunk
+                  minor cs parent idx wosize)
+      (ensures
+        (let cs' = cheney_forward_fields minor cs parent idx wosize in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true))
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then
+    cheney_forward_fields_base minor cs parent idx wosize
+  else begin
+    cheney_forward_fields_step minor cs parent idx wosize;
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' = cheney_forward_one minor cs field_val in
+    assert (cheney_forward_one_split_ready_single_chunk minor cs field_val);
+    assert (cheney_forward_fields_split_ready_single_chunk
+              minor cs' parent (idx + 1) wosize);
+    cheney_forward_one_head_split_preserves_chunked_alloc_shape_single_chunk
+      minor cs field_val;
+    cheney_forward_fields_head_split_preserves_chunked_alloc_shape_single_chunk
+      minor cs' parent (idx + 1) wosize
+  end
 #pop-options
 
 /// ---------------------------------------------------------------------------
