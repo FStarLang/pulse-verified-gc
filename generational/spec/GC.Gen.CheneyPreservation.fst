@@ -2469,7 +2469,7 @@ let cheney_promote_budget_ready_from_split_demand_single_chunk
             minor cs1 0 (cheney_fuel minor) remaining)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
 private let cheney_forward_one_unforwarded_split_demand_decreases_single_chunk
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -2671,7 +2671,7 @@ private let cheney_forward_one_budget_ready_from_unforwarded_single_chunk
     minor cs addr (after + 1)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
 private let rec cheney_forward_roots_budget_ready_from_unforwarded_single_chunk
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma
