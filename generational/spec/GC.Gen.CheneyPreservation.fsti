@@ -277,6 +277,13 @@ val promote_object_head_split_preserves_remaining_head_wosize_single_chunk
 val cheney_forward_one_split_ready_single_chunk
   : minor:minor_state -> cs:cheney_state -> addr:U64.t -> GTot prop
 
+/// Local budget readiness for one Cheney forwarding step: the current head
+/// already has the positive remaining budget, and any actual promoted normal
+/// object (or infix parent) has room for its split demand plus that budget.
+val cheney_forward_one_budget_ready_single_chunk
+  : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
+    remaining:nat -> GTot prop
+
 /// The preflight minor-promotion demand budget gives the split capacity needed
 /// for any single Cheney forwarding step performed at a state whose active
 /// head still carries that whole budget.
@@ -327,6 +334,31 @@ val cheney_forward_one_head_split_preserves_chunked_alloc_shape_single_chunk
          SpecMajorAlloc.major_fl_chain_terminates
            (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
            SpecAlloc.alloc_search_fuel = true))
+
+val cheney_forward_one_head_split_preserves_remaining_head_wosize_single_chunk
+  : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
+    remaining:nat ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_forward_one_budget_ready_single_chunk
+                  minor cs addr remaining)
+      (ensures
+        (let cs' = cheney_forward_one minor cs addr in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
 
 /// Exact trace-readiness predicate for `cheney_forward_roots`: every actual
 /// root step has the split-head capacity needed by the one-step theorem, after

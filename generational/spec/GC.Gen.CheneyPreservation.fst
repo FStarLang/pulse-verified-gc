@@ -1102,6 +1102,32 @@ let cheney_forward_one_split_ready_single_chunk
           (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
         minor_wosize minor parent + 2))
 
+let cheney_forward_one_budget_ready_single_chunk
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (remaining: nat)
+  : GTot prop =
+  remaining > 0 /\
+  SpecMajorAlloc.major_fl_head_wosize
+    (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >= remaining /\
+  (Seq.mem addr (minor_objects minor) /\
+   cs.cs_fwd addr = 0UL /\
+   ~(is_infix_in_minor minor addr) /\
+   minor_wosize minor addr > 0 ==>
+     cs.cs_fp <> 0UL /\
+     SpecMajorAlloc.major_fl_head_wosize
+       (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+     minor_wosize minor addr + 1 + remaining) /\
+  (cs.cs_fwd addr = 0UL /\
+   is_infix_in_minor minor addr ==>
+     (let parent = infix_parent minor addr in
+      Seq.mem parent (minor_objects minor) /\
+      cs.cs_fwd parent = 0UL /\
+      minor_wosize minor parent > 0 ==>
+        cs.cs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+        minor_wosize minor parent + 1 + remaining))
+
 let cheney_forward_one_split_ready_from_minor_demand_single_chunk
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -1267,6 +1293,123 @@ let cheney_forward_one_head_split_preserves_chunked_alloc_shape_single_chunk
     cheney_forward_one_normal minor cs addr;
     cheney_forward_normal_head_split_preserves_chunked_alloc_shape_single_chunk
       minor cs addr
+  end
+
+private let cheney_forward_normal_head_split_preserves_remaining_head_wosize_single_chunk
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                remaining > 0 /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                remaining /\
+                (Seq.mem addr (minor_objects minor) /\
+                 cs.cs_fwd addr = 0UL /\
+                 minor_wosize minor addr > 0 ==>
+                   cs.cs_fp <> 0UL /\
+                   SpecMajorAlloc.major_fl_head_wosize
+                     (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                   minor_wosize minor addr + 1 + remaining))
+      (ensures
+        (let cs' = cheney_forward_normal minor cs addr in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
+  =
+  if not (Seq.mem addr (minor_objects minor)) || cs.cs_fwd addr <> 0UL then
+    cheney_forward_normal_noop minor cs addr
+  else begin
+    let wz = minor_wosize minor addr in
+    if wz = 0 then
+      cheney_forward_normal_noop_wz0 minor cs addr
+    else begin
+      assert (wz > 0);
+      assert (cs.cs_fp <> 0UL);
+      assert (SpecMajorAlloc.major_fl_head_wosize
+                (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+              wz + 1 + remaining);
+      assert (SpecMajorAlloc.major_fl_head_wosize
+                (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+              wz + 2);
+      promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
+        minor cs.cs_major addr cs.cs_fp wz;
+      promote_object_head_split_preserves_remaining_head_wosize_single_chunk
+        minor cs.cs_major addr cs.cs_fp wz remaining;
+      let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
+      assert (res.new_addr <> 0UL);
+      cheney_forward_normal_success minor cs addr
+    end
+  end
+
+let cheney_forward_one_head_split_preserves_remaining_head_wosize_single_chunk
+  (minor: minor_state) (cs: cheney_state) (addr: U64.t)
+  (remaining: nat)
+  : Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_forward_one_budget_ready_single_chunk
+                  minor cs addr remaining)
+      (ensures
+        (let cs' = cheney_forward_one minor cs addr in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+         remaining))
+  =
+  assert (remaining > 0);
+  assert (SpecMajorAlloc.major_fl_head_wosize
+            (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+          remaining);
+  if cs.cs_fwd addr <> 0UL then
+    cheney_forward_one_noop minor cs addr
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    cheney_forward_normal_head_split_preserves_remaining_head_wosize_single_chunk
+      minor cs parent remaining;
+    let cs' = cheney_forward_normal minor cs parent in
+    assert (GenInv.chunked_major_alloc_shape
+              (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+              SpecAlloc.alloc_search_fuel);
+    assert (SpecMajorAlloc.major_fl_chain_terminates
+              (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+              SpecAlloc.alloc_search_fuel = true);
+    assert (SpecMajorAlloc.major_fl_head_wosize
+              (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp >=
+            remaining);
+    if cs'.cs_fwd parent <> 0UL &&
+       U64.v addr >= U64.v parent &&
+       U64.v (cs'.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
+    then
+      cheney_forward_one_infix_guard_pass minor cs addr
+    else
+      cheney_forward_one_infix_guard_fail minor cs addr
+  end else begin
+    cheney_forward_one_normal minor cs addr;
+    cheney_forward_normal_head_split_preserves_remaining_head_wosize_single_chunk
+      minor cs addr remaining
   end
 #pop-options
 
