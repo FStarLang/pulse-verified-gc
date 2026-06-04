@@ -353,6 +353,30 @@ let major_fl_chain_terminates_null (mh: MH.major_heap) (fuel: nat)
   reveal_opaque (`%major_fl_chain_terminates)
     (major_fl_chain_terminates mh 0UL fuel)
 
+let major_fl_chain_terminates_terminal
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires fp = 0UL \/
+                U64.v fp < U64.v mword \/
+                U64.v fp >= heap_size \/
+                U64.v fp % U64.v mword <> 0)
+      (ensures major_fl_chain_terminates mh fp fuel = true)
+  =
+  reveal_opaque (`%major_fl_chain_terminates)
+    (major_fl_chain_terminates mh fp fuel)
+
+let major_fl_chain_terminates_valid_zero
+  (mh: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (requires fp <> 0UL /\
+                U64.v fp >= U64.v mword /\
+                U64.v fp < heap_size /\
+                U64.v fp % U64.v mword == 0)
+      (ensures major_fl_chain_terminates mh fp 0 = false)
+  =
+  reveal_opaque (`%major_fl_chain_terminates)
+    (major_fl_chain_terminates mh fp 0)
+
 let major_fl_chain_terminates_step
   (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   : Lemma

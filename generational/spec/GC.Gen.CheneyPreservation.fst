@@ -736,6 +736,8 @@ private let rec single_chunk_fl_shape_transfer_avoids
           (MH.single_chunk_major_heap g0) cur fuel /\
         SpecMajorAlloc.major_fl_blocks_fit
           (MH.single_chunk_major_heap g0) cur fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap g0) cur fuel = true /\
         SpecMajorAlloc.major_fl_chain_avoids
           (MH.single_chunk_major_heap g0) cur dst fuel = true /\
         objects zero_addr g1 == objects zero_addr g0 /\
@@ -753,18 +755,30 @@ private let rec single_chunk_fl_shape_transfer_avoids
         SpecMajorAlloc.major_fl_above_zero
           (MH.single_chunk_major_heap g1) cur fuel /\
         SpecMajorAlloc.major_fl_blocks_fit
-          (MH.single_chunk_major_heap g1) cur fuel)
+          (MH.single_chunk_major_heap g1) cur fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap g1) cur fuel = true)
       (decreases fuel)
   =
   let mh0 = MH.single_chunk_major_heap g0 in
   let mh1 = MH.single_chunk_major_heap g1 in
   if fuel = 0 then begin
     SpecMajorAlloc.major_fl_valid_zero mh1 cur;
-    SpecMajorAlloc.major_fl_above_zero_fuel_0 mh1 cur
+    SpecMajorAlloc.major_fl_above_zero_fuel_0 mh1 cur;
+    if cur = 0UL ||
+       U64.v cur < U64.v mword ||
+       U64.v cur >= heap_size ||
+       U64.v cur % U64.v mword <> 0 then
+      SpecMajorAlloc.major_fl_chain_terminates_terminal mh1 cur fuel
+    else begin
+      SpecMajorAlloc.major_fl_chain_terminates_valid_zero mh0 cur;
+      assert False
+    end
   end else if cur = 0UL then begin
     SpecMajorAlloc.major_fl_valid_null mh1 fuel;
     SpecMajorAlloc.major_fl_above_zero_null mh1 fuel;
-    SpecMajorAlloc.major_fl_blocks_fit_null mh1 fuel
+    SpecMajorAlloc.major_fl_blocks_fit_null mh1 fuel;
+    SpecMajorAlloc.major_fl_chain_terminates_null mh1 fuel
   end else begin
     assert (fuel > 0);
     SpecMajorAlloc.major_fl_above_zero_current mh0 cur fuel;
@@ -810,13 +824,18 @@ private let rec single_chunk_fl_shape_transfer_avoids
         SpecMajorAlloc.major_fl_above_zero_next mh0 x fuel next;
         SpecMajorAlloc.major_fl_blocks_fit_next mh0 x fuel next;
         SpecMajorAlloc.major_fl_chain_avoids_tail mh0 cur dst fuel;
+        SpecMajorAlloc.major_fl_chain_terminates_tail mh0 cur fuel;
         assert (SpecMajorAlloc.major_fl_chain_avoids
                   mh0 next dst fuel' = true);
+        assert (SpecMajorAlloc.major_fl_chain_terminates
+                  mh0 next fuel' = true);
         single_chunk_fl_shape_transfer_avoids
           g0 g1 dst next fuel';
         assert (SpecMajorAlloc.major_fl_valid mh1 next fuel');
         assert (SpecMajorAlloc.major_fl_above_zero mh1 next fuel');
         assert (SpecMajorAlloc.major_fl_blocks_fit mh1 next fuel');
+        assert (SpecMajorAlloc.major_fl_chain_terminates
+                  mh1 next fuel' = true);
         MH.read_word_in_major_lookup_index mh1 xhd hdr0;
         assert (MH.lookup_chunk_index mh1 xhd ==
                 Some (MH.lookup_chunk_index_value mh1 xhd));
@@ -831,7 +850,8 @@ private let rec single_chunk_fl_shape_transfer_avoids
         assert (next <> cur);
         SpecMajorAlloc.major_fl_valid_step_from_mem mh1 x fuel hdr0 next;
         SpecMajorAlloc.major_fl_above_zero_step mh1 x fuel next;
-        SpecMajorAlloc.major_fl_blocks_fit_step mh1 x fuel hdr0 next
+        SpecMajorAlloc.major_fl_blocks_fit_step mh1 x fuel hdr0 next;
+        SpecMajorAlloc.major_fl_chain_terminates_step mh1 cur fuel
   end
 #pop-options
 
@@ -856,7 +876,10 @@ let promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
          res.fp_out <> 0UL /\
          GenInv.chunked_major_alloc_shape
            (MH.single_chunk_major_heap res.major_out) res.fp_out
-           SpecAlloc.alloc_search_fuel))
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap res.major_out) res.fp_out
+           SpecAlloc.alloc_search_fuel = true))
   =
   let fuel = SpecAlloc.alloc_search_fuel in
   let mh = MH.single_chunk_major_heap major in
@@ -891,6 +914,9 @@ let promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
   assert (SpecMajorAlloc.major_fl_blocks_fit
             (MH.single_chunk_major_heap alloc_res.heap_out)
             alloc_res.fp_out fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            (MH.single_chunk_major_heap alloc_res.heap_out)
+            alloc_res.fp_out fuel = true);
   assert (SpecMajorAlloc.major_fl_chain_avoids
             (MH.single_chunk_major_heap alloc_res.heap_out)
             alloc_res.fp_out (fp <: obj_addr) fuel = true);
@@ -928,6 +954,8 @@ let promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
             (MH.single_chunk_major_heap res.major_out) res.fp_out fuel);
   assert (SpecMajorAlloc.major_fl_blocks_fit
             (MH.single_chunk_major_heap res.major_out) res.fp_out fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            (MH.single_chunk_major_heap res.major_out) res.fp_out fuel = true);
   MH.single_chunk_major_heap_wf res.major_out;
   GenInv.chunked_major_alloc_shape_intro
     (MH.single_chunk_major_heap res.major_out) res.fp_out fuel

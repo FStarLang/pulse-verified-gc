@@ -240,7 +240,10 @@ val promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
          res.fp_out <> 0UL /\
          GenInv.chunked_major_alloc_shape
            (MH.single_chunk_major_heap res.major_out) res.fp_out
-           SpecAlloc.alloc_search_fuel))
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap res.major_out) res.fp_out
+           SpecAlloc.alloc_search_fuel = true))
 
 /// Cheney promotion preserves no_black_objects.
 ///
