@@ -335,6 +335,7 @@ let major_fl_valid_null (mh: MH.major_heap) (fuel: nat)
           (ensures major_fl_valid mh 0UL fuel)
   = ()
 
+[@@"opaque_to_smt"]
 let rec major_fl_chain_terminates (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot bool
   (decreases fuel)
   = if fp = 0UL then true
@@ -348,7 +349,24 @@ let rec major_fl_chain_terminates (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : 
 
 let major_fl_chain_terminates_null (mh: MH.major_heap) (fuel: nat)
   : Lemma (ensures major_fl_chain_terminates mh 0UL fuel = true)
-  = ()
+  =
+  reveal_opaque (`%major_fl_chain_terminates)
+    (major_fl_chain_terminates mh 0UL fuel)
+
+let major_fl_chain_terminates_step
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires fuel > 0 /\
+               U64.v fp >= U64.v mword /\
+               U64.v fp < heap_size /\
+               U64.v fp % U64.v mword == 0 /\
+               (match MH.read_word_in_major mh (fp <: obj_addr) with
+                | Some next -> major_fl_chain_terminates mh next (fuel - 1) = true
+                | None -> True))
+      (ensures major_fl_chain_terminates mh fp fuel = true)
+  =
+  reveal_opaque (`%major_fl_chain_terminates)
+    (major_fl_chain_terminates mh fp fuel)
 
 let major_fl_chain_terminates_tail (mh: MH.major_heap) (fp: U64.t)
                                    (fuel: nat)
@@ -362,7 +380,9 @@ let major_fl_chain_terminates_tail (mh: MH.major_heap) (fp: U64.t)
         (match MH.read_word_in_major mh (fp <: obj_addr) with
         | Some next -> major_fl_chain_terminates mh next (fuel - 1)
         | None -> True))
-  = ()
+  =
+  reveal_opaque (`%major_fl_chain_terminates)
+    (major_fl_chain_terminates mh fp fuel)
 
 let rec major_fl_chain_avoids
   (mh: MH.major_heap) (fp excl: U64.t) (fuel: nat) : Tot bool
@@ -919,30 +939,35 @@ let rec expand_major_heap_preserves_fl_chain_terminates
           (ensures major_fl_chain_terminates
                     (expand_major_heap mh c new_link).major_out fp fuel)
           (decreases fuel)
-  = if fuel > 0 then begin
-      let fuel' : f:nat{f < fuel} = fuel - 1 in
-      if fp = 0UL then ()
-      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
-              U64.v fp % U64.v mword <> 0 then
-        ()
-      else begin
-        let obj : obj_addr = fp in
-        let r = init_fresh_chunk c new_link in
-        init_fresh_chunk_disjoint_from_all mh c new_link;
-        match MH.read_word_in_major mh obj with
-        | None -> ()
-        | Some next ->
-          major_fl_valid_next mh fp fuel;
-          major_fl_chain_terminates_tail mh fp fuel;
-          expand_major_heap_preserves_fl_chain_terminates
-            mh c new_link next fuel';
-          MH.read_word_add_chunk_disjoint_old mh r.chunk_out obj next;
-          assert (MH.read_word_in_major
-                    (expand_major_heap mh c new_link).major_out obj ==
-                  Some next)
-      end
-    end
-    else ()
+  =
+  let mh' = (expand_major_heap mh c new_link).major_out in
+  if fp = 0UL then
+    major_fl_chain_terminates_null mh' fuel
+  else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+          U64.v fp % U64.v mword <> 0 then
+    reveal_opaque (`%major_fl_chain_terminates)
+      (major_fl_chain_terminates mh' fp fuel)
+  else if fuel = 0 then begin
+    reveal_opaque (`%major_fl_chain_terminates)
+      (major_fl_chain_terminates mh fp fuel);
+    assert False
+  end else begin
+    assert (fuel > 0);
+    let fuel' : f:nat{f < fuel} = fuel - 1 in
+    let obj : obj_addr = fp in
+    let r = init_fresh_chunk c new_link in
+    init_fresh_chunk_disjoint_from_all mh c new_link;
+    major_fl_valid_next mh fp fuel;
+    major_fl_chain_terminates_tail mh fp fuel;
+    match MH.read_word_in_major mh obj with
+    | None -> assert False
+    | Some next ->
+      expand_major_heap_preserves_fl_chain_terminates
+        mh c new_link next fuel';
+      MH.read_word_add_chunk_disjoint_old mh r.chunk_out obj next;
+      assert (MH.read_word_in_major mh' obj == Some next);
+      major_fl_chain_terminates_step mh' fp fuel
+  end
 #pop-options
 
 #push-options "--z3rlimit 10"
@@ -996,7 +1021,8 @@ let expand_major_heap_fresh_fl_chain_terminates
     assert (U64.v fp < heap_size);
     assert (U64.v fp % U64.v mword == 0);
     assert (fuel + 1 > 0);
-    assert (MH.read_word_in_major er.major_out fp == Some next_fp)
+    assert (MH.read_word_in_major er.major_out fp == Some next_fp);
+    major_fl_chain_terminates_step er.major_out fp (fuel + 1)
 
 let expand_major_heap_links_fl_valid (mh: MH.major_heap) (c: MH.heap_chunk)
                                      (next_fp: U64.t) (fuel: nat)
