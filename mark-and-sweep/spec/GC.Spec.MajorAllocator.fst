@@ -495,7 +495,52 @@ let rec major_fl_walk_chain_valid_at
         major_fl_walk_chain_valid_at mh next (steps - 1) (pos - 1)
       | None -> assert False
     end
+#pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let rec major_fl_chain_terminates_unfold_steps
+  (mh: MH.major_heap) (fp: U64.t) (n fuel: nat)
+  : Lemma
+      (requires n <= fuel /\
+                major_fl_walk_chain_valid mh fp n)
+      (ensures major_fl_chain_terminates mh fp fuel =
+               major_fl_chain_terminates
+                 mh (major_fl_walk_chain mh fp n) (fuel - n))
+      (decreases n)
+  = if n = 0 then ()
+    else begin
+      assert (n > 0);
+      assert (fuel > 0);
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | None -> assert False
+      | Some next ->
+        reveal_opaque (`%major_fl_chain_terminates)
+          (major_fl_chain_terminates mh fp fuel);
+        major_fl_chain_terminates_unfold_steps mh next (n - 1) (fuel - 1)
+    end
+
+let rec major_fl_chain_kcycle_not_terminates
+  (mh: MH.major_heap) (fp: U64.t) (cycle_len fuel: nat)
+  : Lemma
+      (requires cycle_len > 0 /\
+                major_fl_walk_chain mh fp cycle_len = fp /\
+                major_fl_walk_chain_valid mh fp cycle_len)
+      (ensures major_fl_chain_terminates mh fp fuel = false)
+      (decreases fuel)
+  = if fuel = 0 then
+      reveal_opaque (`%major_fl_chain_terminates)
+        (major_fl_chain_terminates mh fp fuel)
+    else if fuel < cycle_len then begin
+      major_fl_walk_chain_valid_prefix mh fp cycle_len fuel;
+      major_fl_chain_terminates_unfold_steps mh fp fuel fuel;
+      major_fl_walk_chain_valid_at mh fp cycle_len fuel;
+      reveal_opaque (`%major_fl_chain_terminates)
+        (major_fl_chain_terminates
+          mh (major_fl_walk_chain mh fp fuel) 0)
+    end else begin
+      major_fl_chain_terminates_unfold_steps mh fp cycle_len fuel;
+      major_fl_chain_kcycle_not_terminates mh fp cycle_len (fuel - cycle_len)
+    end
 #pop-options
 
 #push-options "--z3rlimit 10"
