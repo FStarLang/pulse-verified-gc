@@ -557,14 +557,18 @@ let rec major_fl_first_hit
   (mh: MH.major_heap) (fp dst: U64.t) (fuel: nat) : Tot nat
   (decreases fuel)
   = if fuel = 0 then 0
-    else if fp = 0UL then 0
-    else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
-            U64.v fp % U64.v mword <> 0 then 0
-    else if fp = dst then 0
+    else if fuel > 0 then
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then 0
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then 0
+      else if fp = dst then 0
+      else
+        match MH.read_word_in_major mh (fp <: obj_addr) with
+        | Some next -> 1 + major_fl_first_hit mh next dst fuel'
+        | None -> 0
     else
-      match MH.read_word_in_major mh (fp <: obj_addr) with
-      | Some next -> 1 + major_fl_first_hit mh next dst (fuel - 1)
-      | None -> 0
+      0
 
 let rec major_fl_first_hit_spec
   (mh: MH.major_heap) (fp dst: U64.t) (fuel: nat)
@@ -577,17 +581,21 @@ let rec major_fl_first_hit_spec
                  mh fp (major_fl_first_hit mh fp dst fuel))
       (decreases fuel)
   = if fuel = 0 then ()
-    else if fp = 0UL then ()
-    else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
-            U64.v fp % U64.v mword <> 0 then ()
-    else if fp = dst then ()
-    else begin
-      match MH.read_word_in_major mh (fp <: obj_addr) with
-      | None -> ()
-      | Some next ->
-        assert (major_fl_chain_avoids mh next dst (fuel - 1) = false);
-        major_fl_first_hit_spec mh next dst (fuel - 1)
-    end
+    else if fuel > 0 then
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      if fp = 0UL then ()
+      else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+              U64.v fp % U64.v mword <> 0 then ()
+      else if fp = dst then ()
+      else begin
+        match MH.read_word_in_major mh (fp <: obj_addr) with
+        | None -> ()
+        | Some next ->
+          assert (major_fl_chain_avoids mh next dst fuel' = false);
+          major_fl_first_hit_spec mh next dst fuel'
+      end
+    else
+      assert False
 #pop-options
 
 #push-options "--z3rlimit 10"
@@ -4900,5 +4908,193 @@ let major_alloc_expand_on_oom_preserves_old_read
                 (major_alloc_spec_expand_on_oom
                   mh fp requested_wz fuel fresh).major_alloc_out addr ==
               MH.read_word_in_major mh addr)
+    end
+#pop-options
+
+[@@"opaque_to_smt"]
+let major_fl_walk_chain_valid_tail
+  (mh: MH.major_heap) (fp: U64.t) (steps: nat)
+  : Lemma
+      (requires major_fl_walk_chain_valid mh fp steps /\ steps > 0)
+      (ensures U64.v fp >= U64.v mword /\
+               U64.v fp < heap_size /\
+               U64.v fp % U64.v mword == 0 /\
+               (match MH.read_word_in_major mh (fp <: obj_addr) with
+                | Some next -> major_fl_walk_chain_valid mh next (steps - 1)
+                | None -> False))
+  = ()
+
+[@@"opaque_to_smt"]
+let major_fl_walk_chain_valid_cons
+  (mh: MH.major_heap) (fp next: U64.t) (steps: nat)
+  : Lemma
+      (requires U64.v fp >= U64.v mword /\
+                U64.v fp < heap_size /\
+                U64.v fp % U64.v mword == 0 /\
+                (match MH.read_word_in_major mh (fp <: obj_addr) with
+                 | Some n -> n == next
+                 | None -> False) /\
+                major_fl_walk_chain_valid mh next steps)
+      (ensures major_fl_walk_chain_valid mh fp (steps + 1))
+  = ()
+
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1 --split_queries always"
+[@@"opaque_to_smt"]
+let major_fl_walk_chain_one_step (mh: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (requires U64.v fp >= U64.v mword /\
+                U64.v fp < heap_size /\
+                U64.v fp % U64.v mword == 0 /\
+                (match MH.read_word_in_major mh (fp <: obj_addr) with
+                 | Some _ -> True
+                 | None -> False))
+      (ensures
+        (match MH.read_word_in_major mh (fp <: obj_addr) with
+         | Some next -> major_fl_walk_chain mh fp 1 == next
+         | None -> False))
+  =
+    if fp = 0UL then
+      assert False
+    else if U64.v fp < U64.v mword then
+      assert False
+    else if U64.v fp >= heap_size then
+      assert False
+    else if U64.v fp % U64.v mword <> 0 then
+      assert False
+    else
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next ->
+        assert (MH.read_word_in_major mh (fp <: obj_addr) == Some next);
+        assert (~ (U64.v fp < U64.v mword));
+        assert (~ (U64.v fp >= heap_size));
+        assert (~ (U64.v fp % U64.v mword <> 0));
+        assert (~ (U64.v fp < U64.v mword ||
+                   U64.v fp >= heap_size ||
+                   U64.v fp % U64.v mword <> 0));
+        assert (major_fl_walk_chain mh fp 1 == next)
+      | None -> assert False
+
+[@@"opaque_to_smt"]
+let rec major_fl_walk_chain_valid_snoc
+  (mh: MH.major_heap) (fp: U64.t) (steps: nat)
+  : Lemma
+      (requires major_fl_walk_chain_valid mh fp steps /\
+                (let node = major_fl_walk_chain mh fp steps in
+                 U64.v node >= U64.v mword /\
+                 U64.v node < heap_size /\
+                 U64.v node % U64.v mword == 0 /\
+                 (match MH.read_word_in_major mh (node <: obj_addr) with
+                  | Some _ -> True
+                  | None -> False)))
+      (ensures major_fl_walk_chain_valid mh fp (steps + 1))
+      (decreases steps)
+  =
+    if steps = 0 then begin
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next ->
+        major_fl_walk_chain_valid_cons mh fp next 0
+      | None -> assert False
+    end else begin
+      assert (steps > 0);
+      major_fl_walk_chain_valid_tail mh fp steps;
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next ->
+        assert (major_fl_walk_chain_valid mh next (steps - 1));
+        let node = major_fl_walk_chain mh fp steps in
+        let tail_node = major_fl_walk_chain mh next (steps - 1) in
+        assert (node == tail_node);
+        assert (U64.v tail_node >= U64.v mword);
+        assert (U64.v tail_node < heap_size);
+        assert (U64.v tail_node % U64.v mword == 0);
+        assert (MH.read_word_in_major mh (tail_node <: obj_addr) ==
+                MH.read_word_in_major mh (node <: obj_addr));
+        assert
+          (match MH.read_word_in_major mh (tail_node <: obj_addr) with
+           | Some _ -> True
+           | None -> False);
+        major_fl_walk_chain_valid_snoc mh next (steps - 1);
+        assert (steps == (steps - 1) + 1);
+        assert (major_fl_walk_chain_valid mh next steps);
+        major_fl_walk_chain_valid_cons mh fp next steps
+      | None -> assert False
+    end
+
+[@@"opaque_to_smt"]
+let rec major_fl_walk_chain_snoc_value
+  (mh: MH.major_heap) (fp: U64.t) (steps: nat)
+  : Lemma
+      (requires major_fl_walk_chain_valid mh fp steps)
+      (ensures major_fl_walk_chain mh fp (steps + 1) ==
+               major_fl_walk_chain mh (major_fl_walk_chain mh fp steps) 1)
+      (decreases steps)
+  =
+    if steps = 0 then begin
+      assert (major_fl_walk_chain mh fp 0 == fp)
+    end else if steps > 0 then begin
+      assert (steps > 0);
+      major_fl_walk_chain_valid_tail mh fp steps;
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next ->
+        assert (major_fl_walk_chain_valid mh next (steps - 1));
+        major_fl_walk_chain_snoc_value mh next (steps - 1);
+        assert (steps == (steps - 1) + 1);
+        assert (steps + 1 - 1 == steps);
+        assert (major_fl_walk_chain mh fp steps ==
+                major_fl_walk_chain mh next (steps - 1));
+        assert (major_fl_walk_chain mh fp (steps + 1) ==
+                major_fl_walk_chain mh next steps);
+        assert (major_fl_walk_chain mh next steps ==
+                major_fl_walk_chain mh
+                  (major_fl_walk_chain mh next (steps - 1)) 1);
+        assert (major_fl_walk_chain mh fp (steps + 1) ==
+                major_fl_walk_chain mh (major_fl_walk_chain mh fp steps) 1)
+      | None -> assert False
+    end else
+      assert False
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+[@@"opaque_to_smt"]
+let major_fl_chain_predecessor_not_in_suffix
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires major_fl_chain_terminates mh fp fuel = true /\
+                major_fl_valid mh fp fuel /\
+                U64.v fp >= U64.v mword /\
+                U64.v fp < heap_size /\
+                U64.v fp % U64.v mword == 0 /\
+                fuel > 0)
+      (ensures
+        (match MH.read_word_in_major mh (fp <: obj_addr) with
+         | Some next -> major_fl_chain_avoids mh next fp (fuel - 1) = true
+         | None -> True))
+  =
+  major_fl_valid_next mh fp fuel;
+  major_fl_chain_terminates_tail mh fp fuel;
+  match MH.read_word_in_major mh (fp <: obj_addr) with
+  | None -> assert False
+  | Some next ->
+    assert (next <> fp);
+    assert (major_fl_valid mh next (fuel - 1));
+    assert (major_fl_chain_terminates mh next (fuel - 1) = true);
+    if major_fl_chain_avoids mh next fp (fuel - 1) then ()
+    else begin
+      major_fl_first_hit_spec mh next fp (fuel - 1);
+      let hit = major_fl_first_hit mh next fp (fuel - 1) in
+      assert (major_fl_walk_chain mh next hit == fp);
+      assert (major_fl_walk_chain_valid mh next hit);
+      assert (hit <= fuel - 1);
+      assert (MH.read_word_in_major mh (fp <: obj_addr) == Some next);
+      assert
+        (match MH.read_word_in_major mh (fp <: obj_addr) with
+         | Some n -> n == next
+         | None -> False);
+      major_fl_walk_chain_valid_snoc mh next hit;
+      major_fl_walk_chain_snoc_value mh next hit;
+      major_fl_walk_chain_one_step mh fp;
+      assert (major_fl_walk_chain_valid mh next (hit + 1));
+      assert (major_fl_walk_chain mh next (hit + 1) == next);
+      major_fl_chain_kcycle_not_terminates mh next (hit + 1) (fuel - 1);
+      assert False
     end
 #pop-options
