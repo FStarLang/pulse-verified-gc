@@ -364,6 +364,50 @@ let major_fl_chain_terminates_tail (mh: MH.major_heap) (fp: U64.t)
         | None -> True))
   = ()
 
+let rec major_fl_chain_avoids
+  (mh: MH.major_heap) (fp excl: U64.t) (fuel: nat) : Tot bool
+  (decreases fuel)
+  = if fp = 0UL then true
+    else if U64.v fp < U64.v mword || U64.v fp >= heap_size ||
+            U64.v fp % U64.v mword <> 0 then true
+    else if fuel = 0 then true
+    else if fp = excl then false
+    else
+      match MH.read_word_in_major mh (fp <: obj_addr) with
+      | Some next -> major_fl_chain_avoids mh next excl (fuel - 1)
+      | None -> true
+
+let major_fl_chain_avoids_null
+  (mh: MH.major_heap) (excl: U64.t) (fuel: nat)
+  : Lemma (ensures major_fl_chain_avoids mh 0UL excl fuel = true)
+  = ()
+
+let major_fl_chain_avoids_head_ne
+  (mh: MH.major_heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma
+      (requires major_fl_chain_avoids mh fp excl fuel = true /\
+               U64.v fp >= U64.v mword /\
+               U64.v fp < heap_size /\
+               U64.v fp % U64.v mword == 0 /\
+               fuel > 0)
+      (ensures fp <> excl)
+  = ()
+
+let major_fl_chain_avoids_tail
+  (mh: MH.major_heap) (fp excl: U64.t) (fuel: nat)
+  : Lemma
+      (requires major_fl_chain_avoids mh fp excl fuel = true /\
+               U64.v fp >= U64.v mword /\
+               U64.v fp < heap_size /\
+               U64.v fp % U64.v mword == 0 /\
+               fp <> excl /\
+               fuel > 0)
+      (ensures
+        (match MH.read_word_in_major mh (fp <: obj_addr) with
+         | Some next -> major_fl_chain_avoids mh next excl (fuel - 1) = true
+         | None -> True))
+  = ()
+
 #push-options "--z3rlimit 10"
 let major_fl_valid_gives_pointer (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
   : Lemma (requires fuel > 0 /\
