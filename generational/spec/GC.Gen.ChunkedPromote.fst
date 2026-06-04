@@ -201,6 +201,49 @@ let rec chunked_copy_fields_frame_before
         minor mh' src_obj dst_obj (i + 1) n target old
     end
   end
+
+let rec chunked_copy_fields_frame_after
+  (minor: minor_state) (mh: MH.major_heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  (target: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        U64.v dst_obj + n * U64.v mword <= U64.v target)
+      (ensures
+        MH.read_word_in_major
+          (chunked_copy_fields minor mh src_obj dst_obj i n)
+          target == Some old)
+      (decreases (n - i))
+  =
+  if i >= n then
+    chunked_copy_fields_base minor mh src_obj dst_obj i n
+  else begin
+    let dst_offset = U64.v dst_obj + i * U64.v mword in
+    if dst_offset + U64.v mword > heap_size ||
+       dst_offset % U64.v mword <> 0 then
+      ()
+    else begin
+      assert (dst_offset < heap_size);
+      let write_addr : hp_addr = U64.uint_to_t dst_offset in
+      assert (U64.v write_addr == dst_offset);
+      assert (i + 1 <= n);
+      assert (U64.v write_addr + U64.v mword ==
+              U64.v dst_obj + (i + 1) * U64.v mword);
+      assert (U64.v write_addr + U64.v mword <=
+              U64.v dst_obj + n * U64.v mword);
+      assert (U64.v write_addr + U64.v mword <= U64.v target);
+      let mh' =
+        SpecMajorAlloc.major_write_word_or_same
+          mh write_addr (minor_read_field minor src_obj i) in
+      major_write_word_or_same_read_frame
+        mh write_addr target (minor_read_field minor src_obj i) old;
+      chunked_copy_fields_step minor mh src_obj dst_obj i n;
+      assert (MH.read_word_in_major mh' target == Some old);
+      chunked_copy_fields_frame_after
+        minor mh' src_obj dst_obj (i + 1) n target old
+    end
+  end
 #pop-options
 
 let chunked_set_promoted_tag (mh: MH.major_heap) (obj: U64.t) (tag: nat)

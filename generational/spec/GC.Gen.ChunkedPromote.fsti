@@ -74,6 +74,19 @@ val chunked_copy_fields_frame_before
           (chunked_copy_fields minor mh src_obj dst_obj i n)
           target == Some old)
 
+val chunked_copy_fields_frame_after
+  : minor:minor_state -> mh:MH.major_heap ->
+    src_obj:U64.t -> dst_obj:U64.t -> i:nat -> n:nat ->
+    target:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        U64.v dst_obj + n * U64.v mword <= U64.v target)
+      (ensures
+        MH.read_word_in_major
+          (chunked_copy_fields minor mh src_obj dst_obj i n)
+          target == Some old)
+
 val chunked_set_promoted_tag
   : mh:MH.major_heap -> obj:U64.t -> tag:nat -> GTot MH.major_heap
 
