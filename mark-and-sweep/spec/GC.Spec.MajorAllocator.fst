@@ -1189,6 +1189,22 @@ let ensure_major_capacity_fl_valid (mh: MH.major_heap) (fp: obj_addr)
     else
       expand_major_heap_links_fl_valid mh fresh fp fuel
 
+let ensure_major_capacity_fl_chain_terminates
+  (mh: MH.major_heap) (fp: obj_addr)
+  (fuel needed: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires major_fl_valid mh fp fuel /\
+                major_fl_chain_terminates mh fp fuel /\
+                (major_fl_capacity mh fp fuel < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> fresh_chunk_object fresh))
+      (ensures (let r = ensure_major_capacity_spec mh fp fuel needed fresh in
+                major_fl_chain_terminates
+                  r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_capacity mh fp fuel >= needed then ()
+    else
+      expand_major_heap_links_fl_chain_terminates mh fresh fp fuel
+
 let ensure_major_capacity_fl_above_zero (mh: MH.major_heap) (fp: obj_addr)
                                        (fuel needed: nat) (fresh: MH.heap_chunk)
   : Lemma (requires major_fl_valid mh fp fuel /\
@@ -1287,6 +1303,23 @@ let ensure_major_head_capacity_fl_valid
   = if major_fl_head_wosize mh fp >= needed then ()
     else
       expand_major_heap_links_fl_valid mh fresh fp fuel
+
+let ensure_major_head_capacity_fl_chain_terminates
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires major_fl_valid mh fp fuel /\
+                major_fl_chain_terminates mh fp fuel /\
+                (major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> fresh_chunk_object fresh))
+      (ensures
+        (let r = ensure_major_head_capacity_spec mh fp fuel needed fresh in
+         major_fl_chain_terminates
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = if major_fl_head_wosize mh fp >= needed then ()
+    else
+      expand_major_heap_links_fl_chain_terminates mh fresh fp fuel
 
 let ensure_major_head_capacity_fl_above_zero
   (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
