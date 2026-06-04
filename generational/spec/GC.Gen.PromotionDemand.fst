@@ -346,3 +346,317 @@ let minor_promotion_filtered_requests_demand_bound
     minor (minor_objects minor) 0 include_obj;
   minor_promotion_demand_eq minor
 #pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+private let rec minor_promotion_requests_from_filter_index_split_demand_bound
+  (minor: minor_state) (objs: seq U64.t) (idx: nat)
+  (include_obj: U64.t -> GTot bool) (k: nat)
+  : Lemma
+      (requires idx <= k /\
+                k < Seq.length objs /\
+                include_obj (Seq.index objs k))
+      (ensures
+        MultiAlloc.request_split_demand
+          (minor_wosize minor (Seq.index objs k)) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_requests_from_filter
+            minor objs idx include_obj))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then
+    assert False
+  else begin
+    let obj = Seq.index objs idx in
+    let tail =
+      minor_promotion_requests_from_filter
+        minor objs (idx + 1) include_obj in
+    if idx < k then begin
+      assert (idx + 1 <= k);
+      minor_promotion_requests_from_filter_index_split_demand_bound
+        minor objs (idx + 1) include_obj k;
+      assert (MultiAlloc.request_split_demand
+                (minor_wosize minor (Seq.index objs k)) <=
+              MultiAlloc.allocation_list_demand tail);
+      if include_obj obj then
+        assert (MultiAlloc.request_split_demand
+                  (minor_wosize minor (Seq.index objs k)) <=
+                MultiAlloc.allocation_list_demand
+                  (minor_promotion_requests_from_filter
+                    minor objs idx include_obj))
+      else
+        assert (MultiAlloc.request_split_demand
+                  (minor_wosize minor (Seq.index objs k)) <=
+                MultiAlloc.allocation_list_demand
+                  (minor_promotion_requests_from_filter
+                    minor objs idx include_obj))
+    end else begin
+      nat_le_not_lt_eq idx k;
+      assert (k = idx);
+      assert (Seq.index objs k == obj);
+      assert (include_obj obj);
+      assert (MultiAlloc.request_split_demand
+                (minor_wosize minor obj) <=
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_obj));
+      assert (MultiAlloc.request_split_demand
+                (minor_wosize minor (Seq.index objs k)) <=
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_obj))
+    end
+  end
+
+let minor_promotion_filtered_request_split_demand_bound
+  (minor: minor_state) (include_obj: U64.t -> GTot bool)
+  (obj: U64.t)
+  : Lemma
+      (requires Seq.mem obj (minor_objects minor) /\
+                include_obj obj)
+      (ensures
+        MultiAlloc.request_split_demand (minor_wosize minor obj) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_obj))
+  =
+  let objs = minor_objects minor in
+  let k = seq_index_of objs obj in
+  assert (Seq.index objs k == obj);
+  minor_promotion_requests_from_filter_index_split_demand_bound
+    minor objs 0 include_obj k
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+private let rec minor_promotion_requests_from_filter_demand_monotone
+  (minor: minor_state) (objs: seq U64.t) (idx: nat)
+  (include_lo: U64.t -> GTot bool)
+  (include_hi: U64.t -> GTot bool)
+  : Lemma
+      (requires
+        (forall (j:nat).
+          idx <= j /\ j < Seq.length objs /\
+          include_lo (Seq.index objs j) ==>
+          include_hi (Seq.index objs j)))
+      (ensures
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_requests_from_filter
+            minor objs idx include_lo) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_requests_from_filter
+            minor objs idx include_hi))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then
+    ()
+  else begin
+    let obj = Seq.index objs idx in
+    let tail_mono (j:nat)
+      : Lemma
+          (requires idx + 1 <= j /\ j < Seq.length objs /\
+                    include_lo (Seq.index objs j))
+          (ensures include_hi (Seq.index objs j))
+      = ()
+    in
+    assert (forall (j:nat).
+      idx + 1 <= j /\ j < Seq.length objs /\
+      include_lo (Seq.index objs j) ==>
+      include_hi (Seq.index objs j));
+    minor_promotion_requests_from_filter_demand_monotone
+      minor objs (idx + 1) include_lo include_hi;
+    if include_lo obj then begin
+      assert (include_hi obj);
+      assert (MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_lo) <=
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_hi))
+    end else
+      assert (MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_lo) <=
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_hi))
+  end
+
+let minor_promotion_filtered_requests_demand_monotone
+  (minor: minor_state)
+  (include_lo: U64.t -> GTot bool)
+  (include_hi: U64.t -> GTot bool)
+  : Lemma
+      (requires
+        (forall (obj:U64.t).
+          Seq.mem obj (minor_objects minor) /\
+          include_lo obj ==>
+          include_hi obj))
+      (ensures
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_lo) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_hi))
+  =
+  let objs = minor_objects minor in
+  let mono_at_index (j:nat)
+    : Lemma
+        (requires 0 <= j /\ j < Seq.length objs /\
+                  include_lo (Seq.index objs j))
+        (ensures include_hi (Seq.index objs j))
+    =
+    Seq.mem_index (Seq.index objs j) objs
+  in
+  assert (forall (j:nat).
+    0 <= j /\ j < Seq.length objs /\
+    include_lo (Seq.index objs j) ==>
+    include_hi (Seq.index objs j));
+  minor_promotion_requests_from_filter_demand_monotone
+    minor objs 0 include_lo include_hi
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+private let rec minor_promotion_requests_from_filter_remove_split_demand_bound
+  (minor: minor_state) (objs: seq U64.t) (idx: nat)
+  (include_before: U64.t -> GTot bool)
+  (include_after: U64.t -> GTot bool)
+  (obj: U64.t) (k: nat)
+  : Lemma
+      (requires idx <= k /\
+                k < Seq.length objs /\
+                Seq.index objs k == obj /\
+                include_before obj /\
+                ~ (include_after obj) /\
+                (forall (j:nat).
+                  idx <= j /\ j < Seq.length objs /\
+                  include_after (Seq.index objs j) ==>
+                  include_before (Seq.index objs j)))
+      (ensures
+        MultiAlloc.request_split_demand (minor_wosize minor obj) +
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_requests_from_filter
+            minor objs idx include_after) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_requests_from_filter
+            minor objs idx include_before))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then
+    assert False
+  else begin
+    let x = Seq.index objs idx in
+    let tail_after =
+      minor_promotion_requests_from_filter
+        minor objs (idx + 1) include_after in
+    let tail_before =
+      minor_promotion_requests_from_filter
+        minor objs (idx + 1) include_before in
+    if x = obj then begin
+      assert (include_before x);
+      assert (~ (include_after x));
+      let tail_mono (j:nat)
+        : Lemma
+            (requires idx + 1 <= j /\ j < Seq.length objs /\
+                      include_after (Seq.index objs j))
+            (ensures include_before (Seq.index objs j))
+        = ()
+      in
+      assert (forall (j:nat).
+        idx + 1 <= j /\ j < Seq.length objs /\
+        include_after (Seq.index objs j) ==>
+        include_before (Seq.index objs j));
+      minor_promotion_requests_from_filter_demand_monotone
+        minor objs (idx + 1) include_after include_before;
+      assert (MultiAlloc.allocation_list_demand tail_after <=
+              MultiAlloc.allocation_list_demand tail_before);
+      assert (MultiAlloc.request_split_demand (minor_wosize minor obj) +
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_after) <=
+              MultiAlloc.allocation_list_demand
+                (minor_promotion_requests_from_filter
+                  minor objs idx include_before))
+    end else begin
+      assert (idx < k);
+      assert (idx + 1 <= k);
+      let tail_mono (j:nat)
+        : Lemma
+            (requires idx + 1 <= j /\ j < Seq.length objs /\
+                      include_after (Seq.index objs j))
+            (ensures include_before (Seq.index objs j))
+        = ()
+      in
+      assert (forall (j:nat).
+        idx + 1 <= j /\ j < Seq.length objs /\
+        include_after (Seq.index objs j) ==>
+        include_before (Seq.index objs j));
+      minor_promotion_requests_from_filter_remove_split_demand_bound
+        minor objs (idx + 1) include_before include_after obj k;
+      if include_after x then begin
+        assert (include_before x);
+        assert (MultiAlloc.request_split_demand (minor_wosize minor obj) +
+                MultiAlloc.allocation_list_demand
+                  (minor_promotion_requests_from_filter
+                    minor objs idx include_after) <=
+                MultiAlloc.allocation_list_demand
+                  (minor_promotion_requests_from_filter
+                    minor objs idx include_before))
+      end else begin
+        assert (MultiAlloc.request_split_demand (minor_wosize minor obj) +
+                MultiAlloc.allocation_list_demand tail_after <=
+                MultiAlloc.allocation_list_demand tail_before);
+        if include_before x then
+          assert (MultiAlloc.request_split_demand (minor_wosize minor obj) +
+                  MultiAlloc.allocation_list_demand
+                    (minor_promotion_requests_from_filter
+                      minor objs idx include_after) <=
+                  MultiAlloc.allocation_list_demand
+                    (minor_promotion_requests_from_filter
+                      minor objs idx include_before))
+        else
+          assert (MultiAlloc.request_split_demand (minor_wosize minor obj) +
+                  MultiAlloc.allocation_list_demand
+                    (minor_promotion_requests_from_filter
+                      minor objs idx include_after) <=
+                  MultiAlloc.allocation_list_demand
+                    (minor_promotion_requests_from_filter
+                      minor objs idx include_before))
+      end
+    end
+  end
+
+let minor_promotion_filtered_requests_remove_split_demand_bound
+  (minor: minor_state)
+  (include_before: U64.t -> GTot bool)
+  (include_after: U64.t -> GTot bool)
+  (obj: U64.t)
+  : Lemma
+      (requires Seq.mem obj (minor_objects minor) /\
+                include_before obj /\
+                ~ (include_after obj) /\
+                (forall (x:U64.t).
+                  Seq.mem x (minor_objects minor) /\
+                  include_after x ==>
+                  include_before x))
+      (ensures
+        MultiAlloc.request_split_demand (minor_wosize minor obj) +
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_after) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_before))
+  =
+  let objs = minor_objects minor in
+  let k = seq_index_of objs obj in
+  assert (Seq.index objs k == obj);
+  let after_to_before_at_index (j:nat)
+    : Lemma
+        (requires 0 <= j /\ j < Seq.length objs /\
+                  include_after (Seq.index objs j))
+        (ensures include_before (Seq.index objs j))
+    =
+    Seq.mem_index (Seq.index objs j) objs
+  in
+  assert (forall (j:nat).
+    0 <= j /\ j < Seq.length objs /\
+    include_after (Seq.index objs j) ==>
+    include_before (Seq.index objs j));
+  minor_promotion_requests_from_filter_remove_split_demand_bound
+    minor objs 0 include_before include_after obj k
+#pop-options

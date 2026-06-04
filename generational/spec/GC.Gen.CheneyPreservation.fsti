@@ -62,6 +62,18 @@ val cheney_forwarded_minor_requests_demand_bound
           (cheney_forwarded_minor_requests minor major fp roots) <=
         PromotionDemand.minor_promotion_demand minor)
 
+/// Size-only allocation demand for normal minor objects that are still
+/// unforwarded in an intermediate Cheney state.
+val cheney_unforwarded_split_demand
+  : minor:minor_state -> cs:cheney_state -> GTot nat
+
+val cheney_unforwarded_split_demand_bound
+  : minor:minor_state -> cs:cheney_state ->
+    Lemma
+      (ensures
+        cheney_unforwarded_split_demand minor cs <=
+        PromotionDemand.minor_promotion_demand minor)
+
 val cheney_forwarded_dense_alloc_list_single_chunk_no_oom
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     fuel:nat ->
@@ -701,10 +713,28 @@ val cheney_promote_budget_ready_from_split_demand_single_chunk
         cheney_promote_budget_ready_single_chunk
           minor major fp roots remaining)
 
+val cheney_promote_budget_ready_from_minor_demand_single_chunk
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (requires minor_wf minor /\
+                SpecAlloc.alloc_search_fuel > 1 /\
+                fp <> 0UL /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap major) fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                SpecMajorAlloc.major_fl_head_wosize
+                  (MH.single_chunk_major_heap major) fp >=
+                PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        cheney_promote_budget_ready_single_chunk
+          minor major fp roots 1)
+
 /// Budgeted audit wrapper: the global minor-promotion preflight budget proves
-/// the conservative allocation trace is non-OOM, while Cheney-order budget
-/// readiness supplies the per-step state obligations needed to preserve the
-/// chunked allocator shape.
+/// both the conservative allocation trace is non-OOM and the Cheney-order
+/// budget readiness needed to preserve the chunked allocator shape.
 val cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chunk
   : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
     Lemma
@@ -719,9 +749,7 @@ val cheney_promote_budgeted_head_split_preserves_chunked_alloc_shape_single_chun
                  SpecAlloc.alloc_search_fuel = true /\
                SpecMajorAlloc.major_fl_head_wosize
                  (MH.single_chunk_major_heap major) fp >=
-                 PromotionDemand.minor_promotion_demand minor + 1 /\
-               cheney_promote_budget_ready_single_chunk
-                 minor major fp roots 1)
+                 PromotionDemand.minor_promotion_demand minor + 1)
       (ensures
         (let res = cheney_promote minor major fp roots in
          let requests =

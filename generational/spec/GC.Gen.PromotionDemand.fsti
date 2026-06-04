@@ -119,3 +119,50 @@ val minor_promotion_filtered_requests_demand_bound
         MultiAlloc.allocation_list_demand
           (minor_promotion_filtered_requests minor include_obj) <=
         minor_promotion_demand minor)
+
+val minor_promotion_filtered_request_split_demand_bound
+  : minor:minor_state -> include_obj:(U64.t -> GTot bool) ->
+    obj:U64.t ->
+    Lemma
+      (requires Seq.mem obj (minor_objects minor) /\
+                include_obj obj)
+      (ensures
+        MultiAlloc.request_split_demand (minor_wosize minor obj) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_obj))
+
+val minor_promotion_filtered_requests_demand_monotone
+  : minor:minor_state ->
+    include_lo:(U64.t -> GTot bool) ->
+    include_hi:(U64.t -> GTot bool) ->
+    Lemma
+      (requires
+        (forall (obj:U64.t).
+          Seq.mem obj (minor_objects minor) /\
+          include_lo obj ==>
+          include_hi obj))
+      (ensures
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_lo) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_hi))
+
+val minor_promotion_filtered_requests_remove_split_demand_bound
+  : minor:minor_state ->
+    include_before:(U64.t -> GTot bool) ->
+    include_after:(U64.t -> GTot bool) ->
+    obj:U64.t ->
+    Lemma
+      (requires Seq.mem obj (minor_objects minor) /\
+                include_before obj /\
+                ~ (include_after obj) /\
+                (forall (x:U64.t).
+                  Seq.mem x (minor_objects minor) /\
+                  include_after x ==>
+                  include_before x))
+      (ensures
+        MultiAlloc.request_split_demand (minor_wosize minor obj) +
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_after) <=
+        MultiAlloc.allocation_list_demand
+          (minor_promotion_filtered_requests minor include_before))
