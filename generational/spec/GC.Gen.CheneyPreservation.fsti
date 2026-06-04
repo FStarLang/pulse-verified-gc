@@ -245,6 +245,46 @@ val promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
            (MH.single_chunk_major_heap res.major_out) res.fp_out
            SpecAlloc.alloc_search_fuel = true))
 
+/// One Cheney forwarding step preserves the chunked allocator shape and chain
+/// termination, assuming the normal object that may be promoted by that step
+/// has enough active-head capacity to split.
+val cheney_forward_one_head_split_preserves_chunked_alloc_shape_single_chunk
+  : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                (Seq.mem addr (minor_objects minor) /\
+                 cs.cs_fwd addr = 0UL /\
+                 ~(is_infix_in_minor minor addr) /\
+                 minor_wosize minor addr > 0 ==>
+                   cs.cs_fp <> 0UL /\
+                   SpecMajorAlloc.major_fl_head_wosize
+                     (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                   minor_wosize minor addr + 2) /\
+                (cs.cs_fwd addr = 0UL /\
+                 is_infix_in_minor minor addr ==>
+                   (let parent = infix_parent minor addr in
+                    Seq.mem parent (minor_objects minor) /\
+                    cs.cs_fwd parent = 0UL /\
+                    minor_wosize minor parent > 0 ==>
+                      cs.cs_fp <> 0UL /\
+                      SpecMajorAlloc.major_fl_head_wosize
+                        (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp >=
+                      minor_wosize minor parent + 2)))
+      (ensures
+        (let cs' = cheney_forward_one minor cs addr in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true))
+
 /// Cheney promotion preserves no_black_objects.
 ///
 /// Promoted objects get white_bits headers; pre-existing objects' colors are
