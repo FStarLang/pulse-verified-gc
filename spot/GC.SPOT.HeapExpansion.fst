@@ -11,6 +11,7 @@ open GC.Gen.Promote
 open GC.Gen.Cheney
 
 module MH = GC.Spec.MajorHeap
+module Obj = GC.Spec.Object
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
@@ -804,6 +805,55 @@ let spot_chunked_cheney_forward_normal_noalloc_preserves_chunked_alloc_shape
   =
   CheneyPreservation.chunked_cheney_forward_normal_noalloc_preserves_chunked_alloc_shape
     minor cs addr fuel
+
+let spot_chunked_alloc_head_split_alloc_header_wosize
+  (mh: MH.major_heap) (fp: U64.t)
+  (wosize: nat{wosize > 0 /\
+                wosize < pow2 54 /\
+                FStar.UInt.size wosize 64})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape mh fp fuel /\
+        SpecMajorAlloc.major_fl_head_wosize mh fp >= wosize + 2)
+      (ensures
+        (let r =
+           SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let dst : obj_addr = fp in
+         r.major_obj_out == fp /\
+         r.major_fp_out <> 0UL /\
+         MH.read_word_in_major r.major_alloc_out (hd_address dst) ==
+           Some (SpecAlloc.make_header (U64.uint_to_t wosize)
+                   SpecAlloc.white_bits 0UL) /\
+         U64.v (Obj.getWosize
+           (SpecAlloc.make_header (U64.uint_to_t wosize)
+             SpecAlloc.white_bits 0UL)) == wosize))
+  =
+  CheneyPreservation.chunked_alloc_head_split_alloc_header_wosize
+    mh fp wosize fuel
+
+let spot_chunked_promote_head_split_padding_noop
+  (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape mh fp fuel /\
+        SpecMajorAlloc.major_fl_head_wosize mh fp >= wosize + 2)
+      (ensures
+        (let alloc_res =
+           SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let copied =
+           ChunkedPromote.chunked_copy_fields
+             minor alloc_res.major_alloc_out obj fp 0 wosize in
+         ChunkedPromote.chunked_zero_promote_padding copied fp wosize ==
+           copied))
+  =
+  CheneyPreservation.chunked_promote_head_split_padding_noop
+    minor mh obj fp wosize fuel
 
 let spot_alloc_spec_head_split_alloc_wosize_single_chunk
   (major: heap) (fp: U64.t) (wosize: nat{wosize > 0})

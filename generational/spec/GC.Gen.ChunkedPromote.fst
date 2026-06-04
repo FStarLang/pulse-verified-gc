@@ -61,6 +61,148 @@ let chunked_copy_fields_step
           src_obj dst_obj (i + 1) n)
   = ()
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+private let rec write_word_in_major_read_frame
+  (mh: MH.major_heap) (write_addr target: hp_addr)
+  (value old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        (U64.v target + U64.v mword <= U64.v write_addr \/
+         U64.v write_addr + U64.v mword <= U64.v target))
+      (ensures
+        (match MH.write_word_in_major mh write_addr value with
+         | None -> True
+         | Some mh' -> MH.read_word_in_major mh' target == Some old))
+      (decreases Seq.length mh)
+  =
+  if Seq.length mh = 0 then
+    assert False
+  else begin
+    let c = Seq.head mh in
+    let tl = Seq.tail mh in
+    assert (Seq.index mh 0 == c);
+    assert (Seq.equal mh (Seq.cons c tl));
+    Seq.lemma_eq_elim mh (Seq.cons c tl);
+    if MH.word_in_chunk c write_addr then begin
+      let c' = MH.write_word_in_chunk c write_addr value in
+      assert (MH.write_word_in_major mh write_addr value ==
+              Some (Seq.cons c' tl));
+      MH.write_word_in_chunk_preserves_range c write_addr value;
+      if MH.chunk_contains_addr c target then begin
+        assert (MH.lookup_chunk mh target == Some c);
+        assert (MH.read_word_in_major mh target ==
+                (if MH.word_in_chunk c target
+                 then Some (MH.read_word_in_chunk c target)
+                 else None));
+        assert (MH.word_in_chunk c target);
+        assert (MH.read_word_in_chunk c target == old);
+        MH.write_word_in_chunk_preserves_word c write_addr value target;
+        assert (MH.word_in_chunk c' target);
+        if write_addr = target then begin
+          assert (U64.v write_addr == U64.v target);
+          assert False
+        end;
+        MH.read_write_in_chunk_different c write_addr target value;
+        assert (MH.read_word_in_chunk c' target == old);
+        assert (MH.lookup_chunk (Seq.cons c' tl) target == Some c');
+        assert (MH.read_word_in_major (Seq.cons c' tl) target == Some old)
+      end else begin
+        assert (~(MH.chunk_contains_addr c' target));
+        MH.read_word_add_chunk_miss tl c target;
+        assert (MH.read_word_in_major tl target == Some old);
+        MH.read_word_add_chunk_miss tl c' target;
+        assert (MH.read_word_in_major (Seq.cons c' tl) target ==
+                MH.read_word_in_major tl target)
+      end
+    end else begin
+      assert (MH.write_word_in_major mh write_addr value ==
+              (match MH.write_word_in_major tl write_addr value with
+               | None -> None
+               | Some tl' -> Some (Seq.cons c tl')));
+      match MH.write_word_in_major tl write_addr value with
+      | None -> ()
+      | Some tl' ->
+        if MH.chunk_contains_addr c target then begin
+          assert (MH.lookup_chunk mh target == Some c);
+          assert (MH.read_word_in_major mh target ==
+                  (if MH.word_in_chunk c target
+                   then Some (MH.read_word_in_chunk c target)
+                   else None));
+          assert (MH.word_in_chunk c target);
+          assert (MH.read_word_in_chunk c target == old);
+          assert (MH.read_word_in_major (Seq.cons c tl') target == Some old)
+        end else begin
+          MH.read_word_add_chunk_miss tl c target;
+          assert (MH.read_word_in_major tl target == Some old);
+          write_word_in_major_read_frame tl write_addr target value old;
+          assert (MH.read_word_in_major tl' target == Some old);
+          MH.read_word_add_chunk_miss tl' c target;
+          assert (MH.read_word_in_major (Seq.cons c tl') target == Some old)
+        end
+    end
+  end
+
+private let major_write_word_or_same_read_frame
+  (mh: MH.major_heap) (write_addr target: hp_addr)
+  (value old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        (U64.v target + U64.v mword <= U64.v write_addr \/
+         U64.v write_addr + U64.v mword <= U64.v target))
+      (ensures
+        MH.read_word_in_major
+          (SpecMajorAlloc.major_write_word_or_same mh write_addr value)
+          target == Some old)
+  =
+  write_word_in_major_read_frame mh write_addr target value old;
+  match MH.write_word_in_major mh write_addr value with
+  | None -> SpecMajorAlloc.major_write_word_or_same_none mh write_addr value
+  | Some mh' ->
+    SpecMajorAlloc.major_write_word_or_same_some mh mh' write_addr value
+
+let rec chunked_copy_fields_frame_before
+  (minor: minor_state) (mh: MH.major_heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  (target: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        U64.v target + U64.v mword <=
+          U64.v dst_obj + i * U64.v mword)
+      (ensures
+        MH.read_word_in_major
+          (chunked_copy_fields minor mh src_obj dst_obj i n)
+          target == Some old)
+      (decreases (n - i))
+  =
+  if i >= n then
+    chunked_copy_fields_base minor mh src_obj dst_obj i n
+  else begin
+    let dst_offset = U64.v dst_obj + i * U64.v mword in
+    if dst_offset + U64.v mword > heap_size ||
+       dst_offset % U64.v mword <> 0 then
+      ()
+    else begin
+      assert (dst_offset < heap_size);
+      let write_addr : hp_addr = U64.uint_to_t dst_offset in
+      assert (U64.v write_addr == dst_offset);
+      let mh' =
+        SpecMajorAlloc.major_write_word_or_same
+          mh write_addr (minor_read_field minor src_obj i) in
+      major_write_word_or_same_read_frame
+        mh write_addr target (minor_read_field minor src_obj i) old;
+      chunked_copy_fields_step minor mh src_obj dst_obj i n;
+      assert (MH.read_word_in_major mh' target == Some old);
+      assert (U64.v target + U64.v mword <=
+              U64.v dst_obj + (i + 1) * U64.v mword);
+      chunked_copy_fields_frame_before
+        minor mh' src_obj dst_obj (i + 1) n target old
+    end
+  end
+#pop-options
+
 let chunked_set_promoted_tag (mh: MH.major_heap) (obj: U64.t) (tag: nat)
   : GTot MH.major_heap =
   if tag >= 256 then mh
@@ -99,6 +241,26 @@ let chunked_zero_promote_padding
       end
       else mh
   else mh
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+let chunked_zero_promote_padding_noop
+  (mh: MH.major_heap) (dst: U64.t) (copied_wz: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        U64.v dst >= U64.v mword /\
+        U64.v dst < heap_size /\
+        U64.v dst % U64.v mword == 0 /\
+        MH.read_word_in_major mh (hd_address (dst <: obj_addr)) ==
+          Some hdr /\
+        U64.v (getWosize hdr) <= copied_wz)
+      (ensures
+        chunked_zero_promote_padding mh dst copied_wz == mh)
+  =
+  let obj : obj_addr = dst in
+  let hd = hd_address obj in
+  assert (MH.read_word_in_major mh hd == Some hdr);
+  assert (~ (U64.v (getWosize hdr) > copied_wz))
+#pop-options
 
 let chunked_promote_object_with_fuel
   (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)

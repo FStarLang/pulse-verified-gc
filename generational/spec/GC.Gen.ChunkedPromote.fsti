@@ -13,6 +13,8 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
 open GC.Gen.MinorHeap
 
 module MH = GC.Spec.MajorHeap
@@ -58,11 +60,38 @@ val chunked_copy_fields_step
             (minor_read_field minor src_obj i))
           src_obj dst_obj (i + 1) n)
 
+val chunked_copy_fields_frame_before
+  : minor:minor_state -> mh:MH.major_heap ->
+    src_obj:U64.t -> dst_obj:U64.t -> i:nat -> n:nat ->
+    target:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        U64.v target + U64.v mword <=
+          U64.v dst_obj + i * U64.v mword)
+      (ensures
+        MH.read_word_in_major
+          (chunked_copy_fields minor mh src_obj dst_obj i n)
+          target == Some old)
+
 val chunked_set_promoted_tag
   : mh:MH.major_heap -> obj:U64.t -> tag:nat -> GTot MH.major_heap
 
 val chunked_zero_promote_padding
   : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat -> GTot MH.major_heap
+
+val chunked_zero_promote_padding_noop
+  : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat -> hdr:U64.t ->
+    Lemma
+      (requires
+        U64.v dst >= U64.v mword /\
+        U64.v dst < heap_size /\
+        U64.v dst % U64.v mword == 0 /\
+        MH.read_word_in_major mh (hd_address (dst <: obj_addr)) ==
+          Some hdr /\
+        U64.v (getWosize hdr) <= copied_wz)
+      (ensures
+        chunked_zero_promote_padding mh dst copied_wz == mh)
 
 val chunked_promote_object_with_fuel
   : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
