@@ -248,6 +248,9 @@ val promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
 /// One Cheney forwarding step preserves the chunked allocator shape and chain
 /// termination, assuming the normal object that may be promoted by that step
 /// has enough active-head capacity to split.
+val cheney_forward_one_split_ready_single_chunk
+  : minor:minor_state -> cs:cheney_state -> addr:U64.t -> GTot prop
+
 val cheney_forward_one_head_split_preserves_chunked_alloc_shape_single_chunk
   : minor:minor_state -> cs:cheney_state -> addr:U64.t ->
     Lemma
@@ -278,6 +281,34 @@ val cheney_forward_one_head_split_preserves_chunked_alloc_shape_single_chunk
                       minor_wosize minor parent + 2)))
       (ensures
         (let cs' = cheney_forward_one minor cs addr in
+         GenInv.chunked_major_alloc_shape
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
+           SpecAlloc.alloc_search_fuel = true))
+
+/// Exact trace-readiness predicate for `cheney_forward_roots`: every actual
+/// root step has the split-head capacity needed by the one-step theorem, after
+/// applying all earlier root steps.
+val cheney_forward_roots_split_ready_single_chunk
+  : minor:minor_state -> cs:cheney_state -> roots:seq U64.t -> idx:nat ->
+    GTot prop
+
+val cheney_forward_roots_head_split_preserves_chunked_alloc_shape_single_chunk
+  : minor:minor_state -> cs:cheney_state -> roots:seq U64.t -> idx:nat ->
+    Lemma
+      (requires SpecAlloc.alloc_search_fuel > 1 /\
+                GenInv.chunked_major_alloc_shape
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates
+                  (MH.single_chunk_major_heap cs.cs_major) cs.cs_fp
+                  SpecAlloc.alloc_search_fuel = true /\
+                cheney_forward_roots_split_ready_single_chunk
+                  minor cs roots idx)
+      (ensures
+        (let cs' = cheney_forward_roots minor cs roots idx in
          GenInv.chunked_major_alloc_shape
            (MH.single_chunk_major_heap cs'.cs_major) cs'.cs_fp
            SpecAlloc.alloc_search_fuel /\
