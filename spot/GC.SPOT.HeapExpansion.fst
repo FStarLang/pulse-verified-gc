@@ -969,6 +969,29 @@ let spot_chunked_cheney_forward_one_head_split_preserves_chunked_alloc_shape
   CheneyPreservation.chunked_cheney_forward_one_head_split_preserves_chunked_alloc_shape
     minor cs addr fuel
 
+let spot_chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        CheneyPreservation.chunked_cheney_forward_one_budget_ready
+          minor cs addr remaining)
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+         GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp fuel = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           cs'.ccs_major cs'.ccs_fp >= remaining))
+  =
+  CheneyPreservation.chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
+    minor cs addr fuel remaining
+
 let spot_chunked_cheney_forward_roots_head_split_preserves_chunked_alloc_shape
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (roots: Seq.seq U64.t) (idx: nat) (alloc_fuel: nat)
