@@ -395,6 +395,29 @@ val promote_object_head_split_padding_noop_single_chunk
          let copied = copy_fields minor r.heap_out obj fp 0 wosize in
          zero_promote_padding copied (fp <: obj_addr) wosize == copied))
 
+/// Direct chunked-major analogue of the split-promotion preservation theorem:
+/// after active-head split allocation, the chunked promotion writes preserve the
+/// allocator shape rooted at the split remainder head.
+val chunked_promote_object_head_split_preserves_chunked_alloc_shape
+  : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} -> fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape mh fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates mh fp fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize mh fp >= wosize + 2)
+      (ensures
+        (let res =
+           ChunkedPromote.chunked_promote_object_with_fuel
+             minor mh obj fp wosize fuel in
+         res.new_addr == fp /\
+         res.fp_out <> 0UL /\
+         GenInv.chunked_major_alloc_shape res.major_out res.fp_out fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           res.major_out res.fp_out fuel = true))
+
 /// In the active-head split case, the allocation creates a post-split
 /// remainder head.  The subsequent promotion writes (field copy + tag update;
 /// padding is a no-op in this case) preserve the chunked allocator shape rooted
