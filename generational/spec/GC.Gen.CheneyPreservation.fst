@@ -4966,6 +4966,37 @@ let chunked_cheney_promote_no_oom_from_budget
     minor major fp roots alloc_fuel;
   chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
     minor major fp roots alloc_fuel
+
+let chunked_cheney_promote_forwards_reachable_from_budget
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         forall (x:U64.t).
+          Seq.mem x (minor_reachable minor roots) /\
+          minor_wosize minor x > 0 ==>
+          res.fwd_map x <> 0UL))
+  =
+  chunked_cheney_promote_no_oom_from_budget
+    minor major fp roots alloc_fuel;
+  let res =
+    ChunkedCheney.chunked_cheney_promote
+      minor major fp roots alloc_fuel in
+  assert (CheneyBFS.fwd_well_formed minor res.fwd_map roots);
+  CheneyBFS.fwd_well_formed_covers_reachable
+    minor res.fwd_map roots
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"

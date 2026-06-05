@@ -1116,6 +1116,28 @@ val chunked_cheney_promote_no_oom_from_budget
       (ensures
         chunked_cheney_no_oom minor major fp roots alloc_fuel)
 
+val chunked_cheney_promote_forwards_reachable_from_budget
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         forall (x:U64.t).
+          Seq.mem x (minor_reachable minor roots) /\
+          minor_wosize minor x > 0 ==>
+          res.fwd_map x <> 0UL))
+
 val chunked_cheney_promote_after_minor_promotion_head_preflight
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> fresh:MH.heap_chunk ->

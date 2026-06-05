@@ -7,6 +7,7 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Reachability
 open GC.Gen.Promote
 open GC.Gen.Cheney
 
@@ -1303,6 +1304,31 @@ let spot_chunked_cheney_promote_no_oom_from_budget
           minor major fp roots alloc_fuel)
   =
   CheneyPreservation.chunked_cheney_promote_no_oom_from_budget
+    minor major fp roots alloc_fuel
+
+let spot_chunked_cheney_promote_forwards_reachable_from_budget
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         forall (x:U64.t).
+          Seq.mem x (minor_reachable minor roots) /\
+          minor_wosize minor x > 0 ==>
+          res.fwd_map x <> 0UL))
+  =
+  CheneyPreservation.chunked_cheney_promote_forwards_reachable_from_budget
     minor major fp roots alloc_fuel
 
 let spot_chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
