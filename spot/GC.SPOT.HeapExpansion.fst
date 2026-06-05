@@ -1211,6 +1211,51 @@ let spot_chunked_cheney_promote_budget_ready_from_minor_demand
   CheneyPreservation.chunked_cheney_promote_budget_ready_from_minor_demand
     minor major fp roots alloc_fuel
 
+let spot_chunked_cheney_promote_after_minor_promotion_head_preflight
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0))
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let res =
+           ChunkedCheney.chunked_cheney_promote
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         GenInv.chunked_collection_heap_shape
+           minor r.capacity_major_out r.capacity_fp_out
+           r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_head_wosize
+           r.capacity_major_out r.capacity_fp_out >= needed /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
+         GenInv.chunked_major_alloc_shape
+           res.major_final res.fp_final r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           res.major_final res.fp_final r.capacity_fuel_out = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           res.major_final res.fp_final >= 1))
+  =
+  CheneyPreservation.chunked_cheney_promote_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh
+
 let spot_chunked_alloc_head_split_alloc_header_wosize
   (mh: MH.major_heap) (fp: U64.t)
   (wosize: nat{wosize > 0 /\

@@ -39,6 +39,7 @@ module BlueAlloc = GC.Gen.PromoteUpdate.BlueAlloc
 module NoBlueUtil = GC.Gen.NoBlueUtil
 module PromotionDemand = GC.Gen.PromotionDemand
 module MH = GC.Spec.MajorHeap
+module CG = GC.Gen.CombinedGraph
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
@@ -3514,6 +3515,102 @@ let chunked_cheney_promote_budget_ready_from_minor_demand
             minor cs0 roots 0 alloc_fuel 1);
   assert (chunked_cheney_scan_budget_ready
             minor cs1 0 (cheney_fuel minor) alloc_fuel 1)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_cheney_promote_after_minor_promotion_head_preflight
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0))
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let res =
+           ChunkedCheney.chunked_cheney_promote
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         GenInv.chunked_collection_heap_shape
+           minor r.capacity_major_out r.capacity_fp_out
+           r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_head_wosize
+           r.capacity_major_out r.capacity_fp_out >= needed /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
+         GenInv.chunked_major_alloc_shape
+           res.major_final res.fp_final r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           res.major_final res.fp_final r.capacity_fuel_out = true /\
+         SpecMajorAlloc.major_fl_head_wosize
+           res.major_final res.fp_final >= 1))
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  assert (needed > 0);
+  GenInv.chunked_collection_heap_shape_ensure_head_capacity_with_chain
+    minor major fp alloc_fuel needed fresh;
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  assert (GenInv.chunked_collection_heap_shape
+            minor r.capacity_major_out r.capacity_fp_out
+            r.capacity_fuel_out);
+  assert (SpecMajorAlloc.major_fl_head_wosize
+            r.capacity_major_out r.capacity_fp_out >= needed);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out =
+          true);
+  GenInv.chunked_collection_heap_shape_elim
+    minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out;
+  assert (GenInv.chunked_major_alloc_shape
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  if SpecMajorAlloc.major_fl_head_wosize major fp >= needed then begin
+    assert (r.capacity_major_out == major);
+    assert (r.capacity_fp_out == fp);
+    assert (r.capacity_fuel_out == alloc_fuel)
+  end else begin
+    assert (r.capacity_fuel_out == alloc_fuel + 1);
+    assert (r.capacity_fp_out == SpecMajorAlloc.fresh_chunk_object fresh);
+    SpecMajorAlloc.fresh_chunk_object_in_chunk fresh;
+    assert (SpecMajorAlloc.fresh_chunk_object fresh <> 0UL);
+    assert (r.capacity_fp_out <> 0UL)
+  end;
+  assert (r.capacity_fuel_out > 1);
+  assert (r.capacity_fp_out <> 0UL);
+  chunked_cheney_promote_budget_ready_from_minor_demand
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out;
+  assert (chunked_cheney_promote_budget_ready
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out 1);
+  chunked_cheney_promote_head_split_preserves_remaining_head_wosize
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out 1;
+  let res =
+    ChunkedCheney.chunked_cheney_promote
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  assert (GenInv.chunked_major_alloc_shape
+            res.major_final res.fp_final r.capacity_fuel_out);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            res.major_final res.fp_final r.capacity_fuel_out = true);
+  assert (SpecMajorAlloc.major_fl_head_wosize
+            res.major_final res.fp_final >= 1)
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
