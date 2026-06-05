@@ -37,6 +37,7 @@ module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
+module CheneyBFS = GC.Gen.CheneyBFS
 
 /// Size-only allocation request trace induced by Cheney's final forwarding map.
 ///
@@ -746,6 +747,62 @@ val chunked_cheney_promote_head_split_preserves_remaining_head_wosize
           res.major_final res.fp_final alloc_fuel = true /\
          SpecMajorAlloc.major_fl_head_wosize
           res.major_final res.fp_final >= remaining))
+
+val chunked_cheney_forward_one_fwd_monotone
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> x:U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires cs.ccs_fwd x <> 0UL)
+      (ensures
+        (ChunkedCheney.chunked_cheney_forward_one
+         minor cs addr alloc_fuel).ccs_fwd x <> 0UL)
+
+val chunked_cheney_forward_roots_fwd_monotone
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    roots:seq U64.t -> idx:nat -> alloc_fuel:nat -> x:U64.t ->
+    Lemma
+      (requires cs.ccs_fwd x <> 0UL)
+      (ensures
+        (ChunkedCheney.chunked_cheney_forward_roots
+         minor cs roots idx alloc_fuel).ccs_fwd x <> 0UL)
+
+val chunked_cheney_forward_one_covers_addr_from_budget
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+         cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+         cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_cheney_forward_one_budget_ready
+         minor cs addr remaining)
+      (ensures
+        Seq.mem addr (minor_objects minor) /\
+        minor_wosize minor addr > 0 ==>
+        (ChunkedCheney.chunked_cheney_forward_one
+         minor cs addr alloc_fuel).ccs_fwd addr <> 0UL)
+
+val chunked_cheney_forward_roots_covers_roots_from_budget
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+         cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+         cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_cheney_forward_roots_budget_ready
+         minor cs roots 0 alloc_fuel remaining)
+      (ensures
+        CheneyBFS.fwd_covers_roots minor
+         (ChunkedCheney.chunked_cheney_forward_roots
+           minor cs roots 0 alloc_fuel).ccs_fwd
+         roots)
 
 val chunked_cheney_promote_budget_ready_from_minor_demand
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
