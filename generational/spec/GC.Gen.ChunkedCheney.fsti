@@ -19,6 +19,7 @@ open GC.Gen.Promote
 module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module ChunkedPromote = GC.Gen.ChunkedPromote
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module Dense = GC.Gen.Cheney
 
 noeq
@@ -65,10 +66,26 @@ type chunked_promote_all_result = {
   fwd_map     : forwarding_map;
 }
 
+noeq
+type chunked_minor_collect_result = {
+  cmc_major : MH.major_heap;
+  cmc_fp    : U64.t;
+  cmc_minor : minor_state;
+  cmc_roots : seq U64.t;
+  cmc_fwd   : forwarding_map;
+}
+
 val chunked_cheney_promote
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat ->
     GTot chunked_promote_all_result
+
+/// Complete chunked minor collection = chunked Cheney promote + chunked pointer
+/// update + root rewrite + minor reset.
+val chunked_cheney_collect_spec
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    GTot chunked_minor_collect_result
 
 val chunked_cheney_forward_normal_noop
   : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
@@ -341,3 +358,18 @@ val chunked_cheney_promote_default_single_chunk_compat
          chunked.major_final == MH.single_chunk_major_heap dense.major_final /\
          chunked.fp_final == dense.fp_final /\
          chunked.fwd_map == dense.fwd_map))
+
+val chunked_cheney_collect_default_single_chunk_compat
+  : minor:minor_state -> major:heap -> fp:U64.t -> roots:seq U64.t ->
+    Lemma
+      (ensures
+        (let chunked =
+           chunked_cheney_collect_spec
+             minor (MH.single_chunk_major_heap major) fp roots
+             SpecAlloc.alloc_search_fuel in
+         let dense = Dense.cheney_collect_spec minor major fp roots in
+         chunked.cmc_major == MH.single_chunk_major_heap dense.mc_major /\
+         chunked.cmc_fp == dense.mc_fp /\
+         chunked.cmc_minor == dense.mc_minor /\
+         chunked.cmc_roots == dense.mc_roots /\
+         chunked.cmc_fwd == dense.mc_fwd))

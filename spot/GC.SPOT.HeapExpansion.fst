@@ -2822,3 +2822,21 @@ let spot_chunked_update_major_pointers_single_chunk_compat
         MH.single_chunk_major_heap (update_major_pointers major fwd))
   =
   ChunkedUpdate.chunked_update_major_pointers_single_chunk_compat major fwd
+
+let spot_chunked_cheney_collect_default_single_chunk_compat
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  : Lemma
+      (ensures
+        (let chunked =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor (MH.single_chunk_major_heap major) fp roots
+             SpecAlloc.alloc_search_fuel in
+         let dense = cheney_collect_spec minor major fp roots in
+         chunked.cmc_major == MH.single_chunk_major_heap dense.mc_major /\
+         chunked.cmc_fp == dense.mc_fp /\
+         chunked.cmc_minor == dense.mc_minor /\
+         chunked.cmc_roots == dense.mc_roots /\
+         chunked.cmc_fwd == dense.mc_fwd))
+  =
+  ChunkedCheney.chunked_cheney_collect_default_single_chunk_compat
+    minor major fp roots

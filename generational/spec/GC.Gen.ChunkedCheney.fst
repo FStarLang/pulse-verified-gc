@@ -15,6 +15,7 @@ open GC.Gen.Promote
 module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module ChunkedPromote = GC.Gen.ChunkedPromote
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module Dense = GC.Gen.Cheney
 module AllocProps = GC.Gen.AllocProps
 
@@ -120,6 +121,20 @@ let chunked_cheney_promote
   { major_final = cs2.ccs_major;
     fp_final = cs2.ccs_fp;
     fwd_map = cs2.ccs_fwd }
+
+let chunked_cheney_collect_spec
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  : GTot chunked_minor_collect_result =
+  let prom = chunked_cheney_promote minor major fp roots alloc_fuel in
+  let updated =
+    ChunkedUpdate.chunked_update_major_pointers
+      prom.major_final prom.fwd_map in
+  { cmc_major = updated;
+    cmc_fp    = prom.fp_final;
+    cmc_minor = minor_reset minor;
+    cmc_roots = rewrite_roots roots prom.fwd_map;
+    cmc_fwd   = prom.fwd_map }
 
 let chunked_cheney_forward_normal_noop
   (minor: minor_state) (cs: chunked_cheney_state) (addr: U64.t)
@@ -608,4 +623,26 @@ let chunked_cheney_promote_default_single_chunk_compat
       minor chunked_cs1 0 (Dense.cheney_fuel minor)
       SpecAlloc.alloc_search_fuel in
   assert (chunked_cs2 == single_chunk_cheney_state dense_cs2)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_cheney_collect_default_single_chunk_compat
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+      (ensures
+        (let chunked =
+           chunked_cheney_collect_spec
+             minor (MH.single_chunk_major_heap major) fp roots
+             SpecAlloc.alloc_search_fuel in
+         let dense = Dense.cheney_collect_spec minor major fp roots in
+         chunked.cmc_major == MH.single_chunk_major_heap dense.mc_major /\
+         chunked.cmc_fp == dense.mc_fp /\
+         chunked.cmc_minor == dense.mc_minor /\
+         chunked.cmc_roots == dense.mc_roots /\
+         chunked.cmc_fwd == dense.mc_fwd))
+  =
+  chunked_cheney_promote_default_single_chunk_compat minor major fp roots;
+  let dense_prom = Dense.cheney_promote minor major fp roots in
+  ChunkedUpdate.chunked_update_major_pointers_single_chunk_compat
+    dense_prom.major_final dense_prom.fwd_map
 #pop-options
