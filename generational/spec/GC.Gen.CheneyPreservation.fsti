@@ -1201,7 +1201,8 @@ val chunked_update_major_pointers_preserves_alloc_shape
           ChunkedUpdate.chunked_update_major_pointers major fwd in
          GenInv.chunked_major_alloc_shape updated fp alloc_fuel /\
          SpecMajorAlloc.major_fl_chain_terminates
-          updated fp alloc_fuel = true))
+          updated fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue updated fp alloc_fuel))
 
 val chunked_cheney_collect_after_minor_promotion_head_preflight
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->

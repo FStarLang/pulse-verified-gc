@@ -2951,7 +2951,8 @@ let spot_chunked_update_major_pointers_preserves_alloc_shape
         (let updated =
            ChunkedUpdate.chunked_update_major_pointers major fwd in
          GenInv.chunked_major_alloc_shape updated fp fuel /\
-         SpecMajorAlloc.major_fl_chain_terminates updated fp fuel = true))
+         SpecMajorAlloc.major_fl_chain_terminates updated fp fuel = true /\
+         GenInv.chunked_chain_objects_blue updated fp fuel))
   =
   CheneyPreservation.chunked_update_major_pointers_preserves_alloc_shape
     major fp fuel fwd

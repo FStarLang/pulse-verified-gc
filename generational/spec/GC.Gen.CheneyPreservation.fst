@@ -5140,6 +5140,40 @@ private let chunked_chain_objects_blue_head_is_blue
     assert False
   end
 
+private let chunked_chain_objects_blue_fuel_zero
+  (mh: MH.major_heap) (fp: U64.t)
+  : Lemma (ensures GenInv.chunked_chain_objects_blue mh fp 0)
+  =
+  let aux (obj: obj_addr)
+    : Lemma
+        (requires
+          Seq.mem obj (MH.major_objects mh) /\
+          ~(GenInv.chunked_is_blue mh obj))
+        (ensures
+          SpecMajorAlloc.major_fl_chain_avoids mh fp obj 0 = true)
+    =
+    ()
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  GenInv.chunked_chain_objects_blue_intro mh fp 0
+
+private let chunked_chain_objects_blue_null
+  (mh: MH.major_heap) (fuel: nat)
+  : Lemma (ensures GenInv.chunked_chain_objects_blue mh 0UL fuel)
+  =
+  let aux (obj: obj_addr)
+    : Lemma
+        (requires
+          Seq.mem obj (MH.major_objects mh) /\
+          ~(GenInv.chunked_is_blue mh obj))
+        (ensures
+          SpecMajorAlloc.major_fl_chain_avoids mh 0UL obj fuel = true)
+    =
+    SpecMajorAlloc.major_fl_chain_avoids_null mh obj fuel
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  GenInv.chunked_chain_objects_blue_intro mh 0UL fuel
+
 let rec chunked_update_major_pointers_preserves_alloc_shape_aux
   (major: MH.major_heap) (fp: U64.t) (alloc_fuel: nat)
   (fwd: forwarding_map)
@@ -5159,7 +5193,8 @@ let rec chunked_update_major_pointers_preserves_alloc_shape_aux
          SpecMajorAlloc.major_fl_above_zero updated fp alloc_fuel /\
          SpecMajorAlloc.major_fl_blocks_fit updated fp alloc_fuel /\
          SpecMajorAlloc.major_fl_chain_terminates
-           updated fp alloc_fuel = true))
+           updated fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue updated fp alloc_fuel))
       (decreases alloc_fuel)
   =
   let updated = ChunkedUpdate.chunked_update_major_pointers major fwd in
@@ -5180,13 +5215,15 @@ let rec chunked_update_major_pointers_preserves_alloc_shape_aux
     else begin
       SpecMajorAlloc.major_fl_chain_terminates_valid_zero major fp;
       assert False
-    end
+    end;
+    chunked_chain_objects_blue_fuel_zero updated fp
   end else if fp = 0UL then begin
     assert (alloc_fuel > 0);
     SpecMajorAlloc.major_fl_valid_null updated alloc_fuel;
     SpecMajorAlloc.major_fl_above_zero_null updated alloc_fuel;
     SpecMajorAlloc.major_fl_blocks_fit_null updated alloc_fuel;
-    SpecMajorAlloc.major_fl_chain_terminates_null updated alloc_fuel
+    SpecMajorAlloc.major_fl_chain_terminates_null updated alloc_fuel;
+    chunked_chain_objects_blue_null updated alloc_fuel
   end else begin
     assert (alloc_fuel > 0);
     assert (fp <> 0UL);
@@ -5287,7 +5324,33 @@ let rec chunked_update_major_pointers_preserves_alloc_shape_aux
         SpecMajorAlloc.major_fl_blocks_fit_step
           updated fp_obj alloc_fuel hdr next;
         SpecMajorAlloc.major_fl_chain_terminates_step
-          updated fp alloc_fuel
+          updated fp alloc_fuel;
+        let updated_chain (obj: obj_addr)
+          : Lemma
+              (requires
+                Seq.mem obj (MH.major_objects updated) /\
+                ~(GenInv.chunked_is_blue updated obj))
+              (ensures
+                SpecMajorAlloc.major_fl_chain_avoids
+                  updated fp obj alloc_fuel = true)
+          =
+          if obj = fp_obj then begin
+            GenInv.chunked_is_blue_header major fp_obj hdr;
+            assert (getColor hdr = Blue);
+            GenInv.chunked_is_blue_header updated fp_obj hdr;
+            assert (GenInv.chunked_is_blue updated fp_obj);
+            assert False
+          end else begin
+            assert (fp <> obj);
+            GenInv.chunked_chain_objects_blue_elim
+              updated next tail_fuel obj;
+            SpecMajorAlloc.major_fl_chain_avoids_step
+              updated fp obj alloc_fuel
+          end
+        in
+        FStar.Classical.forall_intro
+          (FStar.Classical.move_requires updated_chain);
+        GenInv.chunked_chain_objects_blue_intro updated fp alloc_fuel
   end
 
 let chunked_update_major_pointers_preserves_alloc_shape
@@ -5304,7 +5367,8 @@ let chunked_update_major_pointers_preserves_alloc_shape
            ChunkedUpdate.chunked_update_major_pointers major fwd in
          GenInv.chunked_major_alloc_shape updated fp alloc_fuel /\
          SpecMajorAlloc.major_fl_chain_terminates
-           updated fp alloc_fuel = true))
+           updated fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue updated fp alloc_fuel))
   =
   GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
   chunked_update_major_pointers_preserves_alloc_shape_aux
