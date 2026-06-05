@@ -263,14 +263,14 @@ let rec count_unforwarded (objs: seq U64.t) (fwd: forwarding_map) (i: nat)
          count_unforwarded objs fwd (i + 1)
 
 /// count_unforwarded is bounded by the remaining length
-private let rec count_unforwarded_bound (objs: seq U64.t) (fwd: forwarding_map) (i: nat)
+let rec count_unforwarded_bound (objs: seq U64.t) (fwd: forwarding_map) (i: nat)
   : Lemma (ensures count_unforwarded objs fwd i <= (if i < Seq.length objs then Seq.length objs - i else 0))
           (decreases (if i < Seq.length objs then Seq.length objs - i else 0))
   = if i >= Seq.length objs then ()
     else count_unforwarded_bound objs fwd (i + 1)
 
 /// With empty_forwarding, every element contributes 1
-private let rec count_unforwarded_empty (objs: seq U64.t) (i: nat)
+let rec count_unforwarded_empty (objs: seq U64.t) (i: nat)
   : Lemma (ensures count_unforwarded objs empty_forwarding i ==
                    (if i < Seq.length objs then Seq.length objs - i else 0))
           (decreases (if i < Seq.length objs then Seq.length objs - i else 0))
@@ -279,7 +279,7 @@ private let rec count_unforwarded_empty (objs: seq U64.t) (i: nat)
 
 /// When extend_forwarding sets fwd for addr (which was 0UL and is in objs),
 /// count_unforwarded decreases by at least 1.
-private let rec count_unforwarded_decrease
+let rec count_unforwarded_decrease
   (objs: seq U64.t) (fwd: forwarding_map)
   (addr: U64.t) (new_addr: U64.t) (i: nat)
   : Lemma (requires new_addr <> 0UL /\ fwd addr = 0UL /\
@@ -325,7 +325,7 @@ and count_unforwarded_monotone
     end
 
 /// If two forwarding maps agree on all elements of objs, count_unforwarded is the same
-private let rec count_unforwarded_ext
+let rec count_unforwarded_ext
   (objs: seq U64.t) (fwd1 fwd2: forwarding_map) (i: nat)
   : Lemma (requires (forall (k:nat). k >= i /\ k < Seq.length objs ==>
                       fwd1 (Seq.index objs k) == fwd2 (Seq.index objs k)))

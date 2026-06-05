@@ -66,6 +66,57 @@ val scan_preserves_queue_valid
 /// Since count_unforwarded >= 0, we get |queue| <= |minor_objects|.
 /// ---------------------------------------------------------------------------
 
+/// Count positions in a sequence where the forwarding map is zero.
+val count_unforwarded
+  : objs:seq U64.t -> fwd:forwarding_map -> i:nat -> GTot nat
+
+val count_unforwarded_bound
+  : objs:seq U64.t -> fwd:forwarding_map -> i:nat ->
+    Lemma
+      (ensures
+        count_unforwarded objs fwd i <=
+        (if i < Seq.length objs then Seq.length objs - i else 0))
+
+val count_unforwarded_empty
+  : objs:seq U64.t -> i:nat ->
+    Lemma
+      (ensures
+        count_unforwarded objs empty_forwarding i ==
+        (if i < Seq.length objs then Seq.length objs - i else 0))
+
+val count_unforwarded_decrease
+  : objs:seq U64.t -> fwd:forwarding_map ->
+    addr:U64.t -> new_addr:U64.t -> i:nat ->
+    Lemma
+      (requires new_addr <> 0UL /\ fwd addr = 0UL /\
+                (exists (k:nat).
+                  k >= i /\ k < Seq.length objs /\
+                  Seq.index objs k == addr))
+      (ensures
+        count_unforwarded objs (extend_forwarding fwd addr new_addr) i + 1
+        <= count_unforwarded objs fwd i)
+
+val count_unforwarded_monotone
+  : objs:seq U64.t -> fwd:forwarding_map ->
+    addr:U64.t -> new_addr:U64.t -> i:nat ->
+    Lemma
+      (requires new_addr <> 0UL)
+      (ensures
+        count_unforwarded objs (extend_forwarding fwd addr new_addr) i
+        <= count_unforwarded objs fwd i)
+
+val count_unforwarded_ext
+  : objs:seq U64.t -> fwd1:forwarding_map -> fwd2:forwarding_map ->
+    i:nat ->
+    Lemma
+      (requires
+        (forall (k:nat).
+          k >= i /\ k < Seq.length objs ==>
+          fwd1 (Seq.index objs k) == fwd2 (Seq.index objs k)))
+      (ensures
+        count_unforwarded objs fwd1 i ==
+        count_unforwarded objs fwd2 i)
+
 /// Abstract compound BFS invariant
 val cheney_bfs_inv (minor: minor_state) (cs: CheneySpec.cheney_state) : prop
 

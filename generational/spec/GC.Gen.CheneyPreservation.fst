@@ -50,6 +50,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module AllocHeader = GC.Spec.Allocator.Lemmas.Header
 module IndDesc = FStar.IndefiniteDescription
 module CheneyBFS = GC.Gen.CheneyBFS
+module SimOne = GC.Gen.Cheney.SimOne
 
 private let cheney_forwarded_minor_request_filter
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
@@ -3462,6 +3463,66 @@ let rec chunked_cheney_scan_end_index
         minor cs' (scan + 1) fuel' alloc_fuel
   else scan
 
+let rec chunked_cheney_scan_end_exhausted_or_fuel
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan scan_fuel alloc_fuel: nat)
+  : Lemma
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_scan
+             minor cs scan scan_fuel alloc_fuel in
+         let end_idx =
+           chunked_cheney_scan_end_index
+             minor cs scan scan_fuel alloc_fuel in
+         end_idx >= Seq.length cs'.ccs_queue \/
+         end_idx == scan + scan_fuel))
+      (decreases scan_fuel)
+  =
+  if scan_fuel > 0 then
+    if scan >= Seq.length cs.ccs_queue then begin
+      ChunkedCheney.chunked_cheney_scan_base
+        minor cs scan scan_fuel alloc_fuel;
+      assert (chunked_cheney_scan_end_index
+                minor cs scan scan_fuel alloc_fuel == scan);
+      assert (scan >= Seq.length cs.ccs_queue)
+    end else begin
+      assert (scan < Seq.length cs.ccs_queue);
+      let fuel' : f:nat{f < scan_fuel} = scan_fuel - 1 in
+      ChunkedCheney.chunked_cheney_scan_step
+        minor cs scan scan_fuel alloc_fuel;
+      let obj = Seq.index cs.ccs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs obj 0 wz alloc_fuel in
+      let final =
+        ChunkedCheney.chunked_cheney_scan
+          minor cs' (scan + 1) fuel' alloc_fuel in
+      let end_idx =
+        chunked_cheney_scan_end_index
+          minor cs' (scan + 1) fuel' alloc_fuel in
+      chunked_cheney_scan_end_exhausted_or_fuel
+        minor cs' (scan + 1) fuel' alloc_fuel;
+      assert (ChunkedCheney.chunked_cheney_scan
+                minor cs scan scan_fuel alloc_fuel == final);
+      assert (chunked_cheney_scan_end_index
+                minor cs scan scan_fuel alloc_fuel == end_idx);
+      assert (end_idx >= Seq.length final.ccs_queue \/
+              end_idx == (scan + 1) + fuel');
+      assert (fuel' == scan_fuel - 1);
+      assert (scan_fuel == fuel' + 1);
+      assert ((scan + 1) + fuel' == scan + (fuel' + 1));
+      assert ((scan + 1) + fuel' == scan + scan_fuel)
+    end
+  else begin
+    assert (scan_fuel = 0);
+    ChunkedCheney.chunked_cheney_scan_base
+      minor cs scan scan_fuel alloc_fuel;
+    assert (chunked_cheney_scan_end_index
+              minor cs scan scan_fuel alloc_fuel == scan);
+    assert (scan == scan + scan_fuel)
+  end
+
 let rec chunked_cheney_scan_scanned_prefix_from_budget
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (scan scan_fuel alloc_fuel remaining: nat)
@@ -3839,6 +3900,285 @@ let chunked_cheney_scan_fwd_closed_from_budget
     (chunked_cheney_scan_end_index
       minor cs scan scan_fuel alloc_fuel)
 
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_queue_potential
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  : prop =
+  Seq.length cs.ccs_queue +
+  SimOne.count_unforwarded (minor_objects minor) cs.ccs_fwd 0 <=
+  Seq.length (minor_objects minor)
+
+private let chunked_queue_potential_initial
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  : Lemma
+      (requires cs.ccs_queue == Seq.empty /\
+                cs.ccs_fwd == empty_forwarding)
+      (ensures chunked_queue_potential minor cs)
+  =
+  SimOne.count_unforwarded_empty (minor_objects minor) 0
+
+private let chunked_queue_potential_bound
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  : Lemma
+      (requires chunked_queue_potential minor cs)
+      (ensures Seq.length cs.ccs_queue <= Seq.length (minor_objects minor))
+  = ()
+
+private let chunked_cheney_forward_normal_preserves_queue_potential
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires chunked_queue_potential minor cs)
+      (ensures
+        chunked_queue_potential minor
+          (ChunkedCheney.chunked_cheney_forward_normal
+            minor cs addr alloc_fuel))
+  =
+  if not (Seq.mem addr (minor_objects minor)) || cs.ccs_fwd addr <> 0UL then
+    ChunkedCheney.chunked_cheney_forward_normal_noop
+      minor cs addr alloc_fuel
+  else if minor_wosize minor addr = 0 then
+    ChunkedCheney.chunked_cheney_forward_normal_noop_wz0
+      minor cs addr alloc_fuel
+  else begin
+    assert (Seq.mem addr (minor_objects minor));
+    assert (cs.ccs_fwd addr = 0UL);
+    let wz = minor_wosize minor addr in
+    assert (wz > 0);
+    let res =
+      ChunkedPromote.chunked_promote_object_with_fuel
+        minor cs.ccs_major addr cs.ccs_fp wz alloc_fuel in
+    if res.new_addr = 0UL then
+      ChunkedCheney.chunked_cheney_forward_normal_noop_oom
+        minor cs addr alloc_fuel
+    else begin
+      ChunkedCheney.chunked_cheney_forward_normal_success
+        minor cs addr alloc_fuel;
+      let objs = minor_objects minor in
+      let cs' =
+        ChunkedCheney.chunked_cheney_forward_normal
+          minor cs addr alloc_fuel in
+      let old_count = SimOne.count_unforwarded objs cs.ccs_fwd 0 in
+      let new_count = SimOne.count_unforwarded objs cs'.ccs_fwd 0 in
+      FStar.Classical.exists_intro
+        (fun (k:nat) ->
+          k >= 0 /\ k < Seq.length objs /\
+          Seq.index objs k == addr)
+        (Seq.index_mem addr objs);
+      SimOne.count_unforwarded_decrease
+        objs cs.ccs_fwd addr res.new_addr 0;
+      Seq.Base.lemma_len_append cs.ccs_queue (Seq.create 1 addr);
+      assert (cs'.ccs_fwd ==
+              extend_forwarding cs.ccs_fwd addr res.new_addr);
+      assert (new_count + 1 <= old_count);
+      assert (Seq.length cs'.ccs_queue ==
+              Seq.length cs.ccs_queue + 1)
+    end
+  end
+
+private let chunked_cheney_forward_one_preserves_queue_potential
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires minor_wf minor /\
+                chunked_queue_potential minor cs)
+      (ensures
+        chunked_queue_potential minor
+          (ChunkedCheney.chunked_cheney_forward_one
+            minor cs addr alloc_fuel))
+  =
+  if cs.ccs_fwd addr <> 0UL then
+    ChunkedCheney.chunked_cheney_forward_one_noop
+      minor cs addr alloc_fuel
+  else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    chunked_cheney_forward_normal_preserves_queue_potential
+      minor cs parent alloc_fuel;
+    let csn =
+      ChunkedCheney.chunked_cheney_forward_normal
+        minor cs parent alloc_fuel in
+    let r =
+      ChunkedCheney.chunked_cheney_forward_one
+        minor cs addr alloc_fuel in
+    assert (chunked_queue_potential minor csn);
+    if csn.ccs_fwd parent <> 0UL &&
+       U64.v addr >= U64.v parent &&
+       U64.v (csn.ccs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
+    then begin
+      ChunkedCheney.chunked_cheney_forward_one_infix_guard_pass
+        minor cs addr alloc_fuel;
+      let objs = minor_objects minor in
+      let delta = U64.v addr - U64.v parent in
+      let sum =
+        U64.uint_to_t (U64.v (csn.ccs_fwd parent) + delta) in
+      assert (r.ccs_fwd == extend_forwarding csn.ccs_fwd addr sum);
+      assert (r.ccs_queue == csn.ccs_queue);
+      let aux_ext (k:nat{k >= 0 /\ k < Seq.length objs})
+        : Lemma (r.ccs_fwd (Seq.index objs k) ==
+                 csn.ccs_fwd (Seq.index objs k))
+        =
+        let y = Seq.index objs k in
+        minor_objects_not_infix minor y;
+        assert (minor_tag minor y <> 249);
+        assert (minor_tag minor addr = 249);
+        assert (y <> addr);
+        assert ((extend_forwarding csn.ccs_fwd addr sum) y ==
+                csn.ccs_fwd y)
+      in
+      FStar.Classical.forall_intro aux_ext;
+      SimOne.count_unforwarded_ext objs r.ccs_fwd csn.ccs_fwd 0;
+      assert (SimOne.count_unforwarded objs r.ccs_fwd 0 ==
+              SimOne.count_unforwarded objs csn.ccs_fwd 0)
+    end else
+      ChunkedCheney.chunked_cheney_forward_one_infix_guard_fail
+        minor cs addr alloc_fuel
+  end else begin
+    ChunkedCheney.chunked_cheney_forward_one_normal
+      minor cs addr alloc_fuel;
+    chunked_cheney_forward_normal_preserves_queue_potential
+      minor cs addr alloc_fuel
+  end
+
+private let rec chunked_cheney_forward_fields_preserves_queue_potential
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx wosize alloc_fuel: nat)
+  : Lemma
+      (requires minor_wf minor /\
+                chunked_queue_potential minor cs)
+      (ensures
+        chunked_queue_potential minor
+          (ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent idx wosize alloc_fuel))
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then
+    ChunkedCheney.chunked_cheney_forward_fields_base
+      minor cs parent idx wosize alloc_fuel
+  else begin
+    ChunkedCheney.chunked_cheney_forward_fields_step
+      minor cs parent idx wosize alloc_fuel;
+    let child = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one
+        minor cs child alloc_fuel in
+    chunked_cheney_forward_one_preserves_queue_potential
+      minor cs child alloc_fuel;
+    chunked_cheney_forward_fields_preserves_queue_potential
+      minor cs' parent (idx + 1) wosize alloc_fuel
+  end
+
+private let rec chunked_cheney_forward_roots_preserves_queue_potential
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (roots: seq U64.t) (idx alloc_fuel: nat)
+  : Lemma
+      (requires minor_wf minor /\
+                chunked_queue_potential minor cs)
+      (ensures
+        chunked_queue_potential minor
+          (ChunkedCheney.chunked_cheney_forward_roots
+            minor cs roots idx alloc_fuel))
+      (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then
+    ChunkedCheney.chunked_cheney_forward_roots_base
+      minor cs roots idx alloc_fuel
+  else begin
+    ChunkedCheney.chunked_cheney_forward_roots_step
+      minor cs roots idx alloc_fuel;
+    let r = Seq.index roots idx in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one
+        minor cs r alloc_fuel in
+    chunked_cheney_forward_one_preserves_queue_potential
+      minor cs r alloc_fuel;
+    chunked_cheney_forward_roots_preserves_queue_potential
+      minor cs' roots (idx + 1) alloc_fuel
+  end
+
+private let rec chunked_cheney_scan_preserves_queue_potential
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan scan_fuel alloc_fuel: nat)
+  : Lemma
+      (requires minor_wf minor /\
+                chunked_queue_potential minor cs)
+      (ensures
+        chunked_queue_potential minor
+          (ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel))
+      (decreases scan_fuel)
+  =
+  if scan_fuel = 0 || scan >= Seq.length cs.ccs_queue then
+    ChunkedCheney.chunked_cheney_scan_base
+      minor cs scan scan_fuel alloc_fuel
+  else begin
+    assert (scan_fuel > 0);
+    let fuel' : f:nat{f < scan_fuel} = scan_fuel - 1 in
+    ChunkedCheney.chunked_cheney_scan_step
+      minor cs scan scan_fuel alloc_fuel;
+    let obj = Seq.index cs.ccs_queue scan in
+    let wz = minor_wosize minor obj in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_fields
+        minor cs obj 0 wz alloc_fuel in
+    chunked_cheney_forward_fields_preserves_queue_potential
+      minor cs obj 0 wz alloc_fuel;
+    chunked_cheney_scan_preserves_queue_potential
+      minor cs' (scan + 1) fuel' alloc_fuel
+  end
+
+let chunked_cheney_promote_scan_exhaustion
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires minor_wf minor)
+      (ensures
+        (let cs0 : ChunkedCheney.chunked_cheney_state =
+          { ccs_major = major; ccs_fp = fp;
+            ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+         let cs1 =
+          ChunkedCheney.chunked_cheney_forward_roots
+            minor cs0 roots 0 alloc_fuel in
+         let cs2 =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs1 0 (cheney_fuel minor) alloc_fuel in
+         chunked_cheney_scan_end_index
+          minor cs1 0 (cheney_fuel minor) alloc_fuel >=
+         Seq.length cs2.ccs_queue))
+  =
+  let cs0 : ChunkedCheney.chunked_cheney_state =
+    { ccs_major = major; ccs_fp = fp;
+      ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+  chunked_queue_potential_initial minor cs0;
+  chunked_cheney_forward_roots_preserves_queue_potential
+    minor cs0 roots 0 alloc_fuel;
+  let cs1 =
+    ChunkedCheney.chunked_cheney_forward_roots
+      minor cs0 roots 0 alloc_fuel in
+  assert (chunked_queue_potential minor cs1);
+  chunked_cheney_scan_preserves_queue_potential
+    minor cs1 0 (cheney_fuel minor) alloc_fuel;
+  let cs2 =
+    ChunkedCheney.chunked_cheney_scan
+      minor cs1 0 (cheney_fuel minor) alloc_fuel in
+  assert (chunked_queue_potential minor cs2);
+  chunked_queue_potential_bound minor cs2;
+  chunked_cheney_scan_end_exhausted_or_fuel
+    minor cs1 0 (cheney_fuel minor) alloc_fuel;
+  let end_idx =
+    chunked_cheney_scan_end_index
+      minor cs1 0 (cheney_fuel minor) alloc_fuel in
+  assert (end_idx >= Seq.length cs2.ccs_queue \/
+          end_idx == 0 + cheney_fuel minor);
+  if end_idx >= Seq.length cs2.ccs_queue then ()
+  else begin
+    assert (end_idx == cheney_fuel minor);
+    cheney_fuel_eq minor;
+    assert (cheney_fuel minor == Seq.length (minor_objects minor));
+    assert (Seq.length cs2.ccs_queue <= Seq.length (minor_objects minor));
+    assert (end_idx >= Seq.length cs2.ccs_queue)
+  end
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
@@ -4605,6 +4945,27 @@ let chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
   ChunkedCheney.chunked_cheney_promote_equation
     minor major fp roots alloc_fuel;
   assert (res.fwd_map == cs2.ccs_fwd)
+
+let chunked_cheney_promote_no_oom_from_budget
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        chunked_cheney_no_oom minor major fp roots alloc_fuel)
+  =
+  chunked_cheney_promote_scan_exhaustion
+    minor major fp roots alloc_fuel;
+  chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
+    minor major fp roots alloc_fuel
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"

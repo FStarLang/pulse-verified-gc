@@ -883,6 +883,20 @@ val chunked_cheney_scan_end_index
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> GTot nat
 
+val chunked_cheney_scan_end_exhausted_or_fuel
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat ->
+    Lemma
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_scan
+             minor cs scan scan_fuel alloc_fuel in
+         let end_idx =
+           chunked_cheney_scan_end_index
+             minor cs scan scan_fuel alloc_fuel in
+         end_idx >= Seq.length cs'.ccs_queue \/
+         end_idx == scan + scan_fuel))
+
 val chunked_cheney_scan_scanned_prefix_from_budget
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> remaining:nat ->
@@ -1007,6 +1021,25 @@ val chunked_cheney_scan_fwd_closed_from_budget
             minor cs scan scan_fuel alloc_fuel in
          CheneyBFS.fwd_closed minor cs'.ccs_fwd))
 
+val chunked_cheney_promote_scan_exhaustion
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires minor_wf minor)
+      (ensures
+        (let cs0 : ChunkedCheney.chunked_cheney_state =
+          { ccs_major = major; ccs_fp = fp;
+            ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+         let cs1 =
+          ChunkedCheney.chunked_cheney_forward_roots
+            minor cs0 roots 0 alloc_fuel in
+         let cs2 =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs1 0 (cheney_fuel minor) alloc_fuel in
+         chunked_cheney_scan_end_index
+          minor cs1 0 (cheney_fuel minor) alloc_fuel >=
+         Seq.length cs2.ccs_queue))
+
 val chunked_cheney_promote_budget_ready_from_minor_demand
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat ->
@@ -1064,6 +1097,22 @@ val chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
          chunked_cheney_scan_end_index
           minor cs1 0 (cheney_fuel minor) alloc_fuel >=
          Seq.length cs2.ccs_queue))
+      (ensures
+        chunked_cheney_no_oom minor major fp roots alloc_fuel)
+
+val chunked_cheney_promote_no_oom_from_budget
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1)
       (ensures
         chunked_cheney_no_oom minor major fp roots alloc_fuel)
 
