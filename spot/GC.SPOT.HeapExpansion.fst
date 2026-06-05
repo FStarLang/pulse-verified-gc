@@ -1064,6 +1064,32 @@ let spot_chunked_cheney_forward_roots_covers_roots_from_budget
   CheneyPreservation.chunked_cheney_forward_roots_covers_roots_from_budget
     minor cs roots alloc_fuel remaining
 
+let spot_chunked_cheney_forward_fields_covers_successors_from_budget
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        CheneyPreservation.chunked_cheney_forward_fields_budget_ready
+          minor cs parent 0 (minor_wosize minor parent)
+          alloc_fuel remaining)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent 0 (minor_wosize minor parent) alloc_fuel in
+         forall (y:U64.t).
+          Seq.mem y (GC.Gen.Reachability.minor_successors minor parent) /\
+          minor_wosize minor y > 0 ==>
+          cs'.ccs_fwd y <> 0UL))
+  =
+  CheneyPreservation.chunked_cheney_forward_fields_covers_successors_from_budget
+    minor cs parent alloc_fuel remaining
+
 let spot_chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)

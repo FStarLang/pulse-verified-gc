@@ -13,6 +13,7 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Reachability
 open GC.Gen.Promote
 open GC.Gen.PromoteUpdate
 open GC.Gen.Cheney
@@ -2926,6 +2927,32 @@ let chunked_cheney_forward_one_fwd_monotone
       minor cs addr x alloc_fuel
   end
 
+let rec chunked_cheney_forward_fields_fwd_monotone
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx wosize alloc_fuel: nat) (x: U64.t)
+  : Lemma
+      (requires cs.ccs_fwd x <> 0UL)
+      (ensures
+        (ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel).ccs_fwd x <> 0UL)
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then
+    ChunkedCheney.chunked_cheney_forward_fields_base
+      minor cs parent idx wosize alloc_fuel
+  else begin
+    ChunkedCheney.chunked_cheney_forward_fields_step
+      minor cs parent idx wosize alloc_fuel;
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one
+        minor cs field_val alloc_fuel in
+    chunked_cheney_forward_one_fwd_monotone
+      minor cs field_val x alloc_fuel;
+    chunked_cheney_forward_fields_fwd_monotone
+      minor cs' parent (idx + 1) wosize alloc_fuel x
+  end
+
 let rec chunked_cheney_forward_roots_fwd_monotone
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (roots: seq U64.t) (idx: nat) (alloc_fuel: nat) (x: U64.t)
@@ -3089,6 +3116,109 @@ let chunked_cheney_forward_roots_covers_roots_from_budget
     assert (0 <= j);
     chunked_cheney_forward_roots_covers_index_from_budget
       minor cs roots 0 alloc_fuel remaining j
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+private let rec chunked_cheney_forward_fields_covers_index_from_budget
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx wosize alloc_fuel remaining: nat)
+  (j:nat{idx <= j /\ j < wosize})
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_cheney_forward_fields_budget_ready
+          minor cs parent idx wosize alloc_fuel remaining)
+      (ensures
+        (let child = to_minor_offset (minor_read_field minor parent j) in
+         Seq.mem child (minor_objects minor) /\
+         minor_wosize minor child > 0 ==>
+         (ChunkedCheney.chunked_cheney_forward_fields
+           minor cs parent idx wosize alloc_fuel).ccs_fwd child <> 0UL))
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then
+    assert (False)
+  else begin
+    ChunkedCheney.chunked_cheney_forward_fields_step
+      minor cs parent idx wosize alloc_fuel;
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one
+        minor cs field_val alloc_fuel in
+    assert (chunked_cheney_forward_one_budget_ready
+              minor cs field_val remaining);
+    assert (chunked_cheney_forward_fields_budget_ready
+              minor cs' parent (idx + 1) wosize alloc_fuel remaining);
+    if j = idx then begin
+      assert (to_minor_offset (minor_read_field minor parent j) == field_val);
+      chunked_cheney_forward_one_covers_addr_from_budget
+        minor cs field_val alloc_fuel remaining;
+      if Seq.mem field_val (minor_objects minor) &&
+         minor_wosize minor field_val > 0
+      then begin
+        assert (cs'.ccs_fwd field_val <> 0UL);
+        chunked_cheney_forward_fields_fwd_monotone
+          minor cs' parent (idx + 1) wosize alloc_fuel field_val
+      end
+    end else begin
+      assert (j <> idx);
+      assert (idx < j);
+      assert (idx + 1 <= j);
+      chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
+        minor cs field_val alloc_fuel remaining;
+      chunked_cheney_forward_fields_covers_index_from_budget
+        minor cs' parent (idx + 1) wosize alloc_fuel remaining j
+    end
+  end
+
+let chunked_cheney_forward_fields_covers_successors_from_budget
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (alloc_fuel remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_cheney_forward_fields_budget_ready
+          minor cs parent 0 (minor_wosize minor parent) alloc_fuel remaining)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent 0 (minor_wosize minor parent) alloc_fuel in
+         forall (y:U64.t).
+          Seq.mem y (minor_successors minor parent) /\
+          minor_wosize minor y > 0 ==>
+          cs'.ccs_fwd y <> 0UL))
+  =
+  let wosize = minor_wosize minor parent in
+  let cs' =
+    ChunkedCheney.chunked_cheney_forward_fields
+      minor cs parent 0 wosize alloc_fuel in
+  let aux (y: U64.t)
+    : Lemma
+        (requires Seq.mem y (minor_successors minor parent) /\
+                  minor_wosize minor y > 0)
+        (ensures cs'.ccs_fwd y <> 0UL)
+    =
+    minor_successors_char minor parent y;
+    let j = IndDesc.indefinite_description_ghost nat
+      (fun j -> j < wosize /\
+                to_minor_offset (minor_read_field minor parent j) == y /\
+                is_minor_addr y /\
+                Seq.mem y (minor_objects minor)) in
+    assert (j < wosize);
+    assert (0 <= j);
+    assert (to_minor_offset (minor_read_field minor parent j) == y);
+    chunked_cheney_forward_fields_covers_index_from_budget
+      minor cs parent 0 wosize alloc_fuel remaining j
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 

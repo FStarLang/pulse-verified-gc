@@ -18,6 +18,7 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Reachability
 open GC.Gen.Promote
 open GC.Gen.WriteBodyLemmas
 open GC.Gen.PromoteUpdate
@@ -757,6 +758,15 @@ val chunked_cheney_forward_one_fwd_monotone
         (ChunkedCheney.chunked_cheney_forward_one
          minor cs addr alloc_fuel).ccs_fwd x <> 0UL)
 
+val chunked_cheney_forward_fields_fwd_monotone
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat -> x:U64.t ->
+    Lemma
+      (requires cs.ccs_fwd x <> 0UL)
+      (ensures
+        (ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel).ccs_fwd x <> 0UL)
+
 val chunked_cheney_forward_roots_fwd_monotone
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     roots:seq U64.t -> idx:nat -> alloc_fuel:nat -> x:U64.t ->
@@ -803,6 +813,28 @@ val chunked_cheney_forward_roots_covers_roots_from_budget
          (ChunkedCheney.chunked_cheney_forward_roots
            minor cs roots 0 alloc_fuel).ccs_fwd
          roots)
+
+val chunked_cheney_forward_fields_covers_successors_from_budget
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    parent:U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_cheney_forward_fields_budget_ready
+          minor cs parent 0 (minor_wosize minor parent) alloc_fuel remaining)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent 0 (minor_wosize minor parent) alloc_fuel in
+         forall (y:U64.t).
+          Seq.mem y (minor_successors minor parent) /\
+          minor_wosize minor y > 0 ==>
+          cs'.ccs_fwd y <> 0UL))
 
 val chunked_cheney_promote_budget_ready_from_minor_demand
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
