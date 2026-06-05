@@ -908,6 +908,67 @@ let spot_chunked_cheney_forward_normal_noalloc_preserves_chunked_alloc_shape
   CheneyPreservation.chunked_cheney_forward_normal_noalloc_preserves_chunked_alloc_shape
     minor cs addr fuel
 
+let spot_chunked_cheney_forward_normal_head_split_preserves_chunked_alloc_shape
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         minor_wosize minor addr > 0 ==>
+         cs.ccs_fp <> 0UL /\
+         SpecMajorAlloc.major_fl_head_wosize
+           cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2))
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_normal
+             minor cs addr fuel in
+         GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp fuel = true))
+  =
+  CheneyPreservation.chunked_cheney_forward_normal_head_split_preserves_chunked_alloc_shape
+    minor cs addr fuel
+
+let spot_chunked_cheney_forward_one_head_split_preserves_chunked_alloc_shape
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         ~(is_infix_in_minor minor addr) /\
+         minor_wosize minor addr > 0 ==>
+           cs.ccs_fp <> 0UL /\
+           SpecMajorAlloc.major_fl_head_wosize
+             cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2) /\
+        (cs.ccs_fwd addr = 0UL /\
+         is_infix_in_minor minor addr ==>
+           (let parent = infix_parent minor addr in
+            Seq.mem parent (minor_objects minor) /\
+            cs.ccs_fwd parent = 0UL /\
+            minor_wosize minor parent > 0 ==>
+              cs.ccs_fp <> 0UL /\
+              SpecMajorAlloc.major_fl_head_wosize
+                cs.ccs_major cs.ccs_fp >= minor_wosize minor parent + 2)))
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+         GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp fuel = true))
+  =
+  CheneyPreservation.chunked_cheney_forward_one_head_split_preserves_chunked_alloc_shape
+    minor cs addr fuel
+
 let spot_chunked_alloc_head_split_alloc_header_wosize
   (mh: MH.major_heap) (fp: U64.t)
   (wosize: nat{wosize > 0 /\
