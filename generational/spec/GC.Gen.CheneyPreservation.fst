@@ -1489,6 +1489,67 @@ private let rec chunked_fl_shape_transfer_avoids
   end
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+private let rec chunked_fl_chain_avoids_transfer
+  (mh0 mh1: MH.major_heap) (excl cur: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        SpecMajorAlloc.major_fl_valid mh0 cur fuel /\
+        SpecMajorAlloc.major_fl_above_zero mh0 cur fuel /\
+        SpecMajorAlloc.major_fl_chain_avoids mh0 cur excl fuel = true /\
+        (forall (src: obj_addr).
+          Seq.mem src (MH.major_objects mh0) /\
+          src <> excl /\
+          (match MH.read_word_in_major mh0 (hd_address src) with
+           | Some hdr -> U64.v (getWosize hdr) >= 1
+           | None -> False) ==>
+          MH.read_word_in_major mh1 src ==
+          MH.read_word_in_major mh0 src))
+      (ensures
+        SpecMajorAlloc.major_fl_chain_avoids mh1 cur excl fuel = true)
+      (decreases fuel)
+  =
+  if fuel = 0 then ()
+  else if cur = 0UL then ()
+  else if fuel > 0 then begin
+    assert (fuel > 0);
+    let fuel' : f:nat{f < fuel} = fuel - 1 in
+    SpecMajorAlloc.major_fl_above_zero_current mh0 cur fuel;
+    assert (U64.v cur >= U64.v zero_addr + U64.v mword);
+    assert (U64.v cur >= U64.v mword);
+    assert (U64.v cur < heap_size);
+    assert (U64.v cur % U64.v mword == 0);
+    SpecMajorAlloc.major_fl_chain_avoids_head_ne mh0 cur excl fuel;
+    assert (cur <> excl);
+    let x : obj_addr = cur in
+    SpecMajorAlloc.major_fl_valid_gives_mem mh0 cur fuel;
+    SpecMajorAlloc.major_fl_valid_gives_wosize mh0 cur fuel;
+    SpecMajorAlloc.major_fl_valid_next mh0 cur fuel;
+    SpecMajorAlloc.major_fl_chain_avoids_tail mh0 cur excl fuel;
+    match MH.read_word_in_major mh0 (hd_address x) with
+    | None -> assert False
+    | Some hdr ->
+      assert (U64.v (getWosize hdr) >= 1);
+      match MH.read_word_in_major mh0 x with
+      | None -> assert False
+      | Some next ->
+        SpecMajorAlloc.major_fl_above_zero_next mh0 x fuel next;
+        assert (MH.read_word_in_major mh1 x == Some next);
+        assert (SpecMajorAlloc.major_fl_valid mh0 next fuel');
+        assert (SpecMajorAlloc.major_fl_above_zero mh0 next fuel');
+        assert (SpecMajorAlloc.major_fl_chain_avoids
+                  mh0 next excl fuel' = true);
+        chunked_fl_chain_avoids_transfer mh0 mh1 excl next fuel';
+        assert
+          (match MH.read_word_in_major mh1 (cur <: obj_addr) with
+           | Some next' ->
+             SpecMajorAlloc.major_fl_chain_avoids mh1 next' excl fuel' = true
+           | None -> True);
+        SpecMajorAlloc.major_fl_chain_avoids_step mh1 cur excl fuel
+  end else
+    assert False
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
 private let chunked_member_header_disjoint_from_dst_writes
   (mh: MH.major_heap) (dst src: obj_addr) (dst_wz: nat) (dst_hdr: U64.t)
@@ -3512,6 +3573,7 @@ let rec chunked_cheney_scan_end_exhausted_or_fuel
               end_idx == (scan + 1) + fuel');
       assert (fuel' == scan_fuel - 1);
       assert (scan_fuel == fuel' + 1);
+      FStar.Math.Lemmas.paren_add_right scan 1 fuel';
       assert ((scan + 1) + fuel' == scan + (fuel' + 1));
       assert ((scan + 1) + fuel' == scan + scan_fuel)
     end
