@@ -1,0 +1,163 @@
+/// ---------------------------------------------------------------------------
+/// GC.Gen.ChunkedUpdate -- pointer rewriting over chunked major heaps
+/// ---------------------------------------------------------------------------
+///
+/// Chunked-major analogue of the dense `GC.Gen.Promote.update_*` operations.
+/// After Cheney promotion has populated a forwarding map, these functions
+/// rewrite major fields that still contain minor pointers to their forwarded
+/// major addresses.
+
+module GC.Gen.ChunkedUpdate
+
+open FStar.Seq
+module U64 = FStar.UInt64
+
+open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
+open GC.Spec.Fields
+open GC.Gen.Base
+open GC.Gen.Promote
+
+module MH = GC.Spec.MajorHeap
+
+val obj_in_single_chunk_range
+  : obj:obj_addr -> Tot prop
+
+val objects_in_single_chunk_range
+  : objs:seq obj_addr -> idx:nat -> Tot prop
+
+/// Checked major field slot address used by pointer update.
+val chunked_update_field_slot
+  : src:obj_addr -> i:nat -> GTot (option hp_addr)
+
+/// Object metadata readers over an active chunked major heap.
+val chunked_header_of_object
+  : mh:MH.major_heap -> obj:obj_addr -> GTot (option U64.t)
+
+val chunked_wosize_nat_of_object
+  : mh:MH.major_heap -> obj:obj_addr -> GTot nat
+
+val chunked_is_blue
+  : mh:MH.major_heap -> obj:obj_addr -> GTot bool
+
+val chunked_is_no_scan
+  : mh:MH.major_heap -> obj:obj_addr -> GTot bool
+
+/// Rewrite one field slot if it contains a forwarded minor pointer.
+val chunked_update_field
+  : mh:MH.major_heap -> field_addr:hp_addr -> fwd:forwarding_map ->
+    GTot MH.major_heap
+
+/// Update pointers in one object's fields.
+val chunked_update_object_pointers
+  : mh:MH.major_heap -> obj:obj_addr -> wosize:nat -> fwd:forwarding_map ->
+    i:nat -> GTot MH.major_heap
+
+/// Base case: no fields remain.
+val chunked_update_object_pointers_done
+  : mh:MH.major_heap -> obj:obj_addr -> wosize:nat -> fwd:forwarding_map ->
+    i:nat ->
+    Lemma
+      (requires i >= wosize)
+      (ensures chunked_update_object_pointers mh obj wosize fwd i == mh)
+
+/// One valid-slot recursive step.
+val chunked_update_object_pointers_step
+  : mh:MH.major_heap -> obj:obj_addr -> wosize:nat -> fwd:forwarding_map ->
+    i:nat -> field_addr:hp_addr ->
+    Lemma
+      (requires i < wosize /\
+                chunked_update_field_slot obj i == Some field_addr)
+      (ensures
+        chunked_update_object_pointers mh obj wosize fwd i ==
+        chunked_update_object_pointers
+          (chunked_update_field mh field_addr fwd) obj wosize fwd (i + 1))
+
+/// Invalid first slot stops the dense-compatible worker.
+val chunked_update_object_pointers_invalid_slot
+  : mh:MH.major_heap -> obj:obj_addr -> wosize:nat -> fwd:forwarding_map ->
+    i:nat ->
+    Lemma
+      (requires i < wosize /\
+                chunked_update_field_slot obj i == None)
+      (ensures chunked_update_object_pointers mh obj wosize fwd i == mh)
+
+/// Update all objects in an explicit object list from index `idx`.
+val chunked_update_all_objects_aux
+  : mh:MH.major_heap -> objs:seq obj_addr -> fwd:forwarding_map -> idx:nat ->
+    GTot MH.major_heap
+
+/// Update all pointers in active chunked major objects.
+val chunked_update_major_pointers
+  : mh:MH.major_heap -> fwd:forwarding_map -> GTot MH.major_heap
+
+/// Single-chunk metadata compatibility with the existing dense heap readers.
+val chunked_is_blue_single_chunk_compat
+  : g:heap -> obj:obj_addr ->
+    Lemma
+      (requires obj_in_single_chunk_range obj)
+      (ensures
+        chunked_is_blue (MH.single_chunk_major_heap g) obj ==
+        is_blue obj g)
+
+val chunked_is_no_scan_single_chunk_compat
+  : g:heap -> obj:obj_addr ->
+    Lemma
+      (requires obj_in_single_chunk_range obj)
+      (ensures
+        chunked_is_no_scan (MH.single_chunk_major_heap g) obj ==
+        is_no_scan obj g)
+
+val chunked_wosize_nat_single_chunk_compat
+  : g:heap -> obj:obj_addr ->
+    Lemma
+      (requires obj_in_single_chunk_range obj)
+      (ensures
+        chunked_wosize_nat_of_object (MH.single_chunk_major_heap g) obj ==
+        U64.v (wosize_of_object obj g))
+
+/// Single-field update compatibility with the dense update semantics.
+val chunked_update_field_single_chunk_compat
+  : g:heap -> field_addr:hp_addr -> fwd:forwarding_map ->
+    Lemma
+      (requires U64.v field_addr >= U64.v zero_addr /\
+                U64.v field_addr + U64.v mword <= heap_size)
+      (ensures
+        chunked_update_field (MH.single_chunk_major_heap g) field_addr fwd ==
+        MH.single_chunk_major_heap
+          (let field_val = to_minor_offset (read_word g field_addr) in
+           if is_minor_pointer field_val then
+             let new_val = fwd field_val in
+             if new_val <> 0UL then write_word g field_addr new_val else g
+           else g))
+
+/// Object-level update compatibility.
+val chunked_update_object_pointers_single_chunk_compat
+  : g:heap -> obj:obj_addr -> wosize:nat -> fwd:forwarding_map -> i:nat ->
+    Lemma
+      (requires obj_in_single_chunk_range obj)
+      (ensures
+        chunked_update_object_pointers
+          (MH.single_chunk_major_heap g) obj wosize fwd i ==
+        MH.single_chunk_major_heap
+          (update_object_pointers g obj wosize fwd i))
+
+/// Explicit-list all-object update compatibility.
+val chunked_update_all_objects_aux_single_chunk_compat
+  : g:heap -> objs:seq obj_addr -> fwd:forwarding_map -> idx:nat ->
+    Lemma
+      (requires objects_in_single_chunk_range objs idx)
+      (ensures
+        chunked_update_all_objects_aux
+          (MH.single_chunk_major_heap g) objs fwd idx ==
+        MH.single_chunk_major_heap
+          (update_all_objects_aux g objs fwd idx))
+
+/// Top-level major-pointer update compatibility.
+val chunked_update_major_pointers_single_chunk_compat
+  : g:heap -> fwd:forwarding_map ->
+    Lemma
+      (ensures
+        chunked_update_major_pointers (MH.single_chunk_major_heap g) fwd ==
+        MH.single_chunk_major_heap (update_major_pointers g fwd))

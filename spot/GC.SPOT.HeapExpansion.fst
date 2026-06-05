@@ -20,6 +20,7 @@ module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -2811,3 +2812,13 @@ let spot_chunked_all_major_field_edges_preserved_by_expansion
         spot_chunked_all_major_field_edges ms mh objs wz_of idx)
   = CG.chunked_all_major_field_edges_preserved_by_expansion
       ms mh fresh fp objs wz_of idx
+
+let spot_chunked_update_major_pointers_single_chunk_compat
+  (major: heap) (fwd: forwarding_map)
+  : Lemma
+      (ensures
+        ChunkedUpdate.chunked_update_major_pointers
+          (MH.single_chunk_major_heap major) fwd ==
+        MH.single_chunk_major_heap (update_major_pointers major fwd))
+  =
+  ChunkedUpdate.chunked_update_major_pointers_single_chunk_compat major fwd
