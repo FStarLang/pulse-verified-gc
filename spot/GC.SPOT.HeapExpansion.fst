@@ -1090,6 +1090,46 @@ let spot_chunked_cheney_forward_fields_covers_successors_from_budget
   CheneyPreservation.chunked_cheney_forward_fields_covers_successors_from_budget
     minor cs parent alloc_fuel remaining
 
+let spot_chunked_cheney_scan_fwd_monotone
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan scan_fuel alloc_fuel: nat) (x: U64.t)
+  : Lemma
+      (requires cs.ccs_fwd x <> 0UL)
+      (ensures
+        (ChunkedCheney.chunked_cheney_scan
+          minor cs scan scan_fuel alloc_fuel).ccs_fwd x <> 0UL)
+  =
+  CheneyPreservation.chunked_cheney_scan_fwd_monotone
+    minor cs scan scan_fuel alloc_fuel x
+
+let spot_chunked_scanned_prefix_step_from_budget
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan: nat) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        CheneyPreservation.chunked_scanned_prefix_closed minor cs scan /\
+        scan < Seq.length cs.ccs_queue /\
+        (let parent = Seq.index cs.ccs_queue scan in
+         CheneyPreservation.chunked_cheney_forward_fields_budget_ready
+          minor cs parent 0 (minor_wosize minor parent)
+          alloc_fuel remaining))
+      (ensures
+        (let parent = Seq.index cs.ccs_queue scan in
+         let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent 0 (minor_wosize minor parent) alloc_fuel in
+         CheneyPreservation.chunked_scanned_prefix_closed
+          minor cs' (scan + 1)))
+  =
+  CheneyPreservation.chunked_scanned_prefix_step_from_budget
+    minor cs scan alloc_fuel remaining
+
 let spot_chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)

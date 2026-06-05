@@ -776,6 +776,15 @@ val chunked_cheney_forward_roots_fwd_monotone
         (ChunkedCheney.chunked_cheney_forward_roots
          minor cs roots idx alloc_fuel).ccs_fwd x <> 0UL)
 
+val chunked_cheney_scan_fwd_monotone
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> x:U64.t ->
+    Lemma
+      (requires cs.ccs_fwd x <> 0UL)
+      (ensures
+        (ChunkedCheney.chunked_cheney_scan
+          minor cs scan scan_fuel alloc_fuel).ccs_fwd x <> 0UL)
+
 val chunked_cheney_forward_one_covers_addr_from_budget
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> alloc_fuel:nat -> remaining:nat ->
@@ -835,6 +844,40 @@ val chunked_cheney_forward_fields_covers_successors_from_budget
           Seq.mem y (minor_successors minor parent) /\
           minor_wosize minor y > 0 ==>
           cs'.ccs_fwd y <> 0UL))
+
+[@"opaque_to_smt"]
+val chunked_scanned_prefix_closed
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> GTot prop
+
+val chunked_scanned_prefix_empty
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    Lemma
+      (ensures chunked_scanned_prefix_closed minor cs 0)
+
+val chunked_scanned_prefix_step_from_budget
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_scanned_prefix_closed minor cs scan /\
+        scan < Seq.length cs.ccs_queue /\
+        (let parent = Seq.index cs.ccs_queue scan in
+         chunked_cheney_forward_fields_budget_ready
+          minor cs parent 0 (minor_wosize minor parent)
+          alloc_fuel remaining))
+      (ensures
+        (let parent = Seq.index cs.ccs_queue scan in
+         let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent 0 (minor_wosize minor parent) alloc_fuel in
+         chunked_scanned_prefix_closed minor cs' (scan + 1)))
 
 val chunked_cheney_promote_budget_ready_from_minor_demand
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
