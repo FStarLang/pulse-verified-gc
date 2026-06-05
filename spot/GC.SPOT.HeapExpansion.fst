@@ -701,6 +701,34 @@ let spot_chunked_copy_fields_frame_after
   ChunkedPromote.chunked_copy_fields_frame_after
     minor mh src_obj dst_obj i n target old
 
+let spot_chunked_copy_fields_preserves_major_objects
+  (minor: minor_state) (mh: MH.major_heap)
+  (src_obj dst_obj: U64.t) (i n idx: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        U64.v dst_obj >= U64.v mword /\
+        U64.v dst_obj < heap_size /\
+        U64.v dst_obj % U64.v mword == 0 /\
+        i <= n /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address (dst_obj <: obj_addr)) == Some idx /\
+        Seq.mem (dst_obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (dst_obj <: obj_addr)) ==
+          Some hdr /\
+        n <= U64.v (Obj.getWosize hdr))
+      (ensures
+        (let mh' =
+           ChunkedPromote.chunked_copy_fields
+             minor mh src_obj dst_obj i n in
+         MH.well_formed_major_heap mh' /\
+         MH.major_objects mh' == MH.major_objects mh /\
+         MH.read_word_in_major mh' (hd_address (dst_obj <: obj_addr)) ==
+           Some hdr))
+  =
+  ChunkedPromote.chunked_copy_fields_preserves_major_objects
+    minor mh src_obj dst_obj i n idx hdr
+
 let spot_major_write_word_or_same_read_frame
   (mh: MH.major_heap) (write_addr target: hp_addr)
   (value old: U64.t)
@@ -736,6 +764,27 @@ let spot_chunked_set_promoted_tag_read_frame
   =
   ChunkedPromote.chunked_set_promoted_tag_read_frame
     mh obj tag target old
+
+let spot_chunked_set_promoted_tag_preserves_major_objects
+  (mh: MH.major_heap) (obj: U64.t) (tag idx: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        tag < 256 /\
+        MH.well_formed_major_heap mh /\
+        U64.v obj >= U64.v mword /\
+        U64.v obj < heap_size /\
+        U64.v obj % U64.v mword == 0 /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address (obj <: obj_addr)) == Some idx /\
+        Seq.mem (obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (obj <: obj_addr)) == Some hdr)
+      (ensures
+        (let mh' = ChunkedPromote.chunked_set_promoted_tag mh obj tag in
+         MH.well_formed_major_heap mh' /\
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedPromote.chunked_set_promoted_tag_preserves_major_objects
+    mh obj tag idx hdr
 
 let spot_chunked_promote_object_default_single_chunk_compat
   (minor: minor_state) (major: heap) (obj: U64.t)

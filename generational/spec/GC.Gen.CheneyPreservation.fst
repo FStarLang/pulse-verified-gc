@@ -1369,6 +1369,121 @@ private let rec single_chunk_fl_shape_transfer_avoids
   end
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+private let rec chunked_fl_shape_transfer_avoids
+  (mh0 mh1: MH.major_heap) (dst: obj_addr) (cur: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        SpecMajorAlloc.major_fl_valid mh0 cur fuel /\
+        SpecMajorAlloc.major_fl_above_zero mh0 cur fuel /\
+        SpecMajorAlloc.major_fl_blocks_fit mh0 cur fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates mh0 cur fuel = true /\
+        SpecMajorAlloc.major_fl_chain_avoids mh0 cur dst fuel = true /\
+        MH.well_formed_major_heap mh1 /\
+        MH.major_objects mh1 == MH.major_objects mh0 /\
+        (forall (src: obj_addr).
+          Seq.mem src (MH.major_objects mh0) /\ src <> dst ==>
+          MH.read_word_in_major mh1 (hd_address src) ==
+          MH.read_word_in_major mh0 (hd_address src)) /\
+        (forall (src: obj_addr).
+          Seq.mem src (MH.major_objects mh0) /\
+          src <> dst /\
+          (match MH.read_word_in_major mh0 (hd_address src) with
+           | Some hdr -> U64.v (getWosize hdr) >= 1
+           | None -> False) ==>
+          MH.read_word_in_major mh1 src ==
+          MH.read_word_in_major mh0 src))
+      (ensures
+        SpecMajorAlloc.major_fl_valid mh1 cur fuel /\
+        SpecMajorAlloc.major_fl_above_zero mh1 cur fuel /\
+        SpecMajorAlloc.major_fl_blocks_fit mh1 cur fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates mh1 cur fuel = true)
+      (decreases fuel)
+  =
+  if fuel = 0 then begin
+    SpecMajorAlloc.major_fl_valid_zero mh1 cur;
+    SpecMajorAlloc.major_fl_above_zero_fuel_0 mh1 cur;
+    if cur = 0UL ||
+       U64.v cur < U64.v mword ||
+       U64.v cur >= heap_size ||
+       U64.v cur % U64.v mword <> 0 then
+      SpecMajorAlloc.major_fl_chain_terminates_terminal mh1 cur fuel
+    else begin
+      SpecMajorAlloc.major_fl_chain_terminates_valid_zero mh0 cur;
+      assert False
+    end
+  end else if cur = 0UL then begin
+    SpecMajorAlloc.major_fl_valid_null mh1 fuel;
+    SpecMajorAlloc.major_fl_above_zero_null mh1 fuel;
+    SpecMajorAlloc.major_fl_blocks_fit_null mh1 fuel;
+    SpecMajorAlloc.major_fl_chain_terminates_null mh1 fuel
+  end else begin
+    assert (fuel > 0);
+    SpecMajorAlloc.major_fl_above_zero_current mh0 cur fuel;
+    assert (U64.v cur >= U64.v zero_addr + U64.v mword);
+    assert (U64.v cur >= U64.v mword);
+    assert (U64.v cur < heap_size);
+    assert (U64.v cur % U64.v mword == 0);
+    assert (fuel - 1 >= 0);
+    let fuel' : f:nat{f < fuel} = fuel - 1 in
+    let x : obj_addr = cur in
+    let xhd = hd_address x in
+    SpecMajorAlloc.major_fl_chain_avoids_head_ne mh0 cur dst fuel;
+    assert (x <> dst);
+    SpecMajorAlloc.major_fl_valid_gives_mem mh0 cur fuel;
+    assert (Seq.mem x (MH.major_objects mh0));
+    assert (Seq.mem x (MH.major_objects mh1));
+    SpecMajorAlloc.major_fl_valid_gives_wosize mh0 cur fuel;
+    SpecMajorAlloc.major_fl_valid_next mh0 cur fuel;
+    SpecMajorAlloc.major_fl_blocks_fit_current mh0 cur fuel;
+    SpecMajorAlloc.major_fl_chain_avoids_tail mh0 cur dst fuel;
+    SpecMajorAlloc.major_fl_chain_terminates_tail mh0 cur fuel;
+    match MH.read_word_in_major mh0 xhd with
+    | None -> assert False
+    | Some hdr ->
+      assert (U64.v (getWosize hdr) >= 1);
+      assert (MH.read_word_in_major mh1 xhd == Some hdr);
+      match MH.read_word_in_major mh0 x with
+      | None -> assert False
+      | Some next ->
+        assert (MH.read_word_in_major mh1 x == Some next);
+        assert (next <> cur);
+        SpecMajorAlloc.major_fl_above_zero_next mh0 x fuel next;
+        SpecMajorAlloc.major_fl_blocks_fit_next mh0 x fuel next;
+        assert (SpecMajorAlloc.major_fl_valid mh0 next fuel');
+        assert (SpecMajorAlloc.major_fl_above_zero mh0 next fuel');
+        assert (SpecMajorAlloc.major_fl_blocks_fit mh0 next fuel');
+        assert (SpecMajorAlloc.major_fl_chain_avoids mh0 next dst fuel' = true);
+        assert (SpecMajorAlloc.major_fl_chain_terminates mh0 next fuel' = true);
+        chunked_fl_shape_transfer_avoids mh0 mh1 dst next fuel';
+        assert (SpecMajorAlloc.major_fl_valid mh1 next fuel');
+        assert (SpecMajorAlloc.major_fl_above_zero mh1 next fuel');
+        assert (SpecMajorAlloc.major_fl_blocks_fit mh1 next fuel');
+        assert (SpecMajorAlloc.major_fl_chain_terminates mh1 next fuel' = true);
+        SpecMajorAlloc.major_fl_valid_step_from_mem mh1 x fuel hdr next;
+        SpecMajorAlloc.major_fl_above_zero_step mh1 x fuel next;
+        MH.read_word_in_major_lookup_index mh1 xhd hdr;
+        let idx = MH.lookup_chunk_index_value mh1 xhd in
+        assert (MH.lookup_chunk_index mh1 xhd == Some idx);
+        assert (idx < Seq.length mh1);
+        assert (MH.word_in_chunk (Seq.index mh1 idx) xhd);
+        assert (MH.read_word_in_chunk (Seq.index mh1 idx) xhd == hdr);
+        MH.major_objects_member_in_lookup_chunk mh1 idx x;
+        assert (Seq.mem x (MH.objects_in_chunk (Seq.index mh1 idx)));
+        MH.objects_in_chunk_member_header_fits (Seq.index mh1 idx) x;
+        assert (MH.object_header_size_fits_in_chunk (Seq.index mh1 idx) x);
+        assert (U64.v xhd + (1 + U64.v (getWosize hdr)) *
+                  U64.v mword <= MH.chunk_end (Seq.index mh1 idx));
+        SpecMajorAlloc.major_fl_blocks_fit_step mh1 x fuel hdr next;
+        assert
+          (match MH.read_word_in_major mh1 (cur <: obj_addr) with
+           | Some next' ->
+             SpecMajorAlloc.major_fl_chain_terminates mh1 next' fuel' = true
+           | None -> True);
+        SpecMajorAlloc.major_fl_chain_terminates_step mh1 cur fuel
+  end
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
   (minor: minor_state) (major: heap) (obj: U64.t)

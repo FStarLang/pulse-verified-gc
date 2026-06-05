@@ -100,6 +100,30 @@ val chunked_copy_fields_frame_after
           (chunked_copy_fields minor mh src_obj dst_obj i n)
           target == Some old)
 
+val chunked_copy_fields_preserves_major_objects
+  : minor:minor_state -> mh:MH.major_heap ->
+    src_obj:U64.t -> dst_obj:U64.t -> i:nat -> n:nat ->
+    idx:nat -> hdr:U64.t ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        U64.v dst_obj >= U64.v mword /\
+        U64.v dst_obj < heap_size /\
+        U64.v dst_obj % U64.v mword == 0 /\
+        i <= n /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address (dst_obj <: obj_addr)) == Some idx /\
+        Seq.mem (dst_obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (dst_obj <: obj_addr)) ==
+          Some hdr /\
+        n <= U64.v (getWosize hdr))
+      (ensures
+        (let mh' = chunked_copy_fields minor mh src_obj dst_obj i n in
+         MH.well_formed_major_heap mh' /\
+         MH.major_objects mh' == MH.major_objects mh /\
+         MH.read_word_in_major mh' (hd_address (dst_obj <: obj_addr)) ==
+           Some hdr))
+
 val chunked_set_promoted_tag
   : mh:MH.major_heap -> obj:U64.t -> tag:nat -> GTot MH.major_heap
 
@@ -119,6 +143,24 @@ val chunked_set_promoted_tag_read_frame
         MH.read_word_in_major
           (chunked_set_promoted_tag mh obj tag)
           target == Some old)
+
+val chunked_set_promoted_tag_preserves_major_objects
+  : mh:MH.major_heap -> obj:U64.t -> tag:nat -> idx:nat -> hdr:U64.t ->
+    Lemma
+      (requires
+        tag < 256 /\
+        MH.well_formed_major_heap mh /\
+        U64.v obj >= U64.v mword /\
+        U64.v obj < heap_size /\
+        U64.v obj % U64.v mword == 0 /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address (obj <: obj_addr)) == Some idx /\
+        Seq.mem (obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (obj <: obj_addr)) == Some hdr)
+      (ensures
+        (let mh' = chunked_set_promoted_tag mh obj tag in
+         MH.well_formed_major_heap mh' /\
+         MH.major_objects mh' == MH.major_objects mh))
 
 val chunked_zero_promote_padding
   : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat -> GTot MH.major_heap

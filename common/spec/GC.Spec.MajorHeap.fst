@@ -203,6 +203,45 @@ let rec lookup_chunk_index_some (mh: major_heap) (addr: hp_addr) (i: nat)
       end
     end
 
+let rec lookup_chunk_index_word_in_chunk (mh: major_heap) (addr: hp_addr) (i: nat)
+  : Lemma
+      (requires well_formed_major_heap mh /\
+                i < Seq.length mh /\
+                word_in_chunk (Seq.index mh i) addr)
+      (ensures lookup_chunk_index mh addr == Some i)
+      (decreases Seq.length mh)
+  =
+  if Seq.length mh = 0 then
+    assert False
+  else begin
+    let hd = Seq.head mh in
+    let tl = Seq.tail mh in
+    assert (Seq.index mh 0 == hd);
+    if i = 0 then begin
+      assert (Seq.index mh i == hd);
+      assert (chunk_contains_addr hd addr)
+    end else begin
+      assert (i > 0);
+      assert (i >= 1);
+      assert (i - 1 >= 0);
+      assert (i - 1 < Seq.length tl);
+      let im1 : n:nat{n < Seq.length tl} = i - 1 in
+      assert (Seq.index mh i == Seq.index tl im1);
+      assert (word_in_chunk (Seq.index tl im1) addr);
+      assert (chunk_contains_addr (Seq.index tl im1) addr);
+      assert (chunks_disjoint hd (Seq.index tl im1));
+      if chunk_contains_addr hd addr then begin
+        chunks_disjoint_no_shared_addr hd (Seq.index tl im1) addr;
+        assert False
+      end;
+      assert (well_formed_major_heap tl);
+      lookup_chunk_index_word_in_chunk tl addr im1;
+      assert (lookup_chunk_index tl addr == Some im1);
+      assert (lookup_chunk_index mh addr == Some (im1 + 1));
+      assert (im1 + 1 == i)
+    end
+  end
+
 let rec lookup_chunk_index_none (mh: major_heap) (addr: hp_addr)
   : Lemma (requires lookup_chunk_index mh addr == None)
           (ensures lookup_chunk mh addr == None /\
@@ -1561,6 +1600,9 @@ let rec objects_in_chunk_from_separated
               objects_in_chunk_from_addresses_gt_start c next_start src;
               assert (U64.v src > U64.v next_start);
               assert (U64.v first == U64.v start + U64.v mword);
+              assert (obj_size_words >= 1);
+              assert (next_start_nat >= U64.v start + U64.v mword);
+              assert (U64.v next_start == next_start_nat);
               assert (U64.v first <= U64.v next_start);
               assert (U64.v src > U64.v first);
               assert False
