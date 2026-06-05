@@ -1214,6 +1214,38 @@ let spot_chunked_cheney_scan_fwd_closed_from_budget
   CheneyPreservation.chunked_cheney_scan_fwd_closed_from_budget
     minor cs scan scan_fuel alloc_fuel remaining
 
+let spot_chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1 /\
+        (let cs0 : ChunkedCheney.chunked_cheney_state =
+          { ccs_major = major; ccs_fp = fp;
+            ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+         let cs1 =
+          ChunkedCheney.chunked_cheney_forward_roots
+            minor cs0 roots 0 alloc_fuel in
+         let cs2 =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs1 0 (cheney_fuel minor) alloc_fuel in
+         CheneyPreservation.chunked_cheney_scan_end_index
+          minor cs1 0 (cheney_fuel minor) alloc_fuel >=
+         Seq.length cs2.ccs_queue))
+      (ensures
+        CheneyPreservation.chunked_cheney_no_oom
+          minor major fp roots alloc_fuel)
+  =
+  CheneyPreservation.chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
+    minor major fp roots alloc_fuel
+
 let spot_chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)

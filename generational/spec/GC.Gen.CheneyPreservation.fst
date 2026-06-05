@@ -4499,6 +4499,114 @@ let chunked_cheney_promote_budget_ready_from_minor_demand
             minor cs1 0 (cheney_fuel minor) alloc_fuel 1)
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_cheney_scan_preserves_fwd_covers_roots
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (roots: seq U64.t) (scan scan_fuel alloc_fuel: nat)
+  : Lemma
+      (requires CheneyBFS.fwd_covers_roots minor cs.ccs_fwd roots)
+      (ensures
+        CheneyBFS.fwd_covers_roots minor
+          (ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel).ccs_fwd
+          roots)
+  =
+  let cs' =
+    ChunkedCheney.chunked_cheney_scan
+      minor cs scan scan_fuel alloc_fuel in
+  let aux (r: U64.t)
+    : Lemma
+        (requires Seq.mem r roots /\
+                  Seq.mem r (minor_objects minor) /\
+                  minor_wosize minor r > 0)
+        (ensures cs'.ccs_fwd r <> 0UL)
+    =
+    assert (cs.ccs_fwd r <> 0UL);
+    chunked_cheney_scan_fwd_monotone
+      minor cs scan scan_fuel alloc_fuel r
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+let chunked_cheney_no_oom
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  : GTot prop =
+  CheneyBFS.fwd_well_formed minor
+    (ChunkedCheney.chunked_cheney_promote
+      minor major fp roots alloc_fuel).fwd_map
+    roots
+
+let chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1 /\
+        (let cs0 : ChunkedCheney.chunked_cheney_state =
+          { ccs_major = major; ccs_fp = fp;
+            ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+         let cs1 =
+          ChunkedCheney.chunked_cheney_forward_roots
+            minor cs0 roots 0 alloc_fuel in
+         let cs2 =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs1 0 (cheney_fuel minor) alloc_fuel in
+         chunked_cheney_scan_end_index
+          minor cs1 0 (cheney_fuel minor) alloc_fuel >=
+         Seq.length cs2.ccs_queue))
+      (ensures
+        chunked_cheney_no_oom minor major fp roots alloc_fuel)
+  =
+  let cs0 : ChunkedCheney.chunked_cheney_state =
+    { ccs_major = major; ccs_fp = fp;
+      ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+  chunked_cheney_promote_budget_ready_from_minor_demand
+    minor major fp roots alloc_fuel;
+  assert (chunked_cheney_forward_roots_budget_ready
+            minor cs0 roots 0 alloc_fuel 1);
+  chunked_cheney_forward_roots_covers_roots_from_budget
+    minor cs0 roots alloc_fuel 1;
+  chunked_cheney_forward_roots_head_split_preserves_remaining_head_wosize
+    minor cs0 roots 0 alloc_fuel 1;
+  chunked_fwd_in_queue_initial minor cs0;
+  chunked_cheney_forward_roots_preserves_fwd_in_queue
+    minor cs0 roots 0 alloc_fuel;
+  let cs1 =
+    ChunkedCheney.chunked_cheney_forward_roots
+      minor cs0 roots 0 alloc_fuel in
+  assert (CheneyBFS.fwd_covers_roots minor cs1.ccs_fwd roots);
+  assert (GenInv.chunked_major_alloc_shape
+            cs1.ccs_major cs1.ccs_fp alloc_fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            cs1.ccs_major cs1.ccs_fp alloc_fuel = true);
+  assert (chunked_fwd_in_queue minor cs1);
+  assert (chunked_cheney_scan_budget_ready
+            minor cs1 0 (cheney_fuel minor) alloc_fuel 1);
+  chunked_scanned_prefix_empty minor cs1;
+  chunked_cheney_scan_fwd_closed_from_budget
+    minor cs1 0 (cheney_fuel minor) alloc_fuel 1;
+  chunked_cheney_scan_preserves_fwd_covers_roots
+    minor cs1 roots 0 (cheney_fuel minor) alloc_fuel;
+  let cs2 =
+    ChunkedCheney.chunked_cheney_scan
+      minor cs1 0 (cheney_fuel minor) alloc_fuel in
+  assert (CheneyBFS.fwd_covers_roots minor cs2.ccs_fwd roots);
+  assert (CheneyBFS.fwd_closed minor cs2.ccs_fwd);
+  let res =
+    ChunkedCheney.chunked_cheney_promote
+      minor major fp roots alloc_fuel in
+  ChunkedCheney.chunked_cheney_promote_equation
+    minor major fp roots alloc_fuel;
+  assert (res.fwd_map == cs2.ccs_fwd)
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_cheney_promote_after_minor_promotion_head_preflight
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)

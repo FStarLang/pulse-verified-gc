@@ -1024,6 +1024,49 @@ val chunked_cheney_promote_budget_ready_from_minor_demand
         chunked_cheney_promote_budget_ready
          minor major fp roots alloc_fuel 1)
 
+val chunked_cheney_scan_preserves_fwd_covers_roots
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    roots:seq U64.t -> scan:nat -> scan_fuel:nat -> alloc_fuel:nat ->
+    Lemma
+      (requires CheneyBFS.fwd_covers_roots minor cs.ccs_fwd roots)
+      (ensures
+        CheneyBFS.fwd_covers_roots minor
+          (ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel).ccs_fwd
+          roots)
+
+val chunked_cheney_no_oom
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> GTot prop
+
+val chunked_cheney_promote_no_oom_from_budget_and_scan_exhaustion
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1 /\
+        (let cs0 : ChunkedCheney.chunked_cheney_state =
+          { ccs_major = major; ccs_fp = fp;
+            ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+         let cs1 =
+          ChunkedCheney.chunked_cheney_forward_roots
+            minor cs0 roots 0 alloc_fuel in
+         let cs2 =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs1 0 (cheney_fuel minor) alloc_fuel in
+         chunked_cheney_scan_end_index
+          minor cs1 0 (cheney_fuel minor) alloc_fuel >=
+         Seq.length cs2.ccs_queue))
+      (ensures
+        chunked_cheney_no_oom minor major fp roots alloc_fuel)
+
 val chunked_cheney_promote_after_minor_promotion_head_preflight
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> fresh:MH.heap_chunk ->
