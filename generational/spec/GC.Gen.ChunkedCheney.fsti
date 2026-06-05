@@ -256,6 +256,26 @@ val chunked_cheney_scan_step
              chunked_cheney_scan minor cs' (scan + 1) (scan_fuel - 1)
                alloc_fuel))
 
+val chunked_cheney_promote_equation
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (ensures
+        (let cs0 : chunked_cheney_state =
+           { ccs_major = major;
+             ccs_fp = fp;
+             ccs_fwd = empty_forwarding;
+             ccs_queue = Seq.empty } in
+         let cs1 =
+           chunked_cheney_forward_roots minor cs0 roots 0 alloc_fuel in
+         let cs2 =
+           chunked_cheney_scan
+             minor cs1 0 (Dense.cheney_fuel minor) alloc_fuel in
+         chunked_cheney_promote minor major fp roots alloc_fuel ==
+         { major_final = cs2.ccs_major;
+           fp_final = cs2.ccs_fp;
+           fwd_map = cs2.ccs_fwd }))
+
 val chunked_cheney_forward_normal_default_single_chunk_compat
   : minor:minor_state -> cs:Dense.cheney_state -> addr:U64.t ->
     Lemma
