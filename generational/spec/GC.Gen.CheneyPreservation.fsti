@@ -746,6 +746,23 @@ val chunked_cheney_promote_head_split_preserves_remaining_head_wosize
          SpecMajorAlloc.major_fl_head_wosize
           res.major_final res.fp_final >= remaining))
 
+val chunked_cheney_promote_budget_ready_from_minor_demand
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+         major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+         PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        chunked_cheney_promote_budget_ready
+         minor major fp roots alloc_fuel 1)
+
 /// In the active-head split case, the allocation creates a post-split
 /// remainder head.  The subsequent promotion writes (field copy + tag update;
 /// padding is a no-op in this case) preserve the chunked allocator shape rooted

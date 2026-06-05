@@ -1191,6 +1191,26 @@ let spot_chunked_cheney_promote_head_split_preserves_remaining_head_wosize
   CheneyPreservation.chunked_cheney_promote_head_split_preserves_remaining_head_wosize
     minor major fp roots alloc_fuel remaining
 
+let spot_chunked_cheney_promote_budget_ready_from_minor_demand
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        SpecMajorAlloc.major_fl_head_wosize major fp >=
+          PromotionDemand.minor_promotion_demand minor + 1)
+      (ensures
+        CheneyPreservation.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel 1)
+  =
+  CheneyPreservation.chunked_cheney_promote_budget_ready_from_minor_demand
+    minor major fp roots alloc_fuel
+
 let spot_chunked_alloc_head_split_alloc_header_wosize
   (mh: MH.major_heap) (fp: U64.t)
   (wosize: nat{wosize > 0 /\
