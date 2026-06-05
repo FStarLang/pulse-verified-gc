@@ -1185,6 +1185,35 @@ let spot_chunked_cheney_scan_preserves_fwd_in_queue
   CheneyPreservation.chunked_cheney_scan_preserves_fwd_in_queue
     minor cs scan scan_fuel alloc_fuel
 
+let spot_chunked_cheney_scan_fwd_closed_from_budget
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan scan_fuel alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        CheneyPreservation.chunked_fwd_in_queue minor cs /\
+        CheneyPreservation.chunked_scanned_prefix_closed minor cs scan /\
+        CheneyPreservation.chunked_cheney_scan_budget_ready
+          minor cs scan scan_fuel alloc_fuel remaining /\
+        (let cs' =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel in
+         CheneyPreservation.chunked_cheney_scan_end_index
+          minor cs scan scan_fuel alloc_fuel >= Seq.length cs'.ccs_queue))
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel in
+         GC.Gen.CheneyBFS.fwd_closed minor cs'.ccs_fwd))
+  =
+  CheneyPreservation.chunked_cheney_scan_fwd_closed_from_budget
+    minor cs scan scan_fuel alloc_fuel remaining
+
 let spot_chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
