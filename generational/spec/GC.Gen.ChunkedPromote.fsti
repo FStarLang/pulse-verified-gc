@@ -60,6 +60,19 @@ val chunked_copy_fields_step
             (minor_read_field minor src_obj i))
           src_obj dst_obj (i + 1) n)
 
+val major_write_word_or_same_read_frame
+  : mh:MH.major_heap -> write_addr:hp_addr -> target:hp_addr ->
+    value:U64.t -> old:U64.t ->
+    Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        (U64.v target + U64.v mword <= U64.v write_addr \/
+         U64.v write_addr + U64.v mword <= U64.v target))
+      (ensures
+        MH.read_word_in_major
+          (SpecMajorAlloc.major_write_word_or_same mh write_addr value)
+          target == Some old)
+
 val chunked_copy_fields_frame_before
   : minor:minor_state -> mh:MH.major_heap ->
     src_obj:U64.t -> dst_obj:U64.t -> i:nat -> n:nat ->
@@ -89,6 +102,23 @@ val chunked_copy_fields_frame_after
 
 val chunked_set_promoted_tag
   : mh:MH.major_heap -> obj:U64.t -> tag:nat -> GTot MH.major_heap
+
+val chunked_set_promoted_tag_read_frame
+  : mh:MH.major_heap -> obj:U64.t -> tag:nat ->
+    target:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        U64.v obj >= U64.v mword /\
+        U64.v obj < heap_size /\
+        U64.v obj % U64.v mword == 0 /\
+        MH.read_word_in_major mh target == Some old /\
+        (let dst : obj_addr = obj in
+         U64.v target + U64.v mword <= U64.v (hd_address dst) \/
+         U64.v (hd_address dst) + U64.v mword <= U64.v target))
+      (ensures
+        MH.read_word_in_major
+          (chunked_set_promoted_tag mh obj tag)
+          target == Some old)
 
 val chunked_zero_promote_padding
   : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat -> GTot MH.major_heap

@@ -143,7 +143,7 @@ private let rec write_word_in_major_read_frame
     end
   end
 
-private let major_write_word_or_same_read_frame
+let major_write_word_or_same_read_frame
   (mh: MH.major_heap) (write_addr target: hp_addr)
   (value old: U64.t)
   : Lemma
@@ -260,6 +260,36 @@ let chunked_set_promoted_tag (mh: MH.major_heap) (obj: U64.t) (tag: nat)
       let new_hdr = makeHeader (getWosize hdr) White (U64.uint_to_t tag) in
       SpecMajorAlloc.major_write_word_or_same mh hd new_hdr
   else mh
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_promoted_tag_read_frame
+  (mh: MH.major_heap) (obj: U64.t) (tag: nat)
+  (target: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        U64.v obj >= U64.v mword /\
+        U64.v obj < heap_size /\
+        U64.v obj % U64.v mword == 0 /\
+        MH.read_word_in_major mh target == Some old /\
+        (let dst : obj_addr = obj in
+         U64.v target + U64.v mword <= U64.v (hd_address dst) \/
+         U64.v (hd_address dst) + U64.v mword <= U64.v target))
+      (ensures
+        MH.read_word_in_major
+          (chunked_set_promoted_tag mh obj tag)
+          target == Some old)
+  =
+  let dst : obj_addr = obj in
+  let hd = hd_address dst in
+  if tag >= 256 then ()
+  else begin
+    match MH.read_word_in_major mh hd with
+    | None -> ()
+    | Some hdr ->
+      let new_hdr = makeHeader (getWosize hdr) White (U64.uint_to_t tag) in
+      major_write_word_or_same_read_frame mh hd target new_hdr old
+  end
+#pop-options
 
 let chunked_zero_promote_padding
   (mh: MH.major_heap) (dst: U64.t) (copied_wz: nat)

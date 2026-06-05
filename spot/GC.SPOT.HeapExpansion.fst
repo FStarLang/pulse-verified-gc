@@ -701,6 +701,42 @@ let spot_chunked_copy_fields_frame_after
   ChunkedPromote.chunked_copy_fields_frame_after
     minor mh src_obj dst_obj i n target old
 
+let spot_major_write_word_or_same_read_frame
+  (mh: MH.major_heap) (write_addr target: hp_addr)
+  (value old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh target == Some old /\
+        (U64.v target + U64.v mword <= U64.v write_addr \/
+         U64.v write_addr + U64.v mword <= U64.v target))
+      (ensures
+        MH.read_word_in_major
+          (SpecMajorAlloc.major_write_word_or_same mh write_addr value)
+          target == Some old)
+  =
+  ChunkedPromote.major_write_word_or_same_read_frame
+    mh write_addr target value old
+
+let spot_chunked_set_promoted_tag_read_frame
+  (mh: MH.major_heap) (obj: U64.t) (tag: nat)
+  (target: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        U64.v obj >= U64.v mword /\
+        U64.v obj < heap_size /\
+        U64.v obj % U64.v mword == 0 /\
+        MH.read_word_in_major mh target == Some old /\
+        (let dst : obj_addr = obj in
+         U64.v target + U64.v mword <= U64.v (hd_address dst) \/
+         U64.v (hd_address dst) + U64.v mword <= U64.v target))
+      (ensures
+        MH.read_word_in_major
+          (ChunkedPromote.chunked_set_promoted_tag mh obj tag)
+          target == Some old)
+  =
+  ChunkedPromote.chunked_set_promoted_tag_read_frame
+    mh obj tag target old
+
 let spot_chunked_promote_object_default_single_chunk_compat
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
