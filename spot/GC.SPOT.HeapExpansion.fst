@@ -892,7 +892,7 @@ let spot_alloc_spec_head_split_alloc_wosize_single_chunk
         (let r = SpecAlloc.alloc_spec major fp wosize in
          r.obj_out == fp /\
          r.fp_out <> 0UL /\
-         U64.v (wosize_of_object (fp <: obj_addr) r.heap_out) == wosize /\
+         U64.v (Obj.wosize_of_object (fp <: obj_addr) r.heap_out) == wosize /\
          U64.v fp + (wosize - 1) * U64.v mword + U64.v mword <= heap_size))
   =
   CheneyPreservation.alloc_spec_head_split_alloc_wosize_single_chunk
