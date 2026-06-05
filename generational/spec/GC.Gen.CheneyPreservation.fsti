@@ -905,6 +905,72 @@ val chunked_cheney_scan_scanned_prefix_from_budget
            (chunked_cheney_scan_end_index
              minor cs scan scan_fuel alloc_fuel)))
 
+[@"opaque_to_smt"]
+val chunked_fwd_in_queue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    GTot prop
+
+val chunked_fwd_in_queue_elim
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    x:U64.t ->
+    Lemma
+      (requires
+        chunked_fwd_in_queue minor cs /\
+        Seq.mem x (minor_objects minor) /\
+        cs.ccs_fwd x <> 0UL)
+      (ensures Seq.mem x cs.ccs_queue)
+
+val chunked_fwd_in_queue_initial
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    Lemma
+      (requires cs.ccs_queue == Seq.empty /\
+                 cs.ccs_fwd == empty_forwarding)
+      (ensures chunked_fwd_in_queue minor cs)
+
+val chunked_cheney_forward_one_preserves_fwd_in_queue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires minor_wf minor /\
+                 chunked_fwd_in_queue minor cs)
+      (ensures
+        chunked_fwd_in_queue minor
+           (ChunkedCheney.chunked_cheney_forward_one
+             minor cs addr alloc_fuel))
+
+val chunked_cheney_forward_fields_preserves_fwd_in_queue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
+    Lemma
+      (requires minor_wf minor /\
+                 chunked_fwd_in_queue minor cs)
+      (ensures
+        chunked_fwd_in_queue minor
+           (ChunkedCheney.chunked_cheney_forward_fields
+             minor cs parent idx wosize alloc_fuel))
+
+val chunked_cheney_forward_roots_preserves_fwd_in_queue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    roots:seq U64.t -> idx:nat -> alloc_fuel:nat ->
+    Lemma
+      (requires minor_wf minor /\
+                 chunked_fwd_in_queue minor cs)
+      (ensures
+        chunked_fwd_in_queue minor
+           (ChunkedCheney.chunked_cheney_forward_roots
+             minor cs roots idx alloc_fuel))
+
+val chunked_cheney_scan_preserves_fwd_in_queue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat ->
+    Lemma
+      (requires minor_wf minor /\
+                 chunked_fwd_in_queue minor cs)
+      (ensures
+        chunked_fwd_in_queue minor
+           (ChunkedCheney.chunked_cheney_scan
+             minor cs scan scan_fuel alloc_fuel))
+
 val chunked_cheney_promote_budget_ready_from_minor_demand
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat ->

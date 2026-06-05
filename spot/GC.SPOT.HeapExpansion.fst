@@ -1155,6 +1155,36 @@ let spot_chunked_cheney_scan_scanned_prefix_from_budget
   CheneyPreservation.chunked_cheney_scan_scanned_prefix_from_budget
     minor cs scan scan_fuel alloc_fuel remaining
 
+let spot_chunked_cheney_forward_roots_preserves_fwd_in_queue
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (roots: Seq.seq U64.t) (idx alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        CheneyPreservation.chunked_fwd_in_queue minor cs)
+      (ensures
+        CheneyPreservation.chunked_fwd_in_queue minor
+          (ChunkedCheney.chunked_cheney_forward_roots
+            minor cs roots idx alloc_fuel))
+  =
+  CheneyPreservation.chunked_cheney_forward_roots_preserves_fwd_in_queue
+    minor cs roots idx alloc_fuel
+
+let spot_chunked_cheney_scan_preserves_fwd_in_queue
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan scan_fuel alloc_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        CheneyPreservation.chunked_fwd_in_queue minor cs)
+      (ensures
+        CheneyPreservation.chunked_fwd_in_queue minor
+          (ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel))
+  =
+  CheneyPreservation.chunked_cheney_scan_preserves_fwd_in_queue
+    minor cs scan scan_fuel alloc_fuel
+
 let spot_chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
