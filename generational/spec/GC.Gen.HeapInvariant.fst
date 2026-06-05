@@ -118,6 +118,14 @@ let chunked_no_pointer_to_blue (mh: MH.major_heap) : Tot prop =
     ~(chunked_is_blue mh dst)
 
 [@@"opaque_to_smt"]
+let chunked_chain_objects_blue
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) : Tot prop =
+  forall (obj: obj_addr).
+    Seq.mem obj (MH.major_objects mh) /\
+    ~(chunked_is_blue mh obj) ==>
+    SpecMajorAlloc.major_fl_chain_avoids mh fp obj fuel = true
+
+[@@"opaque_to_smt"]
 let chunked_minor_major_fields_no_blue
   (minor: minor_state) (mh: MH.major_heap) : Tot prop =
   forall (obj: U64.t) (j: nat).
@@ -1068,6 +1076,31 @@ let chunked_no_pointer_to_blue_elim
   =
   reveal_opaque (`%chunked_no_pointer_to_blue)
     (chunked_no_pointer_to_blue mh)
+
+let chunked_chain_objects_blue_intro
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        (forall (obj: obj_addr).
+          Seq.mem obj (MH.major_objects mh) /\
+          ~(chunked_is_blue mh obj) ==>
+          SpecMajorAlloc.major_fl_chain_avoids mh fp obj fuel = true))
+      (ensures chunked_chain_objects_blue mh fp fuel)
+  =
+  reveal_opaque (`%chunked_chain_objects_blue)
+    (chunked_chain_objects_blue mh fp fuel)
+
+let chunked_chain_objects_blue_elim
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat) (obj: obj_addr)
+  : Lemma
+      (requires chunked_chain_objects_blue mh fp fuel /\
+                Seq.mem obj (MH.major_objects mh) /\
+                ~(chunked_is_blue mh obj))
+      (ensures
+        SpecMajorAlloc.major_fl_chain_avoids mh fp obj fuel = true)
+  =
+  reveal_opaque (`%chunked_chain_objects_blue)
+    (chunked_chain_objects_blue mh fp fuel)
 
 private let pointer_to_fresh_object_in_fresh_chunk
   (fresh: MH.heap_chunk) (raw: U64.t)

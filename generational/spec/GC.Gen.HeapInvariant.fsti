@@ -78,6 +78,14 @@ val chunked_no_scan_invariant
 val chunked_no_pointer_to_blue
   : mh:MH.major_heap -> Tot prop
 
+/// Chunked-major counterpart of `chain_objects_blue`: every active non-blue
+/// object is avoided by the free-list chain. This is kept separate from
+/// `chunked_major_alloc_shape` until all update/collection preservation lemmas
+/// are ported to the chunked heap.
+[@@"opaque_to_smt"]
+val chunked_chain_objects_blue
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat -> Tot prop
+
 /// Chunked-major counterpart of `minor_major_fields_no_blue`: any minor field
 /// that looks like a major pointer must target an active non-blue major object.
 [@@"opaque_to_smt"]
@@ -588,6 +596,25 @@ val chunked_no_pointer_to_blue_elim
                 Seq.mem dst (MH.major_objects mh) /\
                 is_pointer_to raw dst)
       (ensures ~(chunked_is_blue mh dst))
+
+val chunked_chain_objects_blue_intro
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        (forall (obj:obj_addr).
+          Seq.mem obj (MH.major_objects mh) /\
+          ~(chunked_is_blue mh obj) ==>
+          SpecMajorAlloc.major_fl_chain_avoids mh fp obj fuel = true))
+      (ensures chunked_chain_objects_blue mh fp fuel)
+
+val chunked_chain_objects_blue_elim
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat -> obj:obj_addr ->
+    Lemma
+      (requires chunked_chain_objects_blue mh fp fuel /\
+                Seq.mem obj (MH.major_objects mh) /\
+                ~(chunked_is_blue mh obj))
+      (ensures
+        SpecMajorAlloc.major_fl_chain_avoids mh fp obj fuel = true)
 
 val chunked_no_pointer_to_blue_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->

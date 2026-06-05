@@ -2837,6 +2837,17 @@ let spot_chunked_update_major_pointers_preserves_wf_and_major_objects
   ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
     major fwd
 
+let spot_chunked_chain_objects_blue_elim
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat) (obj: obj_addr)
+  : Lemma
+      (requires GenInv.chunked_chain_objects_blue major fp fuel /\
+                Seq.mem obj (MH.major_objects major) /\
+                ~(GenInv.chunked_is_blue major obj))
+      (ensures
+        SpecMajorAlloc.major_fl_chain_avoids major fp obj fuel = true)
+  =
+  GenInv.chunked_chain_objects_blue_elim major fp fuel obj
+
 let spot_chunked_cheney_collect_default_single_chunk_compat
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   : Lemma
