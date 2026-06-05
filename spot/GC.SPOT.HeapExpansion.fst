@@ -2823,6 +2823,20 @@ let spot_chunked_update_major_pointers_single_chunk_compat
   =
   ChunkedUpdate.chunked_update_major_pointers_single_chunk_compat major fwd
 
+let spot_chunked_update_major_pointers_preserves_wf_and_major_objects
+  (major: MH.major_heap) (fwd: forwarding_map)
+  : Lemma
+      (requires MH.well_formed_major_heap major)
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedUpdate.chunked_update_major_pointers major fwd) /\
+        MH.major_objects
+          (ChunkedUpdate.chunked_update_major_pointers major fwd) ==
+          MH.major_objects major)
+  =
+  ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
+    major fwd
+
 let spot_chunked_cheney_collect_default_single_chunk_compat
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   : Lemma
