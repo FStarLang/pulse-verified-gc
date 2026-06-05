@@ -31,6 +31,12 @@ val objects_in_single_chunk_range
 val chunked_update_field_slot
   : src:obj_addr -> i:nat -> GTot (option hp_addr)
 
+val chunked_update_field_slot_zero
+  : obj:obj_addr ->
+    Lemma
+      (requires U64.v obj + U64.v mword <= heap_size)
+      (ensures chunked_update_field_slot obj 0 == Some obj)
+
 /// Object metadata readers over an active chunked major heap.
 val chunked_header_of_object
   : mh:MH.major_heap -> obj:obj_addr -> GTot (option U64.t)
@@ -38,8 +44,21 @@ val chunked_header_of_object
 val chunked_wosize_nat_of_object
   : mh:MH.major_heap -> obj:obj_addr -> GTot nat
 
+val chunked_wosize_nat_header
+  : mh:MH.major_heap -> obj:obj_addr -> hdr:U64.t ->
+    Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures
+        chunked_wosize_nat_of_object mh obj == U64.v (getWosize hdr))
+
 val chunked_is_blue
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
+
+val chunked_is_blue_header
+  : mh:MH.major_heap -> obj:obj_addr -> hdr:U64.t ->
+    Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures chunked_is_blue mh obj == (getColor hdr = GC.Lib.Header.Blue))
 
 val chunked_is_no_scan
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool

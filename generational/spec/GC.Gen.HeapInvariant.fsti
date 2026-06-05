@@ -57,6 +57,12 @@ val chunked_color_of_object
 val chunked_is_blue
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
 
+val chunked_is_blue_header
+  : mh:MH.major_heap -> obj:obj_addr -> hdr:U64.t ->
+    Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures chunked_is_blue mh obj == (getColor hdr = GC.Lib.Header.Blue))
+
 val chunked_is_black
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
 

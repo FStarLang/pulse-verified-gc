@@ -81,6 +81,26 @@ let chunked_is_blue (mh: MH.major_heap) (obj: obj_addr)
     | Some Header.Blue -> true
     | _ -> false
 
+let chunked_is_blue_header
+  (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures chunked_is_blue mh obj == (getColor hdr = Header.Blue))
+  =
+  assert (chunked_color_of_object mh obj == Some (getColor hdr));
+  match getColor hdr with
+  | Header.Blue ->
+    assert (chunked_is_blue mh obj == true)
+  | Header.White ->
+    assert (getColor hdr <> Header.Blue);
+    assert (chunked_is_blue mh obj == false)
+  | Header.Gray ->
+    assert (getColor hdr <> Header.Blue);
+    assert (chunked_is_blue mh obj == false)
+  | Header.Black ->
+    assert (getColor hdr <> Header.Blue);
+    assert (chunked_is_blue mh obj == false)
+
 let chunked_is_black (mh: MH.major_heap) (obj: obj_addr)
   : GTot bool
   = match chunked_color_of_object mh obj with

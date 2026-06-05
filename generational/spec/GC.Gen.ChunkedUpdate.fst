@@ -36,6 +36,21 @@ let chunked_update_field_slot (src: obj_addr) (i: nat)
     else
       Some (U64.uint_to_t field_offset <: hp_addr)
 
+let chunked_update_field_slot_zero (obj: obj_addr)
+  : Lemma
+      (requires U64.v obj + U64.v mword <= heap_size)
+      (ensures chunked_update_field_slot obj 0 == Some obj)
+  =
+  assert (U64.v mword == 8);
+  assert (0 * 8 == 0);
+  assert (U64.v obj + 0 * 8 == U64.v obj);
+  assert (U64.v obj + 0 * 8 + 8 <= heap_size);
+  assert (~(U64.v obj + 0 * 8 + 8 > heap_size));
+  assert ((U64.v obj + 0 * 8) % 8 == 0);
+  assert (~((U64.v obj + 0 * 8) % 8 <> 0));
+  assert (U64.v (U64.uint_to_t (U64.v obj)) == U64.v obj);
+  assert (U64.uint_to_t (U64.v obj) == obj)
+
 let chunked_header_of_object (mh: MH.major_heap) (obj: obj_addr)
   : GTot (option U64.t)
   = MH.read_word_in_major mh (hd_address obj)
@@ -46,11 +61,28 @@ let chunked_wosize_nat_of_object (mh: MH.major_heap) (obj: obj_addr)
     | Some hdr -> U64.v (getWosize hdr)
     | None -> 0
 
+let chunked_wosize_nat_header
+  (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures
+        chunked_wosize_nat_of_object mh obj == U64.v (getWosize hdr))
+  =
+  assert (chunked_header_of_object mh obj == Some hdr)
+
 let chunked_is_blue (mh: MH.major_heap) (obj: obj_addr)
   : GTot bool
   = match chunked_header_of_object mh obj with
     | Some hdr -> getColor hdr = Blue
     | None -> false
+
+let chunked_is_blue_header
+  (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures chunked_is_blue mh obj == (getColor hdr = Blue))
+  =
+  assert (chunked_header_of_object mh obj == Some hdr)
 
 let chunked_is_no_scan (mh: MH.major_heap) (obj: obj_addr)
   : GTot bool

@@ -2939,6 +2939,23 @@ let spot_chunked_chain_objects_blue_elim
   =
   GenInv.chunked_chain_objects_blue_elim major fp fuel obj
 
+let spot_chunked_update_major_pointers_preserves_alloc_shape
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        GenInv.chunked_major_alloc_shape major fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates major fp fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp fuel)
+      (ensures
+        (let updated =
+           ChunkedUpdate.chunked_update_major_pointers major fwd in
+         GenInv.chunked_major_alloc_shape updated fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates updated fp fuel = true))
+  =
+  CheneyPreservation.chunked_update_major_pointers_preserves_alloc_shape
+    major fp fuel fwd
+
 let spot_chunked_cheney_collect_default_single_chunk_compat
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
   : Lemma

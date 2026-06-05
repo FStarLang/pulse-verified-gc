@@ -47,6 +47,7 @@ module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module AllocHeader = GC.Spec.Allocator.Lemmas.Header
 module IndDesc = FStar.IndefiniteDescription
 module CheneyBFS = GC.Gen.CheneyBFS
@@ -5104,6 +5105,218 @@ let chunked_cheney_promote_after_minor_promotion_head_preflight
             res.major_final res.fp_final r.capacity_fuel_out = true);
   assert (SpecMajorAlloc.major_fl_head_wosize
             res.major_final res.fp_final >= 1)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+private let chunked_update_is_blue_header_compat
+  (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures
+        ChunkedUpdate.chunked_is_blue mh obj == GenInv.chunked_is_blue mh obj)
+  =
+  ChunkedUpdate.chunked_is_blue_header mh obj hdr;
+  GenInv.chunked_is_blue_header mh obj hdr
+
+private let chunked_chain_objects_blue_head_is_blue
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        U64.v fp >= U64.v mword /\
+        U64.v fp < heap_size /\
+        U64.v fp % U64.v mword == 0 /\
+        SpecMajorAlloc.major_fl_valid mh fp fuel /\
+        GenInv.chunked_chain_objects_blue mh fp fuel)
+      (ensures GenInv.chunked_is_blue mh (fp <: obj_addr))
+  =
+  let obj : obj_addr = fp in
+  SpecMajorAlloc.major_fl_valid_gives_mem mh fp fuel;
+  if GenInv.chunked_is_blue mh obj then
+    ()
+  else begin
+    GenInv.chunked_chain_objects_blue_elim mh fp fuel obj;
+    SpecMajorAlloc.major_fl_chain_avoids_head_ne mh fp fp fuel;
+    assert False
+  end
+
+let rec chunked_update_major_pointers_preserves_alloc_shape_aux
+  (major: MH.major_heap) (fp: U64.t) (alloc_fuel: nat)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap major /\
+        SpecMajorAlloc.major_fl_valid major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_above_zero major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_blocks_fit major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel)
+      (ensures
+        (let updated =
+           ChunkedUpdate.chunked_update_major_pointers major fwd in
+         SpecMajorAlloc.major_fl_valid updated fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_above_zero updated fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_blocks_fit updated fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           updated fp alloc_fuel = true))
+      (decreases alloc_fuel)
+  =
+  let updated = ChunkedUpdate.chunked_update_major_pointers major fwd in
+  ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
+    major fwd;
+  assert (MH.well_formed_major_heap updated);
+  assert (MH.major_objects updated == MH.major_objects major);
+  if alloc_fuel = 0 then begin
+    SpecMajorAlloc.major_fl_valid_zero updated fp;
+    SpecMajorAlloc.major_fl_above_zero_fuel_0 updated fp;
+    assert (SpecMajorAlloc.major_fl_blocks_fit updated fp 0);
+    if fp = 0UL ||
+       U64.v fp < U64.v mword ||
+       U64.v fp >= heap_size ||
+       U64.v fp % U64.v mword <> 0
+    then
+      SpecMajorAlloc.major_fl_chain_terminates_terminal updated fp alloc_fuel
+    else begin
+      SpecMajorAlloc.major_fl_chain_terminates_valid_zero major fp;
+      assert False
+    end
+  end else if fp = 0UL then begin
+    assert (alloc_fuel > 0);
+    SpecMajorAlloc.major_fl_valid_null updated alloc_fuel;
+    SpecMajorAlloc.major_fl_above_zero_null updated alloc_fuel;
+    SpecMajorAlloc.major_fl_blocks_fit_null updated alloc_fuel;
+    SpecMajorAlloc.major_fl_chain_terminates_null updated alloc_fuel
+  end else begin
+    assert (alloc_fuel > 0);
+    assert (fp <> 0UL);
+    SpecMajorAlloc.major_fl_above_zero_current major fp alloc_fuel;
+    zero_addr_above_2048 ();
+    assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+    assert (U64.v fp >= U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    let tail_fuel : n:nat{n < alloc_fuel} = alloc_fuel - 1 in
+    let fp_obj : obj_addr = fp in
+    SpecMajorAlloc.major_fl_valid_gives_mem major fp alloc_fuel;
+    assert (Seq.mem fp_obj (MH.major_objects major));
+    chunked_chain_objects_blue_head_is_blue major fp alloc_fuel;
+    assert (GenInv.chunked_is_blue major fp_obj);
+    SpecMajorAlloc.major_fl_valid_gives_wosize major fp alloc_fuel;
+    SpecMajorAlloc.major_fl_valid_next major fp alloc_fuel;
+    SpecMajorAlloc.major_fl_chain_terminates_tail major fp alloc_fuel;
+    match MH.read_word_in_major major (hd_address fp_obj) with
+    | None -> assert False
+    | Some hdr ->
+      chunked_update_is_blue_header_compat major fp_obj hdr;
+      assert (ChunkedUpdate.chunked_is_blue major fp_obj);
+      match MH.read_word_in_major major fp_obj with
+      | None -> assert False
+      | Some next ->
+        SpecMajorAlloc.major_fl_above_zero_next
+          major fp_obj alloc_fuel next;
+        SpecMajorAlloc.major_fl_blocks_fit_next
+          major fp_obj alloc_fuel next;
+        assert (next <> fp);
+        assert (SpecMajorAlloc.major_fl_valid major next tail_fuel);
+        assert (SpecMajorAlloc.major_fl_above_zero major next tail_fuel);
+        assert (SpecMajorAlloc.major_fl_blocks_fit major next tail_fuel);
+        assert (SpecMajorAlloc.major_fl_chain_terminates
+                  major next tail_fuel = true);
+        let chain_tail (obj: obj_addr)
+          : Lemma
+              (requires
+                Seq.mem obj (MH.major_objects major) /\
+                ~(GenInv.chunked_is_blue major obj))
+              (ensures
+                SpecMajorAlloc.major_fl_chain_avoids
+                  major next obj tail_fuel = true)
+          =
+          GenInv.chunked_chain_objects_blue_elim
+            major fp alloc_fuel obj;
+          if obj = fp_obj then
+            assert False
+          else begin
+            assert (fp <> obj);
+            SpecMajorAlloc.major_fl_chain_avoids_tail
+              major fp obj alloc_fuel
+          end
+        in
+        FStar.Classical.forall_intro
+          (FStar.Classical.move_requires chain_tail);
+        GenInv.chunked_chain_objects_blue_intro
+          major next tail_fuel;
+        chunked_update_major_pointers_preserves_alloc_shape_aux
+          major next tail_fuel fwd;
+        assert (SpecMajorAlloc.major_fl_valid updated next tail_fuel);
+        assert (SpecMajorAlloc.major_fl_above_zero updated next tail_fuel);
+        assert (SpecMajorAlloc.major_fl_blocks_fit updated next tail_fuel);
+        assert (SpecMajorAlloc.major_fl_chain_terminates
+                  updated next tail_fuel = true);
+        ChunkedUpdate.chunked_update_major_pointers_preserves_header
+          major fwd fp_obj hdr;
+        assert (MH.read_word_in_major updated (hd_address fp_obj) == Some hdr);
+        assert (U64.v (getWosize hdr) >= 1);
+        MH.read_word_in_major_lookup_index major fp_obj next;
+        assert (U64.v fp_obj + U64.v mword <= heap_size);
+        ChunkedUpdate.chunked_wosize_nat_header major fp_obj hdr;
+        assert (0 < ChunkedUpdate.chunked_wosize_nat_of_object major fp_obj);
+        ChunkedUpdate.chunked_update_field_slot_zero fp_obj;
+        ChunkedUpdate.chunked_update_major_pointers_preserves_blue_field
+          major fwd fp_obj 0 fp_obj next;
+        assert (MH.read_word_in_major updated fp_obj == Some next);
+        assert (Seq.mem fp_obj (MH.major_objects updated));
+        SpecMajorAlloc.major_fl_valid_step_from_mem
+          updated fp_obj alloc_fuel hdr next;
+        SpecMajorAlloc.major_fl_above_zero_step
+          updated fp_obj alloc_fuel next;
+        MH.read_word_in_major_lookup_index updated (hd_address fp_obj) hdr;
+        let idx = MH.lookup_chunk_index_value updated (hd_address fp_obj) in
+        assert (MH.lookup_chunk_index updated (hd_address fp_obj) == Some idx);
+        assert (idx < Seq.length updated);
+        assert (MH.word_in_chunk (Seq.index updated idx) (hd_address fp_obj));
+        MH.major_objects_member_in_lookup_chunk updated idx fp_obj;
+        MH.objects_in_chunk_member_header_fits (Seq.index updated idx) fp_obj;
+        assert (MH.object_header_size_fits_in_chunk
+                  (Seq.index updated idx) fp_obj);
+        assert (MH.read_word_in_chunk
+                  (Seq.index updated idx) (hd_address fp_obj) == hdr);
+        assert (U64.v (hd_address fp_obj) +
+                  (1 + U64.v (getWosize hdr)) * U64.v mword <=
+                MH.chunk_end (Seq.index updated idx));
+        SpecMajorAlloc.major_fl_blocks_fit_step
+          updated fp_obj alloc_fuel hdr next;
+        SpecMajorAlloc.major_fl_chain_terminates_step
+          updated fp alloc_fuel
+  end
+
+let chunked_update_major_pointers_preserves_alloc_shape
+  (major: MH.major_heap) (fp: U64.t) (alloc_fuel: nat)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel)
+      (ensures
+        (let updated =
+           ChunkedUpdate.chunked_update_major_pointers major fwd in
+         GenInv.chunked_major_alloc_shape updated fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           updated fp alloc_fuel = true))
+  =
+  GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
+  chunked_update_major_pointers_preserves_alloc_shape_aux
+    major fp alloc_fuel fwd;
+  let updated = ChunkedUpdate.chunked_update_major_pointers major fwd in
+  ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
+    major fwd;
+  assert (MH.well_formed_major_heap updated);
+  assert (SpecMajorAlloc.major_fl_valid updated fp alloc_fuel);
+  assert (SpecMajorAlloc.major_fl_above_zero updated fp alloc_fuel);
+  assert (SpecMajorAlloc.major_fl_blocks_fit updated fp alloc_fuel);
+  GenInv.chunked_major_alloc_shape_intro updated fp alloc_fuel
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"

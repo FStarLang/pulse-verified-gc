@@ -38,6 +38,7 @@ module SpecMajorAllocSplitShape = GC.Spec.MajorAllocator.SplitShape
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module CheneyBFS = GC.Gen.CheneyBFS
 
 /// Size-only allocation request trace induced by Cheney's final forwarding map.
@@ -1183,6 +1184,24 @@ val chunked_cheney_promote_after_minor_promotion_head_preflight
           res.major_final res.fp_final r.capacity_fuel_out = true /\
          SpecMajorAlloc.major_fl_head_wosize
           res.major_final res.fp_final >= 1))
+
+/// Chunked major-pointer update skips blue objects, so it preserves the global
+/// blue free-list chain when the chain-blue side invariant is available.
+val chunked_update_major_pointers_preserves_alloc_shape
+  : major:MH.major_heap -> fp:U64.t -> alloc_fuel:nat ->
+    fwd:forwarding_map ->
+    Lemma
+      (requires
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+         major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel)
+      (ensures
+        (let updated =
+          ChunkedUpdate.chunked_update_major_pointers major fwd in
+         GenInv.chunked_major_alloc_shape updated fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          updated fp alloc_fuel = true))
 
 val chunked_cheney_collect_after_minor_promotion_head_preflight
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
