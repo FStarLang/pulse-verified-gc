@@ -1122,6 +1122,126 @@ let chunked_chain_objects_blue_elim
   reveal_opaque (`%chunked_chain_objects_blue)
     (chunked_chain_objects_blue mh fp fuel)
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_chain_objects_blue_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires chunked_chain_objects_blue mh fp fuel /\
+                MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        (let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+         chunked_chain_objects_blue r.major_out r.fp_out (fuel + 1)))
+  =
+  let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+  let expanded = r.major_out in
+  let fresh_obj = SpecMajorAlloc.fresh_chunk_object fresh in
+  let aux (obj: obj_addr)
+    : Lemma
+        (requires Seq.mem obj (MH.major_objects expanded) /\
+                  ~(chunked_is_blue expanded obj))
+        (ensures
+          SpecMajorAlloc.major_fl_chain_avoids
+            expanded r.fp_out obj (fuel + 1) = true)
+    =
+    SpecMajorAlloc.expand_major_heap_objects mh fresh fp;
+    if obj = fresh_obj then begin
+      chunked_fresh_object_is_blue mh fresh fp;
+      assert False
+    end else begin
+      if ~(Seq.mem obj (MH.major_objects mh)) then begin
+        GC.Spec.SeqMemLemmas.seq_mem_cons_not_mem_implies_eq
+          fresh_obj obj (MH.major_objects mh);
+        assert False
+      end;
+      assert (Seq.mem obj (MH.major_objects mh));
+      chunked_is_blue_preserved_by_expansion mh fresh fp obj;
+      assert (~(chunked_is_blue mh obj));
+      chunked_chain_objects_blue_elim mh fp fuel obj;
+      let old_link_frame (src: obj_addr)
+        : Lemma
+            (requires
+              Seq.mem src (MH.major_objects mh) /\
+              src <> obj /\
+              (match MH.read_word_in_major mh (hd_address src) with
+               | Some hdr -> U64.v (getWosize hdr) >= 1
+               | None -> False))
+            (ensures
+              MH.read_word_in_major expanded src ==
+              MH.read_word_in_major mh src)
+        =
+        match MH.read_word_in_major mh (hd_address src) with
+        | None -> assert False
+        | Some hdr ->
+          MH.major_objects_member_field0_read_some mh src hdr;
+          match MH.read_word_in_major mh src with
+          | None -> assert False
+          | Some old ->
+            MH.read_word_in_major_lookup_index mh src old;
+            let idx = MH.lookup_chunk_index_value mh src in
+            assert (idx < Seq.length mh);
+            assert (MH.lookup_chunk_index mh src == Some idx);
+            MH.lookup_chunk_index_some mh src idx;
+            assert (MH.lookup_chunk mh src == Some (Seq.index mh idx));
+            MH.lookup_chunk_some_disjoint_miss
+              mh (Seq.index mh idx) fresh src;
+            SpecMajorAlloc.expand_major_heap_old_read mh fresh fp src
+      in
+      FStar.Classical.forall_intro
+        (FStar.Classical.move_requires old_link_frame);
+      SpecMajorAlloc.major_fl_chain_avoids_transfer
+        mh expanded fp obj fuel;
+      SpecMajorAlloc.expand_major_heap_link mh fresh fp;
+      SpecMajorAlloc.fresh_chunk_object_in_chunk fresh;
+      assert (r.fp_out == fresh_obj);
+      assert (r.fp_out <> obj);
+      assert (fuel + 1 > 0);
+      assert (U64.v r.fp_out >= U64.v mword);
+      assert (U64.v r.fp_out < heap_size);
+      assert (U64.v r.fp_out % U64.v mword == 0);
+      assert (MH.read_word_in_major expanded (r.fp_out <: obj_addr) ==
+              Some fp);
+      assert
+        (match MH.read_word_in_major expanded (r.fp_out <: obj_addr) with
+         | Some next ->
+           SpecMajorAlloc.major_fl_chain_avoids expanded next obj fuel = true
+         | None -> True);
+      SpecMajorAlloc.major_fl_chain_avoids_step
+        expanded r.fp_out obj (fuel + 1)
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+  chunked_chain_objects_blue_intro expanded r.fp_out (fuel + 1)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_chain_objects_blue_ensure_head_capacity
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires chunked_chain_objects_blue mh fp fuel /\
+                MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        (let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+         chunked_chain_objects_blue
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  =
+  if SpecMajorAlloc.major_fl_head_wosize mh fp >= needed then
+    ()
+  else
+    chunked_chain_objects_blue_preserved_by_expansion
+      mh fresh fp fuel
+#pop-options
+
 private let pointer_to_fresh_object_in_fresh_chunk
   (fresh: MH.heap_chunk) (raw: U64.t)
   : Lemma

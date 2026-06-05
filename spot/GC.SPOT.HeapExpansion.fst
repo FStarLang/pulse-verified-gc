@@ -2939,6 +2939,44 @@ let spot_chunked_chain_objects_blue_elim
   =
   GenInv.chunked_chain_objects_blue_elim major fp fuel obj
 
+let spot_chunked_chain_objects_blue_preserved_by_expansion
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        GenInv.chunked_chain_objects_blue major fp fuel /\
+        MH.well_formed_major_heap major /\
+        SpecMajorAlloc.major_fl_valid major fp fuel /\
+        SpecMajorAlloc.major_fl_above_zero major fp fuel /\
+        MH.chunk_disjoint_from_all fresh major)
+      (ensures
+        (let r = SpecMajorAlloc.expand_major_heap major fresh fp in
+         GenInv.chunked_chain_objects_blue r.major_out r.fp_out (fuel + 1)))
+  =
+  GenInv.chunked_chain_objects_blue_preserved_by_expansion
+    major fresh fp fuel
+
+let spot_chunked_chain_objects_blue_ensure_head_capacity
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        GenInv.chunked_chain_objects_blue major fp fuel /\
+        MH.well_formed_major_heap major /\
+        SpecMajorAlloc.major_fl_valid major fp fuel /\
+        SpecMajorAlloc.major_fl_above_zero major fp fuel /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+         MH.chunk_disjoint_from_all fresh major))
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp fuel needed fresh in
+         GenInv.chunked_chain_objects_blue
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  =
+  GenInv.chunked_chain_objects_blue_ensure_head_capacity
+    major fp fuel needed fresh
+
 let spot_chunked_update_major_pointers_preserves_alloc_shape
   (major: MH.major_heap) (fp: U64.t) (fuel: nat)
   (fwd: forwarding_map)

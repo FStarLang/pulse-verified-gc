@@ -622,6 +622,35 @@ val chunked_chain_objects_blue_elim
       (ensures
         SpecMajorAlloc.major_fl_chain_avoids mh fp obj fuel = true)
 
+val chunked_chain_objects_blue_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> fuel:nat ->
+    Lemma
+      (requires chunked_chain_objects_blue mh fp fuel /\
+                MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        (let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
+         chunked_chain_objects_blue r.major_out r.fp_out (fuel + 1)))
+
+val chunked_chain_objects_blue_ensure_head_capacity
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
+    needed:nat{needed > 0} -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires chunked_chain_objects_blue mh fp fuel /\
+                MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        (let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+         chunked_chain_objects_blue
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+
 val chunked_no_pointer_to_blue_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
     Lemma
