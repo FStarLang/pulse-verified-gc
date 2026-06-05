@@ -3443,6 +3443,84 @@ let chunked_scanned_prefix_step_from_budget
   in
   FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
 
+let rec chunked_cheney_scan_end_index
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan scan_fuel alloc_fuel: nat)
+  : GTot nat
+  (decreases scan_fuel)
+  =
+  if scan_fuel > 0 then
+    if scan >= Seq.length cs.ccs_queue then scan
+    else
+      let fuel' : f:nat{f < scan_fuel} = scan_fuel - 1 in
+      let obj = Seq.index cs.ccs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs obj 0 wz alloc_fuel in
+      chunked_cheney_scan_end_index
+        minor cs' (scan + 1) fuel' alloc_fuel
+  else scan
+
+let rec chunked_cheney_scan_scanned_prefix_from_budget
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan scan_fuel alloc_fuel remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_scanned_prefix_closed minor cs scan /\
+        chunked_cheney_scan_budget_ready
+          minor cs scan scan_fuel alloc_fuel remaining)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel in
+         chunked_scanned_prefix_closed minor cs'
+          (chunked_cheney_scan_end_index
+            minor cs scan scan_fuel alloc_fuel)))
+      (decreases scan_fuel)
+  =
+  if scan_fuel > 0 then
+    if scan >= Seq.length cs.ccs_queue then
+      ChunkedCheney.chunked_cheney_scan_base
+        minor cs scan scan_fuel alloc_fuel
+    else begin
+      assert (scan < Seq.length cs.ccs_queue);
+      let fuel' : f:nat{f < scan_fuel} = scan_fuel - 1 in
+      ChunkedCheney.chunked_cheney_scan_step
+        minor cs scan scan_fuel alloc_fuel;
+      let obj = Seq.index cs.ccs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs obj 0 wz alloc_fuel in
+      assert (chunked_cheney_forward_fields_budget_ready
+                minor cs obj 0 wz alloc_fuel remaining);
+      assert (chunked_cheney_scan_budget_ready
+                minor cs' (scan + 1) fuel' alloc_fuel remaining);
+      chunked_scanned_prefix_step_from_budget
+        minor cs scan alloc_fuel remaining;
+      assert (chunked_scanned_prefix_closed minor cs' (scan + 1));
+      chunked_cheney_forward_fields_head_split_preserves_remaining_head_wosize
+        minor cs obj 0 wz alloc_fuel remaining;
+      assert (GenInv.chunked_major_alloc_shape
+                cs'.ccs_major cs'.ccs_fp alloc_fuel);
+      assert (SpecMajorAlloc.major_fl_chain_terminates
+                cs'.ccs_major cs'.ccs_fp alloc_fuel = true);
+      chunked_cheney_scan_scanned_prefix_from_budget
+        minor cs' (scan + 1) fuel' alloc_fuel remaining
+    end
+  else begin
+    assert (scan_fuel = 0);
+    ChunkedCheney.chunked_cheney_scan_base
+      minor cs scan scan_fuel alloc_fuel
+  end
+
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"

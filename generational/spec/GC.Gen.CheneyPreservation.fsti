@@ -879,6 +879,32 @@ val chunked_scanned_prefix_step_from_budget
             minor cs parent 0 (minor_wosize minor parent) alloc_fuel in
          chunked_scanned_prefix_closed minor cs' (scan + 1)))
 
+val chunked_cheney_scan_end_index
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> GTot nat
+
+val chunked_cheney_scan_scanned_prefix_from_budget
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+           cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+           cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        chunked_scanned_prefix_closed minor cs scan /\
+        chunked_cheney_scan_budget_ready
+           minor cs scan scan_fuel alloc_fuel remaining)
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_scan
+             minor cs scan scan_fuel alloc_fuel in
+          chunked_scanned_prefix_closed minor cs'
+           (chunked_cheney_scan_end_index
+             minor cs scan scan_fuel alloc_fuel)))
+
 val chunked_cheney_promote_budget_ready_from_minor_demand
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat ->
