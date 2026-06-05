@@ -2837,6 +2837,44 @@ let spot_chunked_update_major_pointers_preserves_wf_and_major_objects
   ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
     major fwd
 
+let spot_chunked_update_field_preserves_read_disjoint
+  (major: MH.major_heap) (field_addr addr: hp_addr)
+  (old: U64.t) (fwd: forwarding_map)
+  : Lemma
+      (requires MH.well_formed_major_heap major /\
+                MH.read_word_in_major major addr == Some old /\
+                ChunkedUpdate.chunked_words_disjoint field_addr addr)
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedUpdate.chunked_update_field major field_addr fwd) /\
+        MH.read_word_in_major
+          (ChunkedUpdate.chunked_update_field major field_addr fwd)
+          addr == Some old)
+  =
+  ChunkedUpdate.chunked_update_field_preserves_wf_and_read_disjoint
+    major field_addr addr old fwd
+
+let spot_chunked_update_object_pointers_preserves_read_disjoint
+  (major: MH.major_heap) (obj: obj_addr) (wosize: nat)
+  (fwd: forwarding_map) (i: nat) (addr: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap major /\
+        MH.read_word_in_major major addr == Some old /\
+        (forall (k:nat) (field_addr:hp_addr).
+          i <= k /\ k < wosize /\
+          ChunkedUpdate.chunked_update_field_slot obj k == Some field_addr ==>
+          ChunkedUpdate.chunked_words_disjoint field_addr addr))
+      (ensures
+        (let major' =
+           ChunkedUpdate.chunked_update_object_pointers
+             major obj wosize fwd i in
+         MH.well_formed_major_heap major' /\
+         MH.read_word_in_major major' addr == Some old))
+  =
+  ChunkedUpdate.chunked_update_object_pointers_preserves_read_disjoint
+    major obj wosize fwd i addr old
+
 let spot_chunked_chain_objects_blue_elim
   (major: MH.major_heap) (fp: U64.t) (fuel: nat) (obj: obj_addr)
   : Lemma

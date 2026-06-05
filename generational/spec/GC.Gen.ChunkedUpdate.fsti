@@ -44,6 +44,10 @@ val chunked_is_blue
 val chunked_is_no_scan
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
 
+/// Two word slots do not overlap.
+val chunked_words_disjoint
+  : a:hp_addr -> b:hp_addr -> Tot prop
+
 /// Rewrite one field slot if it contains a forwarded minor pointer.
 val chunked_update_field
   : mh:MH.major_heap -> field_addr:hp_addr -> fwd:forwarding_map ->
@@ -66,6 +70,21 @@ val chunked_update_field_preserves_wf_and_major_objects
           MH.major_objects mh /\
         chunked_header_of_object (chunked_update_field mh field_addr fwd) obj ==
           chunked_header_of_object mh obj)
+
+/// Updating one field slot preserves reads from disjoint word slots.
+val chunked_update_field_preserves_wf_and_read_disjoint
+  : mh:MH.major_heap -> field_addr:hp_addr -> addr:hp_addr ->
+    old:U64.t -> fwd:forwarding_map ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.read_word_in_major mh addr == Some old /\
+        chunked_words_disjoint field_addr addr)
+      (ensures
+        MH.well_formed_major_heap
+          (chunked_update_field mh field_addr fwd) /\
+        MH.read_word_in_major
+          (chunked_update_field mh field_addr fwd) addr == Some old)
 
 /// Update pointers in one object's fields.
 val chunked_update_object_pointers
@@ -116,6 +135,24 @@ val chunked_update_object_pointers_preserves_wf_and_major_objects
         MH.well_formed_major_heap mh' /\
         MH.major_objects mh' == MH.major_objects mh /\
         chunked_header_of_object mh' obj == chunked_header_of_object mh obj))
+
+/// Updating all remaining fields of one object preserves a read whose word slot
+/// is disjoint from every remaining candidate field slot.
+val chunked_update_object_pointers_preserves_read_disjoint
+  : mh:MH.major_heap -> obj:obj_addr -> wosize:nat ->
+    fwd:forwarding_map -> i:nat -> addr:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.read_word_in_major mh addr == Some old /\
+        (forall (k:nat) (field_addr:hp_addr).
+          i <= k /\ k < wosize /\
+          chunked_update_field_slot obj k == Some field_addr ==>
+          chunked_words_disjoint field_addr addr))
+      (ensures
+        (let mh' = chunked_update_object_pointers mh obj wosize fwd i in
+        MH.well_formed_major_heap mh' /\
+        MH.read_word_in_major mh' addr == Some old))
 
 /// Remaining explicit object-list entries are active in the current major heap.
 val chunked_objects_members

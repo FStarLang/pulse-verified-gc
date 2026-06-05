@@ -58,6 +58,10 @@ let chunked_is_no_scan (mh: MH.major_heap) (obj: obj_addr)
     | Some hdr -> U64.v (getTag hdr) >= U64.v no_scan_tag
     | None -> false
 
+let chunked_words_disjoint (a b: hp_addr) : Tot prop =
+  U64.v a + U64.v mword <= U64.v b \/
+  U64.v b + U64.v mword <= U64.v a
+
 let chunked_update_field (mh: MH.major_heap) (field_addr: hp_addr)
                          (fwd: forwarding_map)
   : GTot MH.major_heap
@@ -198,6 +202,72 @@ let chunked_update_field_preserves_wf_and_major_objects
       end
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_update_field_preserves_wf_and_read_disjoint
+  (mh: MH.major_heap) (field_addr addr: hp_addr)
+  (old: U64.t) (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.read_word_in_major mh addr == Some old /\
+        chunked_words_disjoint field_addr addr)
+      (ensures
+        MH.well_formed_major_heap
+          (chunked_update_field mh field_addr fwd) /\
+        MH.read_word_in_major
+          (chunked_update_field mh field_addr fwd) addr == Some old)
+  =
+  match MH.read_word_in_major mh field_addr with
+  | None -> ()
+  | Some raw ->
+    let field_val = to_minor_offset raw in
+    if is_minor_pointer field_val then begin
+      let new_val = fwd field_val in
+      if new_val <> 0UL then begin
+        MH.read_word_in_major_lookup_index mh addr old;
+        let ridx = MH.lookup_chunk_index_value mh addr in
+        assert (MH.lookup_chunk_index mh addr == Some ridx);
+        assert (ridx < Seq.length mh);
+        let rc = Seq.index mh ridx in
+        assert (MH.word_in_chunk rc addr);
+        assert (MH.read_word_in_chunk rc addr == old);
+        MH.read_word_in_major_lookup_index mh field_addr raw;
+        let widx = MH.lookup_chunk_index_value mh field_addr in
+        assert (MH.lookup_chunk_index mh field_addr == Some widx);
+        assert (widx < Seq.length mh);
+        let wc = Seq.index mh widx in
+        assert (MH.word_in_chunk wc field_addr);
+        let wc' = MH.write_word_in_chunk wc field_addr new_val in
+        MH.write_word_at_index_preserves_wf mh field_addr new_val widx;
+        MH.write_word_in_major_at_lookup_index mh field_addr new_val widx;
+        assert (MH.write_word_in_major mh field_addr new_val ==
+                Some (Seq.upd mh widx wc'));
+        SpecMajorAlloc.major_write_word_or_same_some
+          mh (Seq.upd mh widx wc') field_addr new_val;
+        assert (chunked_update_field mh field_addr fwd ==
+                Seq.upd mh widx wc');
+        let mh' = Seq.upd mh widx wc' in
+        assert (MH.well_formed_major_heap mh');
+        if ridx = widx then begin
+          assert (rc == wc);
+          assert (Seq.index mh' ridx == wc');
+          assert (field_addr <> addr);
+          MH.read_write_in_chunk_different wc field_addr addr new_val;
+          MH.write_word_in_chunk_preserves_range wc field_addr new_val;
+          assert (MH.word_in_chunk wc' addr);
+          assert (MH.read_word_in_chunk wc' addr == old)
+        end else begin
+          assert (Seq.index mh' ridx == rc);
+          assert (MH.word_in_chunk (Seq.index mh' ridx) addr);
+          assert (MH.read_word_in_chunk (Seq.index mh' ridx) addr == old)
+        end;
+        MH.lookup_chunk_index_word_in_chunk mh' addr ridx;
+        MH.read_word_in_major_at_lookup_index mh' addr ridx;
+        assert (MH.read_word_in_major mh' addr == Some old)
+      end
+    end
+#pop-options
+
 let rec chunked_update_object_pointers (mh: MH.major_heap) (obj: obj_addr)
                                        (wosize: nat) (fwd: forwarding_map)
                                        (i: nat)
@@ -283,6 +353,56 @@ let rec chunked_update_object_pointers_preserves_wf_and_major_objects
       assert (chunked_header_of_object
                 (chunked_update_object_pointers mh obj wosize fwd i) obj ==
               chunked_header_of_object mh obj)
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_update_object_pointers_preserves_read_disjoint
+  (mh: MH.major_heap) (obj: obj_addr) (wosize: nat)
+  (fwd: forwarding_map) (i: nat) (addr: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.read_word_in_major mh addr == Some old /\
+        (forall (k: nat) (field_addr: hp_addr).
+          i <= k /\ k < wosize /\
+          chunked_update_field_slot obj k == Some field_addr ==>
+          chunked_words_disjoint field_addr addr))
+      (ensures
+        (let mh' = chunked_update_object_pointers mh obj wosize fwd i in
+        MH.well_formed_major_heap mh' /\
+        MH.read_word_in_major mh' addr == Some old))
+      (decreases (wosize - i))
+  =
+  if i >= wosize then
+    ()
+  else begin
+    match chunked_update_field_slot obj i with
+    | None -> ()
+    | Some field_addr ->
+      assert (chunked_words_disjoint field_addr addr);
+      chunked_update_field_preserves_wf_and_read_disjoint
+        mh field_addr addr old fwd;
+      let mh1 = chunked_update_field mh field_addr fwd in
+      assert (MH.well_formed_major_heap mh1);
+      assert (MH.read_word_in_major mh1 addr == Some old);
+      let tail_disjoint (k: nat) (field_addr': hp_addr)
+        : Lemma
+            (requires
+              i + 1 <= k /\ k < wosize /\
+              chunked_update_field_slot obj k == Some field_addr')
+            (ensures chunked_words_disjoint field_addr' addr)
+        = ()
+      in
+      FStar.Classical.forall_intro
+        (fun k -> FStar.Classical.forall_intro
+          (FStar.Classical.move_requires (tail_disjoint k)));
+      assert (forall (k: nat) (field_addr': hp_addr).
+        i + 1 <= k /\ k < wosize /\
+        chunked_update_field_slot obj k == Some field_addr' ==>
+        chunked_words_disjoint field_addr' addr);
+      chunked_update_object_pointers_preserves_read_disjoint
+        mh1 obj wosize fwd (i + 1) addr old
   end
 #pop-options
 
