@@ -293,6 +293,21 @@ val chunked_cheney_promote_equation
            fp_final = cs2.ccs_fp;
            fwd_map = cs2.ccs_fwd }))
 
+val chunked_cheney_collect_spec_equation
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (ensures
+        (let prom = chunked_cheney_promote minor major fp roots alloc_fuel in
+         chunked_cheney_collect_spec minor major fp roots alloc_fuel ==
+         { cmc_major =
+             ChunkedUpdate.chunked_update_major_pointers
+               prom.major_final prom.fwd_map;
+           cmc_fp    = prom.fp_final;
+           cmc_minor = minor_reset minor;
+           cmc_roots = rewrite_roots roots prom.fwd_map;
+           cmc_fwd   = prom.fwd_map }))
+
 val chunked_cheney_forward_normal_default_single_chunk_compat
   : minor:minor_state -> cs:Dense.cheney_state -> addr:U64.t ->
     Lemma

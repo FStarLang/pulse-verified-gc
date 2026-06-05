@@ -5106,6 +5106,79 @@ let chunked_cheney_promote_after_minor_promotion_head_preflight
             res.major_final res.fp_final >= 1)
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_cheney_collect_after_minor_promotion_head_preflight
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0))
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let prom =
+           ChunkedCheney.chunked_cheney_promote
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         let collect =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         collect.cmc_fp == prom.fp_final /\
+         collect.cmc_minor == minor_reset minor /\
+         minor_wf collect.cmc_minor /\
+         U64.v collect.cmc_minor.bump == 0 /\
+         collect.cmc_roots == rewrite_roots roots prom.fwd_map /\
+         collect.cmc_fwd == prom.fwd_map /\
+         (forall (x:U64.t).
+          Seq.mem x (minor_reachable minor roots) /\
+          minor_wosize minor x > 0 ==>
+          collect.cmc_fwd x <> 0UL)))
+  =
+  chunked_cheney_promote_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh;
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let prom =
+    ChunkedCheney.chunked_cheney_promote
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  ChunkedCheney.chunked_cheney_collect_spec_equation
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out;
+  assert (collect.cmc_fp == prom.fp_final);
+  assert (collect.cmc_minor == minor_reset minor);
+  assert (minor_wf collect.cmc_minor);
+  assert (U64.v collect.cmc_minor.bump == 0);
+  assert (collect.cmc_roots == rewrite_roots roots prom.fwd_map);
+  assert (collect.cmc_fwd == prom.fwd_map);
+  assert (forall (x:U64.t).
+          Seq.mem x (minor_reachable minor roots) /\
+          minor_wosize minor x > 0 ==>
+          collect.cmc_fwd x <> 0UL)
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let promote_object_head_split_preserves_chunked_alloc_shape_single_chunk
   (minor: minor_state) (major: heap) (obj: U64.t)

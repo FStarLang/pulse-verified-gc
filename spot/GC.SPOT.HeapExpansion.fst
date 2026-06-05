@@ -2840,3 +2840,49 @@ let spot_chunked_cheney_collect_default_single_chunk_compat
   =
   ChunkedCheney.chunked_cheney_collect_default_single_chunk_compat
     minor major fp roots
+
+let spot_chunked_cheney_collect_after_minor_promotion_head_preflight
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0))
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let prom =
+           ChunkedCheney.chunked_cheney_promote
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         let collect =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         collect.cmc_fp == prom.fp_final /\
+         collect.cmc_minor == minor_reset minor /\
+         minor_wf collect.cmc_minor /\
+         U64.v collect.cmc_minor.bump == 0 /\
+         collect.cmc_roots == rewrite_roots roots prom.fwd_map /\
+         collect.cmc_fwd == prom.fwd_map /\
+         (forall (x:U64.t).
+          Seq.mem x (minor_reachable minor roots) /\
+          minor_wosize minor x > 0 ==>
+          collect.cmc_fwd x <> 0UL)))
+  =
+  CheneyPreservation.chunked_cheney_collect_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh
