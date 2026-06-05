@@ -1535,6 +1535,10 @@ let spot_chunked_cheney_promote_after_minor_promotion_head_preflight
            r.capacity_major_out r.capacity_fp_out >= needed /\
          SpecMajorAlloc.major_fl_chain_terminates
            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
+          (forall (x:U64.t).
+           Seq.mem x (minor_reachable minor roots) /\
+           minor_wosize minor x > 0 ==>
+           res.fwd_map x <> 0UL) /\
          GenInv.chunked_major_alloc_shape
            res.major_final res.fp_final r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates
