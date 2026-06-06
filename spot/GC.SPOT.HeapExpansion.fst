@@ -1113,6 +1113,34 @@ let spot_chunked_cheney_forward_roots_head_split_preserves_chunked_alloc_shape
   CheneyPreservation.chunked_cheney_forward_roots_head_split_preserves_chunked_alloc_shape
     minor cs roots idx alloc_fuel
 
+let spot_chunked_cheney_forward_roots_head_split_preserves_chain_objects_blue
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (roots: Seq.seq U64.t) (idx: nat) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_forward_roots_split_ready
+          minor cs roots idx alloc_fuel)
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_roots
+             minor cs roots idx alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+           cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+           cs'.ccs_major cs'.ccs_fp alloc_fuel))
+  =
+  CheneyPreservation.chunked_cheney_forward_roots_head_split_preserves_chain_objects_blue
+    minor cs roots idx alloc_fuel
+
 let spot_chunked_cheney_forward_roots_head_split_preserves_remaining_head_wosize
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (roots: Seq.seq U64.t) (idx: nat) (alloc_fuel: nat) (remaining: nat)
@@ -1451,6 +1479,34 @@ let spot_chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
   CheneyPreservation.chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
     minor cs parent idx wosize alloc_fuel
 
+let spot_chunked_cheney_forward_fields_head_split_preserves_chain_objects_blue
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_forward_fields_split_ready
+          minor cs parent idx wosize alloc_fuel)
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_fields
+             minor cs parent idx wosize alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+           cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+           cs'.ccs_major cs'.ccs_fp alloc_fuel))
+  =
+  CheneyPreservation.chunked_cheney_forward_fields_head_split_preserves_chain_objects_blue
+    minor cs parent idx wosize alloc_fuel
+
 let spot_chunked_cheney_forward_fields_head_split_preserves_remaining_head_wosize
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
@@ -1502,6 +1558,34 @@ let spot_chunked_cheney_scan_head_split_preserves_chunked_alloc_shape
   CheneyPreservation.chunked_cheney_scan_head_split_preserves_chunked_alloc_shape
     minor cs scan scan_fuel alloc_fuel
 
+let spot_chunked_cheney_scan_head_split_preserves_chain_objects_blue
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan: nat) (scan_fuel: nat) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_scan_split_ready
+          minor cs scan scan_fuel alloc_fuel)
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_scan
+             minor cs scan scan_fuel alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+           cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+           cs'.ccs_major cs'.ccs_fp alloc_fuel))
+  =
+  CheneyPreservation.chunked_cheney_scan_head_split_preserves_chain_objects_blue
+    minor cs scan scan_fuel alloc_fuel
+
 let spot_chunked_cheney_scan_head_split_preserves_remaining_head_wosize
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (scan: nat) (scan_fuel: nat) (alloc_fuel: nat) (remaining: nat)
@@ -1549,6 +1633,32 @@ let spot_chunked_cheney_promote_head_split_preserves_chunked_alloc_shape
            res.major_final res.fp_final alloc_fuel = true))
   =
   CheneyPreservation.chunked_cheney_promote_head_split_preserves_chunked_alloc_shape
+    minor major fp roots alloc_fuel
+
+let spot_chunked_cheney_promote_head_split_preserves_chain_objects_blue
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel)
+      (ensures
+        (let res =
+           ChunkedCheney.chunked_cheney_promote
+             minor major fp roots alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+           res.major_final res.fp_final alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           res.major_final res.fp_final alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+           res.major_final res.fp_final alloc_fuel))
+  =
+  CheneyPreservation.chunked_cheney_promote_head_split_preserves_chain_objects_blue
     minor major fp roots alloc_fuel
 
 let spot_chunked_cheney_promote_head_split_preserves_remaining_head_wosize

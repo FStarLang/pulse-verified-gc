@@ -662,6 +662,31 @@ val chunked_cheney_forward_roots_head_split_preserves_chunked_alloc_shape
          SpecMajorAlloc.major_fl_chain_terminates
           cs'.ccs_major cs'.ccs_fp alloc_fuel = true))
 
+val chunked_cheney_forward_roots_head_split_preserves_chain_objects_blue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    roots:seq U64.t -> idx:nat -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_forward_roots_split_ready
+          minor cs roots idx alloc_fuel)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_roots
+           minor cs roots idx alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+          cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+          cs'.ccs_major cs'.ccs_fp alloc_fuel))
+
 val chunked_cheney_forward_roots_budget_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     roots:seq U64.t -> idx:nat -> alloc_fuel:nat -> remaining:nat ->
@@ -715,6 +740,31 @@ val chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
           cs'.ccs_major cs'.ccs_fp alloc_fuel /\
          SpecMajorAlloc.major_fl_chain_terminates
           cs'.ccs_major cs'.ccs_fp alloc_fuel = true))
+
+val chunked_cheney_forward_fields_head_split_preserves_chain_objects_blue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_forward_fields_split_ready
+          minor cs parent idx wosize alloc_fuel)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+           minor cs parent idx wosize alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+          cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+          cs'.ccs_major cs'.ccs_fp alloc_fuel))
 
 val chunked_cheney_forward_fields_budget_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
@@ -770,6 +820,31 @@ val chunked_cheney_scan_head_split_preserves_chunked_alloc_shape
          SpecMajorAlloc.major_fl_chain_terminates
           cs'.ccs_major cs'.ccs_fp alloc_fuel = true))
 
+val chunked_cheney_scan_head_split_preserves_chain_objects_blue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_scan_split_ready
+          minor cs scan scan_fuel alloc_fuel)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_scan
+           minor cs scan scan_fuel alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+          cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+          cs'.ccs_major cs'.ccs_fp alloc_fuel))
+
 val chunked_cheney_scan_budget_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> remaining:nat ->
@@ -821,6 +896,29 @@ val chunked_cheney_promote_head_split_preserves_chunked_alloc_shape
           res.major_final res.fp_final alloc_fuel /\
          SpecMajorAlloc.major_fl_chain_terminates
           res.major_final res.fp_final alloc_fuel = true))
+
+val chunked_cheney_promote_head_split_preserves_chain_objects_blue
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+           minor major fp roots alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+          res.major_final res.fp_final alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          res.major_final res.fp_final alloc_fuel = true /\
+         GenInv.chunked_chain_objects_blue
+          res.major_final res.fp_final alloc_fuel))
 
 val chunked_cheney_promote_budget_ready
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
