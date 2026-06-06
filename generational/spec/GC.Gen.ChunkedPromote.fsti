@@ -260,6 +260,43 @@ val chunked_promote_object_success
          res.fp_out == alloc_res.major_fp_out /\
          res.new_addr == alloc_res.major_obj_out))
 
+val chunked_promote_object_success_field_effect
+  : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} -> fuel:nat ->
+    j:nat -> field_addr:hp_addr -> idx:nat -> hdr:U64.t ->
+    Lemma
+      (requires
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let dst = alloc_res.major_obj_out in
+         alloc_res.major_obj_out <> 0UL /\
+         U64.v dst >= U64.v mword /\
+         U64.v dst < heap_size /\
+         U64.v dst % U64.v mword == 0 /\
+         j < wosize /\
+         U64.v field_addr == U64.v dst + j * U64.v mword /\
+         MH.well_formed_major_heap alloc_res.major_alloc_out /\
+         idx < Seq.length alloc_res.major_alloc_out /\
+         MH.lookup_chunk_index alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some idx /\
+         Seq.mem (dst <: obj_addr)
+          (MH.major_objects alloc_res.major_alloc_out) /\
+         MH.read_word_in_major alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some hdr /\
+         U64.v (getWosize hdr) == wosize))
+      (ensures
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let dst = alloc_res.major_obj_out in
+         let res =
+          chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+         let addr_nat = U64.v dst + j * U64.v mword in
+         res.new_addr == dst /\
+         addr_nat + U64.v mword <= heap_size /\
+         addr_nat % U64.v mword == 0 /\
+         MH.read_word_in_major res.major_out field_addr ==
+          Some (minor_read_field minor obj j)))
+
 /// Single-chunk compatibility with dense `promote_object`, for callers that can
 /// show the dense allocator returned an active major address when it succeeded.
 val chunked_promote_object_with_fuel_single_chunk_compat

@@ -731,6 +731,86 @@ let chunked_promote_object_success
   = ()
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_promote_object_success_field_effect
+  (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
+  (j: nat) (field_addr: hp_addr) (idx: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let dst = alloc_res.major_obj_out in
+         alloc_res.major_obj_out <> 0UL /\
+         U64.v dst >= U64.v mword /\
+         U64.v dst < heap_size /\
+         U64.v dst % U64.v mword == 0 /\
+         j < wosize /\
+         U64.v field_addr == U64.v dst + j * U64.v mword /\
+         MH.well_formed_major_heap alloc_res.major_alloc_out /\
+         idx < Seq.length alloc_res.major_alloc_out /\
+         MH.lookup_chunk_index alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some idx /\
+         Seq.mem (dst <: obj_addr)
+          (MH.major_objects alloc_res.major_alloc_out) /\
+         MH.read_word_in_major alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some hdr /\
+         U64.v (getWosize hdr) == wosize))
+      (ensures
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let dst = alloc_res.major_obj_out in
+         let res =
+          chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+         let addr_nat = U64.v dst + j * U64.v mword in
+         res.new_addr == dst /\
+         addr_nat + U64.v mword <= heap_size /\
+         addr_nat % U64.v mword == 0 /\
+         MH.read_word_in_major res.major_out field_addr ==
+          Some (minor_read_field minor obj j)))
+  =
+  let alloc_res =
+    SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+  let dst_u = alloc_res.major_obj_out in
+  let dst : obj_addr = dst_u in
+  let hd = hd_address dst in
+  chunked_promote_object_success minor mh obj fp wosize fuel;
+  chunked_copy_fields_field_effect
+    minor alloc_res.major_alloc_out obj dst_u 0 wosize j idx hdr;
+  let addr_nat = U64.v dst_u + j * U64.v mword in
+  assert (addr_nat + U64.v mword <= heap_size);
+  assert (addr_nat % U64.v mword == 0);
+  assert (field_addr == U64.uint_to_t addr_nat);
+  let copied =
+    chunked_copy_fields
+      minor alloc_res.major_alloc_out obj dst_u 0 wosize in
+  assert (MH.read_word_in_major copied field_addr ==
+         Some (minor_read_field minor obj j));
+  hd_address_spec dst;
+  assert (U64.v hd + U64.v mword == U64.v dst_u);
+  assert (U64.v hd + U64.v mword <= U64.v dst_u + 0 * U64.v mword);
+  chunked_copy_fields_frame_before
+    minor alloc_res.major_alloc_out obj dst_u 0 wosize hd hdr;
+  assert (MH.read_word_in_major copied hd == Some hdr);
+  assert (U64.v (getWosize hdr) <= wosize);
+  chunked_zero_promote_padding_noop copied dst_u wosize hdr;
+  let padded = chunked_zero_promote_padding copied dst_u wosize in
+  assert (padded == copied);
+  let tag = minor_tag minor obj in
+  minor_tag_bound minor obj;
+  assert (U64.v hd + U64.v mword == U64.v dst_u);
+  assert (U64.v hd + U64.v mword <= U64.v field_addr);
+  chunked_set_promoted_tag_read_frame
+    copied dst_u tag field_addr (minor_read_field minor obj j);
+  let final_major = chunked_set_promoted_tag padded dst_u tag in
+  assert (MH.read_word_in_major final_major field_addr ==
+         Some (minor_read_field minor obj j));
+  let res =
+    chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+  assert (res.major_out == final_major);
+  assert (res.new_addr == dst_u)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
 private let rec chunked_copy_fields_single_chunk_compat
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
