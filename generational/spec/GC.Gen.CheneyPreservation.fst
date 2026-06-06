@@ -7561,6 +7561,16 @@ let chunked_cheney_promote_after_minor_promotion_head_preflight
           U64.v (getWosize hdr) >= 1 ==>
           MH.read_word_in_major res.major_final (hd_address src) ==
             Some hdr) /\
+         (forall (src: obj_addr). forall (hdr: U64.t).
+          forall (j:nat). forall (field_addr: hp_addr).
+          forall (old: U64.t).
+           Seq.mem src (MH.major_objects major) /\
+           MH.read_word_in_major major (hd_address src) == Some hdr /\
+           getColor hdr <> Blue /\
+           j < U64.v (getWosize hdr) /\
+           U64.v field_addr == U64.v src + j * U64.v mword /\
+           MH.read_word_in_major major field_addr == Some old ==>
+           MH.read_word_in_major res.major_final field_addr == Some old) /\
          GenInv.chunked_major_alloc_shape
            res.major_final res.fp_final r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates
@@ -7669,6 +7679,63 @@ let chunked_cheney_promote_after_minor_promotion_head_preflight
       (FStar.Classical.move_requires (old_header_survives src))
   in
   FStar.Classical.forall_intro old_header_survives_for_src;
+  GenInv.chunked_collection_heap_shape_elim minor major fp alloc_fuel;
+  assert (GenInv.chunked_major_alloc_shape major fp alloc_fuel);
+  GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
+  let old_field_survives
+    (src: obj_addr) (hdr: U64.t) (j: nat)
+    (field_addr: hp_addr) (old: U64.t)
+    : Lemma
+        (requires Seq.mem src (MH.major_objects major) /\
+                  MH.read_word_in_major major (hd_address src) == Some hdr /\
+                  getColor hdr <> Blue /\
+                  j < U64.v (getWosize hdr) /\
+                  U64.v field_addr == U64.v src + j * U64.v mword /\
+                  MH.read_word_in_major major field_addr == Some old)
+        (ensures MH.read_word_in_major res.major_final field_addr ==
+                 Some old)
+    =
+    if SpecMajorAlloc.major_fl_head_wosize major fp >= needed then begin
+      assert (r.capacity_major_out == major);
+      chunked_cheney_promote_head_split_preserves_old_non_blue_field
+        minor r.capacity_major_out r.capacity_fp_out roots
+        r.capacity_fuel_out src hdr j field_addr old
+    end else begin
+      assert (MH.chunk_disjoint_from_all fresh major);
+      MH.major_object_header_disjoint_from_chunk major fresh src;
+      MH.major_object_field_disjoint_from_chunk
+        major fresh src hdr j field_addr;
+      SpecMajorAlloc.ensure_major_head_capacity_preserves_old_read
+        major fp alloc_fuel needed fresh (hd_address src);
+      SpecMajorAlloc.ensure_major_head_capacity_preserves_old_read
+        major fp alloc_fuel needed fresh field_addr;
+      assert (MH.read_word_in_major r.capacity_major_out (hd_address src) ==
+              Some hdr);
+      assert (MH.read_word_in_major r.capacity_major_out field_addr ==
+              Some old);
+      assert (Seq.mem src (MH.major_objects r.capacity_major_out));
+      chunked_cheney_promote_head_split_preserves_old_non_blue_field
+        minor r.capacity_major_out r.capacity_fp_out roots
+        r.capacity_fuel_out src hdr j field_addr old
+    end
+  in
+  let old_field_survives_for_quantifiers
+    (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+    : Lemma
+        (ensures forall (old: U64.t).
+          Seq.mem src (MH.major_objects major) /\
+          MH.read_word_in_major major (hd_address src) == Some hdr /\
+          getColor hdr <> Blue /\
+          j < U64.v (getWosize hdr) /\
+          U64.v field_addr == U64.v src + j * U64.v mword /\
+          MH.read_word_in_major major field_addr == Some old ==>
+          MH.read_word_in_major res.major_final field_addr == Some old)
+    =
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires
+        (old_field_survives src hdr j field_addr))
+  in
+  FStar.Classical.forall_intro_4 old_field_survives_for_quantifiers;
   chunked_cheney_promote_forwards_reachable_from_budget
     minor r.capacity_major_out r.capacity_fp_out roots
     r.capacity_fuel_out;

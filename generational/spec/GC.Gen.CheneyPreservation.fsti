@@ -1523,6 +1523,16 @@ val chunked_cheney_promote_after_minor_promotion_head_preflight
           U64.v (getWosize hdr) >= 1 ==>
           MH.read_word_in_major res.major_final (hd_address src) ==
             Some hdr) /\
+         (forall (src: obj_addr). forall (hdr: U64.t).
+          forall (j:nat). forall (field_addr: hp_addr).
+          forall (old: U64.t).
+           Seq.mem src (MH.major_objects major) /\
+           MH.read_word_in_major major (hd_address src) == Some hdr /\
+           getColor hdr <> GC.Lib.Header.Blue /\
+           j < U64.v (getWosize hdr) /\
+           U64.v field_addr == U64.v src + j * U64.v mword /\
+           MH.read_word_in_major major field_addr == Some old ==>
+           MH.read_word_in_major res.major_final field_addr == Some old) /\
          GenInv.chunked_major_alloc_shape
           res.major_final res.fp_final r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates

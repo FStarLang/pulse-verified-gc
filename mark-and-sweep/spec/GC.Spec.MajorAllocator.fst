@@ -1770,6 +1770,7 @@ let major_spec_next_fp (mh: MH.major_heap) (obj: obj_addr) : GTot U64.t =
   | Some next -> next
   | None -> 0UL
 
+#push-options "--split_queries always"
 let major_alloc_from_block (mh: MH.major_heap) (obj: obj_addr)
                            (requested_wz: nat) (next_fp: U64.t)
   : GTot (MH.major_heap & U64.t) =
@@ -1808,6 +1809,7 @@ let major_alloc_from_block (mh: MH.major_heap) (obj: obj_addr)
       let mh1 = major_write_word_or_same mh hd alloc_hdr in
       (mh1, next_fp)
     end
+#pop-options
 
 let rec major_alloc_search (mh: MH.major_heap) (head_fp: U64.t) (prev_fp: U64.t)
                            (cur_fp: U64.t) (requested_wz: nat) (fuel: nat)
@@ -2821,6 +2823,7 @@ let rec objects_in_chunk_from_head_split_preserves_object
       (requires Seq.mem obj (MH.objects_in_chunk_from c start) /\
                 requested_wz > 0 /\
                 requested_wz < pow2 54 /\
+                requested_wz < pow2 64 /\
                 block_wz >= requested_wz /\
                 block_wz < pow2 54 /\
                 block_wz - requested_wz >= 2 /\
@@ -2845,8 +2848,6 @@ let rec objects_in_chunk_from_head_split_preserves_object
           Seq.mem obj (MH.objects_in_chunk_from c3 start)))
       (decreases MH.chunk_end c - U64.v start)
   =
-  FStar.Math.Lemmas.pow2_lt_compat 64 54;
-  assert (requested_wz < pow2 64);
   let hd = hd_address obj in
   let alloc_hdr =
     Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
@@ -3119,8 +3120,6 @@ let head_split_chunk_preserves_read_at
           else
             MH.read_word_in_chunk c3 addr == MH.read_word_in_chunk c addr))
   =
-  FStar.Math.Lemmas.pow2_lt_compat 64 54;
-  assert (requested_wz < pow2 64);
   let hd = hd_address obj in
   let alloc_hdr =
     Alloc.make_header (U64.uint_to_t requested_wz) Alloc.white_bits 0UL in
@@ -3175,6 +3174,7 @@ let rec objects_in_chunk_from_head_split_preserves_member
                 Seq.mem x (MH.objects_in_chunk_from c start) /\
                 requested_wz > 0 /\
                 requested_wz < pow2 54 /\
+                requested_wz < pow2 64 /\
                 block_wz >= requested_wz /\
                 block_wz < pow2 54 /\
                 block_wz - requested_wz >= 2 /\

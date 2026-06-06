@@ -2093,6 +2093,40 @@ let major_object_payload_word_in_lookup_chunk
   assert (word_in_chunk c addr);
   lookup_chunk_index_word_in_chunk mh addr i
 
+#push-options "--z3rlimit 10 --split_queries always --fuel 0 --ifuel 0"
+let major_object_field_disjoint_from_chunk
+  (mh: major_heap) (c: heap_chunk) (x: obj_addr) (hdr: U64.t)
+  (j: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires
+        well_formed_major_heap mh /\
+        chunk_disjoint_from_all c mh /\
+        Seq.mem x (major_objects mh) /\
+        read_word_in_major mh (hd_address x) == Some hdr /\
+        j < U64.v (Obj.getWosize hdr) /\
+        U64.v field_addr == U64.v x + j * U64.v mword)
+      (ensures ~(chunk_contains_addr c field_addr))
+  =
+  read_word_in_major_lookup_index mh (hd_address x) hdr;
+  let idx = lookup_chunk_index_value mh (hd_address x) in
+  assert (lookup_chunk_index mh (hd_address x) == Some idx);
+  assert (idx < Seq.length mh);
+  assert (word_in_chunk (Seq.index mh idx) (hd_address x));
+  major_objects_member_in_lookup_chunk mh idx x;
+  assert (Seq.mem x (objects_in_chunk (Seq.index mh idx)));
+  objects_in_chunk_member_header_fits (Seq.index mh idx) x;
+  assert (object_wosize_in_chunk (Seq.index mh idx) x ==
+          U64.v (Obj.getWosize hdr));
+  assert (U64.v field_addr + U64.v mword <=
+          U64.v x + object_wosize_in_chunk (Seq.index mh idx) x *
+                    U64.v mword);
+  major_object_payload_word_in_lookup_chunk mh idx x field_addr;
+  assert (lookup_chunk_index mh field_addr == Some idx);
+  lookup_chunk_index_some mh field_addr idx;
+  assert (lookup_chunk mh field_addr == Some (Seq.index mh idx));
+  lookup_chunk_some_disjoint_miss mh (Seq.index mh idx) c field_addr
+#pop-options
+
 let major_objects_write_member_payload_preserves
   (mh: major_heap) (i: nat) (obj: obj_addr)
   (addr: hp_addr) (value: U64.t)
