@@ -1031,6 +1031,31 @@ val chunked_cheney_promote_head_split_preserves_old_non_blue_header
          MH.read_word_in_major res.major_final (hd_address src) ==
            Some hdr))
 
+val chunked_cheney_promote_head_split_preserves_old_non_blue_field
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> src:obj_addr -> hdr:U64.t ->
+    j:nat -> field_addr:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        MH.read_word_in_major major field_addr == Some old)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         MH.read_word_in_major res.major_final field_addr == Some old))
+
 val chunked_cheney_promote_budget_ready
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> remaining:nat -> GTot prop
