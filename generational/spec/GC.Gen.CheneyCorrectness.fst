@@ -190,3 +190,79 @@ let chunked_cheney_collect_after_preflight_forwards_reachable
     end
   in
   Classical.forall_intro (Classical.move_requires aux)
+
+#push-options "--split_queries always"
+let chunked_cheney_gc_correct_after_preflight
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+        PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0))
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let prom =
+        ChunkedCheney.chunked_cheney_promote
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       collect.cmc_fp == prom.fp_final /\
+       collect.cmc_minor == minor_reset minor /\
+       minor_wf collect.cmc_minor /\
+       U64.v collect.cmc_minor.bump == 0 /\
+       collect.cmc_roots == rewrite_roots roots prom.fwd_map /\
+       collect.cmc_fwd == prom.fwd_map /\
+       GenInv.chunked_major_alloc_shape
+        collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
+       SpecMajorAlloc.major_fl_chain_terminates
+        collect.cmc_major collect.cmc_fp r.capacity_fuel_out = true /\
+       GenInv.chunked_chain_objects_blue
+        collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
+       (forall (src: obj_addr).
+        Seq.mem src (MH.major_objects major) ==>
+        Seq.mem src (MH.major_objects collect.cmc_major)) /\
+       (forall (src: obj_addr). forall (hdr: U64.t).
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (GC.Spec.Heap.hd_address src) == Some hdr /\
+        GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+        U64.v (GC.Spec.Object.getWosize hdr) >= 1 ==>
+        MH.read_word_in_major collect.cmc_major (GC.Spec.Heap.hd_address src) ==
+          Some hdr) /\
+       (forall (src: obj_addr). forall (hdr: U64.t).
+        forall (j:nat). forall (field_addr: hp_addr).
+        forall (old: U64.t).
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (GC.Spec.Heap.hd_address src) == Some hdr /\
+        GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+        j < U64.v (GC.Spec.Object.getWosize hdr) /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        MH.read_word_in_major major field_addr == Some old /\
+        ~(is_minor_pointer (to_minor_offset old) /\
+          collect.cmc_fwd (to_minor_offset old) <> 0UL) ==>
+        MH.read_word_in_major collect.cmc_major field_addr == Some old) /\
+       (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
+        collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0)))
+  =
+  CheneyPres.chunked_cheney_collect_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh;
+  chunked_cheney_collect_after_preflight_forwards_reachable
+    minor major fp roots alloc_fuel fresh
+#pop-options
