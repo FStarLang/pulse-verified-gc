@@ -369,6 +369,72 @@ let chunked_cheney_forward_normal_head_split_field_effect
   chunked_cheney_forward_normal_success minor cs addr fuel
 #pop-options
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_cheney_forward_normal_head_split_header_effect
+  (minor: minor_state) (cs: chunked_cheney_state) (addr: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2)
+      (ensures
+        (let cs' =
+           chunked_cheney_forward_normal minor cs addr fuel in
+         cs'.ccs_fwd addr == cs.ccs_fp /\
+         MH.well_formed_major_heap cs'.ccs_major /\
+         Seq.mem (cs.ccs_fp <: obj_addr) (MH.major_objects cs'.ccs_major) /\
+         (match MH.read_word_in_major cs'.ccs_major
+            (hd_address (cs.ccs_fp <: obj_addr)) with
+          | Some final_hdr ->
+            U64.v (getWosize final_hdr) == minor_wosize minor addr /\
+            getColor final_hdr == GC.Lib.Header.White /\
+            U64.v (getTag final_hdr) == minor_tag minor addr
+          | None -> False)))
+  =
+  let wz = minor_wosize minor addr in
+  assert (wz > 0);
+  assert (SpecMajorAlloc.major_fl_head_wosize
+           cs.ccs_major cs.ccs_fp >= wz + 2);
+  chunked_alloc_head_split_alloc_header_wosize
+    cs.ccs_major cs.ccs_fp wz fuel;
+  let dst : obj_addr = cs.ccs_fp in
+  let alloc_res =
+    SpecMajorAlloc.major_alloc_spec_with_fuel
+      cs.ccs_major cs.ccs_fp wz fuel in
+  assert (alloc_res.major_obj_out == cs.ccs_fp);
+  let alloc_hdr =
+    SpecAlloc.make_header (U64.uint_to_t wz) SpecAlloc.white_bits 0UL in
+  assert (MH.read_word_in_major
+           alloc_res.major_alloc_out (hd_address dst) ==
+          Some alloc_hdr);
+  assert (U64.v (getWosize alloc_hdr) == wz);
+  GenInv.chunked_major_alloc_shape_elim
+    cs.ccs_major cs.ccs_fp fuel;
+  GC.Spec.MajorAllocator.SplitShape.major_alloc_head_split_preserves_alloc_shape
+    cs.ccs_major cs.ccs_fp wz fuel;
+  MH.read_word_in_major_lookup_index
+    alloc_res.major_alloc_out (hd_address dst) alloc_hdr;
+  let idx =
+    MH.lookup_chunk_index_value
+      alloc_res.major_alloc_out (hd_address dst) in
+  minor_tag_bound minor addr;
+  ChunkedPromote.chunked_promote_object_success_header_effect
+    minor cs.ccs_major addr cs.ccs_fp wz fuel idx alloc_hdr;
+  let res =
+    ChunkedPromote.chunked_promote_object_with_fuel
+      minor cs.ccs_major addr cs.ccs_fp wz fuel in
+  assert (res.new_addr == cs.ccs_fp);
+  chunked_cheney_forward_normal_success minor cs addr fuel
+#pop-options
+
 let chunked_cheney_forward_normal_other_fwd
   (minor: minor_state) (cs: chunked_cheney_state) (addr: U64.t)
   (y: U64.t) (fuel: nat)
@@ -426,6 +492,41 @@ let chunked_cheney_forward_one_normal_head_split_field_effect
   chunked_cheney_forward_one_normal minor cs addr fuel;
   chunked_cheney_forward_normal_head_split_field_effect
     minor cs addr fuel j field_addr
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_cheney_forward_one_normal_head_split_header_effect
+  (minor: minor_state) (cs: chunked_cheney_state) (addr: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        ~(is_infix_in_minor minor addr) /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2)
+      (ensures
+        (let cs' = chunked_cheney_forward_one minor cs addr fuel in
+         cs'.ccs_fwd addr == cs.ccs_fp /\
+         MH.well_formed_major_heap cs'.ccs_major /\
+         Seq.mem (cs.ccs_fp <: obj_addr) (MH.major_objects cs'.ccs_major) /\
+         (match MH.read_word_in_major cs'.ccs_major
+            (hd_address (cs.ccs_fp <: obj_addr)) with
+          | Some final_hdr ->
+            U64.v (getWosize final_hdr) == minor_wosize minor addr /\
+            getColor final_hdr == GC.Lib.Header.White /\
+            U64.v (getTag final_hdr) == minor_tag minor addr
+          | None -> False)))
+  =
+  chunked_cheney_forward_one_normal minor cs addr fuel;
+  chunked_cheney_forward_normal_head_split_header_effect
+    minor cs addr fuel
 #pop-options
 
 let chunked_cheney_forward_one_infix

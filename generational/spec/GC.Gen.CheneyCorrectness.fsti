@@ -492,6 +492,50 @@ val chunked_forward_one_normal_updated_field_edge
           (ChunkedUpdate.chunked_update_major_pointers
             cs'.ccs_major cs'.ccs_fwd))))
 
+/// Stronger head-split specialization of the single-step edge bridge.  The
+/// promoted object's header facts are derived from the chunked normal-forwarding
+/// step itself; callers only provide the copied field slot and the active
+/// forwarding target.
+val chunked_forward_one_normal_head_split_updated_field_edge
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel: nat) (j: nat)
+  (promoted expected: obj_addr) (field_addr: hp_addr)
+  : Lemma
+    (requires
+      fuel > 1 /\
+      Seq.mem addr (minor_objects minor) /\
+      cs.ccs_fwd addr = 0UL /\
+      ~(is_infix_in_minor minor addr) /\
+      minor_wosize minor addr > 0 /\
+      minor_wosize minor addr < pow2 54 /\
+      FStar.UInt.size (minor_wosize minor addr) 64 /\
+      minor_tag minor addr < U64.v GC.Spec.Object.no_scan_tag /\
+      j < minor_wosize minor addr /\
+      promoted == cs.ccs_fp /\
+      GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+      cs.ccs_fp <> 0UL /\
+      SpecMajorAlloc.major_fl_head_wosize
+        cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2 /\
+      U64.v field_addr == U64.v promoted + j * U64.v mword /\
+      CG.chunked_major_field_slot promoted j == Some field_addr /\
+      (let cs' = ChunkedCheney.chunked_cheney_forward_one
+          minor cs addr fuel in
+       let old = minor_read_field minor addr j in
+       let x = to_minor_offset old in
+       CheneyPres.chunked_fwd_targets_above_minor cs'.ccs_fwd /\
+       Seq.mem expected (MH.major_objects cs'.ccs_major) /\
+       is_minor_pointer x /\
+       cs'.ccs_fwd x <> 0UL /\
+       cs'.ccs_fwd x == expected))
+    (ensures
+      (let cs' = ChunkedCheney.chunked_cheney_forward_one
+        minor cs addr fuel in
+       CG.mem_ce (CG.MajorV promoted, CG.MajorV expected)
+        (CG.build_chunked_combined_graph
+          (minor_reset minor)
+          (ChunkedUpdate.chunked_update_major_pointers
+            cs'.ccs_major cs'.ccs_fwd))))
+
 /// Edge-level consequence of the chunked correctness bundle for old scanned
 /// major fields.  The theorem is intentionally phrased with an explicit
 /// `expected` post-major object: target-membership can come either from an old

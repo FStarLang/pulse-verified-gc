@@ -201,6 +201,30 @@ val chunked_set_promoted_tag_preserves_major_objects
          MH.well_formed_major_heap mh' /\
          MH.major_objects mh' == MH.major_objects mh))
 
+val chunked_set_promoted_tag_header_effect
+  : mh:MH.major_heap -> obj:U64.t -> tag:nat -> hdr:U64.t ->
+    Lemma
+      (requires
+        tag < 256 /\
+        MH.well_formed_major_heap mh /\
+        U64.v obj >= U64.v mword /\
+        U64.v obj < heap_size /\
+        U64.v obj % U64.v mword == 0 /\
+        Seq.mem (obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (obj <: obj_addr)) == Some hdr)
+      (ensures
+        (let new_hdr =
+           makeHeader (getWosize hdr) GC.Lib.Header.White
+             (U64.uint_to_t tag) in
+         let mh' = chunked_set_promoted_tag mh obj tag in
+         MH.well_formed_major_heap mh' /\
+         MH.major_objects mh' == MH.major_objects mh /\
+         MH.read_word_in_major mh' (hd_address (obj <: obj_addr)) ==
+           Some new_hdr /\
+         getWosize new_hdr == getWosize hdr /\
+         getColor new_hdr == GC.Lib.Header.White /\
+         getTag new_hdr == U64.uint_to_t tag))
+
 val chunked_zero_promote_padding
   : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat -> GTot MH.major_heap
 
@@ -296,6 +320,46 @@ val chunked_promote_object_success_field_effect
          addr_nat % U64.v mword == 0 /\
          MH.read_word_in_major res.major_out field_addr ==
           Some (minor_read_field minor obj j)))
+
+val chunked_promote_object_success_header_effect
+  : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} -> fuel:nat ->
+    idx:nat -> hdr:U64.t ->
+    Lemma
+      (requires
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let dst = alloc_res.major_obj_out in
+         alloc_res.major_obj_out <> 0UL /\
+         U64.v dst >= U64.v mword /\
+         U64.v dst < heap_size /\
+         U64.v dst % U64.v mword == 0 /\
+         MH.well_formed_major_heap alloc_res.major_alloc_out /\
+         idx < Seq.length alloc_res.major_alloc_out /\
+         MH.lookup_chunk_index alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some idx /\
+         Seq.mem (dst <: obj_addr)
+          (MH.major_objects alloc_res.major_alloc_out) /\
+         MH.read_word_in_major alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some hdr /\
+         U64.v (getWosize hdr) == wosize /\
+         minor_tag minor obj < 256))
+      (ensures
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+          let dst = alloc_res.major_obj_out in
+          let res =
+           chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+          res.new_addr == dst /\
+          MH.well_formed_major_heap res.major_out /\
+          Seq.mem (dst <: obj_addr) (MH.major_objects res.major_out) /\
+          (match MH.read_word_in_major res.major_out
+           (hd_address (dst <: obj_addr)) with
+           | Some final_hdr ->
+           U64.v (getWosize final_hdr) == wosize /\
+           getColor final_hdr == GC.Lib.Header.White /\
+           U64.v (getTag final_hdr) == minor_tag minor obj
+           | None -> False)))
 
 /// Single-chunk compatibility with dense `promote_object`, for callers that can
 /// show the dense allocator returned an active major address when it succeeded.

@@ -626,6 +626,76 @@ let chunked_set_promoted_tag_preserves_major_objects
   MH.write_word_at_index_preserves_wf mh hd new_hdr idx
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_promoted_tag_header_effect
+  (mh: MH.major_heap) (obj: U64.t) (tag: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        tag < 256 /\
+        MH.well_formed_major_heap mh /\
+        U64.v obj >= U64.v mword /\
+        U64.v obj < heap_size /\
+        U64.v obj % U64.v mword == 0 /\
+        Seq.mem (obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (obj <: obj_addr)) == Some hdr)
+      (ensures
+        (let new_hdr =
+           makeHeader (getWosize hdr) GC.Lib.Header.White
+             (U64.uint_to_t tag) in
+         let mh' = chunked_set_promoted_tag mh obj tag in
+         MH.well_formed_major_heap mh' /\
+         MH.major_objects mh' == MH.major_objects mh /\
+         MH.read_word_in_major mh' (hd_address (obj <: obj_addr)) ==
+           Some new_hdr /\
+         getWosize new_hdr == getWosize hdr /\
+         getColor new_hdr == GC.Lib.Header.White /\
+         getTag new_hdr == U64.uint_to_t tag))
+  =
+  let dst : obj_addr = obj in
+  let hd = hd_address dst in
+  MH.read_word_in_major_lookup_index mh hd hdr;
+  let idx = MH.lookup_chunk_index_value mh hd in
+  let c = Seq.index mh idx in
+  assert (MH.lookup_chunk_index mh hd == Some idx);
+  assert (idx < Seq.length mh);
+  assert (MH.word_in_chunk c hd);
+  assert (MH.read_word_in_chunk c hd == hdr);
+  MH.lookup_chunk_index_some mh hd idx;
+  MH.major_objects_member_in_lookup_chunk mh idx dst;
+  assert (Seq.mem dst (MH.objects_in_chunk c));
+  MH.objects_in_chunk_member_header_fits c dst;
+  assert (MH.object_wosize_in_chunk c dst == U64.v (getWosize hdr));
+  let new_hdr =
+    makeHeader (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag) in
+  makeHeader_getWosize
+    (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag);
+  makeHeader_getColor
+    (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag);
+  makeHeader_getTag
+    (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag);
+  assert (U64.v (getWosize new_hdr) == MH.object_wosize_in_chunk c dst);
+  MH.major_objects_write_member_header_same_wosize_preserves
+    mh idx dst new_hdr;
+  MH.write_word_in_major_at_lookup_index mh hd new_hdr idx;
+  let c' = MH.write_word_in_chunk c hd new_hdr in
+  assert (MH.write_word_in_major mh hd new_hdr ==
+          Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') hd new_hdr;
+  assert (chunked_set_promoted_tag mh obj tag == Seq.upd mh idx c');
+  MH.write_word_at_index_preserves_wf mh hd new_hdr idx;
+  MH.write_word_in_chunk_preserves_word c hd new_hdr hd;
+  MH.read_write_in_chunk_same c hd new_hdr;
+  assert (Seq.index (Seq.upd mh idx c') idx == c');
+  assert (MH.word_in_chunk (Seq.index (Seq.upd mh idx c') idx) hd);
+  assert (forall k. k < idx ==>
+            Seq.index (Seq.upd mh idx c') k == Seq.index mh k);
+  assert (forall k. k < idx ==>
+            ~(MH.chunk_contains_addr (Seq.index (Seq.upd mh idx c') k) hd));
+  MH.read_word_in_major_at_index (Seq.upd mh idx c') hd idx;
+  assert (MH.read_word_in_chunk c' hd == new_hdr)
+#pop-options
+
 let chunked_zero_promote_padding
   (mh: MH.major_heap) (dst: U64.t) (copied_wz: nat)
   : GTot MH.major_heap =
@@ -806,6 +876,87 @@ let chunked_promote_object_success_field_effect
          Some (minor_read_field minor obj j));
   let res =
     chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+  assert (res.major_out == final_major);
+  assert (res.new_addr == dst_u)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_promote_object_success_header_effect
+  (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
+  (idx: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+         let dst = alloc_res.major_obj_out in
+         alloc_res.major_obj_out <> 0UL /\
+         U64.v dst >= U64.v mword /\
+         U64.v dst < heap_size /\
+         U64.v dst % U64.v mword == 0 /\
+         MH.well_formed_major_heap alloc_res.major_alloc_out /\
+         idx < Seq.length alloc_res.major_alloc_out /\
+         MH.lookup_chunk_index alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some idx /\
+         Seq.mem (dst <: obj_addr)
+          (MH.major_objects alloc_res.major_alloc_out) /\
+         MH.read_word_in_major alloc_res.major_alloc_out
+          (hd_address (dst <: obj_addr)) == Some hdr /\
+         U64.v (getWosize hdr) == wosize /\
+         minor_tag minor obj < 256))
+      (ensures
+        (let alloc_res =
+          SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+          let dst = alloc_res.major_obj_out in
+          let res =
+           chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+          res.new_addr == dst /\
+          MH.well_formed_major_heap res.major_out /\
+          Seq.mem (dst <: obj_addr) (MH.major_objects res.major_out) /\
+          (match MH.read_word_in_major res.major_out
+             (hd_address (dst <: obj_addr)) with
+           | Some final_hdr ->
+             U64.v (getWosize final_hdr) == wosize /\
+             getColor final_hdr == GC.Lib.Header.White /\
+             U64.v (getTag final_hdr) == minor_tag minor obj
+           | None -> False)))
+  =
+  let alloc_res =
+    SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+  let dst_u = alloc_res.major_obj_out in
+  let dst : obj_addr = dst_u in
+  let hd = hd_address dst in
+  chunked_promote_object_success minor mh obj fp wosize fuel;
+  chunked_copy_fields_preserves_major_objects
+    minor alloc_res.major_alloc_out obj dst_u 0 wosize idx hdr;
+  let copied =
+    chunked_copy_fields
+      minor alloc_res.major_alloc_out obj dst_u 0 wosize in
+  assert (MH.well_formed_major_heap copied);
+  assert (MH.major_objects copied ==
+          MH.major_objects alloc_res.major_alloc_out);
+  assert (Seq.mem dst (MH.major_objects copied));
+  assert (MH.read_word_in_major copied hd == Some hdr);
+  assert (U64.v (getWosize hdr) <= wosize);
+  chunked_zero_promote_padding_noop copied dst_u wosize hdr;
+  let padded = chunked_zero_promote_padding copied dst_u wosize in
+  assert (padded == copied);
+  let tag = minor_tag minor obj in
+  minor_tag_bound minor obj;
+  chunked_set_promoted_tag_header_effect copied dst_u tag hdr;
+  let final_major = chunked_set_promoted_tag padded dst_u tag in
+  let new_hdr =
+    makeHeader (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag) in
+  assert (MH.well_formed_major_heap final_major);
+  assert (Seq.mem dst (MH.major_objects final_major));
+  assert (MH.read_word_in_major final_major hd == Some new_hdr);
+  makeHeader_getWosize
+    (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag);
+  makeHeader_getColor
+    (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag);
+  makeHeader_getTag
+    (getWosize hdr) GC.Lib.Header.White (U64.uint_to_t tag);
+  let res = chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
   assert (res.major_out == final_major);
   assert (res.new_addr == dst_u)
 #pop-options

@@ -12,6 +12,8 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
@@ -162,6 +164,35 @@ val chunked_cheney_forward_normal_head_split_field_effect
          MH.read_word_in_major cs'.ccs_major field_addr ==
           Some (minor_read_field minor addr j)))
 
+val chunked_cheney_forward_normal_head_split_header_effect
+  : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
+    fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2)
+      (ensures
+        (let cs' =
+           chunked_cheney_forward_normal minor cs addr fuel in
+         cs'.ccs_fwd addr == cs.ccs_fp /\
+         MH.well_formed_major_heap cs'.ccs_major /\
+         Seq.mem (cs.ccs_fp <: obj_addr) (MH.major_objects cs'.ccs_major) /\
+         (match MH.read_word_in_major cs'.ccs_major
+            (hd_address (cs.ccs_fp <: obj_addr)) with
+          | Some final_hdr ->
+            U64.v (getWosize final_hdr) == minor_wosize minor addr /\
+            getColor final_hdr == GC.Lib.Header.White /\
+            U64.v (getTag final_hdr) == minor_tag minor addr
+          | None -> False)))
+
 val chunked_cheney_forward_normal_other_fwd
   : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
     y:U64.t -> fuel:nat ->
@@ -211,6 +242,35 @@ val chunked_cheney_forward_one_normal_head_split_field_effect
          cs'.ccs_fwd addr == cs.ccs_fp /\
          MH.read_word_in_major cs'.ccs_major field_addr ==
            Some (minor_read_field minor addr j)))
+
+val chunked_cheney_forward_one_normal_head_split_header_effect
+  : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
+    fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        ~(is_infix_in_minor minor addr) /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2)
+      (ensures
+        (let cs' = chunked_cheney_forward_one minor cs addr fuel in
+         cs'.ccs_fwd addr == cs.ccs_fp /\
+         MH.well_formed_major_heap cs'.ccs_major /\
+         Seq.mem (cs.ccs_fp <: obj_addr) (MH.major_objects cs'.ccs_major) /\
+         (match MH.read_word_in_major cs'.ccs_major
+           (hd_address (cs.ccs_fp <: obj_addr)) with
+          | Some final_hdr ->
+           U64.v (getWosize final_hdr) == minor_wosize minor addr /\
+           getColor final_hdr == GC.Lib.Header.White /\
+           U64.v (getTag final_hdr) == minor_tag minor addr
+          | None -> False)))
 
 val chunked_cheney_forward_one_infix
   : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
