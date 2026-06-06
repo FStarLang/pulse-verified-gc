@@ -162,6 +162,37 @@ let major_write_word_or_same_read_frame
   | Some mh' ->
     SpecMajorAlloc.major_write_word_or_same_some mh mh' write_addr value
 
+let major_write_word_or_same_read_same
+  (mh: MH.major_heap) (write_addr: hp_addr) (value: U64.t)
+  (idx: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh write_addr == Some idx /\
+        MH.word_in_chunk (Seq.index mh idx) write_addr)
+      (ensures
+        MH.read_word_in_major
+          (SpecMajorAlloc.major_write_word_or_same mh write_addr value)
+          write_addr == Some value)
+  =
+  let c = Seq.index mh idx in
+  MH.write_word_in_major_at_lookup_index mh write_addr value idx;
+  MH.write_word_at_index_preserves_wf mh write_addr value idx;
+  let c' = MH.write_word_in_chunk c write_addr value in
+  assert (MH.write_word_in_major mh write_addr value ==
+          Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') write_addr value;
+  MH.read_write_in_chunk_same c write_addr value;
+  assert (MH.read_word_in_chunk c' write_addr == value);
+  MH.write_word_in_chunk_preserves_word c write_addr value write_addr;
+  assert (MH.word_in_chunk c' write_addr);
+  MH.lookup_chunk_index_word_in_chunk (Seq.upd mh idx c') write_addr idx;
+  assert (MH.lookup_chunk_index (Seq.upd mh idx c') write_addr == Some idx);
+  MH.read_word_in_major_at_lookup_index (Seq.upd mh idx c') write_addr idx;
+  assert (MH.read_word_in_major (Seq.upd mh idx c') write_addr == Some value)
+
 let rec chunked_copy_fields_frame_before
   (minor: minor_state) (mh: MH.major_heap)
   (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
@@ -243,6 +274,156 @@ let rec chunked_copy_fields_frame_after
       chunked_copy_fields_frame_after
         minor mh' src_obj dst_obj (i + 1) n target old
     end
+  end
+
+let rec chunked_copy_fields_field_effect
+  (minor: minor_state) (mh: MH.major_heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat) (j: nat)
+  (idx: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        U64.v dst_obj >= U64.v mword /\
+        U64.v dst_obj < heap_size /\
+        U64.v dst_obj % U64.v mword == 0 /\
+        i <= j /\ j < n /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address (dst_obj <: obj_addr)) == Some idx /\
+        Seq.mem (dst_obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (dst_obj <: obj_addr)) ==
+          Some hdr /\
+        n <= U64.v (getWosize hdr))
+      (ensures
+        (let result = chunked_copy_fields minor mh src_obj dst_obj i n in
+         let addr_nat = U64.v dst_obj + j * U64.v mword in
+         addr_nat + U64.v mword <= heap_size /\
+         addr_nat % U64.v mword == 0 /\
+         MH.read_word_in_major result (U64.uint_to_t addr_nat) ==
+           Some (minor_read_field minor src_obj j)))
+      (decreases n - i)
+  =
+  let dst : obj_addr = dst_obj in
+  let hd = hd_address dst in
+  assert (i < n);
+  let c = Seq.index mh idx in
+  MH.lookup_chunk_index_some mh hd idx;
+  assert (MH.chunk_contains_addr c hd);
+  MH.read_word_in_major_at_lookup_index mh hd idx;
+  assert (MH.word_in_chunk c hd);
+  assert (MH.read_word_in_chunk c hd == hdr);
+  MH.major_objects_member_in_lookup_chunk mh idx dst;
+  assert (Seq.mem dst (MH.objects_in_chunk c));
+  MH.objects_in_chunk_member_header_fits c dst;
+  assert (MH.object_header_size_fits_in_chunk c dst);
+  assert (MH.object_wosize_in_chunk c dst == U64.v (getWosize hdr));
+  let dst_offset = U64.v dst_obj + i * U64.v mword in
+  assert (U64.v mword == 8);
+  SpecMajorAlloc.aligned_plus_word_product (U64.v dst_obj) i;
+  assert (dst_offset % U64.v mword == 0);
+  assert (i + 1 <= n);
+  FStar.Math.Lemmas.lemma_mult_le_right
+    (U64.v mword) (i + 1) n;
+  FStar.Math.Lemmas.distributivity_add_left i 1 (U64.v mword);
+  assert (i * U64.v mword + U64.v mword ==
+          (i + 1) * U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v dst_obj) (i * U64.v mword) (U64.v mword);
+  assert (dst_offset + U64.v mword ==
+          U64.v dst_obj + (i + 1) * U64.v mword);
+  assert (dst_offset + U64.v mword <= U64.v dst_obj + n * U64.v mword);
+  assert (dst_offset + U64.v mword <=
+          U64.v dst_obj + U64.v (getWosize hdr) * U64.v mword);
+  hd_address_spec dst;
+  assert (U64.v hd + U64.v mword == U64.v dst_obj);
+  FStar.Math.Lemmas.distributivity_add_left
+    1 (U64.v (getWosize hdr)) (U64.v mword);
+  assert ((1 + U64.v (getWosize hdr)) * U64.v mword ==
+          U64.v mword + U64.v (getWosize hdr) * U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v hd) (U64.v mword)
+    (U64.v (getWosize hdr) * U64.v mword);
+  assert (U64.v dst_obj + U64.v (getWosize hdr) * U64.v mword ==
+          U64.v hd + (1 + U64.v (getWosize hdr)) * U64.v mword);
+  assert (dst_offset + U64.v mword <= MH.chunk_end c);
+  assert (dst_offset < heap_size);
+  let write_addr : hp_addr = U64.uint_to_t dst_offset in
+  assert (U64.v write_addr == dst_offset);
+  assert (MH.word_in_chunk c write_addr);
+  MH.lookup_chunk_index_word_in_chunk mh write_addr idx;
+  assert (MH.lookup_chunk_index mh write_addr == Some idx);
+  let value = minor_read_field minor src_obj i in
+  MH.major_objects_write_member_payload_preserves
+    mh idx dst write_addr value;
+  MH.write_word_in_major_at_lookup_index mh write_addr value idx;
+  let c' = MH.write_word_in_chunk c write_addr value in
+  assert (MH.write_word_in_major mh write_addr value ==
+          Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') write_addr value;
+  let mh' = SpecMajorAlloc.major_write_word_or_same mh write_addr value in
+  assert (mh' == Seq.upd mh idx c');
+  assert (MH.major_objects mh' == MH.major_objects mh);
+  MH.write_word_at_index_preserves_wf mh write_addr value idx;
+  assert (MH.well_formed_major_heap mh');
+  major_write_word_or_same_read_frame mh write_addr hd value hdr;
+  assert (MH.read_word_in_major mh' hd == Some hdr);
+  MH.write_word_in_chunk_preserves_word c write_addr value hd;
+  assert (MH.word_in_chunk c' hd);
+  MH.lookup_chunk_index_word_in_chunk mh' hd idx;
+  assert (idx < Seq.length mh');
+  assert (Seq.mem dst (MH.major_objects mh'));
+  let target_nat = U64.v dst_obj + j * U64.v mword in
+  SpecMajorAlloc.aligned_plus_word_product (U64.v dst_obj) j;
+  assert (target_nat % U64.v mword == 0);
+  FStar.Math.Lemmas.lemma_mult_le_right
+    (U64.v mword) (j + 1) n;
+  FStar.Math.Lemmas.distributivity_add_left j 1 (U64.v mword);
+  assert (j * U64.v mword + U64.v mword ==
+          (j + 1) * U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v dst_obj) (j * U64.v mword) (U64.v mword);
+  assert (target_nat + U64.v mword ==
+          U64.v dst_obj + (j + 1) * U64.v mword);
+  assert (target_nat + U64.v mword <= U64.v dst_obj + n * U64.v mword);
+  FStar.Math.Lemmas.lemma_mult_le_right
+    (U64.v mword) n (U64.v (getWosize hdr));
+  assert (n * U64.v mword <= U64.v (getWosize hdr) * U64.v mword);
+  assert (target_nat + U64.v mword <=
+          U64.v dst_obj + U64.v (getWosize hdr) * U64.v mword);
+  assert (target_nat + U64.v mword <= MH.chunk_end c);
+  assert (target_nat < heap_size);
+  let target_addr : hp_addr = U64.uint_to_t target_nat in
+  assert (U64.v target_addr == target_nat);
+  MH.major_object_payload_word_in_lookup_chunk mh idx dst target_addr;
+  assert (MH.word_in_chunk c target_addr);
+  assert (MH.lookup_chunk_index mh target_addr == Some idx);
+  MH.read_word_in_major_at_lookup_index mh target_addr idx;
+  let old = MH.read_word_in_chunk c target_addr in
+  assert (MH.read_word_in_major mh target_addr == Some old);
+  chunked_copy_fields_step minor mh src_obj dst_obj i n;
+  assert (chunked_copy_fields minor mh src_obj dst_obj i n ==
+          chunked_copy_fields minor mh' src_obj dst_obj (i + 1) n);
+  if j = i then begin
+    assert (target_nat == dst_offset);
+    assert (target_addr == write_addr);
+    major_write_word_or_same_read_same mh write_addr value idx;
+    assert (MH.read_word_in_major mh' target_addr == Some value);
+    assert (U64.v target_addr + U64.v mword <=
+            U64.v dst_obj + (i + 1) * U64.v mword);
+    chunked_copy_fields_frame_before
+      minor mh' src_obj dst_obj (i + 1) n target_addr value;
+    assert (value == minor_read_field minor src_obj j)
+  end else begin
+    assert (i < j);
+    FStar.Math.Lemmas.lemma_mult_le_right
+      (U64.v mword) (i + 1) j;
+    assert (dst_offset + U64.v mword <= target_nat);
+    major_write_word_or_same_read_frame
+      mh write_addr target_addr value old;
+    assert (MH.read_word_in_major mh' target_addr == Some old);
+    assert (i + 1 <= j);
+    chunked_copy_fields_field_effect
+      minor mh' src_obj dst_obj (i + 1) n j idx hdr
   end
 #pop-options
 

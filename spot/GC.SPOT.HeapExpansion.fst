@@ -762,6 +762,35 @@ let spot_chunked_copy_fields_preserves_major_objects
   ChunkedPromote.chunked_copy_fields_preserves_major_objects
     minor mh src_obj dst_obj i n idx hdr
 
+let spot_chunked_copy_fields_field_effect
+  (minor: minor_state) (mh: MH.major_heap)
+  (src_obj dst_obj: U64.t) (i n j idx: nat) (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        U64.v dst_obj >= U64.v mword /\
+        U64.v dst_obj < heap_size /\
+        U64.v dst_obj % U64.v mword == 0 /\
+        i <= j /\ j < n /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address (dst_obj <: obj_addr)) == Some idx /\
+        Seq.mem (dst_obj <: obj_addr) (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address (dst_obj <: obj_addr)) ==
+          Some hdr /\
+        n <= U64.v (Obj.getWosize hdr))
+      (ensures
+        (let result =
+           ChunkedPromote.chunked_copy_fields
+             minor mh src_obj dst_obj i n in
+         let addr_nat = U64.v dst_obj + j * U64.v mword in
+         addr_nat + U64.v mword <= heap_size /\
+         addr_nat % U64.v mword == 0 /\
+         MH.read_word_in_major result (U64.uint_to_t addr_nat) ==
+           Some (minor_read_field minor src_obj j)))
+  =
+  ChunkedPromote.chunked_copy_fields_field_effect
+    minor mh src_obj dst_obj i n j idx hdr
+
 let spot_major_write_word_or_same_read_frame
   (mh: MH.major_heap) (write_addr target: hp_addr)
   (value old: U64.t)
