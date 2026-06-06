@@ -3915,6 +3915,34 @@ let spot_chunked_cheney_gc_correct_after_preflight
   CheneyCorrectness.chunked_cheney_gc_correct_after_preflight
     minor major fp roots alloc_fuel fresh
 
+let spot_chunked_update_forwarded_minor_field_edge
+  (minor: minor_state) (mh: MH.major_heap) (fwd: forwarding_map)
+  (src expected: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        CheneyPreservation.chunked_fwd_targets_above_minor fwd /\
+        Seq.mem src (MH.major_objects mh) /\
+        Seq.mem expected (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        Obj.getColor hdr <> GC.Lib.Header.Blue /\
+        U64.v (Obj.getTag hdr) < U64.v Obj.no_scan_tag /\
+        j < U64.v (Obj.getWosize hdr) /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        CG.chunked_major_field_slot src j == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some old /\
+        (let x = to_minor_offset old in
+         is_minor_pointer x /\ fwd x <> 0UL /\ fwd x == expected))
+      (ensures
+        CG.mem_ce (CG.MajorV src, CG.MajorV expected)
+          (CG.build_chunked_combined_graph
+            (minor_reset minor)
+            (ChunkedUpdate.chunked_update_major_pointers mh fwd)))
+  =
+  CheneyCorrectness.chunked_update_forwarded_minor_field_edge
+    minor mh fwd src expected hdr j field_addr old
+
 let spot_chunked_cheney_gc_correct_after_preflight_old_major_field_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)

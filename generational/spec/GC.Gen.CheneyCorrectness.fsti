@@ -410,6 +410,36 @@ val chunked_cheney_gc_correct_after_preflight
       (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
        collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0)))
 
+/// Local update-to-edge bridge for promoted-minor fields.  If a scanned active
+/// major object has a payload field containing a minor pointer and the forwarding
+/// map rewrites it to an active major object, then after chunked major-pointer
+/// update and minor reset the rewritten MajorV->MajorV edge is present.
+val chunked_update_forwarded_minor_field_edge
+  (minor: minor_state) (mh: MH.major_heap) (fwd: forwarding_map)
+  (src expected: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap mh /\
+      CheneyPres.chunked_fwd_targets_above_minor fwd /\
+      Seq.mem src (MH.major_objects mh) /\
+      Seq.mem expected (MH.major_objects mh) /\
+      MH.read_word_in_major mh (GC.Spec.Heap.hd_address src) == Some hdr /\
+      GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+      U64.v (GC.Spec.Object.getTag hdr) <
+       U64.v GC.Spec.Object.no_scan_tag /\
+      j < U64.v (GC.Spec.Object.getWosize hdr) /\
+      U64.v field_addr == U64.v src + j * U64.v mword /\
+      CG.chunked_major_field_slot src j == Some field_addr /\
+      MH.read_word_in_major mh field_addr == Some old /\
+      (let x = to_minor_offset old in
+      is_minor_pointer x /\ fwd x <> 0UL /\ fwd x == expected))
+    (ensures
+      CG.mem_ce (CG.MajorV src, CG.MajorV expected)
+       (CG.build_chunked_combined_graph
+         (minor_reset minor)
+         (ChunkedUpdate.chunked_update_major_pointers mh fwd)))
+
 /// Edge-level consequence of the chunked correctness bundle for old scanned
 /// major fields.  The theorem is intentionally phrased with an explicit
 /// `expected` post-major object: target-membership can come either from an old
