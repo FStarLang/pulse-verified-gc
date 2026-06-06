@@ -2235,6 +2235,13 @@ let chunked_promote_object_head_split_preserves_chunked_alloc_shape
           (forall (src:obj_addr).
             Seq.mem src (MH.major_objects mh) ==>
             Seq.mem src (MH.major_objects res.major_out)) /\
+          (forall (src:obj_addr). forall (hdr:U64.t).
+            Seq.mem src (MH.major_objects mh) /\
+            src <> fp /\
+            MH.read_word_in_major mh (hd_address src) == Some hdr /\
+            U64.v (getWosize hdr) >= 1 ==>
+            MH.read_word_in_major res.major_out (hd_address src) ==
+              Some hdr) /\
           Seq.mem (fp <: obj_addr)
             (MH.major_objects alloc_res.major_alloc_out) /\
           Seq.mem (fp <: obj_addr) (MH.major_objects res.major_out) /\
@@ -2456,6 +2463,54 @@ let chunked_promote_object_head_split_preserves_chunked_alloc_shape
       in
       FStar.Classical.forall_intro
         (FStar.Classical.move_requires header_frame);
+      let old_header_frame (src: obj_addr) (hdr: U64.t)
+        : Lemma
+            (requires Seq.mem src (MH.major_objects mh) /\
+                      src <> dst /\
+                      MH.read_word_in_major mh (hd_address src) ==
+                        Some hdr /\
+                      U64.v (getWosize hdr) >= 1)
+            (ensures MH.read_word_in_major res.major_out (hd_address src) ==
+                     Some hdr)
+        =
+        let src_hd = hd_address src in
+        MH.major_objects_member_field0_read_some mh src hdr;
+        match MH.read_word_in_major mh src with
+        | None -> assert False
+        | Some old_next ->
+          MH.read_word_in_major_lookup_index mh src_hd hdr;
+          let src_idx = MH.lookup_chunk_index_value mh src_hd in
+          assert (MH.lookup_chunk_index mh src_hd == Some src_idx);
+          assert (src_idx < Seq.length mh);
+          assert (MH.word_in_chunk (Seq.index mh src_idx) src_hd);
+          MH.major_objects_member_in_lookup_chunk mh src_idx src;
+          MH.objects_in_chunk_member_header_fits (Seq.index mh src_idx) src;
+          assert (U64.v src_hd +
+                    (1 + U64.v (getWosize hdr)) * U64.v mword <=
+                  MH.chunk_end (Seq.index mh src_idx));
+          SpecMajorAllocSplitShape.head_split_preserves_non_head_node_facts
+            mh idx dst src hdr old_next wosize block_wz next_fp
+            rem_wz_u rem_hd rem_obj;
+          assert (Seq.mem src (MH.major_objects alloc_res.major_alloc_out));
+          assert (MH.read_word_in_major
+                    alloc_res.major_alloc_out src_hd == Some hdr);
+          assert (MH.read_word_in_major final_major src_hd ==
+                  MH.read_word_in_major alloc_res.major_alloc_out src_hd)
+      in
+      let old_header_frame_for_src (src: obj_addr)
+        : Lemma
+            (ensures forall (hdr: U64.t).
+              Seq.mem src (MH.major_objects mh) /\
+              src <> dst /\
+              MH.read_word_in_major mh (hd_address src) == Some hdr /\
+              U64.v (getWosize hdr) >= 1 ==>
+              MH.read_word_in_major res.major_out (hd_address src) ==
+                Some hdr)
+        =
+        FStar.Classical.forall_intro
+          (FStar.Classical.move_requires (old_header_frame src))
+      in
+      FStar.Classical.forall_intro old_header_frame_for_src;
       let link_frame (src: obj_addr)
         : Lemma
             (requires Seq.mem src (MH.major_objects alloc_res.major_alloc_out) /\
@@ -2594,6 +2649,46 @@ let chunked_promote_object_head_split_preserves_chain_objects_blue
     alloc_res.major_alloc_out res.major_out fp alloc_res.major_fp_out fuel;
   assert (GenInv.chunked_chain_objects_blue
             res.major_out alloc_res.major_fp_out fuel)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_promote_object_head_split_preserves_old_non_blue_header
+  (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
+  (src: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape mh fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates mh fp fuel = true /\
+        GenInv.chunked_chain_objects_blue mh fp fuel /\
+        SpecMajorAlloc.major_fl_head_wosize mh fp >= wosize + 2 /\
+        Seq.mem src (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        getColor hdr <> Blue /\
+        U64.v (getWosize hdr) >= 1)
+      (ensures
+        (let res =
+           ChunkedPromote.chunked_promote_object_with_fuel
+             minor mh obj fp wosize fuel in
+         MH.read_word_in_major res.major_out (hd_address src) == Some hdr))
+  =
+  chunked_promote_object_head_split_preserves_chunked_alloc_shape
+    minor mh obj fp wosize fuel;
+  if src = (fp <: obj_addr) then begin
+    GenInv.chunked_major_alloc_shape_elim mh fp fuel;
+    SpecMajorAlloc.major_fl_above_zero_current mh fp fuel;
+    assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+    assert (U64.v fp >= U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    chunked_chain_objects_blue_head_is_blue_for_transfer mh fp fuel;
+    GenInv.chunked_is_blue_header mh src hdr;
+    assert (getColor hdr = Blue);
+    assert False
+  end else
+    assert (src <> fp)
 #pop-options
 
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
