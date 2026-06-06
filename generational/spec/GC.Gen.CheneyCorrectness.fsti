@@ -318,6 +318,7 @@ val chunked_cheney_gc_correct_after_preflight
       U64.v collect.cmc_minor.bump == 0 /\
       collect.cmc_roots == rewrite_roots roots prom.fwd_map /\
       collect.cmc_fwd == prom.fwd_map /\
+      CheneyPres.chunked_fwd_targets_above_minor collect.cmc_fwd /\
       GenInv.chunked_major_alloc_shape
        collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
       SpecMajorAlloc.major_fl_chain_terminates
@@ -357,9 +358,7 @@ val chunked_cheney_gc_correct_after_preflight
          U64.v GC.Spec.Object.no_scan_tag /\
        j < U64.v (GC.Spec.Object.getWosize hdr) /\
        U64.v field_addr == U64.v src + j * U64.v mword /\
-       MH.read_word_in_major major field_addr == Some old /\
-       ChunkedUpdate.chunked_update_value_stable collect.cmc_fwd
-         (ChunkedUpdate.chunked_update_expected_value collect.cmc_fwd old) ==>
+       MH.read_word_in_major major field_addr == Some old ==>
        MH.read_word_in_major collect.cmc_major field_addr ==
          Some (ChunkedUpdate.chunked_update_expected_value
            collect.cmc_fwd old)) /\

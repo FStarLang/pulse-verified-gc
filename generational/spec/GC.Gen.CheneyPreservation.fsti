@@ -682,6 +682,32 @@ val chunked_cheney_forward_one_budget_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> remaining:nat -> GTot prop
 
+/// Every nonzero forwarding target is already outside the minor-address range
+/// and word-aligned, so applying the major-pointer updater to a forwarded value
+/// cannot rewrite it again.
+[@"opaque_to_smt"]
+val chunked_fwd_targets_above_minor
+  : fwd:forwarding_map -> GTot prop
+
+val chunked_fwd_targets_above_minor_empty
+  : unit -> Lemma (ensures chunked_fwd_targets_above_minor empty_forwarding)
+
+val chunked_fwd_targets_above_minor_elim
+  : fwd:forwarding_map -> x:U64.t ->
+    Lemma
+      (requires chunked_fwd_targets_above_minor fwd /\
+                fwd x <> 0UL)
+      (ensures U64.v (fwd x) >= minor_heap_size /\
+               U64.v (fwd x) % U64.v mword == 0)
+
+val chunked_fwd_targets_above_minor_expected_stable
+  : fwd:forwarding_map -> old:U64.t ->
+    Lemma
+      (requires chunked_fwd_targets_above_minor fwd)
+      (ensures
+        ChunkedUpdate.chunked_update_value_stable fwd
+          (ChunkedUpdate.chunked_update_expected_value fwd old))
+
 val chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> fuel:nat -> remaining:nat ->
@@ -701,6 +727,23 @@ val chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
           cs'.ccs_major cs'.ccs_fp fuel = true /\
          SpecMajorAlloc.major_fl_head_wosize
           cs'.ccs_major cs'.ccs_fp >= remaining))
+
+val chunked_cheney_forward_one_preserves_fwd_targets_above_minor
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        chunked_fwd_targets_above_minor cs.ccs_fwd /\
+        chunked_cheney_forward_one_budget_ready
+          minor cs addr remaining)
+      (ensures
+        chunked_fwd_targets_above_minor
+          (ChunkedCheney.chunked_cheney_forward_one
+            minor cs addr fuel).ccs_fwd)
 
 val chunked_cheney_forward_one_split_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
@@ -1081,6 +1124,23 @@ val chunked_cheney_promote_head_split_preserves_remaining_head_wosize
           res.major_final res.fp_final alloc_fuel = true /\
          SpecMajorAlloc.major_fl_head_wosize
           res.major_final res.fp_final >= remaining))
+
+val chunked_cheney_promote_preserves_fwd_targets_above_minor
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         chunked_fwd_targets_above_minor res.fwd_map))
 
 val chunked_cheney_forward_one_fwd_monotone
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
@@ -1509,6 +1569,7 @@ val chunked_cheney_promote_after_minor_promotion_head_preflight
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
          GenInv.chunked_chain_objects_blue
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         chunked_fwd_targets_above_minor res.fwd_map /\
          (forall (x:U64.t).
           Seq.mem x (minor_reachable minor roots) /\
           minor_wosize minor x > 0 ==>
@@ -1600,6 +1661,7 @@ val chunked_cheney_collect_after_minor_promotion_head_preflight
          U64.v collect.cmc_minor.bump == 0 /\
          collect.cmc_roots == rewrite_roots roots prom.fwd_map /\
          collect.cmc_fwd == prom.fwd_map /\
+         chunked_fwd_targets_above_minor collect.cmc_fwd /\
          GenInv.chunked_major_alloc_shape
          collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates
@@ -1638,9 +1700,7 @@ val chunked_cheney_collect_after_minor_promotion_head_preflight
            U64.v (getTag hdr) < U64.v no_scan_tag /\
            j < U64.v (getWosize hdr) /\
            U64.v field_addr == U64.v src + j * U64.v mword /\
-           MH.read_word_in_major major field_addr == Some old /\
-           ChunkedUpdate.chunked_update_value_stable collect.cmc_fwd
-             (ChunkedUpdate.chunked_update_expected_value collect.cmc_fwd old) ==>
+           MH.read_word_in_major major field_addr == Some old ==>
            MH.read_word_in_major collect.cmc_major field_addr ==
              Some (ChunkedUpdate.chunked_update_expected_value
                collect.cmc_fwd old)) /\

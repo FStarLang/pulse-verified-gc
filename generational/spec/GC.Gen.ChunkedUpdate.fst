@@ -1696,7 +1696,7 @@ let chunked_update_major_pointers_preserves_no_scan_field
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
-private let chunked_update_expected_value_effect
+let chunked_update_expected_value_effect
   (fwd: forwarding_map) (old: U64.t)
   : Lemma
       (ensures
@@ -1712,6 +1712,16 @@ private let chunked_update_expected_value_effect
     let new_val = fwd old_val in
     if new_val <> 0UL then ()
   end
+
+let chunked_update_value_stable_intro
+  (fwd: forwarding_map) (v: U64.t)
+  : Lemma
+      (requires
+        ~(is_minor_pointer (to_minor_offset v) /\
+          fwd (to_minor_offset v) <> 0UL))
+      (ensures chunked_update_value_stable fwd v)
+  =
+  ()
 
 let rec chunked_update_all_objects_aux_field_effect_stable
   (mh: MH.major_heap) (objs: seq obj_addr) (fwd: forwarding_map)

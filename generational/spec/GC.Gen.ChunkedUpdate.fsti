@@ -375,6 +375,25 @@ val chunked_update_major_pointers_preserves_no_scan_field
         MH.read_word_in_major
           (chunked_update_major_pointers mh fwd) field_addr == Some old)
 
+val chunked_update_expected_value_effect
+  : fwd:forwarding_map -> old:U64.t ->
+    Lemma
+      (ensures
+        (let expected = chunked_update_expected_value fwd old in
+        let old_val = to_minor_offset old in
+        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==>
+          expected == fwd old_val) /\
+        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
+          expected == old)))
+
+val chunked_update_value_stable_intro
+  : fwd:forwarding_map -> v:U64.t ->
+    Lemma
+      (requires
+        ~(is_minor_pointer (to_minor_offset v) /\
+          fwd (to_minor_offset v) <> 0UL))
+      (ensures chunked_update_value_stable fwd v)
+
 /// Top-level update has the exact value-level effect on a scanned payload slot,
 /// provided the expected value is stable under further update passes.  The
 /// stability precondition makes the theorem robust even if the explicit object
