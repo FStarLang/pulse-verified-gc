@@ -874,6 +874,7 @@ let major_alloc_head_split_preserves_alloc_shape
          r.major_obj_out == fp /\
          r.major_fp_out <> 0UL /\
          MH.well_formed_major_heap r.major_alloc_out /\
+         Seq.mem (fp <: obj_addr) (MH.major_objects r.major_alloc_out) /\
          MA.major_alloc_result_fp_in_objects r /\
          MA.major_fl_valid r.major_alloc_out r.major_fp_out fuel /\
          MA.major_fl_above_zero r.major_alloc_out r.major_fp_out fuel /\
@@ -970,6 +971,9 @@ let major_alloc_head_split_preserves_alloc_shape
       assert (r.major_fp_out <> 0UL);
       assert (r.major_alloc_out ==
               head_split_heap mh obj req next_fp rem_wz_u rem_hd rem_obj);
+      head_split_preserves_allocated_head_node_facts
+        mh idx obj hdr next_fp req block_wz next_fp rem_wz_u rem_hd rem_obj;
+      assert (Seq.mem obj (MH.major_objects r.major_alloc_out));
       MA.major_alloc_head_split_preserves_head_wosize mh fp requested_wz fuel 1;
       MA.major_alloc_head_split_link_not_self mh fp requested_wz fuel;
       assert (MH.well_formed_major_heap r.major_alloc_out);

@@ -436,6 +436,16 @@ val chunked_promote_object_head_split_preserves_chunked_alloc_shape
             U64.v (getWosize hdr) >= 1 ==>
             MH.read_word_in_major res.major_out (hd_address src) ==
               Some hdr) /\
+          (forall (src:obj_addr). forall (hdr:U64.t).
+           forall (j:nat). forall (field_addr:hp_addr).
+           forall (old:U64.t).
+            Seq.mem src (MH.major_objects mh) /\
+            src <> fp /\
+            MH.read_word_in_major mh (hd_address src) == Some hdr /\
+            j < U64.v (getWosize hdr) /\
+            U64.v field_addr == U64.v src + j * U64.v mword /\
+            MH.read_word_in_major mh field_addr == Some old ==>
+            MH.read_word_in_major res.major_out field_addr == Some old) /\
           Seq.mem (fp <: obj_addr)
             (MH.major_objects alloc_res.major_alloc_out) /\
           Seq.mem (fp <: obj_addr) (MH.major_objects res.major_out) /\
@@ -499,6 +509,31 @@ val chunked_promote_object_head_split_preserves_old_non_blue_header
          ChunkedPromote.chunked_promote_object_with_fuel
            minor mh obj fp wosize fuel in
          MH.read_word_in_major res.major_out (hd_address src) == Some hdr))
+
+val chunked_promote_object_head_split_preserves_old_non_blue_field
+  : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} -> fuel:nat ->
+    src:obj_addr -> hdr:U64.t -> j:nat -> field_addr:hp_addr ->
+    old:U64.t ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape mh fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates mh fp fuel = true /\
+        GenInv.chunked_chain_objects_blue mh fp fuel /\
+        SpecMajorAlloc.major_fl_head_wosize mh fp >= wosize + 2 /\
+        Seq.mem src (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        (let res =
+         ChunkedPromote.chunked_promote_object_with_fuel
+          minor mh obj fp wosize fuel in
+         MH.read_word_in_major res.major_out field_addr == Some old))
 
 val chunked_promote_object_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
