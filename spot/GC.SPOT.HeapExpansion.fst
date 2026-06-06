@@ -2981,6 +2981,20 @@ let spot_chunked_minor_field_edges_preserved_by_expansion
   = CG.chunked_minor_field_edges_preserved_by_expansion
       ms mh fresh fp src wz i
 
+let spot_chunked_minor_field_edge_intro_full
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (i: nat) (dst: CG.combined_vertex)
+  : Lemma
+      (requires Seq.mem src (minor_objects ms) /\
+                i < minor_wosize ms src /\
+                CG.chunked_classify_minor_field
+                  ms mh (minor_read_field ms src i) == Some dst)
+      (ensures
+        CG.mem_ce (CG.MinorV src, dst)
+          (CG.build_chunked_combined_graph ms mh))
+  =
+  CG.chunked_minor_field_edge_intro_full ms mh src i dst
+
 let spot_chunked_minor_object_edges
   (ms: minor_state) (mh: MH.major_heap) (obj: U64.t)
   : GTot (Seq.seq CG.combined_edge)

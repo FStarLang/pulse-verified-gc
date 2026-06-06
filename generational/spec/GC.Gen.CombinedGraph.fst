@@ -1419,6 +1419,124 @@ let minor_field_edge_intro (ms: minor_state) (major: heap)
                          (all_major_edges ms major major_objs 0)
 #pop-options
 
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+private let chunked_minor_field_edge_at
+  (ms: minor_state) (mh: MH.major_heap) (src: U64.t) (wz: nat)
+  (i: nat) (dst: combined_vertex)
+  : Lemma
+      (requires i < wz /\
+                chunked_classify_minor_field
+                  ms mh (minor_read_field ms src i) == Some dst)
+      (ensures
+        Seq.mem (MinorV src, dst)
+          (chunked_minor_field_edges ms mh src wz i))
+  =
+  let rest = chunked_minor_field_edges ms mh src wz (i + 1) in
+  Seq.mem_cons (MinorV src, dst) rest
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+private let rec chunked_minor_field_edge_later
+  (ms: minor_state) (mh: MH.major_heap) (src: U64.t) (wz: nat)
+  (start target_idx: nat) (dst: combined_vertex)
+  : Lemma
+      (requires start <= target_idx /\ target_idx < wz /\
+                chunked_classify_minor_field
+                  ms mh (minor_read_field ms src target_idx) == Some dst)
+      (ensures
+        Seq.mem (MinorV src, dst)
+          (chunked_minor_field_edges ms mh src wz start))
+      (decreases (wz - start))
+  =
+  if start >= wz then ()
+  else if start = target_idx then
+    chunked_minor_field_edge_at ms mh src wz start dst
+  else begin
+    let rest = chunked_minor_field_edges ms mh src wz (start + 1) in
+    chunked_minor_field_edge_later
+      ms mh src wz (start + 1) target_idx dst;
+    match chunked_classify_minor_field ms mh (minor_read_field ms src start) with
+    | Some dst' -> Seq.mem_cons (MinorV src, dst') rest
+    | None -> ()
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+private let rec chunked_all_minor_edges_suffix
+  (ms: minor_state) (mh: MH.major_heap) (objs: seq U64.t)
+  (idx: nat) (e: combined_edge)
+  : Lemma
+      (requires idx <= Seq.length objs /\
+                Seq.mem e (chunked_all_minor_edges ms mh objs idx))
+      (ensures Seq.mem e (chunked_all_minor_edges ms mh objs 0))
+      (decreases idx)
+  =
+  if idx = 0 then ()
+  else begin
+    let prev : nat = idx - 1 in
+    Seq.lemma_mem_append
+      (chunked_minor_object_edges ms mh (Seq.index objs prev))
+      (chunked_all_minor_edges ms mh objs idx);
+    chunked_all_minor_edges_suffix ms mh objs prev e
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+private let chunked_all_minor_edges_includes_object
+  (ms: minor_state) (mh: MH.major_heap) (objs: seq U64.t)
+  (src: U64.t) (k: nat) (e: combined_edge)
+  : Lemma
+      (requires k < Seq.length objs /\
+                Seq.index objs k == src /\
+                Seq.mem e (chunked_minor_object_edges ms mh src))
+      (ensures Seq.mem e (chunked_all_minor_edges ms mh objs 0))
+  =
+  Seq.lemma_mem_append
+    (chunked_minor_object_edges ms mh (Seq.index objs k))
+    (chunked_all_minor_edges ms mh objs (k + 1));
+  chunked_all_minor_edges_suffix ms mh objs k e
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+let chunked_minor_field_edge_intro
+  (ms: minor_state) (mh: MH.major_heap) (major_objs: seq obj_addr)
+  (src: U64.t) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (minor_objects ms) /\
+                    i < minor_wosize ms src /\
+                    chunked_classify_minor_field
+                      ms mh (minor_read_field ms src i) == Some dst)
+          (ensures mem_ce (MinorV src, dst)
+            (build_chunked_combined_graph_from_major_objects
+              ms mh major_objs))
+  =
+  let minor_objs = minor_objects ms in
+  let wz = minor_wosize ms src in
+  chunked_minor_field_edge_later ms mh src wz 0 i dst;
+  assert (chunked_minor_object_edges ms mh src ==
+          chunked_minor_field_edges ms mh src wz 0);
+  Classical.move_requires (Seq.mem_index src) minor_objs;
+  let k = find_index_from minor_objs src 0 in
+  chunked_all_minor_edges_includes_object
+    ms mh minor_objs src k (MinorV src, dst);
+  Seq.lemma_mem_append
+    (chunked_all_minor_edges ms mh minor_objs 0)
+    (chunked_all_major_object_edges ms mh major_objs 0)
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+let chunked_minor_field_edge_intro_full
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (minor_objects ms) /\
+                    i < minor_wosize ms src /\
+                    chunked_classify_minor_field
+                      ms mh (minor_read_field ms src i) == Some dst)
+          (ensures mem_ce (MinorV src, dst)
+            (build_chunked_combined_graph ms mh))
+  =
+  chunked_minor_field_edge_intro ms mh (MH.major_objects mh) src i dst
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Major Edge Introduction Helpers
 /// ---------------------------------------------------------------------------

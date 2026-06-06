@@ -681,6 +681,30 @@ val minor_field_edge_intro (ms: minor_state) (major: heap)
                     classify_minor_field ms major (minor_read_field ms src i) == Some dst)
           (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major))
 
+/// Chunked-major analogue of minor_field_edge_intro for an explicit old-object
+/// graph view.
+val chunked_minor_field_edge_intro
+  (ms: minor_state) (mh: MH.major_heap) (major_objs: seq obj_addr)
+  (src: U64.t) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (minor_objects ms) /\
+                    i < minor_wosize ms src /\
+                    chunked_classify_minor_field
+                      ms mh (minor_read_field ms src i) == Some dst)
+          (ensures mem_ce (MinorV src, dst)
+            (build_chunked_combined_graph_from_major_objects
+              ms mh major_objs))
+
+/// Full-graph specialization of chunked_minor_field_edge_intro.
+val chunked_minor_field_edge_intro_full
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (i: nat) (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (minor_objects ms) /\
+                    i < minor_wosize ms src /\
+                    chunked_classify_minor_field
+                      ms mh (minor_read_field ms src i) == Some dst)
+          (ensures mem_ce (MinorV src, dst)
+            (build_chunked_combined_graph ms mh))
+
 /// If a field of major object src is classified as a pointer, the
 /// corresponding edge exists in the combined graph.
 val major_field_edge_intro (ms: minor_state) (major: heap)
