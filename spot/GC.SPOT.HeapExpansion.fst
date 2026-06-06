@@ -1658,6 +1658,32 @@ let spot_chunked_cheney_promote_head_split_preserves_old_major_objects
   CheneyPreservation.chunked_cheney_promote_head_split_preserves_old_major_objects
     minor major fp roots alloc_fuel
 
+let spot_chunked_cheney_promote_head_split_preserves_old_non_blue_header
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (src: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        Obj.getColor hdr <> GC.Lib.Header.Blue /\
+        U64.v (Obj.getWosize hdr) >= 1)
+      (ensures
+        (let res =
+           ChunkedCheney.chunked_cheney_promote
+             minor major fp roots alloc_fuel in
+         MH.read_word_in_major res.major_final (hd_address src) ==
+           Some hdr))
+  =
+  CheneyPreservation.chunked_cheney_promote_head_split_preserves_old_non_blue_header
+    minor major fp roots alloc_fuel src hdr
+
 let spot_chunked_cheney_promote_head_split_preserves_chain_objects_blue
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat)
@@ -1774,6 +1800,13 @@ let spot_chunked_cheney_promote_after_minor_promotion_head_preflight
          (forall (src: obj_addr).
            Seq.mem src (MH.major_objects major) ==>
            Seq.mem src (MH.major_objects res.major_final)) /\
+         (forall (src: obj_addr). forall (hdr: U64.t).
+           Seq.mem src (MH.major_objects major) /\
+           MH.read_word_in_major major (hd_address src) == Some hdr /\
+           Obj.getColor hdr <> GC.Lib.Header.Blue /\
+           U64.v (Obj.getWosize hdr) >= 1 ==>
+           MH.read_word_in_major res.major_final (hd_address src) ==
+             Some hdr) /\
          GenInv.chunked_major_alloc_shape
            res.major_final res.fp_final r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates
@@ -3359,6 +3392,13 @@ let spot_chunked_cheney_collect_after_minor_promotion_head_preflight
          (forall (src: obj_addr).
           Seq.mem src (MH.major_objects major) ==>
           Seq.mem src (MH.major_objects collect.cmc_major)) /\
+         (forall (src: obj_addr). forall (hdr: U64.t).
+          Seq.mem src (MH.major_objects major) /\
+          MH.read_word_in_major major (hd_address src) == Some hdr /\
+          Obj.getColor hdr <> GC.Lib.Header.Blue /\
+          U64.v (Obj.getWosize hdr) >= 1 ==>
+          MH.read_word_in_major collect.cmc_major (hd_address src) ==
+            Some hdr) /\
          (forall (x:U64.t).
           Seq.mem x (minor_reachable minor roots) /\
           minor_wosize minor x > 0 ==>
