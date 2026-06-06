@@ -1629,6 +1629,21 @@ val chunked_cheney_collect_after_minor_promotion_head_preflight
            ~(is_minor_pointer (to_minor_offset old) /\
             collect.cmc_fwd (to_minor_offset old) <> 0UL)) ==>
           MH.read_word_in_major collect.cmc_major field_addr == Some old) /\
+          (forall (src: obj_addr). forall (hdr: U64.t).
+           forall (j:nat). forall (field_addr: hp_addr).
+           forall (old: U64.t).
+           Seq.mem src (MH.major_objects major) /\
+           MH.read_word_in_major major (hd_address src) == Some hdr /\
+           getColor hdr <> GC.Lib.Header.Blue /\
+           U64.v (getTag hdr) < U64.v no_scan_tag /\
+           j < U64.v (getWosize hdr) /\
+           U64.v field_addr == U64.v src + j * U64.v mword /\
+           MH.read_word_in_major major field_addr == Some old /\
+           ChunkedUpdate.chunked_update_value_stable collect.cmc_fwd
+             (ChunkedUpdate.chunked_update_expected_value collect.cmc_fwd old) ==>
+           MH.read_word_in_major collect.cmc_major field_addr ==
+             Some (ChunkedUpdate.chunked_update_expected_value
+               collect.cmc_fwd old)) /\
          (forall (x:U64.t).
          Seq.mem x (minor_reachable minor roots) /\
          minor_wosize minor x > 0 ==>

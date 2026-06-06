@@ -80,6 +80,14 @@ val chunked_update_field
   : mh:MH.major_heap -> field_addr:hp_addr -> fwd:forwarding_map ->
     GTot MH.major_heap
 
+/// Pure value-level effect of the update guard.
+val chunked_update_expected_value
+  : fwd:forwarding_map -> old:U64.t -> GTot U64.t
+
+/// A value is stable when applying the update guard would leave it unchanged.
+val chunked_update_value_stable
+  : fwd:forwarding_map -> v:U64.t -> Tot prop
+
 /// Exact effect of updating one field slot.
 val chunked_update_field_effect
   : mh:MH.major_heap -> field_addr:hp_addr -> old:U64.t ->
@@ -366,6 +374,30 @@ val chunked_update_major_pointers_preserves_no_scan_field
       (ensures
         MH.read_word_in_major
           (chunked_update_major_pointers mh fwd) field_addr == Some old)
+
+/// Top-level update has the exact value-level effect on a scanned payload slot,
+/// provided the expected value is stable under further update passes.  The
+/// stability precondition makes the theorem robust even if the explicit object
+/// list contained repeated occurrences of `h`.
+val chunked_update_major_pointers_field_effect_stable
+  : mh:MH.major_heap -> fwd:forwarding_map -> h:obj_addr -> hdr:U64.t ->
+    j:nat -> field_addr:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem h (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address h) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        U64.v (getTag hdr) < U64.v GC.Spec.Object.no_scan_tag /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v h + j * U64.v mword /\
+        MH.read_word_in_major mh field_addr == Some old /\
+        chunked_update_value_stable fwd
+          (chunked_update_expected_value fwd old))
+      (ensures
+        MH.read_word_in_major
+          (chunked_update_major_pointers mh fwd) field_addr ==
+        Some (chunked_update_expected_value fwd old))
 
 /// Single-chunk metadata compatibility with the existing dense heap readers.
 val chunked_is_blue_single_chunk_compat

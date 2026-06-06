@@ -50,6 +50,7 @@ module MH = GC.Spec.MajorHeap
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module PromotionDemand = GC.Gen.PromotionDemand
 module ChunkedCheney = GC.Gen.ChunkedCheney
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module CheneyPres = GC.Gen.CheneyPreservation
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
@@ -346,5 +347,21 @@ val chunked_cheney_gc_correct_after_preflight
         ~(is_minor_pointer (to_minor_offset old) /\
           collect.cmc_fwd (to_minor_offset old) <> 0UL)) ==>
        MH.read_word_in_major collect.cmc_major field_addr == Some old) /\
+      (forall (src: obj_addr). forall (hdr: U64.t).
+       forall (j:nat). forall (field_addr: hp_addr).
+       forall (old: U64.t).
+       Seq.mem src (MH.major_objects major) /\
+       MH.read_word_in_major major (GC.Spec.Heap.hd_address src) == Some hdr /\
+       GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+       U64.v (GC.Spec.Object.getTag hdr) <
+         U64.v GC.Spec.Object.no_scan_tag /\
+       j < U64.v (GC.Spec.Object.getWosize hdr) /\
+       U64.v field_addr == U64.v src + j * U64.v mword /\
+       MH.read_word_in_major major field_addr == Some old /\
+       ChunkedUpdate.chunked_update_value_stable collect.cmc_fwd
+         (ChunkedUpdate.chunked_update_expected_value collect.cmc_fwd old) ==>
+       MH.read_word_in_major collect.cmc_major field_addr ==
+         Some (ChunkedUpdate.chunked_update_expected_value
+           collect.cmc_fwd old)) /\
       (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
        collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0)))
