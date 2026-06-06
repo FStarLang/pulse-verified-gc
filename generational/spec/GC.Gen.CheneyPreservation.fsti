@@ -424,6 +424,11 @@ val chunked_promote_object_head_split_preserves_chunked_alloc_shape
          (let alloc_res =
             SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
           res.fp_out == alloc_res.major_fp_out /\
+          MH.major_objects res.major_out ==
+            MH.major_objects alloc_res.major_alloc_out /\
+          (forall (src:obj_addr).
+            Seq.mem src (MH.major_objects mh) ==>
+            Seq.mem src (MH.major_objects res.major_out)) /\
           Seq.mem (fp <: obj_addr)
             (MH.major_objects alloc_res.major_alloc_out) /\
           Seq.mem (fp <: obj_addr) (MH.major_objects res.major_out) /\
@@ -920,6 +925,25 @@ val chunked_cheney_promote_head_split_preserves_chain_objects_blue
          GenInv.chunked_chain_objects_blue
           res.major_final res.fp_final alloc_fuel))
 
+val chunked_cheney_promote_head_split_preserves_old_major_objects
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         forall (src: obj_addr).
+          Seq.mem src (MH.major_objects major) ==>
+          Seq.mem src (MH.major_objects res.major_final)))
+
 val chunked_cheney_promote_budget_ready
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> remaining:nat -> GTot prop
@@ -1377,6 +1401,9 @@ val chunked_cheney_promote_after_minor_promotion_head_preflight
           Seq.mem x (minor_reachable minor roots) /\
           minor_wosize minor x > 0 ==>
           res.fwd_map x <> 0UL) /\
+         (forall (src: obj_addr).
+          Seq.mem src (MH.major_objects major) ==>
+          Seq.mem src (MH.major_objects res.major_final)) /\
          GenInv.chunked_major_alloc_shape
           res.major_final res.fp_final r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates
@@ -1450,6 +1477,9 @@ val chunked_cheney_collect_after_minor_promotion_head_preflight
          collect.cmc_major collect.cmc_fp r.capacity_fuel_out = true /\
          GenInv.chunked_chain_objects_blue
          collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
+         (forall (src: obj_addr).
+         Seq.mem src (MH.major_objects major) ==>
+         Seq.mem src (MH.major_objects collect.cmc_major)) /\
          (forall (x:U64.t).
          Seq.mem x (minor_reachable minor roots) /\
          minor_wosize minor x > 0 ==>
