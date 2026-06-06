@@ -1716,6 +1716,7 @@ let spot_chunked_cheney_promote_after_minor_promotion_head_preflight
         GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
         SpecMajorAlloc.major_fl_chain_terminates
           major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
         (SpecMajorAlloc.major_fl_head_wosize major fp <
           PromotionDemand.minor_promotion_demand minor + 1 ==>
           MH.chunk_disjoint_from_all fresh major /\
@@ -1741,7 +1742,9 @@ let spot_chunked_cheney_promote_after_minor_promotion_head_preflight
            r.capacity_major_out r.capacity_fp_out >= needed /\
          SpecMajorAlloc.major_fl_chain_terminates
            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
-          (forall (x:U64.t).
+         GenInv.chunked_chain_objects_blue
+           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         (forall (x:U64.t).
            Seq.mem x (minor_reachable minor roots) /\
            minor_wosize minor x > 0 ==>
            res.fwd_map x <> 0UL) /\
@@ -1749,6 +1752,8 @@ let spot_chunked_cheney_promote_after_minor_promotion_head_preflight
            res.major_final res.fp_final r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates
            res.major_final res.fp_final r.capacity_fuel_out = true /\
+         GenInv.chunked_chain_objects_blue
+           res.major_final res.fp_final r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_head_wosize
            res.major_final res.fp_final >= 1))
   =
@@ -3253,6 +3258,7 @@ let spot_chunked_cheney_collect_after_minor_promotion_head_preflight
         GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
         SpecMajorAlloc.major_fl_chain_terminates
           major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
         (SpecMajorAlloc.major_fl_head_wosize major fp <
           PromotionDemand.minor_promotion_demand minor + 1 ==>
           MH.chunk_disjoint_from_all fresh major /\
@@ -3281,6 +3287,12 @@ let spot_chunked_cheney_collect_after_minor_promotion_head_preflight
          U64.v collect.cmc_minor.bump == 0 /\
          collect.cmc_roots == rewrite_roots roots prom.fwd_map /\
          collect.cmc_fwd == prom.fwd_map /\
+         GenInv.chunked_major_alloc_shape
+           collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           collect.cmc_major collect.cmc_fp r.capacity_fuel_out = true /\
+         GenInv.chunked_chain_objects_blue
+           collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
          (forall (x:U64.t).
           Seq.mem x (minor_reachable minor roots) /\
           minor_wosize minor x > 0 ==>
