@@ -634,6 +634,68 @@ let chunked_forward_one_normal_existing_forwarded_updated_field_edge
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_forward_fields_preserved_forwarded_minor_field_edge
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx wosize alloc_fuel: nat)
+  (src expected: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+    (requires
+      alloc_fuel > 1 /\
+      GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates
+        cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp alloc_fuel /\
+      CheneyPres.chunked_cheney_forward_fields_split_ready
+        minor cs parent idx wosize alloc_fuel /\
+      Seq.mem src (MH.major_objects cs.ccs_major) /\
+      MH.read_word_in_major cs.ccs_major
+        (GC.Spec.Heap.hd_address src) == Some hdr /\
+      GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+      U64.v (GC.Spec.Object.getTag hdr) <
+        U64.v GC.Spec.Object.no_scan_tag /\
+      j < U64.v (GC.Spec.Object.getWosize hdr) /\
+      U64.v field_addr == U64.v src + j * U64.v mword /\
+      CG.chunked_major_field_slot src j == Some field_addr /\
+      MH.read_word_in_major cs.ccs_major field_addr == Some old /\
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       let x = to_minor_offset old in
+       CheneyPres.chunked_fwd_targets_above_minor cs'.ccs_fwd /\
+       Seq.mem expected (MH.major_objects cs'.ccs_major) /\
+       is_minor_pointer x /\
+       cs'.ccs_fwd x <> 0UL /\
+       cs'.ccs_fwd x == expected))
+    (ensures
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       CG.mem_ce (CG.MajorV src, CG.MajorV expected)
+        (CG.build_chunked_combined_graph
+          (minor_reset minor)
+          (ChunkedUpdate.chunked_update_major_pointers
+            cs'.ccs_major cs'.ccs_fwd))))
+  =
+  let cs' =
+    ChunkedCheney.chunked_cheney_forward_fields
+      minor cs parent idx wosize alloc_fuel in
+  CheneyPres.chunked_cheney_forward_fields_head_split_preserves_old_non_blue_object_field
+    minor cs parent idx wosize alloc_fuel src hdr j field_addr old;
+  GenInv.chunked_major_alloc_shape_elim
+    cs'.ccs_major cs'.ccs_fp alloc_fuel;
+  assert (MH.well_formed_major_heap cs'.ccs_major);
+  assert (Seq.mem src (MH.major_objects cs'.ccs_major));
+  assert (MH.read_word_in_major cs'.ccs_major
+            (GC.Spec.Heap.hd_address src) == Some hdr);
+  assert (MH.read_word_in_major cs'.ccs_major field_addr == Some old);
+  let x = to_minor_offset old in
+  chunked_update_forwarded_minor_field_edge
+    minor cs'.ccs_major cs'.ccs_fwd
+    src expected hdr j field_addr old
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
 let chunked_cheney_gc_correct_after_preflight_old_major_field_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)

@@ -1092,6 +1092,40 @@ val chunked_cheney_promote_head_split_preserves_old_non_blue_header
          MH.read_word_in_major res.major_final (hd_address src) ==
            Some hdr))
 
+val chunked_cheney_forward_fields_head_split_preserves_old_non_blue_object_field
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
+    src:obj_addr -> hdr:U64.t -> j:nat -> field_addr:hp_addr ->
+    old:U64.t ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_forward_fields_split_ready
+          minor cs parent idx wosize alloc_fuel /\
+        Seq.mem src (MH.major_objects cs.ccs_major) /\
+        MH.read_word_in_major cs.ccs_major (hd_address src) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        MH.read_word_in_major cs.ccs_major field_addr == Some old)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent idx wosize alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+          cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         Seq.mem src (MH.major_objects cs'.ccs_major) /\
+         MH.read_word_in_major cs'.ccs_major (hd_address src) == Some hdr /\
+         MH.read_word_in_major cs'.ccs_major field_addr == Some old))
+
 val chunked_cheney_promote_head_split_preserves_old_non_blue_field
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> src:obj_addr -> hdr:U64.t ->

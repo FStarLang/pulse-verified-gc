@@ -582,6 +582,53 @@ val chunked_forward_one_normal_existing_forwarded_updated_field_edge
           (ChunkedUpdate.chunked_update_major_pointers
             cs'.ccs_major cs'.ccs_fwd))))
 
+/// Field-loop promoted-minor edge bridge.  If a promoted source object already
+/// contains a copied minor field before forwarding a range of fields, and the
+/// final field-forwarding map rewrites that copied minor value to an active
+/// major object, then the post-update graph contains the corresponding edge.
+val chunked_forward_fields_preserved_forwarded_minor_field_edge
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx wosize alloc_fuel: nat)
+  (src expected: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+    (requires
+      alloc_fuel > 1 /\
+      GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates
+        cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp alloc_fuel /\
+      CheneyPres.chunked_cheney_forward_fields_split_ready
+        minor cs parent idx wosize alloc_fuel /\
+      Seq.mem src (MH.major_objects cs.ccs_major) /\
+      MH.read_word_in_major cs.ccs_major
+        (GC.Spec.Heap.hd_address src) == Some hdr /\
+      GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+      U64.v (GC.Spec.Object.getTag hdr) <
+        U64.v GC.Spec.Object.no_scan_tag /\
+      j < U64.v (GC.Spec.Object.getWosize hdr) /\
+      U64.v field_addr == U64.v src + j * U64.v mword /\
+      CG.chunked_major_field_slot src j == Some field_addr /\
+      MH.read_word_in_major cs.ccs_major field_addr == Some old /\
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       let x = to_minor_offset old in
+       CheneyPres.chunked_fwd_targets_above_minor cs'.ccs_fwd /\
+       Seq.mem expected (MH.major_objects cs'.ccs_major) /\
+       is_minor_pointer x /\
+       cs'.ccs_fwd x <> 0UL /\
+       cs'.ccs_fwd x == expected))
+    (ensures
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       CG.mem_ce (CG.MajorV src, CG.MajorV expected)
+        (CG.build_chunked_combined_graph
+          (minor_reset minor)
+          (ChunkedUpdate.chunked_update_major_pointers
+            cs'.ccs_major cs'.ccs_fwd))))
+
 /// Edge-level consequence of the chunked correctness bundle for old scanned
 /// major fields.  The theorem is intentionally phrased with an explicit
 /// `expected` post-major object: target-membership can come either from an old

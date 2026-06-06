@@ -5507,6 +5507,52 @@ private let rec chunked_cheney_forward_fields_head_split_preserves_old_non_blue_
       src hdr j field_addr old
   end
 
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_cheney_forward_fields_head_split_preserves_old_non_blue_object_field
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_forward_fields_split_ready
+          minor cs parent idx wosize alloc_fuel /\
+        Seq.mem src (MH.major_objects cs.ccs_major) /\
+        MH.read_word_in_major cs.ccs_major (hd_address src) == Some hdr /\
+        getColor hdr <> Blue /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        MH.read_word_in_major cs.ccs_major field_addr == Some old)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent idx wosize alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+          cs'.ccs_major cs'.ccs_fp alloc_fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+          cs'.ccs_major cs'.ccs_fp alloc_fuel = true /\
+         Seq.mem src (MH.major_objects cs'.ccs_major) /\
+         MH.read_word_in_major cs'.ccs_major (hd_address src) == Some hdr /\
+         MH.read_word_in_major cs'.ccs_major field_addr == Some old))
+  =
+  assert (U64.v (getWosize hdr) >= 1);
+  chunked_cheney_forward_fields_head_split_preserves_chunked_alloc_shape
+    minor cs parent idx wosize alloc_fuel;
+  chunked_cheney_forward_fields_head_split_preserves_old_major_objects
+    minor cs parent idx wosize alloc_fuel;
+  chunked_cheney_forward_fields_head_split_preserves_old_non_blue_header
+    minor cs parent idx wosize alloc_fuel src hdr;
+  chunked_cheney_forward_fields_head_split_preserves_old_non_blue_field
+    minor cs parent idx wosize alloc_fuel src hdr j field_addr old
+#pop-options
+
 private let rec chunked_cheney_scan_head_split_preserves_old_non_blue_field
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (scan: nat) (scan_fuel: nat) (alloc_fuel: nat)
