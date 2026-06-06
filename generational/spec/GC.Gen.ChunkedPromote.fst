@@ -902,8 +902,7 @@ let chunked_promote_object_success_header_effect
           (MH.major_objects alloc_res.major_alloc_out) /\
          MH.read_word_in_major alloc_res.major_alloc_out
           (hd_address (dst <: obj_addr)) == Some hdr /\
-         U64.v (getWosize hdr) == wosize /\
-         minor_tag minor obj < 256))
+         U64.v (getWosize hdr) == wosize))
       (ensures
         (let alloc_res =
           SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
@@ -943,6 +942,9 @@ let chunked_promote_object_success_header_effect
   assert (padded == copied);
   let tag = minor_tag minor obj in
   minor_tag_bound minor obj;
+  assert (tag < 256);
+  assert (tag < pow2 64);
+  assert (FStar.UInt.size tag 64);
   chunked_set_promoted_tag_header_effect copied dst_u tag hdr;
   let final_major = chunked_set_promoted_tag padded dst_u tag in
   let new_hdr =
