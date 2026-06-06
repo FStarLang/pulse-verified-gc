@@ -8,16 +8,22 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
+open GC.Lib.Header
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
+module SpecMajorAlloc = GC.Spec.MajorAllocator
+module GenInv = GC.Gen.HeapInvariant
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module Dense = GC.Gen.Cheney
 module AllocProps = GC.Gen.AllocProps
+module AllocHeader = GC.Spec.Allocator.Lemmas.Header
 
 let single_chunk_cheney_state (cs: Dense.cheney_state)
   : GTot chunked_cheney_state =
@@ -187,6 +193,181 @@ let chunked_cheney_forward_normal_success
            ccs_fwd   = extend_forwarding cs.ccs_fwd addr res.new_addr;
            ccs_queue = Seq.append cs.ccs_queue (Seq.create 1 addr) }))
   = ()
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_alloc_head_split_alloc_header_wosize
+  (mh: MH.major_heap) (fp: U64.t)
+  (requested_wz: nat{requested_wz > 0 /\
+                    requested_wz < pow2 54 /\
+                    FStar.UInt.size requested_wz 64})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape mh fp fuel /\
+        SpecMajorAlloc.major_fl_head_wosize mh fp >= requested_wz + 2)
+      (ensures
+        (let r =
+           SpecMajorAlloc.major_alloc_spec_with_fuel
+            mh fp requested_wz fuel in
+         let dst : obj_addr = fp in
+         r.major_obj_out == fp /\
+         r.major_fp_out <> 0UL /\
+         MH.read_word_in_major r.major_alloc_out (hd_address dst) ==
+           Some (SpecAlloc.make_header (U64.uint_to_t requested_wz)
+                  SpecAlloc.white_bits 0UL) /\
+         U64.v (getWosize
+           (SpecAlloc.make_header (U64.uint_to_t requested_wz)
+            SpecAlloc.white_bits 0UL)) == requested_wz))
+  =
+  GenInv.chunked_major_alloc_shape_elim mh fp fuel;
+  SpecMajorAlloc.major_fl_above_zero_current mh fp fuel;
+  assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+  let dst : obj_addr = fp in
+  let hd = hd_address dst in
+  SpecMajorAlloc.major_fl_head_wosize_current mh fp fuel;
+  SpecMajorAlloc.major_fl_head_block_fits_current mh fp fuel;
+  SpecMajorAlloc.major_fl_valid_link_lookup_index mh fp fuel;
+  let idx = MH.lookup_chunk_index_value mh hd in
+  assert (MH.lookup_chunk_index mh hd == Some idx);
+  assert (idx < Seq.length mh);
+  assert (MH.word_in_chunk (Seq.index mh idx) hd);
+  match MH.read_word_in_major mh hd with
+  | None -> assert False
+  | Some old_hdr ->
+    let block_wz = U64.v (getWosize old_hdr) in
+    assert (SpecMajorAlloc.major_fl_head_wosize mh fp == block_wz);
+    assert (block_wz < pow2 54);
+    assert (block_wz >= requested_wz + 2);
+    assert (block_wz - requested_wz >= 2);
+    assert (requested_wz < pow2 54);
+    FStar.Math.Lemmas.pow2_lt_compat 64 54;
+    assert (requested_wz < pow2 64);
+    assert (FStar.UInt.size requested_wz 64);
+    match MH.read_word_in_major mh dst with
+    | None -> assert False
+    | Some next_fp ->
+      let c = Seq.index mh idx in
+      MH.read_word_in_major_at_lookup_index mh hd idx;
+      assert (MH.read_word_in_chunk c hd == old_hdr);
+      assert (U64.v hd + (1 + block_wz) * U64.v mword <=
+             MH.chunk_end c);
+      assert (U64.v mword == 8);
+      let rem_hd_nat = U64.v hd + (1 + requested_wz) * 8 in
+      let rem_obj_nat = rem_hd_nat + U64.v mword in
+      FStar.Math.Lemmas.distributivity_add_left (1 + requested_wz) 1 8;
+      assert ((1 + requested_wz) * 8 + 8 == (requested_wz + 2) * 8);
+      FStar.Math.Lemmas.paren_add_right (U64.v hd) ((1 + requested_wz) * 8) 8;
+      assert (rem_obj_nat == U64.v hd + (requested_wz + 2) * 8);
+      assert (requested_wz + 3 <= 1 + block_wz);
+      assert (rem_obj_nat + 8 == U64.v hd + (requested_wz + 3) * 8);
+      assert (rem_obj_nat + 8 <= U64.v hd + (1 + block_wz) * 8);
+      assert (rem_obj_nat + 8 <= MH.chunk_end c);
+      assert (MH.chunk_end c <= heap_size);
+      assert (rem_hd_nat < heap_size);
+      assert (rem_obj_nat < heap_size);
+      assert (heap_size < pow2 64);
+      assert (rem_hd_nat < pow2 64);
+      assert (rem_obj_nat < pow2 64);
+      assert (rem_obj_nat >= U64.v mword);
+      hd_address_spec dst;
+      SpecMajorAlloc.aligned_plus_word_product (U64.v hd) (1 + requested_wz);
+      assert (rem_hd_nat % U64.v mword == 0);
+      SpecMajorAlloc.aligned_plus_word_product (U64.v hd) (requested_wz + 2);
+      assert (rem_obj_nat % U64.v mword == 0);
+      let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+      let rem_obj : obj_addr = U64.uint_to_t rem_obj_nat in
+      assert (U64.v rem_hd == rem_hd_nat);
+      assert (U64.v rem_obj == rem_obj_nat);
+      assert (U64.v rem_obj == U64.v rem_hd + U64.v mword);
+      SpecMajorAlloc.active_head_split_remainder_words_in_chunk
+        c hd block_wz requested_wz rem_hd rem_obj;
+      let rem_wz = block_wz - requested_wz - 1 in
+      assert (rem_wz >= 1);
+      assert (rem_wz < pow2 54);
+      let rem_wz_u : w:U64.t{U64.v w == rem_wz /\ U64.v w < pow2 54} =
+        U64.uint_to_t rem_wz in
+      assert (U64.v rem_wz_u == block_wz - requested_wz - 1);
+      SpecMajorAlloc.major_alloc_head_split
+        mh dst requested_wz fuel old_hdr next_fp rem_hd rem_obj;
+      let r =
+        SpecMajorAlloc.major_alloc_spec_with_fuel mh fp requested_wz fuel in
+      assert (r.major_obj_out == fp);
+      assert (r.major_fp_out == rem_obj);
+      assert (r.major_fp_out <> 0UL);
+      SpecMajorAlloc.head_split_major_preserves_read_at
+        mh idx dst hd old_hdr requested_wz block_wz next_fp rem_wz_u
+        rem_hd rem_obj;
+      let alloc_hdr =
+        SpecAlloc.make_header (U64.uint_to_t requested_wz)
+          SpecAlloc.white_bits 0UL in
+      assert (MH.read_word_in_major r.major_alloc_out hd == Some alloc_hdr);
+      AllocHeader.make_header_getWosize
+        (U64.uint_to_t requested_wz) SpecAlloc.white_bits 0UL;
+      assert (U64.v (getWosize alloc_hdr) == requested_wz)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_cheney_forward_normal_head_split_field_effect
+  (minor: minor_state) (cs: chunked_cheney_state) (addr: U64.t)
+  (fuel: nat) (j: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        j < minor_wosize minor addr /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2 /\
+        U64.v field_addr ==
+          U64.v cs.ccs_fp + j * U64.v mword)
+      (ensures
+        (let cs' =
+           chunked_cheney_forward_normal minor cs addr fuel in
+         cs'.ccs_fwd addr == cs.ccs_fp /\
+         MH.read_word_in_major cs'.ccs_major field_addr ==
+           Some (minor_read_field minor addr j)))
+  =
+  let wz = minor_wosize minor addr in
+  assert (wz > 0);
+  assert (SpecMajorAlloc.major_fl_head_wosize
+           cs.ccs_major cs.ccs_fp >= wz + 2);
+  chunked_alloc_head_split_alloc_header_wosize
+    cs.ccs_major cs.ccs_fp wz fuel;
+  let dst : obj_addr = cs.ccs_fp in
+  let alloc_res =
+    SpecMajorAlloc.major_alloc_spec_with_fuel
+      cs.ccs_major cs.ccs_fp wz fuel in
+  assert (alloc_res.major_obj_out == cs.ccs_fp);
+  let alloc_hdr =
+    SpecAlloc.make_header (U64.uint_to_t wz) SpecAlloc.white_bits 0UL in
+  assert (MH.read_word_in_major
+           alloc_res.major_alloc_out (hd_address dst) ==
+          Some alloc_hdr);
+  assert (U64.v (getWosize alloc_hdr) == wz);
+  GenInv.chunked_major_alloc_shape_elim
+    cs.ccs_major cs.ccs_fp fuel;
+  GC.Spec.MajorAllocator.SplitShape.major_alloc_head_split_preserves_alloc_shape
+    cs.ccs_major cs.ccs_fp wz fuel;
+  MH.read_word_in_major_lookup_index
+    alloc_res.major_alloc_out (hd_address dst) alloc_hdr;
+  let idx =
+    MH.lookup_chunk_index_value
+      alloc_res.major_alloc_out (hd_address dst) in
+  ChunkedPromote.chunked_promote_object_success_field_effect
+    minor cs.ccs_major addr cs.ccs_fp wz fuel j field_addr idx alloc_hdr;
+  let res =
+    ChunkedPromote.chunked_promote_object_with_fuel
+      minor cs.ccs_major addr cs.ccs_fp wz fuel in
+  assert (res.new_addr == cs.ccs_fp);
+  chunked_cheney_forward_normal_success minor cs addr fuel
+#pop-options
 
 let chunked_cheney_forward_normal_other_fwd
   (minor: minor_state) (cs: chunked_cheney_state) (addr: U64.t)

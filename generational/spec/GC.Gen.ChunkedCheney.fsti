@@ -18,6 +18,8 @@ open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
+module SpecMajorAlloc = GC.Spec.MajorAllocator
+module GenInv = GC.Gen.HeapInvariant
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module Dense = GC.Gen.Cheney
@@ -134,6 +136,31 @@ val chunked_cheney_forward_normal_success
            ccs_fp    = res.fp_out;
            ccs_fwd   = extend_forwarding cs.ccs_fwd addr res.new_addr;
            ccs_queue = Seq.append cs.ccs_queue (Seq.create 1 addr) }))
+
+val chunked_cheney_forward_normal_head_split_field_effect
+  : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
+    fuel:nat -> j:nat -> field_addr:hp_addr ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        j < minor_wosize minor addr /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+         cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2 /\
+        U64.v field_addr ==
+         U64.v cs.ccs_fp + j * U64.v mword)
+      (ensures
+        (let cs' =
+          chunked_cheney_forward_normal minor cs addr fuel in
+         cs'.ccs_fwd addr == cs.ccs_fp /\
+         MH.read_word_in_major cs'.ccs_major field_addr ==
+          Some (minor_read_field minor addr j)))
 
 val chunked_cheney_forward_normal_other_fwd
   : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
