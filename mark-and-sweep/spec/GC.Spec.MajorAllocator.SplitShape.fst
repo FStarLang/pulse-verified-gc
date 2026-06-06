@@ -1210,3 +1210,148 @@ let major_alloc_head_split_remainder_avoids_allocated_head
       assert (MA.major_fl_chain_avoids
                 r.major_alloc_out r.major_fp_out r.major_obj_out fuel = true)
 #pop-options
+
+#push-options "--z3rlimit 20 --split_queries always --fuel 1 --ifuel 1"
+let major_alloc_head_split_remainder_avoids_other
+  (mh: MH.major_heap) (fp excl: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                requested_wz > 0 /\
+                MH.well_formed_major_heap mh /\
+                MA.major_fl_valid mh fp fuel /\
+                MA.major_fl_above_zero mh fp fuel /\
+                MA.major_fl_blocks_fit mh fp fuel /\
+                MA.major_fl_chain_terminates mh fp fuel = true /\
+                MA.major_fl_chain_avoids mh fp excl fuel = true /\
+                MA.major_fl_head_wosize mh fp >= requested_wz + 2 /\
+                (MA.major_alloc_spec_with_fuel mh fp requested_wz fuel).major_fp_out
+                  <> excl)
+      (ensures
+        (let r = MA.major_alloc_spec_with_fuel mh fp requested_wz fuel in
+         MA.major_fl_chain_avoids
+           r.major_alloc_out r.major_fp_out excl fuel = true))
+  =
+  major_alloc_head_split_preserves_alloc_shape mh fp requested_wz fuel;
+  MA.major_fl_above_zero_current mh fp fuel;
+  assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+  assert (U64.v fp >= U64.v mword);
+  assert (U64.v fp < heap_size);
+  assert (U64.v fp % U64.v mword == 0);
+  MA.major_fl_chain_avoids_head_ne mh fp excl fuel;
+  assert (fp <> excl);
+  let obj : obj_addr = fp in
+  let hd = hd_address obj in
+  MA.major_fl_head_wosize_current mh fp fuel;
+  MA.major_fl_head_block_fits_current mh fp fuel;
+  MA.major_fl_valid_link_lookup_index mh fp fuel;
+  let idx = MH.lookup_chunk_index_value mh hd in
+  assert (MH.lookup_chunk_index mh hd == Some idx);
+  assert (idx < Seq.length mh);
+  assert (MH.word_in_chunk (Seq.index mh idx) hd);
+  match MH.read_word_in_major mh hd with
+  | None -> assert False
+  | Some hdr ->
+    let block_wz = U64.v (Obj.getWosize hdr) in
+    assert (MA.major_fl_head_wosize mh fp == block_wz);
+    assert (block_wz < pow2 54);
+    assert (block_wz >= requested_wz + 2);
+    assert (block_wz - requested_wz >= 2);
+    assert (requested_wz < pow2 54);
+    FStar.Math.Lemmas.pow2_lt_compat 64 54;
+    assert (requested_wz < pow2 64);
+    assert (FStar.UInt.size requested_wz 64);
+    let req : r:nat{r == requested_wz /\
+                    r < pow2 54 /\ FStar.UInt.size r 64} = requested_wz in
+    match MH.read_word_in_major mh obj with
+    | None -> assert False
+    | Some next_fp ->
+      let c = Seq.index mh idx in
+      MH.read_word_in_major_at_lookup_index mh hd idx;
+      assert (MH.read_word_in_chunk c hd == hdr);
+      MA.major_fl_valid_gives_mem mh fp fuel;
+      assert (Seq.mem obj (MH.major_objects mh));
+      MH.major_objects_member_in_lookup_chunk mh idx obj;
+      assert (Seq.mem obj (MH.objects_in_chunk c));
+      assert (MH.object_wosize_in_chunk c obj == block_wz);
+      assert (U64.v hd + (1 + block_wz) * U64.v mword <= MH.chunk_end c);
+      assert (U64.v mword == 8);
+      let rem_hd_nat = U64.v hd + (1 + requested_wz) * 8 in
+      let rem_obj_nat = rem_hd_nat + U64.v mword in
+      FStar.Math.Lemmas.distributivity_add_left (1 + requested_wz) 1 8;
+      assert ((1 + requested_wz) * 8 + 8 == (requested_wz + 2) * 8);
+      FStar.Math.Lemmas.paren_add_right (U64.v hd) ((1 + requested_wz) * 8) 8;
+      assert (rem_obj_nat == U64.v hd + (requested_wz + 2) * 8);
+      assert (requested_wz + 2 <= block_wz);
+      assert (requested_wz + 3 <= 1 + block_wz);
+      FStar.Math.Lemmas.distributivity_add_left (requested_wz + 2) 1 8;
+      assert ((requested_wz + 2) * 8 + 8 == (requested_wz + 3) * 8);
+      FStar.Math.Lemmas.paren_add_right (U64.v hd) ((requested_wz + 2) * 8) 8;
+      assert (rem_obj_nat + 8 == (U64.v hd + (requested_wz + 2) * 8) + 8);
+      assert (rem_obj_nat + 8 == U64.v hd + ((requested_wz + 2) * 8 + 8));
+      assert (rem_obj_nat + 8 == U64.v hd + (requested_wz + 3) * 8);
+      assert (rem_obj_nat + 8 <= U64.v hd + (1 + block_wz) * 8);
+      assert (rem_obj_nat + 8 <= MH.chunk_end c);
+      assert (MH.chunk_end c <= heap_size);
+      assert (rem_hd_nat < heap_size);
+      assert (rem_obj_nat < heap_size);
+      assert (heap_size < pow2 64);
+      assert (rem_hd_nat < pow2 64);
+      assert (rem_obj_nat < pow2 64);
+      assert (rem_obj_nat >= U64.v mword);
+      hd_address_spec obj;
+      MA.aligned_plus_word_product (U64.v hd) (1 + requested_wz);
+      assert (rem_hd_nat % U64.v mword == 0);
+      MA.aligned_plus_word_product (U64.v hd) (requested_wz + 2);
+      assert (rem_obj_nat % U64.v mword == 0);
+      let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+      let rem_obj : obj_addr = U64.uint_to_t rem_obj_nat in
+      assert (U64.v rem_hd == rem_hd_nat);
+      assert (U64.v rem_obj == rem_obj_nat);
+      assert (U64.v rem_obj == U64.v rem_hd + U64.v mword);
+      MA.active_head_split_remainder_words_in_chunk
+        c hd block_wz requested_wz rem_hd rem_obj;
+      let rem_wz = block_wz - requested_wz - 1 in
+      assert (rem_wz >= 1);
+      assert (rem_wz < pow2 54);
+      assert (rem_wz < pow2 64);
+      assert (FStar.UInt.size rem_wz 64);
+      let rem_wz_u : w:U64.t{U64.v w == rem_wz /\ U64.v w < pow2 54} =
+        U64.uint_to_t rem_wz in
+      assert (U64.v rem_wz_u == block_wz - requested_wz - 1);
+      MA.major_alloc_head_split mh obj requested_wz fuel hdr next_fp rem_hd rem_obj;
+      let r = MA.major_alloc_spec_with_fuel mh fp requested_wz fuel in
+      assert (r.major_obj_out == fp);
+      assert (r.major_fp_out == rem_obj);
+      assert (r.major_alloc_out ==
+              head_split_heap mh obj req next_fp rem_wz_u rem_hd rem_obj);
+      assert (rem_obj <> excl);
+      let fuel' : f:nat{f < fuel} = fuel - 1 in
+      MA.major_fl_chain_predecessor_not_in_suffix mh fp fuel;
+      assert (MA.major_fl_chain_avoids mh next_fp fp fuel' = true);
+      MA.major_fl_chain_avoids_tail mh fp excl fuel;
+      assert (MA.major_fl_chain_avoids mh next_fp excl fuel' = true);
+      MA.major_fl_valid_next mh fp fuel;
+      MA.major_fl_above_zero_next mh obj fuel next_fp;
+      MA.major_fl_blocks_fit_next mh obj fuel next_fp;
+      assert (MA.major_fl_valid mh next_fp fuel');
+      assert (MA.major_fl_above_zero mh next_fp fuel');
+      assert (MA.major_fl_blocks_fit mh next_fp fuel');
+      head_split_preserves_old_free_list_avoids_other
+        mh idx obj req block_wz next_fp rem_wz_u rem_hd rem_obj next_fp excl fuel';
+      assert (MA.major_fl_chain_avoids r.major_alloc_out next_fp excl fuel' = true);
+      head_split_remainder_head_facts
+        mh idx obj req block_wz next_fp rem_wz_u rem_hd rem_obj;
+      assert (MH.read_word_in_major r.major_alloc_out rem_obj == Some next_fp);
+      assert (U64.v rem_obj >= U64.v mword);
+      assert (U64.v rem_obj < heap_size);
+      assert (U64.v rem_obj % U64.v mword == 0);
+      assert
+        (match MH.read_word_in_major r.major_alloc_out (rem_obj <: obj_addr) with
+         | Some next -> MA.major_fl_chain_avoids r.major_alloc_out next excl fuel' = true
+         | None -> True);
+      MA.major_fl_chain_avoids_step r.major_alloc_out rem_obj excl fuel;
+      assert (MA.major_fl_chain_avoids
+                r.major_alloc_out r.major_fp_out excl fuel = true)
+#pop-options

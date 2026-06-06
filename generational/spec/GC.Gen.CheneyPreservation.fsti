@@ -423,9 +423,48 @@ val chunked_promote_object_head_split_preserves_chunked_alloc_shape
            res.major_out res.fp_out fuel = true /\
          (let alloc_res =
             SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+          res.fp_out == alloc_res.major_fp_out /\
           Seq.mem (fp <: obj_addr)
             (MH.major_objects alloc_res.major_alloc_out) /\
-          Seq.mem (fp <: obj_addr) (MH.major_objects res.major_out))))
+          Seq.mem (fp <: obj_addr) (MH.major_objects res.major_out) /\
+          (forall (src:obj_addr).
+            Seq.mem src (MH.major_objects alloc_res.major_alloc_out) /\
+            src <> fp ==>
+            MH.read_word_in_major res.major_out (hd_address src) ==
+            MH.read_word_in_major alloc_res.major_alloc_out
+              (hd_address src)) /\
+          (forall (src:obj_addr).
+            Seq.mem src (MH.major_objects alloc_res.major_alloc_out) /\
+            src <> fp /\
+            (match MH.read_word_in_major
+               alloc_res.major_alloc_out (hd_address src)
+             with
+             | Some hdr -> U64.v (getWosize hdr) >= 1
+             | None -> False) ==>
+            MH.read_word_in_major res.major_out src ==
+            MH.read_word_in_major alloc_res.major_alloc_out src))))
+
+val chunked_promote_object_head_split_preserves_chain_objects_blue
+  : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} -> fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        fp <> 0UL /\
+        GenInv.chunked_major_alloc_shape mh fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates mh fp fuel = true /\
+        GenInv.chunked_chain_objects_blue mh fp fuel /\
+        SpecMajorAlloc.major_fl_head_wosize mh fp >= wosize + 2)
+      (ensures
+        (let res =
+           ChunkedPromote.chunked_promote_object_with_fuel
+            minor mh obj fp wosize fuel in
+         res.new_addr == fp /\
+         res.fp_out <> 0UL /\
+         GenInv.chunked_major_alloc_shape res.major_out res.fp_out fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           res.major_out res.fp_out fuel = true /\
+         GenInv.chunked_chain_objects_blue res.major_out res.fp_out fuel))
 
 val chunked_promote_object_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
