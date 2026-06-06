@@ -293,11 +293,25 @@ val chunked_wosize_of_object
 val chunked_wosize_nat_of_object
   : mh:MH.major_heap -> obj:obj_addr -> GTot nat
 
+val chunked_wosize_nat_header
+  : mh:MH.major_heap -> obj:obj_addr -> hdr:U64.t ->
+    Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures chunked_wosize_nat_of_object mh obj == U64.v (getWosize hdr))
+
 val chunked_tag_of_object
   : mh:MH.major_heap -> obj:obj_addr -> GTot (option U64.t)
 
 val chunked_is_no_scan
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
+
+val chunked_is_no_scan_header
+  : mh:MH.major_heap -> obj:obj_addr -> hdr:U64.t ->
+    Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures
+        chunked_is_no_scan mh obj ==
+        (U64.v (getTag hdr) >= U64.v no_scan_tag))
 
 val chunked_header_of_object_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t -> obj:obj_addr ->
@@ -547,6 +561,24 @@ val classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x
                    (let vo = to_minor_offset v in
                     ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
 
+/// Chunked characterization: chunked_classify_major_field returns MajorV v
+/// when v is an active major object and not a live minor pointer.
+val chunked_classify_major_field_major (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : Lemma (requires is_val_addr v /\ Seq.mem (v <: obj_addr) (MH.major_objects mh) /\
+                    (let vo = to_minor_offset v in
+                     ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
+          (ensures chunked_classify_major_field ms mh v == Some (MajorV v))
+
+/// Inversion: chunked_classify_major_field == Some (MajorV x) implies v == x
+/// and x is an active chunked-major object.
+val chunked_classify_major_field_inv_major
+  (ms: minor_state) (mh: MH.major_heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires chunked_classify_major_field ms mh v == Some (MajorV x))
+          (ensures v == x /\ is_val_addr v /\
+                   Seq.mem (v <: obj_addr) (MH.major_objects mh) /\
+                   (let vo = to_minor_offset v in
+                    ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
+
 /// ---------------------------------------------------------------------------
 /// Graph Construction
 /// ---------------------------------------------------------------------------
@@ -661,6 +693,36 @@ val major_field_edge_intro (ms: minor_state) (major: heap)
                     classify_major_field ms major
                       (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some dst)
           (ensures mem_ce (MajorV src, dst) (build_combined_graph ms major))
+
+/// Chunked-major analogue of major_field_edge_intro for an explicit old-object
+/// graph view.
+val chunked_major_field_edge_intro
+  (ms: minor_state) (mh: MH.major_heap) (major_objs: seq obj_addr)
+  (src: obj_addr) (i: nat) (field_addr: hp_addr) (v: U64.t)
+  (dst: combined_vertex)
+  : Lemma (requires Seq.mem src major_objs /\
+                    chunked_is_no_scan mh src == false /\
+                    i < chunked_wosize_nat_of_object mh src /\
+                    chunked_major_field_slot src i == Some field_addr /\
+                    MH.read_word_in_major mh field_addr == Some v /\
+                    chunked_classify_major_field ms mh v == Some dst)
+          (ensures mem_ce (MajorV src, dst)
+            (build_chunked_combined_graph_from_major_objects
+              ms mh major_objs))
+
+/// Full-graph specialization of chunked_major_field_edge_intro.
+val chunked_major_field_edge_intro_full
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: obj_addr) (i: nat) (field_addr: hp_addr) (v: U64.t)
+  (dst: combined_vertex)
+  : Lemma (requires Seq.mem src (MH.major_objects mh) /\
+                    chunked_is_no_scan mh src == false /\
+                    i < chunked_wosize_nat_of_object mh src /\
+                    chunked_major_field_slot src i == Some field_addr /\
+                    MH.read_word_in_major mh field_addr == Some v /\
+                    chunked_classify_major_field ms mh v == Some dst)
+          (ensures mem_ce (MajorV src, dst)
+            (build_chunked_combined_graph ms mh))
 
 /// ---------------------------------------------------------------------------
 /// Edge Elimination Lemmas

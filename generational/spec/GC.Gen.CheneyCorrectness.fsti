@@ -364,3 +364,62 @@ val chunked_cheney_gc_correct_after_preflight
            collect.cmc_fwd old)) /\
       (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
        collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0)))
+
+/// Edge-level consequence of the chunked correctness bundle for old scanned
+/// major fields.  The theorem is intentionally phrased with an explicit
+/// `expected` post-major object: target-membership can come either from an old
+/// major target or from a forwarded minor target, while this lemma packages the
+/// common field-update/header-framing/graph-introduction reasoning.
+val chunked_cheney_gc_correct_after_preflight_old_major_field_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (src expected: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+      PromotionDemand.minor_promotion_demand minor + 1 ==>
+      MH.chunk_disjoint_from_all fresh major /\
+      fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+      U64.v fresh.base >= U64.v zero_addr /\
+      SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+      CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0) /\
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+      let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+         major fp alloc_fuel needed fresh in
+      let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+         minor r.capacity_major_out r.capacity_fp_out roots
+         r.capacity_fuel_out in
+      Seq.mem src (MH.major_objects major) /\
+      MH.read_word_in_major major (GC.Spec.Heap.hd_address src) == Some hdr /\
+      GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+      U64.v (GC.Spec.Object.getTag hdr) <
+       U64.v GC.Spec.Object.no_scan_tag /\
+      j < U64.v (GC.Spec.Object.getWosize hdr) /\
+      U64.v field_addr == U64.v src + j * U64.v mword /\
+      CG.chunked_major_field_slot src j == Some field_addr /\
+      MH.read_word_in_major major field_addr == Some old /\
+      ChunkedUpdate.chunked_update_expected_value collect.cmc_fwd old ==
+       expected /\
+      Seq.mem expected (MH.major_objects collect.cmc_major)))
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+      let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+         major fp alloc_fuel needed fresh in
+      let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+         minor r.capacity_major_out r.capacity_fp_out roots
+         r.capacity_fuel_out in
+      CG.mem_ce (CG.MajorV src, CG.MajorV expected)
+       (CG.build_chunked_combined_graph
+         collect.cmc_minor collect.cmc_major)))
