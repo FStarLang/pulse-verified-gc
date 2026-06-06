@@ -1625,8 +1625,9 @@ val chunked_cheney_collect_after_minor_promotion_head_preflight
           j < U64.v (getWosize hdr) /\
           U64.v field_addr == U64.v src + j * U64.v mword /\
           MH.read_word_in_major major field_addr == Some old /\
-          ~(is_minor_pointer (to_minor_offset old) /\
-           collect.cmc_fwd (to_minor_offset old) <> 0UL) ==>
+          (U64.v (getTag hdr) >= U64.v no_scan_tag \/
+           ~(is_minor_pointer (to_minor_offset old) /\
+            collect.cmc_fwd (to_minor_offset old) <> 0UL)) ==>
           MH.read_word_in_major collect.cmc_major field_addr == Some old) /\
          (forall (x:U64.t).
          Seq.mem x (minor_reachable minor roots) /\

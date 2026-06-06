@@ -90,6 +90,16 @@ let chunked_is_no_scan (mh: MH.major_heap) (obj: obj_addr)
     | Some hdr -> U64.v (getTag hdr) >= U64.v no_scan_tag
     | None -> false
 
+let chunked_is_no_scan_header
+  (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures
+        chunked_is_no_scan mh obj ==
+        (U64.v (getTag hdr) >= U64.v no_scan_tag))
+  =
+  assert (chunked_header_of_object mh obj == Some hdr)
+
 let chunked_words_disjoint (a b: hp_addr) : Tot prop =
   U64.v a + U64.v mword <= U64.v b \/
   U64.v b + U64.v mword <= U64.v a
@@ -1326,6 +1336,122 @@ let chunked_update_major_pointers_preserves_nonforwarded_field
   =
   chunked_major_objects_members mh;
   chunked_update_all_objects_aux_preserves_nonforwarded_field
+    mh (MH.major_objects mh) fwd 0 h hdr j field_addr old
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_update_all_objects_aux_preserves_no_scan_field
+  (mh: MH.major_heap) (objs: seq obj_addr) (fwd: forwarding_map)
+  (idx: nat) (h: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_objects_members mh objs idx /\
+        Seq.mem h (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address h) == Some hdr /\
+        getColor hdr <> Blue /\
+        U64.v (getTag hdr) >= U64.v no_scan_tag /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v h + j * U64.v mword /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        (let mh' = chunked_update_all_objects_aux mh objs fwd idx in
+        MH.well_formed_major_heap mh' /\
+        MH.major_objects mh' == MH.major_objects mh /\
+        MH.read_word_in_major mh' field_addr == Some old))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then
+    ()
+  else begin
+    let obj = Seq.index objs idx in
+    assert (Seq.mem obj (MH.major_objects mh));
+    assert (chunked_objects_members mh objs (idx + 1));
+    chunked_wosize_nat_header mh h hdr;
+    chunked_is_blue_header mh h hdr;
+    chunked_is_no_scan_header mh h hdr;
+    chunked_update_field_slot_of_payload_addr mh h hdr j field_addr;
+    assert (j < chunked_wosize_nat_of_object mh h);
+    assert (chunked_is_no_scan mh h);
+    assert (~(chunked_is_blue mh h));
+    if chunked_is_blue mh obj then begin
+      if obj = h then
+        assert False;
+      chunked_update_all_objects_aux_preserves_no_scan_field
+        mh objs fwd (idx + 1) h hdr j field_addr old
+    end else if chunked_is_no_scan mh obj then begin
+      chunked_update_all_objects_aux_preserves_no_scan_field
+        mh objs fwd (idx + 1) h hdr j field_addr old
+    end else begin
+      if obj = h then
+        assert False;
+      let wz = chunked_wosize_nat_of_object mh obj in
+      let disjoint (k: nat) (field_addr': hp_addr)
+        : Lemma
+            (requires
+              0 <= k /\ k < wz /\
+              chunked_update_field_slot obj k == Some field_addr')
+            (ensures chunked_words_disjoint field_addr' field_addr)
+        = chunked_update_field_slots_disjoint_distinct
+            mh obj k field_addr' h j field_addr
+      in
+      FStar.Classical.forall_intro
+        (fun k -> FStar.Classical.forall_intro
+          (FStar.Classical.move_requires (disjoint k)));
+      assert (forall (k: nat) (field_addr': hp_addr).
+        0 <= k /\ k < wz /\
+        chunked_update_field_slot obj k == Some field_addr' ==>
+        chunked_words_disjoint field_addr' field_addr);
+      chunked_update_object_pointers_preserves_wf_and_major_objects
+        mh obj wz fwd 0;
+      chunked_update_object_pointers_preserves_read_disjoint
+        mh obj wz fwd 0 field_addr old;
+      chunked_update_object_pointers_preserves_header_read
+        mh obj wz fwd 0 h hdr;
+      let mh1 = chunked_update_object_pointers mh obj wz fwd 0 in
+      assert (MH.well_formed_major_heap mh1);
+      assert (MH.major_objects mh1 == MH.major_objects mh);
+      assert (Seq.mem h (MH.major_objects mh1));
+      assert (MH.read_word_in_major mh1 (hd_address h) == Some hdr);
+      assert (chunked_header_of_object mh1 h ==
+              chunked_header_of_object mh h);
+      assert (chunked_is_blue mh1 h == chunked_is_blue mh h);
+      assert (~(chunked_is_blue mh1 h));
+      chunked_is_no_scan_header mh1 h hdr;
+      assert (chunked_is_no_scan mh1 h);
+      assert (chunked_wosize_nat_of_object mh1 h ==
+              chunked_wosize_nat_of_object mh h);
+      assert (j < chunked_wosize_nat_of_object mh1 h);
+      assert (MH.read_word_in_major mh1 field_addr == Some old);
+      chunked_objects_members_transfer mh mh1 objs (idx + 1);
+      chunked_update_all_objects_aux_preserves_no_scan_field
+        mh1 objs fwd (idx + 1) h hdr j field_addr old;
+      assert (MH.read_word_in_major
+                (chunked_update_all_objects_aux mh1 objs fwd (idx + 1))
+                field_addr == Some old)
+    end
+  end
+
+let chunked_update_major_pointers_preserves_no_scan_field
+  (mh: MH.major_heap) (fwd: forwarding_map) (h: obj_addr) (hdr: U64.t)
+  (j: nat) (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem h (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address h) == Some hdr /\
+        getColor hdr <> Blue /\
+        U64.v (getTag hdr) >= U64.v no_scan_tag /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v h + j * U64.v mword /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        MH.read_word_in_major
+          (chunked_update_major_pointers mh fwd) field_addr == Some old)
+  =
+  chunked_major_objects_members mh;
+  chunked_update_all_objects_aux_preserves_no_scan_field
     mh (MH.major_objects mh) fwd 0 h hdr j field_addr old
 #pop-options
 

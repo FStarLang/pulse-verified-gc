@@ -136,6 +136,7 @@ let cheney_promotes_all_reachable
   in
   Classical.forall_intro (Classical.move_requires aux)
 
+#push-options "--split_queries always"
 let chunked_cheney_collect_after_preflight_forwards_reachable
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
@@ -182,14 +183,13 @@ let chunked_cheney_collect_after_preflight_forwards_reachable
         (requires Seq.mem x (minor_reachable minor roots))
         (ensures collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0)
     =
-    if minor_wosize minor x = 0 then
-      ()
-    else begin
-      assert (minor_wosize minor x > 0);
+    if minor_wosize minor x > 0 then
       assert (collect.cmc_fwd x <> 0UL)
-    end
+    else
+      assert (minor_wosize minor x = 0)
   in
   Classical.forall_intro (Classical.move_requires aux)
+#pop-options
 
 #push-options "--split_queries always"
 let chunked_cheney_gc_correct_after_preflight
@@ -255,8 +255,9 @@ let chunked_cheney_gc_correct_after_preflight
         j < U64.v (GC.Spec.Object.getWosize hdr) /\
         U64.v field_addr == U64.v src + j * U64.v mword /\
         MH.read_word_in_major major field_addr == Some old /\
-        ~(is_minor_pointer (to_minor_offset old) /\
-          collect.cmc_fwd (to_minor_offset old) <> 0UL) ==>
+        (U64.v (GC.Spec.Object.getTag hdr) >= U64.v GC.Spec.Object.no_scan_tag \/
+         ~(is_minor_pointer (to_minor_offset old) /\
+           collect.cmc_fwd (to_minor_offset old) <> 0UL)) ==>
         MH.read_word_in_major collect.cmc_major field_addr == Some old) /\
        (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
         collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0)))

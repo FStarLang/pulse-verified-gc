@@ -63,6 +63,14 @@ val chunked_is_blue_header
 val chunked_is_no_scan
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
 
+val chunked_is_no_scan_header
+  : mh:MH.major_heap -> obj:obj_addr -> hdr:U64.t ->
+    Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures
+        chunked_is_no_scan mh obj ==
+        (U64.v (getTag hdr) >= U64.v GC.Spec.Object.no_scan_tag))
+
 /// Two word slots do not overlap.
 val chunked_words_disjoint
   : a:hp_addr -> b:hp_addr -> Tot prop
@@ -296,6 +304,25 @@ val chunked_update_major_pointers_preserves_nonforwarded_field
         MH.read_word_in_major mh field_addr == Some old /\
         ~(is_minor_pointer (to_minor_offset old) /\
           fwd (to_minor_offset old) <> 0UL))
+      (ensures
+        MH.read_word_in_major
+          (chunked_update_major_pointers mh fwd) field_addr == Some old)
+
+/// Top-level update preserves a payload field of an active no-scan object
+/// unconditionally, since no-scan objects are skipped by the updater.
+val chunked_update_major_pointers_preserves_no_scan_field
+  : mh:MH.major_heap -> fwd:forwarding_map -> h:obj_addr -> hdr:U64.t ->
+    j:nat -> field_addr:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem h (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address h) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        U64.v (getTag hdr) >= U64.v GC.Spec.Object.no_scan_tag /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v h + j * U64.v mword /\
+        MH.read_word_in_major mh field_addr == Some old)
       (ensures
         MH.read_word_in_major
           (chunked_update_major_pointers mh fwd) field_addr == Some old)

@@ -8105,8 +8105,9 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight
            j < U64.v (getWosize hdr) /\
            U64.v field_addr == U64.v src + j * U64.v mword /\
            MH.read_word_in_major major field_addr == Some old /\
-           ~(is_minor_pointer (to_minor_offset old) /\
-             collect.cmc_fwd (to_minor_offset old) <> 0UL) ==>
+           (U64.v (getTag hdr) >= U64.v no_scan_tag \/
+            ~(is_minor_pointer (to_minor_offset old) /\
+              collect.cmc_fwd (to_minor_offset old) <> 0UL)) ==>
            MH.read_word_in_major collect.cmc_major field_addr == Some old) /\
          (forall (x:U64.t).
           Seq.mem x (minor_reachable minor roots) /\
@@ -8197,8 +8198,9 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight
                   j < U64.v (getWosize hdr) /\
                   U64.v field_addr == U64.v src + j * U64.v mword /\
                   MH.read_word_in_major major field_addr == Some old /\
-                  ~(is_minor_pointer (to_minor_offset old) /\
-                    collect.cmc_fwd (to_minor_offset old) <> 0UL))
+                  (U64.v (getTag hdr) >= U64.v no_scan_tag \/
+                   ~(is_minor_pointer (to_minor_offset old) /\
+                     collect.cmc_fwd (to_minor_offset old) <> 0UL)))
         (ensures MH.read_word_in_major collect.cmc_major field_addr ==
                  Some old)
     =
@@ -8206,10 +8208,15 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight
             Some hdr);
     assert (Seq.mem src (MH.major_objects prom.major_final));
     assert (MH.read_word_in_major prom.major_final field_addr == Some old);
-    assert (~(is_minor_pointer (to_minor_offset old) /\
-              prom.fwd_map (to_minor_offset old) <> 0UL));
-    ChunkedUpdate.chunked_update_major_pointers_preserves_nonforwarded_field
-      prom.major_final prom.fwd_map src hdr j field_addr old;
+    if U64.v (getTag hdr) >= U64.v no_scan_tag then
+      ChunkedUpdate.chunked_update_major_pointers_preserves_no_scan_field
+        prom.major_final prom.fwd_map src hdr j field_addr old
+    else begin
+      assert (~(is_minor_pointer (to_minor_offset old) /\
+                prom.fwd_map (to_minor_offset old) <> 0UL));
+      ChunkedUpdate.chunked_update_major_pointers_preserves_nonforwarded_field
+        prom.major_final prom.fwd_map src hdr j field_addr old
+    end;
     assert (MH.read_word_in_major collect.cmc_major field_addr == Some old)
   in
   let old_field_survives_for_quantifiers
@@ -8222,8 +8229,9 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight
           j < U64.v (getWosize hdr) /\
           U64.v field_addr == U64.v src + j * U64.v mword /\
           MH.read_word_in_major major field_addr == Some old /\
-          ~(is_minor_pointer (to_minor_offset old) /\
-            collect.cmc_fwd (to_minor_offset old) <> 0UL) ==>
+          (U64.v (getTag hdr) >= U64.v no_scan_tag \/
+           ~(is_minor_pointer (to_minor_offset old) /\
+             collect.cmc_fwd (to_minor_offset old) <> 0UL)) ==>
           MH.read_word_in_major collect.cmc_major field_addr == Some old)
     =
     FStar.Classical.forall_intro
