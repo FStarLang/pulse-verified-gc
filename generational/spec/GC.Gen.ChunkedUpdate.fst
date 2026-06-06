@@ -120,6 +120,67 @@ let chunked_update_field (mh: MH.major_heap) (field_addr: hp_addr)
       else
         mh
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+private let major_write_word_or_same_read_same
+  (mh: MH.major_heap) (addr: hp_addr) (old value: U64.t)
+  : Lemma
+      (requires
+       MH.well_formed_major_heap mh /\
+       MH.read_word_in_major mh addr == Some old)
+      (ensures
+       MH.read_word_in_major
+         (SpecMajorAlloc.major_write_word_or_same mh addr value)
+         addr == Some value)
+  =
+  MH.read_word_in_major_lookup_index mh addr old;
+  let idx = MH.lookup_chunk_index_value mh addr in
+  assert (MH.lookup_chunk_index mh addr == Some idx);
+  assert (idx < Seq.length mh);
+  let c = Seq.index mh idx in
+  assert (MH.word_in_chunk c addr);
+  assert (MH.read_word_in_chunk c addr == old);
+  let c' = MH.write_word_in_chunk c addr value in
+  MH.write_word_at_index_preserves_wf mh addr value idx;
+  MH.write_word_in_major_at_lookup_index mh addr value idx;
+  assert (MH.write_word_in_major mh addr value == Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') addr value;
+  assert (SpecMajorAlloc.major_write_word_or_same mh addr value ==
+         Seq.upd mh idx c');
+  MH.read_write_in_chunk_same c addr value;
+  MH.write_word_in_chunk_preserves_range c addr value;
+  assert (MH.word_in_chunk c' addr);
+  assert (MH.read_word_in_chunk c' addr == value);
+  assert (Seq.index (Seq.upd mh idx c') idx == c');
+  MH.lookup_chunk_index_word_in_chunk (Seq.upd mh idx c') addr idx;
+  MH.read_word_in_major_at_lookup_index (Seq.upd mh idx c') addr idx
+
+let chunked_update_field_effect
+  (mh: MH.major_heap) (field_addr: hp_addr) (old: U64.t)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+       MH.well_formed_major_heap mh /\
+       MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+       (let old_val = to_minor_offset old in
+        let updated = chunked_update_field mh field_addr fwd in
+        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==>
+         MH.read_word_in_major updated field_addr == Some (fwd old_val)) /\
+        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
+         MH.read_word_in_major updated field_addr == Some old)))
+  =
+  let old_val = to_minor_offset old in
+  if is_minor_pointer old_val then begin
+    let new_val = fwd old_val in
+    if new_val <> 0UL then
+      major_write_word_or_same_read_same mh field_addr old new_val
+    else
+      assert (chunked_update_field mh field_addr fwd == mh)
+  end else
+    assert (chunked_update_field mh field_addr fwd == mh)
+#pop-options
+
 #push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
 let chunked_update_field_noop_when_not_forwarded
   (mh: MH.major_heap) (field_addr: hp_addr) (old: U64.t)
@@ -263,6 +324,72 @@ let chunked_update_field_slot_of_payload_addr
   assert ((U64.v obj + j * 8) % 8 == 0);
   assert (~((U64.v obj + j * 8) % 8 <> 0));
   assert (U64.uint_to_t (U64.v field_addr) == field_addr)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+private let chunked_update_field_slot_some_for_object
+  (mh: MH.major_heap) (obj: obj_addr) (i: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        i < chunked_wosize_nat_of_object mh obj)
+      (ensures chunked_update_field_slot obj i <> None)
+  =
+  MH.major_objects_member_header_read_some mh obj;
+  match MH.read_word_in_major mh (hd_address obj) with
+  | None -> assert False
+  | Some hdr ->
+    chunked_wosize_nat_header mh obj hdr;
+    MH.read_word_in_major_lookup_index mh (hd_address obj) hdr;
+    let idx = MH.lookup_chunk_index_value mh (hd_address obj) in
+    assert (MH.lookup_chunk_index mh (hd_address obj) == Some idx);
+    assert (idx < Seq.length mh);
+    let c = Seq.index mh idx in
+    assert (MH.word_in_chunk c (hd_address obj));
+    assert (MH.read_word_in_chunk c (hd_address obj) == hdr);
+    MH.major_objects_member_in_lookup_chunk mh idx obj;
+    assert (Seq.mem obj (MH.objects_in_chunk c));
+    MH.objects_in_chunk_member_header_fits c obj;
+    assert (MH.object_header_size_fits_in_chunk c obj);
+    let wz = U64.v (getWosize hdr) in
+    assert (chunked_wosize_nat_of_object mh obj == wz);
+    assert (i < wz);
+    assert (MH.object_wosize_in_chunk c obj == wz);
+    let field_offset = U64.v obj + i * U64.v mword in
+    assert (U64.v mword == 8);
+    assert (field_offset == U64.v obj + i * 8);
+    hd_address_spec obj;
+    assert (U64.v (hd_address obj) + U64.v mword == U64.v obj);
+    FStar.Math.Lemmas.distributivity_add_left 1 wz (U64.v mword);
+    assert ((1 + wz) * U64.v mword ==
+            U64.v mword + wz * U64.v mword);
+    FStar.Math.Lemmas.paren_add_right
+      (U64.v (hd_address obj)) (U64.v mword) (wz * U64.v mword);
+    assert (U64.v obj + wz * U64.v mword ==
+            U64.v (hd_address obj) +
+            (1 + wz) * U64.v mword);
+    assert (U64.v obj + wz * U64.v mword <= MH.chunk_end c);
+    assert (i + 1 <= wz);
+    FStar.Math.Lemmas.lemma_mult_le_right (U64.v mword) (i + 1) wz;
+    FStar.Math.Lemmas.distributivity_add_left i 1 (U64.v mword);
+    assert (i * U64.v mword + U64.v mword ==
+            (i + 1) * U64.v mword);
+    FStar.Math.Lemmas.paren_add_right
+      (U64.v obj) (i * U64.v mword) (U64.v mword);
+    assert (field_offset + U64.v mword ==
+            U64.v obj + (i + 1) * U64.v mword);
+    assert ((i + 1) * U64.v mword <= wz * U64.v mword);
+    assert (field_offset + U64.v mword <= U64.v obj + wz * U64.v mword);
+    assert (field_offset + U64.v mword <= MH.chunk_end c);
+    assert (field_offset + U64.v mword <= heap_size);
+    assert (field_offset + 8 <= heap_size);
+    assert (U64.v obj % U64.v mword == 0);
+    SpecMajorAlloc.aligned_plus_word_product (U64.v obj) i;
+    assert (field_offset % U64.v mword == 0);
+    assert (field_offset % 8 == 0);
+    assert (~(field_offset + 8 > heap_size));
+    assert (~(field_offset % 8 <> 0))
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
@@ -862,6 +989,104 @@ let rec chunked_update_object_pointers_preserves_self_field
         assert (MH.read_word_in_major
                   (chunked_update_object_pointers mh1 obj wosize fwd (i + 1))
                   field_addr == Some old)
+      end
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_update_object_pointers_field_effect
+  (mh: MH.major_heap) (obj: obj_addr) (wosize: nat)
+  (fwd: forwarding_map) (i: nat) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        wosize == chunked_wosize_nat_of_object mh obj /\
+        i <= j /\ j < wosize /\
+        chunked_update_field_slot obj j == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        (let mh' = chunked_update_object_pointers mh obj wosize fwd i in
+        let old_val = to_minor_offset old in
+        MH.well_formed_major_heap mh' /\
+        MH.major_objects mh' == MH.major_objects mh /\
+        chunked_header_of_object mh' obj == chunked_header_of_object mh obj /\
+        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==>
+          MH.read_word_in_major mh' field_addr == Some (fwd old_val)) /\
+        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
+          MH.read_word_in_major mh' field_addr == Some old)))
+      (decreases (wosize - i))
+  =
+  chunked_update_object_pointers_preserves_wf_and_major_objects
+    mh obj wosize fwd i;
+  if i >= wosize then
+    assert False
+  else begin
+    chunked_update_field_slot_some_for_object mh obj i;
+    match chunked_update_field_slot obj i with
+    | None -> assert False
+    | Some cur_field ->
+      if i = j then begin
+        assert (cur_field == field_addr);
+        chunked_update_field_preserves_wf_and_major_objects
+          mh obj i field_addr fwd;
+        chunked_update_field_effect mh field_addr old fwd;
+        let mh1 = chunked_update_field mh field_addr fwd in
+        assert (MH.well_formed_major_heap mh1);
+        let old_val = to_minor_offset old in
+        let tail_disjoint (k: nat) (field_addr': hp_addr)
+          : Lemma
+              (requires
+                i + 1 <= k /\ k < wosize /\
+                chunked_update_field_slot obj k == Some field_addr')
+              (ensures chunked_words_disjoint field_addr' field_addr)
+          = chunked_update_field_slots_disjoint_same_object
+              obj k field_addr' j field_addr
+        in
+        FStar.Classical.forall_intro
+          (fun k -> FStar.Classical.forall_intro
+            (FStar.Classical.move_requires (tail_disjoint k)));
+        assert (forall (k: nat) (field_addr': hp_addr).
+          i + 1 <= k /\ k < wosize /\
+          chunked_update_field_slot obj k == Some field_addr' ==>
+          chunked_words_disjoint field_addr' field_addr);
+        if is_minor_pointer old_val then begin
+          let new_val = fwd old_val in
+          if new_val <> 0UL then begin
+            assert (MH.read_word_in_major mh1 field_addr == Some new_val);
+            chunked_update_object_pointers_preserves_read_disjoint
+              mh1 obj wosize fwd (i + 1) field_addr new_val
+          end else begin
+            assert (MH.read_word_in_major mh1 field_addr == Some old);
+            chunked_update_object_pointers_preserves_read_disjoint
+              mh1 obj wosize fwd (i + 1) field_addr old
+          end
+        end else begin
+          assert (MH.read_word_in_major mh1 field_addr == Some old);
+          chunked_update_object_pointers_preserves_read_disjoint
+            mh1 obj wosize fwd (i + 1) field_addr old
+        end
+      end else begin
+        assert (i < j);
+        chunked_update_field_slots_disjoint_same_object
+          obj i cur_field j field_addr;
+        chunked_update_field_preserves_wf_and_major_objects
+          mh obj i cur_field fwd;
+        chunked_update_field_preserves_wf_and_read_disjoint
+          mh cur_field field_addr old fwd;
+        let mh1 = chunked_update_field mh cur_field fwd in
+        assert (MH.well_formed_major_heap mh1);
+        assert (MH.major_objects mh1 == MH.major_objects mh);
+        assert (Seq.mem obj (MH.major_objects mh1));
+        assert (chunked_header_of_object mh1 obj ==
+                chunked_header_of_object mh obj);
+        assert (chunked_wosize_nat_of_object mh1 obj ==
+                chunked_wosize_nat_of_object mh obj);
+        assert (wosize == chunked_wosize_nat_of_object mh1 obj);
+        assert (MH.read_word_in_major mh1 field_addr == Some old);
+        chunked_update_object_pointers_field_effect
+          mh1 obj wosize fwd (i + 1) j field_addr old
       end
   end
 #pop-options

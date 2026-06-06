@@ -80,6 +80,22 @@ val chunked_update_field
   : mh:MH.major_heap -> field_addr:hp_addr -> fwd:forwarding_map ->
     GTot MH.major_heap
 
+/// Exact effect of updating one field slot.
+val chunked_update_field_effect
+  : mh:MH.major_heap -> field_addr:hp_addr -> old:U64.t ->
+    fwd:forwarding_map ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        (let old_val = to_minor_offset old in
+        let updated = chunked_update_field mh field_addr fwd in
+        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==>
+          MH.read_word_in_major updated field_addr == Some (fwd old_val)) /\
+        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
+          MH.read_word_in_major updated field_addr == Some old)))
+
 /// A checked update slot for an active object is a payload word in the same
 /// chunk as the object's header.
 val chunked_update_field_slot_in_object_chunk
@@ -203,6 +219,30 @@ val chunked_update_object_pointers_preserves_read_disjoint
         (let mh' = chunked_update_object_pointers mh obj wosize fwd i in
         MH.well_formed_major_heap mh' /\
         MH.read_word_in_major mh' addr == Some old))
+
+/// Exact effect of updating the payload fields of one scanned object.
+val chunked_update_object_pointers_field_effect
+  : mh:MH.major_heap -> obj:obj_addr -> wosize:nat ->
+    fwd:forwarding_map -> i:nat -> j:nat -> field_addr:hp_addr ->
+    old:U64.t ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        wosize == chunked_wosize_nat_of_object mh obj /\
+        i <= j /\ j < wosize /\
+        chunked_update_field_slot obj j == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        (let mh' = chunked_update_object_pointers mh obj wosize fwd i in
+        let old_val = to_minor_offset old in
+        MH.well_formed_major_heap mh' /\
+        MH.major_objects mh' == MH.major_objects mh /\
+        chunked_header_of_object mh' obj == chunked_header_of_object mh obj /\
+        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==>
+          MH.read_word_in_major mh' field_addr == Some (fwd old_val)) /\
+        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
+          MH.read_word_in_major mh' field_addr == Some old)))
 
 /// Updating all remaining fields of one object preserves the header read of an
 /// active object.

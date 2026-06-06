@@ -3251,6 +3251,23 @@ let spot_chunked_update_field_preserves_read_disjoint
   ChunkedUpdate.chunked_update_field_preserves_wf_and_read_disjoint
     major field_addr addr old fwd
 
+let spot_chunked_update_field_effect
+  (major: MH.major_heap) (field_addr: hp_addr) (old: U64.t)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap major /\
+        MH.read_word_in_major major field_addr == Some old)
+      (ensures
+        (let old_val = to_minor_offset old in
+         let updated = ChunkedUpdate.chunked_update_field major field_addr fwd in
+         (is_minor_pointer old_val /\ fwd old_val <> 0UL ==>
+          MH.read_word_in_major updated field_addr == Some (fwd old_val)) /\
+         (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
+          MH.read_word_in_major updated field_addr == Some old)))
+  =
+  ChunkedUpdate.chunked_update_field_effect major field_addr old fwd
+
 let spot_chunked_update_field_slot_in_object_chunk
   (major: MH.major_heap) (obj: obj_addr) (i: nat) (field_addr: hp_addr)
   : Lemma
@@ -3290,6 +3307,35 @@ let spot_chunked_update_object_pointers_preserves_read_disjoint
   =
   ChunkedUpdate.chunked_update_object_pointers_preserves_read_disjoint
     major obj wosize fwd i addr old
+
+let spot_chunked_update_object_pointers_field_effect
+  (major: MH.major_heap) (obj: obj_addr) (wosize: nat)
+  (fwd: forwarding_map) (i: nat) (j: nat) (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap major /\
+        Seq.mem obj (MH.major_objects major) /\
+        wosize == ChunkedUpdate.chunked_wosize_nat_of_object major obj /\
+        i <= j /\ j < wosize /\
+        ChunkedUpdate.chunked_update_field_slot obj j == Some field_addr /\
+        MH.read_word_in_major major field_addr == Some old)
+      (ensures
+        (let major' =
+           ChunkedUpdate.chunked_update_object_pointers
+             major obj wosize fwd i in
+         let old_val = to_minor_offset old in
+         MH.well_formed_major_heap major' /\
+         MH.major_objects major' == MH.major_objects major /\
+         ChunkedUpdate.chunked_header_of_object major' obj ==
+           ChunkedUpdate.chunked_header_of_object major obj /\
+         (is_minor_pointer old_val /\ fwd old_val <> 0UL ==>
+          MH.read_word_in_major major' field_addr == Some (fwd old_val)) /\
+         (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
+          MH.read_word_in_major major' field_addr == Some old)))
+  =
+  ChunkedUpdate.chunked_update_object_pointers_field_effect
+    major obj wosize fwd i j field_addr old
 
 let spot_chunked_update_major_pointers_preserves_header
   (major: MH.major_heap) (fwd: forwarding_map) (h: obj_addr) (hdr: U64.t)
