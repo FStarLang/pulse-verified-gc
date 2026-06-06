@@ -280,6 +280,26 @@ val chunked_update_major_pointers_preserves_blue_field
         MH.read_word_in_major
           (chunked_update_major_pointers mh fwd) field_addr == Some old)
 
+/// Top-level update preserves a payload field of an active non-blue object when
+/// the field value is not a minor pointer with a nonzero forwarding target.
+val chunked_update_major_pointers_preserves_nonforwarded_field
+  : mh:MH.major_heap -> fwd:forwarding_map -> h:obj_addr -> hdr:U64.t ->
+    j:nat -> field_addr:hp_addr -> old:U64.t ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem h (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address h) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        j < U64.v (getWosize hdr) /\
+        U64.v field_addr == U64.v h + j * U64.v mword /\
+        MH.read_word_in_major mh field_addr == Some old /\
+        ~(is_minor_pointer (to_minor_offset old) /\
+          fwd (to_minor_offset old) <> 0UL))
+      (ensures
+        MH.read_word_in_major
+          (chunked_update_major_pointers mh fwd) field_addr == Some old)
+
 /// Single-chunk metadata compatibility with the existing dense heap readers.
 val chunked_is_blue_single_chunk_compat
   : g:heap -> obj:obj_addr ->
