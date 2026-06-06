@@ -516,6 +516,31 @@ val chunked_cheney_forward_normal_head_split_preserves_chunked_alloc_shape
          SpecMajorAlloc.major_fl_chain_terminates
           cs'.ccs_major cs'.ccs_fp fuel = true))
 
+val chunked_cheney_forward_normal_head_split_preserves_chain_objects_blue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp fuel /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         minor_wosize minor addr > 0 ==>
+         cs.ccs_fp <> 0UL /\
+         SpecMajorAlloc.major_fl_head_wosize
+           cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2))
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_normal
+             minor cs addr fuel in
+         GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp fuel = true /\
+         GenInv.chunked_chain_objects_blue cs'.ccs_major cs'.ccs_fp fuel))
+
 /// One chunked Cheney forwarding step preserves allocator shape when any
 /// possible normal promotion from the step splits the active free-list head.
 val chunked_cheney_forward_one_head_split_preserves_chunked_alloc_shape
@@ -549,6 +574,40 @@ val chunked_cheney_forward_one_head_split_preserves_chunked_alloc_shape
          GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
          SpecMajorAlloc.major_fl_chain_terminates
           cs'.ccs_major cs'.ccs_fp fuel = true))
+
+val chunked_cheney_forward_one_head_split_preserves_chain_objects_blue
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp fuel /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         ~(is_infix_in_minor minor addr) /\
+         minor_wosize minor addr > 0 ==>
+           cs.ccs_fp <> 0UL /\
+           SpecMajorAlloc.major_fl_head_wosize
+             cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2) /\
+        (cs.ccs_fwd addr = 0UL /\
+         is_infix_in_minor minor addr ==>
+           (let parent = infix_parent minor addr in
+            Seq.mem parent (minor_objects minor) /\
+            cs.ccs_fwd parent = 0UL /\
+            minor_wosize minor parent > 0 ==>
+              cs.ccs_fp <> 0UL /\
+              SpecMajorAlloc.major_fl_head_wosize
+                cs.ccs_major cs.ccs_fp >= minor_wosize minor parent + 2)))
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+         GenInv.chunked_major_alloc_shape cs'.ccs_major cs'.ccs_fp fuel /\
+         SpecMajorAlloc.major_fl_chain_terminates
+           cs'.ccs_major cs'.ccs_fp fuel = true /\
+         GenInv.chunked_chain_objects_blue cs'.ccs_major cs'.ccs_fp fuel))
 
 val chunked_cheney_forward_one_budget_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
