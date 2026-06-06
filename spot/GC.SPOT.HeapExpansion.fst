@@ -860,6 +860,35 @@ let spot_chunked_cheney_forward_normal_head_split_field_effect
   ChunkedCheney.chunked_cheney_forward_normal_head_split_field_effect
     minor cs addr fuel j field_addr
 
+let spot_chunked_cheney_forward_one_normal_head_split_field_effect
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel: nat) (j: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        ~(is_infix_in_minor minor addr) /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        j < minor_wosize minor addr /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2 /\
+        U64.v field_addr ==
+          U64.v cs.ccs_fp + j * U64.v mword)
+      (ensures
+        (let cs' =
+           ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+         cs'.ccs_fwd addr == cs.ccs_fp /\
+         MH.read_word_in_major cs'.ccs_major field_addr ==
+           Some (minor_read_field minor addr j)))
+  =
+  ChunkedCheney.chunked_cheney_forward_one_normal_head_split_field_effect
+    minor cs addr fuel j field_addr
+
 let spot_major_write_word_or_same_read_frame
   (mh: MH.major_heap) (write_addr target: hp_addr)
   (value old: U64.t)
