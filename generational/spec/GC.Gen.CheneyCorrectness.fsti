@@ -319,6 +319,7 @@ val chunked_cheney_gc_correct_after_preflight
       collect.cmc_roots == rewrite_roots roots prom.fwd_map /\
       collect.cmc_fwd == prom.fwd_map /\
       CheneyPres.chunked_fwd_targets_above_minor collect.cmc_fwd /\
+      CheneyPres.chunked_fwd_targets_valid_addr collect.cmc_fwd /\
       GenInv.chunked_major_alloc_shape
        collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
       SpecMajorAlloc.major_fl_chain_terminates
