@@ -46,6 +46,13 @@ open GC.Gen.Promote
 open GC.Gen.Cheney
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
+module PromotionDemand = GC.Gen.PromotionDemand
+module ChunkedCheney = GC.Gen.ChunkedCheney
+module CheneyPres = GC.Gen.CheneyPreservation
+module GenInv = GC.Gen.HeapInvariant
+module CG = GC.Gen.CombinedGraph
 
 /// ---------------------------------------------------------------------------
 /// Property 1: Object survival — pre-existing major objects survive collection
@@ -232,3 +239,38 @@ val cheney_promotes_all_reachable
               // Every reachable minor object is forwarded (or has zero wosize)
               forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
                 prom.fwd_map x <> 0UL \/ minor_wosize minor x = 0))
+
+/// Chunked/preflight analogue of `cheney_promotes_all_reachable`: after the
+/// optional major-heap head-capacity expansion and full chunked minor
+/// collection, every minor object reachable from the original roots was
+/// forwarded, unless it is zero-sized.
+val chunked_cheney_collect_after_preflight_forwards_reachable
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+     minor_wf minor /\
+     alloc_fuel > 1 /\
+     GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+     SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+     GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+     (SpecMajorAlloc.major_fl_head_wosize major fp <
+      PromotionDemand.minor_promotion_demand minor + 1 ==>
+      MH.chunk_disjoint_from_all fresh major /\
+      fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+      U64.v fresh.base >= U64.v zero_addr /\
+      SpecMajorAlloc.fresh_chunk_wosize fresh >=
+        PromotionDemand.minor_promotion_demand minor + 1 /\
+      CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0))
+    (ensures
+     (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+      let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+      let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+      forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
+        collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0))
