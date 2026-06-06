@@ -93,6 +93,15 @@ let chunked_classify_minor_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t
     else
       None
 
+let chunked_classify_minor_field_minor (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : Lemma (requires (
+             let vo = to_minor_offset v in
+             is_minor_addr vo /\ Seq.mem vo (minor_objects ms)))
+          (ensures
+             chunked_classify_minor_field ms mh v ==
+             Some (MinorV (to_minor_offset v)))
+  = ()
+
 let chunked_classify_major_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
   : GTot (option combined_vertex)
   = let vo = to_minor_offset v in

@@ -121,6 +121,16 @@ val classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
 val chunked_classify_minor_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
   : GTot (option combined_vertex)
 
+/// Chunked characterization: chunked_classify_minor_field returns
+/// MinorV(to_minor_offset v) when the normalized value is a minor object.
+val chunked_classify_minor_field_minor (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : Lemma (requires (
+             let vo = to_minor_offset v in
+             is_minor_addr vo /\ Seq.mem vo (minor_objects ms)))
+          (ensures
+             chunked_classify_minor_field ms mh v ==
+             Some (MinorV (to_minor_offset v)))
+
 /// Chunked-major analogue of `classify_major_field`.
 val chunked_classify_major_field (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
   : GTot (option combined_vertex)
