@@ -461,7 +461,7 @@ let chunked_cheney_gc_correct_after_preflight_old_major_nonforwarded_field_edge
 let chunked_cheney_gc_correct_after_preflight_old_major_forwarded_minor_field_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
-  (src: obj_addr) (hdr: U64.t) (j: nat)
+  (src expected: obj_addr) (hdr: U64.t) (j: nat)
   (field_addr: hp_addr) (old: U64.t)
   : Lemma
     (requires
@@ -499,9 +499,8 @@ let chunked_cheney_gc_correct_after_preflight_old_major_forwarded_minor_field_ed
        MH.read_word_in_major major field_addr == Some old /\
        is_minor_pointer x /\
        collect.cmc_fwd x <> 0UL /\
-       is_val_addr (collect.cmc_fwd x) /\
-       Seq.mem (collect.cmc_fwd x <: obj_addr)
-        (MH.major_objects collect.cmc_major)))
+       collect.cmc_fwd x == expected /\
+       Seq.mem expected (MH.major_objects collect.cmc_major)))
     (ensures
       (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
        let r =
@@ -512,7 +511,7 @@ let chunked_cheney_gc_correct_after_preflight_old_major_forwarded_minor_field_ed
           minor r.capacity_major_out r.capacity_fp_out roots
           r.capacity_fuel_out in
        let x = to_minor_offset old in
-       CG.mem_ce (CG.MajorV src, CG.MajorV (collect.cmc_fwd x))
+       CG.mem_ce (CG.MajorV src, CG.MajorV expected)
         (CG.build_chunked_combined_graph
           collect.cmc_minor collect.cmc_major)))
   =
@@ -527,11 +526,11 @@ let chunked_cheney_gc_correct_after_preflight_old_major_forwarded_minor_field_ed
       minor r.capacity_major_out r.capacity_fp_out roots
       r.capacity_fuel_out in
   let x = to_minor_offset old in
-  is_val_addr_spec (collect.cmc_fwd x);
-  let expected : obj_addr = collect.cmc_fwd x in
   ChunkedUpdate.chunked_update_expected_value_effect collect.cmc_fwd old;
   assert (ChunkedUpdate.chunked_update_expected_value collect.cmc_fwd old ==
           collect.cmc_fwd x);
+  assert (ChunkedUpdate.chunked_update_expected_value collect.cmc_fwd old ==
+          expected);
   chunked_cheney_gc_correct_after_preflight_old_major_field_edge
     minor major fp roots alloc_fuel fresh src expected hdr j field_addr old
 #pop-options
