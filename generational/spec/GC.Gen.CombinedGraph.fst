@@ -541,6 +541,62 @@ let chunked_major_field_slot_elim
   end
 #pop-options
 
+#push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_major_field_slot_of_object_header
+  (mh: MH.major_heap) (src: obj_addr) (hdr: U64.t) (i: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        i < U64.v (getWosize hdr))
+      (ensures chunked_major_field_slot src i <> None)
+  =
+  MH.read_word_in_major_lookup_index mh (hd_address src) hdr;
+  let idx = MH.lookup_chunk_index_value mh (hd_address src) in
+  let c = Seq.index mh idx in
+  assert (MH.lookup_chunk_index mh (hd_address src) == Some idx);
+  assert (idx < Seq.length mh);
+  assert (MH.word_in_chunk c (hd_address src));
+  assert (MH.read_word_in_chunk c (hd_address src) == hdr);
+  MH.major_objects_member_in_lookup_chunk mh idx src;
+  assert (Seq.mem src (MH.objects_in_chunk c));
+  MH.objects_in_chunk_member_header_fits c src;
+  assert (MH.object_header_size_fits_in_chunk c src);
+  assert (MH.object_wosize_in_chunk c src == U64.v (getWosize hdr));
+  hd_address_spec src;
+  assert_norm (U64.v mword == 8);
+  assert (U64.v (hd_address src) + U64.v mword == U64.v src);
+  let wz = U64.v (getWosize hdr) in
+  assert (i + 1 <= wz);
+  FStar.Math.Lemmas.lemma_mult_le_right (U64.v mword) (i + 1) wz;
+  assert ((i + 1) * U64.v mword <= wz * U64.v mword);
+  FStar.Math.Lemmas.distributivity_add_left i 1 (U64.v mword);
+  assert (i * U64.v mword + U64.v mword == (i + 1) * U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v src) (i * U64.v mword) (U64.v mword);
+  assert (U64.v src + i * U64.v mword + U64.v mword ==
+          U64.v src + (i + 1) * U64.v mword);
+  FStar.Math.Lemmas.distributivity_add_left 1 wz (U64.v mword);
+  assert ((1 + wz) * U64.v mword == U64.v mword + wz * U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v (hd_address src)) (U64.v mword) (wz * U64.v mword);
+  assert (U64.v src + wz * U64.v mword ==
+          U64.v (hd_address src) + (1 + wz) * U64.v mword);
+  assert (U64.v src + i * U64.v mword + U64.v mword <=
+          U64.v (hd_address src) + (1 + wz) * U64.v mword);
+  assert (U64.v (hd_address src) + (1 + wz) * U64.v mword <=
+          MH.chunk_end c);
+  assert (MH.chunk_end c <= heap_size);
+  let field_offset = U64.v src + i * U64.v mword in
+  assert (field_offset + U64.v mword <= heap_size);
+  SpecMajorAlloc.aligned_plus_word_product (U64.v src) i;
+  assert (field_offset % U64.v mword == 0);
+  match chunked_major_field_slot src i with
+  | None -> assert False
+  | Some _ -> ()
+#pop-options
+
 let rec chunked_major_field_edges (ms: minor_state) (mh: MH.major_heap)
                                   (src: obj_addr) (wz: nat) (i: nat)
   : GTot (seq combined_edge) (decreases (wz - i))

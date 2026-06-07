@@ -3474,6 +3474,17 @@ let spot_chunked_is_no_scan_preserved_by_expansion
         CG.chunked_is_no_scan mh obj)
   = CG.chunked_is_no_scan_preserved_by_expansion mh fresh fp obj
 
+let spot_chunked_major_field_slot_of_object_header
+  (mh: MH.major_heap) (src: obj_addr) (hdr: U64.t) (i: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        i < U64.v (Obj.getWosize hdr))
+      (ensures CG.chunked_major_field_slot src i <> None)
+  = CG.chunked_major_field_slot_of_object_header mh src hdr i
+
 let spot_chunked_major_field_edges
   (ms: minor_state) (mh: MH.major_heap) (src: obj_addr) (wz: nat) (i: nat)
   : GTot (Seq.seq CG.combined_edge)

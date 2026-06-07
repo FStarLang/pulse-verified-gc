@@ -393,6 +393,16 @@ val chunked_major_field_slot_elim
         U64.v field_addr == U64.v src + i * U64.v mword /\
         U64.v field_addr + U64.v mword <= heap_size)
 
+val chunked_major_field_slot_of_object_header
+  : mh:MH.major_heap -> src:obj_addr -> hdr:U64.t -> i:nat ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        i < U64.v (getWosize hdr))
+      (ensures chunked_major_field_slot src i <> None)
+
 /// Build field edges for a major object in a chunked major heap.
 val chunked_major_field_edges
   : ms:minor_state -> mh:MH.major_heap -> src:obj_addr -> wz:nat -> i:nat ->
