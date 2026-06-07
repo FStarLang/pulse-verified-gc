@@ -896,3 +896,32 @@ let chunked_cheney_gc_correct_after_preflight_graph_selected_ready_maps_to_major
   chunked_cheney_gc_correct_after_preflight_graph_edges_selected_map_to_major_edges
     minor major fp roots alloc_fuel fresh
 #pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_selected_graph_maps_to_major_graph
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_major_objects_above_minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_selected_graph_maps_to_major_graph_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  chunked_cheney_gc_correct_after_preflight_graph_selected_ready_maps_to_major_graph
+    minor major fp roots alloc_fuel fresh
+#pop-options
