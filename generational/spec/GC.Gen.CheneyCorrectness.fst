@@ -309,6 +309,8 @@ let chunked_cheney_gc_correct_after_preflight
        collect.cmc_fwd == prom.fwd_map /\
        CheneyPres.chunked_fwd_targets_above_minor collect.cmc_fwd /\
        CheneyPres.chunked_fwd_targets_valid_addr collect.cmc_fwd /\
+       CheneyPres.chunked_fwd_noninfix_targets_in_major
+         minor collect.cmc_fwd collect.cmc_major /\
        GenInv.chunked_major_alloc_shape
         collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
        SpecMajorAlloc.major_fl_chain_terminates
@@ -359,6 +361,119 @@ let chunked_cheney_gc_correct_after_preflight
     minor major fp roots alloc_fuel fresh;
   chunked_cheney_collect_after_preflight_forwards_reachable
     minor major fp roots alloc_fuel fresh
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_forwarded_minor_object_in_major
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (x: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+        PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0) /\
+      Seq.mem x (minor_objects minor) /\
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       collect.cmc_fwd x <> 0UL))
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       is_val_addr (collect.cmc_fwd x) /\
+       Seq.mem ((collect.cmc_fwd x) <: obj_addr)
+        (MH.major_objects collect.cmc_major)))
+  =
+  chunked_cheney_gc_correct_after_preflight
+    minor major fp roots alloc_fuel fresh;
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  minor_objects_not_infix minor x;
+  assert (~(is_infix_in_minor minor x));
+  CheneyPres.chunked_fwd_noninfix_targets_in_major_elim
+    minor collect.cmc_fwd collect.cmc_major x
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_reachable_forwarding_target_in_major
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (x: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+        PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0) /\
+      Seq.mem x (minor_reachable minor roots) /\
+      minor_wosize minor x > 0)
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       is_val_addr (collect.cmc_fwd x) /\
+       Seq.mem ((collect.cmc_fwd x) <: obj_addr)
+        (MH.major_objects collect.cmc_major)))
+  =
+  chunked_cheney_gc_correct_after_preflight
+    minor major fp roots alloc_fuel fresh;
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  minor_reachable_subset minor roots;
+  assert (Seq.mem x (minor_objects minor));
+  assert (collect.cmc_fwd x <> 0UL);
+  chunked_cheney_gc_correct_after_preflight_forwarded_minor_object_in_major
+    minor major fp roots alloc_fuel fresh x
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
@@ -692,6 +807,68 @@ let chunked_forward_fields_preserved_forwarded_minor_field_edge
   let x = to_minor_offset old in
   chunked_update_forwarded_minor_field_edge
     minor cs'.ccs_major cs'.ccs_fwd
+    src expected hdr j field_addr old
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_forward_fields_preserved_minor_object_field_edge
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx wosize alloc_fuel: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates
+        cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp alloc_fuel /\
+      CheneyPres.chunked_cheney_forward_fields_split_ready
+        minor cs parent idx wosize alloc_fuel /\
+      Seq.mem src (MH.major_objects cs.ccs_major) /\
+      MH.read_word_in_major cs.ccs_major
+        (GC.Spec.Heap.hd_address src) == Some hdr /\
+      GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+      U64.v (GC.Spec.Object.getTag hdr) <
+        U64.v GC.Spec.Object.no_scan_tag /\
+      j < U64.v (GC.Spec.Object.getWosize hdr) /\
+      U64.v field_addr == U64.v src + j * U64.v mword /\
+      CG.chunked_major_field_slot src j == Some field_addr /\
+      MH.read_word_in_major cs.ccs_major field_addr == Some old /\
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       let x = to_minor_offset old in
+       CheneyPres.chunked_fwd_targets_above_minor cs'.ccs_fwd /\
+       CheneyPres.chunked_fwd_noninfix_targets_in_major
+        minor cs'.ccs_fwd cs'.ccs_major /\
+       is_minor_pointer x /\
+       Seq.mem x (minor_objects minor) /\
+       cs'.ccs_fwd x <> 0UL))
+    (ensures
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       let x = to_minor_offset old in
+       CG.mem_ce (CG.MajorV src, CG.MajorV (cs'.ccs_fwd x))
+        (CG.build_chunked_combined_graph
+          (minor_reset minor)
+          (ChunkedUpdate.chunked_update_major_pointers
+            cs'.ccs_major cs'.ccs_fwd))))
+  =
+  let cs' =
+    ChunkedCheney.chunked_cheney_forward_fields
+      minor cs parent idx wosize alloc_fuel in
+  let x = to_minor_offset old in
+  minor_objects_not_infix minor x;
+  assert (~(is_infix_in_minor minor x));
+  CheneyPres.chunked_fwd_noninfix_targets_in_major_elim
+    minor cs'.ccs_fwd cs'.ccs_major x;
+  let expected = (cs'.ccs_fwd x <: obj_addr) in
+  assert (cs'.ccs_fwd x == expected);
+  chunked_forward_fields_preserved_forwarded_minor_field_edge
+    minor cs parent idx wosize alloc_fuel
     src expected hdr j field_addr old
 #pop-options
 

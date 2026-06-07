@@ -726,6 +726,32 @@ val chunked_fwd_targets_valid_addr_elim
                 fwd x <> 0UL)
       (ensures is_val_addr (fwd x))
 
+/// Non-infix minor sources are forwarded to ordinary active major objects in
+/// the current chunked major heap.  Infix sources are intentionally excluded:
+/// their forwarding entries are interior pointers into the promoted parent, not
+/// members of `MH.major_objects`.
+[@"opaque_to_smt"]
+val chunked_fwd_noninfix_targets_in_major
+  : minor:minor_state -> fwd:forwarding_map -> mh:MH.major_heap -> GTot prop
+
+val chunked_fwd_noninfix_targets_in_major_empty
+  : minor:minor_state -> mh:MH.major_heap ->
+    Lemma
+      (ensures
+        chunked_fwd_noninfix_targets_in_major minor empty_forwarding mh)
+
+val chunked_fwd_noninfix_targets_in_major_elim
+  : minor:minor_state -> fwd:forwarding_map -> mh:MH.major_heap ->
+    x:U64.t ->
+    Lemma
+      (requires
+        chunked_fwd_noninfix_targets_in_major minor fwd mh /\
+        fwd x <> 0UL /\
+        ~(is_infix_in_minor minor x))
+      (ensures
+        is_val_addr (fwd x) /\
+        Seq.mem ((fwd x) <: obj_addr) (MH.major_objects mh))
+
 val chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> fuel:nat -> remaining:nat ->
@@ -762,6 +788,25 @@ val chunked_cheney_forward_one_preserves_fwd_targets_above_minor
         chunked_fwd_targets_above_minor
           (ChunkedCheney.chunked_cheney_forward_one
             minor cs addr fuel).ccs_fwd)
+
+val chunked_cheney_forward_one_preserves_fwd_noninfix_targets_in_major
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        chunked_fwd_noninfix_targets_in_major
+          minor cs.ccs_fwd cs.ccs_major /\
+        chunked_cheney_forward_one_budget_ready
+          minor cs addr remaining)
+      (ensures
+        (let cs' =
+          ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+         chunked_fwd_noninfix_targets_in_major
+          minor cs'.ccs_fwd cs'.ccs_major))
 
 val chunked_cheney_forward_one_split_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
@@ -1211,6 +1256,24 @@ val chunked_cheney_promote_preserves_fwd_targets_valid_addr
             minor major fp roots alloc_fuel in
          chunked_fwd_targets_valid_addr res.fwd_map))
 
+val chunked_cheney_promote_preserves_fwd_noninfix_targets_in_major
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         chunked_fwd_noninfix_targets_in_major
+          minor res.fwd_map res.major_final))
+
 val chunked_cheney_forward_one_fwd_monotone
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> x:U64.t -> alloc_fuel:nat ->
@@ -1640,6 +1703,8 @@ val chunked_cheney_promote_after_minor_promotion_head_preflight
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
          chunked_fwd_targets_above_minor res.fwd_map /\
          chunked_fwd_targets_valid_addr res.fwd_map /\
+         chunked_fwd_noninfix_targets_in_major
+           minor res.fwd_map res.major_final /\
          (forall (x:U64.t).
           Seq.mem x (minor_reachable minor roots) /\
           minor_wosize minor x > 0 ==>
@@ -1733,6 +1798,8 @@ val chunked_cheney_collect_after_minor_promotion_head_preflight
          collect.cmc_fwd == prom.fwd_map /\
          chunked_fwd_targets_above_minor collect.cmc_fwd /\
          chunked_fwd_targets_valid_addr collect.cmc_fwd /\
+         chunked_fwd_noninfix_targets_in_major
+          minor collect.cmc_fwd collect.cmc_major /\
          GenInv.chunked_major_alloc_shape
          collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
          SpecMajorAlloc.major_fl_chain_terminates

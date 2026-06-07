@@ -364,6 +364,8 @@ val chunked_cheney_gc_correct_after_preflight
       collect.cmc_fwd == prom.fwd_map /\
       CheneyPres.chunked_fwd_targets_above_minor collect.cmc_fwd /\
       CheneyPres.chunked_fwd_targets_valid_addr collect.cmc_fwd /\
+      CheneyPres.chunked_fwd_noninfix_targets_in_major
+       minor collect.cmc_fwd collect.cmc_major /\
       GenInv.chunked_major_alloc_shape
        collect.cmc_major collect.cmc_fp r.capacity_fuel_out /\
       SpecMajorAlloc.major_fl_chain_terminates
@@ -409,6 +411,88 @@ val chunked_cheney_gc_correct_after_preflight
            collect.cmc_fwd old)) /\
       (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
        collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0)))
+
+/// Any forwarded ordinary minor object becomes an active object in the final
+/// chunked major heap after the preflight collection shell.
+val chunked_cheney_gc_correct_after_preflight_forwarded_minor_object_in_major
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (x: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+        PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0) /\
+      Seq.mem x (minor_objects minor) /\
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       collect.cmc_fwd x <> 0UL))
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       is_val_addr (collect.cmc_fwd x) /\
+       Seq.mem ((collect.cmc_fwd x) <: obj_addr)
+        (MH.major_objects collect.cmc_major)))
+
+/// Reachable positive-size minor objects are forwarded to active objects in the
+/// final chunked major heap.
+val chunked_cheney_gc_correct_after_preflight_reachable_forwarding_target_in_major
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (x: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+        PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0) /\
+      Seq.mem x (minor_reachable minor roots) /\
+      minor_wosize minor x > 0)
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       is_val_addr (collect.cmc_fwd x) /\
+       Seq.mem ((collect.cmc_fwd x) <: obj_addr)
+        (MH.major_objects collect.cmc_major)))
 
 /// Local update-to-edge bridge for promoted-minor fields.  If a scanned active
 /// major object has a payload field containing a minor pointer and the forwarding
@@ -628,6 +712,56 @@ val chunked_forward_fields_preserved_forwarded_minor_field_edge
           (minor_reset minor)
           (ChunkedUpdate.chunked_update_major_pointers
             cs'.ccs_major cs'.ccs_fwd))))
+
+/// Field-loop promoted-minor edge bridge for ordinary minor-object targets.
+/// The active post-major target is derived from
+/// `chunked_fwd_noninfix_targets_in_major`, rather than supplied explicitly by
+/// the caller.
+val chunked_forward_fields_preserved_minor_object_field_edge
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx wosize alloc_fuel: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates
+        cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp alloc_fuel /\
+      CheneyPres.chunked_cheney_forward_fields_split_ready
+        minor cs parent idx wosize alloc_fuel /\
+      Seq.mem src (MH.major_objects cs.ccs_major) /\
+      MH.read_word_in_major cs.ccs_major
+        (GC.Spec.Heap.hd_address src) == Some hdr /\
+      GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+      U64.v (GC.Spec.Object.getTag hdr) <
+        U64.v GC.Spec.Object.no_scan_tag /\
+      j < U64.v (GC.Spec.Object.getWosize hdr) /\
+      U64.v field_addr == U64.v src + j * U64.v mword /\
+      CG.chunked_major_field_slot src j == Some field_addr /\
+      MH.read_word_in_major cs.ccs_major field_addr == Some old /\
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       let x = to_minor_offset old in
+       CheneyPres.chunked_fwd_targets_above_minor cs'.ccs_fwd /\
+       CheneyPres.chunked_fwd_noninfix_targets_in_major
+        minor cs'.ccs_fwd cs'.ccs_major /\
+       is_minor_pointer x /\
+       Seq.mem x (minor_objects minor) /\
+       cs'.ccs_fwd x <> 0UL))
+    (ensures
+      (let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs parent idx wosize alloc_fuel in
+       let x = to_minor_offset old in
+       CG.mem_ce (CG.MajorV src, CG.MajorV (cs'.ccs_fwd x))
+        (CG.build_chunked_combined_graph
+          (minor_reset minor)
+          (ChunkedUpdate.chunked_update_major_pointers
+           cs'.ccs_major cs'.ccs_fwd))))
 
 /// Edge-level consequence of the chunked correctness bundle for old scanned
 /// major fields.  The theorem is intentionally phrased with an explicit
