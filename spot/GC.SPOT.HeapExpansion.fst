@@ -4101,18 +4101,7 @@ let spot_chunked_cheney_gc_correct_after_preflight_minor_successor_major_edge_no
         to_minor_offset (minor_read_field minor src j) == dst /\
         is_minor_addr dst /\
         Seq.mem dst (minor_objects minor) /\
-        minor_wosize minor dst > 0 /\
-        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
-         let r =
-           SpecMajorAlloc.ensure_major_head_capacity_spec
-             major fp alloc_fuel needed fresh in
-         let collect =
-           ChunkedCheney.chunked_cheney_collect_spec
-             minor r.capacity_major_out r.capacity_fp_out roots
-             r.capacity_fuel_out in
-         exists (target: obj_addr).
-          target == collect.cmc_fwd src /\
-          CG.chunked_major_field_slot target j <> None))
+        minor_wosize minor dst > 0)
       (ensures
         (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
          let r =
@@ -4215,18 +4204,7 @@ let spot_chunked_cheney_gc_correct_after_preflight_minor_successor_edge_maps_to_
         to_minor_offset (minor_read_field minor src j) == dst /\
         is_minor_addr dst /\
         Seq.mem dst (minor_objects minor) /\
-        minor_wosize minor dst > 0 /\
-        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
-         let r =
-           SpecMajorAlloc.ensure_major_head_capacity_spec
-             major fp alloc_fuel needed fresh in
-         let collect =
-           ChunkedCheney.chunked_cheney_collect_spec
-             minor r.capacity_major_out r.capacity_fp_out roots
-             r.capacity_fuel_out in
-         exists (target: obj_addr).
-          target == collect.cmc_fwd src /\
-          CG.chunked_major_field_slot target j <> None))
+        minor_wosize minor dst > 0)
       (ensures
         (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
          let r =

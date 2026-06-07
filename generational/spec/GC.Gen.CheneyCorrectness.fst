@@ -645,18 +645,7 @@ let chunked_cheney_gc_correct_after_preflight_minor_successor_major_edge_no_fiel
       to_minor_offset (minor_read_field minor src j) == dst /\
       is_minor_addr dst /\
       Seq.mem dst (minor_objects minor) /\
-      minor_wosize minor dst > 0 /\
-      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
-       let r =
-        SpecMajorAlloc.ensure_major_head_capacity_spec
-          major fp alloc_fuel needed fresh in
-       let collect =
-        ChunkedCheney.chunked_cheney_collect_spec
-          minor r.capacity_major_out r.capacity_fp_out roots
-          r.capacity_fuel_out in
-       exists (target: obj_addr).
-        target == collect.cmc_fwd src /\
-        CG.chunked_major_field_slot target j <> None))
+      minor_wosize minor dst > 0)
     (ensures
       (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
        let r =
@@ -675,6 +664,10 @@ let chunked_cheney_gc_correct_after_preflight_minor_successor_major_edge_no_fiel
   let r =
     SpecMajorAlloc.ensure_major_head_capacity_spec
       major fp alloc_fuel needed fresh in
+  let prom =
+    ChunkedCheney.chunked_cheney_promote
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
   let collect =
     ChunkedCheney.chunked_cheney_collect_spec
       minor r.capacity_major_out r.capacity_fp_out roots
@@ -684,12 +677,62 @@ let chunked_cheney_gc_correct_after_preflight_minor_successor_major_edge_no_fiel
                CG.MajorV (collect.cmc_fwd dst))
       (CG.build_chunked_combined_graph
         collect.cmc_minor collect.cmc_major) in
-  let prove_edge (target: obj_addr)
-    : Lemma
-        (requires target == collect.cmc_fwd src /\
-                  CG.chunked_major_field_slot target j <> None)
-        (ensures edge_goal)
-    =
+  CheneyPres.chunked_cheney_promote_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh;
+  ChunkedCheney.chunked_cheney_collect_spec_equation
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out;
+  chunked_cheney_gc_correct_after_preflight_minor_successor_forwarded
+    minor major fp roots alloc_fuel fresh src dst j;
+  minor_reachable_subset minor roots;
+  assert (Seq.mem src (minor_objects minor));
+  minor_objects_not_infix minor src;
+  assert (~(is_infix_in_minor minor src));
+  ensure_major_head_capacity_fuel_gt1 major fp alloc_fuel needed fresh;
+  assert (r.capacity_fuel_out > 1);
+  assert (collect.cmc_fwd == prom.fwd_map);
+  assert (prom.fwd_map src <> 0UL);
+  assert (GenInv.chunked_collection_heap_shape
+            minor r.capacity_major_out r.capacity_fp_out
+            r.capacity_fuel_out);
+  GenInv.chunked_collection_heap_shape_elim
+    minor r.capacity_major_out r.capacity_fp_out
+    r.capacity_fuel_out;
+  assert (GenInv.chunked_major_alloc_shape
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out =
+          true);
+  assert (GenInv.chunked_chain_objects_blue
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  assert (CheneyPres.chunked_cheney_promote_budget_ready
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out 1);
+  assert (minor_wosize minor src > 0);
+  CheneyPres.chunked_cheney_promote_fwd_target_header_matches_minor
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out 1 src;
+  assert (GenInv.chunked_major_alloc_shape
+            prom.major_final prom.fp_final r.capacity_fuel_out);
+  GenInv.chunked_major_alloc_shape_elim
+    prom.major_final prom.fp_final r.capacity_fuel_out;
+  assert (U64.v (prom.fwd_map src) >= U64.v mword);
+  assert (U64.v (prom.fwd_map src) < heap_size);
+  assert_norm (U64.v mword == 8);
+  assert (U64.v mword <> 0);
+  assert (U64.v (prom.fwd_map src) % U64.v mword == 0);
+  is_val_addr_spec (prom.fwd_map src);
+  assert (is_val_addr (prom.fwd_map src));
+  let target : obj_addr = prom.fwd_map src in
+  assert (Seq.mem target (MH.major_objects prom.major_final));
+  match MH.read_word_in_major
+          prom.major_final (GC.Spec.Heap.hd_address target) with
+  | None -> assert False
+  | Some hdr ->
+    assert (U64.v (GC.Spec.Object.getWosize hdr) == minor_wosize minor src);
+    assert (j < U64.v (GC.Spec.Object.getWosize hdr));
+    CG.chunked_major_field_slot_of_object_header
+      prom.major_final target hdr j;
     match CG.chunked_major_field_slot target j with
     | None -> assert False
     | Some field_addr ->
@@ -698,13 +741,6 @@ let chunked_cheney_gc_correct_after_preflight_minor_successor_major_edge_no_fiel
               U64.v (collect.cmc_fwd src) + j * U64.v mword);
       chunked_cheney_gc_correct_after_preflight_minor_successor_major_edge
         minor major fp roots alloc_fuel fresh src dst j field_addr
-  in
-  FStar.Classical.exists_elim edge_goal #obj_addr
-    #(fun target ->
-        target == collect.cmc_fwd src /\
-        CG.chunked_major_field_slot target j <> None)
-    ()
-    (fun target -> FStar.Classical.move_requires prove_edge target)
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
@@ -795,18 +831,7 @@ let chunked_cheney_gc_correct_after_preflight_minor_successor_edge_maps_to_major
       to_minor_offset (minor_read_field minor src j) == dst /\
       is_minor_addr dst /\
       Seq.mem dst (minor_objects minor) /\
-      minor_wosize minor dst > 0 /\
-      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
-       let r =
-        SpecMajorAlloc.ensure_major_head_capacity_spec
-          major fp alloc_fuel needed fresh in
-       let collect =
-        ChunkedCheney.chunked_cheney_collect_spec
-          minor r.capacity_major_out r.capacity_fp_out roots
-          r.capacity_fuel_out in
-       exists (target: obj_addr).
-        target == collect.cmc_fwd src /\
-        CG.chunked_major_field_slot target j <> None))
+      minor_wosize minor dst > 0)
     (ensures
       (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
        let r =

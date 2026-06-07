@@ -1274,6 +1274,46 @@ val chunked_cheney_promote_preserves_fwd_noninfix_targets_in_major
          chunked_fwd_noninfix_targets_in_major
           minor res.fwd_map res.major_final))
 
+/// Header metadata for ordinary chunked forwarding targets.  This is the
+/// field-address-free part of `chunked_cheney_promote_fwd_target_fields_match`:
+/// normal (non-infix) forwarded minor objects become active major objects whose
+/// final header is non-blue and has the same body wosize.
+val chunked_cheney_promote_fwd_target_header_matches_minor
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    x:U64.t ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+           minor major fp roots alloc_fuel in
+         res.fwd_map x <> 0UL /\
+         Seq.mem x (minor_objects minor) /\
+         ~(is_infix_in_minor minor x) /\
+         minor_wosize minor x > 0))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+           minor major fp roots alloc_fuel in
+         U64.v (res.fwd_map x) >= U64.v mword /\
+         U64.v (res.fwd_map x) < heap_size /\
+         U64.v (res.fwd_map x) % U64.v mword == 0 /\
+         (let target : obj_addr = res.fwd_map x in
+          Seq.mem target (MH.major_objects res.major_final) /\
+          (match MH.read_word_in_major res.major_final (hd_address target) with
+          | Some hdr ->
+            getColor hdr <> GC.Lib.Header.Blue /\
+            U64.v (getWosize hdr) == minor_wosize minor x
+          | None -> False))))
+
 /// If chunked Cheney forwards an ordinary minor object, every original source
 /// field within the minor object's wosize is copied to the corresponding field
 /// of its final forwarding target.  The theorem also exposes the target header
