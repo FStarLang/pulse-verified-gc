@@ -5545,6 +5545,57 @@ let spot_chunked_graph_edge_maps_to_major_edge_targets_ready_implies_nonblue_sou
   CheneyGraphReadiness.chunked_graph_edge_maps_to_major_edge_targets_ready_implies_nonblue_sources_above_minor_targets_ready
     minor major fp roots alloc_fuel fresh u v
 
+let spot_chunked_major_chunks_above_minor_objects_above_minor
+  (major: MH.major_heap)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_chunks_above_minor major)
+      (ensures
+        CheneyGraphReadiness.chunked_major_objects_above_minor major)
+  =
+  CheneyGraphReadiness.chunked_major_chunks_above_minor_objects_above_minor
+    major
+
+let spot_chunked_major_objects_above_minor_single_chunk
+  (g: heap)
+  : Lemma
+      (ensures
+        CheneyGraphReadiness.chunked_major_objects_above_minor
+          (MH.single_chunk_major_heap g))
+  =
+  CheneyGraphReadiness.chunked_major_objects_above_minor_single_chunk g
+
+let spot_chunked_major_objects_above_minor_expand_major_heap
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_objects_above_minor major /\
+        U64.v fresh.base >= minor_heap_size)
+      (ensures
+        CheneyGraphReadiness.chunked_major_objects_above_minor
+          (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  CheneyGraphReadiness.chunked_major_objects_above_minor_expand_major_heap
+    major fresh fp
+
+let spot_chunked_major_objects_above_minor_ensure_head_capacity
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_objects_above_minor major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+         U64.v fresh.base >= U64.v zero_addr))
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp fuel needed fresh in
+         CheneyGraphReadiness.chunked_major_objects_above_minor
+           r.capacity_major_out))
+  =
+  CheneyGraphReadiness.chunked_major_objects_above_minor_ensure_head_capacity
+    major fp fuel needed fresh
+
 let spot_chunked_cheney_gc_correct_after_preflight_graph_edge_edge_targets_maps_to_major_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)

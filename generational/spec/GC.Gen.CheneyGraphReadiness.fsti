@@ -26,6 +26,50 @@ let chunked_major_objects_above_minor (major: MH.major_heap) : prop =
   forall (obj: obj_addr).
     Seq.mem obj (MH.major_objects major) ==> U64.v obj >= minor_heap_size
 
+let chunked_major_chunks_above_minor (major: MH.major_heap) : prop =
+  forall (i: nat).
+    i < Seq.length major ==> U64.v (Seq.index major i).base >= minor_heap_size
+
+val chunked_major_chunks_above_minor_objects_above_minor
+  (major: MH.major_heap)
+  : Lemma
+    (requires chunked_major_chunks_above_minor major)
+    (ensures chunked_major_objects_above_minor major)
+
+val chunked_major_chunks_above_minor_single_chunk
+  (g: heap)
+  : Lemma
+    (ensures chunked_major_chunks_above_minor (MH.single_chunk_major_heap g))
+
+val chunked_major_objects_above_minor_single_chunk
+  (g: heap)
+  : Lemma
+    (ensures chunked_major_objects_above_minor (MH.single_chunk_major_heap g))
+
+val chunked_major_objects_above_minor_expand_major_heap
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+    (requires
+      chunked_major_objects_above_minor major /\
+      U64.v fresh.base >= minor_heap_size)
+    (ensures
+      chunked_major_objects_above_minor
+        (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+
+val chunked_major_objects_above_minor_ensure_head_capacity
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_major_objects_above_minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+       U64.v fresh.base >= U64.v zero_addr))
+    (ensures
+      (let r =
+         SpecMajorAlloc.ensure_major_head_capacity_spec
+           major fp fuel needed fresh in
+       chunked_major_objects_above_minor r.capacity_major_out))
+
 /// Edge readiness variant that derives major-target witnesses from the graph
 /// edge itself.  Major target branches no longer mention the target address:
 /// `CG.mem_ce` plus `chunked_major_objects_above_minor` recovers the active
