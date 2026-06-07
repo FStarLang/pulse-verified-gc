@@ -2239,6 +2239,356 @@ let major_edge_elim (ms: minor_state) (major: heap)
     assert (src == obj);
     Seq.mem_index obj major_objs
 #pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+private let rec chunked_minor_field_edges_source
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (wz i: nat) (e: combined_edge)
+  : Lemma
+      (requires Seq.mem e (chunked_minor_field_edges ms mh src wz i))
+      (ensures fst e == MinorV src /\
+               (exists (k:nat). i <= k /\ k < wz /\
+                 chunked_classify_minor_field
+                   ms mh (minor_read_field ms src k) == Some (snd e)))
+      (decreases (wz - i))
+  =
+  if i >= wz then ()
+  else begin
+    let rest = chunked_minor_field_edges ms mh src wz (i + 1) in
+    match chunked_classify_minor_field ms mh (minor_read_field ms src i) with
+    | Some dst ->
+      Seq.mem_cons (MinorV src, dst) rest;
+      if e = (MinorV src, dst) then ()
+      else chunked_minor_field_edges_source ms mh src wz (i + 1) e
+    | None ->
+      chunked_minor_field_edges_source ms mh src wz (i + 1) e
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+private let rec chunked_major_field_edges_source
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: obj_addr) (wz i: nat) (e: combined_edge)
+  : Lemma
+      (requires Seq.mem e (chunked_major_field_edges ms mh src wz i))
+      (ensures fst e == MajorV src /\
+               (exists (k:nat). exists (field_addr:hp_addr).
+                exists (v:U64.t).
+                  i <= k /\ k < wz /\
+                  chunked_major_field_slot src k == Some field_addr /\
+                  MH.read_word_in_major mh field_addr == Some v /\
+                  chunked_classify_major_field ms mh v == Some (snd e)))
+      (decreases (wz - i))
+  =
+  if i >= wz then ()
+  else begin
+    let rest = chunked_major_field_edges ms mh src wz (i + 1) in
+    match chunked_major_field_slot src i with
+    | None ->
+      chunked_major_field_edges_source ms mh src wz (i + 1) e
+    | Some field_addr ->
+      match MH.read_word_in_major mh field_addr with
+      | None ->
+        chunked_major_field_edges_source ms mh src wz (i + 1) e
+      | Some v ->
+        match chunked_classify_major_field ms mh v with
+        | Some dst ->
+          Seq.mem_cons (MajorV src, dst) rest;
+          if e = (MajorV src, dst) then ()
+          else chunked_major_field_edges_source ms mh src wz (i + 1) e
+        | None ->
+          chunked_major_field_edges_source ms mh src wz (i + 1) e
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 5"
+private let rec chunked_all_minor_edges_to_object
+  (ms: minor_state) (mh: MH.major_heap)
+  (objs: seq U64.t) (idx: nat) (e: combined_edge)
+  : Lemma
+      (requires Seq.mem e (chunked_all_minor_edges ms mh objs idx))
+      (ensures exists (k:nat). idx <= k /\ k < Seq.length objs /\
+                 Seq.mem e
+                   (chunked_minor_object_edges ms mh (Seq.index objs k)))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then ()
+  else begin
+    Seq.lemma_mem_append
+      (chunked_minor_object_edges ms mh (Seq.index objs idx))
+      (chunked_all_minor_edges ms mh objs (idx + 1));
+    if Seq.mem e (chunked_minor_object_edges ms mh (Seq.index objs idx)) then ()
+    else chunked_all_minor_edges_to_object ms mh objs (idx + 1) e
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 5"
+private let rec chunked_all_major_object_edges_to_object
+  (ms: minor_state) (mh: MH.major_heap)
+  (objs: seq obj_addr) (idx: nat) (e: combined_edge)
+  : Lemma
+      (requires Seq.mem e (chunked_all_major_object_edges ms mh objs idx))
+      (ensures exists (k:nat). idx <= k /\ k < Seq.length objs /\
+                 Seq.mem e
+                   (chunked_major_object_edges ms mh (Seq.index objs k)))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then ()
+  else begin
+    Seq.lemma_mem_append
+      (chunked_major_object_edges ms mh (Seq.index objs idx))
+      (chunked_all_major_object_edges ms mh objs (idx + 1));
+    if Seq.mem e (chunked_major_object_edges ms mh (Seq.index objs idx)) then ()
+    else chunked_all_major_object_edges_to_object ms mh objs (idx + 1) e
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+private let rec chunked_major_field_edges_no_minor
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: obj_addr) (wz i: nat) (a: U64.t) (dst: combined_vertex)
+  : Lemma
+      (ensures
+        ~(Seq.mem (MinorV a, dst)
+          (chunked_major_field_edges ms mh src wz i)))
+      (decreases (wz - i))
+  =
+  if i >= wz then ()
+  else begin
+    let rest = chunked_major_field_edges ms mh src wz (i + 1) in
+    match chunked_major_field_slot src i with
+    | None ->
+      chunked_major_field_edges_no_minor ms mh src wz (i + 1) a dst
+    | Some field_addr ->
+      match MH.read_word_in_major mh field_addr with
+      | None ->
+        chunked_major_field_edges_no_minor ms mh src wz (i + 1) a dst
+      | Some v ->
+        match chunked_classify_major_field ms mh v with
+        | Some d ->
+          Seq.mem_cons (MajorV src, d) rest;
+          chunked_major_field_edges_no_minor ms mh src wz (i + 1) a dst
+        | None ->
+          chunked_major_field_edges_no_minor ms mh src wz (i + 1) a dst
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+private let chunked_major_object_edges_no_minor
+  (ms: minor_state) (mh: MH.major_heap)
+  (obj: obj_addr) (a: U64.t) (dst: combined_vertex)
+  : Lemma
+      (ensures
+        ~(Seq.mem (MinorV a, dst)
+          (chunked_major_object_edges ms mh obj)))
+  =
+  if chunked_is_no_scan mh obj then ()
+  else
+    chunked_major_field_edges_no_minor
+      ms mh obj (chunked_wosize_nat_of_object mh obj) 0 a dst
+#pop-options
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 5"
+private let rec chunked_all_major_object_edges_no_minor
+  (ms: minor_state) (mh: MH.major_heap)
+  (objs: seq obj_addr) (idx: nat) (a: U64.t) (dst: combined_vertex)
+  : Lemma
+      (ensures
+        ~(Seq.mem (MinorV a, dst)
+          (chunked_all_major_object_edges ms mh objs idx)))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then ()
+  else begin
+    chunked_major_object_edges_no_minor
+      ms mh (Seq.index objs idx) a dst;
+    chunked_all_major_object_edges_no_minor
+      ms mh objs (idx + 1) a dst;
+    Seq.lemma_mem_append
+      (chunked_major_object_edges ms mh (Seq.index objs idx))
+      (chunked_all_major_object_edges ms mh objs (idx + 1))
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+private let rec chunked_minor_field_edges_no_major
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (wz i: nat) (a: U64.t) (dst: combined_vertex)
+  : Lemma
+      (ensures
+        ~(Seq.mem (MajorV a, dst)
+          (chunked_minor_field_edges ms mh src wz i)))
+      (decreases (wz - i))
+  =
+  if i >= wz then ()
+  else begin
+    let rest = chunked_minor_field_edges ms mh src wz (i + 1) in
+    match chunked_classify_minor_field ms mh (minor_read_field ms src i) with
+    | Some d ->
+      Seq.mem_cons (MinorV src, d) rest;
+      chunked_minor_field_edges_no_major ms mh src wz (i + 1) a dst
+    | None ->
+      chunked_minor_field_edges_no_major ms mh src wz (i + 1) a dst
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+private let chunked_minor_object_edges_no_major
+  (ms: minor_state) (mh: MH.major_heap)
+  (obj: U64.t) (a: U64.t) (dst: combined_vertex)
+  : Lemma
+      (ensures
+        ~(Seq.mem (MajorV a, dst)
+          (chunked_minor_object_edges ms mh obj)))
+  =
+  chunked_minor_field_edges_no_major
+    ms mh obj (minor_wosize ms obj) 0 a dst
+#pop-options
+
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 5"
+private let rec chunked_all_minor_edges_no_major
+  (ms: minor_state) (mh: MH.major_heap)
+  (objs: seq U64.t) (idx: nat) (a: U64.t) (dst: combined_vertex)
+  : Lemma
+      (ensures
+        ~(Seq.mem (MajorV a, dst)
+          (chunked_all_minor_edges ms mh objs idx)))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then ()
+  else begin
+    chunked_minor_object_edges_no_major ms mh (Seq.index objs idx) a dst;
+    chunked_all_minor_edges_no_major ms mh objs (idx + 1) a dst;
+    Seq.lemma_mem_append
+      (chunked_minor_object_edges ms mh (Seq.index objs idx))
+      (chunked_all_minor_edges ms mh objs (idx + 1))
+  end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+let chunked_edge_source_decomposition
+  (ms: minor_state) (mh: MH.major_heap) (e: combined_edge)
+  : Lemma (requires mem_ce e (build_chunked_combined_graph ms mh))
+          (ensures
+            (match fst e with
+             | MinorV src -> Seq.mem src (minor_objects ms)
+             | MajorV src ->
+               U64.v src >= U64.v mword /\ U64.v src < heap_size /\
+               U64.v src % U64.v mword == 0 /\
+               Seq.mem (src <: obj_addr) (MH.major_objects mh)))
+  =
+  let minor_objs = minor_objects ms in
+  let major_objs = MH.major_objects mh in
+  Seq.lemma_mem_append
+    (chunked_all_minor_edges ms mh minor_objs 0)
+    (chunked_all_major_object_edges ms mh major_objs 0);
+  match fst e with
+  | MinorV src ->
+    chunked_all_major_object_edges_no_minor ms mh major_objs 0 src (snd e);
+    assert (Seq.mem e (chunked_all_minor_edges ms mh minor_objs 0));
+    chunked_all_minor_edges_to_object ms mh minor_objs 0 e;
+    let open FStar.IndefiniteDescription in
+    let k = indefinite_description_ghost nat
+      (fun k -> 0 <= k /\ k < Seq.length minor_objs /\
+                Seq.mem e
+                  (chunked_minor_object_edges ms mh (Seq.index minor_objs k))) in
+    let obj = Seq.index minor_objs k in
+    let wz = minor_wosize ms obj in
+    chunked_minor_field_edges_source ms mh obj wz 0 e;
+    assert (fst e == MinorV obj);
+    assert (src == obj);
+    Seq.mem_index obj minor_objs
+  | MajorV src ->
+    chunked_all_minor_edges_no_major ms mh minor_objs 0 src (snd e);
+    assert (Seq.mem e (chunked_all_major_object_edges ms mh major_objs 0));
+    chunked_all_major_object_edges_to_object ms mh major_objs 0 e;
+    let open FStar.IndefiniteDescription in
+    let k = indefinite_description_ghost nat
+      (fun k -> 0 <= k /\ k < Seq.length major_objs /\
+                Seq.mem e
+                  (chunked_major_object_edges ms mh (Seq.index major_objs k))) in
+    let obj = Seq.index major_objs k in
+    assert (Seq.mem e (chunked_major_object_edges ms mh obj));
+    if chunked_is_no_scan mh obj then begin
+      assert (chunked_major_object_edges ms mh obj == Seq.empty);
+      assert (Seq.mem e Seq.empty)
+    end else begin
+      let wz = chunked_wosize_nat_of_object mh obj in
+      chunked_major_field_edges_source ms mh obj wz 0 e;
+      assert (fst e == MajorV obj);
+      assert (src == obj);
+      Seq.mem_index obj major_objs
+    end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+let chunked_minor_edge_elim
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (dst: combined_vertex)
+  : Lemma (requires mem_ce (MinorV src, dst)
+              (build_chunked_combined_graph ms mh))
+          (ensures Seq.mem src (minor_objects ms) /\
+                   (exists (i:nat). i < minor_wosize ms src /\
+                     chunked_classify_minor_field
+                       ms mh (minor_read_field ms src i) == Some dst))
+  =
+  let minor_objs = minor_objects ms in
+  let major_objs = MH.major_objects mh in
+  let e = (MinorV src, dst) in
+  Seq.lemma_mem_append
+    (chunked_all_minor_edges ms mh minor_objs 0)
+    (chunked_all_major_object_edges ms mh major_objs 0);
+  chunked_all_major_object_edges_no_minor ms mh major_objs 0 src dst;
+  assert (Seq.mem e (chunked_all_minor_edges ms mh minor_objs 0));
+  chunked_all_minor_edges_to_object ms mh minor_objs 0 e;
+  let open FStar.IndefiniteDescription in
+  let k = indefinite_description_ghost nat
+    (fun k -> 0 <= k /\ k < Seq.length minor_objs /\
+              Seq.mem e
+                (chunked_minor_object_edges ms mh (Seq.index minor_objs k))) in
+  let obj = Seq.index minor_objs k in
+  let wz = minor_wosize ms obj in
+  chunked_minor_field_edges_source ms mh obj wz 0 e;
+  assert (src == obj);
+  Seq.mem_index obj minor_objs
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+let chunked_major_edge_elim
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: obj_addr) (dst: combined_vertex)
+  : Lemma (requires mem_ce (MajorV src, dst)
+              (build_chunked_combined_graph ms mh))
+          (ensures Seq.mem src (MH.major_objects mh) /\
+                   chunked_is_no_scan mh src == false /\
+                   (exists (i:nat). exists (field_addr:hp_addr).
+                    exists (v:U64.t).
+                      i < chunked_wosize_nat_of_object mh src /\
+                      chunked_major_field_slot src i == Some field_addr /\
+                      MH.read_word_in_major mh field_addr == Some v /\
+                      chunked_classify_major_field ms mh v == Some dst))
+  =
+  let minor_objs = minor_objects ms in
+  let major_objs = MH.major_objects mh in
+  let e = (MajorV src, dst) in
+  Seq.lemma_mem_append
+    (chunked_all_minor_edges ms mh minor_objs 0)
+    (chunked_all_major_object_edges ms mh major_objs 0);
+  chunked_all_minor_edges_no_major ms mh minor_objs 0 src dst;
+  assert (Seq.mem e (chunked_all_major_object_edges ms mh major_objs 0));
+  chunked_all_major_object_edges_to_object ms mh major_objs 0 e;
+  let open FStar.IndefiniteDescription in
+  let k = indefinite_description_ghost nat
+    (fun k -> 0 <= k /\ k < Seq.length major_objs /\
+              Seq.mem e
+                (chunked_major_object_edges ms mh (Seq.index major_objs k))) in
+  let obj = Seq.index major_objs k in
+  assert (~(chunked_is_no_scan mh obj));
+  let wz = chunked_wosize_nat_of_object mh obj in
+  chunked_major_field_edges_source ms mh obj wz 0 e;
+  assert (src == obj);
+  Seq.mem_index obj major_objs
+#pop-options
 noeq
 type combined_reach (g: combined_graph) (roots: seq combined_vertex)
   : combined_vertex -> Type =

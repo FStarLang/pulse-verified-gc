@@ -820,6 +820,47 @@ val major_edge_elim (ms: minor_state) (major: heap)
                      classify_major_field ms major
                        (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some dst))
 
+/// Chunked source decomposition: every chunked graph edge comes from either a
+/// minor object or an active chunked major object.
+val chunked_edge_source_decomposition
+  (ms: minor_state) (mh: MH.major_heap) (e: combined_edge)
+  : Lemma (requires mem_ce e (build_chunked_combined_graph ms mh))
+          (ensures
+            (match fst e with
+             | MinorV src -> Seq.mem src (minor_objects ms)
+             | MajorV src ->
+               U64.v src >= U64.v mword /\ U64.v src < heap_size /\
+               U64.v src % U64.v mword == 0 /\
+               Seq.mem (src <: obj_addr) (MH.major_objects mh)))
+
+/// Chunked minor edge elimination: every edge from a minor source has a
+/// witness source field whose chunked classification produced the target.
+val chunked_minor_edge_elim
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (dst: combined_vertex)
+  : Lemma (requires mem_ce (MinorV src, dst)
+              (build_chunked_combined_graph ms mh))
+          (ensures Seq.mem src (minor_objects ms) /\
+                   (exists (i: nat). i < minor_wosize ms src /\
+                     chunked_classify_minor_field
+                       ms mh (minor_read_field ms src i) == Some dst))
+
+/// Chunked major edge elimination: every edge from an active major source has a
+/// witness checked payload slot whose chunked classification produced the target.
+val chunked_major_edge_elim
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: obj_addr) (dst: combined_vertex)
+  : Lemma (requires mem_ce (MajorV src, dst)
+              (build_chunked_combined_graph ms mh))
+          (ensures Seq.mem src (MH.major_objects mh) /\
+                   chunked_is_no_scan mh src == false /\
+                   (exists (i: nat). exists (field_addr: hp_addr).
+                    exists (v: U64.t).
+                      i < chunked_wosize_nat_of_object mh src /\
+                      chunked_major_field_slot src i == Some field_addr /\
+                      MH.read_word_in_major mh field_addr == Some v /\
+                      chunked_classify_major_field ms mh v == Some dst))
+
 /// ---------------------------------------------------------------------------
 /// GC Morphism (forwarding map as graph homomorphism)
 /// ---------------------------------------------------------------------------

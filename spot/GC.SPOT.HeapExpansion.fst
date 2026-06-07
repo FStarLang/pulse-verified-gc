@@ -3360,6 +3360,50 @@ let spot_build_chunked_combined_graph
   : GTot CG.combined_graph
   = CG.build_chunked_combined_graph ms mh
 
+let spot_chunked_edge_source_decomposition
+  (ms: minor_state) (mh: MH.major_heap) (e: CG.combined_edge)
+  : Lemma
+      (requires CG.mem_ce e (spot_build_chunked_combined_graph ms mh))
+      (ensures
+        (match fst e with
+         | CG.MinorV src -> Seq.mem src (minor_objects ms)
+         | CG.MajorV src ->
+           U64.v src >= U64.v mword /\
+           U64.v src < heap_size /\
+           U64.v src % U64.v mword == 0 /\
+           Seq.mem (src <: obj_addr) (MH.major_objects mh)))
+  = CG.chunked_edge_source_decomposition ms mh e
+
+let spot_chunked_minor_edge_elim
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: U64.t) (dst: CG.combined_vertex)
+  : Lemma
+      (requires
+        CG.mem_ce (CG.MinorV src, dst)
+          (spot_build_chunked_combined_graph ms mh))
+      (ensures Seq.mem src (minor_objects ms) /\
+               (exists (i: nat). i < minor_wosize ms src /\
+                 CG.chunked_classify_minor_field
+                   ms mh (minor_read_field ms src i) == Some dst))
+  = CG.chunked_minor_edge_elim ms mh src dst
+
+let spot_chunked_major_edge_elim
+  (ms: minor_state) (mh: MH.major_heap)
+  (src: obj_addr) (dst: CG.combined_vertex)
+  : Lemma
+      (requires
+        CG.mem_ce (CG.MajorV src, dst)
+          (spot_build_chunked_combined_graph ms mh))
+      (ensures Seq.mem src (MH.major_objects mh) /\
+               CG.chunked_is_no_scan mh src == false /\
+               (exists (i: nat). exists (field_addr: hp_addr).
+                exists (v: U64.t).
+                  i < CG.chunked_wosize_nat_of_object mh src /\
+                  CG.chunked_major_field_slot src i == Some field_addr /\
+                  MH.read_word_in_major mh field_addr == Some v /\
+                  CG.chunked_classify_major_field ms mh v == Some dst))
+  = CG.chunked_major_edge_elim ms mh src dst
+
 let spot_chunked_combined_graph_old_view_preserved_by_expansion
   (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
   (major_objs: Seq.seq obj_addr)
