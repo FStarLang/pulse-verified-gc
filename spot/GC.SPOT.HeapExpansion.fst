@@ -5596,6 +5596,57 @@ let spot_chunked_major_objects_above_minor_ensure_head_capacity
   CheneyGraphReadiness.chunked_major_objects_above_minor_ensure_head_capacity
     major fp fuel needed fresh
 
+let spot_chunked_major_chunks_above_zero_addr_objects_are_pointer_fields
+  (major: MH.major_heap)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major)
+      (ensures
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major)
+  =
+  CheneyGraphReadiness.chunked_major_chunks_above_zero_addr_objects_are_pointer_fields
+    major
+
+let spot_chunked_major_chunks_above_zero_addr_single_chunk
+  (g: heap)
+  : Lemma
+      (ensures
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr
+          (MH.single_chunk_major_heap g))
+  =
+  CheneyGraphReadiness.chunked_major_chunks_above_zero_addr_single_chunk g
+
+let spot_chunked_major_chunks_above_zero_addr_expand_major_heap
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major /\
+        U64.v fresh.base >= U64.v zero_addr)
+      (ensures
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr
+          (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  CheneyGraphReadiness.chunked_major_chunks_above_zero_addr_expand_major_heap
+    major fresh fp
+
+let spot_chunked_major_chunks_above_zero_addr_ensure_head_capacity
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+         U64.v fresh.base >= U64.v zero_addr))
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp fuel needed fresh in
+         CheneyGraphReadiness.chunked_major_chunks_above_zero_addr
+           r.capacity_major_out))
+  =
+  CheneyGraphReadiness.chunked_major_chunks_above_zero_addr_ensure_head_capacity
+    major fp fuel needed fresh
+
 let spot_chunked_major_objects_are_pointer_fields_single_chunk
   (g: heap)
   : Lemma

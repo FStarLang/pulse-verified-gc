@@ -175,6 +175,134 @@ let chunked_major_objects_above_minor_ensure_head_capacity
     chunked_major_objects_above_minor_expand_major_heap major fresh fp
   end
 
+private let rec major_object_pointer_field_from_chunks
+  (major: MH.major_heap) (obj: obj_addr)
+  : Lemma
+    (requires
+      chunked_major_chunks_above_zero_addr major /\
+      Seq.mem obj (MH.major_objects major))
+    (ensures GC.Spec.Fields.is_pointer_field obj)
+    (decreases Seq.length major)
+  =
+  if Seq.length major = 0 then
+    assert False
+  else begin
+    assert (Seq.length major > 0);
+    let hd = Seq.head major in
+    let tl = Seq.tail major in
+    assert (Seq.length tl < Seq.length major);
+    assert (MH.major_objects major ==
+            Seq.append (MH.objects_in_chunk hd) (MH.major_objects tl));
+    SeqProps.lemma_mem_append (MH.objects_in_chunk hd) (MH.major_objects tl);
+    if Seq.mem obj (MH.objects_in_chunk hd) then begin
+      MH.objects_in_chunk_member_in_chunk hd obj;
+      assert (U64.v obj >= MH.chunk_start hd + U64.v mword);
+      assert (hd == Seq.index major 0);
+      assert (U64.v (Seq.index major 0).base >= U64.v zero_addr);
+      assert (U64.v hd.base >= U64.v zero_addr);
+      assert (U64.v obj >= U64.v zero_addr + U64.v mword);
+      assert (U64.v obj < heap_size);
+      assert (U64.v obj % U64.v mword == 0)
+    end else begin
+      assert (Seq.mem obj (MH.major_objects tl));
+      let tl_chunks_above_zero (i: nat{i < Seq.length tl})
+        : Lemma (U64.v (Seq.index tl i).base >= U64.v zero_addr)
+        =
+        let imajor : n:nat{n < Seq.length major} = i + 1 in
+        assert (Seq.index tl i == Seq.index major imajor)
+      in
+      FStar.Classical.forall_intro tl_chunks_above_zero;
+      assert (chunked_major_chunks_above_zero_addr tl);
+      major_object_pointer_field_from_chunks tl obj
+    end
+  end
+
+let chunked_major_chunks_above_zero_addr_objects_are_pointer_fields
+  (major: MH.major_heap)
+  : Lemma
+    (requires chunked_major_chunks_above_zero_addr major)
+    (ensures chunked_major_objects_are_pointer_fields major)
+  =
+  let prove (obj: obj_addr)
+    : Lemma
+      (requires Seq.mem obj (MH.major_objects major))
+      (ensures GC.Spec.Fields.is_pointer_field obj)
+    =
+    major_object_pointer_field_from_chunks major obj
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires prove)
+
+let chunked_major_chunks_above_zero_addr_single_chunk
+  (g: heap)
+  : Lemma
+    (ensures chunked_major_chunks_above_zero_addr (MH.single_chunk_major_heap g))
+  =
+  let prove (i: nat{i < Seq.length (MH.single_chunk_major_heap g)})
+    : Lemma
+      (ensures
+        U64.v (Seq.index (MH.single_chunk_major_heap g) i).base >=
+        U64.v zero_addr)
+    =
+    assert (i == 0);
+    assert (Seq.index (MH.single_chunk_major_heap g) i ==
+            MH.single_chunk_of_heap g);
+    assert ((MH.single_chunk_of_heap g).base == zero_addr)
+  in
+  FStar.Classical.forall_intro prove
+
+let chunked_major_chunks_above_zero_addr_expand_major_heap
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+    (requires
+      chunked_major_chunks_above_zero_addr major /\
+      U64.v fresh.base >= U64.v zero_addr)
+    (ensures
+      chunked_major_chunks_above_zero_addr
+        (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  let er = SpecMajorAlloc.expand_major_heap major fresh fp in
+  let r = SpecMajorAlloc.init_fresh_chunk fresh fp in
+  SpecMajorAlloc.init_fresh_chunk_preserves_range fresh fp;
+  assert (er.major_out == MH.add_chunk major r.chunk_out);
+  let prove (i: nat{i < Seq.length er.major_out})
+    : Lemma
+      (ensures U64.v (Seq.index er.major_out i).base >= U64.v zero_addr)
+    =
+    if i <= 0 then begin
+      assert (i == 0);
+      assert (Seq.index er.major_out i == r.chunk_out);
+      assert (r.chunk_out.base == fresh.base)
+    end else begin
+      assert (i > 0);
+      assert (er.major_out == Seq.cons r.chunk_out major);
+      assert (Seq.length er.major_out == Seq.length major + 1);
+      assert (i - 1 >= 0);
+      assert (i - 1 < Seq.length major);
+      let imajor : n:nat{n < Seq.length major} = i - 1 in
+      assert (Seq.index er.major_out i == Seq.index major imajor)
+    end
+  in
+  FStar.Classical.forall_intro prove
+
+let chunked_major_chunks_above_zero_addr_ensure_head_capacity
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_major_chunks_above_zero_addr major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+       U64.v fresh.base >= U64.v zero_addr))
+    (ensures
+      (let r =
+         SpecMajorAlloc.ensure_major_head_capacity_spec
+           major fp fuel needed fresh in
+       chunked_major_chunks_above_zero_addr r.capacity_major_out))
+  =
+  if SpecMajorAlloc.major_fl_head_wosize major fp >= needed then
+    ()
+  else
+    chunked_major_chunks_above_zero_addr_expand_major_heap major fresh fp
+
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 20 --fuel 1 --ifuel 0"
