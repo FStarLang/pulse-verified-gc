@@ -2649,3 +2649,183 @@ let chunked_cheney_gc_correct_after_preflight_graph_maps_to_major_graph
   chunked_cheney_gc_correct_after_preflight_graph_edges_map_to_major_edges
     minor major fp roots alloc_fuel fresh
 #pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+private let above_minor_target_not_rewritten
+  (fwd: forwarding_map) (dst: obj_addr)
+  : Lemma
+    (requires U64.v dst >= minor_heap_size)
+    (ensures
+      ~(is_minor_pointer (to_minor_offset dst) /\
+        fwd (to_minor_offset dst) <> 0UL))
+  =
+  to_minor_offset_stable_above_minor dst;
+  assert (to_minor_offset dst == dst);
+  if is_minor_pointer (to_minor_offset dst) then begin
+    assert (is_minor_pointer dst);
+    assert (U64.v dst < minor_heap_size);
+    assert False
+  end
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_graph_edge_maps_to_major_above_minor_targets_ready_implies_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      chunked_graph_edge_maps_to_major_above_minor_targets_ready
+        minor major fp roots alloc_fuel fresh u v)
+    (ensures
+      chunked_graph_edge_maps_to_major_ready
+        minor major fp roots alloc_fuel fresh u v)
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  match u, v with
+  | CG.MinorV src, CG.MinorV dst -> ()
+  | CG.MinorV src, CG.MajorV dst ->
+    let dst_obj =
+      FStar.IndefiniteDescription.indefinite_description_ghost obj_addr
+        (fun dst_obj ->
+          dst_obj == dst /\ U64.v dst_obj >= minor_heap_size) in
+    assert (dst_obj == dst);
+    assert (U64.v dst_obj >= minor_heap_size);
+    above_minor_target_not_rewritten collect.cmc_fwd dst_obj
+  | CG.MajorV src, CG.MajorV dst ->
+    let dst_obj =
+      FStar.IndefiniteDescription.indefinite_description_ghost obj_addr
+        (fun dst_obj ->
+          dst_obj == dst /\ U64.v dst_obj >= minor_heap_size) in
+    assert (dst_obj == dst);
+    assert (U64.v dst_obj >= minor_heap_size);
+    above_minor_target_not_rewritten collect.cmc_fwd dst_obj
+  | CG.MajorV src, CG.MinorV dst -> ()
+  | _, _ -> assert False
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_graph_edge_above_minor_targets_maps_to_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0) /\
+      CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+      chunked_graph_edge_maps_to_major_above_minor_targets_ready
+        minor major fp roots alloc_fuel fresh u v)
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+         major fp alloc_fuel needed fresh in
+       let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+         minor r.capacity_major_out r.capacity_fp_out roots
+         r.capacity_fuel_out in
+       CG.mem_ce
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+         CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+        (CG.build_chunked_combined_graph
+         collect.cmc_minor collect.cmc_major)))
+  =
+  chunked_graph_edge_maps_to_major_above_minor_targets_ready_implies_ready
+    minor major fp roots alloc_fuel fresh u v;
+  chunked_cheney_gc_correct_after_preflight_graph_edge_maps_to_major_edge
+    minor major fp roots alloc_fuel fresh u v
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_graph_edges_above_minor_targets_map_to_major_edges
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_graph_edges_above_minor_targets_map_to_major_edges_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  let prove_for_u (u: CG.combined_vertex)
+    : Lemma
+      (ensures
+        forall (v: CG.combined_vertex).
+          CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+          chunked_graph_edge_maps_to_major_above_minor_targets_ready
+            minor major fp roots alloc_fuel fresh u v ==>
+          (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+           let r =
+             SpecMajorAlloc.ensure_major_head_capacity_spec
+               major fp alloc_fuel needed fresh in
+           let collect =
+             ChunkedCheney.chunked_cheney_collect_spec
+               minor r.capacity_major_out r.capacity_fp_out roots
+               r.capacity_fuel_out in
+           CG.mem_ce
+            (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+             CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+            (CG.build_chunked_combined_graph
+             collect.cmc_minor collect.cmc_major)))
+    =
+    let prove_for_v (v: CG.combined_vertex)
+      : Lemma
+        (requires
+          CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+          chunked_graph_edge_maps_to_major_above_minor_targets_ready
+            minor major fp roots alloc_fuel fresh u v)
+        (ensures
+          (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+           let r =
+             SpecMajorAlloc.ensure_major_head_capacity_spec
+               major fp alloc_fuel needed fresh in
+           let collect =
+             ChunkedCheney.chunked_cheney_collect_spec
+               minor r.capacity_major_out r.capacity_fp_out roots
+               r.capacity_fuel_out in
+           CG.mem_ce
+            (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+             CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+            (CG.build_chunked_combined_graph
+             collect.cmc_minor collect.cmc_major)))
+      =
+      chunked_cheney_gc_correct_after_preflight_graph_edge_above_minor_targets_maps_to_major_edge
+        minor major fp roots alloc_fuel fresh u v
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires prove_for_v)
+  in
+  FStar.Classical.forall_intro prove_for_u
+#pop-options
