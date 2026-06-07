@@ -1776,6 +1776,55 @@ let chunked_cheney_gc_correct_after_preflight_reachable_live_graph_maps_to_major
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_reachable_live_graph_injective_from_minor_image_facts
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_reachable_live_minor_images_injective_prop
+        minor major fp roots alloc_fuel fresh /\
+      chunked_reachable_live_minor_images_disjoint_from_major_prop
+        minor major fp roots alloc_fuel fresh)
+    (ensures
+      chunked_reachable_live_graph_injective_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let prove (u v: CG.combined_vertex)
+    : Lemma
+      (requires
+        chunked_reachable_live_graph_vertex minor major roots u /\
+        chunked_reachable_live_graph_vertex minor major roots v /\
+        CG.fwd_morphism collect.cmc_fwd u ==
+        CG.fwd_morphism collect.cmc_fwd v)
+      (ensures u == v)
+    =
+    match u, v with
+    | CG.MinorV x, CG.MinorV y ->
+      assert (collect.cmc_fwd x == collect.cmc_fwd y);
+      assert (x == y)
+    | CG.MinorV x, CG.MajorV y ->
+      assert (collect.cmc_fwd x == y);
+      assert (collect.cmc_fwd x <> y);
+      assert False
+    | CG.MajorV y, CG.MinorV x ->
+      assert (y == collect.cmc_fwd x);
+      assert (collect.cmc_fwd x <> y);
+      assert False
+    | CG.MajorV x, CG.MajorV y ->
+      assert (x == y)
+    | _, _ -> assert False
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 prove)
+
 let chunked_reachable_live_graph_image_isomorphism_from_injective
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)

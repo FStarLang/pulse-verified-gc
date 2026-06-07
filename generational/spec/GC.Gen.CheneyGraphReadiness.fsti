@@ -1271,6 +1271,52 @@ let chunked_reachable_live_graph_image_isomorphism_prop
       minor major fp roots alloc_fuel fresh)
     collect.cmc_fwd
 
+let chunked_reachable_live_minor_images_injective_prop
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk) : prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  forall (x y: U64.t).
+    chunked_reachable_live_graph_vertex minor major roots (CG.MinorV x) /\
+    chunked_reachable_live_graph_vertex minor major roots (CG.MinorV y) /\
+    collect.cmc_fwd x == collect.cmc_fwd y ==>
+    x == y
+
+let chunked_reachable_live_minor_images_disjoint_from_major_prop
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk) : prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  forall (x y: U64.t).
+    chunked_reachable_live_graph_vertex minor major roots (CG.MinorV x) /\
+    chunked_reachable_live_graph_vertex minor major roots (CG.MajorV y) ==>
+    collect.cmc_fwd x <> y
+
+val chunked_reachable_live_graph_injective_from_minor_image_facts
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_reachable_live_minor_images_injective_prop
+        minor major fp roots alloc_fuel fresh /\
+      chunked_reachable_live_minor_images_disjoint_from_major_prop
+        minor major fp roots alloc_fuel fresh)
+    (ensures
+      chunked_reachable_live_graph_injective_prop
+        minor major fp roots alloc_fuel fresh)
+
 val chunked_reachable_live_graph_image_isomorphism_from_injective
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
