@@ -873,6 +873,108 @@ let chunked_forward_fields_preserved_minor_object_field_edge
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_forward_one_normal_then_fields_minor_successor_edge
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel: nat) (j: nat)
+  (promoted: obj_addr) (field_addr: hp_addr)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      fuel > 1 /\
+      Seq.mem addr (minor_objects minor) /\
+      cs.ccs_fwd addr = 0UL /\
+      ~(is_infix_in_minor minor addr) /\
+      minor_wosize minor addr > 0 /\
+      minor_wosize minor addr < pow2 54 /\
+      FStar.UInt.size (minor_wosize minor addr) 64 /\
+      minor_tag minor addr < U64.v GC.Spec.Object.no_scan_tag /\
+      j < minor_wosize minor addr /\
+      promoted == cs.ccs_fp /\
+      GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates
+        cs.ccs_major cs.ccs_fp fuel = true /\
+      GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp fuel /\
+      cs.ccs_fp <> 0UL /\
+      SpecMajorAlloc.major_fl_head_wosize
+        cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2 /\
+      U64.v field_addr == U64.v promoted + j * U64.v mword /\
+      CG.chunked_major_field_slot promoted j == Some field_addr /\
+      (let cs1 =
+        ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+       let cs2 =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs1 addr 0 (minor_wosize minor addr) fuel in
+       let old = minor_read_field minor addr j in
+       let x = to_minor_offset old in
+       CheneyPres.chunked_cheney_forward_fields_split_ready
+        minor cs1 addr 0 (minor_wosize minor addr) fuel /\
+       CheneyPres.chunked_cheney_forward_fields_budget_ready
+        minor cs1 addr 0 (minor_wosize minor addr) fuel 1 /\
+       CheneyPres.chunked_fwd_targets_above_minor cs2.ccs_fwd /\
+       CheneyPres.chunked_fwd_noninfix_targets_in_major
+        minor cs2.ccs_fwd cs2.ccs_major /\
+       is_minor_pointer x /\
+       Seq.mem x (minor_objects minor) /\
+       minor_wosize minor x > 0))
+    (ensures
+      (let cs1 =
+        ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+       let cs2 =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs1 addr 0 (minor_wosize minor addr) fuel in
+       let x = to_minor_offset (minor_read_field minor addr j) in
+       CG.mem_ce (CG.MajorV promoted, CG.MajorV (cs2.ccs_fwd x))
+        (CG.build_chunked_combined_graph
+          (minor_reset minor)
+          (ChunkedUpdate.chunked_update_major_pointers
+            cs2.ccs_major cs2.ccs_fwd))))
+  =
+  let wz = minor_wosize minor addr in
+  let old = minor_read_field minor addr j in
+  let x = to_minor_offset old in
+  let cs1 = ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+  let cs2 =
+    ChunkedCheney.chunked_cheney_forward_fields minor cs1 addr 0 wz fuel in
+  ChunkedCheney.chunked_cheney_forward_one_normal_head_split_field_effect
+    minor cs addr fuel j field_addr;
+  ChunkedCheney.chunked_cheney_forward_one_normal_head_split_header_effect
+    minor cs addr fuel;
+  CheneyPres.chunked_cheney_forward_one_head_split_preserves_chain_objects_blue
+    minor cs addr fuel;
+  assert (GenInv.chunked_major_alloc_shape cs1.ccs_major cs1.ccs_fp fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            cs1.ccs_major cs1.ccs_fp fuel = true);
+  assert (GenInv.chunked_chain_objects_blue cs1.ccs_major cs1.ccs_fp fuel);
+  is_minor_addr_from_bounds x;
+  FStar.Classical.exists_intro
+    (fun (i:nat) ->
+      i < minor_wosize minor addr /\
+      to_minor_offset (minor_read_field minor addr i) == x /\
+      is_minor_addr x /\
+      Seq.mem x (minor_objects minor))
+    j;
+  minor_successors_char minor addr x;
+  assert (Seq.mem x (minor_successors minor addr));
+  CheneyPres.chunked_cheney_forward_fields_covers_successors_from_budget
+    minor cs1 addr fuel 1;
+  assert (cs2.ccs_fwd x <> 0UL);
+  assert (MH.read_word_in_major cs1.ccs_major field_addr == Some old);
+  match MH.read_word_in_major cs1.ccs_major (GC.Spec.Heap.hd_address promoted) with
+  | Some hdr ->
+    assert (Seq.mem promoted (MH.major_objects cs1.ccs_major));
+    assert (GC.Spec.Object.getColor hdr == GC.Lib.Header.White);
+    assert (GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue);
+    assert (U64.v (GC.Spec.Object.getTag hdr) == minor_tag minor addr);
+    assert (U64.v (GC.Spec.Object.getTag hdr) <
+            U64.v GC.Spec.Object.no_scan_tag);
+    assert (U64.v (GC.Spec.Object.getWosize hdr) == wz);
+    chunked_forward_fields_preserved_minor_object_field_edge
+      minor cs1 addr 0 wz fuel promoted hdr j field_addr old
+  | None ->
+    assert False
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
 let chunked_cheney_gc_correct_after_preflight_old_major_field_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)

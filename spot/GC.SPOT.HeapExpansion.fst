@@ -4402,6 +4402,65 @@ let spot_chunked_forward_fields_preserved_minor_object_field_edge
   CheneyCorrectness.chunked_forward_fields_preserved_minor_object_field_edge
     minor cs parent idx wosize alloc_fuel src hdr j field_addr old
 
+let spot_chunked_forward_one_normal_then_fields_minor_successor_edge
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel: nat) (j: nat)
+  (promoted: obj_addr) (field_addr: hp_addr)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        fuel > 1 /\
+        Seq.mem addr (minor_objects minor) /\
+        cs.ccs_fwd addr = 0UL /\
+        ~(is_infix_in_minor minor addr) /\
+        minor_wosize minor addr > 0 /\
+        minor_wosize minor addr < pow2 54 /\
+        FStar.UInt.size (minor_wosize minor addr) 64 /\
+        minor_tag minor addr < U64.v Obj.no_scan_tag /\
+        j < minor_wosize minor addr /\
+        promoted == cs.ccs_fp /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp fuel /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2 /\
+        U64.v field_addr == U64.v promoted + j * U64.v mword /\
+        CG.chunked_major_field_slot promoted j == Some field_addr /\
+        (let cs1 =
+          ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+         let cs2 =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs1 addr 0 (minor_wosize minor addr) fuel in
+         let old = minor_read_field minor addr j in
+         let x = to_minor_offset old in
+         CheneyPreservation.chunked_cheney_forward_fields_split_ready
+          minor cs1 addr 0 (minor_wosize minor addr) fuel /\
+         CheneyPreservation.chunked_cheney_forward_fields_budget_ready
+          minor cs1 addr 0 (minor_wosize minor addr) fuel 1 /\
+         CheneyPreservation.chunked_fwd_targets_above_minor cs2.ccs_fwd /\
+         CheneyPreservation.chunked_fwd_noninfix_targets_in_major
+          minor cs2.ccs_fwd cs2.ccs_major /\
+         is_minor_pointer x /\
+         Seq.mem x (minor_objects minor) /\
+         minor_wosize minor x > 0))
+      (ensures
+        (let cs1 =
+          ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+         let cs2 =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs1 addr 0 (minor_wosize minor addr) fuel in
+         let x = to_minor_offset (minor_read_field minor addr j) in
+         CG.mem_ce (CG.MajorV promoted, CG.MajorV (cs2.ccs_fwd x))
+          (CG.build_chunked_combined_graph
+            (minor_reset minor)
+            (ChunkedUpdate.chunked_update_major_pointers
+              cs2.ccs_major cs2.ccs_fwd))))
+  =
+  CheneyCorrectness.chunked_forward_one_normal_then_fields_minor_successor_edge
+    minor cs addr fuel j promoted field_addr
+
 let spot_chunked_cheney_gc_correct_after_preflight_old_major_field_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
