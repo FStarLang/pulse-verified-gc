@@ -1200,3 +1200,84 @@ val chunked_cheney_gc_correct_after_preflight_reachable_live_graph_maps_to_major
         minor major fp
         (CRem.chunked_minor_collection_roots minor major base_roots)
         alloc_fuel fresh)
+
+let chunked_reachable_live_graph_image_vertex
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (w: U64.t) : GTot prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  exists (u: CG.combined_vertex).
+    chunked_reachable_live_graph_vertex minor major roots u /\
+    CG.fwd_morphism collect.cmc_fwd u == w
+
+let chunked_reachable_live_graph_image_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (x y: U64.t) : GTot prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  exists (u v: CG.combined_vertex).
+    chunked_reachable_live_graph_edge minor major roots u v /\
+    CG.fwd_morphism collect.cmc_fwd u == x /\
+    CG.fwd_morphism collect.cmc_fwd v == y
+
+let chunked_reachable_live_graph_injective_prop
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk) : prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  forall (u v: CG.combined_vertex).
+    chunked_reachable_live_graph_vertex minor major roots u /\
+    chunked_reachable_live_graph_vertex minor major roots v /\
+    CG.fwd_morphism collect.cmc_fwd u == CG.fwd_morphism collect.cmc_fwd v ==>
+    u == v
+
+let chunked_reachable_live_graph_image_isomorphism_prop
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk) : prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  CG.reachable_subgraph_isomorphism
+    (chunked_reachable_live_graph_vertex minor major roots)
+    (chunked_reachable_live_graph_image_vertex
+      minor major fp roots alloc_fuel fresh)
+    (chunked_reachable_live_graph_edge minor major roots)
+    (chunked_reachable_live_graph_image_edge
+      minor major fp roots alloc_fuel fresh)
+    collect.cmc_fwd
+
+val chunked_reachable_live_graph_image_isomorphism_from_injective
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_reachable_live_graph_injective_prop
+        minor major fp roots alloc_fuel fresh)
+    (ensures
+      chunked_reachable_live_graph_image_isomorphism_prop
+        minor major fp roots alloc_fuel fresh)

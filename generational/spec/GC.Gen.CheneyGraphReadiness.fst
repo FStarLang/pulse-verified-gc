@@ -1774,3 +1774,129 @@ let chunked_cheney_gc_correct_after_preflight_reachable_live_graph_maps_to_major
     (CRem.chunked_minor_collection_roots minor major base_roots)
     alloc_fuel fresh
 #pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_reachable_live_graph_image_isomorphism_from_injective
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_reachable_live_graph_injective_prop
+        minor major fp roots alloc_fuel fresh)
+    (ensures
+      chunked_reachable_live_graph_image_isomorphism_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let image_valid (u: CG.combined_vertex)
+    : Lemma
+      (requires chunked_reachable_live_graph_vertex minor major roots u)
+      (ensures
+        chunked_reachable_live_graph_image_vertex
+          minor major fp roots alloc_fuel fresh
+          (CG.fwd_morphism collect.cmc_fwd u))
+    =
+    FStar.Classical.exists_intro
+      (fun (x: CG.combined_vertex) ->
+        chunked_reachable_live_graph_vertex minor major roots x /\
+        CG.fwd_morphism collect.cmc_fwd x ==
+        CG.fwd_morphism collect.cmc_fwd u)
+      u
+  in
+  let inj (u v: CG.combined_vertex)
+    : Lemma
+      (requires
+        chunked_reachable_live_graph_vertex minor major roots u /\
+        chunked_reachable_live_graph_vertex minor major roots v /\
+        CG.fwd_morphism collect.cmc_fwd u ==
+        CG.fwd_morphism collect.cmc_fwd v)
+      (ensures u == v)
+    =
+    ()
+  in
+  let surj (w: U64.t)
+    : Lemma
+      (requires
+        chunked_reachable_live_graph_image_vertex
+          minor major fp roots alloc_fuel fresh w)
+      (ensures
+        exists (u: CG.combined_vertex).
+          chunked_reachable_live_graph_vertex minor major roots u /\
+          CG.fwd_morphism collect.cmc_fwd u == w)
+    =
+    ()
+  in
+  let edge (u v: CG.combined_vertex)
+    : Lemma
+      (requires
+        chunked_reachable_live_graph_vertex minor major roots u /\
+        chunked_reachable_live_graph_vertex minor major roots v)
+      (ensures
+        (chunked_reachable_live_graph_edge minor major roots u v <==>
+         chunked_reachable_live_graph_image_edge
+          minor major fp roots alloc_fuel fresh
+          (CG.fwd_morphism collect.cmc_fwd u)
+          (CG.fwd_morphism collect.cmc_fwd v)))
+    =
+    if chunked_reachable_live_graph_edge minor major roots u v then
+      FStar.Classical.exists_intro
+        (fun (u': CG.combined_vertex) ->
+          exists (v': CG.combined_vertex).
+            chunked_reachable_live_graph_edge minor major roots u' v' /\
+            CG.fwd_morphism collect.cmc_fwd u' ==
+            CG.fwd_morphism collect.cmc_fwd u /\
+            CG.fwd_morphism collect.cmc_fwd v' ==
+            CG.fwd_morphism collect.cmc_fwd v)
+        u
+    else begin
+      if chunked_reachable_live_graph_image_edge
+           minor major fp roots alloc_fuel fresh
+           (CG.fwd_morphism collect.cmc_fwd u)
+           (CG.fwd_morphism collect.cmc_fwd v)
+      then begin
+        let u' =
+          FStar.IndefiniteDescription.indefinite_description_ghost
+            CG.combined_vertex
+            (fun u' ->
+              exists (v': CG.combined_vertex).
+                chunked_reachable_live_graph_edge minor major roots u' v' /\
+                CG.fwd_morphism collect.cmc_fwd u' ==
+                CG.fwd_morphism collect.cmc_fwd u /\
+                CG.fwd_morphism collect.cmc_fwd v' ==
+                CG.fwd_morphism collect.cmc_fwd v) in
+        let v' =
+          FStar.IndefiniteDescription.indefinite_description_ghost
+            CG.combined_vertex
+            (fun v' ->
+              chunked_reachable_live_graph_edge minor major roots u' v' /\
+              CG.fwd_morphism collect.cmc_fwd u' ==
+              CG.fwd_morphism collect.cmc_fwd u /\
+              CG.fwd_morphism collect.cmc_fwd v' ==
+              CG.fwd_morphism collect.cmc_fwd v) in
+        assert (chunked_reachable_live_graph_edge minor major roots u' v');
+        assert (chunked_reachable_live_graph_vertex minor major roots u');
+        assert (chunked_reachable_live_graph_vertex minor major roots v');
+        inj u' u;
+        inj v' v;
+        assert (u' == u);
+        assert (v' == v);
+        assert False
+      end
+    end
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires image_valid);
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 inj);
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires surj);
+  FStar.Classical.forall_intro_2
+    (fun u -> FStar.Classical.move_requires (edge u))
+#pop-options

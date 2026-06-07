@@ -6378,6 +6378,20 @@ let spot_chunked_cheney_gc_correct_after_preflight_reachable_live_graph_maps_to_
   CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_reachable_live_graph_maps_to_major_graph_from_chunk_bases_and_scanned_roots
     minor major fp base_roots alloc_fuel fresh
 
+let spot_chunked_reachable_live_graph_image_isomorphism_from_injective
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_reachable_live_graph_injective_prop
+          minor major fp roots alloc_fuel fresh)
+      (ensures
+        CheneyGraphReadiness.chunked_reachable_live_graph_image_isomorphism_prop
+          minor major fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_reachable_live_graph_image_isomorphism_from_injective
+    minor major fp roots alloc_fuel fresh
+
 let spot_chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
