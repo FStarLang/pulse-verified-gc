@@ -521,6 +521,50 @@ val chunked_cheney_gc_correct_after_preflight_minor_successor_edge_maps_to_major
        (CG.build_chunked_combined_graph
          collect.cmc_minor collect.cmc_major)))
 
+/// Graph-edge-level form of the promoted-minor successor mapping.  Instead of
+/// exposing the source field index, this consumes an actual pre-collection
+/// MinorV->MinorV graph edge and recovers the copied field witness internally.
+val chunked_cheney_gc_correct_after_preflight_minor_graph_edge_maps_to_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (src dst: U64.t)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0) /\
+      Seq.mem src (minor_reachable minor roots) /\
+      minor_tag minor src < U64.v GC.Spec.Object.no_scan_tag /\
+      CG.mem_ce (CG.MinorV src, CG.MinorV dst)
+       (CG.build_chunked_combined_graph minor major) /\
+      minor_wosize minor dst > 0)
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+         major fp alloc_fuel needed fresh in
+       let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+         minor r.capacity_major_out r.capacity_fp_out roots
+         r.capacity_fuel_out in
+       collect.cmc_fwd src <> 0UL /\
+       collect.cmc_fwd dst <> 0UL /\
+       CG.mem_ce (CG.MajorV (collect.cmc_fwd src),
+                CG.MajorV (collect.cmc_fwd dst))
+       (CG.build_chunked_combined_graph
+        collect.cmc_minor collect.cmc_major)))
+
 /// Chunked/preflight end-to-end minor-collection correctness bundle.  This is
 /// the client-facing analogue of `cheney_gc_correct` for the current chunked
 /// collection shell: optional head-capacity expansion, chunked Cheney

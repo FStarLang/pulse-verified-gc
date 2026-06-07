@@ -605,6 +605,34 @@ val chunked_classify_major_field_major (ms: minor_state) (mh: MH.major_heap) (v:
                      ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
           (ensures chunked_classify_major_field ms mh v == Some (MajorV v))
 
+/// Inversion: chunked_classify_minor_field == Some (MinorV x) implies the
+/// normalized field value is x and x is a minor object.
+val chunked_classify_minor_field_inv_minor
+  (ms: minor_state) (mh: MH.major_heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires chunked_classify_minor_field ms mh v == Some (MinorV x))
+          (ensures to_minor_offset v == x /\
+                   is_minor_addr x /\
+                   Seq.mem x (minor_objects ms))
+
+/// Inversion: chunked_classify_minor_field == Some (MajorV x) implies v == x
+/// and x is an active chunked-major object.
+val chunked_classify_minor_field_inv_major
+  (ms: minor_state) (mh: MH.major_heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires chunked_classify_minor_field ms mh v == Some (MajorV x))
+          (ensures v == x /\ is_val_addr v /\
+                   Seq.mem (v <: obj_addr) (MH.major_objects mh) /\
+                   (let vo = to_minor_offset v in
+                    ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms))))
+
+/// Inversion: chunked_classify_major_field == Some (MinorV x) implies the
+/// normalized field value is x and x is a minor object.
+val chunked_classify_major_field_inv_minor
+  (ms: minor_state) (mh: MH.major_heap) (v: U64.t) (x: U64.t)
+  : Lemma (requires chunked_classify_major_field ms mh v == Some (MinorV x))
+          (ensures to_minor_offset v == x /\
+                   is_minor_pointer x /\
+                   Seq.mem x (minor_objects ms))
+
 /// Inversion: chunked_classify_major_field == Some (MajorV x) implies v == x
 /// and x is an active chunked-major object.
 val chunked_classify_major_field_inv_major
