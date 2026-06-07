@@ -19,6 +19,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module CC = GC.Gen.CheneyCorrectness
+module CReach = GC.Gen.ChunkedReachabilityBridge
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
 private let aligned_gt_ge_plus_mword (x z: nat)
@@ -1023,6 +1024,58 @@ let chunked_minor_source_edge_not_no_scan
       assert (~(GC.Spec.Fields.is_pointer_field field));
       assert False
   end
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
+let chunked_reachable_major_vertex_live_selected
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_objects_are_pointer_fields major /\
+      CG.combined_reachable
+        (CG.build_chunked_combined_graph minor major)
+        (CG.classify_roots roots)
+        (CG.MajorV v))
+    (ensures
+      chunked_live_selected_graph_vertex minor major roots (CG.MajorV v))
+  =
+  assert (CReach.chunked_major_objects_are_pointer_fields major);
+  CReach.chunked_reachable_major_valid_nonblue minor major fp fuel roots;
+  assert (U64.v v >= U64.v mword);
+  assert (U64.v v < heap_size);
+  assert (U64.v v % U64.v mword == 0);
+  let obj : obj_addr = v in
+  assert (Seq.mem obj (MH.major_objects major));
+  assert (~(GenInv.chunked_is_blue major obj));
+  CG.chunked_major_vertex_char minor major obj;
+  assert (CG.mem_cv (CG.MajorV obj)
+    (CG.build_chunked_combined_graph minor major));
+  assert (CG.MajorV obj == CG.MajorV v);
+  assert (exists (src_obj: obj_addr).
+    src_obj == v /\
+    Seq.mem src_obj (MH.major_objects major) /\
+    ~(GenInv.chunked_is_blue major src_obj))
+
+let chunked_reachable_major_vertex_live_selected_from_chunk_bases
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_chunks_above_zero_addr major /\
+      CG.combined_reachable
+        (CG.build_chunked_combined_graph minor major)
+        (CG.classify_roots roots)
+        (CG.MajorV v))
+    (ensures
+      chunked_live_selected_graph_vertex minor major roots (CG.MajorV v))
+  =
+  chunked_major_chunks_above_zero_addr_objects_are_pointer_fields major;
+  chunked_reachable_major_vertex_live_selected minor major fp fuel roots v
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"

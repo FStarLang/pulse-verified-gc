@@ -17,6 +17,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module CC = GC.Gen.CheneyCorrectness
+module CReach = GC.Gen.ChunkedReachabilityBridge
 
 /// Heap-level separation fact needed to discharge major-target update stability
 /// from graph-edge membership: every active major object address lies outside
@@ -639,6 +640,36 @@ let chunked_live_selected_graph_vertex
       Seq.mem src_obj (MH.major_objects major) /\
       ~(GenInv.chunked_is_blue major src_obj)
   | _ -> False)
+
+val chunked_reachable_major_vertex_live_selected
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+   (requires
+     GenInv.chunked_collection_heap_shape minor major fp fuel /\
+     CReach.chunked_roots_valid_nonblue roots major /\
+     chunked_major_objects_are_pointer_fields major /\
+     CG.combined_reachable
+       (CG.build_chunked_combined_graph minor major)
+       (CG.classify_roots roots)
+       (CG.MajorV v))
+   (ensures
+     chunked_live_selected_graph_vertex minor major roots (CG.MajorV v))
+
+val chunked_reachable_major_vertex_live_selected_from_chunk_bases
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+   (requires
+     GenInv.chunked_collection_heap_shape minor major fp fuel /\
+     CReach.chunked_roots_valid_nonblue roots major /\
+     chunked_major_chunks_above_zero_addr major /\
+     CG.combined_reachable
+       (CG.build_chunked_combined_graph minor major)
+       (CG.classify_roots roots)
+       (CG.MajorV v))
+   (ensures
+     chunked_live_selected_graph_vertex minor major roots (CG.MajorV v))
 
 let chunked_live_selected_graph_edge
   (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)

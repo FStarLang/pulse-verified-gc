@@ -20,6 +20,7 @@ module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module CheneyCorrectness = GC.Gen.CheneyCorrectness
 module CheneyGraphReadiness = GC.Gen.CheneyGraphReadiness
+module CReach = GC.Gen.ChunkedReachabilityBridge
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
@@ -6081,6 +6082,66 @@ let spot_chunked_cheney_gc_correct_after_preflight_graph_edge_live_selected_maps
   =
   CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_graph_edge_live_selected_maps_to_major_edge
     minor major fp roots alloc_fuel fresh u v
+
+let spot_chunked_reachable_major_valid_nonblue
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: Seq.seq U64.t)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor major fp fuel /\
+        CReach.chunked_roots_valid_nonblue roots major /\
+        CReach.chunked_major_objects_are_pointer_fields major)
+      (ensures
+        (let cg = CG.build_chunked_combined_graph minor major in
+         let combined_roots = CG.classify_roots roots in
+         forall (v: U64.t).
+           CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
+           U64.v v >= U64.v mword /\
+           U64.v v < heap_size /\
+           U64.v v % U64.v mword == 0 /\
+           Seq.mem (v <: obj_addr) (MH.major_objects major) /\
+           ~(GenInv.chunked_is_blue major (v <: obj_addr))))
+  =
+  CReach.chunked_reachable_major_valid_nonblue
+    minor major fp fuel roots
+
+let spot_chunked_reachable_major_vertex_live_selected
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: Seq.seq U64.t) (v: U64.t)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor major fp fuel /\
+        CReach.chunked_roots_valid_nonblue roots major /\
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major /\
+        CG.combined_reachable
+          (CG.build_chunked_combined_graph minor major)
+          (CG.classify_roots roots)
+          (CG.MajorV v))
+      (ensures
+        CheneyGraphReadiness.chunked_live_selected_graph_vertex
+          minor major roots (CG.MajorV v))
+  =
+  CheneyGraphReadiness.chunked_reachable_major_vertex_live_selected
+    minor major fp fuel roots v
+
+let spot_chunked_reachable_major_vertex_live_selected_from_chunk_bases
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: Seq.seq U64.t) (v: U64.t)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor major fp fuel /\
+        CReach.chunked_roots_valid_nonblue roots major /\
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major /\
+        CG.combined_reachable
+          (CG.build_chunked_combined_graph minor major)
+          (CG.classify_roots roots)
+          (CG.MajorV v))
+      (ensures
+        CheneyGraphReadiness.chunked_live_selected_graph_vertex
+          minor major roots (CG.MajorV v))
+  =
+  CheneyGraphReadiness.chunked_reachable_major_vertex_live_selected_from_chunk_bases
+    minor major fp fuel roots v
 
 let spot_chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
