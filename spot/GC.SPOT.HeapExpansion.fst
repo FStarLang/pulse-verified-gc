@@ -5014,3 +5014,104 @@ let spot_chunked_cheney_gc_correct_after_preflight_old_major_forwarded_minor_fie
   =
   CheneyCorrectness.chunked_cheney_gc_correct_after_preflight_old_major_forwarded_minor_field_edge
     minor major fp roots alloc_fuel fresh src expected hdr j field_addr old
+
+let spot_chunked_cheney_gc_correct_after_preflight_old_major_major_graph_edge_maps_to_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (src dst: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0) /\
+          CG.mem_ce (CG.MajorV src, CG.MajorV dst)
+          (CG.build_chunked_combined_graph minor major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        Obj.getColor hdr <> GC.Lib.Header.Blue /\
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let collect =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         ~(is_minor_pointer (to_minor_offset dst) /\
+           collect.cmc_fwd (to_minor_offset dst) <> 0UL)))
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let collect =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         CG.mem_ce (CG.MajorV src, CG.MajorV dst)
+          (CG.build_chunked_combined_graph
+            collect.cmc_minor collect.cmc_major)))
+  =
+  CheneyCorrectness.chunked_cheney_gc_correct_after_preflight_old_major_major_graph_edge_maps_to_major_edge
+    minor major fp roots alloc_fuel fresh src dst hdr
+
+let spot_chunked_cheney_gc_correct_after_preflight_old_major_minor_graph_edge_maps_to_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (src: obj_addr) (dst: U64.t) (hdr: U64.t)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0) /\
+        CG.mem_ce (CG.MajorV src, CG.MinorV dst)
+          (CG.build_chunked_combined_graph minor major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        Obj.getColor hdr <> GC.Lib.Header.Blue /\
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let collect =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         collect.cmc_fwd dst <> 0UL))
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let collect =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         CG.mem_ce (CG.MajorV src, CG.MajorV (collect.cmc_fwd dst))
+          (CG.build_chunked_combined_graph
+            collect.cmc_minor collect.cmc_major)))
+  =
+  CheneyCorrectness.chunked_cheney_gc_correct_after_preflight_old_major_minor_graph_edge_maps_to_major_edge
+    minor major fp roots alloc_fuel fresh src dst hdr
