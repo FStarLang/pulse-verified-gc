@@ -475,3 +475,155 @@ val chunked_cheney_gc_correct_after_preflight_graph_membership_ready_maps_to_maj
     (ensures
       chunked_graph_membership_ready_maps_to_major_graph_prop
         minor major fp roots alloc_fuel fresh)
+
+/// Edge readiness phrased over a selected source/target view:
+/// minor sources must be selected and scannable, major sources must be active
+/// non-blue objects, and major-to-minor edges require a selected minor target.
+let chunked_graph_edge_maps_to_major_selected_ready
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  (u v: CG.combined_vertex) : GTot prop =
+  match u, v with
+  | CG.MinorV src, CG.MinorV _ ->
+    chunked_graph_vertex_maps_to_major_membership_ready minor roots u /\
+    minor_tag minor src < U64.v GC.Spec.Object.no_scan_tag
+  | CG.MinorV src, CG.MajorV _ ->
+    chunked_graph_vertex_maps_to_major_membership_ready minor roots u /\
+    minor_tag minor src < U64.v GC.Spec.Object.no_scan_tag
+  | CG.MajorV src, CG.MajorV _ ->
+    exists (src_obj: obj_addr).
+      src_obj == src /\
+      Seq.mem src_obj (MH.major_objects major) /\
+      ~(GenInv.chunked_is_blue major src_obj)
+  | CG.MajorV src, CG.MinorV _ ->
+    (exists (src_obj: obj_addr).
+      src_obj == src /\
+      Seq.mem src_obj (MH.major_objects major) /\
+      ~(GenInv.chunked_is_blue major src_obj)) /\
+    chunked_graph_vertex_maps_to_major_membership_ready minor roots v
+  | _, _ -> False
+
+val chunked_graph_edge_maps_to_major_selected_ready_implies_reachable_targets_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      chunked_graph_edge_maps_to_major_selected_ready minor major roots u v)
+    (ensures
+      chunked_graph_edge_maps_to_major_reachable_targets_ready
+        minor major fp roots alloc_fuel fresh u v)
+
+val chunked_cheney_gc_correct_after_preflight_graph_edge_selected_maps_to_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_major_objects_above_minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0) /\
+      CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+      chunked_graph_edge_maps_to_major_selected_ready
+        minor major roots u v)
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+         major fp alloc_fuel needed fresh in
+       let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+         minor r.capacity_major_out r.capacity_fp_out roots
+         r.capacity_fuel_out in
+       CG.mem_ce
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+         CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+        (CG.build_chunked_combined_graph
+         collect.cmc_minor collect.cmc_major)))
+
+let chunked_graph_edges_selected_map_to_major_edges_prop
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk) : prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  forall (u v: CG.combined_vertex).
+    CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+    chunked_graph_edge_maps_to_major_selected_ready minor major roots u v ==>
+    CG.mem_ce
+      (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+       CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+      (CG.build_chunked_combined_graph
+        collect.cmc_minor collect.cmc_major)
+
+val chunked_cheney_gc_correct_after_preflight_graph_edges_selected_map_to_major_edges
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_major_objects_above_minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_graph_edges_selected_map_to_major_edges_prop
+        minor major fp roots alloc_fuel fresh)
+
+let chunked_graph_selected_ready_maps_to_major_graph_prop
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk) : prop =
+  chunked_graph_vertices_membership_ready_map_to_major_vertices_prop
+    minor major fp roots alloc_fuel fresh /\
+  chunked_graph_edges_selected_map_to_major_edges_prop
+    minor major fp roots alloc_fuel fresh
+
+val chunked_cheney_gc_correct_after_preflight_graph_selected_ready_maps_to_major_graph
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_major_objects_above_minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_graph_selected_ready_maps_to_major_graph_prop
+        minor major fp roots alloc_fuel fresh)
