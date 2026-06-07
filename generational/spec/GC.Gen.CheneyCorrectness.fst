@@ -134,7 +134,11 @@ let cheney_promotes_all_reachable
   let aux (x: U64.t)
     : Lemma (requires Seq.mem x (minor_reachable minor roots))
             (ensures prom.fwd_map x <> 0UL \/ minor_wosize minor x = 0)
-    = ()
+    =
+    if minor_wosize minor x > 0 then
+      assert (prom.fwd_map x <> 0UL)
+    else
+      assert (minor_wosize minor x = 0)
   in
   Classical.forall_intro (Classical.move_requires aux)
 
@@ -193,7 +197,7 @@ let chunked_cheney_collect_after_preflight_forwards_reachable
   Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+#push-options "--split_queries always --z3rlimit 20 --fuel 1 --ifuel 0"
 let chunked_cheney_gc_correct_after_preflight_minor_successor_forwarded
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
@@ -266,6 +270,352 @@ let chunked_cheney_gc_correct_after_preflight_minor_successor_forwarded
   assert (minor_wosize minor src > 0);
   assert (collect.cmc_fwd src <> 0UL);
   assert (collect.cmc_fwd dst <> 0UL)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+let major_fl_head_wosize_positive_nonzero
+  (mh: MH.major_heap) (fp: U64.t) (needed: nat{needed > 0})
+  : Lemma
+    (requires SpecMajorAlloc.major_fl_head_wosize mh fp >= needed)
+    (ensures fp <> 0UL)
+  =
+  if fp = 0UL then begin
+    assert (SpecMajorAlloc.major_fl_head_wosize mh fp == 0);
+    assert False
+  end
+
+let ensure_major_head_capacity_fuel_gt1
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat{fuel > 1})
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+    (ensures
+      (SpecMajorAlloc.ensure_major_head_capacity_spec
+        mh fp fuel needed fresh).capacity_fuel_out > 1)
+  =
+  if SpecMajorAlloc.major_fl_head_wosize mh fp >= needed then ()
+  else ()
+
+let chunked_major_edge_rewrite_collect
+  (minor0: minor_state) (updated: MH.major_heap)
+  (collect: ChunkedCheney.chunked_minor_collect_result)
+  (src dst promoted expected: U64.t)
+  : Lemma
+    (requires
+      collect.cmc_minor == minor0 /\
+      collect.cmc_major == updated /\
+      promoted == collect.cmc_fwd src /\
+      expected == collect.cmc_fwd dst /\
+      CG.mem_ce (CG.MajorV promoted, CG.MajorV expected)
+        (CG.build_chunked_combined_graph minor0 updated))
+    (ensures
+      CG.mem_ce (CG.MajorV (collect.cmc_fwd src),
+                 CG.MajorV (collect.cmc_fwd dst))
+        (CG.build_chunked_combined_graph
+          collect.cmc_minor collect.cmc_major))
+  = ()
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+private let chunked_update_forwarded_minor_field_edge_core
+  (minor: minor_state) (mh: MH.major_heap) (fwd: forwarding_map)
+  (src expected: obj_addr) (hdr: U64.t) (j: nat)
+  (field_addr: hp_addr) (old: U64.t)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap mh /\
+      CheneyPres.chunked_fwd_targets_above_minor fwd /\
+      Seq.mem src (MH.major_objects mh) /\
+      Seq.mem expected (MH.major_objects mh) /\
+      MH.read_word_in_major mh (GC.Spec.Heap.hd_address src) == Some hdr /\
+      GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue /\
+      U64.v (GC.Spec.Object.getTag hdr) <
+        U64.v GC.Spec.Object.no_scan_tag /\
+      j < U64.v (GC.Spec.Object.getWosize hdr) /\
+      U64.v field_addr == U64.v src + j * U64.v mword /\
+      CG.chunked_major_field_slot src j == Some field_addr /\
+      MH.read_word_in_major mh field_addr == Some old /\
+      (let x = to_minor_offset old in
+       is_minor_pointer x /\ fwd x <> 0UL /\ fwd x == expected))
+    (ensures
+      CG.mem_ce (CG.MajorV src, CG.MajorV expected)
+        (CG.build_chunked_combined_graph
+          (minor_reset minor)
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd)))
+  =
+  let updated = ChunkedUpdate.chunked_update_major_pointers mh fwd in
+  let x = to_minor_offset old in
+  ChunkedUpdate.chunked_update_expected_value_effect fwd old;
+  assert (ChunkedUpdate.chunked_update_expected_value fwd old == expected);
+  CheneyPres.chunked_fwd_targets_above_minor_expected_stable fwd old;
+  ChunkedUpdate.chunked_update_major_pointers_field_effect_stable
+    mh fwd src hdr j field_addr old;
+  assert (MH.read_word_in_major updated field_addr == Some expected);
+  ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
+    mh fwd;
+  assert (MH.major_objects updated == MH.major_objects mh);
+  assert (Seq.mem src (MH.major_objects updated));
+  assert (Seq.mem expected (MH.major_objects updated));
+  ChunkedUpdate.chunked_update_major_pointers_preserves_header
+    mh fwd src hdr;
+  assert (MH.read_word_in_major updated (GC.Spec.Heap.hd_address src) ==
+          Some hdr);
+  CG.chunked_wosize_nat_header updated src hdr;
+  CG.chunked_is_no_scan_header updated src hdr;
+  assert (j < CG.chunked_wosize_nat_of_object updated src);
+  assert (CG.chunked_is_no_scan updated src == false);
+  assert (CG.chunked_major_field_slot src j == Some field_addr);
+  minor_reset_objects_not_mem minor (to_minor_offset expected);
+  assert (~(Seq.mem (to_minor_offset expected)
+              (minor_objects (minor_reset minor))));
+  assert (~(is_minor_pointer (to_minor_offset expected) /\
+            Seq.mem (to_minor_offset expected)
+              (minor_objects (minor_reset minor))));
+  is_val_addr_spec expected;
+  assert (is_val_addr expected);
+  CG.chunked_classify_major_field_major
+    (minor_reset minor) updated expected;
+  assert (CG.chunked_classify_major_field
+            (minor_reset minor) updated expected ==
+          Some (CG.MajorV expected));
+  CG.chunked_major_field_edge_intro_full
+    (minor_reset minor) updated
+    src j field_addr expected (CG.MajorV expected)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+private let chunked_cheney_promote_minor_successor_updated_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel remaining: nat)
+  (src dst: U64.t) (j: nat) (field_addr: hp_addr)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      CheneyPres.chunked_cheney_promote_budget_ready
+        minor major fp roots alloc_fuel remaining /\
+      (let res =
+        ChunkedCheney.chunked_cheney_promote
+          minor major fp roots alloc_fuel in
+       GenInv.chunked_major_alloc_shape
+         res.major_final res.fp_final alloc_fuel /\
+       CheneyPres.chunked_fwd_targets_above_minor res.fwd_map /\
+       CheneyPres.chunked_fwd_noninfix_targets_in_major
+         minor res.fwd_map res.major_final /\
+       res.fwd_map src <> 0UL /\
+       res.fwd_map dst <> 0UL /\
+       Seq.mem src (minor_objects minor) /\
+       Seq.mem dst (minor_objects minor) /\
+       ~(is_infix_in_minor minor src) /\
+       ~(is_infix_in_minor minor dst) /\
+       minor_tag minor src < U64.v GC.Spec.Object.no_scan_tag /\
+       j < minor_wosize minor src /\
+       to_minor_offset (minor_read_field minor src j) == dst /\
+       U64.v field_addr == U64.v (res.fwd_map src) + j * U64.v mword))
+    (ensures
+      (let res =
+        ChunkedCheney.chunked_cheney_promote
+          minor major fp roots alloc_fuel in
+       let updated =
+        ChunkedUpdate.chunked_update_major_pointers
+          res.major_final res.fwd_map in
+       CG.mem_ce (CG.MajorV (res.fwd_map src),
+                  CG.MajorV (res.fwd_map dst))
+        (CG.build_chunked_combined_graph
+          (minor_reset minor) updated)))
+  =
+  let res =
+    ChunkedCheney.chunked_cheney_promote
+      minor major fp roots alloc_fuel in
+  let updated =
+    ChunkedUpdate.chunked_update_major_pointers
+      res.major_final res.fwd_map in
+  CheneyPres.chunked_cheney_promote_fwd_target_fields_match
+    minor major fp roots alloc_fuel remaining src j field_addr;
+  assert (res.fwd_map src <> 0UL);
+  assert (res.fwd_map dst <> 0UL);
+  assert (U64.v field_addr ==
+          U64.v (res.fwd_map src) + j * U64.v mword);
+  let promoted : obj_addr = res.fwd_map src in
+  assert (match MH.read_word_in_major
+                  res.major_final (GC.Spec.Heap.hd_address promoted) with
+          | Some _ -> True
+          | None -> False);
+  match MH.read_word_in_major res.major_final (GC.Spec.Heap.hd_address promoted) with
+  | Some hdr ->
+    assert (Seq.mem promoted (MH.major_objects res.major_final));
+    assert (GC.Spec.Object.getColor hdr <> GC.Lib.Header.Blue);
+    assert (U64.v (GC.Spec.Object.getTag hdr) == minor_tag minor src);
+    assert (U64.v (GC.Spec.Object.getTag hdr) <
+            U64.v GC.Spec.Object.no_scan_tag);
+    assert (j < U64.v (GC.Spec.Object.getWosize hdr));
+    assert (CG.chunked_major_field_slot promoted j == Some field_addr);
+    assert (MH.read_word_in_major res.major_final field_addr ==
+            Some (minor_read_field minor src j));
+    CheneyPres.chunked_fwd_noninfix_targets_in_major_elim
+      minor res.fwd_map res.major_final dst;
+    let expected : obj_addr = res.fwd_map dst in
+    assert (Seq.mem expected (MH.major_objects res.major_final));
+    minor_objects_valid minor dst;
+    assert (is_minor_pointer dst);
+    let old = minor_read_field minor src j in
+    GenInv.chunked_major_alloc_shape_elim
+      res.major_final res.fp_final alloc_fuel;
+    assert (MH.well_formed_major_heap res.major_final);
+    assert (CheneyPres.chunked_fwd_targets_above_minor res.fwd_map);
+    assert (to_minor_offset old == dst);
+    assert (is_minor_pointer (to_minor_offset old));
+    assert (res.fwd_map (to_minor_offset old) <> 0UL);
+    assert (res.fwd_map (to_minor_offset old) == expected);
+    chunked_update_forwarded_minor_field_edge_core
+      minor res.major_final res.fwd_map
+      promoted expected hdr j field_addr old;
+    assert (CG.mem_ce (CG.MajorV promoted, CG.MajorV expected)
+              (CG.build_chunked_combined_graph
+                (minor_reset minor) updated));
+    assert (promoted == (res.fwd_map src <: obj_addr));
+    assert (expected == (res.fwd_map dst <: obj_addr))
+  | None ->
+    assert (match MH.read_word_in_major
+                    res.major_final (GC.Spec.Heap.hd_address promoted) with
+            | Some _ -> True
+            | None -> False);
+    assert False
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_minor_successor_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (src dst: U64.t) (j: nat) (field_addr: hp_addr)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+         PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+         major fresh (MH.major_objects major) 0) /\
+      Seq.mem src (minor_reachable minor roots) /\
+      j < minor_wosize minor src /\
+      minor_tag minor src < U64.v GC.Spec.Object.no_scan_tag /\
+      to_minor_offset (minor_read_field minor src j) == dst /\
+      is_minor_addr dst /\
+      Seq.mem dst (minor_objects minor) /\
+      minor_wosize minor dst > 0 /\
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       U64.v field_addr == U64.v (collect.cmc_fwd src) + j * U64.v mword))
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       CG.mem_ce (CG.MajorV (collect.cmc_fwd src),
+                  CG.MajorV (collect.cmc_fwd dst))
+        (CG.build_chunked_combined_graph
+          collect.cmc_minor collect.cmc_major)))
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let prom =
+    ChunkedCheney.chunked_cheney_promote
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  CheneyPres.chunked_cheney_promote_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh;
+  ChunkedCheney.chunked_cheney_collect_spec_equation
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out;
+  assert (collect.cmc_minor == minor_reset minor);
+  assert (collect.cmc_major ==
+          ChunkedUpdate.chunked_update_major_pointers
+            prom.major_final prom.fwd_map);
+  assert (collect.cmc_fwd == prom.fwd_map);
+  assert (needed > 0);
+  SpecMajorAlloc.ensure_major_head_capacity_has_head_wosize
+    major fp alloc_fuel needed fresh;
+  assert (SpecMajorAlloc.major_fl_head_wosize
+            r.capacity_major_out r.capacity_fp_out >= needed);
+  major_fl_head_wosize_positive_nonzero
+    r.capacity_major_out r.capacity_fp_out needed;
+  chunked_cheney_gc_correct_after_preflight_minor_successor_forwarded
+    minor major fp roots alloc_fuel fresh src dst j;
+  assert (collect.cmc_fwd src <> 0UL);
+  assert (collect.cmc_fwd dst <> 0UL);
+  minor_reachable_subset minor roots;
+  assert (Seq.mem src (minor_objects minor));
+  minor_objects_not_infix minor src;
+  minor_objects_not_infix minor dst;
+  assert (~(is_infix_in_minor minor src));
+  assert (~(is_infix_in_minor minor dst));
+  ensure_major_head_capacity_fuel_gt1 major fp alloc_fuel needed fresh;
+  assert (r.capacity_fuel_out > 1);
+  assert (r.capacity_fp_out <> 0UL);
+  GenInv.chunked_collection_heap_shape_elim
+    minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out;
+  assert (GenInv.chunked_major_alloc_shape
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out =
+          true);
+  assert (GenInv.chunked_chain_objects_blue
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  assert (CheneyPres.chunked_cheney_promote_budget_ready
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out 1);
+  assert (prom.fwd_map src <> 0UL);
+  assert (prom.fwd_map dst <> 0UL);
+  assert (U64.v field_addr ==
+          U64.v (prom.fwd_map src) + j * U64.v mword);
+  assert (GenInv.chunked_major_alloc_shape
+            prom.major_final prom.fp_final r.capacity_fuel_out);
+  assert (CheneyPres.chunked_fwd_targets_above_minor prom.fwd_map);
+  assert (CheneyPres.chunked_fwd_noninfix_targets_in_major
+            minor prom.fwd_map prom.major_final);
+  chunked_cheney_promote_minor_successor_updated_edge
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out 1 src dst j field_addr;
+  let updated =
+    ChunkedUpdate.chunked_update_major_pointers
+      prom.major_final prom.fwd_map in
+  assert (CG.mem_ce (CG.MajorV (prom.fwd_map src),
+                     CG.MajorV (prom.fwd_map dst))
+            (CG.build_chunked_combined_graph
+              (minor_reset minor) updated));
+  assert (updated == collect.cmc_major);
+  assert (collect.cmc_minor == minor_reset minor);
+  assert (collect.cmc_fwd src == prom.fwd_map src);
+  assert (collect.cmc_fwd dst == prom.fwd_map dst);
+  chunked_major_edge_rewrite_collect
+    (minor_reset minor) updated collect
+    src dst (prom.fwd_map src) (prom.fwd_map dst)
 #pop-options
 
 #push-options "--split_queries always"
@@ -503,44 +853,8 @@ let chunked_update_forwarded_minor_field_edge
           (minor_reset minor)
           (ChunkedUpdate.chunked_update_major_pointers mh fwd)))
   =
-  let updated = ChunkedUpdate.chunked_update_major_pointers mh fwd in
-  let x = to_minor_offset old in
-  ChunkedUpdate.chunked_update_expected_value_effect fwd old;
-  assert (ChunkedUpdate.chunked_update_expected_value fwd old == expected);
-  CheneyPres.chunked_fwd_targets_above_minor_expected_stable fwd old;
-  ChunkedUpdate.chunked_update_major_pointers_field_effect_stable
-    mh fwd src hdr j field_addr old;
-  assert (MH.read_word_in_major updated field_addr == Some expected);
-  ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
-    mh fwd;
-  assert (MH.major_objects updated == MH.major_objects mh);
-  assert (Seq.mem src (MH.major_objects updated));
-  assert (Seq.mem expected (MH.major_objects updated));
-  ChunkedUpdate.chunked_update_major_pointers_preserves_header
-    mh fwd src hdr;
-  assert (MH.read_word_in_major updated (GC.Spec.Heap.hd_address src) ==
-          Some hdr);
-  CG.chunked_wosize_nat_header updated src hdr;
-  CG.chunked_is_no_scan_header updated src hdr;
-  assert (j < CG.chunked_wosize_nat_of_object updated src);
-  assert (CG.chunked_is_no_scan updated src == false);
-  assert (CG.chunked_major_field_slot src j == Some field_addr);
-  minor_reset_objects_not_mem minor (to_minor_offset expected);
-  assert (~(Seq.mem (to_minor_offset expected)
-              (minor_objects (minor_reset minor))));
-  assert (~(is_minor_pointer (to_minor_offset expected) /\
-            Seq.mem (to_minor_offset expected)
-              (minor_objects (minor_reset minor))));
-  is_val_addr_spec expected;
-  assert (is_val_addr expected);
-  CG.chunked_classify_major_field_major
-    (minor_reset minor) updated expected;
-  assert (CG.chunked_classify_major_field
-            (minor_reset minor) updated expected ==
-          Some (CG.MajorV expected));
-  CG.chunked_major_field_edge_intro_full
-    (minor_reset minor) updated
-    src j field_addr expected (CG.MajorV expected)
+  chunked_update_forwarded_minor_field_edge_core
+    minor mh fwd src expected hdr j field_addr old
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"

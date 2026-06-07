@@ -377,6 +377,14 @@ val chunked_is_no_scan_preserved_by_expansion
 val chunked_major_field_slot (src: obj_addr) (i: nat)
   : GTot (option hp_addr)
 
+val chunked_major_field_slot_intro
+  : src:obj_addr -> i:nat -> field_addr:hp_addr ->
+    Lemma
+      (requires
+        U64.v field_addr == U64.v src + i * U64.v mword /\
+        U64.v field_addr + U64.v mword <= heap_size)
+      (ensures chunked_major_field_slot src i == Some field_addr)
+
 /// Build field edges for a major object in a chunked major heap.
 val chunked_major_field_edges
   : ms:minor_state -> mh:MH.major_heap -> src:obj_addr -> wz:nat -> i:nat ->

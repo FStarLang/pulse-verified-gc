@@ -500,6 +500,25 @@ let chunked_major_field_slot (src: obj_addr) (i: nat)
     else
       Some (U64.uint_to_t field_offset <: hp_addr)
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+let chunked_major_field_slot_intro
+  (src: obj_addr) (i: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires
+        U64.v field_addr == U64.v src + i * U64.v mword /\
+        U64.v field_addr + U64.v mword <= heap_size)
+      (ensures chunked_major_field_slot src i == Some field_addr)
+  =
+  assert_norm (U64.v mword == 8);
+  let field_offset = U64.v src + i * 8 in
+  assert (field_offset == U64.v field_addr);
+  assert (field_offset + 8 <= heap_size);
+  assert (field_offset % 8 == 0);
+  let slot_addr : hp_addr = U64.uint_to_t field_offset in
+  U64.v_inj slot_addr field_addr;
+  assert (slot_addr == field_addr)
+#pop-options
+
 let rec chunked_major_field_edges (ms: minor_state) (mh: MH.major_heap)
                                   (src: obj_addr) (wz: nat) (i: nat)
   : GTot (seq combined_edge) (decreases (wz - i))

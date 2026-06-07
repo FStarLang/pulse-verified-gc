@@ -53,6 +53,12 @@ module IndDesc = FStar.IndefiniteDescription
 module CheneyBFS = GC.Gen.CheneyBFS
 module SimOne = GC.Gen.Cheney.SimOne
 
+private let nat_nonzero_gt_zero (n: nat)
+  : Lemma (requires n <> 0)
+          (ensures n > 0)
+  =
+  if n = 0 then assert False
+
 private let cheney_forwarded_minor_request_filter
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: U64.t)
@@ -1878,7 +1884,7 @@ private let rec chunked_chain_objects_blue_transfer_on_chain
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 private let chunked_member_header_disjoint_from_dst_writes
   (mh: MH.major_heap) (dst src: obj_addr) (dst_wz: nat) (dst_hdr: U64.t)
   : Lemma
@@ -2024,7 +2030,7 @@ private let chunked_member_field0_disjoint_from_dst_writes
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 private let chunked_member_payload_field_disjoint_from_dst_writes
   (mh: MH.major_heap) (dst src: obj_addr)
   (dst_wz: nat) (dst_hdr src_hdr: U64.t)
@@ -2077,7 +2083,7 @@ private let chunked_member_payload_field_disjoint_from_dst_writes
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
 private let major_alloc_head_split_preserves_chain_objects_blue
   (mh: MH.major_heap) (fp: U64.t)
   (wosize: nat{wosize > 0}) (fuel: nat)
@@ -2141,6 +2147,9 @@ private let major_alloc_head_split_preserves_chain_objects_blue
       FStar.Math.Lemmas.paren_add_right (U64.v hd) ((1 + wosize) * 8) 8;
       assert (rem_obj_nat == U64.v hd + (wosize + 2) * 8);
       assert (wosize + 3 <= 1 + block_wz);
+      FStar.Math.Lemmas.distributivity_add_left (wosize + 2) 1 8;
+      assert ((wosize + 2) * 8 + 8 == (wosize + 3) * 8);
+      FStar.Math.Lemmas.paren_add_right (U64.v hd) ((wosize + 2) * 8) 8;
       assert (rem_obj_nat + 8 == U64.v hd + (wosize + 3) * 8);
       assert (rem_obj_nat + 8 <= U64.v hd + (1 + block_wz) * 8);
       assert (rem_obj_nat + 8 <= MH.chunk_end c);
@@ -2260,6 +2269,7 @@ private let major_alloc_head_split_preserves_chain_objects_blue
                 alloc_res.major_alloc_out alloc_res.major_fp_out fuel)
 #pop-options
 
+#restart-solver
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_promote_object_head_split_preserves_chunked_alloc_shape
   (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
@@ -2372,6 +2382,9 @@ let chunked_promote_object_head_split_preserves_chunked_alloc_shape
       FStar.Math.Lemmas.paren_add_right (U64.v hd) ((1 + wosize) * 8) 8;
       assert (rem_obj_nat == U64.v hd + (wosize + 2) * 8);
       assert (wosize + 3 <= 1 + block_wz);
+      FStar.Math.Lemmas.distributivity_add_left (wosize + 2) 1 8;
+      assert ((wosize + 2) * 8 + 8 == (wosize + 3) * 8);
+      FStar.Math.Lemmas.paren_add_right (U64.v hd) ((wosize + 2) * 8) 8;
       assert (rem_obj_nat + 8 == U64.v hd + (wosize + 3) * 8);
       assert (rem_obj_nat + 8 <= U64.v hd + (1 + block_wz) * 8);
       assert (rem_obj_nat + 8 <= MH.chunk_end c);
@@ -2773,7 +2786,7 @@ let chunked_promote_object_head_split_preserves_chunked_alloc_shape
       FStar.Classical.forall_intro_4 old_field_frame_for_quantifiers
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_promote_object_head_split_preserves_chain_objects_blue
   (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
@@ -2938,7 +2951,7 @@ let chunked_promote_object_head_split_preserves_old_non_blue_field
     assert (src <> fp)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_promote_object_head_split_preserves_remaining_head_wosize
   (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
@@ -3426,6 +3439,8 @@ private let chunked_infix_parent_aligned
     assert (U64.v (infix_parent minor addr) == parent_v)
   end else begin
     assert (infix_parent minor addr == 0UL);
+    assert (U64.v (infix_parent minor addr) == U64.v 0UL);
+    assert (U64.v 0UL == 0);
     assert (U64.v (infix_parent minor addr) == 0)
   end
 
@@ -3691,6 +3706,8 @@ private let chunked_cheney_forward_normal_preserves_fwd_targets_above_minor
     assert ((ChunkedCheney.chunked_cheney_forward_normal
              minor cs addr fuel).ccs_fwd == cs.ccs_fwd)
   end else begin
+    assert (Seq.mem addr (minor_objects minor));
+    assert (cs.ccs_fwd addr == 0UL);
     let wz = minor_wosize minor addr in
     if wz = 0 then begin
       ChunkedCheney.chunked_cheney_forward_normal_noop_wz0 minor cs addr fuel;
@@ -6633,6 +6650,768 @@ let chunked_cheney_promote_preserves_fwd_noninfix_targets_in_major
   assert (res.fwd_map == cs2.ccs_fwd);
   assert (res.major_final == cs2.ccs_major)
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_fwd_target_field_pre
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (x: U64.t) (j: nat) (field_addr: hp_addr)
+  : prop =
+  cs.ccs_fwd x <> 0UL /\
+  Seq.mem x (minor_objects minor) /\
+  ~(is_infix_in_minor minor x) /\
+  j < minor_wosize minor x /\
+  U64.v field_addr == U64.v (cs.ccs_fwd x) + j * U64.v mword
+
+private let chunked_fwd_target_field_match
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (x: U64.t) (j: nat) (field_addr: hp_addr)
+  : prop =
+  chunked_fwd_target_field_pre minor cs x j field_addr ==>
+  U64.v (cs.ccs_fwd x) >= U64.v mword /\
+  U64.v (cs.ccs_fwd x) < heap_size /\
+  U64.v (cs.ccs_fwd x) % U64.v mword == 0 /\
+  (let target : obj_addr = cs.ccs_fwd x in
+   Seq.mem target (MH.major_objects cs.ccs_major) /\
+   (match MH.read_word_in_major cs.ccs_major (hd_address target) with
+    | Some hdr ->
+      getColor hdr <> Blue /\
+      U64.v (getTag hdr) == minor_tag minor x /\
+      j < U64.v (getWosize hdr) /\
+      CG.chunked_major_field_slot target j == Some field_addr /\
+      MH.read_word_in_major cs.ccs_major field_addr ==
+        Some (minor_read_field minor x j)
+    | None -> False))
+
+private let chunked_fwd_target_fields_match_state
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  : prop =
+  forall (x: U64.t) (j: nat) (field_addr: hp_addr).
+    chunked_fwd_target_field_match minor cs x j field_addr
+
+private let chunked_fwd_target_fields_match_state_elim
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (x: U64.t) (j: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires
+        chunked_fwd_target_fields_match_state minor cs /\
+        chunked_fwd_target_field_pre minor cs x j field_addr)
+      (ensures
+        U64.v (cs.ccs_fwd x) >= U64.v mword /\
+        U64.v (cs.ccs_fwd x) < heap_size /\
+        U64.v (cs.ccs_fwd x) % U64.v mword == 0 /\
+        (let target : obj_addr = cs.ccs_fwd x in
+         Seq.mem target (MH.major_objects cs.ccs_major) /\
+         (match MH.read_word_in_major cs.ccs_major (hd_address target) with
+          | Some hdr ->
+            getColor hdr <> Blue /\
+            U64.v (getTag hdr) == minor_tag minor x /\
+            j < U64.v (getWosize hdr) /\
+            CG.chunked_major_field_slot target j == Some field_addr /\
+            MH.read_word_in_major cs.ccs_major field_addr ==
+              Some (minor_read_field minor x j)
+          | None -> False)))
+  =
+  assert (chunked_fwd_target_field_match minor cs x j field_addr)
+
+private let chunked_fwd_target_fields_match_initial
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (ensures
+        chunked_fwd_target_fields_match_state minor
+          { ccs_major = major; ccs_fp = fp;
+            ccs_fwd = empty_forwarding; ccs_queue = Seq.empty })
+  =
+  let cs0 : ChunkedCheney.chunked_cheney_state =
+    { ccs_major = major; ccs_fp = fp;
+      ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+  let aux (x: U64.t) (j: nat) (field_addr: hp_addr)
+    : Lemma
+        (requires chunked_fwd_target_field_pre minor cs0 x j field_addr)
+        (ensures
+          U64.v (cs0.ccs_fwd x) >= U64.v mword /\
+          U64.v (cs0.ccs_fwd x) < heap_size /\
+          U64.v (cs0.ccs_fwd x) % U64.v mword == 0 /\
+          (let target : obj_addr = cs0.ccs_fwd x in
+           Seq.mem target (MH.major_objects cs0.ccs_major) /\
+           (match MH.read_word_in_major cs0.ccs_major (hd_address target) with
+            | Some hdr ->
+              getColor hdr <> Blue /\
+              U64.v (getTag hdr) == minor_tag minor x /\
+              j < U64.v (getWosize hdr) /\
+              CG.chunked_major_field_slot target j == Some field_addr /\
+              MH.read_word_in_major cs0.ccs_major field_addr ==
+                Some (minor_read_field minor x j)
+            | None -> False)))
+    =
+    assert (cs0.ccs_fwd x == 0UL);
+    assert False
+  in
+  FStar.Classical.forall_intro_3
+    #(U64.t)
+    #(fun _ -> nat)
+    #(fun _ _ -> hp_addr)
+    #(fun x j field_addr ->
+      chunked_fwd_target_field_match minor cs0 x j field_addr)
+    (FStar.Classical.move_requires_3
+      #(U64.t) #(fun _ -> nat) #(fun _ _ -> hp_addr)
+      #(fun x j field_addr ->
+        chunked_fwd_target_field_pre minor cs0 x j field_addr)
+      #(fun x j field_addr ->
+        U64.v (cs0.ccs_fwd x) >= U64.v mword /\
+        U64.v (cs0.ccs_fwd x) < heap_size /\
+        U64.v (cs0.ccs_fwd x) % U64.v mword == 0 /\
+        (let target : obj_addr = cs0.ccs_fwd x in
+         Seq.mem target (MH.major_objects cs0.ccs_major) /\
+         (match MH.read_word_in_major cs0.ccs_major (hd_address target) with
+          | Some hdr ->
+            getColor hdr <> Blue /\
+            U64.v (getTag hdr) == minor_tag minor x /\
+            j < U64.v (getWosize hdr) /\
+            CG.chunked_major_field_slot target j == Some field_addr /\
+            MH.read_word_in_major cs0.ccs_major field_addr ==
+              Some (minor_read_field minor x j)
+          | None -> False)))
+      aux)
+#pop-options
+
+#restart-solver
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"
+private let chunked_cheney_forward_normal_preserves_fwd_target_fields_match_state
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        fuel > 1 /\
+        remaining > 0 /\
+        chunked_fwd_target_fields_match_state minor cs /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp fuel /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         minor_wosize minor addr > 0 ==>
+          cs.ccs_fp <> 0UL /\
+          SpecMajorAlloc.major_fl_head_wosize
+            cs.ccs_major cs.ccs_fp >=
+          minor_wosize minor addr + 1 + remaining))
+      (ensures
+        chunked_fwd_target_fields_match_state minor
+          (ChunkedCheney.chunked_cheney_forward_normal
+            minor cs addr fuel))
+  =
+  let cs' =
+    ChunkedCheney.chunked_cheney_forward_normal minor cs addr fuel in
+  let aux (x: U64.t) (j: nat) (field_addr: hp_addr)
+    : Lemma
+        (requires chunked_fwd_target_field_pre minor cs' x j field_addr)
+        (ensures
+          U64.v (cs'.ccs_fwd x) >= U64.v mword /\
+          U64.v (cs'.ccs_fwd x) < heap_size /\
+          U64.v (cs'.ccs_fwd x) % U64.v mword == 0 /\
+          (let target : obj_addr = cs'.ccs_fwd x in
+           Seq.mem target (MH.major_objects cs'.ccs_major) /\
+           (match MH.read_word_in_major cs'.ccs_major (hd_address target) with
+            | Some hdr ->
+              getColor hdr <> Blue /\
+              U64.v (getTag hdr) == minor_tag minor x /\
+              j < U64.v (getWosize hdr) /\
+              CG.chunked_major_field_slot target j == Some field_addr /\
+              MH.read_word_in_major cs'.ccs_major field_addr ==
+                Some (minor_read_field minor x j)
+            | None -> False)))
+    =
+    if not (Seq.mem addr (minor_objects minor)) || cs.ccs_fwd addr <> 0UL then begin
+      ChunkedCheney.chunked_cheney_forward_normal_noop minor cs addr fuel;
+      assert (cs' == cs);
+      chunked_fwd_target_fields_match_state_elim minor cs x j field_addr
+    end else begin
+      let wz = minor_wosize minor addr in
+      if wz = 0 then begin
+        ChunkedCheney.chunked_cheney_forward_normal_noop_wz0
+          minor cs addr fuel;
+        assert (cs' == cs);
+        chunked_fwd_target_fields_match_state_elim minor cs x j field_addr
+      end else begin
+        assert (wz <> 0);
+        nat_nonzero_gt_zero wz;
+        assert (wz > 0);
+        assert (cs.ccs_fp <> 0UL);
+        assert (remaining >= 1);
+        assert (wz + 2 <= wz + 1 + remaining);
+        assert (SpecMajorAlloc.major_fl_head_wosize
+                  cs.ccs_major cs.ccs_fp >= wz + 2);
+        chunked_promote_object_head_split_preserves_chunked_alloc_shape
+          minor cs.ccs_major addr cs.ccs_fp wz fuel;
+        let res =
+          ChunkedPromote.chunked_promote_object_with_fuel
+            minor cs.ccs_major addr cs.ccs_fp wz fuel in
+        assert (res.new_addr == cs.ccs_fp);
+        assert (res.new_addr <> 0UL);
+        ChunkedCheney.chunked_cheney_forward_normal_success
+          minor cs addr fuel;
+        if x = addr then begin
+          assert (cs'.ccs_fwd x == cs.ccs_fp);
+          GenInv.chunked_major_alloc_shape_elim
+            cs.ccs_major cs.ccs_fp fuel;
+          SpecMajorAlloc.major_fl_above_zero_current
+            cs.ccs_major cs.ccs_fp fuel;
+          SpecMajorAlloc.major_fl_head_wosize_current
+            cs.ccs_major cs.ccs_fp fuel;
+          match MH.read_word_in_major
+                  cs.ccs_major (hd_address (cs.ccs_fp <: obj_addr)) with
+          | None -> assert False
+          | Some old_hdr ->
+            assert (SpecMajorAlloc.major_fl_head_wosize
+                      cs.ccs_major cs.ccs_fp ==
+                    U64.v (getWosize old_hdr));
+            assert (U64.v (getWosize old_hdr) < pow2 54);
+            assert (wz + 2 <= U64.v (getWosize old_hdr));
+            assert (wz < pow2 54);
+          assert (minor_wosize minor addr < pow2 54);
+          FStar.Math.Lemmas.pow2_lt_compat 64 54;
+          assert (minor_wosize minor addr < pow2 64);
+          assert (FStar.UInt.size (minor_wosize minor addr) 64);
+          ChunkedCheney.chunked_cheney_forward_normal_head_split_field_effect
+            minor cs addr fuel j field_addr;
+          ChunkedCheney.chunked_cheney_forward_normal_head_split_header_effect
+            minor cs addr fuel;
+          is_val_addr_spec (cs'.ccs_fwd x);
+          let target : obj_addr = cs'.ccs_fwd x in
+          assert (target == (cs.ccs_fp <: obj_addr));
+          assert (U64.v field_addr ==
+                  U64.v target + j * U64.v mword);
+          assert (Seq.mem target (MH.major_objects cs'.ccs_major));
+          match MH.read_word_in_major cs'.ccs_major (hd_address target) with
+          | Some hdr ->
+            assert (getColor hdr == White);
+            assert (getColor hdr <> Blue);
+            assert (U64.v (getWosize hdr) == wz);
+            assert (U64.v (getTag hdr) == minor_tag minor x);
+            assert (j < U64.v (getWosize hdr));
+            assert_norm (U64.v mword == 8);
+            let field_offset = U64.v target + j * 8 in
+            assert (field_offset == U64.v field_addr);
+            SpecMajorAlloc.aligned_lt_heap_has_word_room (U64.v field_addr);
+            assert (U64.v field_addr + 8 <= heap_size);
+            assert (field_offset + 8 <= heap_size);
+            CG.chunked_major_field_slot_intro target j field_addr;
+            assert (CG.chunked_major_field_slot target j == Some field_addr);
+            assert (MH.read_word_in_major cs'.ccs_major field_addr ==
+                    Some (minor_read_field minor x j))
+          | None ->
+            assert False
+        end else begin
+          ChunkedCheney.chunked_cheney_forward_normal_other_fwd
+            minor cs addr x fuel;
+          assert (cs'.ccs_fwd x == cs.ccs_fwd x);
+          assert (chunked_fwd_target_field_pre minor cs x j field_addr);
+          chunked_fwd_target_fields_match_state_elim
+            minor cs x j field_addr;
+          let target : obj_addr = cs.ccs_fwd x in
+          match MH.read_word_in_major cs.ccs_major (hd_address target) with
+          | Some hdr ->
+            assert (getColor hdr <> Blue);
+            assert (U64.v (getTag hdr) == minor_tag minor x);
+            assert (j < U64.v (getWosize hdr));
+            assert (CG.chunked_major_field_slot target j == Some field_addr);
+            assert (MH.read_word_in_major cs.ccs_major field_addr ==
+                    Some (minor_read_field minor x j));
+            chunked_cheney_forward_normal_head_split_preserves_old_major_objects
+              minor cs addr fuel;
+            chunked_cheney_forward_normal_head_split_preserves_old_non_blue_header
+              minor cs addr fuel target hdr;
+            chunked_cheney_forward_normal_head_split_preserves_old_non_blue_field
+              minor cs addr fuel target hdr j field_addr
+              (minor_read_field minor x j);
+            assert (Seq.mem target (MH.major_objects cs'.ccs_major));
+            assert (MH.read_word_in_major cs'.ccs_major
+                      (hd_address target) == Some hdr);
+            assert (MH.read_word_in_major cs'.ccs_major field_addr ==
+                    Some (minor_read_field minor x j))
+          | None ->
+            assert False
+        end
+      end
+    end
+  in
+  FStar.Classical.forall_intro_3
+    #(U64.t)
+    #(fun _ -> nat)
+    #(fun _ _ -> hp_addr)
+    #(fun x j field_addr ->
+      chunked_fwd_target_field_match minor cs' x j field_addr)
+    (FStar.Classical.move_requires_3
+      #(U64.t) #(fun _ -> nat) #(fun _ _ -> hp_addr)
+      #(fun x j field_addr ->
+        chunked_fwd_target_field_pre minor cs' x j field_addr)
+      #(fun x j field_addr ->
+        U64.v (cs'.ccs_fwd x) >= U64.v mword /\
+        U64.v (cs'.ccs_fwd x) < heap_size /\
+        U64.v (cs'.ccs_fwd x) % U64.v mword == 0 /\
+        (let target : obj_addr = cs'.ccs_fwd x in
+         Seq.mem target (MH.major_objects cs'.ccs_major) /\
+         (match MH.read_word_in_major cs'.ccs_major (hd_address target) with
+          | Some hdr ->
+            getColor hdr <> Blue /\
+            U64.v (getTag hdr) == minor_tag minor x /\
+            j < U64.v (getWosize hdr) /\
+            CG.chunked_major_field_slot target j == Some field_addr /\
+            MH.read_word_in_major cs'.ccs_major field_addr ==
+              Some (minor_read_field minor x j)
+          | None -> False)))
+      aux)
+#pop-options
+
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"
+private let chunked_cheney_forward_one_preserves_fwd_target_fields_match_state
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (fuel remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        fuel > 1 /\
+        chunked_fwd_target_fields_match_state minor cs /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        GenInv.chunked_chain_objects_blue cs.ccs_major cs.ccs_fp fuel /\
+        chunked_cheney_forward_one_budget_ready minor cs addr remaining)
+      (ensures
+        chunked_fwd_target_fields_match_state minor
+          (ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel))
+  =
+  assert (remaining > 0);
+  let r = ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel in
+  if cs.ccs_fwd addr <> 0UL then begin
+    ChunkedCheney.chunked_cheney_forward_one_noop minor cs addr fuel;
+    assert (r == cs)
+  end else if is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    chunked_cheney_forward_normal_preserves_fwd_target_fields_match_state
+      minor cs parent fuel remaining;
+    chunked_cheney_forward_normal_head_split_preserves_remaining_head_wosize
+      minor cs parent fuel remaining;
+    let csn =
+      ChunkedCheney.chunked_cheney_forward_normal minor cs parent fuel in
+    assert (chunked_fwd_target_fields_match_state minor csn);
+    if csn.ccs_fwd parent <> 0UL &&
+       U64.v addr >= U64.v parent &&
+       U64.v (csn.ccs_fwd parent) + (U64.v addr - U64.v parent) < heap_size
+    then begin
+      ChunkedCheney.chunked_cheney_forward_one_infix_guard_pass
+        minor cs addr fuel;
+      let delta = U64.v addr - U64.v parent in
+      let sum =
+        U64.uint_to_t (U64.v (csn.ccs_fwd parent) + delta) in
+      assert (r.ccs_fwd == extend_forwarding csn.ccs_fwd addr sum);
+      assert (r.ccs_major == csn.ccs_major);
+      let aux (x: U64.t) (j: nat) (field_addr: hp_addr)
+        : Lemma
+            (requires chunked_fwd_target_field_pre minor r x j field_addr)
+            (ensures
+              U64.v (r.ccs_fwd x) >= U64.v mword /\
+              U64.v (r.ccs_fwd x) < heap_size /\
+              U64.v (r.ccs_fwd x) % U64.v mword == 0 /\
+              (let target : obj_addr = r.ccs_fwd x in
+               Seq.mem target (MH.major_objects r.ccs_major) /\
+               (match MH.read_word_in_major r.ccs_major (hd_address target) with
+                | Some hdr ->
+                  getColor hdr <> Blue /\
+                  U64.v (getTag hdr) == minor_tag minor x /\
+                  j < U64.v (getWosize hdr) /\
+                  CG.chunked_major_field_slot target j == Some field_addr /\
+                  MH.read_word_in_major r.ccs_major field_addr ==
+                    Some (minor_read_field minor x j)
+                | None -> False)))
+        =
+        if x = addr then begin
+          assert (is_infix_in_minor minor x);
+          assert False
+        end else begin
+          assert (r.ccs_fwd x == csn.ccs_fwd x);
+          assert (chunked_fwd_target_field_pre minor csn x j field_addr);
+          chunked_fwd_target_fields_match_state_elim
+            minor csn x j field_addr
+        end
+      in
+      FStar.Classical.forall_intro_3
+        #(U64.t)
+        #(fun _ -> nat)
+        #(fun _ _ -> hp_addr)
+        #(fun x j field_addr ->
+          chunked_fwd_target_field_match minor r x j field_addr)
+        (FStar.Classical.move_requires_3
+          #(U64.t) #(fun _ -> nat) #(fun _ _ -> hp_addr)
+          #(fun x j field_addr ->
+            chunked_fwd_target_field_pre minor r x j field_addr)
+          #(fun x j field_addr ->
+            U64.v (r.ccs_fwd x) >= U64.v mword /\
+            U64.v (r.ccs_fwd x) < heap_size /\
+            U64.v (r.ccs_fwd x) % U64.v mword == 0 /\
+            (let target : obj_addr = r.ccs_fwd x in
+             Seq.mem target (MH.major_objects r.ccs_major) /\
+             (match MH.read_word_in_major r.ccs_major (hd_address target) with
+              | Some hdr ->
+                getColor hdr <> Blue /\
+                U64.v (getTag hdr) == minor_tag minor x /\
+                j < U64.v (getWosize hdr) /\
+                CG.chunked_major_field_slot target j == Some field_addr /\
+                MH.read_word_in_major r.ccs_major field_addr ==
+                  Some (minor_read_field minor x j)
+              | None -> False)))
+          aux)
+    end else begin
+      ChunkedCheney.chunked_cheney_forward_one_infix_guard_fail
+        minor cs addr fuel;
+      assert (r == csn)
+    end
+  end else begin
+    ChunkedCheney.chunked_cheney_forward_one_normal minor cs addr fuel;
+    chunked_cheney_forward_normal_preserves_fwd_target_fields_match_state
+      minor cs addr fuel remaining
+  end
+#pop-options
+
+private let rec chunked_cheney_forward_roots_preserves_fwd_target_fields_match_state
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (roots: seq U64.t) (idx: nat) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        chunked_fwd_target_fields_match_state minor cs /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_forward_roots_budget_ready
+          minor cs roots idx alloc_fuel remaining)
+      (ensures
+        chunked_fwd_target_fields_match_state minor
+          (ChunkedCheney.chunked_cheney_forward_roots
+            minor cs roots idx alloc_fuel))
+      (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx >= Seq.length roots then
+    ChunkedCheney.chunked_cheney_forward_roots_base
+      minor cs roots idx alloc_fuel
+  else begin
+    ChunkedCheney.chunked_cheney_forward_roots_step
+      minor cs roots idx alloc_fuel;
+    let r = Seq.index roots idx in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one minor cs r alloc_fuel in
+    assert (chunked_cheney_forward_one_budget_ready minor cs r remaining);
+    assert (chunked_cheney_forward_roots_budget_ready
+              minor cs' roots (idx + 1) alloc_fuel remaining);
+    chunked_cheney_forward_one_preserves_fwd_target_fields_match_state
+      minor cs r alloc_fuel remaining;
+    chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
+      minor cs r alloc_fuel remaining;
+    chunked_cheney_forward_one_head_split_preserves_chain_objects_blue
+      minor cs r alloc_fuel;
+    assert (chunked_fwd_target_fields_match_state minor cs');
+    assert (GenInv.chunked_major_alloc_shape
+              cs'.ccs_major cs'.ccs_fp alloc_fuel);
+    assert (SpecMajorAlloc.major_fl_chain_terminates
+              cs'.ccs_major cs'.ccs_fp alloc_fuel = true);
+    assert (GenInv.chunked_chain_objects_blue
+              cs'.ccs_major cs'.ccs_fp alloc_fuel);
+    chunked_cheney_forward_roots_preserves_fwd_target_fields_match_state
+      minor cs' roots (idx + 1) alloc_fuel remaining
+  end
+
+private let chunked_cheney_forward_one_budget_ready_implies_split_ready_for_field_match
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr: U64.t) (remaining: nat)
+  : Lemma
+      (requires chunked_cheney_forward_one_budget_ready minor cs addr remaining)
+      (ensures chunked_cheney_forward_one_split_ready minor cs addr)
+  =
+  assert (remaining > 0);
+  if Seq.mem addr (minor_objects minor) &&
+     cs.ccs_fwd addr = 0UL &&
+     ~(is_infix_in_minor minor addr) &&
+     minor_wosize minor addr > 0
+  then begin
+    assert (cs.ccs_fp <> 0UL);
+    assert (SpecMajorAlloc.major_fl_head_wosize
+              cs.ccs_major cs.ccs_fp >=
+            minor_wosize minor addr + 1 + remaining);
+    assert (SpecMajorAlloc.major_fl_head_wosize
+              cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2)
+  end;
+  if cs.ccs_fwd addr = 0UL && is_infix_in_minor minor addr then begin
+    let parent = infix_parent minor addr in
+    if Seq.mem parent (minor_objects minor) &&
+       cs.ccs_fwd parent = 0UL &&
+       minor_wosize minor parent > 0
+    then begin
+      assert (cs.ccs_fp <> 0UL);
+      assert (SpecMajorAlloc.major_fl_head_wosize
+                cs.ccs_major cs.ccs_fp >=
+              minor_wosize minor parent + 1 + remaining);
+      assert (SpecMajorAlloc.major_fl_head_wosize
+                cs.ccs_major cs.ccs_fp >= minor_wosize minor parent + 2)
+    end
+  end;
+  assert (chunked_cheney_forward_one_split_ready minor cs addr)
+
+private let rec chunked_cheney_forward_fields_budget_ready_implies_split_ready_for_field_match
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
+  (remaining: nat)
+  : Lemma
+      (requires
+        chunked_cheney_forward_fields_budget_ready
+          minor cs parent idx wosize alloc_fuel remaining)
+      (ensures
+        chunked_cheney_forward_fields_split_ready
+          minor cs parent idx wosize alloc_fuel)
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx < wosize then begin
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one minor cs field_val alloc_fuel in
+    assert (chunked_cheney_forward_one_budget_ready
+              minor cs field_val remaining);
+    assert (chunked_cheney_forward_fields_budget_ready
+              minor cs' parent (idx + 1) wosize alloc_fuel remaining);
+    chunked_cheney_forward_one_budget_ready_implies_split_ready_for_field_match
+      minor cs field_val remaining;
+    chunked_cheney_forward_fields_budget_ready_implies_split_ready_for_field_match
+      minor cs' parent (idx + 1) wosize alloc_fuel remaining
+  end
+
+private let rec chunked_cheney_forward_fields_preserves_fwd_target_fields_match_state
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (parent: U64.t) (idx: nat) (wosize: nat) (alloc_fuel: nat)
+  (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        chunked_fwd_target_fields_match_state minor cs /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_forward_fields_budget_ready
+          minor cs parent idx wosize alloc_fuel remaining)
+      (ensures
+        chunked_fwd_target_fields_match_state minor
+          (ChunkedCheney.chunked_cheney_forward_fields
+            minor cs parent idx wosize alloc_fuel))
+      (decreases (if idx < wosize then wosize - idx else 0))
+  =
+  if idx >= wosize then
+    ChunkedCheney.chunked_cheney_forward_fields_base
+      minor cs parent idx wosize alloc_fuel
+  else begin
+    ChunkedCheney.chunked_cheney_forward_fields_step
+      minor cs parent idx wosize alloc_fuel;
+    let field_val = to_minor_offset (minor_read_field minor parent idx) in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one
+        minor cs field_val alloc_fuel in
+    assert (chunked_cheney_forward_one_budget_ready
+              minor cs field_val remaining);
+    assert (chunked_cheney_forward_fields_budget_ready
+              minor cs' parent (idx + 1) wosize alloc_fuel remaining);
+    chunked_cheney_forward_one_preserves_fwd_target_fields_match_state
+      minor cs field_val alloc_fuel remaining;
+    chunked_cheney_forward_one_head_split_preserves_remaining_head_wosize
+      minor cs field_val alloc_fuel remaining;
+    chunked_cheney_forward_one_head_split_preserves_chain_objects_blue
+      minor cs field_val alloc_fuel;
+    assert (chunked_fwd_target_fields_match_state minor cs');
+    assert (GenInv.chunked_major_alloc_shape
+              cs'.ccs_major cs'.ccs_fp alloc_fuel);
+    assert (SpecMajorAlloc.major_fl_chain_terminates
+              cs'.ccs_major cs'.ccs_fp alloc_fuel = true);
+    assert (GenInv.chunked_chain_objects_blue
+              cs'.ccs_major cs'.ccs_fp alloc_fuel);
+    chunked_cheney_forward_fields_preserves_fwd_target_fields_match_state
+      minor cs' parent (idx + 1) wosize alloc_fuel remaining
+  end
+
+private let rec chunked_cheney_scan_preserves_fwd_target_fields_match_state
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (scan: nat) (scan_fuel: nat) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        chunked_fwd_target_fields_match_state minor cs /\
+        GenInv.chunked_major_alloc_shape
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          cs.ccs_major cs.ccs_fp alloc_fuel /\
+        chunked_cheney_scan_budget_ready
+          minor cs scan scan_fuel alloc_fuel remaining)
+      (ensures
+        chunked_fwd_target_fields_match_state minor
+          (ChunkedCheney.chunked_cheney_scan
+            minor cs scan scan_fuel alloc_fuel))
+      (decreases scan_fuel)
+  =
+  if scan_fuel > 0 then
+    if scan >= Seq.length cs.ccs_queue then
+      ChunkedCheney.chunked_cheney_scan_base
+        minor cs scan scan_fuel alloc_fuel
+    else begin
+      let fuel' : f:nat{f < scan_fuel} = scan_fuel - 1 in
+      ChunkedCheney.chunked_cheney_scan_step
+        minor cs scan scan_fuel alloc_fuel;
+      let obj = Seq.index cs.ccs_queue scan in
+      let wz = minor_wosize minor obj in
+      let cs' =
+        ChunkedCheney.chunked_cheney_forward_fields
+          minor cs obj 0 wz alloc_fuel in
+      assert (chunked_cheney_forward_fields_budget_ready
+                minor cs obj 0 wz alloc_fuel remaining);
+      assert (chunked_cheney_scan_budget_ready
+                minor cs' (scan + 1) fuel' alloc_fuel remaining);
+      chunked_cheney_forward_fields_preserves_fwd_target_fields_match_state
+        minor cs obj 0 wz alloc_fuel remaining;
+      chunked_cheney_forward_fields_head_split_preserves_remaining_head_wosize
+        minor cs obj 0 wz alloc_fuel remaining;
+      chunked_cheney_forward_fields_budget_ready_implies_split_ready_for_field_match
+        minor cs obj 0 wz alloc_fuel remaining;
+      chunked_cheney_forward_fields_head_split_preserves_chain_objects_blue
+        minor cs obj 0 wz alloc_fuel;
+      assert (chunked_fwd_target_fields_match_state minor cs');
+      assert (GenInv.chunked_major_alloc_shape
+                cs'.ccs_major cs'.ccs_fp alloc_fuel);
+      assert (SpecMajorAlloc.major_fl_chain_terminates
+                cs'.ccs_major cs'.ccs_fp alloc_fuel = true);
+      assert (GenInv.chunked_chain_objects_blue
+                cs'.ccs_major cs'.ccs_fp alloc_fuel);
+      chunked_cheney_scan_preserves_fwd_target_fields_match_state
+        minor cs' (scan + 1) fuel' alloc_fuel remaining
+    end
+  else begin
+    assert (scan_fuel = 0);
+    ChunkedCheney.chunked_cheney_scan_base
+      minor cs scan scan_fuel alloc_fuel
+  end
+
+private let rec chunked_cheney_forward_roots_budget_ready_implies_split_ready_for_field_match
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (roots: seq U64.t) (idx: nat) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        chunked_cheney_forward_roots_budget_ready
+          minor cs roots idx alloc_fuel remaining)
+      (ensures
+        chunked_cheney_forward_roots_split_ready
+          minor cs roots idx alloc_fuel)
+      (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
+  =
+  if idx < Seq.length roots then begin
+    let r = Seq.index roots idx in
+    let cs' =
+      ChunkedCheney.chunked_cheney_forward_one minor cs r alloc_fuel in
+    assert (chunked_cheney_forward_one_budget_ready minor cs r remaining);
+    assert (chunked_cheney_forward_roots_budget_ready
+              minor cs' roots (idx + 1) alloc_fuel remaining);
+    chunked_cheney_forward_one_budget_ready_implies_split_ready_for_field_match
+      minor cs r remaining;
+    chunked_cheney_forward_roots_budget_ready_implies_split_ready_for_field_match
+      minor cs' roots (idx + 1) alloc_fuel remaining
+  end
+
+let chunked_cheney_promote_fwd_target_fields_match
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  (x: U64.t) (j: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         res.fwd_map x <> 0UL /\
+         Seq.mem x (minor_objects minor) /\
+         ~(is_infix_in_minor minor x) /\
+         j < minor_wosize minor x /\
+         U64.v field_addr == U64.v (res.fwd_map x) + j * U64.v mword))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         U64.v (res.fwd_map x) >= U64.v mword /\
+         U64.v (res.fwd_map x) < heap_size /\
+         U64.v (res.fwd_map x) % U64.v mword == 0 /\
+         (let target : obj_addr = res.fwd_map x in
+          Seq.mem target (MH.major_objects res.major_final) /\
+          (match MH.read_word_in_major res.major_final (hd_address target) with
+           | Some hdr ->
+             getColor hdr <> Blue /\
+             U64.v (getTag hdr) == minor_tag minor x /\
+             j < U64.v (getWosize hdr) /\
+             CG.chunked_major_field_slot target j == Some field_addr /\
+             MH.read_word_in_major res.major_final field_addr ==
+              Some (minor_read_field minor x j)
+           | None -> False))))
+  =
+  let cs0 : ChunkedCheney.chunked_cheney_state =
+    { ccs_major = major; ccs_fp = fp;
+      ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+  chunked_fwd_target_fields_match_initial minor major fp;
+  assert (chunked_fwd_target_fields_match_state minor cs0);
+  assert (chunked_cheney_forward_roots_budget_ready
+            minor cs0 roots 0 alloc_fuel remaining);
+  chunked_cheney_forward_roots_preserves_fwd_target_fields_match_state
+    minor cs0 roots 0 alloc_fuel remaining;
+  chunked_cheney_forward_roots_head_split_preserves_remaining_head_wosize
+    minor cs0 roots 0 alloc_fuel remaining;
+  chunked_cheney_forward_roots_budget_ready_implies_split_ready_for_field_match
+    minor cs0 roots 0 alloc_fuel remaining;
+  chunked_cheney_forward_roots_head_split_preserves_chain_objects_blue
+    minor cs0 roots 0 alloc_fuel;
+  let cs1 =
+    ChunkedCheney.chunked_cheney_forward_roots
+      minor cs0 roots 0 alloc_fuel in
+  assert (chunked_fwd_target_fields_match_state minor cs1);
+  assert (GenInv.chunked_major_alloc_shape
+            cs1.ccs_major cs1.ccs_fp alloc_fuel);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            cs1.ccs_major cs1.ccs_fp alloc_fuel = true);
+  assert (GenInv.chunked_chain_objects_blue
+            cs1.ccs_major cs1.ccs_fp alloc_fuel);
+  assert (chunked_cheney_scan_budget_ready
+            minor cs1 0 (cheney_fuel minor) alloc_fuel remaining);
+  chunked_cheney_scan_preserves_fwd_target_fields_match_state
+    minor cs1 0 (cheney_fuel minor) alloc_fuel remaining;
+  let cs2 =
+    ChunkedCheney.chunked_cheney_scan
+      minor cs1 0 (cheney_fuel minor) alloc_fuel in
+  let res =
+    ChunkedCheney.chunked_cheney_promote
+      minor major fp roots alloc_fuel in
+  ChunkedCheney.chunked_cheney_promote_equation
+    minor major fp roots alloc_fuel;
+  assert (res.fwd_map == cs2.ccs_fwd);
+  assert (res.major_final == cs2.ccs_major);
+  assert (chunked_fwd_target_field_pre minor cs2 x j field_addr);
+  chunked_fwd_target_fields_match_state_elim minor cs2 x j field_addr
+
 private let chunked_cheney_forward_one_budget_ready_implies_split_ready
   (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
   (addr: U64.t) (remaining: nat)
@@ -8955,6 +9734,9 @@ let chunked_cheney_promote_after_minor_promotion_head_preflight
            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
          GenInv.chunked_chain_objects_blue
            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         chunked_cheney_promote_budget_ready
+           minor r.capacity_major_out r.capacity_fp_out roots
+           r.capacity_fuel_out 1 /\
          chunked_fwd_targets_above_minor res.fwd_map /\
          chunked_fwd_targets_valid_addr res.fwd_map /\
          chunked_fwd_noninfix_targets_in_major
@@ -9297,6 +10079,7 @@ let rec chunked_update_major_pointers_preserves_alloc_shape_aux
     chunked_chain_objects_blue_fuel_zero updated fp
   end else if fp = 0UL then begin
     assert (alloc_fuel <> 0);
+    nat_nonzero_gt_zero alloc_fuel;
     assert (alloc_fuel > 0);
     SpecMajorAlloc.major_fl_valid_null updated alloc_fuel;
     SpecMajorAlloc.major_fl_above_zero_null updated alloc_fuel;
@@ -12089,7 +12872,8 @@ private let rec cheney_forward_roots_preserves_no_black
 /// cheney_scan preserves no_black_objects (recursive)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
+#restart-solver
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"
 
 private let rec cheney_scan_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
@@ -12107,13 +12891,15 @@ private let rec cheney_scan_preserves_no_black
   else if scan >= Seq.length cs.cs_queue then
     cheney_scan_base minor cs scan fuel
   else begin
+    assert (fuel > 0);
+    let fuel' : f:nat{f < fuel} = fuel - 1 in
     cheney_scan_step minor cs scan fuel;
     let obj = Seq.index cs.cs_queue scan in
     let wz = minor_wosize minor obj in
     let cs' = cheney_forward_fields minor cs obj 0 wz in
     cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
     cheney_forward_fields_preserves_no_black minor cs obj 0 wz;
-    cheney_scan_preserves_no_black minor cs' (scan + 1) (fuel - 1)
+    cheney_scan_preserves_no_black minor cs' (scan + 1) fuel'
   end
 
 #pop-options

@@ -1274,6 +1274,52 @@ val chunked_cheney_promote_preserves_fwd_noninfix_targets_in_major
          chunked_fwd_noninfix_targets_in_major
           minor res.fwd_map res.major_final))
 
+/// If chunked Cheney forwards an ordinary minor object, every original source
+/// field within the minor object's wosize is copied to the corresponding field
+/// of its final forwarding target.  The theorem also exposes the target header
+/// metadata needed by graph/update clients.  Infix sources are excluded because
+/// their forwarding entries are interior pointers into their promoted parent.
+val chunked_cheney_promote_fwd_target_fields_match
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    x:U64.t -> j:nat -> field_addr:hp_addr ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         res.fwd_map x <> 0UL /\
+         Seq.mem x (minor_objects minor) /\
+         ~(is_infix_in_minor minor x) /\
+         j < minor_wosize minor x /\
+         U64.v field_addr == U64.v (res.fwd_map x) + j * U64.v mword))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         U64.v (res.fwd_map x) >= U64.v mword /\
+         U64.v (res.fwd_map x) < heap_size /\
+         U64.v (res.fwd_map x) % U64.v mword == 0 /\
+         (let target : obj_addr = res.fwd_map x in
+          Seq.mem target (MH.major_objects res.major_final) /\
+          (match MH.read_word_in_major res.major_final (hd_address target) with
+           | Some hdr ->
+             getColor hdr <> GC.Lib.Header.Blue /\
+             U64.v (getTag hdr) == minor_tag minor x /\
+             j < U64.v (getWosize hdr) /\
+             CG.chunked_major_field_slot target j == Some field_addr /\
+             MH.read_word_in_major res.major_final field_addr ==
+              Some (minor_read_field minor x j)
+           | None -> False))))
+
 val chunked_cheney_forward_one_fwd_monotone
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> x:U64.t -> alloc_fuel:nat ->
@@ -1701,6 +1747,9 @@ val chunked_cheney_promote_after_minor_promotion_head_preflight
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
          GenInv.chunked_chain_objects_blue
           r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+         chunked_cheney_promote_budget_ready
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out 1 /\
          chunked_fwd_targets_above_minor res.fwd_map /\
          chunked_fwd_targets_valid_addr res.fwd_map /\
          chunked_fwd_noninfix_targets_in_major
