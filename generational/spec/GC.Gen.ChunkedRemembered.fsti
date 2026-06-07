@@ -27,11 +27,31 @@ val chunked_scan_major_objects_for_minor_refs
 val chunked_minor_roots_from_major
   : minor:minor_state -> major:MH.major_heap -> GTot (seq U64.t)
 
+let chunked_minor_collection_roots
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  : GTot (seq U64.t) =
+  Seq.append roots (chunked_minor_roots_from_major minor major)
+
 let chunked_minor_roots_in_roots
   (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t) : prop =
   forall (v: U64.t).
     Seq.mem v (chunked_minor_roots_from_major minor major) ==>
     Seq.mem v roots
+
+val chunked_minor_roots_in_collection_roots
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  : Lemma
+    (ensures
+      chunked_minor_roots_in_roots
+        minor major (chunked_minor_collection_roots minor major roots))
+
+val chunked_minor_roots_in_roots_append_prefix
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  : Lemma
+    (ensures
+      chunked_minor_roots_in_roots
+        minor major
+        (Seq.append (chunked_minor_roots_from_major minor major) roots))
 
 val chunked_scan_object_fields_complete
   (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)

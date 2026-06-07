@@ -12,6 +12,7 @@ module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module SeqMem = GC.Spec.SeqMemLemmas
+module SeqProps = FStar.Seq.Properties
 
 let rec chunked_scan_object_fields_for_minor_refs
   (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)
@@ -68,6 +69,43 @@ let chunked_minor_roots_from_major
   =
   chunked_scan_major_objects_for_minor_refs
     minor major (MH.major_objects major) 0
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_minor_roots_in_collection_roots
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  : Lemma
+    (ensures
+      chunked_minor_roots_in_roots
+        minor major (chunked_minor_collection_roots minor major roots))
+  =
+  let scan = chunked_minor_roots_from_major minor major in
+  let prove (v: U64.t)
+    : Lemma
+      (requires Seq.mem v scan)
+      (ensures Seq.mem v (Seq.append roots scan))
+    =
+    SeqProps.lemma_append_count roots scan
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires prove)
+
+let chunked_minor_roots_in_roots_append_prefix
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  : Lemma
+    (ensures
+      chunked_minor_roots_in_roots
+        minor major
+        (Seq.append (chunked_minor_roots_from_major minor major) roots))
+  =
+  let scan = chunked_minor_roots_from_major minor major in
+  let prove (v: U64.t)
+    : Lemma
+      (requires Seq.mem v scan)
+      (ensures Seq.mem v (Seq.append scan roots))
+    =
+    SeqProps.lemma_append_count scan roots
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires prove)
+#pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
 let rec chunked_scan_object_fields_complete
