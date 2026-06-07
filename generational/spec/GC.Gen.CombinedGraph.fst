@@ -517,6 +517,28 @@ let chunked_major_field_slot_intro
   let slot_addr : hp_addr = U64.uint_to_t field_offset in
   U64.v_inj slot_addr field_addr;
   assert (slot_addr == field_addr)
+
+let chunked_major_field_slot_elim
+  (src: obj_addr) (i: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires chunked_major_field_slot src i == Some field_addr)
+      (ensures
+        U64.v field_addr == U64.v src + i * U64.v mword /\
+        U64.v field_addr + U64.v mword <= heap_size)
+  =
+  assert_norm (U64.v mword == 8);
+  let field_offset = U64.v src + i * 8 in
+  if field_offset + 8 > heap_size || field_offset % 8 <> 0 then
+    assert False
+  else begin
+    let slot_addr : hp_addr = U64.uint_to_t field_offset in
+    assert (chunked_major_field_slot src i == Some slot_addr);
+    assert (slot_addr == field_addr);
+    U64.v_inj slot_addr field_addr;
+    assert (U64.v field_addr == field_offset);
+    assert (field_offset == U64.v src + i * U64.v mword);
+    assert (U64.v field_addr + U64.v mword <= heap_size)
+  end
 #pop-options
 
 let rec chunked_major_field_edges (ms: minor_state) (mh: MH.major_heap)
