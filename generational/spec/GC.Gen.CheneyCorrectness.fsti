@@ -1458,10 +1458,104 @@ val chunked_cheney_gc_correct_after_preflight_old_major_minor_graph_edge_maps_to
         (CG.build_chunked_combined_graph
           collect.cmc_minor collect.cmc_major)))
 
+/// Source-vertex side condition for the chunked graph morphism surface.  We map
+/// old major vertices by identity and reachable positive-size minor vertices
+/// through the forwarding map.  Zero-sized minor objects are excluded because
+/// collection is allowed to leave their forwarding entry at zero.
+let chunked_graph_vertex_maps_to_major_ready
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  (u: CG.combined_vertex) : GTot prop =
+  match u with
+  | CG.MinorV src ->
+    Seq.mem src (minor_reachable minor roots) /\
+    minor_wosize minor src > 0
+  | CG.MajorV src ->
+    exists (src_obj: obj_addr).
+      src_obj == src /\
+      Seq.mem src_obj (MH.major_objects major)
+  | _ -> False
+
+/// One-vertex image theorem for the chunked preflight collector over the
+/// old-major plus reachable-minor subgraph.
+val chunked_cheney_gc_correct_after_preflight_graph_vertex_maps_to_major_vertex
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u: CG.combined_vertex)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0) /\
+      CG.mem_cv u (CG.build_chunked_combined_graph minor major) /\
+      chunked_graph_vertex_maps_to_major_ready minor major roots u)
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+         major fp alloc_fuel needed fresh in
+       let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+         minor r.capacity_major_out r.capacity_fp_out roots
+         r.capacity_fuel_out in
+       CG.mem_cv (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+        (CG.build_chunked_combined_graph collect.cmc_minor collect.cmc_major)))
+
+let chunked_graph_vertices_map_to_major_vertices_prop
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk) : prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  forall (u: CG.combined_vertex).
+    CG.mem_cv u (CG.build_chunked_combined_graph minor major) /\
+    chunked_graph_vertex_maps_to_major_ready minor major roots u ==>
+    CG.mem_cv (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+      (CG.build_chunked_combined_graph collect.cmc_minor collect.cmc_major)
+
+val chunked_cheney_gc_correct_after_preflight_graph_vertices_map_to_major_vertices
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_graph_vertices_map_to_major_vertices_prop
+        minor major fp roots alloc_fuel fresh)
+
 /// One-edge graph-morphism theorem for the chunked preflight collector over the
-/// old-major plus reachable-minor subgraph.  Under the branch-specific readiness
-/// predicate above, any concrete pre-collection combined edge maps to a concrete
-/// post-collection major edge by `CG.fwd_morphism collect.cmc_fwd`.
+/// old-major plus reachable-minor subgraph.  Under
+/// `chunked_graph_edge_maps_to_major_ready`, any concrete pre-collection
+/// combined edge maps to a concrete post-collection major edge by
+/// `CG.fwd_morphism collect.cmc_fwd`.
 val chunked_cheney_gc_correct_after_preflight_graph_edge_maps_to_major_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
