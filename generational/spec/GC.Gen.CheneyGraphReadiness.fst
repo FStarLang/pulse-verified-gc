@@ -1076,6 +1076,58 @@ let chunked_reachable_major_vertex_live_selected_from_chunk_bases
   =
   chunked_major_chunks_above_zero_addr_objects_are_pointer_fields major;
   chunked_reachable_major_vertex_live_selected minor major fp fuel roots v
+
+let chunked_reachable_positive_minor_vertex_live_selected
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_objects_are_pointer_fields major /\
+      CReach.chunked_major_field_zero_no_minor minor major /\
+      CReach.chunked_remembered_minor_edges_in_roots minor major roots /\
+      CG.combined_reachable
+        (CG.build_chunked_combined_graph minor major)
+        (CG.classify_roots roots)
+        (CG.MinorV v) /\
+      minor_wosize minor v > 0)
+    (ensures
+      chunked_live_selected_graph_vertex minor major roots (CG.MinorV v))
+  =
+  assert (CReach.chunked_major_objects_are_pointer_fields major);
+  CReach.chunked_combined_minor_reachable_in_minor_reachable
+    minor major fp fuel roots;
+  assert (Seq.mem v (minor_reachable minor roots));
+  minor_reachable_subset minor roots;
+  assert (Seq.mem v (minor_objects minor));
+  CG.chunked_minor_vertex_char minor major v;
+  assert (CG.mem_cv (CG.MinorV v)
+    (CG.build_chunked_combined_graph minor major));
+  assert (chunked_graph_vertex_maps_to_major_membership_ready
+    minor roots (CG.MinorV v))
+
+let chunked_reachable_positive_minor_vertex_live_selected_from_chunk_bases
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_chunks_above_zero_addr major /\
+      CReach.chunked_major_field_zero_no_minor minor major /\
+      CReach.chunked_remembered_minor_edges_in_roots minor major roots /\
+      CG.combined_reachable
+        (CG.build_chunked_combined_graph minor major)
+        (CG.classify_roots roots)
+        (CG.MinorV v) /\
+      minor_wosize minor v > 0)
+    (ensures
+      chunked_live_selected_graph_vertex minor major roots (CG.MinorV v))
+  =
+  chunked_major_chunks_above_zero_addr_objects_are_pointer_fields major;
+  chunked_reachable_positive_minor_vertex_live_selected
+    minor major fp fuel roots v
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"

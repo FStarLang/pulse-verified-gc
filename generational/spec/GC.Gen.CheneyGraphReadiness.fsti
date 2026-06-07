@@ -671,6 +671,42 @@ val chunked_reachable_major_vertex_live_selected_from_chunk_bases
    (ensures
      chunked_live_selected_graph_vertex minor major roots (CG.MajorV v))
 
+val chunked_reachable_positive_minor_vertex_live_selected
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+   (requires
+     GenInv.chunked_collection_heap_shape minor major fp fuel /\
+     CReach.chunked_roots_valid_nonblue roots major /\
+     chunked_major_objects_are_pointer_fields major /\
+     CReach.chunked_major_field_zero_no_minor minor major /\
+     CReach.chunked_remembered_minor_edges_in_roots minor major roots /\
+     CG.combined_reachable
+       (CG.build_chunked_combined_graph minor major)
+       (CG.classify_roots roots)
+       (CG.MinorV v) /\
+     minor_wosize minor v > 0)
+   (ensures
+     chunked_live_selected_graph_vertex minor major roots (CG.MinorV v))
+
+val chunked_reachable_positive_minor_vertex_live_selected_from_chunk_bases
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (v: U64.t)
+  : Lemma
+   (requires
+     GenInv.chunked_collection_heap_shape minor major fp fuel /\
+     CReach.chunked_roots_valid_nonblue roots major /\
+     chunked_major_chunks_above_zero_addr major /\
+     CReach.chunked_major_field_zero_no_minor minor major /\
+     CReach.chunked_remembered_minor_edges_in_roots minor major roots /\
+     CG.combined_reachable
+       (CG.build_chunked_combined_graph minor major)
+       (CG.classify_roots roots)
+       (CG.MinorV v) /\
+     minor_wosize minor v > 0)
+   (ensures
+     chunked_live_selected_graph_vertex minor major roots (CG.MinorV v))
+
 let chunked_live_selected_graph_edge
   (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
   (u v: CG.combined_vertex) : GTot prop =

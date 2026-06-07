@@ -8,6 +8,7 @@ open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
+open GC.Gen.Reachability
 
 module MH = GC.Spec.MajorHeap
 module GenInv = GC.Gen.HeapInvariant
@@ -174,6 +175,160 @@ let chunked_reachable_major_valid_nonblue
       (ensures p (CG.MajorV v))
     =
     CG.combined_reachable_ind cg combined_roots p (CG.MajorV v)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_combined_minor_reachable_in_minor_reachable
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp fuel /\
+      chunked_roots_valid_nonblue roots major /\
+      chunked_major_objects_are_pointer_fields major /\
+      chunked_major_field_zero_no_minor minor major /\
+      chunked_remembered_minor_edges_in_roots minor major roots)
+    (ensures (
+      let cg = CG.build_chunked_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MinorV v) ==>
+        Seq.mem v (minor_reachable minor roots))
+    )
+  =
+  let cg = CG.build_chunked_combined_graph minor major in
+  let combined_roots = CG.classify_roots roots in
+  let p (cv: CG.combined_vertex) : prop =
+    match cv with
+    | CG.MinorV v -> Seq.mem v (minor_reachable minor roots)
+    | CG.MajorV _ -> True
+    | _ -> True
+  in
+  let base (r: CG.combined_vertex)
+    : Lemma
+      (requires Seq.mem r combined_roots /\ CG.mem_cv r cg)
+      (ensures p r)
+    =
+    combined_vertex_cases r;
+    assert (CG.MinorV? r \/ CG.MajorV? r);
+    match r with
+    | CG.MinorV v ->
+      CG.classify_roots_inv_minor roots v;
+      CG.chunked_minor_vertex_char minor major v;
+      assert (Seq.mem v (minor_objects minor));
+      minor_reachable_roots minor roots
+    | CG.MajorV _ -> ()
+    | _ -> ()
+  in
+  let edge (u w: CG.combined_vertex)
+    : Lemma
+      (requires CG.combined_reachable cg combined_roots u /\ p u /\
+                CG.mem_ce (u, w) cg)
+      (ensures p w)
+    =
+    combined_vertex_cases w;
+    assert (CG.MinorV? w \/ CG.MajorV? w);
+    match w with
+    | CG.MajorV _ -> ()
+    | CG.MinorV dst ->
+      combined_vertex_cases u;
+      assert (CG.MinorV? u \/ CG.MajorV? u);
+      match u with
+      | CG.MinorV src ->
+        CG.chunked_minor_edge_elim minor major src (CG.MinorV dst);
+        let prove_witness (i: nat)
+          : Lemma
+            (requires
+              i < minor_wosize minor src /\
+              CG.chunked_classify_minor_field
+                minor major (minor_read_field minor src i) ==
+              Some (CG.MinorV dst))
+            (ensures Seq.mem dst (minor_successors minor src))
+          =
+          let raw = minor_read_field minor src i in
+          CG.chunked_classify_minor_field_inv_minor minor major raw dst;
+          assert (to_minor_offset raw == dst);
+          assert (is_minor_addr dst);
+          assert (Seq.mem dst (minor_objects minor));
+          minor_successors_char minor src dst;
+          assert (exists (j: nat).
+            j < minor_wosize minor src /\
+            to_minor_offset (minor_read_field minor src j) == dst /\
+            is_minor_addr dst /\
+            Seq.mem dst (minor_objects minor))
+        in
+        FStar.Classical.forall_intro
+          (FStar.Classical.move_requires prove_witness);
+        minor_reachable_closed minor roots src dst
+      | CG.MajorV src ->
+        chunked_reachable_major_valid_nonblue minor major fp fuel roots;
+        assert (U64.v src >= U64.v mword);
+        assert (U64.v src < heap_size);
+        assert (U64.v src % U64.v mword == 0);
+        let src_obj : obj_addr = src in
+        assert (Seq.mem src_obj (MH.major_objects major));
+        assert (~(GenInv.chunked_is_blue major src_obj));
+        CG.chunked_major_edge_elim minor major src_obj (CG.MinorV dst);
+        let prove_witness (i: nat) (field_addr: hp_addr) (raw: U64.t)
+          : Lemma
+            (requires
+              i < CG.chunked_wosize_nat_of_object major src_obj /\
+              CG.chunked_major_field_slot src_obj i == Some field_addr /\
+              MH.read_word_in_major major field_addr == Some raw /\
+              CG.chunked_classify_major_field minor major raw ==
+              Some (CG.MinorV dst))
+            (ensures Seq.mem dst (minor_reachable minor roots))
+          =
+          CG.chunked_classify_major_field_inv_minor minor major raw dst;
+          assert (to_minor_offset raw == dst);
+          assert (is_minor_pointer dst);
+          assert (Seq.mem dst (minor_objects minor));
+          if i = 0 then begin
+            assert (CG.chunked_major_field_slot src_obj 0 == Some field_addr);
+            assert (is_minor_pointer (to_minor_offset raw));
+            assert (Seq.mem (to_minor_offset raw) (minor_objects minor));
+            assert False
+          end else begin
+            assert (i <> 0);
+            assert (Seq.mem dst roots);
+            minor_reachable_roots minor roots
+          end
+        in
+        FStar.Classical.forall_intro_3
+          #(nat)
+          #(fun _ -> hp_addr)
+          #(fun _ _ -> U64.t)
+          #(fun i field_addr raw ->
+            i < CG.chunked_wosize_nat_of_object major src_obj /\
+            CG.chunked_major_field_slot src_obj i == Some field_addr /\
+            MH.read_word_in_major major field_addr == Some raw /\
+            CG.chunked_classify_major_field minor major raw ==
+            Some (CG.MinorV dst) ==>
+            Seq.mem dst (minor_reachable minor roots))
+          (FStar.Classical.move_requires_3
+            #(nat) #(fun _ -> hp_addr) #(fun _ _ -> U64.t)
+            #(fun i field_addr raw ->
+              i < CG.chunked_wosize_nat_of_object major src_obj /\
+              CG.chunked_major_field_slot src_obj i == Some field_addr /\
+              MH.read_word_in_major major field_addr == Some raw /\
+              CG.chunked_classify_major_field minor major raw ==
+              Some (CG.MinorV dst))
+            #(fun _ _ _ -> Seq.mem dst (minor_reachable minor roots))
+            prove_witness)
+      | _ -> ()
+    | _ -> ()
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires base);
+  FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (edge u));
+  let aux (v: U64.t)
+    : Lemma
+      (requires CG.combined_reachable cg combined_roots (CG.MinorV v))
+      (ensures p (CG.MinorV v))
+    =
+    CG.combined_reachable_ind_with_reach
+      cg combined_roots p (CG.MinorV v)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
