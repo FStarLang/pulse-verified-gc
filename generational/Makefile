@@ -41,7 +41,9 @@ IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti)
 SPOT_SRC = spec/GC.Gen.SPOT.fst spec/GC.Gen.SPOT.Lemmas.fst impl/GC.Gen.SPOT.Pulse.fst impl/GC.Gen.SPOT.Simple.fst impl/GC.Gen.SPOT.Full.fst
 ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
-ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst
+ROOT_SRC = \
+  impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst \
+  spec/GC.Gen.CheneyGraphReadiness.fsti spec/GC.Gen.CheneyGraphReadiness.fst
 ROOT_CHECKED = $(addsuffix .checked,$(ROOT_SRC))
 VERIFY_CHECKED ?= $(ROOT_CHECKED)
 
