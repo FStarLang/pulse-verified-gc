@@ -5647,6 +5647,28 @@ let spot_chunked_major_chunks_above_zero_addr_ensure_head_capacity
   CheneyGraphReadiness.chunked_major_chunks_above_zero_addr_ensure_head_capacity
     major fp fuel needed fresh
 
+let spot_chunked_major_chunks_above_zero_addr_chunks_above_minor
+  (major: MH.major_heap)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major)
+      (ensures
+        CheneyGraphReadiness.chunked_major_chunks_above_minor major)
+  =
+  CheneyGraphReadiness.chunked_major_chunks_above_zero_addr_chunks_above_minor
+    major
+
+let spot_chunked_major_chunks_above_zero_addr_objects_above_minor
+  (major: MH.major_heap)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major)
+      (ensures
+        CheneyGraphReadiness.chunked_major_objects_above_minor major)
+  =
+  CheneyGraphReadiness.chunked_major_chunks_above_zero_addr_objects_above_minor
+    major
+
 let spot_chunked_major_objects_are_pointer_fields_single_chunk
   (g: heap)
   : Lemma
@@ -6087,6 +6109,34 @@ let spot_chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_m
           minor major fp roots alloc_fuel fresh)
   =
   CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph
+    minor major fp roots alloc_fuel fresh
+
+let spot_chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph_from_chunk_bases
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0))
+      (ensures
+        CheneyGraphReadiness.chunked_live_selected_graph_maps_to_major_graph_prop
+          minor major fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph_from_chunk_bases
     minor major fp roots alloc_fuel fresh
 
 let spot_chunked_graph_edge_maps_to_major_selected_ready_implies_reachable_targets_ready
