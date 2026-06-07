@@ -3389,6 +3389,33 @@ let spot_build_chunked_combined_graph
   : GTot CG.combined_graph
   = CG.build_chunked_combined_graph ms mh
 
+let spot_chunked_minor_vertex_char
+  (ms: minor_state) (mh: MH.major_heap) (a: U64.t)
+  : Lemma
+      (ensures
+        CG.mem_cv (CG.MinorV a) (spot_build_chunked_combined_graph ms mh) <==>
+        Seq.mem a (minor_objects ms))
+  = CG.chunked_minor_vertex_char ms mh a
+
+let spot_chunked_major_vertex_char
+  (ms: minor_state) (mh: MH.major_heap) (a: obj_addr)
+  : Lemma
+      (ensures
+        CG.mem_cv (CG.MajorV a) (spot_build_chunked_combined_graph ms mh) <==>
+        Seq.mem a (MH.major_objects mh))
+  = CG.chunked_major_vertex_char ms mh a
+
+let spot_chunked_major_vertex_valid
+  (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : Lemma
+      (requires CG.mem_cv (CG.MajorV v)
+                  (spot_build_chunked_combined_graph ms mh))
+      (ensures U64.v v >= U64.v mword /\
+               U64.v v < heap_size /\
+               U64.v v % U64.v mword == 0 /\
+               Seq.mem (v <: obj_addr) (MH.major_objects mh))
+  = CG.chunked_major_vertex_valid ms mh v
+
 let spot_chunked_edge_source_decomposition
   (ms: minor_state) (mh: MH.major_heap) (e: CG.combined_edge)
   : Lemma

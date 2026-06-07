@@ -723,6 +723,27 @@ val major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
           (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
                    Seq.mem (v <: obj_addr) (objects zero_addr major))
 
+/// Chunked MinorV vertex characterization.
+val chunked_minor_vertex_char (ms: minor_state) (mh: MH.major_heap) (a: U64.t)
+  : Lemma (ensures
+      mem_cv (MinorV a) (build_chunked_combined_graph ms mh) <==>
+      Seq.mem a (minor_objects ms))
+
+/// Chunked MajorV vertex characterization.
+val chunked_major_vertex_char (ms: minor_state) (mh: MH.major_heap) (a: obj_addr)
+  : Lemma (ensures
+      mem_cv (MajorV a) (build_chunked_combined_graph ms mh) <==>
+      Seq.mem a (MH.major_objects mh))
+
+/// Validity from chunked vertex membership: if MajorV v is a vertex, then v
+/// satisfies the obj_addr refinement and names an active chunked-major object.
+val chunked_major_vertex_valid (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : Lemma (requires mem_cv (MajorV v) (build_chunked_combined_graph ms mh))
+          (ensures U64.v v >= U64.v mword /\
+                   U64.v v < heap_size /\
+                   U64.v v % U64.v mword == 0 /\
+                   Seq.mem (v <: obj_addr) (MH.major_objects mh))
+
 /// ---------------------------------------------------------------------------
 /// Well-Formedness of Construction
 /// ---------------------------------------------------------------------------

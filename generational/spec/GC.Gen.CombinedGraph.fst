@@ -1252,6 +1252,49 @@ let major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
     tag_major_valid major_objs 0 v
 #pop-options
 
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+let chunked_minor_vertex_char (ms: minor_state) (mh: MH.major_heap) (a: U64.t)
+  : Lemma (ensures
+      mem_cv (MinorV a) (build_chunked_combined_graph ms mh) <==>
+      Seq.mem a (minor_objects ms))
+  =
+  let minor_objs = minor_objects ms in
+  let major_objs = MH.major_objects mh in
+  tag_minor_mem minor_objs 0 a;
+  tag_major_no_minor major_objs 0 a;
+  Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0);
+  Classical.move_requires (Seq.mem_index a) minor_objs
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+let chunked_major_vertex_char (ms: minor_state) (mh: MH.major_heap) (a: obj_addr)
+  : Lemma (ensures
+      mem_cv (MajorV a) (build_chunked_combined_graph ms mh) <==>
+      Seq.mem a (MH.major_objects mh))
+  =
+  let minor_objs = minor_objects ms in
+  let major_objs = MH.major_objects mh in
+  tag_major_mem major_objs 0 a;
+  tag_minor_no_major minor_objs 0 a;
+  Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0);
+  Classical.move_requires (Seq.mem_index a) major_objs
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 15"
+let chunked_major_vertex_valid (ms: minor_state) (mh: MH.major_heap) (v: U64.t)
+  : Lemma (requires mem_cv (MajorV v) (build_chunked_combined_graph ms mh))
+          (ensures U64.v v >= U64.v mword /\
+                   U64.v v < heap_size /\
+                   U64.v v % U64.v mword == 0 /\
+                   Seq.mem (v <: obj_addr) (MH.major_objects mh))
+  =
+  let minor_objs = minor_objects ms in
+  let major_objs = MH.major_objects mh in
+  tag_minor_no_major minor_objs 0 v;
+  Seq.lemma_mem_append (tag_minor minor_objs 0) (tag_major major_objs 0);
+  tag_major_valid major_objs 0 v
+#pop-options
+
 /// ---------------------------------------------------------------------------
 /// Well-Formedness Helpers
 /// ---------------------------------------------------------------------------
