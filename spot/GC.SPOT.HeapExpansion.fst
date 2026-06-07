@@ -5596,6 +5596,46 @@ let spot_chunked_major_objects_above_minor_ensure_head_capacity
   CheneyGraphReadiness.chunked_major_objects_above_minor_ensure_head_capacity
     major fp fuel needed fresh
 
+let spot_chunked_major_objects_are_pointer_fields_single_chunk
+  (g: heap)
+  : Lemma
+      (ensures
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields
+          (MH.single_chunk_major_heap g))
+  =
+  CheneyGraphReadiness.chunked_major_objects_are_pointer_fields_single_chunk g
+
+let spot_chunked_major_objects_are_pointer_fields_expand_major_heap
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major /\
+        U64.v fresh.base >= U64.v zero_addr)
+      (ensures
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields
+          (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  CheneyGraphReadiness.chunked_major_objects_are_pointer_fields_expand_major_heap
+    major fresh fp
+
+let spot_chunked_major_objects_are_pointer_fields_ensure_head_capacity
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+         U64.v fresh.base >= U64.v zero_addr))
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp fuel needed fresh in
+         CheneyGraphReadiness.chunked_major_objects_are_pointer_fields
+           r.capacity_major_out))
+  =
+  CheneyGraphReadiness.chunked_major_objects_are_pointer_fields_ensure_head_capacity
+    major fp fuel needed fresh
+
 let spot_chunked_cheney_gc_correct_after_preflight_graph_edge_edge_targets_maps_to_major_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
@@ -5878,6 +5918,82 @@ let spot_chunked_cheney_gc_correct_after_preflight_graph_membership_ready_maps_t
   =
   CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_graph_membership_ready_maps_to_major_graph
     minor major fp roots alloc_fuel fresh
+
+let spot_chunked_minor_source_edge_not_no_scan
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (src: U64.t) (dst: CG.combined_vertex)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor major fp fuel /\
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major /\
+        CG.mem_ce (CG.MinorV src, dst)
+          (CG.build_chunked_combined_graph minor major))
+      (ensures
+        minor_tag minor src < U64.v GC.Spec.Object.no_scan_tag)
+  =
+  CheneyGraphReadiness.chunked_minor_source_edge_not_no_scan
+    minor major fp fuel src dst
+
+let spot_chunked_graph_edge_maps_to_major_live_selected_ready_implies_selected_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: Seq.seq U64.t) (u v: CG.combined_vertex)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor major fp fuel /\
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major /\
+        CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+        CheneyGraphReadiness.chunked_graph_edge_maps_to_major_live_selected_ready
+          minor major roots u v)
+      (ensures
+        CheneyGraphReadiness.chunked_graph_edge_maps_to_major_selected_ready
+          minor major roots u v)
+  =
+  CheneyGraphReadiness.chunked_graph_edge_maps_to_major_live_selected_ready_implies_selected_ready
+    minor major fp fuel roots u v
+
+let spot_chunked_cheney_gc_correct_after_preflight_graph_edge_live_selected_maps_to_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u v: CG.combined_vertex)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyGraphReadiness.chunked_major_objects_above_minor major /\
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0) /\
+        CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+        CheneyGraphReadiness.chunked_graph_edge_maps_to_major_live_selected_ready
+          minor major roots u v)
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         let collect =
+           ChunkedCheney.chunked_cheney_collect_spec
+             minor r.capacity_major_out r.capacity_fp_out roots
+             r.capacity_fuel_out in
+         CG.mem_ce
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+           CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+          (CG.build_chunked_combined_graph
+           collect.cmc_minor collect.cmc_major)))
+  =
+  CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_graph_edge_live_selected_maps_to_major_edge
+    minor major fp roots alloc_fuel fresh u v
 
 let spot_chunked_graph_edge_maps_to_major_selected_ready_implies_reachable_targets_ready
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)

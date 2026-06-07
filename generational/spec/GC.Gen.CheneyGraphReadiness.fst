@@ -3,6 +3,7 @@ module GC.Gen.CheneyGraphReadiness
 open FStar.Seq
 module U64 = FStar.UInt64
 module SeqProps = FStar.Seq.Properties
+module ML = FStar.Math.Lemmas
 
 open GC.Spec.Base
 open GC.Gen.Base
@@ -18,6 +19,22 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module CC = GC.Gen.CheneyCorrectness
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+private let aligned_gt_ge_plus_mword (x z: nat)
+  : Lemma
+    (requires x > z /\ x % U64.v mword == 0 /\ z % U64.v mword == 0)
+    (ensures x >= z + U64.v mword)
+  =
+  if x < z + U64.v mword then begin
+    assert (x - z > 0);
+    assert (x - z < U64.v mword);
+    ML.lemma_mod_sub_distr x z (U64.v mword);
+    assert ((x - z) % U64.v mword == 0);
+    ML.small_mod (x - z) (U64.v mword);
+    assert False
+  end
+#pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
 private let rec major_object_above_minor_from_chunks
@@ -157,6 +174,85 @@ let chunked_major_objects_above_minor_ensure_head_capacity
     assert (U64.v fresh.base >= minor_heap_size);
     chunked_major_objects_above_minor_expand_major_heap major fresh fp
   end
+
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 20 --fuel 1 --ifuel 0"
+let chunked_major_objects_are_pointer_fields_single_chunk
+  (g: heap)
+  : Lemma
+    (ensures
+      chunked_major_objects_are_pointer_fields (MH.single_chunk_major_heap g))
+  =
+  MH.single_chunk_major_objects_compat g;
+  let prove (obj: obj_addr)
+    : Lemma
+      (requires Seq.mem obj (MH.major_objects (MH.single_chunk_major_heap g)))
+      (ensures GC.Spec.Fields.is_pointer_field obj)
+    =
+    assert (Seq.mem obj (GC.Spec.Fields.objects zero_addr g));
+    GC.Spec.Fields.objects_addresses_gt_start zero_addr g obj;
+    assert (U64.v obj > U64.v zero_addr);
+    aligned_gt_ge_plus_mword (U64.v obj) (U64.v zero_addr);
+    assert (U64.v obj >= U64.v zero_addr + U64.v mword);
+    assert (U64.v obj < heap_size);
+    assert (U64.v obj % U64.v mword == 0)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires prove)
+
+let chunked_major_objects_are_pointer_fields_expand_major_heap
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+    (requires
+      chunked_major_objects_are_pointer_fields major /\
+      U64.v fresh.base >= U64.v zero_addr)
+    (ensures
+      chunked_major_objects_are_pointer_fields
+        (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  let er = SpecMajorAlloc.expand_major_heap major fresh fp in
+  SpecMajorAlloc.expand_major_heap_objects major fresh fp;
+  SpecMajorAlloc.expand_major_heap_link major fresh fp;
+  let prove (obj: obj_addr)
+    : Lemma
+      (requires Seq.mem obj (MH.major_objects er.major_out))
+      (ensures GC.Spec.Fields.is_pointer_field obj)
+    =
+    assert (MH.major_objects er.major_out ==
+            Seq.cons er.fp_out (MH.major_objects major));
+    SeqProps.mem_cons er.fp_out (MH.major_objects major);
+    if obj = er.fp_out then begin
+      SpecMajorAlloc.fresh_chunk_object_in_chunk fresh;
+      assert (er.fp_out == SpecMajorAlloc.fresh_chunk_object fresh);
+      assert (U64.v obj >= U64.v fresh.base + U64.v mword);
+      assert (U64.v obj >= U64.v zero_addr + U64.v mword);
+      assert (U64.v obj < heap_size);
+      assert (U64.v obj % U64.v mword == 0)
+    end else begin
+      assert (Seq.mem obj (MH.major_objects major));
+      assert (GC.Spec.Fields.is_pointer_field obj)
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires prove)
+
+let chunked_major_objects_are_pointer_fields_ensure_head_capacity
+  (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_major_objects_are_pointer_fields major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+       U64.v fresh.base >= U64.v zero_addr))
+    (ensures
+      (let r =
+         SpecMajorAlloc.ensure_major_head_capacity_spec
+           major fp fuel needed fresh in
+       chunked_major_objects_are_pointer_fields r.capacity_major_out))
+  =
+  if SpecMajorAlloc.major_fl_head_wosize major fp >= needed then
+    ()
+  else
+    chunked_major_objects_are_pointer_fields_expand_major_heap major fresh fp
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
@@ -725,6 +821,81 @@ let chunked_cheney_gc_correct_after_preflight_graph_membership_ready_maps_to_maj
     minor major fp roots alloc_fuel fresh
 #pop-options
 
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 1"
+let chunked_minor_source_edge_not_no_scan
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (src: U64.t) (dst: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp fuel /\
+      chunked_major_objects_are_pointer_fields major /\
+      CG.mem_ce (CG.MinorV src, dst)
+        (CG.build_chunked_combined_graph minor major))
+    (ensures
+      minor_tag minor src < U64.v GC.Spec.Object.no_scan_tag)
+  =
+  GenInv.chunked_collection_heap_shape_elim minor major fp fuel;
+  GenInv.minor_heap_shape_elim minor;
+  assert (minor_no_scan_invariant minor);
+  CG.chunked_minor_edge_elim minor major src dst;
+  assert (Seq.mem src (minor_objects minor));
+  let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
+    (fun i -> i < minor_wosize minor src /\
+      CG.chunked_classify_minor_field
+        minor major (minor_read_field minor src i) == Some dst) in
+  assert (i < minor_wosize minor src);
+  assert (CG.chunked_classify_minor_field
+    minor major (minor_read_field minor src i) == Some dst);
+  GC.Spec.Object.no_scan_tag_val ();
+  if minor_tag minor src >= U64.v GC.Spec.Object.no_scan_tag then begin
+    assert (minor_tag minor src >= 251);
+    let field = minor_read_field minor src i in
+    match dst with
+    | CG.MinorV d ->
+      CG.chunked_classify_minor_field_inv_minor minor major field d;
+      assert (to_minor_offset field == d);
+      assert (Seq.mem d (minor_objects minor));
+      minor_objects_valid minor d;
+      assert (is_minor_pointer d);
+      assert (is_minor_pointer (to_minor_offset field));
+      assert (~(is_minor_pointer (to_minor_offset field)));
+      assert False
+    | CG.MajorV d ->
+      CG.chunked_classify_minor_field_inv_major minor major field d;
+      assert (field == d);
+      is_val_addr_spec field;
+      assert (Seq.mem (field <: obj_addr) (MH.major_objects major));
+      assert (GC.Spec.Fields.is_pointer_field (field <: obj_addr));
+      assert (GC.Spec.Fields.is_pointer_field field);
+      assert (~(GC.Spec.Fields.is_pointer_field field));
+      assert False
+  end
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
+let chunked_graph_edge_maps_to_major_live_selected_ready_implies_selected_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (roots: seq U64.t) (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp fuel /\
+      chunked_major_objects_are_pointer_fields major /\
+      CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+      chunked_graph_edge_maps_to_major_live_selected_ready
+        minor major roots u v)
+    (ensures
+      chunked_graph_edge_maps_to_major_selected_ready minor major roots u v)
+  =
+  match u, v with
+  | CG.MinorV src, CG.MinorV dst ->
+    chunked_minor_source_edge_not_no_scan minor major fp fuel src (CG.MinorV dst)
+  | CG.MinorV src, CG.MajorV dst ->
+    chunked_minor_source_edge_not_no_scan minor major fp fuel src (CG.MajorV dst)
+  | CG.MajorV src, CG.MajorV dst -> ()
+  | CG.MajorV src, CG.MinorV dst -> ()
+  | _, _ -> assert False
+#pop-options
+
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
 let chunked_graph_edge_maps_to_major_selected_ready_implies_reachable_targets_ready
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
@@ -788,6 +959,53 @@ let chunked_cheney_gc_correct_after_preflight_graph_edge_selected_maps_to_major_
   chunked_graph_edge_maps_to_major_selected_ready_implies_reachable_targets_ready
     minor major fp roots alloc_fuel fresh u v;
   chunked_cheney_gc_correct_after_preflight_graph_edge_reachable_targets_maps_to_major_edge
+    minor major fp roots alloc_fuel fresh u v
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_graph_edge_live_selected_maps_to_major_edge
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_major_objects_above_minor major /\
+      chunked_major_objects_are_pointer_fields major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0) /\
+      CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major) /\
+      chunked_graph_edge_maps_to_major_live_selected_ready
+        minor major roots u v)
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel needed fresh in
+       let collect =
+        ChunkedCheney.chunked_cheney_collect_spec
+          minor r.capacity_major_out r.capacity_fp_out roots
+          r.capacity_fuel_out in
+       CG.mem_ce
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+         CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+        (CG.build_chunked_combined_graph
+          collect.cmc_minor collect.cmc_major)))
+  =
+  chunked_graph_edge_maps_to_major_live_selected_ready_implies_selected_ready
+    minor major fp alloc_fuel roots u v;
+  chunked_cheney_gc_correct_after_preflight_graph_edge_selected_maps_to_major_edge
     minor major fp roots alloc_fuel fresh u v
 #pop-options
 
