@@ -873,6 +873,25 @@ let chunked_minor_source_edge_not_no_scan
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
+let chunked_live_selected_graph_edge_implies_live_selected_ready
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      chunked_live_selected_graph_edge minor major roots u v)
+    (ensures
+      chunked_graph_edge_maps_to_major_live_selected_ready
+        minor major roots u v)
+  =
+  match u, v with
+  | CG.MinorV src, CG.MinorV dst -> ()
+  | CG.MinorV src, CG.MajorV dst -> ()
+  | CG.MajorV src, CG.MajorV dst -> ()
+  | CG.MajorV src, CG.MinorV dst -> ()
+  | _, _ -> assert False
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
 let chunked_graph_edge_maps_to_major_live_selected_ready_implies_selected_ready
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
   (roots: seq U64.t) (u v: CG.combined_vertex)
@@ -1007,6 +1026,110 @@ let chunked_cheney_gc_correct_after_preflight_graph_edge_live_selected_maps_to_m
     minor major fp alloc_fuel roots u v;
   chunked_cheney_gc_correct_after_preflight_graph_edge_selected_maps_to_major_edge
     minor major fp roots alloc_fuel fresh u v
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_major_objects_above_minor major /\
+      chunked_major_objects_are_pointer_fields major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_live_selected_graph_maps_to_major_graph_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  let prove_vertex (u: CG.combined_vertex)
+    : Lemma
+      (requires
+        chunked_live_selected_graph_vertex minor major roots u)
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp alloc_fuel needed fresh in
+         let collect =
+          ChunkedCheney.chunked_cheney_collect_spec
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out in
+         CG.mem_cv (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+           (CG.build_chunked_combined_graph
+             collect.cmc_minor collect.cmc_major)))
+    =
+    match u with
+    | CG.MinorV src ->
+      chunked_cheney_gc_correct_after_preflight_graph_vertex_membership_ready_maps_to_major_vertex
+        minor major fp roots alloc_fuel fresh u
+    | CG.MajorV src ->
+      assert (chunked_graph_vertex_maps_to_major_membership_ready
+        minor roots u);
+      chunked_cheney_gc_correct_after_preflight_graph_vertex_membership_ready_maps_to_major_vertex
+        minor major fp roots alloc_fuel fresh u
+    | _ -> assert False
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires prove_vertex);
+  let prove_edge_u (u: CG.combined_vertex)
+    : Lemma
+      (ensures
+        (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp alloc_fuel needed fresh in
+         let collect =
+          ChunkedCheney.chunked_cheney_collect_spec
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out in
+         forall (v: CG.combined_vertex).
+          chunked_live_selected_graph_edge minor major roots u v ==>
+          CG.mem_ce
+            (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+             CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+            (CG.build_chunked_combined_graph
+              collect.cmc_minor collect.cmc_major)))
+    =
+    let prove_edge_v (v: CG.combined_vertex)
+      : Lemma
+        (requires
+          chunked_live_selected_graph_edge minor major roots u v)
+        (ensures
+          (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+           let r =
+            SpecMajorAlloc.ensure_major_head_capacity_spec
+              major fp alloc_fuel needed fresh in
+           let collect =
+            ChunkedCheney.chunked_cheney_collect_spec
+              minor r.capacity_major_out r.capacity_fp_out roots
+              r.capacity_fuel_out in
+           CG.mem_ce
+            (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+             CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+            (CG.build_chunked_combined_graph
+              collect.cmc_minor collect.cmc_major)))
+      =
+      chunked_live_selected_graph_edge_implies_live_selected_ready
+        minor major roots u v;
+      chunked_cheney_gc_correct_after_preflight_graph_edge_live_selected_maps_to_major_edge
+        minor major fp roots alloc_fuel fresh u v
+    in
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires prove_edge_v)
+  in
+  FStar.Classical.forall_intro prove_edge_u
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
