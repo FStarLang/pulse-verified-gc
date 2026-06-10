@@ -31,6 +31,7 @@ INCLUDES = \
 # --- F* base flags ----------------------------------------------------------
 
 FSTAR_FLAGS = \
+  $(OTHERFLAGS) \
   --cache_checked_modules \
   --odir $(OUTPUT_DIR) \
   --warn_error -321 \

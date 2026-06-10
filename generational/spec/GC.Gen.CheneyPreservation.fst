@@ -705,7 +705,7 @@ private let promote_object_preserves_gray_black_objects_on_stack
   end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 500 --fuel 1 --ifuel 0 --split_queries always --z3refresh"
 private let cheney_forward_one_preserves_gray_black_objects_on_stack
   (minor: minor_state) (cs: cheney_state) (addr: U64.t) (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\

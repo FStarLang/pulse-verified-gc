@@ -601,7 +601,7 @@ private let promote_object_wosize_self_full
 /// Single-k proof for chain_all_inv_intro: proves the body of the forall
 /// for a specific index k. TOP-LEVEL to avoid context pollution.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 150 --fuel 0 --ifuel 0 --split_queries always"
 private let promote_step_chain_one_k
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
