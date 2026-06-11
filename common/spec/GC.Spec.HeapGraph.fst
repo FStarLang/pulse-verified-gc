@@ -51,7 +51,7 @@ let set_field (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (v: U64.t)
 /// Check if field value looks like a valid heap pointer
 let is_pointer_field (v: U64.t) : bool =
   U64.v v % U64.v mword = 0 &&
-  U64.v v > 0 &&
+  U64.v v >= U64.v zero_addr + U64.v mword &&
   U64.v v < heap_size
 
 /// is_pointer_field implies obj_addr refinement (needed for hd_address)

@@ -121,7 +121,7 @@ val sweep_post_elim_objects_bridge (g_pre g_post: GC.Spec.Base.heap) (new_fp: U6
 /// Bridge: obj_in_objects for initial head object (avoids heap subtyping in Pulse)
 val obj_in_objects_head_bridge (g: GC.Spec.Base.heap)
   : Lemma (requires Seq.length (SpecFields.objects zero_addr g) > 0)
-          (ensures 8 < heap_size ==> SI.obj_in_objects (U64.uint_to_t 8) g)
+          (ensures SI.obj_in_objects (GC.Spec.Heap.f_address zero_addr) g)
 
 /// ---------------------------------------------------------------------------
 /// Density / Objects Nonempty Bridge Lemmas

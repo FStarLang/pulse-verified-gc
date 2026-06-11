@@ -1,0 +1,3 @@
+benchmark,runtime,total_allocated_words,minor_words,major_words,promoted_words,minor_collections,major_collections,forced_major_collections,heap_words,top_heap_words,rss_mb
+count_change,verified-gen,23166011,23163334,2677,0,88,2,0,126976,126976,162.453
+count_change,stock-ocaml,23166011,23163334,3575085,3572408,91,7,0,4077568,4077568,31.992

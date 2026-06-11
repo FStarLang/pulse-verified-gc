@@ -35,7 +35,8 @@ SPEC_SRC = $(wildcard spec/*.fst spec/*.fsti \
                       $(C)/spec/*.fst $(C)/spec/*.fsti $(C)/lib/*.fst)
 IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti \
                       $(C)/impl/*.fst $(C)/impl/*.fsti)
-ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
+TEST_SRC =
+ALL_SRC  = $(filter-out $(TEST_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
 # --- Auto-generated dependency graph ----------------------------------------
 #
@@ -62,7 +63,7 @@ ALL_SRC  = $(SPEC_SRC) $(IMPL_SRC)
 # --- Default goal (must precede -include .depend so included targets
 #     don't accidentally become the default goal) -------------------------
 
-.PHONY: all verify verify-spec verify-impl extract snapshot clean
+.PHONY: all verify verify-spec verify-impl verify-tests extract snapshot clean
 
 all: verify
 
@@ -70,30 +71,28 @@ all: verify
 
 verify: verify-impl
 
-verify-spec: $(addsuffix .checked,$(SPEC_SRC))
+verify-spec: $(addsuffix .checked,$(filter-out $(TEST_SRC),$(SPEC_SRC)))
 	@echo "=== spec modules verified ==="
 
 verify-impl: $(addsuffix .checked,$(ALL_SRC))
 	@echo "=== all modules verified ==="
 
-# --- Pattern rules (verification) -------------------------------------------
+verify-tests:
+	@echo "=== no mark-and-sweep test modules ==="
 
-# Bridge lemmas: no z3refresh (some queries benefit from accumulated state)
-spec/GC.Test.Bridge.fst.checked: spec/GC.Test.Bridge.fst
-	$(FSTAR) $<
+# --- Pattern rules (verification) -------------------------------------------
 
 spec/%.checked: spec/%
 	$(FSTAR) $<
-
-# Allocator bridge lemmas: bitvector and objects-walk proofs need higher limits
-spec/GC.Spec.Allocator.Lemmas.fst.checked: spec/GC.Spec.Allocator.Lemmas.fst
-	$(FSTAR) --z3rlimit 200 $<
 
 $(C)/spec/%.checked: $(C)/spec/%
 	$(FSTAR) $<
 
 $(C)/lib/%.checked: $(C)/lib/%
 	$(FSTAR) $<
+
+$(C)/lib/GC.Lib.Header.fst.checked: $(C)/lib/GC.Lib.Header.fst
+	$(FSTAR) --z3rlimit 20 $<
 
 impl/%.checked: impl/%
 	$(FSTAR) --split_queries always --z3refresh $<
@@ -128,6 +127,16 @@ _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 	  --codegen krml --extract_module FStar.Pervasives.Native \
 	  --odir $(OUTPUT_DIR) $(FSTAR_LIB)/ulib/FStar.Pervasives.Native.fst
 
+# GC.Impl.ArrayWord — interface-only module (assumed vals, no .fst)
+_output/GC_Impl_ArrayWord.krml: verify-impl | $(OUTPUT_DIR)
+	$(FSTAR) --codegen krml --odir $(OUTPUT_DIR) \
+	  --extract_module GC.Impl.ArrayWord GC.Impl.ArrayWord.fsti
+
+# GC.Spec.ZeroAddr — interface-only module (extern zero_addr, no .fst)
+_output/GC_Spec_ZeroAddr.krml: | $(OUTPUT_DIR)
+	$(FSTAR) --codegen krml --odir $(OUTPUT_DIR) \
+	  --extract_module GC.Spec.ZeroAddr GC.Spec.ZeroAddr.fsti
+
 # --- KaRaMeL bundling (.krml → C) ------------------------------------------
 
 EXTRACT_MODULES = \
@@ -135,8 +144,8 @@ EXTRACT_MODULES = \
   GC.Impl.Coalesce \
   GC.Impl.FusedSweepCoalesce GC.Impl \
   GC.Impl.Allocator \
-  GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
-  GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
+  GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+  GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
 
 ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_MODULES))) \
            $(OUTPUT_DIR)/FStar_Pervasives_Native.krml
@@ -146,10 +155,11 @@ KRML_FLAGS = \
   -skip-compilation -skip-linking \
   -bundle 'GC.Impl+GC.Impl.Allocator=GC.Impl.*[rename=GC_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
+  -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
     GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
-    GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce) \
+    GC.Impl.ArrayWord GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce GC.Spec.ZeroAddr) \
   -warn-error -2-9-15
 
 $(EXTRACT_DIR):

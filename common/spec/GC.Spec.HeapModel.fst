@@ -66,9 +66,9 @@ let rec objects_is_vertex_set_aux (start: hp_addr) (g: heap)
 #pop-options
 
 val objects_is_vertex_set : (g: heap) ->
-  Lemma (is_vertex_set (HeapGraph.coerce_to_vertex_list (objects 0UL g)))
+  Lemma (is_vertex_set (HeapGraph.coerce_to_vertex_list (objects zero_addr g)))
 
-let objects_is_vertex_set g = objects_is_vertex_set_aux 0UL g
+let objects_is_vertex_set g = objects_is_vertex_set_aux zero_addr g
 
 /// ---------------------------------------------------------------------------
 /// Graph Construction
@@ -76,20 +76,20 @@ let objects_is_vertex_set g = objects_is_vertex_set_aux 0UL g
 
 let create_graph (g: heap) : GTot graph_state =
   objects_is_vertex_set g;
-  HeapGraph.create_graph_from_heap g (objects 0UL g)
+  HeapGraph.create_graph_from_heap g (objects zero_addr g)
 
 let graph_vertices_mem (g: heap) (x: obj_addr)
-  : Lemma (Seq.mem x (objects 0UL g) <==> Seq.mem x (create_graph g).vertices)
+  : Lemma (Seq.mem x (objects zero_addr g) <==> Seq.mem x (create_graph g).vertices)
   = objects_is_vertex_set g;
-    HeapGraph.graph_vertices_mem g (objects 0UL g) x
+    HeapGraph.graph_vertices_mem g (objects zero_addr g) x
 
 /// ---------------------------------------------------------------------------
 /// Field Reads Equality (Data Transparency)
 /// ---------------------------------------------------------------------------
 
 let field_reads_equal (g1 g2: heap) : GTot prop =
-  forall (x: obj_addr). Seq.mem x (objects 0UL g1) ==>
-    (Seq.mem x (objects 0UL g2) /\
+  forall (x: obj_addr). Seq.mem x (objects zero_addr g1) ==>
+    (Seq.mem x (objects zero_addr g2) /\
      wosize_of_object x g1 == wosize_of_object x g2 /\
      (forall (i: U64.t). 1 <= U64.v i /\ U64.v i <= U64.v (wosize_of_object x g1) ==>
        HeapGraph.get_field g1 x i == HeapGraph.get_field g2 x i))

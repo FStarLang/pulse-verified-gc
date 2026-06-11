@@ -24,6 +24,7 @@ module SF = GC.Spec.Fields
 module SO = GC.Spec.Object
 module SH = GC.Spec.Heap
 module SI = GC.Spec.SweepInv
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
 /// Pure helper lemmas (all proven — no admits)
@@ -93,7 +94,7 @@ let hd_address_eq (obj: obj_addr)
 /// ---------------------------------------------------------------------------
 
 let is_valid_fp (v: U64.t) : bool =
-  U64.gte v mword &&
+  U64.gte v (U64.add zero_addr mword) &&
   U64.lt v heap_size_u64 &&
   (U64.rem v mword = 0UL)
 
@@ -345,6 +346,214 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   };
 
   // Post-loop: invariant with go=false gives us spec correspondence
+  let final_fp = !head_fp;
+  let final_obj = !result_obj;
+  (final_fp, final_obj)
+}
+#pop-options
+
+/// ---------------------------------------------------------------------------
+/// Weak-precondition allocation (for use during promotion)
+/// ---------------------------------------------------------------------------
+/// Same implementation as `allocate` but only requires well_formed_heap_part1
+/// + fl_valid + fl_chain_terminates. The allocator logic only reads headers
+/// and free-list link pointers — it never inspects object pointer fields,
+/// so well_formed_heap_part2 (pointer closure) is not needed.
+
+#push-options "--z3rlimit 100"
+fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires is_heap heap 's **
+           pure (SF.well_formed_heap_part1 's /\
+                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
+  returns res: (U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 **
+    pure (let spec_res = SA.alloc_spec 's fp (U64.v wosize) in
+          s2 == spec_res.heap_out /\
+          fst res == spec_res.fp_out /\
+          snd res == spec_res.obj_out)
+{
+  // Ensure wosize >= 1 (need at least 1 word for free-list link)
+  let wz : U64.t = (if U64.eq wosize 0UL then 1UL else wosize);
+
+  // Mutable state for the search loop
+  let mut head_fp = fp;
+  let mut prev_fp = 0UL;
+  let mut cur_fp = fp;
+  let mut result_obj = 0UL;
+  let mut go = true;
+  let mut fuel_ref : U64.t = U64.div heap_size_u64 mword;
+
+  while (!go)
+    invariant exists* vgo vfuel vhead vprev vcur vresult s_cur.
+      R.pts_to go vgo **
+      R.pts_to fuel_ref vfuel **
+      R.pts_to head_fp vhead **
+      R.pts_to prev_fp vprev **
+      R.pts_to cur_fp vcur **
+      R.pts_to result_obj vresult **
+      is_heap heap s_cur **
+      pure (
+        U64.v vfuel <= heap_size / 8 /\
+        (if vgo then
+          s_cur == 's /\
+          vhead == fp /\
+          vresult == 0UL /\
+          (vprev == 0UL \/
+           (U64.v vprev >= U64.v mword /\
+            U64.v vprev < heap_size /\
+            U64.v vprev % U64.v mword == 0)) /\
+          SA.alloc_search 's vhead vprev vcur (U64.v wz) (U64.v vfuel) ==
+            SA.alloc_spec 's fp (U64.v wosize)
+        else
+          (let sr = SA.alloc_spec 's fp (U64.v wosize) in
+           s_cur == sr.heap_out /\
+           vhead == sr.fp_out /\
+           vresult == sr.obj_out))
+      )
+  {
+    let vfuel = !fuel_ref;
+    if U64.eq vfuel 0UL {
+      let vh = !head_fp;
+      let vp = !prev_fp;
+      let vc = !cur_fp;
+      SA.alloc_search_fuel_0 's vh vp vc (U64.v wz);
+      go := false
+    } else {
+      let vcur = !cur_fp;
+      let valid = is_valid_fp vcur;
+      if not valid {
+        let vh = !head_fp;
+        let vp = !prev_fp;
+        SA.alloc_search_invalid 's vh vp vcur (U64.v wz) (U64.v vfuel);
+        go := false
+      } else {
+        hd_address_eq vcur;
+        let hd_addr = hd_address vcur;
+        let hdr = read_word heap hd_addr;
+        let block_wz = getWosize hdr;
+        getWosize_eq hdr;
+
+        let next = read_word heap vcur;
+        SA.spec_next_fp_eq 's (vcur <: obj_addr);
+
+        if U64.gte block_wz wz {
+          let leftover = U64.sub block_wz wz;
+          let vh = !head_fp;
+          let vp = !prev_fp;
+
+          if U64.gte leftover 2UL {
+            // === SPLIT CASE ===
+            wosize_bound_lemma wz block_wz;
+            split_offset_fits wz;
+            split_no_overflow hd_addr wz;
+
+            let wz_plus_1 = U64.add wz 1UL;
+            let offset = U64.mul wz_plus_1 mword;
+            let rem_hd_off = U64.add hd_addr offset;
+
+            if U64.gte rem_hd_off heap_size_u64 {
+              SA.alloc_from_block_split_rem_hd_oob 's (vcur <: obj_addr) (U64.v wz) next;
+
+              let alloc_hdr = makeHeader wz white 0UL;
+              write_word heap hd_addr alloc_hdr;
+
+              if U64.eq vp 0UL {
+                SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel);
+                head_fp := next;
+                result_obj := vcur;
+                go := false
+              } else {
+                SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel);
+                write_word heap (vp <: hp_addr) next;
+                result_obj := vcur;
+                go := false
+              }
+            } else {
+              assert (pure (U64.v rem_hd_off < heap_size));
+              assert (pure (U64.v rem_hd_off % 8 == 0));
+              let rem_obj = U64.add rem_hd_off mword;
+
+              if U64.gte rem_obj heap_size_u64 {
+                SA.alloc_from_block_split_rem_obj_oob 's (vcur <: obj_addr) (U64.v wz) next;
+
+                let alloc_hdr = makeHeader wz white 0UL;
+                write_word heap hd_addr alloc_hdr;
+                let rem_wz_u = U64.sub leftover 1UL;
+                let rem_hdr = makeHeader rem_wz_u blue 0UL;
+                write_word heap rem_hd_off rem_hdr;
+
+                if U64.eq vp 0UL {
+                  SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel);
+                  head_fp := rem_obj;
+                  result_obj := vcur;
+                  go := false
+                } else {
+                  SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel);
+                  write_word heap (vp <: hp_addr) rem_obj;
+                  result_obj := vcur;
+                  go := false
+                }
+              } else {
+                assert (pure (U64.v rem_obj < heap_size));
+                assert (pure (U64.v rem_obj % 8 == 0));
+
+                SA.alloc_from_block_split_normal 's (vcur <: obj_addr) (U64.v wz) next;
+
+                let alloc_hdr = makeHeader wz white 0UL;
+                write_word heap hd_addr alloc_hdr;
+                let rem_wz_u = U64.sub leftover 1UL;
+                let rem_hdr = makeHeader rem_wz_u blue 0UL;
+                write_word heap rem_hd_off rem_hdr;
+                write_word heap rem_obj next;
+
+                if U64.eq vp 0UL {
+                  SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel);
+                  head_fp := rem_obj;
+                  result_obj := vcur;
+                  go := false
+                } else {
+                  SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel);
+                  write_word heap (vp <: hp_addr) rem_obj;
+                  result_obj := vcur;
+                  go := false
+                }
+              }
+            }
+          } else {
+            // === EXACT FIT CASE ===
+            SA.alloc_from_block_exact 's (vcur <: obj_addr) (U64.v wz) next;
+
+            let alloc_hdr = makeHeader block_wz white 0UL;
+            write_word heap hd_addr alloc_hdr;
+
+            if U64.eq vp 0UL {
+              SA.alloc_search_found_head 's vh vp vcur (U64.v wz) (U64.v vfuel);
+              head_fp := next;
+              result_obj := vcur;
+              go := false
+            } else {
+              SA.alloc_search_found_prev 's vh vp vcur (U64.v wz) (U64.v vfuel);
+              write_word heap (vp <: hp_addr) next;
+              result_obj := vcur;
+              go := false
+            }
+          }
+        } else {
+          let vh = !head_fp;
+          let vp = !prev_fp;
+          hd_address_eq vcur;
+          SH.hd_address_spec (vcur <: obj_addr);
+          SA.alloc_search_advance 's vh vp vcur (U64.v wz) (U64.v vfuel);
+          prev_fp := vcur;
+          cur_fp := next;
+          fuel_ref := U64.sub vfuel 1UL;
+          fuel_bound_lemma vfuel
+        }
+      }
+    }
+  };
+
   let final_fp = !head_fp;
   let final_obj = !result_obj;
   (final_fp, final_obj)

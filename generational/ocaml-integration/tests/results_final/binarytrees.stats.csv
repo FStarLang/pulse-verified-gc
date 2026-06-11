@@ -1,0 +1,3 @@
+benchmark,runtime,total_allocated_words,minor_words,major_words,promoted_words,minor_collections,major_collections,forced_major_collections,heap_words,top_heap_words,rss_mb
+binarytrees,verified-gen,1993131309,1993128613,2696,0,7604,29,0,126976,126976,1040.441
+binarytrees,stock-ocaml,1993131309,1993128613,1035510385,1035507689,7647,87,1,66752512,66752512,515.898

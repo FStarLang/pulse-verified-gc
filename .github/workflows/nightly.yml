@@ -9,7 +9,7 @@ on:
 jobs:
   nightly:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
@@ -19,21 +19,55 @@ jobs:
       - name: Show F* version
         run: fstar/bin/fstar.exe --version
 
-      - name: Verify all modules
+      - name: Verify GC code
         id: verify
         continue-on-error: true
-        run: make -j$(nproc) 2>&1 | tee verify.log
+        run: |
+          set -o pipefail
+          make -j$(nproc) 2>&1 | tee verify.log
+
+      - name: Verify SPOT proofs
+        id: spot
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          make -C spot -j$(nproc) 2>&1 | tee spot.log
 
       - name: Extract to C
         id: extract
-        if: steps.verify.outcome == 'success'
+        if: steps.verify.outcome == 'success' && steps.spot.outcome == 'success'
         continue-on-error: true
-        run: make extract 2>&1 | tee extract.log
+        run: |
+          set -o pipefail
+          make extract 2>&1 | tee extract.log
 
-      - name: Compile snapshot
+      - name: Refresh generational snapshot
+        id: snapshot
         if: steps.extract.outcome == 'success'
         continue-on-error: true
-        run: make -C mark-and-sweep/snapshot 2>&1 | tee snapshot.log
+        run: |
+          set -o pipefail
+          make -C generational snapshot 2>&1 | tee snapshot.log
+
+      - name: Build verified_gc runtime
+        id: verified_gc_build
+        if: steps.snapshot.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          make -C generational/ocaml-integration setup 2>&1 | tee verified_gc_build.log
+
+      - name: Run verified_gc smoke tests
+        id: verified_gc_tests
+        if: steps.verified_gc_build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          make -C generational/ocaml-integration/tests test \
+            OCAMLC="$PWD/generational/ocaml-integration/ocaml-4.14-unchanged/_install/bin/ocamlc" \
+            VERIFIED_GEN_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-verified-gen/runtime/ocamlrun" \
+            UNCHANGED_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-unchanged/runtime/ocamlrun" \
+            2>&1 | tee verified_gc_tests.log
 
       - name: Report results
         if: always()
@@ -45,29 +79,65 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Step | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Verify | ${{ steps.verify.outcome }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Extract | ${{ steps.extract.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GC verification | ${{ steps.verify.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SPOT verification | ${{ steps.spot.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Extraction | ${{ steps.extract.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Generational snapshot | ${{ steps.snapshot.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| verified_gc build | ${{ steps.verified_gc_build.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| verified_gc tests | ${{ steps.verified_gc_tests.outcome }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.verify.outcome }}" != "success" ]; then
-            echo "<details><summary>Verification errors</summary>" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            grep -i "error\|failed" verify.log | tail -30 >> $GITHUB_STEP_SUMMARY || true
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "</details>" >> $GITHUB_STEP_SUMMARY
-          fi
+
+          summarize_failure() {
+            step_name="$1"
+            outcome="$2"
+            log_file="$3"
+
+            if [ "$outcome" != "success" ] && [ -f "$log_file" ]; then
+              echo "<details><summary>$step_name failures</summary>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              grep -E "(Error|error|Warning|warning|Admitted|admitted|failed|Failed)" "$log_file" | tail -100 >> $GITHUB_STEP_SUMMARY || tail -100 "$log_file" >> $GITHUB_STEP_SUMMARY || true
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "</details>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          }
+
+          summarize_failure "GC verification" "${{ steps.verify.outcome }}" verify.log
+          summarize_failure "SPOT verification" "${{ steps.spot.outcome }}" spot.log
+          summarize_failure "Extraction" "${{ steps.extract.outcome }}" extract.log
+          summarize_failure "Generational snapshot" "${{ steps.snapshot.outcome }}" snapshot.log
+          summarize_failure "verified_gc build" "${{ steps.verified_gc_build.outcome }}" verified_gc_build.log
+          summarize_failure "verified_gc tests" "${{ steps.verified_gc_tests.outcome }}" verified_gc_tests.log
 
       - name: Upload logs
-        if: failure() || steps.verify.outcome != 'success'
+        if: |
+          always() && (
+            steps.verify.outcome != 'success' ||
+            steps.spot.outcome != 'success' ||
+            steps.extract.outcome != 'success' ||
+            steps.snapshot.outcome != 'success' ||
+            steps.verified_gc_build.outcome != 'success' ||
+            steps.verified_gc_tests.outcome != 'success'
+          )
         uses: actions/upload-artifact@v4
         with:
           name: nightly-logs
           path: |
             verify.log
+            spot.log
             extract.log
             snapshot.log
+            verified_gc_build.log
+            verified_gc_tests.log
           retention-days: 14
 
-      - name: Fail if verification failed
-        if: steps.verify.outcome != 'success'
+      - name: Fail if any step failed
+        if: |
+          steps.verify.outcome != 'success' ||
+          steps.spot.outcome != 'success' ||
+          steps.extract.outcome != 'success' ||
+          steps.snapshot.outcome != 'success' ||
+          steps.verified_gc_build.outcome != 'success' ||
+          steps.verified_gc_tests.outcome != 'success'
         run: exit 1

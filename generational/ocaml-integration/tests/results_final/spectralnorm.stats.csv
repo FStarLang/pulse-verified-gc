@@ -1,0 +1,3 @@
+benchmark,runtime,total_allocated_words,minor_words,major_words,promoted_words,minor_collections,major_collections,forced_major_collections,heap_words,top_heap_words,rss_mb
+spectralnorm,verified-gen,400043844,400019197,24647,0,1525,23,0,126976,126976,266.508
+spectralnorm,stock-ocaml,400043844,400019197,33869,9222,1528,7,1,61440,188416,4.605

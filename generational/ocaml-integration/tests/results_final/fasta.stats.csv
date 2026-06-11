@@ -1,0 +1,3 @@
+benchmark,runtime,total_allocated_words,minor_words,major_words,promoted_words,minor_collections,major_collections,forced_major_collections,heap_words,top_heap_words,rss_mb
+fasta,verified-gen,207824073,205279637,2544436,0,783,3,0,126976,126976,1040.371
+fasta,stock-ocaml,207824073,205279637,2548559,4123,785,1,0,5719040,5719040,24.023

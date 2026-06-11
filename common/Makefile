@@ -26,6 +26,7 @@ FSTAR_IMPL_FLAGS = --cache_checked_modules --report_assumes warn \
 SPEC_CHECKED = \
   lib/GC.Lib.Header.fst.checked \
   lib/GC.Lib.Address.fst.checked \
+  spec/GC.Spec.ZeroAddr.fsti.checked \
   spec/GC.Spec.Base.fsti.checked \
   spec/GC.Spec.Base.fst.checked \
   spec/GC.Spec.Heap.fsti.checked \
@@ -40,6 +41,7 @@ SPEC_CHECKED = \
 
 # Impl checked files
 IMPL_CHECKED = \
+  impl/GC.Impl.ArrayWord.fsti.checked \
   impl/GC.Impl.Heap.fst.checked \
   impl/GC.Impl.Object.fst.checked \
   impl/GC.Impl.Stack.fsti.checked \
@@ -66,10 +68,13 @@ lib/GC.Lib.Header.fst.checked: lib/GC.Lib.Header.fst
 lib/GC.Lib.Address.fst.checked: lib/GC.Lib.Address.fst \
 spec/GC.Spec.Base.fsti.checked
 
+spec/GC.Spec.ZeroAddr.fsti.checked: spec/GC.Spec.ZeroAddr.fsti
+
 spec/GC.Spec.Base.fsti.checked: spec/GC.Spec.Base.fsti
 
 spec/GC.Spec.Base.fst.checked: spec/GC.Spec.Base.fst \
-spec/GC.Spec.Base.fsti.checked
+spec/GC.Spec.Base.fsti.checked \
+spec/GC.Spec.ZeroAddr.fsti.checked
 
 spec/GC.Spec.Heap.fsti.checked: spec/GC.Spec.Heap.fsti \
 lib/GC.Lib.Header.fst.checked \
@@ -115,7 +120,12 @@ spec/GC.Spec.Base.fsti.checked
 
 # --- Impl dependencies ---
 
+impl/GC.Impl.ArrayWord.fsti.checked: impl/GC.Impl.ArrayWord.fsti \
+spec/GC.Spec.Heap.fsti.checked \
+spec/GC.Spec.Base.fsti.checked
+
 impl/GC.Impl.Heap.fst.checked: impl/GC.Impl.Heap.fst \
+impl/GC.Impl.ArrayWord.fsti.checked \
 spec/GC.Spec.Heap.fsti.checked \
 spec/GC.Spec.Base.fsti.checked
 
@@ -137,6 +147,9 @@ spec/%.checked: spec/%
 
 lib/%.checked: lib/%
 	$(FSTAR) $(FSTAR_SPEC_FLAGS) $<
+
+lib/GC.Lib.Header.fst.checked: lib/GC.Lib.Header.fst
+	$(FSTAR) $(FSTAR_SPEC_FLAGS) --z3rlimit 20 $<
 
 impl/%.checked: impl/%
 	$(FSTAR) $(FSTAR_IMPL_FLAGS) $<

@@ -1,21 +1,25 @@
 /* Minimal test harness for the verified mark-and-sweep GC.
  *
- * Provides the heap_size_u64 extern required by GC_Impl.c,
- * allocates a heap, initializes it, allocates objects, then collects.
+ * The heap size constant (GC_Spec_Base_heap_size_u64) is defined in
+ * GC_Spec_GC_Lib_Header_GC_Lib_Address.c (extracted from verified F* spec).
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include "compat.h"
 #include "GC_Impl.h"
-
-/* Configurable heap size (bytes).  GC_Impl.c references this as extern. */
-uint64_t heap_size_u64 = 1024;
+#include "internal/GC_Impl.h"
+#include "internal/GC_Spec_GC_Lib_Header_GC_Lib_Address.h"
 
 int main(void)
 {
-  size_t heap_bytes = (size_t)heap_size_u64;
+  GC_Spec_Base_zero_addr = 0;
+  zero_addr0 = 0;
+  GC_Spec_Base_heap_size_u64 = 1024;
+
+  size_t heap_bytes = (size_t)GC_Spec_Base_heap_size_u64;
 
   /* Allocate the heap (zero-initialized). */
   uint8_t *heap_data = calloc(heap_bytes, 1);
@@ -74,7 +78,7 @@ int main(void)
    * Without coalescing, the largest free block would be the original remainder
    * (heap_size/8 - 2 - 3 - 4 - 2 - 1 = 116 words for 1024-byte heap).
    * With coalescing, we get heap_size/8 - 2 = 126 words. */
-  uint64_t big_wosize = heap_size_u64 / 8 - 2; /* max possible allocation */
+  uint64_t big_wosize = GC_Spec_Base_heap_size_u64 / 8 - 2; /* max possible allocation */
   K___uint64_t_uint64_t r4 = allocate(heap, result_fp, big_wosize);
   printf("  alloc(%llu) after GC: fp=%llu, obj=%llu\n",
          (unsigned long long)big_wosize,

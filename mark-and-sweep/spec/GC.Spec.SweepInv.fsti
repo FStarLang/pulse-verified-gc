@@ -31,11 +31,11 @@ val sweep_post : heap -> heap -> U64.t -> prop
 /// ---------------------------------------------------------------------------
 
 val obj_in_objects_intro : (obj: obj_addr) -> (g: heap) ->
-  Lemma (requires Seq.mem obj (objects 0UL g))
+  Lemma (requires Seq.mem obj (objects zero_addr g))
         (ensures obj_in_objects obj g)
 
 val fp_valid_intro : (fp: obj_addr) -> (g: heap) ->
-  Lemma (requires Seq.mem fp (objects 0UL g))
+  Lemma (requires Seq.mem fp (objects zero_addr g))
         (ensures fp_valid fp g)
 
 /// fp_valid holds trivially when fp is not a pointer field (e.g., 0UL)
@@ -56,14 +56,14 @@ val obj_in_objects_elim : (obj: U64.t) -> (g: heap) ->
   Lemma (requires obj_in_objects obj g)
         (ensures U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\
                  U64.v obj % U64.v mword == 0 /\
-                 Seq.mem (obj <: obj_addr) (objects 0UL g))
+                 Seq.mem (obj <: obj_addr) (objects zero_addr g))
 
 val fp_valid_elim : (fp: U64.t) -> (g: heap) ->
   Lemma (requires fp_valid fp g)
         (ensures is_pointer_field fp ==>
                   (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
                    U64.v fp % U64.v mword == 0 /\
-                   Seq.mem (fp <: obj_addr) (objects 0UL g)))
+                   Seq.mem (fp <: obj_addr) (objects zero_addr g)))
 
 /// ---------------------------------------------------------------------------
 /// Sweep postcondition: introduction and elimination
@@ -71,7 +71,7 @@ val fp_valid_elim : (fp: U64.t) -> (g: heap) ->
 
 val sweep_post_intro : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
   Lemma (requires well_formed_heap g_post /\
-                  objects 0UL g_post == objects 0UL g_pre /\
+                  objects zero_addr g_post == objects zero_addr g_pre /\
                   fp_valid new_fp g_post)
         (ensures sweep_post g_pre g_post new_fp)
 
@@ -81,7 +81,7 @@ val sweep_post_elim_wfh : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
 
 val sweep_post_elim_objects : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
   Lemma (requires sweep_post g_pre g_post new_fp)
-        (ensures objects 0UL g_post == objects 0UL g_pre)
+        (ensures objects zero_addr g_post == objects zero_addr g_pre)
 
 val sweep_post_elim_fp : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
   Lemma (requires sweep_post g_pre g_post new_fp)
@@ -92,18 +92,18 @@ val sweep_post_elim_fp : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
 /// ---------------------------------------------------------------------------
 
 val fp_valid_transfer : (fp: U64.t) -> (g1: heap) -> (g2: heap) ->
-  Lemma (requires fp_valid fp g1 /\ objects 0UL g2 == objects 0UL g1)
+  Lemma (requires fp_valid fp g1 /\ objects zero_addr g2 == objects zero_addr g1)
         (ensures fp_valid fp g2)
 
 val obj_in_objects_transfer : (obj: U64.t) -> (g1: heap) -> (g2: heap) ->
-  Lemma (requires obj_in_objects obj g1 /\ objects 0UL g2 == objects 0UL g1)
+  Lemma (requires obj_in_objects obj g1 /\ objects zero_addr g2 == objects zero_addr g1)
         (ensures obj_in_objects obj g2)
 
-/// Initial loop invariant: when objects from 0 is non-empty and 8 < heap_size,
-/// the head object (at address 8) is in the objects list
+/// Initial loop invariant: when objects from zero_addr is non-empty,
+/// the head object (at f_address zero_addr) is in the objects list
 val obj_in_objects_head : (g: heap) ->
-  Lemma (requires Seq.length (objects 0UL g) > 0 /\ heap_size > 8)
-        (ensures obj_in_objects (U64.uint_to_t 8) g)
+  Lemma (requires Seq.length (objects zero_addr g) > 0)
+        (ensures obj_in_objects (f_address zero_addr) g)
 
 /// ---------------------------------------------------------------------------
 /// Heap density: walk continues at every interior position
@@ -119,13 +119,13 @@ val heap_objects_dense : heap -> prop
 val heap_objects_dense_intro : (g: heap) ->
   Lemma (requires (forall (start: hp_addr).
                     U64.v start + 8 < heap_size ==>
-                    Seq.mem (f_address start) (objects 0UL g) ==>
+                    Seq.mem (f_address start) (objects zero_addr g) ==>
                     Seq.length (objects start g) > 0 ==>
                     (let wz = getWosize (read_word g start) in
                      let next = U64.v start + ((U64.v wz + 1) * 8) in
                      next + 8 < heap_size ==>
                      Seq.length (objects (U64.uint_to_t next) g) > 0 /\
-                     Seq.mem (f_address (U64.uint_to_t next)) (objects 0UL g))))
+                     Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g))))
         (ensures heap_objects_dense g)
 
 /// Step lemma: density + object at start in global list + objects at start > 0
@@ -133,7 +133,7 @@ val heap_objects_dense_intro : (g: heap) ->
 val objects_dense_step : (start: hp_addr) -> (g: heap) ->
   Lemma (requires heap_objects_dense g /\
                   U64.v start + 8 < heap_size /\
-                  Seq.mem (f_address start) (objects 0UL g) /\
+                  Seq.mem (f_address start) (objects zero_addr g) /\
                   Seq.length (objects start g) > 0)
         (ensures (let wz = getWosize (read_word g start) in
                   let next = U64.v start + ((U64.v wz + 1) * 8) in
@@ -144,7 +144,7 @@ val objects_dense_step : (start: hp_addr) -> (g: heap) ->
 val objects_dense_obj_in : (start: hp_addr) -> (g: heap) ->
   Lemma (requires heap_objects_dense g /\
                   U64.v start + 8 < heap_size /\
-                  Seq.mem (f_address start) (objects 0UL g) /\
+                  Seq.mem (f_address start) (objects zero_addr g) /\
                   Seq.length (objects start g) > 0)
         (ensures (let wz = getWosize (read_word g start) in
                   let next = U64.v start + ((U64.v wz + 1) * 8) in
@@ -156,7 +156,7 @@ val objects_dense_obj_in : (start: hp_addr) -> (g: heap) ->
 /// are determined by the same header words.
 val heap_objects_dense_transfer : (g1: heap) -> (g2: heap) ->
   Lemma (requires heap_objects_dense g1 /\
-                  objects 0UL g2 == objects 0UL g1 /\
+                  objects zero_addr g2 == objects zero_addr g1 /\
                   (forall (p: hp_addr). getWosize (read_word g2 p) == getWosize (read_word g1 p)))
         (ensures heap_objects_dense g2)
 
@@ -175,7 +175,7 @@ val color_change_preserves_density : (obj: obj_addr) -> (g: heap) -> (c: color) 
 /// This avoids needing suffix preservation — we only need global membership.
 val member_implies_objects_nonempty : (h: hp_addr{U64.v h + 8 < heap_size}) -> (g: heap) ->
   Lemma (requires well_formed_heap g /\
-                  Seq.mem (f_address h) (objects 0UL g))
+                  Seq.mem (f_address h) (objects zero_addr g))
         (ensures Seq.length (objects h g) > 0)
 
 /// ---------------------------------------------------------------------------
@@ -239,7 +239,7 @@ val objects_white_before : nat -> heap -> prop
 
 /// Vacuously true at the start (no objects before position 0)
 val objects_white_before_zero : (g: heap) ->
-  Lemma (ensures objects_white_before 0 g)
+  Lemma (ensures objects_white_before (U64.v zero_addr) g)
 
 /// Step: extend swept region from h_addr to h_addr + (wz+1)*8
 /// Requires:
@@ -253,27 +253,27 @@ val objects_white_before_zero : (g: heap) ->
 val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: heap) ->
   Lemma (requires
     objects_white_before (U64.v h_addr) g_pre /\
-    objects 0UL g_post == objects 0UL g_pre /\
+    objects zero_addr g_post == objects zero_addr g_pre /\
     well_formed_heap g_post /\
     U64.v h_addr + 8 < heap_size /\
     (is_white (f_address h_addr) g_post \/ is_blue (f_address h_addr) g_post) /\
     headers_preserved_before (U64.v h_addr) g_post g_pre /\
     getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
-    Seq.mem (f_address h_addr) (objects 0UL g_post))
+    Seq.mem (f_address h_addr) (objects zero_addr g_post))
   (ensures objects_white_before 
     (U64.v h_addr + ((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
 
 /// Final: when pos covers all of heap_size, all objects are white or blue
 val objects_white_before_all : (pos: nat) -> (g: heap) ->
   Lemma (requires objects_white_before pos g /\ pos >= heap_size)
-        (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> (is_white x g \/ is_blue x g))
+        (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
 
 /// Exit variant: when pos + 8 >= heap_size, all objects are white or blue.
 /// At loop exit we have pos + mword >= heap_size, meaning no more objects can start at pos.
 /// All objects have hd_address(x) + 8 < heap_size (from hd_address_bounds), so hd_address(x) < pos.
 val objects_white_before_exit : (pos: nat) -> (g: heap) ->
   Lemma (requires objects_white_before pos g /\ pos + 8 >= heap_size)
-        (ensures forall (x: obj_addr). Seq.mem x (objects 0UL g) ==> (is_white x g \/ is_blue x g))
+        (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
 
 /// ---------------------------------------------------------------------------
 /// No Gray Objects
@@ -287,18 +287,18 @@ val no_gray_objects : heap -> prop
 /// then the color at h_addr is the same, so no-gray transfers.
 val no_gray_at_preserved : (obj: obj_addr) -> (g_init: heap) -> (g_cur: heap) ->
   Lemma (requires no_gray_objects g_init /\
-                  Seq.mem obj (objects 0UL g_init) /\
+                  Seq.mem obj (objects zero_addr g_init) /\
                   read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
         (ensures ~(is_gray obj g_cur))
 
 /// Eliminate: extract per-object non-gray from no_gray_objects
 val no_gray_elim : (obj: obj_addr) -> (g: heap) ->
-  Lemma (requires no_gray_objects g /\ Seq.mem obj (objects 0UL g))
+  Lemma (requires no_gray_objects g /\ Seq.mem obj (objects zero_addr g))
         (ensures ~(is_gray obj g))
 
 /// No gray from empty-stack mark_inv: all gray objects are on (empty) stack
 val no_gray_intro : (g: heap) ->
-  Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))
+  Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g))
         (ensures no_gray_objects g)
 
 /// set_object_color at h_addr preserves all headers before h_addr

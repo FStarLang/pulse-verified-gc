@@ -48,7 +48,7 @@ let rec fused_aux (g0: heap) (g: heap) (objs: seq obj_addr)
 
 /// Top-level fused sweep+coalesce: walk all objects, build fresh free list
 let fused_sweep_coalesce (g: heap) : GTot (heap & U64.t) =
-  fused_aux g g (objects 0UL g) 0UL 0 0UL
+  fused_aux g g (objects zero_addr g) 0UL 0 0UL
 
 /// ---------------------------------------------------------------------------
 /// Unfolding lemmas

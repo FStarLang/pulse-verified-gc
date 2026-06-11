@@ -19,6 +19,7 @@ module SpecAlloc = GC.Spec.Allocator
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// Allocate an object of wosize words from the free list.
 ///
@@ -35,6 +36,25 @@ module SI = GC.Spec.SweepInv
 fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's)
+  returns res: (U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 **
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+          s2 == spec_res.heap_out /\
+          fst res == spec_res.fp_out /\
+          snd res == spec_res.obj_out)
+
+/// Allocate with weaker precondition: only requires well_formed_heap_part1
+/// + fl_valid + fl_chain_terminates. Suitable for use during promotion where
+/// full well_formed_heap (part2: pointer closure) may be temporarily violated.
+///
+/// The implementation is identical to `allocate` — the allocator only reads
+/// headers and free-list links, never inspecting object pointer fields.
+
+fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap_part1 's /\
+                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
     pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in

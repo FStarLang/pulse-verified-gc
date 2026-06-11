@@ -58,10 +58,10 @@ let flush_blue_length g fb rw fp =
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let objects_mem_at_zero g =
-  objects_nonempty_head 0UL g;
-  let objs = objects 0UL g in
+  objects_nonempty_head zero_addr g;
+  let objs = objects zero_addr g in
   Seq.Properties.cons_head_tail objs;
-  Seq.Properties.mem_cons (f_address 0UL) (Seq.tail objs)
+  Seq.Properties.mem_cons (f_address zero_addr) (Seq.tail objs)
 #pop-options
 
 let coalesce_unfold g = ()

@@ -390,7 +390,7 @@ val unpack (g: heap) : GTot (option heap_l)
 
 /// Bridge: pointer_closed implies unpack succeeds
 val pointer_closed_implies_unpack (g: heap) : Lemma
-  (requires pointer_closed (unpack_objects g 0UL) = true)
+  (requires pointer_closed (unpack_objects g zero_addr) = true)
   (ensures Some? (unpack g))
 
 /// Lookup an object by address

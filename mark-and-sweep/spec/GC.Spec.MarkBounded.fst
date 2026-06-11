@@ -31,13 +31,6 @@ module SweepInv = GC.Spec.SweepInv
 /// Bounded Stack Properties (no gray_objects_on_stack)
 /// ---------------------------------------------------------------------------
 
-/// Stack properties without the "all grays on stack" requirement.
-/// With overflow, gray objects may exist in the heap but not on the stack.
-let bounded_stack_props (g: heap) (st: seq obj_addr) : prop =
-  stack_elements_valid g st /\
-  stack_points_to_gray g st /\
-  stack_no_dups st
-
 /// bounded_stack_props is weaker than stack_props
 let bounded_from_full (g: heap) (st: seq obj_addr)
   : Lemma (requires stack_props g st)
@@ -48,54 +41,9 @@ let bounded_from_full (g: heap) (st: seq obj_addr)
 /// Counting non-black objects (termination measure)
 /// ---------------------------------------------------------------------------
 
-/// Count objects that are NOT black in a sequence.
-let rec count_non_black_in (g: heap) (objs: seq obj_addr)
-  : GTot nat (decreases Seq.length objs)
-  = if Seq.length objs = 0 then 0
-    else
-      let obj = Seq.head objs in
-      let rest = count_non_black_in g (Seq.tail objs) in
-      if is_black obj g then rest
-      else rest + 1
-
-/// Count non-black objects in the full objects list.
-let count_non_black (g: heap) : GTot nat =
-  count_non_black_in g (objects 0UL g)
-
 /// ---------------------------------------------------------------------------
 /// Push children with bounded stack capacity
 /// ---------------------------------------------------------------------------
-
-/// Like push_children, but skips push when stack is at capacity.
-/// The child is still made gray — it stays gray in the heap for later rescan.
-let rec push_children_bounded
-  (g: heap) (st: seq obj_addr) (obj: obj_addr)
-  (i: U64.t{U64.v i >= 1}) (ws: U64.t) (cap: nat)
-  : GTot (heap & seq obj_addr) (decreases (U64.v ws - U64.v i))
-  =
-  if U64.v i > U64.v ws then (g, st)
-  else
-    let v = HeapGraph.get_field g obj i in
-    let (g', st') =
-      if HeapGraph.is_pointer_field v then begin
-        HeapGraph.is_pointer_field_is_obj_addr v;
-        let child_raw : obj_addr = v in
-        let child = resolve_object child_raw g in
-        if is_white child g then
-          let g' = makeGray child g in
-          if Seq.length st < cap then
-            (g', Seq.cons child st)
-          else
-            (g', st)  // overflow: child gray in heap, not on stack
-        else
-          (g, st)
-      end else
-        (g, st)
-    in
-    if U64.v i < U64.v ws then
-      push_children_bounded g' st' obj (U64.add i 1UL) ws cap
-    else
-      (g', st')
 
 /// The heap output of push_children_bounded is identical to push_children.
 /// Both perform the same makeGray mutations; only the stack differs.
@@ -104,7 +52,6 @@ let rec push_children_bounded_heap_eq
   (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t) (cap: nat)
   : Lemma (ensures fst (push_children_bounded g st_b obj i ws cap) ==
                    fst (push_children g st_u obj i ws))
-          (decreases (U64.v ws - U64.v i))
   =
   if U64.v i > U64.v ws then ()
   else
@@ -150,21 +97,6 @@ let rec push_children_bounded_heap_eq
 /// Bounded mark step
 /// ---------------------------------------------------------------------------
 
-/// Process one gray object with bounded stack: pop, blacken, push children (bounded).
-let mark_step_bounded (g: heap) (st: seq obj_addr) (cap: nat)
-  : GTot (heap & seq obj_addr)
-  =
-  if Seq.length st = 0 then (g, st)
-  else
-    let obj = Seq.head st in
-    let st' = Seq.tail st in
-    let g' = makeBlack obj g in
-    let ws = wosize_of_object obj g in
-    if is_no_scan obj g then
-      (g', st')
-    else
-      push_children_bounded g' st' obj 1UL ws cap
-
 /// The heap output of mark_step_bounded is identical to mark_step
 /// (given stacks with the same head, since both pop the head).
 let mark_step_bounded_heap_eq (g: heap) (st_b: seq obj_addr) (st_u: seq obj_addr) (cap: nat)
@@ -182,44 +114,15 @@ let mark_step_bounded_heap_eq (g: heap) (st_b: seq obj_addr) (st_u: seq obj_addr
 /// Inner mark loop (drain stack)
 /// ---------------------------------------------------------------------------
 
-let rec mark_inner_loop (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
-  : GTot (heap & seq obj_addr) (decreases fuel)
-  =
-  if fuel = 0 || Seq.length st = 0 then (g, st)
-  else
-    let (g', st') = mark_step_bounded g st cap in
-    mark_inner_loop g' st' cap (fuel - 1)
-
 /// ---------------------------------------------------------------------------
 /// Heap rescan: linear scan for remaining gray objects
 /// ---------------------------------------------------------------------------
-
-/// Walk the objects list, collecting gray objects onto the stack (up to cap).
-let rec rescan_heap (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
-  : GTot (seq obj_addr) (decreases Seq.length objs)
-  =
-  if Seq.length objs = 0 then st
-  else
-    let obj = Seq.head objs in
-    let st' =
-      if is_gray obj g && not (Seq.mem obj st) && Seq.length st < cap then
-        Seq.cons obj st
-      else
-        st
-    in
-    rescan_heap g (Seq.tail objs) st' cap
 
 /// ---------------------------------------------------------------------------
 /// Key lemmas: push_children_bounded preserves bounded_stack_props
 /// ---------------------------------------------------------------------------
 
 /// push_children_bounded respects stack capacity.
-val push_children_bounded_cap :
-  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
-  Lemma (ensures Seq.length (snd (push_children_bounded g st obj i ws cap)) <= (if Seq.length st > cap then Seq.length st else cap))
-        (decreases (U64.v ws - U64.v i))
-
 let rec push_children_bounded_cap g st obj i ws cap =
   if U64.v i > U64.v ws then ()
   else begin
@@ -261,20 +164,6 @@ let spg_preserved_other_color (g g': heap) (st: seq obj_addr) (child: obj_addr) 
 /// Combined push_children_bounded preserves bounded_stack_props
 /// Proved by induction on field index, mirroring push_children_preserves_stack_props.
 #push-options "--z3rlimit 800 --fuel 2 --ifuel 1"
-val push_children_bounded_preserves_bsp :
-  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
-  Lemma (requires well_formed_heap g /\ is_black obj g /\
-                  Seq.mem obj (objects 0UL g) /\
-                  bounded_stack_props g st /\
-                  ~(Seq.mem obj st) /\
-                  U64.v ws <= U64.v (wosize_of_object obj g) /\
-                  U64.v (wosize_of_object obj g) < pow2 54 /\
-                  U64.v (hd_address obj) + U64.v mword + U64.v ws * U64.v mword <= heap_size)
-        (ensures (let (g', st') = push_children_bounded g st obj i ws cap in
-                  bounded_stack_props g' st' /\ well_formed_heap g'))
-        (decreases (U64.v ws - U64.v i))
-
 let rec push_children_bounded_preserves_bsp g st obj i ws cap =
   if U64.v i > U64.v ws then ()
   else begin
@@ -296,7 +185,7 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
         field_read_implies_exists_pointing g obj wz (U64.sub i 1UL) child_raw;
         wf_field_target_in_objects g obj child_raw;
         wf_infix_wf g;
-        resolve_object_in_objects child_raw g (objects 0UL g);
+        resolve_object_in_objects child_raw g (objects zero_addr g);
 
         color_change_preserves_wf g child Header.Gray;
         color_change_preserves_objects g child Header.Gray;
@@ -311,7 +200,7 @@ let rec push_children_bounded_preserves_bsp g st obj i ws cap =
           assert (Seq.head st' == child);
           Seq.lemma_tl child st;
           assert (Seq.tail st' == st);
-          assert (Seq.mem child (objects 0UL g'));
+          assert (Seq.mem child (objects zero_addr g'));
           assert (stack_elements_valid g' st);
           assert (stack_elements_valid g' st');
           assert (~(Seq.mem child st));
@@ -372,14 +261,14 @@ let bounded_stack_head_is_gray (g: heap) (st: seq obj_addr)
   : Lemma (requires bounded_stack_props g st /\ Seq.length st > 0)
           (ensures (let obj = Seq.head st in
                     is_gray obj g /\
-                    Seq.mem obj (objects 0UL g)))
+                    Seq.mem obj (objects zero_addr g)))
   = ()
 
 #push-options "--z3rlimit 800 --fuel 2 --ifuel 1"
 let mark_step_bounded_preserves_bsp
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                  Seq.length (objects 0UL g) > 0 /\ SweepInv.heap_objects_dense g)
+                  Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g)
         (ensures (let (g', st') = mark_step_bounded g st cap in
                   well_formed_heap g' /\ bounded_stack_props g' st'))
   = let obj = Seq.head st in
@@ -441,12 +330,6 @@ let mark_step_bounded_preserves_bsp
 /// ---------------------------------------------------------------------------
 
 /// push_children_bounded preserves the objects list (only does makeGray)
-val push_children_bounded_preserves_objects :
-  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
-  Lemma (ensures objects 0UL (fst (push_children_bounded g st obj i ws cap)) == objects 0UL g)
-        (decreases (U64.v ws - U64.v i))
-
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec push_children_bounded_preserves_objects g st obj i ws cap =
   if U64.v i > U64.v ws then ()
@@ -486,7 +369,7 @@ let rec push_children_bounded_preserves_objects g st obj i ws cap =
 let mark_step_bounded_preserves_objects
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st)
-        (ensures objects 0UL (fst (mark_step_bounded g st cap)) == objects 0UL g)
+        (ensures objects zero_addr (fst (mark_step_bounded g st cap)) == objects zero_addr g)
   = let obj = Seq.head st in
     bounded_stack_head_is_gray g st;
     makeBlack_eq obj g;
@@ -499,13 +382,6 @@ let mark_step_bounded_preserves_objects
 /// ---------------------------------------------------------------------------
 /// Density preservation through mark_step_bounded
 /// ---------------------------------------------------------------------------
-
-val push_children_bounded_preserves_density :
-  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
-  Lemma (requires SweepInv.heap_objects_dense g)
-        (ensures SweepInv.heap_objects_dense (fst (push_children_bounded g st obj i ws cap)))
-        (decreases (U64.v ws - U64.v i))
 
 let rec push_children_bounded_preserves_density g st obj i ws cap =
   if U64.v i > U64.v ws then ()
@@ -561,7 +437,6 @@ let mark_step_bounded_preserves_density
 let rec count_non_black_monotone (g g': heap) (objs: seq obj_addr)
   : Lemma (requires (forall (x: obj_addr). is_black x g ==> is_black x g'))
           (ensures count_non_black_in g' objs <= count_non_black_in g objs)
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else count_non_black_monotone g g' (Seq.tail objs)
 
@@ -585,7 +460,6 @@ let makeBlack_preserves_other_black (obj x: obj_addr) (g: heap)
 let rec count_non_black_in_has_nonblack (g: heap) (obj: obj_addr) (objs: seq obj_addr)
   : Lemma (requires Seq.mem obj objs /\ ~(is_black obj g))
           (ensures count_non_black_in g objs > 0)
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else if Seq.head objs = obj then ()
     else count_non_black_in_has_nonblack g obj (Seq.tail objs)
@@ -595,7 +469,6 @@ let rec count_non_black_in_has_nonblack (g: heap) (obj: obj_addr) (objs: seq obj
 let rec count_non_black_makeBlack (g: heap) (obj: obj_addr) (objs: seq obj_addr)
   : Lemma (requires is_gray obj g /\ Seq.mem obj objs)
           (ensures count_non_black_in (makeBlack obj g) objs < count_non_black_in g objs)
-          (decreases Seq.length objs)
   = let g' = makeBlack obj g in
     is_gray_iff obj g; is_black_iff obj g;
     if Seq.length objs = 0 then ()
@@ -677,7 +550,6 @@ let makeGray_white_preserves_nonblack (child x: obj_addr) (g: heap)
 let rec count_non_black_makeGray_white (g: heap) (child: obj_addr) (objs: seq obj_addr)
   : Lemma (requires is_white child g)
           (ensures count_non_black_in (makeGray child g) objs == count_non_black_in g objs)
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
       let hd = Seq.head objs in
@@ -687,13 +559,6 @@ let rec count_non_black_makeGray_white (g: heap) (child: obj_addr) (objs: seq ob
        else makeGray_white_preserves_nonblack child hd g);
       count_non_black_makeGray_white g child (Seq.tail objs)
     end
-
-val push_children_bounded_count_non_black :
-  (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) -> (cap: nat) ->
-  Lemma (ensures (let (g', _) = push_children_bounded g st obj i ws cap in
-                  count_non_black_in g' (objects 0UL g) == count_non_black_in g (objects 0UL g)))
-        (decreases (U64.v ws - U64.v i))
 
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec push_children_bounded_count_non_black g st obj i ws cap =
@@ -708,7 +573,7 @@ let rec push_children_bounded_count_non_black g st obj i ws cap =
         let g' = makeGray child g in
         makeGray_eq child g;
         color_change_preserves_objects g child Header.Gray;
-        count_non_black_makeGray_white g child (objects 0UL g);
+        count_non_black_makeGray_white g child (objects zero_addr g);
         let st' = if Seq.length st < cap then Seq.cons child st else st in
         if U64.v i < U64.v ws then
           push_children_bounded_count_non_black g' st' obj (U64.add i 1UL) ws cap
@@ -729,7 +594,7 @@ let rec push_children_bounded_count_non_black g st obj i ws cap =
 let mark_step_bounded_decreases_non_black
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                  Seq.length (objects 0UL g) > 0 /\ SweepInv.heap_objects_dense g)
+                  Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g)
         (ensures count_non_black (fst (mark_step_bounded g st cap)) < count_non_black g)
   = let obj = Seq.head st in
     bounded_stack_head_is_gray g st;
@@ -740,22 +605,22 @@ let mark_step_bounded_decreases_non_black
     is_gray_iff obj g; is_black_iff obj g;
     // objects preserved by makeBlack
     color_change_preserves_objects g obj Header.Black;
-    assert (objects 0UL g1 == objects 0UL g);
+    assert (objects zero_addr g1 == objects zero_addr g);
     // makeBlack: count drops
-    count_non_black_makeBlack g obj (objects 0UL g);
-    assert (count_non_black_in g1 (objects 0UL g) < count_non_black_in g (objects 0UL g));
+    count_non_black_makeBlack g obj (objects zero_addr g);
+    assert (count_non_black_in g1 (objects zero_addr g) < count_non_black_in g (objects zero_addr g));
     if is_no_scan obj g then begin
       // g_final = g1, objects unchanged
-      assert (count_non_black g1 == count_non_black_in g1 (objects 0UL g1));
-      assert (count_non_black g == count_non_black_in g (objects 0UL g));
+      assert (count_non_black g1 == count_non_black_in g1 (objects zero_addr g1));
+      assert (count_non_black g == count_non_black_in g (objects zero_addr g));
       ()
     end else begin
       push_children_bounded_count_non_black g1 (Seq.tail st) obj 1UL ws cap;
       push_children_bounded_preserves_objects g1 (Seq.tail st) obj 1UL ws cap;
       let (g_final, _) = push_children_bounded g1 (Seq.tail st) obj 1UL ws cap in
-      assert (count_non_black_in g_final (objects 0UL g1) == count_non_black_in g1 (objects 0UL g1));
-      assert (objects 0UL g_final == objects 0UL g1);
-      assert (objects 0UL g1 == objects 0UL g);
+      assert (count_non_black_in g_final (objects zero_addr g1) == count_non_black_in g1 (objects zero_addr g1));
+      assert (objects zero_addr g_final == objects zero_addr g1);
+      assert (objects zero_addr g1 == objects zero_addr g);
       ()
     end
 
@@ -766,7 +631,7 @@ let mark_step_bounded_decreases_non_black
 /// Helper: adding a gray object to a bounded stack preserves bounded_stack_props
 let cons_gray_preserves_bsp (g: heap) (obj: obj_addr) (st: seq obj_addr)
   : Lemma (requires bounded_stack_props g st /\ is_gray obj g /\
-                   Seq.mem obj (objects 0UL g) /\ ~(Seq.mem obj st))
+                   Seq.mem obj (objects zero_addr g) /\ ~(Seq.mem obj st))
           (ensures bounded_stack_props g (Seq.cons obj st))
   = let st' = Seq.cons obj st in
     // stack_elements_valid: obj ∈ objects, plus st was valid → cons valid
@@ -786,9 +651,8 @@ let cons_gray_preserves_bsp (g: heap) (obj: obj_addr) (st: seq obj_addr)
 let rec rescan_heap_bsp_gen
   (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
   : Lemma (requires bounded_stack_props g st /\
-                   (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects 0UL g)))
+                   (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects zero_addr g)))
           (ensures bounded_stack_props g (rescan_heap g objs st cap))
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
       let obj = Seq.head objs in
@@ -809,7 +673,7 @@ let empty_bounded_stack_props (g: heap)
 
 let rescan_heap_bounded_stack_props
   (g: heap) (objs: seq obj_addr) (cap: nat)
-  : Lemma (requires (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects 0UL g)))
+  : Lemma (requires (forall (x: obj_addr). Seq.mem x objs ==> Seq.mem x (objects zero_addr g)))
           (ensures bounded_stack_props g (rescan_heap g objs Seq.empty cap))
   = empty_bounded_stack_props g;
     rescan_heap_bsp_gen g objs Seq.empty cap
@@ -818,7 +682,6 @@ let rescan_heap_bounded_stack_props
 let rec rescan_heap_monotone
   (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
   : Lemma (ensures Seq.length (rescan_heap g objs st cap) >= Seq.length st)
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
       let obj = Seq.head objs in
@@ -835,7 +698,6 @@ let rec rescan_heap_cap_bound
   (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
   : Lemma (requires Seq.length st <= cap)
           (ensures Seq.length (rescan_heap g objs st cap) <= cap)
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
       let obj = Seq.head objs in
@@ -855,7 +717,6 @@ let rec rescan_complete_gen
           (ensures (Seq.length (rescan_heap g objs st cap) = 0 ==>
                     (Seq.length st = 0 /\
                      (forall (obj: obj_addr). Seq.mem obj objs ==> ~(is_gray obj g)))))
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
       let obj = Seq.head objs in
@@ -873,10 +734,10 @@ let rec rescan_complete_gen
 let rescan_complete
   (g: heap) (cap: nat)
   : Lemma (requires cap > 0)
-          (ensures (let st = rescan_heap g (objects 0UL g) Seq.empty cap in
+          (ensures (let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
                   Seq.length st = 0 ==>
-                  (forall (obj: obj_addr). Seq.mem obj (objects 0UL g) ==> ~(is_gray obj g))))
-  = rescan_complete_gen g (objects 0UL g) Seq.empty cap
+                  (forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g))))
+  = rescan_complete_gen g (objects zero_addr g) Seq.empty cap
 
 /// ---------------------------------------------------------------------------
 /// Inner loop invariants
@@ -886,15 +747,14 @@ let rescan_complete
 let rec mark_inner_loop_preserves_inv
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    Seq.length st <= cap /\ cap > 0)
           (ensures (let (g', st') = mark_inner_loop g st cap fuel in
                     well_formed_heap g' /\ bounded_stack_props g' st' /\
-                    Seq.length (objects 0UL g') > 0 /\
+                    Seq.length (objects zero_addr g') > 0 /\
                     SweepInv.heap_objects_dense g' /\
                     Seq.length st' <= cap))
-          (decreases fuel)
   = if fuel = 0 || Seq.length st = 0 then ()
     else begin
       mark_step_bounded_preserves_bsp g st cap;
@@ -919,10 +779,9 @@ let rec mark_inner_loop_preserves_inv
 let rec mark_inner_loop_preserves_objects
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
-          (ensures objects 0UL (fst (mark_inner_loop g st cap fuel)) == objects 0UL g)
-          (decreases fuel)
+          (ensures objects zero_addr (fst (mark_inner_loop g st cap fuel)) == objects zero_addr g)
   = if fuel = 0 || Seq.length st = 0 then ()
     else begin
       mark_step_bounded_preserves_bsp g st cap;
@@ -936,10 +795,9 @@ let rec mark_inner_loop_preserves_objects
 let rec mark_inner_loop_count_non_increasing
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
           (ensures count_non_black (fst (mark_inner_loop g st cap fuel)) <= count_non_black g)
-          (decreases fuel)
   = if fuel = 0 || Seq.length st = 0 then ()
     else begin
       mark_step_bounded_preserves_bsp g st cap;
@@ -958,7 +816,7 @@ let rec mark_inner_loop_count_non_increasing
 let mark_inner_loop_count_decreases
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    Seq.length st > 0 /\ fuel > 0)
           (ensures count_non_black (fst (mark_inner_loop g st cap fuel)) < count_non_black g)
@@ -973,11 +831,10 @@ let mark_inner_loop_count_decreases
 let rec mark_inner_loop_drains
   (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    fuel >= count_non_black g)
           (ensures Seq.length (snd (mark_inner_loop g st cap fuel)) = 0)
-          (decreases fuel)
   = if Seq.length st = 0 then ()
     else if fuel = 0 then begin
       // st non-empty but fuel = 0 → count_non_black g >= 1 but fuel >= count_non_black g
@@ -985,7 +842,7 @@ let rec mark_inner_loop_drains
       bounded_stack_head_is_gray g st;
       let obj = Seq.head st in
       is_gray_iff obj g; is_black_iff obj g;
-      count_non_black_in_has_nonblack g obj (objects 0UL g);
+      count_non_black_in_has_nonblack g obj (objects zero_addr g);
       ()
     end else begin
       mark_step_bounded_preserves_bsp g st cap;
@@ -1000,34 +857,20 @@ let rec mark_inner_loop_drains
 /// Top-level bounded mark: outer loop
 /// ---------------------------------------------------------------------------
 
-/// The full bounded mark: rescan → drain → rescan → ... until no grays.
-/// Termination: count_non_black strictly decreases each non-trivial iteration.
-let rec mark_bounded (g: heap) (cap: nat{cap > 0}) (fuel: nat)
-  : GTot heap (decreases fuel)
-  = if fuel = 0 then g
-    else
-      let st = rescan_heap g (objects 0UL g) Seq.empty cap in
-      if Seq.length st = 0 then g
-      else
-        let inner_fuel = count_non_black g in
-        let (g', _) = mark_inner_loop g st cap inner_fuel in
-        mark_bounded g' cap (fuel - 1)
-
 /// mark_bounded preserves well-formedness and density
 let rec mark_bounded_preserves_inv (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
           (ensures (let g' = mark_bounded g cap fuel in
                     well_formed_heap g' /\
-                    Seq.length (objects 0UL g') > 0 /\
+                    Seq.length (objects zero_addr g') > 0 /\
                     SweepInv.heap_objects_dense g'))
-          (decreases fuel)
   = if fuel = 0 then ()
     else begin
-      let st = rescan_heap g (objects 0UL g) Seq.empty cap in
-      rescan_heap_bounded_stack_props g (objects 0UL g) cap;
-      rescan_heap_cap_bound g (objects 0UL g) Seq.empty cap;
+      let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
+      rescan_heap_bounded_stack_props g (objects zero_addr g) cap;
+      rescan_heap_cap_bound g (objects zero_addr g) Seq.empty cap;
       if Seq.length st = 0 then ()
       else begin
         let inner_fuel = count_non_black g in
@@ -1041,15 +884,14 @@ let rec mark_bounded_preserves_inv (g: heap) (cap: nat{cap > 0}) (fuel: nat)
 /// mark_bounded preserves objects list
 let rec mark_bounded_preserves_objects (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
-          (ensures objects 0UL (mark_bounded g cap fuel) == objects 0UL g)
-          (decreases fuel)
+          (ensures objects zero_addr (mark_bounded g cap fuel) == objects zero_addr g)
   = if fuel = 0 then ()
     else begin
-      let st = rescan_heap g (objects 0UL g) Seq.empty cap in
-      rescan_heap_bounded_stack_props g (objects 0UL g) cap;
-      rescan_heap_cap_bound g (objects 0UL g) Seq.empty cap;
+      let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
+      rescan_heap_bounded_stack_props g (objects zero_addr g) cap;
+      rescan_heap_cap_bound g (objects zero_addr g) Seq.empty cap;
       if Seq.length st = 0 then ()
       else begin
         let inner_fuel = count_non_black g in
@@ -1063,19 +905,18 @@ let rec mark_bounded_preserves_objects (g: heap) (cap: nat{cap > 0}) (fuel: nat)
 /// count_non_black strictly decreases per non-trivial iteration
 let rec mark_bounded_count_decreases (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\ fuel > 0 /\
-                   Seq.length (rescan_heap g (objects 0UL g) Seq.empty cap) > 0)
+                   Seq.length (rescan_heap g (objects zero_addr g) Seq.empty cap) > 0)
           (ensures count_non_black (mark_bounded g cap fuel) < count_non_black g)
-          (decreases fuel)
-  = let st = rescan_heap g (objects 0UL g) Seq.empty cap in
-    rescan_heap_bounded_stack_props g (objects 0UL g) cap;
-    rescan_heap_cap_bound g (objects 0UL g) Seq.empty cap;
+  = let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
+    rescan_heap_bounded_stack_props g (objects zero_addr g) cap;
+    rescan_heap_cap_bound g (objects zero_addr g) Seq.empty cap;
     // st non-empty: head is gray (from bsp), gray is non-black → count_non_black > 0
     bounded_stack_head_is_gray g st;
     let obj = Seq.head st in
     is_gray_iff obj g; is_black_iff obj g;
-    count_non_black_in_has_nonblack g obj (objects 0UL g);
+    count_non_black_in_has_nonblack g obj (objects zero_addr g);
     let inner_fuel = count_non_black g in
     mark_inner_loop_preserves_inv g st cap inner_fuel;
     mark_inner_loop_preserves_objects g st cap inner_fuel;
@@ -1083,7 +924,7 @@ let rec mark_bounded_count_decreases (g: heap) (cap: nat{cap > 0}) (fuel: nat)
     let (g', _) = mark_inner_loop g st cap inner_fuel in
     if fuel = 1 then ()
     else begin
-      let st' = rescan_heap g' (objects 0UL g') Seq.empty cap in
+      let st' = rescan_heap g' (objects zero_addr g') Seq.empty cap in
       if Seq.length st' = 0 then ()
       else begin
         mark_bounded_count_decreases g' cap (fuel - 1)
@@ -1094,7 +935,6 @@ let rec mark_bounded_count_decreases (g: heap) (cap: nat{cap > 0}) (fuel: nat)
 let rec count_non_black_zero_not_gray (g: heap) (obj: obj_addr) (objs: seq obj_addr)
   : Lemma (requires count_non_black_in g objs = 0 /\ Seq.mem obj objs)
           (ensures ~(is_gray obj g))
-          (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else if Seq.head objs = obj then begin
       if is_black obj g then begin
@@ -1109,9 +949,9 @@ let rec count_non_black_zero_not_gray (g: heap) (obj: obj_addr) (objs: seq obj_a
 let count_non_black_zero_no_gray (g: heap)
   : Lemma (requires count_non_black g = 0)
           (ensures SweepInv.no_gray_objects g)
-  = let aux (obj: obj_addr) : Lemma (requires Seq.mem obj (objects 0UL g))
+  = let aux (obj: obj_addr) : Lemma (requires Seq.mem obj (objects zero_addr g))
                                     (ensures ~(is_gray obj g))
-    = count_non_black_zero_not_gray g obj (objects 0UL g)
+    = count_non_black_zero_not_gray g obj (objects zero_addr g)
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
     SweepInv.no_gray_intro g
@@ -1119,17 +959,16 @@ let count_non_black_zero_no_gray (g: heap)
 /// With sufficient fuel, mark_bounded produces no gray objects
 let rec mark_bounded_completes (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects 0UL g) > 0 /\
+                   Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g /\
                    fuel >= count_non_black g)
           (ensures SweepInv.no_gray_objects (mark_bounded g cap fuel))
-          (decreases fuel)
   = if fuel = 0 then begin
       count_non_black_zero_no_gray g
     end else begin
-      let st = rescan_heap g (objects 0UL g) Seq.empty cap in
-      rescan_heap_bounded_stack_props g (objects 0UL g) cap;
-      rescan_heap_cap_bound g (objects 0UL g) Seq.empty cap;
+      let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
+      rescan_heap_bounded_stack_props g (objects zero_addr g) cap;
+      rescan_heap_cap_bound g (objects zero_addr g) Seq.empty cap;
       rescan_complete g cap;
       if Seq.length st = 0 then
         SweepInv.no_gray_intro g
@@ -1137,7 +976,7 @@ let rec mark_bounded_completes (g: heap) (cap: nat{cap > 0}) (fuel: nat)
         // st non-empty → count_non_black g > 0
         bounded_stack_head_is_gray g st;
         is_gray_iff (Seq.head st) g; is_black_iff (Seq.head st) g;
-        count_non_black_in_has_nonblack g (Seq.head st) (objects 0UL g);
+        count_non_black_in_has_nonblack g (Seq.head st) (objects zero_addr g);
         let inner_fuel = count_non_black g in
         mark_inner_loop_preserves_inv g st cap inner_fuel;
         mark_inner_loop_preserves_objects g st cap inner_fuel;
