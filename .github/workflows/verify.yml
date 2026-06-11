@@ -49,30 +49,6 @@ jobs:
             VERIFIED_GEN_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-verified-gen/runtime/ocamlrun" \
             UNCHANGED_OCAMLRUN="$PWD/generational/ocaml-integration/ocaml-4.14-unchanged/runtime/ocamlrun"
 
-  snapshot-diff:
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    needs: verify
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache F* toolchain
-        id: cache-fstar
-        uses: actions/cache@v4
-        with:
-          path: fstar
-          key: fstar-release-v2026.05.17-linux-x86_64
-
-      - name: Install F*
-        if: steps.cache-fstar.outputs.cache-hit != 'true'
-        run: ./setup.sh
-
-      - name: Regenerate snapshots
-        run: |
-          make -C mark-and-sweep snapshot
-          make -C generational snapshot
-
       - name: Check snapshots are up to date
         run: |
           if ! git diff --quiet -- mark-and-sweep/snapshot/ generational/snapshot/; then

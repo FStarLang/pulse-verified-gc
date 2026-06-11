@@ -2,7 +2,7 @@
 
 This repository is a verified generational garbage-collector for OCaml
 4.14, specified in [F*](https://fstar-lang.org/) and implemented in
-[Pulse](https://fstar-lang.org/). It now contains shared OCaml heap/object
+[Pulse](https://fstar-lang.org/). It contains shared OCaml heap/object
 infrastructure, a verified major-heap allocator, a bounded-stack mark-and-sweep
 major collector, a generational collector with Cheney-style minor collection,
 SPOT contract audits, KaRaMeL extraction to C, and an OCaml bytecode runtime
