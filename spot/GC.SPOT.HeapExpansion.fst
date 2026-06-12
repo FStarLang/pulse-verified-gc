@@ -13,6 +13,7 @@ open GC.Gen.Cheney
 
 module MH = GC.Spec.MajorHeap
 module Obj = GC.Spec.Object
+module Fields = GC.Spec.Fields
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
@@ -7541,6 +7542,46 @@ let spot_chunked_minor_preflight_value_policy_single_chunk_from_dense
   CheneyGraphReadiness.chunked_minor_preflight_value_policy_single_chunk_from_dense
     minor major fp base_roots fresh
 
+let spot_chunked_major_field_values_miss_fresh_single_chunk_from_dense_wf
+  (major: heap) (fresh: MH.heap_chunk) (src: obj_addr)
+  : Lemma
+      (requires
+        Fields.well_formed_heap major /\
+        MH.chunk_disjoint_from_all fresh (MH.single_chunk_major_heap major) /\
+        U64.v fresh.base >= U64.v zero_addr /\
+        Seq.mem src (MH.major_objects (MH.single_chunk_major_heap major)))
+      (ensures
+        CG.chunked_major_field_values_miss_fresh
+          (MH.single_chunk_major_heap major) fresh src
+          (CG.chunked_wosize_nat_of_object (MH.single_chunk_major_heap major) src)
+          0)
+  =
+  CheneyGraphReadiness.chunked_major_field_values_miss_fresh_single_chunk_from_dense_wf
+    major fresh src
+
+let spot_chunked_minor_preflight_value_policy_single_chunk_from_dense_wf
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (base_roots: Seq.seq U64.t) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        Fields.well_formed_heap major /\
+        RBridge.roots_valid_nonblue base_roots major /\
+        RBridge.major_field_zero_no_minor minor major /\
+        (let chunked_major = MH.single_chunk_major_heap major in
+         let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+         CReach.chunked_roots_disjoint_from_chunk base_roots fresh /\
+         MH.chunk_disjoint_from_all fresh chunked_major /\
+         fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+         U64.v fresh.base >= U64.v zero_addr /\
+         SpecMajorAlloc.fresh_chunk_wosize fresh >= needed))
+      (ensures
+        CheneyGraphReadiness.chunked_minor_preflight_value_policy
+          minor (MH.single_chunk_major_heap major) fp base_roots fresh)
+  =
+  CheneyGraphReadiness.chunked_minor_preflight_value_policy_single_chunk_from_dense_wf
+    minor major fp base_roots fresh
+
 let spot_chunked_cheney_promote_after_minor_promotion_head_preflight_single_chunk_from_dense_value_safety
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
@@ -7609,6 +7650,68 @@ let spot_chunked_cheney_collect_after_minor_promotion_head_preflight_single_chun
           minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
   =
   CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_value_safety
+    minor major fp roots alloc_fuel fresh
+
+let spot_chunked_cheney_promote_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        Fields.well_formed_heap major /\
+        GenInv.chunked_collection_heap_shape
+          minor (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap major) fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        RBridge.roots_valid_nonblue roots major /\
+        RBridge.major_field_zero_no_minor minor major /\
+        (let chunked_major = MH.single_chunk_major_heap major in
+         let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+         CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+         MH.chunk_disjoint_from_all fresh chunked_major /\
+         fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+         U64.v fresh.base >= U64.v zero_addr /\
+         SpecMajorAlloc.fresh_chunk_wosize fresh >= needed))
+      (ensures
+        CheneyGraphReadiness.chunked_cheney_promote_after_minor_promotion_head_preflight_post
+          minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_cheney_promote_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
+    minor major fp roots alloc_fuel fresh
+
+let spot_chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        Fields.well_formed_heap major /\
+        GenInv.chunked_collection_heap_shape
+          minor (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap major) fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        RBridge.roots_valid_nonblue roots major /\
+        RBridge.major_field_zero_no_minor minor major /\
+        (let chunked_major = MH.single_chunk_major_heap major in
+         let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+         CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+         MH.chunk_disjoint_from_all fresh chunked_major /\
+         fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+         U64.v fresh.base >= U64.v zero_addr /\
+         SpecMajorAlloc.fresh_chunk_wosize fresh >= needed))
+      (ensures
+        CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_post
+          minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
     minor major fp roots alloc_fuel fresh
 
 let spot_chunked_minor_preflight_value_policy_core_expansion_safety_single_chunk_from_dense
@@ -7752,6 +7855,60 @@ let spot_chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachabl
           minor r.capacity_major_out))
   =
   CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_single_chunk_from_dense_roots_value_safety
+    minor major fp base_roots alloc_fuel fresh
+
+let spot_chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_single_chunk_from_dense_roots_wf
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (base_roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        Fields.well_formed_heap major /\
+        GenInv.chunked_collection_heap_shape
+          minor (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap major) fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        RBridge.roots_valid_nonblue base_roots major /\
+        RBridge.major_field_zero_no_minor minor major /\
+        (let chunked_major = MH.single_chunk_major_heap major in
+         let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+         CReach.chunked_roots_disjoint_from_chunk base_roots fresh /\
+         MH.chunk_disjoint_from_all fresh chunked_major /\
+         fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+         U64.v fresh.base >= U64.v zero_addr /\
+         SpecMajorAlloc.fresh_chunk_wosize fresh >= needed))
+      (ensures
+        CheneyGraphReadiness.chunked_reachable_live_graph_post_reachable_image_isomorphism_prop
+          minor (MH.single_chunk_major_heap major) fp
+          (CRem.chunked_minor_collection_roots
+            minor (MH.single_chunk_major_heap major) base_roots)
+          alloc_fuel fresh /\
+        (let chunked_major = MH.single_chunk_major_heap major in
+         let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            chunked_major fp alloc_fuel
+            (PromotionDemand.minor_promotion_demand minor + 1) fresh in
+         CReach.chunked_roots_valid_nonblue base_roots r.capacity_major_out /\
+         CReach.chunked_roots_valid_nonblue
+          (CRem.chunked_minor_collection_roots minor chunked_major base_roots)
+          r.capacity_major_out /\
+         (SpecMajorAlloc.major_fl_head_wosize chunked_major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          CReach.chunked_roots_disjoint_from_chunk
+            (CRem.chunked_minor_collection_roots minor chunked_major base_roots)
+            fresh) /\
+         CheneyGraphReadiness.chunked_major_chunks_above_zero_addr
+          r.capacity_major_out /\
+         CheneyGraphReadiness.chunked_major_objects_are_pointer_fields
+          r.capacity_major_out /\
+         CReach.chunked_major_field_zero_no_minor
+          minor r.capacity_major_out))
+  =
+  CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_single_chunk_from_dense_roots_wf
     minor major fp base_roots alloc_fuel fresh
 
 let spot_chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph

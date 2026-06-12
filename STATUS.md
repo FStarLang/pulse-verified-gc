@@ -89,6 +89,8 @@ The split graph-readiness module now bridges the compact preflight value policy 
 
 Fixed-heap compatibility has the same reduced surface for those lower Cheney wrappers. The dense-root wrappers construct `chunked_minor_preflight_value_policy` from `roots_valid_nonblue`, `major_field_zero_no_minor`, and expansion-branch old-field-value freshness, then call the value-policy promotion/collection theorems over `MH.single_chunk_major_heap`.
 
+For fixed-heap callers, old-field-value freshness is now derived from dense `well_formed_heap` plus fresh-chunk disjointness and fresh-base policy. This removes the raw old-field-value freshness quantifier from the dense-root promotion, collection, and post-reachable image wrappers while keeping the true multi-chunk value policy explicit.
+
 ## Remaining steps
 
 1. **Thread remaining side conditions through the final API.** The final graph theorem now has an append-based scanned-root construction wrapper, derives collection-root validity from base-root validity, derives collection-root fresh-disjointness from base-root fresh-disjointness plus fresh chunk base policy, derives old field-slot/header expansion safety from chunk disjointness and well-formedness, returns the full chunk-base/pointer-field/base-root-valid/constructed-root-valid/field-0 policy facts preserved by preflight expansion, has a fixed-heap wrapper from dense root/field-0 predicates, and the core collection-correctness bundle now also has a value-safety wrapper plus a compact-policy-to-core-branch bridge. The remaining API work is to supply the initial multi-chunk chunk-base/base-root-valid/base-root-fresh-disjoint/old-field-value-fresh-disjoint/field-0 policy from the actual runtime-facing collection boundary.
