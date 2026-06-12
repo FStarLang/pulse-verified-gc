@@ -6,11 +6,14 @@ module SeqProps = FStar.Seq.Properties
 module ML = FStar.Math.Lemmas
 
 open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Reachability
 open GC.Gen.Promote
 open GC.Gen.Cheney
+open GC.Lib.Header
 
 module MH = GC.Spec.MajorHeap
 module SpecMajorAlloc = GC.Spec.MajorAllocator
@@ -21,6 +24,7 @@ module CG = GC.Gen.CombinedGraph
 module CC = GC.Gen.CheneyCorrectness
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CInj = GC.Gen.ChunkedCheneyInjectivity
+module CDisj = GC.Gen.ChunkedCheneyDisjointness
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
 private let aligned_gt_ge_plus_mword (x z: nat)
@@ -1876,6 +1880,210 @@ let chunked_cheney_gc_correct_after_preflight_reachable_live_minor_images_inject
     (FStar.Classical.move_requires_2 prove)
 #pop-options
 
+#push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
+private let ensure_major_head_capacity_preserves_old_major_objects
+  (major: MH.major_heap) (fp: U64.t) (alloc_fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         forall (src: obj_addr).
+           Seq.mem src (MH.major_objects major) ==>
+           Seq.mem src (MH.major_objects r.capacity_major_out)))
+  =
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let aux (src: obj_addr)
+    : Lemma
+        (requires Seq.mem src (MH.major_objects major))
+        (ensures Seq.mem src (MH.major_objects r.capacity_major_out))
+    =
+    if SpecMajorAlloc.major_fl_head_wosize major fp >= needed then
+      assert (r.capacity_major_out == major)
+    else begin
+      assert (r.capacity_major_out ==
+              (SpecMajorAlloc.expand_major_heap major fresh fp).major_out);
+      SpecMajorAlloc.expand_major_heap_old_object major fresh fp src
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+
+private let old_major_header_misses_fresh_chunk
+  (major: MH.major_heap) (fresh: MH.heap_chunk) (old: obj_addr)
+  : Lemma
+      (requires
+        MH.chunk_disjoint_from_all fresh major /\
+        Seq.mem old (MH.major_objects major))
+      (ensures ~(MH.chunk_contains_addr fresh (hd_address old)))
+  =
+  MH.major_object_header_disjoint_from_chunk major fresh old
+
+private let ensure_major_head_capacity_preserves_old_header_read
+  (major: MH.major_heap) (fp: U64.t) (alloc_fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk) (old: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem old (MH.major_objects major) /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+         MH.chunk_disjoint_from_all fresh major))
+      (ensures
+        (let r =
+           SpecMajorAlloc.ensure_major_head_capacity_spec
+             major fp alloc_fuel needed fresh in
+         MH.read_word_in_major r.capacity_major_out (hd_address old) ==
+         MH.read_word_in_major major (hd_address old)))
+  =
+  if SpecMajorAlloc.major_fl_head_wosize major fp < needed then begin
+    assert (MH.chunk_disjoint_from_all fresh major);
+    old_major_header_misses_fresh_chunk major fresh old
+  end;
+  SpecMajorAlloc.ensure_major_head_capacity_preserves_old_read
+    major fp alloc_fuel needed fresh (hd_address old)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_cheney_gc_correct_after_preflight_reachable_live_minor_images_disjoint_from_major_from_chunk_bases_and_scan
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_chunks_above_zero_addr major /\
+      CReach.chunked_major_field_zero_no_minor minor major /\
+      CRem.chunked_minor_roots_in_roots minor major roots /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_reachable_live_minor_images_disjoint_from_major_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let prom =
+    ChunkedCheney.chunked_cheney_promote
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  GC.Gen.CheneyPreservation.chunked_cheney_promote_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh;
+  GenInv.chunked_collection_heap_shape_elim
+    minor major fp alloc_fuel;
+  GenInv.chunked_collection_heap_shape_elim
+    minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out;
+  assert (GenInv.chunked_major_alloc_shape major fp alloc_fuel);
+  GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
+  assert (MH.well_formed_major_heap major);
+  assert (GenInv.chunked_major_alloc_shape
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  GenInv.chunked_major_alloc_shape_elim
+    r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out;
+  assert (MH.well_formed_major_heap r.capacity_major_out);
+  assert (SpecMajorAlloc.major_fl_chain_terminates
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true);
+  assert (GenInv.chunked_chain_objects_blue
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  assert (SpecMajorAlloc.major_fl_head_wosize
+            r.capacity_major_out r.capacity_fp_out >= needed);
+  assert (r.capacity_fp_out <> 0UL);
+  assert (r.capacity_fuel_out > 1);
+  assert (GC.Gen.CheneyPreservation.chunked_cheney_promote_budget_ready
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out 1);
+  ChunkedCheney.chunked_cheney_collect_spec_equation
+    minor r.capacity_major_out r.capacity_fp_out roots
+    r.capacity_fuel_out;
+  chunked_major_chunks_above_zero_addr_objects_are_pointer_fields major;
+  assert (CReach.chunked_major_objects_are_pointer_fields major);
+  CReach.chunked_reachable_major_valid_nonblue
+    minor major fp alloc_fuel roots;
+  CRem.chunked_remembered_minor_edges_in_roots_from_scan minor major roots;
+  CReach.chunked_combined_minor_reachable_in_minor_reachable
+    minor major fp alloc_fuel roots;
+  ensure_major_head_capacity_preserves_old_major_objects
+    major fp alloc_fuel needed fresh;
+  let prove (x y: U64.t)
+    : Lemma
+      (requires
+        chunked_reachable_live_graph_vertex minor major roots (CG.MinorV x) /\
+        chunked_reachable_live_graph_vertex minor major roots (CG.MajorV y))
+      (ensures collect.cmc_fwd x <> y)
+    =
+    assert (CG.combined_reachable
+      (CG.build_chunked_combined_graph minor major)
+      (CG.classify_roots roots)
+      (CG.MinorV x));
+    assert (CG.combined_reachable
+      (CG.build_chunked_combined_graph minor major)
+      (CG.classify_roots roots)
+      (CG.MajorV y));
+    assert (minor_wosize minor x > 0);
+    assert (Seq.mem x (minor_reachable minor roots));
+    minor_reachable_subset minor roots;
+    assert (Seq.mem x (minor_objects minor));
+    minor_objects_not_infix minor x;
+    assert (~(is_infix_in_minor minor x));
+    assert (collect.cmc_fwd x <> 0UL);
+    assert (collect.cmc_fwd == prom.fwd_map);
+    assert (prom.fwd_map x <> 0UL);
+    assert (U64.v y >= U64.v mword);
+    assert (U64.v y < heap_size);
+    assert (U64.v y % U64.v mword == 0);
+    let yobj : obj_addr = y in
+    assert (Seq.mem yobj (MH.major_objects major));
+    assert (~(GenInv.chunked_is_blue major yobj));
+    assert (MH.well_formed_major_heap major);
+    MH.major_objects_member_header_read_some major yobj;
+    match MH.read_word_in_major major (hd_address yobj) with
+    | Some hdr ->
+      GenInv.chunked_is_blue_header major yobj hdr;
+      assert (getColor hdr <> Blue);
+      assert (Seq.mem yobj (MH.major_objects r.capacity_major_out));
+      ensure_major_head_capacity_preserves_old_header_read
+        major fp alloc_fuel needed fresh yobj;
+      assert (MH.read_word_in_major
+                r.capacity_major_out (hd_address yobj) == Some hdr);
+      GenInv.chunked_is_blue_header
+        r.capacity_major_out yobj hdr;
+      assert (~(GenInv.chunked_is_blue r.capacity_major_out yobj));
+      GenInv.chunked_chain_objects_blue_elim
+        r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out yobj;
+      assert (SpecMajorAlloc.major_fl_chain_avoids
+                r.capacity_major_out r.capacity_fp_out yobj
+                r.capacity_fuel_out = true);
+      CDisj.chunked_cheney_promote_fwd_normal_disjoint_from_old_major
+        minor r.capacity_major_out r.capacity_fp_out roots
+        r.capacity_fuel_out 1 yobj;
+      CDisj.chunked_fwd_normal_disjoint_from_old_major_elim
+        minor prom.fwd_map yobj x;
+      assert (prom.fwd_map x <> y);
+      assert (collect.cmc_fwd x <> y)
+    | None ->
+      assert False
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 prove)
+#pop-options
+
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
 let chunked_reachable_live_graph_injective_from_minor_image_facts
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
@@ -2049,4 +2257,70 @@ let chunked_reachable_live_graph_image_isomorphism_from_injective
     (FStar.Classical.move_requires surj);
   FStar.Classical.forall_intro_2
     (fun u -> FStar.Classical.move_requires (edge u))
+
+let chunked_cheney_gc_correct_after_preflight_reachable_live_graph_injective_from_chunk_bases_and_scan
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_chunks_above_zero_addr major /\
+      CReach.chunked_major_field_zero_no_minor minor major /\
+      CRem.chunked_minor_roots_in_roots minor major roots /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_reachable_live_graph_injective_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  chunked_cheney_gc_correct_after_preflight_reachable_live_minor_images_injective_from_chunk_bases_and_scan
+    minor major fp roots alloc_fuel fresh;
+  chunked_cheney_gc_correct_after_preflight_reachable_live_minor_images_disjoint_from_major_from_chunk_bases_and_scan
+    minor major fp roots alloc_fuel fresh;
+  chunked_reachable_live_graph_injective_from_minor_image_facts
+    minor major fp roots alloc_fuel fresh
+
+let chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_isomorphism_from_chunk_bases_and_scan
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_chunks_above_zero_addr major /\
+      CReach.chunked_major_field_zero_no_minor minor major /\
+      CRem.chunked_minor_roots_in_roots minor major roots /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_reachable_live_graph_image_isomorphism_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  chunked_cheney_gc_correct_after_preflight_reachable_live_graph_injective_from_chunk_bases_and_scan
+    minor major fp roots alloc_fuel fresh;
+  chunked_reachable_live_graph_image_isomorphism_from_injective
+    minor major fp roots alloc_fuel fresh
 #pop-options
