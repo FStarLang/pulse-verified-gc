@@ -16,6 +16,7 @@ module Obj = GC.Spec.Object
 module Header = GC.Lib.Header
 module Fields = GC.Spec.Fields
 module Mark = GC.Spec.Mark
+module BMark = GC.Spec.MarkBounded
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
@@ -41,6 +42,7 @@ module ChunkedMarkNoPointer = GC.Spec.ChunkedMark.NoPointerCompat
 module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
 module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
+module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -842,6 +844,66 @@ let spot_chunked_mark_bounded_step
               mh' cap (fuel - 1))))
   =
   ChunkedMarkBounded.chunked_mark_bounded_step mh cap fuel
+
+let spot_chunked_bounded_is_gray_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedMarkBounded.chunked_is_gray
+        (MH.single_chunk_major_heap g) obj ==
+       Obj.is_gray obj g)
+  =
+  ChunkedMarkBoundedCompat.chunked_is_gray_single_chunk_compat g obj
+
+let spot_chunked_push_children_bounded_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedCompat.push_children_bounded_single_chunk_ready
+          g st obj i ws cap)
+      (ensures
+        ChunkedMarkBounded.chunked_push_children_bounded
+          (MH.single_chunk_major_heap g) st obj i ws cap ==
+        (let (g', st') =
+          BMark.push_children_bounded g st obj i ws cap in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkBoundedCompat.chunked_push_children_bounded_single_chunk_compat
+    g st obj i ws cap
+
+let spot_chunked_mark_step_bounded_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        (if Seq.length st = 0 then True
+         else
+           let obj = Seq.head st in
+           U64.v obj >= U64.v zero_addr + U64.v mword /\
+           (if Obj.is_no_scan obj g then
+              True
+            else
+              ChunkedMarkBoundedCompat.push_children_bounded_single_chunk_ready
+                (Obj.makeBlack obj g)
+                (Seq.tail st)
+                obj
+                1UL
+                (Obj.wosize_of_object obj g)
+                cap)))
+      (ensures
+        ChunkedMarkBounded.chunked_mark_step_bounded
+          (MH.single_chunk_major_heap g) st cap ==
+        (let (g', st') = BMark.mark_step_bounded g st cap in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkBoundedCompat.chunked_mark_step_bounded_single_chunk_compat
+    g st cap
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
