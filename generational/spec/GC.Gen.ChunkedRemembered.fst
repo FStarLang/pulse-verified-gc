@@ -6,6 +6,7 @@ module U64 = FStar.UInt64
 open GC.Spec.Base
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
 module GenInv = GC.Gen.HeapInvariant
@@ -105,6 +106,139 @@ let chunked_minor_roots_in_roots_append_prefix
     SeqProps.lemma_append_count scan roots
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires prove)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let rec chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)
+  (wz i: nat) (v: U64.t)
+  : Lemma
+    (requires
+      Seq.mem v
+        (chunked_scan_object_fields_for_minor_refs minor major obj wz i))
+    (ensures is_minor_pointer v)
+    (decreases (if i < wz then wz - i else 0))
+  =
+  if i >= wz then
+    ()
+  else begin
+    let rest =
+      chunked_scan_object_fields_for_minor_refs
+        minor major obj wz (i + 1) in
+    match CG.chunked_major_field_slot obj i with
+    | None ->
+      chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+        minor major obj wz (i + 1) v
+    | Some field_addr ->
+      match MH.read_word_in_major major field_addr with
+      | None ->
+        chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+          minor major obj wz (i + 1) v
+      | Some raw ->
+        match CG.chunked_classify_major_field minor major raw with
+        | Some dst ->
+          (match dst with
+          | CG.MinorV x ->
+            Seq.mem_cons x rest;
+            if v = x then
+              CG.chunked_classify_major_field_inv_minor minor major raw x
+            else
+              chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+                minor major obj wz (i + 1) v
+          | CG.MajorV _ ->
+            chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+              minor major obj wz (i + 1) v
+          | _ ->
+            chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+              minor major obj wz (i + 1) v)
+        | None ->
+          chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+            minor major obj wz (i + 1) v
+  end
+
+let chunked_scan_object_for_minor_refs_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)
+  (v: U64.t)
+  : Lemma
+    (requires
+      Seq.mem v (chunked_scan_object_for_minor_refs minor major obj))
+    (ensures is_minor_pointer v)
+  =
+  if GenInv.chunked_is_blue major obj then
+    ()
+  else if CG.chunked_is_no_scan major obj then
+    ()
+  else
+    chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+      minor major obj (CG.chunked_wosize_nat_of_object major obj) 1 v
+
+let rec chunked_scan_major_objects_for_minor_refs_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (objs: seq obj_addr)
+  (idx: nat) (v: U64.t)
+  : Lemma
+    (requires
+      Seq.mem v (chunked_scan_major_objects_for_minor_refs minor major objs idx))
+    (ensures is_minor_pointer v)
+    (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then
+    ()
+  else begin
+    let obj = Seq.index objs idx in
+    let this = chunked_scan_object_for_minor_refs minor major obj in
+    let rest =
+      chunked_scan_major_objects_for_minor_refs minor major objs (idx + 1) in
+    Seq.lemma_mem_append this rest;
+    if Seq.mem v this then
+      chunked_scan_object_for_minor_refs_are_minor_pointers
+        minor major obj v
+    else
+      chunked_scan_major_objects_for_minor_refs_are_minor_pointers
+        minor major objs (idx + 1) v
+  end
+
+let chunked_minor_roots_from_major_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (v: U64.t)
+  : Lemma
+    (requires Seq.mem v (chunked_minor_roots_from_major minor major))
+    (ensures is_minor_pointer v)
+  =
+  chunked_scan_major_objects_for_minor_refs_are_minor_pointers
+    minor major (MH.major_objects major) 0 v
+
+let chunked_roots_valid_nonblue_collection_roots
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  : Lemma
+    (requires CReach.chunked_roots_valid_nonblue roots major)
+    (ensures
+      CReach.chunked_roots_valid_nonblue
+        (chunked_minor_collection_roots minor major roots) major)
+  =
+  let scan = chunked_minor_roots_from_major minor major in
+  let prove (r: U64.t)
+    : Lemma
+      (ensures
+        Seq.mem r (Seq.append roots scan) /\
+        ~(is_minor_pointer r) /\
+        is_val_addr r /\
+        Seq.mem (r <: obj_addr) (MH.major_objects major) ==>
+        ~(GenInv.chunked_is_blue major (r <: obj_addr)))
+    =
+    if Seq.mem r (Seq.append roots scan) /\
+      ~(is_minor_pointer r) /\
+      is_val_addr r /\
+      Seq.mem (r <: obj_addr) (MH.major_objects major) then begin
+      Seq.lemma_mem_append roots scan;
+      if Seq.mem r roots then
+        ()
+      else begin
+        assert (Seq.mem r scan);
+        chunked_minor_roots_from_major_are_minor_pointers minor major r;
+        assert False
+      end
+    end
+  in
+  FStar.Classical.forall_intro prove
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"

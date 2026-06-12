@@ -6,6 +6,7 @@ module U64 = FStar.UInt64
 open GC.Spec.Base
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
 module GenInv = GC.Gen.HeapInvariant
@@ -52,6 +53,45 @@ val chunked_minor_roots_in_roots_append_prefix
       chunked_minor_roots_in_roots
         minor major
         (Seq.append (chunked_minor_roots_from_major minor major) roots))
+
+val chunked_scan_object_fields_for_minor_refs_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)
+  (wz i: nat) (v: U64.t)
+  : Lemma
+    (requires
+      Seq.mem v
+        (chunked_scan_object_fields_for_minor_refs minor major obj wz i))
+    (ensures is_minor_pointer v)
+
+val chunked_scan_object_for_minor_refs_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)
+  (v: U64.t)
+  : Lemma
+    (requires
+      Seq.mem v (chunked_scan_object_for_minor_refs minor major obj))
+    (ensures is_minor_pointer v)
+
+val chunked_scan_major_objects_for_minor_refs_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (objs: seq obj_addr)
+  (idx: nat) (v: U64.t)
+  : Lemma
+    (requires
+      Seq.mem v (chunked_scan_major_objects_for_minor_refs minor major objs idx))
+    (ensures is_minor_pointer v)
+
+val chunked_minor_roots_from_major_are_minor_pointers
+  (minor: minor_state) (major: MH.major_heap) (v: U64.t)
+  : Lemma
+    (requires Seq.mem v (chunked_minor_roots_from_major minor major))
+    (ensures is_minor_pointer v)
+
+val chunked_roots_valid_nonblue_collection_roots
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  : Lemma
+    (requires CReach.chunked_roots_valid_nonblue roots major)
+    (ensures
+      CReach.chunked_roots_valid_nonblue
+        (chunked_minor_collection_roots minor major roots) major)
 
 val chunked_scan_object_fields_complete
   (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)
