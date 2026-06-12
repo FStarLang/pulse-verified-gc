@@ -13,6 +13,7 @@ open GC.Gen.Cheney
 
 module MH = GC.Spec.MajorHeap
 module Obj = GC.Spec.Object
+module Header = GC.Lib.Header
 module Fields = GC.Spec.Fields
 module Mark = GC.Spec.Mark
 module SpecAlloc = GC.Spec.Allocator
@@ -34,6 +35,7 @@ module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 module DenseFused = GC.Spec.SweepCoalesce.Defs
+module ChunkedMarkDefs = GC.Spec.ChunkedMark.Defs
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -429,6 +431,87 @@ let spot_chunked_fused_sweep_coalesce_single_chunk_compat
         (MH.single_chunk_major_heap g', fp')))
   =
   ChunkedSweepCompat.chunked_fused_sweep_coalesce_single_chunk_compat g
+
+let spot_chunked_mark_pointer_field_is_obj_addr
+  (mh: MH.major_heap)
+  (v: U64.t)
+  : Lemma
+      (requires ChunkedMarkDefs.chunked_is_pointer_field mh v)
+      (ensures U64.v v >= U64.v mword /\
+               U64.v v < heap_size /\
+               U64.v v % U64.v mword == 0)
+  =
+  ChunkedMarkDefs.chunked_is_pointer_field_is_obj_addr mh v
+
+let spot_chunked_make_gray_step
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (ChunkedMarkDefs.chunked_make_gray mh obj ==
+       ChunkedSweepDefs.chunked_set_object_color mh obj Header.Gray)
+  =
+  ChunkedMarkDefs.chunked_make_gray_step mh obj
+
+let spot_chunked_make_black_step
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (ChunkedMarkDefs.chunked_make_black mh obj ==
+       ChunkedSweepDefs.chunked_set_object_color mh obj Header.Black)
+  =
+  ChunkedMarkDefs.chunked_make_black_step mh obj
+
+let spot_chunked_mark_step_empty
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st = 0)
+      (ensures ChunkedMarkDefs.chunked_mark_step mh st == (mh, st))
+  =
+  ChunkedMarkDefs.chunked_mark_step_empty mh st
+
+let spot_chunked_mark_step_no_scan
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st > 0 /\
+                ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st))
+      (ensures
+        (let obj = Seq.head st in
+         let st' = Seq.tail st in
+         ChunkedMarkDefs.chunked_mark_step mh st ==
+         (ChunkedMarkDefs.chunked_make_black mh obj, st')))
+  =
+  ChunkedMarkDefs.chunked_mark_step_no_scan mh st
+
+let spot_chunked_mark_step_scan
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st > 0 /\
+                ~(ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st)))
+      (ensures
+        (let obj = Seq.head st in
+         let st' = Seq.tail st in
+         let mh' = ChunkedMarkDefs.chunked_make_black mh obj in
+         let ws = ChunkedSweepDefs.chunked_wosize_of_object mh obj in
+         ChunkedMarkDefs.chunked_mark_step mh st ==
+         ChunkedMarkDefs.chunked_push_children mh' st' obj 1UL ws))
+  =
+  ChunkedMarkDefs.chunked_mark_step_scan mh st
+
+let spot_chunked_mark_aux_step
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat{fuel > 0})
+  : Lemma
+      (requires Seq.length st > 0)
+      (ensures
+        (let (mh', st') = ChunkedMarkDefs.chunked_mark_step mh st in
+         ChunkedMarkDefs.chunked_mark_aux mh st fuel ==
+         ChunkedMarkDefs.chunked_mark_aux mh' st' (fuel - 1)))
+  =
+  ChunkedMarkDefs.chunked_mark_aux_step mh st fuel
 #pop-options
 
 let spot_expand_on_oom_pre
