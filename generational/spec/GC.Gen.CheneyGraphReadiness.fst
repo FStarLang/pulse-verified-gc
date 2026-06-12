@@ -22,6 +22,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module CC = GC.Gen.CheneyCorrectness
+module CheneyPres = GC.Gen.CheneyPreservation
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CInj = GC.Gen.ChunkedCheneyInjectivity
 module CDisj = GC.Gen.ChunkedCheneyDisjointness
@@ -2434,5 +2435,408 @@ let chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_subgrap
   chunked_cheney_gc_correct_after_preflight_reachable_live_graph_maps_to_major_graph_from_chunk_bases_and_scan
     minor major fp roots alloc_fuel fresh;
   chunked_reachable_live_graph_image_subgraph_of_post_major_graph_from_maps
+    minor major fp roots alloc_fuel fresh
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+private let rec rewrite_roots_mem_image_readiness
+  (roots: seq U64.t) (fwd: forwarding_map) (r: U64.t)
+  : Lemma
+    (requires Seq.mem r roots)
+    (ensures Seq.mem (rewrite_root r fwd) (rewrite_roots roots fwd))
+    (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    let hd = Seq.index roots 0 in
+    let tl = Seq.slice roots 1 (Seq.length roots) in
+    let hd' = rewrite_root hd fwd in
+    let tl' = rewrite_roots tl fwd in
+    if r = hd then begin
+      assert (rewrite_roots roots fwd == Seq.cons hd' tl');
+      Seq.mem_cons hd' tl'
+    end else begin
+      assert (Seq.mem r tl);
+      rewrite_roots_mem_image_readiness tl fwd r;
+      assert (Seq.mem (rewrite_root r fwd) tl');
+      assert (rewrite_roots roots fwd == Seq.cons hd' tl');
+      Seq.mem_cons hd' tl'
+    end
+  end
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+private let chunked_edge_source_reachable_live
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  (u v: CG.combined_vertex)
+  : Lemma
+    (requires
+      CG.combined_reachable
+        (CG.build_chunked_combined_graph minor major)
+        (CG.classify_roots roots) u /\
+      CG.mem_ce (u, v) (CG.build_chunked_combined_graph minor major))
+    (ensures
+      chunked_reachable_live_graph_vertex minor major roots u)
+  =
+  CG.chunked_edge_source_vertex minor major (u, v);
+  assert (CG.mem_cv u (CG.build_chunked_combined_graph minor major));
+  match u with
+  | CG.MajorV _ -> ()
+  | CG.MinorV src ->
+    CG.chunked_minor_edge_elim minor major src v;
+    let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
+      (fun i -> i < minor_wosize minor src /\
+        CG.chunked_classify_minor_field
+          minor major (minor_read_field minor src i) == Some v) in
+    assert (i < minor_wosize minor src);
+    assert (minor_wosize minor src > 0)
+  | _ ->
+    CG.combined_vertex_exhaustive u;
+    assert False
+
+private let chunked_cheney_gc_correct_after_preflight_reachable_live_root_image_in_post_roots
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (u: CG.combined_vertex)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0) /\
+      Seq.mem u (CG.classify_roots roots) /\
+      CG.mem_cv u (CG.build_chunked_combined_graph minor major) /\
+      (match u with
+       | CG.MinorV v -> minor_wosize minor v > 0
+       | CG.MajorV _ -> True
+       | _ -> False))
+    (ensures
+      (let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       let r =
+         SpecMajorAlloc.ensure_major_head_capacity_spec
+           major fp alloc_fuel needed fresh in
+       let collect =
+         ChunkedCheney.chunked_cheney_collect_spec
+           minor r.capacity_major_out r.capacity_fp_out roots
+           r.capacity_fuel_out in
+       Seq.mem (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+         (CG.classify_roots collect.cmc_roots)))
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let prom =
+    ChunkedCheney.chunked_cheney_promote
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  CC.chunked_cheney_gc_correct_after_preflight
+    minor major fp roots alloc_fuel fresh;
+  assert (collect.cmc_roots == rewrite_roots roots prom.fwd_map);
+  assert (collect.cmc_fwd == prom.fwd_map);
+  assert (CheneyPres.chunked_fwd_targets_above_minor collect.cmc_fwd);
+  assert (forall (x: U64.t). Seq.mem x (minor_reachable minor roots) ==>
+    collect.cmc_fwd x <> 0UL \/ minor_wosize minor x = 0);
+  match u with
+  | CG.MajorV v ->
+    CG.classify_roots_inv_major roots v;
+    assert (Seq.mem v roots);
+    assert (~(is_minor_pointer v));
+    assert (rewrite_root v prom.fwd_map == v);
+    rewrite_roots_mem_image_readiness roots prom.fwd_map v;
+    assert (Seq.mem v (rewrite_roots roots prom.fwd_map));
+    assert (Seq.mem v collect.cmc_roots);
+    CG.classify_roots_major_mem collect.cmc_roots v;
+    assert (CG.fwd_morphism collect.cmc_fwd u == v)
+  | CG.MinorV v ->
+    CG.classify_roots_inv_minor roots v;
+    assert (Seq.mem v roots);
+    assert (is_minor_pointer v);
+    CG.chunked_minor_vertex_char minor major v;
+    assert (Seq.mem v (minor_objects minor));
+    minor_reachable_roots minor roots;
+    assert (Seq.mem v (minor_reachable minor roots));
+    assert (minor_wosize minor v > 0);
+    assert (~(minor_wosize minor v = 0));
+    assert (collect.cmc_fwd v <> 0UL);
+    assert (prom.fwd_map v <> 0UL);
+    assert (rewrite_root v prom.fwd_map == prom.fwd_map v);
+    rewrite_roots_mem_image_readiness roots prom.fwd_map v;
+    assert (Seq.mem (prom.fwd_map v) (rewrite_roots roots prom.fwd_map));
+    assert (Seq.mem (collect.cmc_fwd v) collect.cmc_roots);
+    CheneyPres.chunked_fwd_targets_above_minor_elim collect.cmc_fwd v;
+    assert (U64.v (collect.cmc_fwd v) >= minor_heap_size);
+    assert (~(is_minor_pointer (collect.cmc_fwd v)));
+    CG.classify_roots_major_mem collect.cmc_roots (collect.cmc_fwd v);
+    assert (CG.fwd_morphism collect.cmc_fwd u == collect.cmc_fwd v)
+  | _ ->
+    CG.combined_vertex_exhaustive u;
+    assert False
+
+let chunked_cheney_gc_correct_after_preflight_reachable_live_graph_root_images_in_post_roots
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_reachable_live_graph_root_images_in_post_roots_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires
+      (chunked_cheney_gc_correct_after_preflight_reachable_live_root_image_in_post_roots
+        minor major fp roots alloc_fuel fresh))
+
+let chunked_reachable_live_graph_image_reachable_in_post_major_graph_from_roots_and_subgraph
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_reachable_live_graph_root_images_in_post_roots_prop
+        minor major fp roots alloc_fuel fresh /\
+      chunked_reachable_live_graph_image_subgraph_of_post_major_graph_prop
+        minor major fp roots alloc_fuel fresh)
+    (ensures
+      chunked_reachable_live_graph_image_reachable_in_post_major_graph_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let pre_g = CG.build_chunked_combined_graph minor major in
+  let post_g =
+    CG.build_chunked_combined_graph collect.cmc_minor collect.cmc_major in
+  let src_roots = CG.classify_roots roots in
+  let post_roots = CG.classify_roots collect.cmc_roots in
+  let p (u: CG.combined_vertex) : prop =
+    chunked_reachable_live_graph_vertex minor major roots u ==>
+    CG.combined_reachable post_g post_roots
+      (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)) in
+  let root (u: CG.combined_vertex)
+    : Lemma
+      (requires Seq.mem u src_roots /\ CG.mem_cv u pre_g)
+      (ensures p u)
+    =
+    match u with
+    | CG.MinorV v ->
+      if minor_wosize minor v > 0 then begin
+        CG.combined_reachable_root pre_g src_roots u;
+        assert (chunked_reachable_live_graph_vertex minor major roots u);
+        FStar.Classical.exists_intro
+          (fun x ->
+            chunked_reachable_live_graph_vertex minor major roots x /\
+            CG.fwd_morphism collect.cmc_fwd x ==
+            CG.fwd_morphism collect.cmc_fwd u)
+          u;
+        assert (chunked_reachable_live_graph_image_vertex
+          minor major fp roots alloc_fuel fresh
+          (CG.fwd_morphism collect.cmc_fwd u));
+        assert (CG.mem_cv
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)) post_g);
+        assert (Seq.mem
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)) post_roots);
+        CG.combined_reachable_root post_g post_roots
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+      end
+    | CG.MajorV _ ->
+      CG.combined_reachable_root pre_g src_roots u;
+      assert (chunked_reachable_live_graph_vertex minor major roots u);
+      FStar.Classical.exists_intro
+        (fun x ->
+          chunked_reachable_live_graph_vertex minor major roots x /\
+          CG.fwd_morphism collect.cmc_fwd x ==
+          CG.fwd_morphism collect.cmc_fwd u)
+        u;
+      assert (chunked_reachable_live_graph_image_vertex
+        minor major fp roots alloc_fuel fresh
+        (CG.fwd_morphism collect.cmc_fwd u));
+      assert (CG.mem_cv
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)) post_g);
+      assert (Seq.mem
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)) post_roots);
+      CG.combined_reachable_root post_g post_roots
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+    | _ ->
+      CG.combined_vertex_exhaustive u;
+      assert False
+  in
+  let step (u v: CG.combined_vertex)
+    : Lemma
+      (requires
+        CG.combined_reachable pre_g src_roots u /\
+        p u /\
+        CG.mem_ce (u, v) pre_g)
+      (ensures p v)
+    =
+    match v with
+    | CG.MinorV dst ->
+      if minor_wosize minor dst > 0 then begin
+        CG.combined_reachable_step pre_g src_roots u v;
+        chunked_edge_source_reachable_live minor major roots u v;
+        assert (chunked_reachable_live_graph_vertex minor major roots u);
+        assert (chunked_reachable_live_graph_vertex minor major roots v);
+        assert (CG.combined_reachable post_g post_roots
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)));
+        assert (chunked_reachable_live_graph_edge minor major roots u v);
+        FStar.Classical.exists_intro
+          (fun x -> exists (y: CG.combined_vertex).
+            chunked_reachable_live_graph_edge minor major roots x y /\
+            CG.fwd_morphism collect.cmc_fwd x ==
+            CG.fwd_morphism collect.cmc_fwd u /\
+            CG.fwd_morphism collect.cmc_fwd y ==
+            CG.fwd_morphism collect.cmc_fwd v)
+          u;
+        FStar.Classical.exists_intro
+          (fun y ->
+            chunked_reachable_live_graph_edge minor major roots u y /\
+            CG.fwd_morphism collect.cmc_fwd u ==
+            CG.fwd_morphism collect.cmc_fwd u /\
+            CG.fwd_morphism collect.cmc_fwd y ==
+            CG.fwd_morphism collect.cmc_fwd v)
+          v;
+        assert (chunked_reachable_live_graph_image_edge
+          minor major fp roots alloc_fuel fresh
+          (CG.fwd_morphism collect.cmc_fwd u)
+          (CG.fwd_morphism collect.cmc_fwd v));
+        assert (CG.mem_ce
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+           CG.MajorV (CG.fwd_morphism collect.cmc_fwd v)) post_g);
+        CG.combined_reachable_step post_g post_roots
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+          (CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+      end
+    | CG.MajorV _ ->
+      CG.combined_reachable_step pre_g src_roots u v;
+      chunked_edge_source_reachable_live minor major roots u v;
+      assert (chunked_reachable_live_graph_vertex minor major roots u);
+      assert (chunked_reachable_live_graph_vertex minor major roots v);
+      assert (CG.combined_reachable post_g post_roots
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)));
+      assert (chunked_reachable_live_graph_edge minor major roots u v);
+      FStar.Classical.exists_intro
+        (fun x -> exists (y: CG.combined_vertex).
+          chunked_reachable_live_graph_edge minor major roots x y /\
+          CG.fwd_morphism collect.cmc_fwd x ==
+          CG.fwd_morphism collect.cmc_fwd u /\
+          CG.fwd_morphism collect.cmc_fwd y ==
+          CG.fwd_morphism collect.cmc_fwd v)
+        u;
+      FStar.Classical.exists_intro
+        (fun y ->
+          chunked_reachable_live_graph_edge minor major roots u y /\
+          CG.fwd_morphism collect.cmc_fwd u ==
+          CG.fwd_morphism collect.cmc_fwd u /\
+          CG.fwd_morphism collect.cmc_fwd y ==
+          CG.fwd_morphism collect.cmc_fwd v)
+        v;
+      assert (chunked_reachable_live_graph_image_edge
+        minor major fp roots alloc_fuel fresh
+        (CG.fwd_morphism collect.cmc_fwd u)
+        (CG.fwd_morphism collect.cmc_fwd v));
+      assert (CG.mem_ce
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u),
+         CG.MajorV (CG.fwd_morphism collect.cmc_fwd v)) post_g);
+      CG.combined_reachable_step post_g post_roots
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u))
+        (CG.MajorV (CG.fwd_morphism collect.cmc_fwd v))
+    | _ ->
+      CG.combined_vertex_exhaustive v;
+      assert False
+  in
+  let image (w: U64.t)
+    : Lemma
+      (requires
+        chunked_reachable_live_graph_image_vertex
+          minor major fp roots alloc_fuel fresh w)
+      (ensures
+        CG.combined_reachable post_g post_roots (CG.MajorV w))
+    =
+    let u =
+      FStar.IndefiniteDescription.indefinite_description_ghost
+        CG.combined_vertex
+        (fun u ->
+          chunked_reachable_live_graph_vertex minor major roots u /\
+          CG.fwd_morphism collect.cmc_fwd u == w) in
+    assert (chunked_reachable_live_graph_vertex minor major roots u);
+    assert (CG.fwd_morphism collect.cmc_fwd u == w);
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires root);
+    FStar.Classical.forall_intro_2
+      (fun x -> FStar.Classical.move_requires (step x));
+    CG.combined_reachable_ind_with_reach pre_g src_roots p u;
+    assert (p u);
+    assert (CG.combined_reachable post_g post_roots
+      (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u)));
+    assert (CG.MajorV (CG.fwd_morphism collect.cmc_fwd u) == CG.MajorV w)
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires image)
+
+let chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_reachable_in_post_major_graph_from_chunk_bases_and_scan
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      CReach.chunked_roots_valid_nonblue roots major /\
+      chunked_major_chunks_above_zero_addr major /\
+      CReach.chunked_major_field_zero_no_minor minor major /\
+      CRem.chunked_minor_roots_in_roots minor major roots /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_reachable_live_graph_image_reachable_in_post_major_graph_prop
+        minor major fp roots alloc_fuel fresh)
+  =
+  chunked_cheney_gc_correct_after_preflight_reachable_live_graph_root_images_in_post_roots
+    minor major fp roots alloc_fuel fresh;
+  chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_subgraph_of_post_major_graph_from_chunk_bases_and_scan
+    minor major fp roots alloc_fuel fresh;
+  chunked_reachable_live_graph_image_reachable_in_post_major_graph_from_roots_and_subgraph
     minor major fp roots alloc_fuel fresh
 #pop-options

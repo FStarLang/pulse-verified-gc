@@ -44,6 +44,15 @@ type combined_vertex =
 /// explicitly for use in Seq.mem which requires eqtype)
 val cv_eqtype : squash (hasEq combined_vertex)
 
+/// SMT-facing exhaustiveness fact for clients that use defensive wildcard
+/// branches when destructing combined vertices.
+val combined_vertex_exhaustive (u: combined_vertex)
+  : Lemma (ensures
+      (match u with
+       | MinorV _ -> True
+       | MajorV _ -> True
+       | _ -> False))
+
 /// ---------------------------------------------------------------------------
 /// Combined Graph Type
 /// ---------------------------------------------------------------------------
@@ -881,6 +890,12 @@ val chunked_edge_source_decomposition
                U64.v src >= U64.v mword /\ U64.v src < heap_size /\
                U64.v src % U64.v mword == 0 /\
                Seq.mem (src <: obj_addr) (MH.major_objects mh)))
+
+/// Every chunked graph edge source is a chunked graph vertex.
+val chunked_edge_source_vertex
+  (ms: minor_state) (mh: MH.major_heap) (e: combined_edge)
+  : Lemma (requires mem_ce e (build_chunked_combined_graph ms mh))
+          (ensures mem_cv (fst e) (build_chunked_combined_graph ms mh))
 
 /// Chunked minor edge elimination: every edge from a minor source has a
 /// witness source field whose chunked classification produced the target.

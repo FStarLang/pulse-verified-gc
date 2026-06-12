@@ -27,6 +27,17 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 let cv_eqtype : squash (hasEq combined_vertex) = ()
 
+let combined_vertex_exhaustive (u: combined_vertex)
+  : Lemma (ensures
+      (match u with
+       | MinorV _ -> True
+       | MajorV _ -> True
+       | _ -> False))
+  =
+  match u with
+  | MinorV _ -> ()
+  | MajorV _ -> ()
+
 /// ---------------------------------------------------------------------------
 /// Field Classification
 /// ---------------------------------------------------------------------------
@@ -2587,6 +2598,22 @@ let chunked_edge_source_decomposition
       assert (src == obj);
       Seq.mem_index obj major_objs
     end
+#pop-options
+
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
+let chunked_edge_source_vertex
+  (ms: minor_state) (mh: MH.major_heap) (e: combined_edge)
+  : Lemma (requires mem_ce e (build_chunked_combined_graph ms mh))
+          (ensures mem_cv (fst e) (build_chunked_combined_graph ms mh))
+  =
+  chunked_edge_source_decomposition ms mh e;
+  match fst e with
+  | MinorV src ->
+    chunked_minor_vertex_char ms mh src
+  | MajorV src ->
+    let src_obj : obj_addr = src in
+    assert (src_obj == src);
+    chunked_major_vertex_char ms mh src_obj
 #pop-options
 
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 5"
