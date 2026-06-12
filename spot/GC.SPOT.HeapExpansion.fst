@@ -36,6 +36,7 @@ module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMarkDefs = GC.Spec.ChunkedMark.Defs
+module ChunkedMarkCompat = GC.Spec.ChunkedMark.Compat
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -512,6 +513,73 @@ let spot_chunked_mark_aux_step
          ChunkedMarkDefs.chunked_mark_aux mh' st' (fuel - 1)))
   =
   ChunkedMarkDefs.chunked_mark_aux_step mh st fuel
+
+let spot_chunked_get_field_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (ChunkedMarkDefs.chunked_get_field
+        (MH.single_chunk_major_heap g) obj i ==
+       GC.Spec.HeapGraph.get_field g obj i)
+  =
+  ChunkedMarkCompat.chunked_get_field_single_chunk_compat g obj i
+
+let spot_chunked_mark_pointer_field_single_chunk_compat
+  (g: heap)
+  (v: U64.t)
+  : Lemma
+      (ChunkedMarkDefs.chunked_is_pointer_field
+        (MH.single_chunk_major_heap g) v ==
+       GC.Spec.HeapGraph.is_pointer_field v)
+  =
+  ChunkedMarkCompat.chunked_is_pointer_field_single_chunk_compat g v
+
+let spot_chunked_make_gray_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedMarkDefs.chunked_make_gray
+        (MH.single_chunk_major_heap g) obj ==
+       MH.single_chunk_major_heap (Obj.makeGray obj g))
+  =
+  ChunkedMarkCompat.chunked_make_gray_single_chunk_compat g obj
+
+let spot_chunked_make_black_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedMarkDefs.chunked_make_black
+        (MH.single_chunk_major_heap g) obj ==
+       MH.single_chunk_major_heap (Obj.makeBlack obj g))
+  =
+  ChunkedMarkCompat.chunked_make_black_single_chunk_compat g obj
+
+let spot_chunked_mark_no_scan_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedMarkDefs.chunked_is_no_scan
+        (MH.single_chunk_major_heap g) obj ==
+       Obj.is_no_scan obj g)
+  =
+  ChunkedMarkCompat.chunked_is_no_scan_single_chunk_compat g obj
+
+let spot_chunked_resolve_object_single_chunk_compat
+  (g: heap)
+  (addr: obj_addr{U64.v addr >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (requires
+        Obj.is_infix addr g ==>
+        (let p = Obj.parent_closure_addr_nat addr g in
+         p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+         Fields.is_pointer (U64.uint_to_t p)))
+      (ensures
+        ChunkedMarkDefs.chunked_resolve_object
+          (MH.single_chunk_major_heap g) addr ==
+        Obj.resolve_object addr g)
+  =
+  ChunkedMarkCompat.chunked_resolve_object_single_chunk_compat g addr
 #pop-options
 
 let spot_expand_on_oom_pre

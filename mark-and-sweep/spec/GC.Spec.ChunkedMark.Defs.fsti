@@ -6,6 +6,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Heap
 
 module Header = GC.Lib.Header
 module MH = GC.Spec.MajorHeap
@@ -18,10 +19,50 @@ val chunked_get_field
   (i: U64.t{U64.v i >= 1})
   : GTot U64.t
 
+val chunked_get_field_no_room:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  i:U64.t{U64.v i >= 1} ->
+  Lemma
+    (requires
+      ~(U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+        heap_size))
+    (ensures chunked_get_field mh obj i == 0UL)
+
+val chunked_get_field_read_some:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  i:U64.t{U64.v i >= 1} ->
+  v:U64.t ->
+  Lemma
+    (requires
+      U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+        heap_size /\
+      (let field_addr = U64.add (hd_address obj) (U64.mul mword i) in
+       MH.read_word_in_major mh field_addr == Some v))
+    (ensures chunked_get_field mh obj i == v)
+
+val chunked_get_field_read_none:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  i:U64.t{U64.v i >= 1} ->
+  Lemma
+    (requires
+      U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+        heap_size /\
+      (let field_addr = U64.add (hd_address obj) (U64.mul mword i) in
+       MH.read_word_in_major mh field_addr == None))
+    (ensures chunked_get_field mh obj i == 0UL)
+
 val chunked_is_pointer_field
   (mh: MH.major_heap)
   (v: U64.t)
   : GTot bool
+
+val chunked_is_pointer_field_step:
+  mh:MH.major_heap ->
+  v:U64.t ->
+  Lemma (chunked_is_pointer_field mh v == MH.is_major_pointer mh v)
 
 val chunked_is_pointer_field_is_obj_addr
   (mh: MH.major_heap)
@@ -42,6 +83,14 @@ val chunked_parent_closure_addr_nat
   (mh: MH.major_heap)
   : GTot int
 
+val chunked_parent_closure_addr_nat_step:
+  infix_obj:obj_addr ->
+  mh:MH.major_heap ->
+  Lemma
+    (chunked_parent_closure_addr_nat infix_obj mh ==
+     U64.v infix_obj - 8 -
+     (U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh infix_obj) * 8))
+
 val chunked_resolve_object
   (mh: MH.major_heap)
   (addr: obj_addr)
@@ -51,6 +100,13 @@ val chunked_is_no_scan
   (mh: MH.major_heap)
   (obj: obj_addr)
   : GTot bool
+
+val chunked_is_no_scan_step:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  Lemma
+    (chunked_is_no_scan mh obj ==
+     U64.gte (ChunkedSweepDefs.chunked_tag_of_object mh obj) Obj.no_scan_tag)
 
 val chunked_make_gray
   (mh: MH.major_heap)
@@ -106,6 +162,19 @@ val chunked_resolve_non_infix:
   Lemma
     (requires ~(ChunkedSweepDefs.chunked_is_infix mh addr))
     (ensures chunked_resolve_object mh addr == addr)
+
+val chunked_resolve_infix_valid_active:
+  mh:MH.major_heap ->
+  addr:obj_addr ->
+  Lemma
+    (requires
+      ChunkedSweepDefs.chunked_is_infix mh addr /\
+      (let p = chunked_parent_closure_addr_nat addr mh in
+       p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+       chunked_is_pointer_field mh (U64.uint_to_t p)))
+    (ensures
+      chunked_resolve_object mh addr ==
+      U64.uint_to_t (chunked_parent_closure_addr_nat addr mh))
 
 val chunked_push_children_done:
   mh:MH.major_heap ->

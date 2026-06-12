@@ -28,8 +28,50 @@ let chunked_get_field
   else
     0UL
 
+let chunked_get_field_no_room
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        ~(U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size))
+      (ensures chunked_get_field mh obj i == 0UL)
+  = ()
+
+let chunked_get_field_read_some
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (v: U64.t)
+  : Lemma
+      (requires
+        U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size /\
+        (let field_addr = U64.add (hd_address obj) (U64.mul mword i) in
+         MH.read_word_in_major mh field_addr == Some v))
+      (ensures chunked_get_field mh obj i == v)
+  = ()
+
+let chunked_get_field_read_none
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size /\
+        (let field_addr = U64.add (hd_address obj) (U64.mul mword i) in
+         MH.read_word_in_major mh field_addr == None))
+      (ensures chunked_get_field mh obj i == 0UL)
+  = ()
+
 let chunked_is_pointer_field (mh: MH.major_heap) (v: U64.t) : GTot bool =
   MH.is_major_pointer mh v
+
+let chunked_is_pointer_field_step (mh: MH.major_heap) (v: U64.t)
+  : Lemma (chunked_is_pointer_field mh v == MH.is_major_pointer mh v)
+  = ()
 
 let rec chunked_is_pointer_field_is_obj_addr
     (mh: MH.major_heap)
@@ -69,6 +111,15 @@ let chunked_parent_closure_addr_nat
   U64.v infix_obj - 8 -
   (U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh infix_obj) * 8)
 
+let chunked_parent_closure_addr_nat_step
+    (infix_obj: obj_addr)
+    (mh: MH.major_heap)
+  : Lemma
+      (chunked_parent_closure_addr_nat infix_obj mh ==
+       U64.v infix_obj - 8 -
+       (U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh infix_obj) * 8))
+  = ()
+
 let chunked_resolve_object
     (mh: MH.major_heap)
     (addr: obj_addr)
@@ -88,6 +139,12 @@ let chunked_is_no_scan
   : GTot bool
   =
   U64.gte (ChunkedSweepDefs.chunked_tag_of_object mh obj) Obj.no_scan_tag
+
+let chunked_is_no_scan_step (mh: MH.major_heap) (obj: obj_addr)
+  : Lemma
+      (chunked_is_no_scan mh obj ==
+       U64.gte (ChunkedSweepDefs.chunked_tag_of_object mh obj) Obj.no_scan_tag)
+  = ()
 
 let chunked_make_gray (mh: MH.major_heap) (obj: obj_addr) : GTot MH.major_heap =
   ChunkedSweepDefs.chunked_set_object_color mh obj Header.Gray
@@ -148,9 +205,11 @@ let rec chunked_mark_aux
   =
   if Seq.length st = 0 then mh
   else if fuel = 0 then mh
-  else
+  else begin
+    assert (fuel > 0);
     let (mh', st') = chunked_mark_step mh st in
     chunked_mark_aux mh' st' (fuel - 1)
+  end
 
 let chunked_mark
     (mh: MH.major_heap)
@@ -175,6 +234,18 @@ let chunked_resolve_non_infix (mh: MH.major_heap) (addr: obj_addr)
   : Lemma
       (requires ~(ChunkedSweepDefs.chunked_is_infix mh addr))
       (ensures chunked_resolve_object mh addr == addr)
+  = ()
+
+let chunked_resolve_infix_valid_active (mh: MH.major_heap) (addr: obj_addr)
+  : Lemma
+      (requires
+        ChunkedSweepDefs.chunked_is_infix mh addr /\
+        (let p = chunked_parent_closure_addr_nat addr mh in
+         p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
+         chunked_is_pointer_field mh (U64.uint_to_t p)))
+      (ensures
+        chunked_resolve_object mh addr ==
+        U64.uint_to_t (chunked_parent_closure_addr_nat addr mh))
   = ()
 
 let chunked_push_children_done
