@@ -499,6 +499,38 @@ let spot_chunked_collection_shape_ensure_head_capacity_with_chain_blue
   = GenInv.chunked_collection_heap_shape_ensure_head_capacity_with_chain_blue
       minor mh fp fuel needed fresh
 
+let spot_chunked_collection_shape_ensure_head_capacity_with_chain_blue_value_safety
+  (minor: minor_state) (mh: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires GenInv.chunked_collection_heap_shape minor mh fp fuel /\
+                SpecMajorAlloc.major_fl_chain_terminates mh fp fuel = true /\
+                GenInv.chunked_chain_objects_blue mh fp fuel /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+                 (forall (obj:obj_addr).
+                  Seq.mem obj (MH.major_objects mh) ==>
+                    CG.chunked_major_field_values_miss_fresh
+                      mh fresh obj (CG.chunked_wosize_nat_of_object mh obj) 0)))
+      (ensures (
+        let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+        GenInv.chunked_collection_heap_shape
+          minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          r.capacity_major_out r.capacity_fp_out >= needed /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true /\
+        GenInv.chunked_chain_objects_blue
+          r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out))
+  = GenInv.chunked_collection_heap_shape_ensure_head_capacity_with_chain_blue_value_safety
+      minor mh fp fuel needed fresh
+
 let spot_chunked_collection_shape_ensure_head_capacity_alloc_list_budget
   (minor: minor_state) (mh: MH.major_heap)
   (fp: U64.t) (fuel: nat) (fresh: MH.heap_chunk)
@@ -766,9 +798,11 @@ let spot_chunked_copy_fields_preserves_major_objects
   ChunkedPromote.chunked_copy_fields_preserves_major_objects
     minor mh src_obj dst_obj i n idx hdr
 
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
 let spot_chunked_copy_fields_field_effect
   (minor: minor_state) (mh: MH.major_heap)
-  (src_obj dst_obj: U64.t) (i n j idx: nat) (hdr: U64.t)
+  (src_obj dst_obj: U64.t) (i n j idx: nat)
+  (field_addr: hp_addr) (hdr: U64.t)
   : Lemma
       (requires
         MH.well_formed_major_heap mh /\
@@ -779,21 +813,29 @@ let spot_chunked_copy_fields_field_effect
         idx < Seq.length mh /\
         MH.lookup_chunk_index mh (hd_address (dst_obj <: obj_addr)) == Some idx /\
         Seq.mem (dst_obj <: obj_addr) (MH.major_objects mh) /\
+        CG.chunked_major_field_slot (dst_obj <: obj_addr) j == Some field_addr /\
         MH.read_word_in_major mh (hd_address (dst_obj <: obj_addr)) ==
-          Some hdr /\
+         Some hdr /\
         n <= U64.v (Obj.getWosize hdr))
       (ensures
         (let result =
-           ChunkedPromote.chunked_copy_fields
-             minor mh src_obj dst_obj i n in
-         let addr_nat = U64.v dst_obj + j * U64.v mword in
-         addr_nat + U64.v mword <= heap_size /\
-         addr_nat % U64.v mword == 0 /\
-         MH.read_word_in_major result (U64.uint_to_t addr_nat) ==
-           Some (minor_read_field minor src_obj j)))
+          ChunkedPromote.chunked_copy_fields
+            minor mh src_obj dst_obj i n in
+         MH.read_word_in_major result field_addr ==
+          Some (minor_read_field minor src_obj j)))
   =
   ChunkedPromote.chunked_copy_fields_field_effect
-    minor mh src_obj dst_obj i n j idx hdr
+    minor mh src_obj dst_obj i n j idx hdr;
+  let result =
+    ChunkedPromote.chunked_copy_fields minor mh src_obj dst_obj i n in
+  let addr_nat = U64.v dst_obj + j * U64.v mword in
+  let addr : hp_addr = U64.uint_to_t addr_nat in
+  CG.chunked_major_field_slot_elim (dst_obj <: obj_addr) j field_addr;
+  assert (U64.v field_addr == addr_nat);
+  assert (U64.v addr == addr_nat);
+  U64.v_inj addr field_addr;
+  assert (addr == field_addr)
+#pop-options
 
 let spot_chunked_promote_object_success_field_effect
   (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
