@@ -66,6 +66,12 @@ val chunked_is_blue_header
 val chunked_is_black
   : mh:MH.major_heap -> obj:obj_addr -> GTot bool
 
+val chunked_is_black_header
+  : mh:MH.major_heap -> obj:obj_addr -> hdr:U64.t ->
+    Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures chunked_is_black mh obj == (getColor hdr = GC.Lib.Header.Black))
+
 /// Chunked-major counterpart of `Mark.no_black_objects`: no active major object
 /// is black at the start of collection/promotion.
 [@@"opaque_to_smt"]

@@ -7,6 +7,7 @@ open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
 open GC.Spec.Fields
+open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
@@ -15,6 +16,8 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 module FreeListShape = GC.Gen.FreeListShape
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module GenInv = GC.Gen.HeapInvariant
+module Mark = GC.Spec.Mark
+module CG = GC.Gen.CombinedGraph
 
 let dense_chain_nonblue_avoids (g: heap) (fp: U64.t) (fuel: nat) : prop =
   forall (obj: obj_addr).
@@ -225,6 +228,88 @@ val chunked_major_alloc_shape_single_chunk_from_dense
       (ensures
         GenInv.chunked_major_alloc_shape
           (MH.single_chunk_major_heap g) fp Alloc.alloc_search_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap g) fp Alloc.alloc_search_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          (MH.single_chunk_major_heap g) fp Alloc.alloc_search_fuel)
+
+val chunked_is_blue_single_chunk_compat
+  : g:heap -> obj:obj_addr ->
+    Lemma
+      (requires Seq.mem obj (objects zero_addr g))
+      (ensures
+        GenInv.chunked_is_blue (MH.single_chunk_major_heap g) obj ==
+        is_blue obj g)
+
+val chunked_is_black_single_chunk_compat
+  : g:heap -> obj:obj_addr ->
+    Lemma
+      (requires Seq.mem obj (objects zero_addr g))
+      (ensures
+        GenInv.chunked_is_black (MH.single_chunk_major_heap g) obj ==
+        is_black obj g)
+
+val chunked_no_black_objects_single_chunk_from_dense
+  : g:heap ->
+    Lemma
+      (requires Mark.no_black_objects g)
+      (ensures
+        GenInv.chunked_no_black_objects (MH.single_chunk_major_heap g))
+
+val chunked_minor_major_fields_no_blue_single_chunk_from_dense
+  : minor:minor_state -> g:heap ->
+    Lemma
+      (requires GenInv.minor_major_fields_no_blue minor g)
+      (ensures
+        GenInv.chunked_minor_major_fields_no_blue
+          minor (MH.single_chunk_major_heap g))
+
+val chunked_wosize_single_chunk_compat
+  : g:heap -> obj:obj_addr ->
+    Lemma
+      (requires Seq.mem obj (objects zero_addr g))
+      (ensures
+        CG.chunked_wosize_nat_of_object
+          (MH.single_chunk_major_heap g) obj ==
+        U64.v (wosize_of_object obj g))
+
+val chunked_is_no_scan_single_chunk_compat
+  : g:heap -> obj:obj_addr ->
+    Lemma
+      (requires Seq.mem obj (objects zero_addr g))
+      (ensures
+        CG.chunked_is_no_scan (MH.single_chunk_major_heap g) obj ==
+        is_no_scan obj g)
+
+val chunked_no_scan_invariant_single_chunk_from_dense
+  : g:heap ->
+    Lemma
+      (requires no_scan_invariant g)
+      (ensures
+        GenInv.chunked_no_scan_invariant (MH.single_chunk_major_heap g))
+
+val chunked_major_minor_fields_no_infix_targets_single_chunk_from_dense
+  : minor:minor_state -> g:heap ->
+    Lemma
+      (requires GenInv.major_minor_fields_no_infix_targets minor g)
+      (ensures
+        GenInv.chunked_major_minor_fields_no_infix_targets
+          minor (MH.single_chunk_major_heap g))
+
+val chunked_no_pointer_to_blue_single_chunk_from_dense
+  : g:heap ->
+    Lemma
+      (requires well_formed_heap g /\ Mark.no_pointer_to_blue g)
+      (ensures
+        GenInv.chunked_no_pointer_to_blue (MH.single_chunk_major_heap g))
+
+val chunked_collection_heap_shape_single_chunk_from_dense
+  : minor:minor_state -> g:heap -> fp:U64.t ->
+    Lemma
+      (requires GenInv.collection_heap_shape minor g fp)
+      (ensures
+        GenInv.chunked_collection_heap_shape
+          minor (MH.single_chunk_major_heap g) fp Alloc.alloc_search_fuel /\
         SpecMajorAlloc.major_fl_chain_terminates
           (MH.single_chunk_major_heap g) fp Alloc.alloc_search_fuel = true /\
         GenInv.chunked_chain_objects_blue

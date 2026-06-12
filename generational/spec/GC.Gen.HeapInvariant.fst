@@ -107,6 +107,26 @@ let chunked_is_black (mh: MH.major_heap) (obj: obj_addr)
     | Some Header.Black -> true
     | _ -> false
 
+let chunked_is_black_header
+  (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires MH.read_word_in_major mh (hd_address obj) == Some hdr)
+      (ensures chunked_is_black mh obj == (getColor hdr = Header.Black))
+  =
+  assert (chunked_color_of_object mh obj == Some (getColor hdr));
+  match getColor hdr with
+  | Header.Black ->
+    assert (chunked_is_black mh obj == true)
+  | Header.White ->
+    assert (getColor hdr <> Header.Black);
+    assert (chunked_is_black mh obj == false)
+  | Header.Gray ->
+    assert (getColor hdr <> Header.Black);
+    assert (chunked_is_black mh obj == false)
+  | Header.Blue ->
+    assert (getColor hdr <> Header.Black);
+    assert (chunked_is_black mh obj == false)
+
 [@@"opaque_to_smt"]
 let chunked_no_black_objects (mh: MH.major_heap) : Tot prop =
   forall (obj: obj_addr).
