@@ -33,6 +33,7 @@ module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
+module DenseFused = GC.Spec.SweepCoalesce.Defs
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -394,6 +395,40 @@ let spot_chunked_flush_blue_single_chunk_compat
   =
   ChunkedSweepCompat.chunked_flush_blue_single_chunk_compat
     g first_blue run_words fp
+
+let spot_chunked_fused_aux_single_chunk_compat
+  (source work: heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        (forall (o: obj_addr).
+          Seq.mem o objs ==> U64.v o >= U64.v zero_addr + U64.v mword) /\
+        (run_words = 0 \/
+         U64.v first_blue >= U64.v zero_addr + U64.v mword))
+      (ensures
+        ChunkedSweepDefs.chunked_fused_aux
+          (MH.single_chunk_major_heap source)
+          (MH.single_chunk_major_heap work)
+          objs first_blue run_words fp ==
+        (let (work', fp') =
+          DenseFused.fused_aux source work objs first_blue run_words fp in
+         (MH.single_chunk_major_heap work', fp')))
+  =
+  ChunkedSweepCompat.chunked_fused_aux_single_chunk_compat
+    source work objs first_blue run_words fp
+
+let spot_chunked_fused_sweep_coalesce_single_chunk_compat
+  (g: heap)
+  : Lemma
+      (ChunkedSweepDefs.chunked_fused_sweep_coalesce
+        (MH.single_chunk_major_heap g) ==
+       (let (g', fp') = DenseFused.fused_sweep_coalesce g in
+        (MH.single_chunk_major_heap g', fp')))
+  =
+  ChunkedSweepCompat.chunked_fused_sweep_coalesce_single_chunk_compat g
 #pop-options
 
 let spot_expand_on_oom_pre

@@ -161,6 +161,12 @@ val chunked_sweep_step:
   fp:U64.t ->
   Lemma (chunked_sweep mh fp == chunked_sweep_chunks mh mh fp)
 
+val chunked_fused_sweep_coalesce_step:
+  mh:MH.major_heap ->
+  Lemma
+    (chunked_fused_sweep_coalesce mh ==
+     chunked_fused_sweep_coalesce_chunks mh mh mh 0UL)
+
 val chunked_zero_fields_zero:
   mh:MH.major_heap ->
   addr:U64.t ->

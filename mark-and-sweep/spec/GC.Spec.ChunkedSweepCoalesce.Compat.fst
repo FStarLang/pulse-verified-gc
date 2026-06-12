@@ -17,6 +17,7 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecCoalesce = GC.Spec.Coalesce
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 module SpecSweep = GC.Spec.Sweep
+module DenseFused = GC.Spec.SweepCoalesce.Defs
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -357,3 +358,102 @@ let chunked_flush_blue_single_chunk_compat
   end
   end
 #pop-options
+
+let rec chunked_fused_aux_single_chunk_compat
+    (source work: heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Lemma
+      (requires
+        (forall (o: obj_addr). Seq.mem o objs ==> U64.v o >= U64.v zero_addr + U64.v mword) /\
+        (run_words = 0 \/
+         U64.v first_blue >= U64.v zero_addr + U64.v mword))
+      (ensures
+        Defs.chunked_fused_aux
+          (MH.single_chunk_major_heap source)
+          (MH.single_chunk_major_heap work)
+          objs first_blue run_words fp ==
+        (let (work', fp') =
+          DenseFused.fused_aux source work objs first_blue run_words fp in
+         (MH.single_chunk_major_heap work', fp')))
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then begin
+    assert (Seq.length objs == Seq.length (Seq.empty #obj_addr));
+    assert (forall i. i < Seq.length objs ==>
+      Seq.index objs i == Seq.index (Seq.empty #obj_addr) i);
+    Seq.lemma_eq_intro objs (Seq.empty #obj_addr);
+    Seq.lemma_eq_elim objs (Seq.empty #obj_addr);
+    Defs.chunked_fused_aux_empty
+      (MH.single_chunk_major_heap source)
+      (MH.single_chunk_major_heap work)
+      first_blue run_words fp;
+    DenseFused.fused_aux_empty source work first_blue run_words fp;
+    chunked_flush_blue_single_chunk_compat work first_blue run_words fp
+  end else begin
+    assert (Seq.length objs > 0);
+    let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    Seq.mem_cons obj rest;
+    assert (Seq.mem obj objs);
+    assert (U64.v obj >= U64.v zero_addr + U64.v mword);
+    Defs.chunked_is_black_single_chunk_compat source obj;
+    if Obj.is_black obj source then begin
+      Defs.chunked_fused_aux_black_step
+        (MH.single_chunk_major_heap source)
+        (MH.single_chunk_major_heap work)
+        objs first_blue run_words fp;
+      DenseFused.fused_aux_black_step source work objs first_blue run_words fp;
+      chunked_flush_blue_single_chunk_compat work first_blue run_words fp;
+      let (work', fp') = SpecCoalesce.flush_blue work first_blue run_words fp in
+      chunked_make_white_single_chunk_compat work' obj;
+      let work'' = Obj.makeWhite obj work' in
+      chunked_fused_aux_single_chunk_compat
+        source work'' rest 0UL 0 fp'
+    end else begin
+      Defs.chunked_fused_aux_nonblack_step
+        (MH.single_chunk_major_heap source)
+        (MH.single_chunk_major_heap work)
+        objs first_blue run_words fp;
+      DenseFused.fused_aux_nonblack_step
+        source work objs first_blue run_words fp;
+      Defs.chunked_wosize_of_object_single_chunk_compat source obj;
+      let ws = U64.v (Obj.wosize_of_object obj source) in
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      assert (run_words + ws + 1 <> 0);
+      assert (U64.v new_first >= U64.v zero_addr + U64.v mword);
+      chunked_fused_aux_single_chunk_compat
+        source work rest new_first (run_words + ws + 1) fp
+    end
+  end
+
+let chunked_fused_sweep_coalesce_single_chunk_compat
+    (g: heap)
+  : Lemma
+      (Defs.chunked_fused_sweep_coalesce (MH.single_chunk_major_heap g) ==
+       (let (g', fp') = DenseFused.fused_sweep_coalesce g in
+        (MH.single_chunk_major_heap g', fp')))
+  =
+  Defs.chunked_fused_sweep_coalesce_step (MH.single_chunk_major_heap g);
+  assert (Seq.length (MH.single_chunk_major_heap g) > 0);
+  Defs.chunked_fused_sweep_coalesce_chunks_step
+    (MH.single_chunk_major_heap g)
+    (MH.single_chunk_major_heap g)
+    (MH.single_chunk_major_heap g)
+    0UL;
+  assert (Seq.head (MH.single_chunk_major_heap g) == MH.single_chunk_of_heap g);
+  MH.single_chunk_objects_compat g;
+  assert (MH.objects_in_chunk (Seq.head (MH.single_chunk_major_heap g)) ==
+          Fields.objects zero_addr g);
+  single_chunk_objects_have_header_room g;
+  chunked_fused_aux_single_chunk_compat
+    g g (MH.objects_in_chunk (Seq.head (MH.single_chunk_major_heap g)))
+    0UL 0 0UL;
+  let (g', fp') = DenseFused.fused_sweep_coalesce g in
+  assert (Seq.length (Seq.tail (MH.single_chunk_major_heap g)) == 0);
+  Seq.lemma_empty (Seq.tail (MH.single_chunk_major_heap g));
+  Defs.chunked_fused_sweep_coalesce_chunks_empty
+    (MH.single_chunk_major_heap g)
+    (MH.single_chunk_major_heap g') fp'

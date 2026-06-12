@@ -14,6 +14,7 @@ module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 module SpecAlloc = GC.Spec.Allocator
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
+module DenseFused = GC.Spec.SweepCoalesce.Defs
 
 val chunked_make_white_single_chunk_compat
   (g: heap)
@@ -83,3 +84,30 @@ val chunked_flush_blue_single_chunk_compat
         (let (g', fp') =
           SpecCoalesce.flush_blue g first_blue run_words fp in
          (MH.single_chunk_major_heap g', fp')))
+
+val chunked_fused_aux_single_chunk_compat
+  (source work: heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        (forall (o: obj_addr). Seq.mem o objs ==> U64.v o >= U64.v zero_addr + U64.v mword) /\
+        (run_words = 0 \/
+         U64.v first_blue >= U64.v zero_addr + U64.v mword))
+      (ensures
+        Defs.chunked_fused_aux
+          (MH.single_chunk_major_heap source)
+          (MH.single_chunk_major_heap work)
+          objs first_blue run_words fp ==
+        (let (work', fp') =
+          DenseFused.fused_aux source work objs first_blue run_words fp in
+         (MH.single_chunk_major_heap work', fp')))
+
+val chunked_fused_sweep_coalesce_single_chunk_compat
+  (g: heap)
+  : Lemma
+      (Defs.chunked_fused_sweep_coalesce (MH.single_chunk_major_heap g) ==
+       (let (g', fp') = DenseFused.fused_sweep_coalesce g in
+        (MH.single_chunk_major_heap g', fp')))

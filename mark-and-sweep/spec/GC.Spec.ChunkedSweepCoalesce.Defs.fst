@@ -350,6 +350,12 @@ let chunked_sweep_step (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep mh fp == chunked_sweep_chunks mh mh fp)
   = ()
 
+let chunked_fused_sweep_coalesce_step (mh: MH.major_heap)
+  : Lemma
+      (chunked_fused_sweep_coalesce mh ==
+       chunked_fused_sweep_coalesce_chunks mh mh mh 0UL)
+  = ()
+
 #push-options "--z3rlimit 1 --fuel 1 --ifuel 0 --split_queries always"
 let chunked_zero_fields_zero (mh: MH.major_heap) (addr: U64.t)
   : Lemma (chunked_zero_fields mh addr 0 == mh)
