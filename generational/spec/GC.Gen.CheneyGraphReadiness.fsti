@@ -1887,6 +1887,72 @@ val chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_ima
         CReach.chunked_major_field_zero_no_minor
          minor r.capacity_major_out))
 
+let chunked_preflight_base_policy
+  (minor: minor_state) (major: MH.major_heap) (base_roots: seq U64.t)
+  : prop =
+  CReach.chunked_roots_valid_nonblue base_roots major /\
+  chunked_major_chunks_above_zero_addr major /\
+  CReach.chunked_major_field_zero_no_minor minor major
+
+let chunked_preflight_expansion_value_policy
+  (major: MH.major_heap) (fp: U64.t) (base_roots: seq U64.t)
+  (needed: nat) (fresh: MH.heap_chunk)
+  : prop =
+  CReach.chunked_roots_disjoint_from_chunk base_roots fresh /\
+  MH.chunk_disjoint_from_all fresh major /\
+  fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+  U64.v fresh.base >= U64.v zero_addr /\
+  SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+  (forall (obj:obj_addr).
+    Seq.mem obj (MH.major_objects major) ==>
+      CG.chunked_major_field_values_miss_fresh
+        major fresh obj (CG.chunked_wosize_nat_of_object major obj) 0)
+
+let chunked_minor_preflight_value_policy
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (base_roots: seq U64.t) (fresh: MH.heap_chunk)
+  : prop =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  chunked_preflight_base_policy minor major base_roots /\
+  (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+   chunked_preflight_expansion_value_policy
+     major fp base_roots needed fresh)
+
+val chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_from_preflight_value_policy
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (base_roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_minor_preflight_value_policy
+        minor major fp base_roots fresh)
+    (ensures
+      chunked_reachable_live_graph_post_reachable_image_isomorphism_prop
+        minor major fp
+        (CRem.chunked_minor_collection_roots minor major base_roots)
+        alloc_fuel fresh /\
+      (let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp alloc_fuel (PromotionDemand.minor_promotion_demand minor + 1)
+          fresh in
+       CReach.chunked_roots_valid_nonblue base_roots r.capacity_major_out /\
+        CReach.chunked_roots_valid_nonblue
+          (CRem.chunked_minor_collection_roots minor major base_roots)
+          r.capacity_major_out /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+         PromotionDemand.minor_promotion_demand minor + 1 ==>
+         CReach.chunked_roots_disjoint_from_chunk
+           (CRem.chunked_minor_collection_roots minor major base_roots)
+           fresh) /\
+        chunked_major_chunks_above_zero_addr r.capacity_major_out /\
+        chunked_major_objects_are_pointer_fields r.capacity_major_out /\
+        CReach.chunked_major_field_zero_no_minor
+         minor r.capacity_major_out))
+
 val chunked_cheney_gc_correct_after_preflight_policy_and_post_reachable_image_single_chunk_from_dense_roots
   (minor: minor_state) (major: heap) (fp: U64.t)
   (base_roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
