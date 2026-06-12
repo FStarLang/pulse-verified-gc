@@ -30,6 +30,8 @@ module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
+module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
+module SpecSweep = GC.Spec.Sweep
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -300,6 +302,38 @@ let spot_chunked_sweep_is_infix_single_chunk_compat
        Obj.is_infix obj g)
   =
   ChunkedSweepDefs.chunked_is_infix_single_chunk_compat g obj
+
+let spot_chunked_make_white_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_make_white
+        (MH.single_chunk_major_heap g) obj ==
+       MH.single_chunk_major_heap (Obj.makeWhite obj g))
+  =
+  ChunkedSweepCompat.chunked_make_white_single_chunk_compat g obj
+
+let spot_chunked_make_blue_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_make_blue
+        (MH.single_chunk_major_heap g) obj ==
+       MH.single_chunk_major_heap (Obj.makeBlue obj g))
+  =
+  ChunkedSweepCompat.chunked_make_blue_single_chunk_compat g obj
+
+let spot_chunked_sweep_object_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  (fp: U64.t)
+  : Lemma
+      (ChunkedSweepDefs.chunked_sweep_object
+        (MH.single_chunk_major_heap g) obj fp ==
+       (let (g', fp') = SpecSweep.sweep_object g obj fp in
+        (MH.single_chunk_major_heap g', fp')))
+  =
+  ChunkedSweepCompat.chunked_sweep_object_single_chunk_compat g obj fp
 #pop-options
 
 let spot_expand_on_oom_pre

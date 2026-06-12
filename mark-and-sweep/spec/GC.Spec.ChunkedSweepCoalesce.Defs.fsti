@@ -11,6 +11,7 @@ open GC.Spec.Heap
 module Obj = GC.Spec.Object
 module Header = GC.Lib.Header
 module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 val chunked_read_header
   (mh: MH.major_heap) (obj: obj_addr)
@@ -153,6 +154,88 @@ val chunked_is_infix_single_chunk_compat
 val chunked_sweep_aux_empty
   (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep_aux mh Seq.empty fp == (mh, fp))
+
+val chunked_set_object_color_some:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  color:Header.color_sem ->
+  hdr:U64.t ->
+  Lemma
+    (requires chunked_read_header mh obj == Some hdr)
+    (ensures
+      chunked_set_object_color mh obj color ==
+      SpecMajorAlloc.major_write_word_or_same
+        mh (hd_address obj) (Obj.colorHeader hdr color))
+
+val chunked_set_object_color_none:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  color:Header.color_sem ->
+  Lemma
+    (requires chunked_read_header mh obj == None)
+    (ensures chunked_set_object_color mh obj color == mh)
+
+val chunked_make_white_step:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  Lemma
+    (chunked_make_white mh obj ==
+     chunked_set_object_color mh obj Header.White)
+
+val chunked_make_blue_step:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  Lemma
+    (chunked_make_blue mh obj ==
+     chunked_set_object_color mh obj Header.Blue)
+
+val chunked_sweep_object_infix_step:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  fp:U64.t ->
+  Lemma
+    (requires chunked_is_infix mh obj)
+    (ensures chunked_sweep_object mh obj fp == (mh, fp))
+
+val chunked_sweep_object_white_step:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  fp:U64.t ->
+  Lemma
+    (requires ~(chunked_is_infix mh obj) /\
+              chunked_is_white mh obj)
+    (ensures
+      chunked_sweep_object mh obj fp ==
+      (let ws = chunked_wosize_of_object mh obj in
+       let hd = hd_address obj in
+       let mh' =
+         if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size
+         then SpecMajorAlloc.major_write_word_or_same mh obj fp
+         else mh
+       in
+       (chunked_make_blue mh' obj, obj)))
+
+val chunked_sweep_object_black_step:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  fp:U64.t ->
+  Lemma
+    (requires ~(chunked_is_infix mh obj) /\
+              ~(chunked_is_white mh obj) /\
+              chunked_is_black mh obj)
+    (ensures
+      chunked_sweep_object mh obj fp ==
+      (chunked_make_white mh obj, fp))
+
+val chunked_sweep_object_other_step:
+  mh:MH.major_heap ->
+  obj:obj_addr ->
+  fp:U64.t ->
+  Lemma
+    (requires ~(chunked_is_infix mh obj) /\
+              ~(chunked_is_white mh obj) /\
+              ~(chunked_is_black mh obj))
+    (ensures chunked_sweep_object mh obj fp == (mh, fp))
 
 val chunked_sweep_aux_step
   (mh: MH.major_heap) (objs: seq obj_addr) (fp: U64.t)
