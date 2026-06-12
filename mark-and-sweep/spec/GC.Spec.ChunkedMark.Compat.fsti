@@ -1,6 +1,7 @@
 module GC.Spec.ChunkedMark.Compat
 
 module U64 = FStar.UInt64
+module Seq = FStar.Seq
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -8,6 +9,7 @@ open GC.Spec.Heap
 module Obj = GC.Spec.Object
 module Fields = GC.Spec.Fields
 module HeapGraph = GC.Spec.HeapGraph
+module Mark = GC.Spec.Mark
 module MH = GC.Spec.MajorHeap
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 
@@ -67,3 +69,43 @@ val chunked_resolve_object_single_chunk_compat
       (ensures
         MarkDefs.chunked_resolve_object (MH.single_chunk_major_heap g) addr ==
         Obj.resolve_object addr g)
+
+val chunked_mark_step_empty_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st = 0)
+      (ensures
+        MarkDefs.chunked_mark_step (MH.single_chunk_major_heap g) st ==
+        (let (g', st') = Mark.mark_step g st in
+         (MH.single_chunk_major_heap g', st')))
+
+val chunked_mark_step_no_scan_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st > 0 /\
+                U64.v (Seq.head st) >= U64.v zero_addr + U64.v mword /\
+                Obj.is_no_scan (Seq.head st) g)
+      (ensures
+        MarkDefs.chunked_mark_step (MH.single_chunk_major_heap g) st ==
+        (let (g', st') = Mark.mark_step g st in
+         (MH.single_chunk_major_heap g', st')))
+
+val chunked_mark_aux_empty_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat)
+  : Lemma
+      (requires Seq.length st = 0)
+      (ensures
+        MarkDefs.chunked_mark_aux (MH.single_chunk_major_heap g) st fuel ==
+        MH.single_chunk_major_heap (Mark.mark_aux g st fuel))
+
+val chunked_mark_aux_out_of_fuel_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        MarkDefs.chunked_mark_aux (MH.single_chunk_major_heap g) st 0 ==
+        MH.single_chunk_major_heap (Mark.mark_aux g st 0))

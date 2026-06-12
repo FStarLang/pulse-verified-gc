@@ -10,6 +10,7 @@ module Header = GC.Lib.Header
 module Obj = GC.Spec.Object
 module Fields = GC.Spec.Fields
 module HeapGraph = GC.Spec.HeapGraph
+module Mark = GC.Spec.Mark
 module MH = GC.Spec.MajorHeap
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
@@ -171,3 +172,54 @@ let chunked_resolve_object_single_chunk_compat
     MarkDefs.chunked_resolve_non_infix (MH.single_chunk_major_heap g) addr;
     Obj.resolve_non_infix addr g
   end
+
+let chunked_mark_step_empty_single_chunk_compat
+    (g: heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st = 0)
+      (ensures
+        MarkDefs.chunked_mark_step (MH.single_chunk_major_heap g) st ==
+        (let (g', st') = Mark.mark_step g st in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  MarkDefs.chunked_mark_step_empty (MH.single_chunk_major_heap g) st
+
+let chunked_mark_step_no_scan_single_chunk_compat
+    (g: heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st > 0 /\
+                U64.v (Seq.head st) >= U64.v zero_addr + U64.v mword /\
+                Obj.is_no_scan (Seq.head st) g)
+      (ensures
+        MarkDefs.chunked_mark_step (MH.single_chunk_major_heap g) st ==
+        (let (g', st') = Mark.mark_step g st in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  let obj = Seq.head st in
+  chunked_is_no_scan_single_chunk_compat g obj;
+  chunked_make_black_single_chunk_compat g obj;
+  MarkDefs.chunked_mark_step_no_scan (MH.single_chunk_major_heap g) st
+
+let chunked_mark_aux_empty_single_chunk_compat
+    (g: heap)
+    (st: Seq.seq obj_addr)
+    (fuel: nat)
+  : Lemma
+      (requires Seq.length st = 0)
+      (ensures
+        MarkDefs.chunked_mark_aux (MH.single_chunk_major_heap g) st fuel ==
+        MH.single_chunk_major_heap (Mark.mark_aux g st fuel))
+  =
+  MarkDefs.chunked_mark_aux_empty (MH.single_chunk_major_heap g) st fuel
+
+let chunked_mark_aux_out_of_fuel_single_chunk_compat
+    (g: heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        MarkDefs.chunked_mark_aux (MH.single_chunk_major_heap g) st 0 ==
+        MH.single_chunk_major_heap (Mark.mark_aux g st 0))
+  =
+  MarkDefs.chunked_mark_aux_out_of_fuel (MH.single_chunk_major_heap g) st
