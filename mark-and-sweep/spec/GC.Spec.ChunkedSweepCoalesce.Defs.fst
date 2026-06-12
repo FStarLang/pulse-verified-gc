@@ -235,6 +235,110 @@ let chunked_fused_sweep_coalesce (mh: MH.major_heap)
   = chunked_fused_sweep_coalesce_chunks mh mh mh 0UL
 
 /// ---------------------------------------------------------------------------
+/// Single-chunk compatibility
+/// ---------------------------------------------------------------------------
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_read_header_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_read_header (MH.single_chunk_major_heap g) obj ==
+       Some (read_word g (hd_address obj)))
+  =
+  hd_address_spec obj;
+  assert (U64.v (hd_address obj) >= U64.v zero_addr);
+  assert (U64.v (hd_address obj) + U64.v mword == U64.v obj);
+  assert (U64.v (hd_address obj) + U64.v mword <= heap_size);
+  MH.single_chunk_read_word_compat g (hd_address obj)
+
+let chunked_color_of_object_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_color_of_object (MH.single_chunk_major_heap g) obj ==
+       Some (Obj.color_of_object obj g))
+  =
+  chunked_read_header_single_chunk_compat g obj;
+  Obj.color_of_object_spec obj g
+
+let chunked_wosize_of_object_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_wosize_of_object (MH.single_chunk_major_heap g) obj ==
+       Obj.wosize_of_object obj g)
+  =
+  chunked_read_header_single_chunk_compat g obj;
+  Obj.wosize_of_object_spec obj g
+
+let chunked_tag_of_object_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_tag_of_object (MH.single_chunk_major_heap g) obj ==
+       Obj.tag_of_object obj g)
+  =
+  chunked_read_header_single_chunk_compat g obj;
+  Obj.tag_of_object_spec obj g
+
+let chunked_is_white_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_white (MH.single_chunk_major_heap g) obj ==
+       Obj.is_white obj g)
+  =
+  chunked_color_of_object_single_chunk_compat g obj;
+  Obj.is_white_iff obj g;
+  match Obj.color_of_object obj g with
+  | Header.White -> ()
+  | Header.Gray -> ()
+  | Header.Blue -> ()
+  | Header.Black -> ()
+
+let chunked_is_blue_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_blue (MH.single_chunk_major_heap g) obj ==
+       Obj.is_blue obj g)
+  =
+  chunked_color_of_object_single_chunk_compat g obj;
+  Obj.is_blue_iff obj g;
+  match Obj.color_of_object obj g with
+  | Header.White -> ()
+  | Header.Gray -> ()
+  | Header.Blue -> ()
+  | Header.Black -> ()
+
+let chunked_is_black_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_black (MH.single_chunk_major_heap g) obj ==
+       Obj.is_black obj g)
+  =
+  chunked_color_of_object_single_chunk_compat g obj;
+  Obj.is_black_iff obj g;
+  match Obj.color_of_object obj g with
+  | Header.White -> ()
+  | Header.Gray -> ()
+  | Header.Blue -> ()
+  | Header.Black -> ()
+
+let chunked_is_infix_single_chunk_compat
+    (g: heap)
+    (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_infix (MH.single_chunk_major_heap g) obj ==
+       Obj.is_infix obj g)
+  =
+  chunked_tag_of_object_single_chunk_compat g obj;
+  Obj.is_infix_spec obj g
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Unfolding lemmas
 /// ---------------------------------------------------------------------------
 

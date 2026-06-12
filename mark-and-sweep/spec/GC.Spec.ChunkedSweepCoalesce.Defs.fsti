@@ -94,6 +94,62 @@ val chunked_fused_sweep_coalesce
   (mh: MH.major_heap)
   : GTot (MH.major_heap & U64.t)
 
+val chunked_read_header_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_read_header (MH.single_chunk_major_heap g) obj ==
+       Some (read_word g (hd_address obj)))
+
+val chunked_color_of_object_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_color_of_object (MH.single_chunk_major_heap g) obj ==
+       Some (Obj.color_of_object obj g))
+
+val chunked_wosize_of_object_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_wosize_of_object (MH.single_chunk_major_heap g) obj ==
+       Obj.wosize_of_object obj g)
+
+val chunked_tag_of_object_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_tag_of_object (MH.single_chunk_major_heap g) obj ==
+       Obj.tag_of_object obj g)
+
+val chunked_is_white_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_white (MH.single_chunk_major_heap g) obj ==
+       Obj.is_white obj g)
+
+val chunked_is_blue_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_blue (MH.single_chunk_major_heap g) obj ==
+       Obj.is_blue obj g)
+
+val chunked_is_black_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_black (MH.single_chunk_major_heap g) obj ==
+       Obj.is_black obj g)
+
+val chunked_is_infix_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (chunked_is_infix (MH.single_chunk_major_heap g) obj ==
+       Obj.is_infix obj g)
+
 val chunked_sweep_aux_empty
   (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep_aux mh Seq.empty fp == (mh, fp))

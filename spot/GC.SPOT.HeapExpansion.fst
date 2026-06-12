@@ -220,6 +220,86 @@ let spot_chunked_fused_sweep_coalesce_chunks_step
   =
   ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks_step
     source_chunks source work fp
+
+let spot_chunked_sweep_header_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_read_header
+         (MH.single_chunk_major_heap g) obj ==
+       Some (read_word g (hd_address obj)))
+  =
+  ChunkedSweepDefs.chunked_read_header_single_chunk_compat g obj
+
+let spot_chunked_sweep_color_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_color_of_object
+         (MH.single_chunk_major_heap g) obj ==
+       Some (Obj.color_of_object obj g))
+  =
+  ChunkedSweepDefs.chunked_color_of_object_single_chunk_compat g obj
+
+let spot_chunked_sweep_wosize_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_wosize_of_object
+         (MH.single_chunk_major_heap g) obj ==
+       Obj.wosize_of_object obj g)
+  =
+  ChunkedSweepDefs.chunked_wosize_of_object_single_chunk_compat g obj
+
+let spot_chunked_sweep_tag_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_tag_of_object
+         (MH.single_chunk_major_heap g) obj ==
+       Obj.tag_of_object obj g)
+  =
+  ChunkedSweepDefs.chunked_tag_of_object_single_chunk_compat g obj
+
+let spot_chunked_sweep_is_white_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_is_white
+         (MH.single_chunk_major_heap g) obj ==
+       Obj.is_white obj g)
+  =
+  ChunkedSweepDefs.chunked_is_white_single_chunk_compat g obj
+
+let spot_chunked_sweep_is_blue_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_is_blue
+         (MH.single_chunk_major_heap g) obj ==
+       Obj.is_blue obj g)
+  =
+  ChunkedSweepDefs.chunked_is_blue_single_chunk_compat g obj
+
+let spot_chunked_sweep_is_black_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_is_black
+         (MH.single_chunk_major_heap g) obj ==
+       Obj.is_black obj g)
+  =
+  ChunkedSweepDefs.chunked_is_black_single_chunk_compat g obj
+
+let spot_chunked_sweep_is_infix_single_chunk_compat
+  (g: heap)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  : Lemma
+      (ChunkedSweepDefs.chunked_is_infix
+         (MH.single_chunk_major_heap g) obj ==
+       Obj.is_infix obj g)
+  =
+  ChunkedSweepDefs.chunked_is_infix_single_chunk_compat g obj
 #pop-options
 
 let spot_expand_on_oom_pre
