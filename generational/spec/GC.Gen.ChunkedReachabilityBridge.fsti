@@ -26,12 +26,47 @@ let chunked_roots_valid_nonblue (roots: seq U64.t) (major: MH.major_heap) : prop
     is_val_addr r /\ Seq.mem (r <: obj_addr) (MH.major_objects major) ==>
     ~(GenInv.chunked_is_blue major (r <: obj_addr))
 
+/// Roots collected before registering a fresh chunk must not name the fresh
+/// chunk.  This is the root-side analogue of field expansion safety.
+let chunked_roots_disjoint_from_chunk
+  (roots: seq U64.t) (fresh: MH.heap_chunk) : prop =
+  forall (r: U64.t).
+    Seq.mem r roots ==> ~(MH.pointer_in_chunk fresh r)
+
 val chunked_roots_valid_nonblue_single_chunk_compat
   (roots: seq U64.t) (major: heap)
   : Lemma
     (requires RBridge.roots_valid_nonblue roots major)
     (ensures
       chunked_roots_valid_nonblue roots (MH.single_chunk_major_heap major))
+
+val chunked_roots_valid_nonblue_preserved_by_expansion
+  (roots: seq U64.t) (major: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+    (requires
+      chunked_roots_valid_nonblue roots major /\
+      chunked_roots_disjoint_from_chunk roots fresh /\
+      MH.chunk_disjoint_from_all fresh major)
+    (ensures
+      chunked_roots_valid_nonblue
+        roots (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+
+val chunked_roots_valid_nonblue_ensure_head_capacity
+  (roots: seq U64.t) (major: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_roots_valid_nonblue roots major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+       chunked_roots_disjoint_from_chunk roots fresh /\
+       MH.chunk_disjoint_from_all fresh major))
+    (ensures
+      chunked_roots_valid_nonblue
+        roots
+        (SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp fuel needed fresh).capacity_major_out)
 
 /// Chunked active-major object addresses are valid legacy pointer field values.
 /// This is intentionally local to avoid a dependency cycle with

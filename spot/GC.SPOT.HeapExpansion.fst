@@ -6134,6 +6134,40 @@ let spot_chunked_roots_valid_nonblue_single_chunk_compat
   CReach.chunked_roots_valid_nonblue_single_chunk_compat
     roots major
 
+let spot_chunked_roots_valid_nonblue_preserved_by_expansion
+  (roots: Seq.seq U64.t) (major: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        CReach.chunked_roots_valid_nonblue roots major /\
+        CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+        MH.chunk_disjoint_from_all fresh major)
+      (ensures
+        CReach.chunked_roots_valid_nonblue
+          roots (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  CReach.chunked_roots_valid_nonblue_preserved_by_expansion
+    roots major fresh fp
+
+let spot_chunked_roots_valid_nonblue_ensure_head_capacity
+  (roots: Seq.seq U64.t) (major: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CReach.chunked_roots_valid_nonblue roots major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+          CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+          MH.chunk_disjoint_from_all fresh major))
+      (ensures
+        CReach.chunked_roots_valid_nonblue
+          roots
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp fuel needed fresh).capacity_major_out)
+  =
+  CReach.chunked_roots_valid_nonblue_ensure_head_capacity
+    roots major fp fuel needed fresh
+
 let spot_chunked_major_field_zero_no_minor_single_chunk_compat
   (minor: minor_state) (major: heap)
   : Lemma

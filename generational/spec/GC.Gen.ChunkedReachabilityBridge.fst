@@ -124,6 +124,79 @@ let chunked_roots_valid_nonblue_single_chunk_compat
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_roots_valid_nonblue_preserved_by_expansion
+  (roots: seq U64.t) (major: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+    (requires
+      chunked_roots_valid_nonblue roots major /\
+      chunked_roots_disjoint_from_chunk roots fresh /\
+      MH.chunk_disjoint_from_all fresh major)
+    (ensures
+      chunked_roots_valid_nonblue
+        roots (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap major fresh fp).major_out in
+  let fresh_obj = SpecMajorAlloc.fresh_chunk_object fresh in
+  let prove (r: U64.t)
+    : Lemma
+      (ensures
+        Seq.mem r roots /\ ~(is_minor_pointer r) /\
+        is_val_addr r /\ Seq.mem (r <: obj_addr) (MH.major_objects expanded) ==>
+        ~(GenInv.chunked_is_blue expanded (r <: obj_addr)))
+    =
+    if Seq.mem r roots /\
+      ~(is_minor_pointer r) /\
+      is_val_addr r /\
+      Seq.mem (r <: obj_addr) (MH.major_objects expanded) then begin
+      let obj : obj_addr = r in
+      assert (obj == r);
+      SpecMajorAlloc.expand_major_heap_objects major fresh fp;
+      if obj == fresh_obj then begin
+        SpecMajorAlloc.fresh_chunk_object_in_chunk fresh;
+        assert (MH.pointer_in_chunk fresh fresh_obj);
+        assert (MH.pointer_in_chunk fresh r);
+        assert False
+      end else begin
+        if ~(Seq.mem obj (MH.major_objects major)) then begin
+          GC.Spec.SeqMemLemmas.seq_mem_cons_not_mem_implies_eq
+            fresh_obj obj (MH.major_objects major);
+          assert False
+        end;
+        assert (Seq.mem obj (MH.major_objects major));
+        assert (~(GenInv.chunked_is_blue major obj));
+        GenInv.chunked_is_blue_preserved_by_expansion major fresh fp obj;
+        assert (GenInv.chunked_is_blue expanded obj ==
+                GenInv.chunked_is_blue major obj)
+      end
+    end
+  in
+  FStar.Classical.forall_intro prove
+
+let chunked_roots_valid_nonblue_ensure_head_capacity
+  (roots: seq U64.t) (major: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_roots_valid_nonblue roots major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+       chunked_roots_disjoint_from_chunk roots fresh /\
+       MH.chunk_disjoint_from_all fresh major))
+    (ensures
+      chunked_roots_valid_nonblue
+        roots
+        (SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp fuel needed fresh).capacity_major_out)
+  =
+  if SpecMajorAlloc.major_fl_head_wosize major fp >= needed then
+    ()
+  else
+    chunked_roots_valid_nonblue_preserved_by_expansion
+      roots major fresh fp
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
 let chunked_reachable_major_valid_nonblue
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
   (roots: seq U64.t)
