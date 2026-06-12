@@ -228,6 +228,27 @@ let chunked_roots_valid_nonblue_append_minor_pointers
     end
   in
   FStar.Classical.forall_intro prove
+
+let chunked_roots_disjoint_from_chunk_minor_pointers_above_zero
+  (roots: seq U64.t) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_roots_all_minor_pointers roots /\
+      U64.v fresh.base >= U64.v zero_addr)
+    (ensures chunked_roots_disjoint_from_chunk roots fresh)
+  =
+  let prove (r: U64.t)
+    : Lemma
+      (ensures Seq.mem r roots ==> ~(MH.pointer_in_chunk fresh r))
+    =
+    if Seq.mem r roots then begin
+      assert (is_minor_pointer r);
+      zero_addr_above_minor ();
+      assert (U64.v r < minor_heap_size);
+      assert (U64.v r < U64.v fresh.base + U64.v mword)
+    end
+  in
+  FStar.Classical.forall_intro prove
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"

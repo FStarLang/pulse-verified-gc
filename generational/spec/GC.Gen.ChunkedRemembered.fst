@@ -276,6 +276,47 @@ let chunked_roots_valid_nonblue_collection_roots_ensure_head_capacity
     roots scan ensured
 #pop-options
 
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_collection_roots_disjoint_from_chunk
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+      U64.v fresh.base >= U64.v zero_addr)
+    (ensures
+      CReach.chunked_roots_disjoint_from_chunk
+        (chunked_minor_collection_roots minor major roots) fresh)
+  =
+  let scan = chunked_minor_roots_from_major minor major in
+  let prove_scan (v: U64.t)
+    : Lemma
+      (ensures Seq.mem v scan ==> is_minor_pointer v)
+    =
+    if Seq.mem v scan then
+      chunked_minor_roots_from_major_are_minor_pointers minor major v
+  in
+  FStar.Classical.forall_intro prove_scan;
+  CReach.chunked_roots_disjoint_from_chunk_minor_pointers_above_zero
+    scan fresh;
+  let prove (r: U64.t)
+    : Lemma
+      (ensures
+        Seq.mem r (Seq.append roots scan) ==>
+        ~(MH.pointer_in_chunk fresh r))
+    =
+    if Seq.mem r (Seq.append roots scan) then begin
+      Seq.lemma_mem_append roots scan;
+      if Seq.mem r roots then
+        ()
+      else begin
+        assert (Seq.mem r scan)
+      end
+    end
+  in
+  FStar.Classical.forall_intro prove
+#pop-options
+
 #push-options "--split_queries always --z3rlimit 1 --fuel 1 --ifuel 0"
 let rec chunked_scan_object_fields_complete
   (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)

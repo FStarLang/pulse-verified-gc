@@ -109,6 +109,17 @@ val chunked_roots_valid_nonblue_collection_roots_ensure_head_capacity
         (GC.Spec.MajorAllocator.ensure_major_head_capacity_spec
           major fp fuel needed fresh).capacity_major_out)
 
+val chunked_collection_roots_disjoint_from_chunk
+  (minor: minor_state) (major: MH.major_heap) (roots: seq U64.t)
+  (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+      U64.v fresh.base >= U64.v zero_addr)
+    (ensures
+      CReach.chunked_roots_disjoint_from_chunk
+        (chunked_minor_collection_roots minor major roots) fresh)
+
 val chunked_scan_object_fields_complete
   (minor: minor_state) (major: MH.major_heap) (obj: obj_addr)
   (wz i field_idx: nat) (field_addr: hp_addr) (raw v: U64.t)

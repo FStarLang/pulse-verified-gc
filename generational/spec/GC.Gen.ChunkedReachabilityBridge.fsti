@@ -81,6 +81,14 @@ val chunked_roots_valid_nonblue_append_minor_pointers
     (ensures
       chunked_roots_valid_nonblue (Seq.append roots suffix) major)
 
+val chunked_roots_disjoint_from_chunk_minor_pointers_above_zero
+  (roots: seq U64.t) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_roots_all_minor_pointers roots /\
+      U64.v fresh.base >= U64.v zero_addr)
+    (ensures chunked_roots_disjoint_from_chunk roots fresh)
+
 /// Chunked active-major object addresses are valid legacy pointer field values.
 /// This is intentionally local to avoid a dependency cycle with
 /// `GC.Gen.CheneyGraphReadiness`, which provides construction lemmas for the

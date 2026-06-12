@@ -3134,6 +3134,11 @@ let chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_ima
         CReach.chunked_roots_valid_nonblue
           (CRem.chunked_minor_collection_roots minor major base_roots)
           r.capacity_major_out /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+         PromotionDemand.minor_promotion_demand minor + 1 ==>
+         CReach.chunked_roots_disjoint_from_chunk
+           (CRem.chunked_minor_collection_roots minor major base_roots)
+           fresh) /\
         chunked_major_chunks_above_zero_addr r.capacity_major_out /\
         chunked_major_objects_are_pointer_fields r.capacity_major_out /\
         CReach.chunked_major_field_zero_no_minor
@@ -3145,7 +3150,10 @@ let chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_ima
   CReach.chunked_roots_valid_nonblue_ensure_head_capacity
     base_roots major fp alloc_fuel needed fresh;
   CRem.chunked_roots_valid_nonblue_collection_roots_ensure_head_capacity
-    minor major base_roots fp alloc_fuel needed fresh
+    minor major base_roots fp alloc_fuel needed fresh;
+  if SpecMajorAlloc.major_fl_head_wosize major fp < needed then
+    CRem.chunked_collection_roots_disjoint_from_chunk
+      minor major base_roots fresh
 
 let chunked_cheney_gc_correct_after_preflight_policy_and_post_reachable_image_single_chunk_from_dense_roots
   (minor: minor_state) (major: heap) (fp: U64.t)
