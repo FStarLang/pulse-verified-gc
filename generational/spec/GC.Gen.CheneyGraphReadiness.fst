@@ -16,9 +16,11 @@ open GC.Gen.Cheney
 open GC.Lib.Header
 
 module MH = GC.Spec.MajorHeap
+module Obj = GC.Spec.Object
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module PromotionDemand = GC.Gen.PromotionDemand
 module ChunkedCheney = GC.Gen.ChunkedCheney
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module CC = GC.Gen.CheneyCorrectness
@@ -338,7 +340,7 @@ let chunked_major_chunks_above_zero_addr_objects_above_minor
 
 #pop-options
 
-#push-options "--split_queries always --z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--split_queries always --z3rlimit 15 --fuel 1 --ifuel 0"
 let chunked_major_objects_are_pointer_fields_single_chunk
   (g: heap)
   : Lemma
@@ -3265,6 +3267,120 @@ let chunked_minor_preflight_value_policy_core_expansion_safety
     chunked_preflight_expansion_value_policy_elim_values
       major fp base_roots needed fresh
   end
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+let chunked_minor_preflight_value_policy_all_object_expansion_safe
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      chunked_minor_preflight_value_policy minor major fp roots fresh)
+    (ensures
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       CG.chunked_all_major_object_expansion_safe
+         major fresh (MH.major_objects major) 0))
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  if SpecMajorAlloc.major_fl_head_wosize major fp < needed then begin
+    chunked_minor_preflight_value_policy_core_expansion_safety
+      minor major fp roots fresh;
+    GenInv.chunked_collection_heap_shape_elim minor major fp alloc_fuel;
+    GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
+    CG.chunked_major_objects_expansion_safe_from_values_miss_fresh
+      major fresh
+  end
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+private let chunked_minor_preflight_value_policy_cheney_expansion_safety
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      chunked_minor_preflight_value_policy minor major fp roots fresh)
+    (ensures
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+         PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+         major fresh (MH.major_objects major) 0))
+  =
+  chunked_minor_preflight_value_policy_core_expansion_safety
+    minor major fp roots fresh;
+  chunked_minor_preflight_value_policy_all_object_expansion_safe
+    minor major fp roots alloc_fuel fresh
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 20 --fuel 1 --ifuel 0"
+let chunked_cheney_promote_after_minor_promotion_head_preflight_from_preflight_value_policy
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_minor_preflight_value_policy minor major fp roots fresh)
+    (ensures
+      chunked_cheney_promote_after_minor_promotion_head_preflight_post
+        minor major fp roots alloc_fuel fresh)
+  =
+  chunked_minor_preflight_value_policy_cheney_expansion_safety
+    minor major fp roots alloc_fuel fresh;
+  assert (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0);
+  CheneyPres.chunked_cheney_promote_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh;
+  assert (chunked_cheney_promote_after_minor_promotion_head_preflight_post
+            minor major fp roots alloc_fuel fresh)
+
+let chunked_cheney_collect_after_minor_promotion_head_preflight_from_preflight_value_policy
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_minor_preflight_value_policy minor major fp roots fresh)
+    (ensures
+      chunked_cheney_collect_after_minor_promotion_head_preflight_post
+        minor major fp roots alloc_fuel fresh)
+  =
+  chunked_minor_preflight_value_policy_cheney_expansion_safety
+    minor major fp roots alloc_fuel fresh;
+  assert (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0);
+  CheneyPres.chunked_cheney_collect_after_minor_promotion_head_preflight
+    minor major fp roots alloc_fuel fresh;
+  assert (chunked_cheney_collect_after_minor_promotion_head_preflight_post
+            minor major fp roots alloc_fuel fresh)
 #pop-options
 
 let chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_from_preflight_value_policy
