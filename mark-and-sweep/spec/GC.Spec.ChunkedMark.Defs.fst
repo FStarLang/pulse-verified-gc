@@ -224,6 +224,14 @@ let chunked_mark
   =
   chunked_mark_aux mh st (heap_size / U64.v mword)
 
+let chunked_mark_equation
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (chunked_mark mh st ==
+       chunked_mark_aux mh st (heap_size / U64.v mword))
+  = ()
+
 let chunked_make_gray_step (mh: MH.major_heap) (obj: obj_addr)
   : Lemma
       (chunked_make_gray mh obj ==

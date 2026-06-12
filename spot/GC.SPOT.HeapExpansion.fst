@@ -39,6 +39,7 @@ module ChunkedMarkDefs = GC.Spec.ChunkedMark.Defs
 module ChunkedMarkCompat = GC.Spec.ChunkedMark.Compat
 module ChunkedMarkNoPointer = GC.Spec.ChunkedMark.NoPointerCompat
 module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
+module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -524,6 +525,15 @@ let spot_chunked_mark_aux_step
   =
   ChunkedMarkDefs.chunked_mark_aux_step mh st fuel
 
+let spot_chunked_mark_equation
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (ChunkedMarkDefs.chunked_mark mh st ==
+       ChunkedMarkDefs.chunked_mark_aux mh st (heap_size / U64.v mword))
+  =
+  ChunkedMarkDefs.chunked_mark_equation mh st
+
 let spot_chunked_get_field_single_chunk_compat
   (g: heap)
   (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
@@ -694,6 +704,45 @@ let spot_chunked_mark_step_scan_single_chunk_compat
          (MH.single_chunk_major_heap g', st')))
   =
   ChunkedMarkPush.chunked_mark_step_scan_single_chunk_compat g st
+
+let spot_chunked_mark_step_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires ChunkedMarkLoop.mark_step_single_chunk_ready g st)
+      (ensures
+        ChunkedMarkDefs.chunked_mark_step
+          (MH.single_chunk_major_heap g) st ==
+        (let (g', st') = Mark.mark_step g st in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkLoop.chunked_mark_step_single_chunk_compat g st
+
+let spot_chunked_mark_aux_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat)
+  : Lemma
+      (requires ChunkedMarkLoop.mark_aux_single_chunk_ready g st fuel)
+      (ensures
+        ChunkedMarkDefs.chunked_mark_aux
+          (MH.single_chunk_major_heap g) st fuel ==
+        MH.single_chunk_major_heap (Mark.mark_aux g st fuel))
+  =
+  ChunkedMarkLoop.chunked_mark_aux_single_chunk_compat g st fuel
+
+let spot_chunked_mark_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        ChunkedMarkLoop.mark_aux_single_chunk_ready
+          g st (heap_size / U64.v mword))
+      (ensures
+        ChunkedMarkDefs.chunked_mark (MH.single_chunk_major_heap g) st ==
+        MH.single_chunk_major_heap (Mark.mark g st))
+  =
+  ChunkedMarkLoop.chunked_mark_single_chunk_compat g st
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)

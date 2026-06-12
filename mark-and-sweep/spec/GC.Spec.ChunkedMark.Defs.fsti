@@ -147,6 +147,13 @@ val chunked_mark
   (st: seq obj_addr)
   : GTot MH.major_heap
 
+val chunked_mark_equation:
+  mh:MH.major_heap ->
+  st:seq obj_addr ->
+  Lemma
+    (chunked_mark mh st ==
+     chunked_mark_aux mh st (heap_size / U64.v mword))
+
 val chunked_make_gray_step:
   mh:MH.major_heap ->
   obj:obj_addr ->
