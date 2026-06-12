@@ -37,6 +37,7 @@ module SpecSweep = GC.Spec.Sweep
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMarkDefs = GC.Spec.ChunkedMark.Defs
 module ChunkedMarkCompat = GC.Spec.ChunkedMark.Compat
+module ChunkedMarkNoPointer = GC.Spec.ChunkedMark.NoPointerCompat
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -606,6 +607,46 @@ let spot_chunked_mark_step_no_scan_single_chunk_compat
          (MH.single_chunk_major_heap g', st')))
   =
   ChunkedMarkCompat.chunked_mark_step_no_scan_single_chunk_compat g st
+
+let spot_chunked_push_children_no_pointer_fields_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        ChunkedMarkNoPointer.no_pointer_fields g obj i ws)
+      (ensures
+        ChunkedMarkDefs.chunked_push_children
+          (MH.single_chunk_major_heap g) st obj i ws ==
+        (let (g', st') = Mark.push_children g st obj i ws in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkNoPointer.chunked_push_children_no_pointer_fields_single_chunk_compat
+    g st obj i ws
+
+let spot_chunked_mark_step_scan_no_pointer_fields_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        U64.v (Seq.head st) >= U64.v zero_addr + U64.v mword /\
+        ~(Obj.is_no_scan (Seq.head st) g) /\
+        ChunkedMarkNoPointer.no_pointer_fields
+          (Obj.makeBlack (Seq.head st) g)
+          (Seq.head st)
+          1UL
+          (Obj.wosize_of_object (Seq.head st) g))
+      (ensures
+        ChunkedMarkDefs.chunked_mark_step
+          (MH.single_chunk_major_heap g) st ==
+        (let (g', st') = Mark.mark_step g st in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkNoPointer.chunked_mark_step_scan_no_pointer_fields_single_chunk_compat
+    g st
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
