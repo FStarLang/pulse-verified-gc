@@ -20,6 +20,7 @@ module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module CheneyCorrectness = GC.Gen.CheneyCorrectness
 module CheneyGraphReadiness = GC.Gen.CheneyGraphReadiness
+module RBridge = GC.Gen.ReachabilityBridge
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CRem = GC.Gen.ChunkedRemembered
 module ChunkedPromote = GC.Gen.ChunkedPromote
@@ -6121,6 +6122,17 @@ let spot_chunked_reachable_major_valid_nonblue
   =
   CReach.chunked_reachable_major_valid_nonblue
     minor major fp fuel roots
+
+let spot_chunked_major_field_zero_no_minor_single_chunk_compat
+  (minor: minor_state) (major: heap)
+  : Lemma
+      (requires RBridge.major_field_zero_no_minor minor major)
+      (ensures
+        CReach.chunked_major_field_zero_no_minor
+          minor (MH.single_chunk_major_heap major))
+  =
+  CReach.chunked_major_field_zero_no_minor_single_chunk_compat
+    minor major
 
 let spot_chunked_reachable_major_vertex_live_selected
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)

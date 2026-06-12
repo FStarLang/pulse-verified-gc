@@ -4,6 +4,8 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
@@ -13,12 +15,26 @@ open GC.Gen.Reachability
 module MH = GC.Spec.MajorHeap
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
+module RBridge = GC.Gen.ReachabilityBridge
+module ML = FStar.Math.Lemmas
 
 private let combined_vertex_cases (v: CG.combined_vertex)
   : Lemma (ensures CG.MinorV? v \/ CG.MajorV? v)
   = match v with
     | CG.MinorV _ -> ()
     | CG.MajorV _ -> ()
+
+private let aligned_gt_ge_plus_mword (x z: nat)
+  : Lemma (requires x > z /\ x % U64.v mword == 0 /\ z % U64.v mword == 0)
+          (ensures x >= z + U64.v mword)
+  =
+    if x < z + U64.v mword then begin
+      assert (x - z > 0);
+      assert (x - z < U64.v mword);
+      ML.lemma_mod_sub_distr x z (U64.v mword);
+      assert ((x - z) % U64.v mword == 0);
+      assert False
+    end
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
 let chunked_reachable_major_valid_nonblue
@@ -177,6 +193,78 @@ let chunked_reachable_major_valid_nonblue
     CG.combined_reachable_ind cg combined_roots p (CG.MajorV v)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_major_field_zero_no_minor_single_chunk_compat
+  (minor: minor_state) (major: heap)
+  : Lemma
+    (requires RBridge.major_field_zero_no_minor minor major)
+    (ensures
+      chunked_major_field_zero_no_minor
+        minor (MH.single_chunk_major_heap major))
+  =
+  let single = MH.single_chunk_major_heap major in
+  let prove (src: obj_addr) (field_addr: hp_addr) (raw: U64.t)
+    : Lemma
+      (requires
+        Seq.mem src (MH.major_objects single) /\
+        ~(GenInv.chunked_is_blue single src) /\
+        CG.chunked_is_no_scan single src == false /\
+        CG.chunked_major_field_slot src 0 == Some field_addr /\
+        MH.read_word_in_major single field_addr == Some raw)
+      (ensures
+        ~(is_minor_pointer (to_minor_offset raw) /\
+          Seq.mem (to_minor_offset raw) (minor_objects minor)))
+    =
+    MH.single_chunk_major_objects_compat major;
+    assert (Seq.mem src (objects zero_addr major));
+    objects_addresses_gt_start zero_addr major src;
+    aligned_gt_ge_plus_mword (U64.v src) (U64.v zero_addr);
+    hd_address_bounds src;
+    hd_address_spec src;
+    assert_norm (U64.v mword == 8);
+    assert (U64.v (hd_address src) >= U64.v zero_addr);
+    let hdr = read_word major (hd_address src) in
+    MH.single_chunk_read_word_compat major (hd_address src);
+    CG.chunked_is_no_scan_header single src hdr;
+    tag_of_object_spec src major;
+    is_no_scan_spec src major;
+    assert (CG.chunked_is_no_scan single src == is_no_scan src major);
+    assert (~(is_no_scan src major));
+    CG.chunked_major_field_slot_elim src 0 field_addr;
+    assert (U64.v field_addr == U64.v src);
+    U64.v_inj field_addr src;
+    assert (field_addr == src);
+    assert (U64.v field_addr >= U64.v zero_addr);
+    MH.single_chunk_read_word_compat major field_addr;
+    assert (raw == read_word major field_addr);
+    assert (raw == read_word major src)
+  in
+  FStar.Classical.forall_intro_3
+    #(obj_addr)
+    #(fun _ -> hp_addr)
+    #(fun _ _ -> U64.t)
+    #(fun src field_addr raw ->
+      Seq.mem src (MH.major_objects single) /\
+      ~(GenInv.chunked_is_blue single src) /\
+      CG.chunked_is_no_scan single src == false /\
+      CG.chunked_major_field_slot src 0 == Some field_addr /\
+      MH.read_word_in_major single field_addr == Some raw ==>
+      ~(is_minor_pointer (to_minor_offset raw) /\
+        Seq.mem (to_minor_offset raw) (minor_objects minor)))
+    (FStar.Classical.move_requires_3
+      #(obj_addr) #(fun _ -> hp_addr) #(fun _ _ -> U64.t)
+      #(fun src field_addr raw ->
+        Seq.mem src (MH.major_objects single) /\
+        ~(GenInv.chunked_is_blue single src) /\
+        CG.chunked_is_no_scan single src == false /\
+        CG.chunked_major_field_slot src 0 == Some field_addr /\
+        MH.read_word_in_major single field_addr == Some raw)
+      #(fun _ _ raw ->
+        ~(is_minor_pointer (to_minor_offset raw) /\
+          Seq.mem (to_minor_offset raw) (minor_objects minor)))
+      prove)
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"

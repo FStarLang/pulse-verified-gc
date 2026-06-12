@@ -4,6 +4,8 @@ open FStar.Seq
 module U64 = FStar.UInt64
 
 open GC.Spec.Base
+open GC.Spec.Heap
+open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
@@ -13,6 +15,7 @@ open GC.Gen.Reachability
 module MH = GC.Spec.MajorHeap
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
+module RBridge = GC.Gen.ReachabilityBridge
 
 /// Major roots must be valid active non-blue chunked-major objects when they
 /// classify as `MajorV`.
@@ -65,6 +68,14 @@ let chunked_major_field_zero_no_minor
     MH.read_word_in_major major field_addr == Some raw ==>
     ~(is_minor_pointer (to_minor_offset raw) /\
       Seq.mem (to_minor_offset raw) (minor_objects minor))
+
+val chunked_major_field_zero_no_minor_single_chunk_compat
+  (minor: minor_state) (major: heap)
+  : Lemma
+    (requires RBridge.major_field_zero_no_minor minor major)
+    (ensures
+      chunked_major_field_zero_no_minor
+        minor (MH.single_chunk_major_heap major))
 
 /// Provisional direct remembered-root coverage: every non-field-0 active
 /// non-blue major edge to a minor vertex has that minor target in `roots`.
