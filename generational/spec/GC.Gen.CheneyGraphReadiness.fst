@@ -3795,6 +3795,67 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_fro
     minor major fp roots alloc_fuel fresh;
   chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
     minor major fp roots alloc_fuel fresh
+
+let fixed_heap_minor_collect_preflight_policy_core_expansion_safety
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (base_roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      fixed_heap_minor_collect_preflight_policy
+        minor major fp base_roots alloc_fuel fresh)
+    (ensures
+      (let chunked_major = MH.single_chunk_major_heap major in
+       SpecMajorAlloc.major_fl_head_wosize chunked_major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh chunked_major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+         PromotionDemand.minor_promotion_demand minor + 1 /\
+       (forall (obj:obj_addr).
+         Seq.mem obj (MH.major_objects chunked_major) ==>
+           CG.chunked_major_field_values_miss_fresh
+             chunked_major fresh obj
+             (CG.chunked_wosize_nat_of_object chunked_major obj) 0)))
+  =
+  chunked_minor_preflight_value_policy_single_chunk_from_dense_wf
+    minor major fp base_roots fresh;
+  chunked_minor_preflight_value_policy_core_expansion_safety
+    minor (MH.single_chunk_major_heap major) fp base_roots fresh
+
+let fixed_heap_minor_collect_preflight_policy_core_expansion_safety_no_expansion
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (base_roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      alloc_fuel > 1 /\
+      Fields.well_formed_heap major /\
+      alloc_fuel == SpecAlloc.alloc_search_fuel /\
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.roots_valid_nonblue base_roots major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      SpecMajorAlloc.major_fl_head_wosize
+        (MH.single_chunk_major_heap major) fp >=
+        PromotionDemand.minor_promotion_demand minor + 1)
+    (ensures
+      (let chunked_major = MH.single_chunk_major_heap major in
+       SpecMajorAlloc.major_fl_head_wosize chunked_major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh chunked_major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+         PromotionDemand.minor_promotion_demand minor + 1 /\
+       (forall (obj:obj_addr).
+         Seq.mem obj (MH.major_objects chunked_major) ==>
+           CG.chunked_major_field_values_miss_fresh
+             chunked_major fresh obj
+             (CG.chunked_wosize_nat_of_object chunked_major obj) 0)))
+  =
+  fixed_heap_minor_collect_preflight_policy_no_expansion
+    minor major fp base_roots alloc_fuel fresh;
+  fixed_heap_minor_collect_preflight_policy_core_expansion_safety
+    minor major fp base_roots alloc_fuel fresh
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
