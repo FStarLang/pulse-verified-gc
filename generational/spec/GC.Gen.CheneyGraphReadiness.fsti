@@ -2311,6 +2311,37 @@ val chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_fro
       chunked_cheney_collect_after_minor_promotion_head_preflight_post
         minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
 
+let fixed_heap_minor_collect_preflight_policy
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : prop =
+  minor_wf minor /\
+  alloc_fuel > 1 /\
+  Fields.well_formed_heap major /\
+  alloc_fuel == SpecAlloc.alloc_search_fuel /\
+  GenInv.collection_heap_shape minor major fp /\
+  RBridge.roots_valid_nonblue roots major /\
+  RBridge.major_field_zero_no_minor minor major /\
+  (let chunked_major = MH.single_chunk_major_heap major in
+   let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+   SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+   CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+   MH.chunk_disjoint_from_all fresh chunked_major /\
+   fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+   U64.v fresh.base >= U64.v zero_addr /\
+   SpecMajorAlloc.fresh_chunk_wosize fresh >= needed)
+
+val chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      fixed_heap_minor_collect_preflight_policy
+        minor major fp roots alloc_fuel fresh)
+    (ensures
+      chunked_cheney_collect_after_minor_promotion_head_preflight_post
+        minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+
 val chunked_minor_preflight_value_policy_core_expansion_safety_single_chunk_from_dense
   (minor: minor_state) (major: heap) (fp: U64.t)
   (base_roots: seq U64.t) (fresh: MH.heap_chunk)

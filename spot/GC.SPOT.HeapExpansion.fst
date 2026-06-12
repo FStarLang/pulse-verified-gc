@@ -7799,6 +7799,20 @@ let spot_chunked_cheney_collect_after_minor_promotion_head_preflight_single_chun
   CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
     minor major fp roots alloc_fuel fresh
 
+let spot_chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.fixed_heap_minor_collect_preflight_policy
+          minor major fp roots alloc_fuel fresh)
+      (ensures
+        CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_post
+          minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
+    minor major fp roots alloc_fuel fresh
+
 let spot_chunked_minor_preflight_value_policy_core_expansion_safety_single_chunk_from_dense
   (minor: minor_state) (major: heap) (fp: U64.t)
   (base_roots: Seq.seq U64.t) (fresh: MH.heap_chunk)

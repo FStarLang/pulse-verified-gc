@@ -3728,6 +3728,20 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_fro
     minor major fp roots fresh;
   chunked_cheney_collect_after_minor_promotion_head_preflight_from_preflight_value_policy
     minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh
+
+let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      fixed_heap_minor_collect_preflight_policy
+        minor major fp roots alloc_fuel fresh)
+    (ensures
+      chunked_cheney_collect_after_minor_promotion_head_preflight_post
+        minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+  =
+  chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
+    minor major fp roots alloc_fuel fresh
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
