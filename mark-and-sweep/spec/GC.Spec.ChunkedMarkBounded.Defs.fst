@@ -159,6 +159,33 @@ let chunked_is_gray_step
         | _ -> false))
   = ()
 
+let chunked_count_non_black_in_empty
+    (mh: MH.major_heap)
+    (objs: seq obj_addr)
+  : Lemma
+      (requires Seq.length objs = 0)
+      (ensures chunked_count_non_black_in mh objs == 0)
+  = ()
+
+let chunked_count_non_black_in_step
+    (mh: MH.major_heap)
+    (objs: seq obj_addr)
+  : Lemma
+      (requires Seq.length objs > 0)
+      (ensures
+        (let obj = Seq.head objs in
+         let rest = chunked_count_non_black_in mh (Seq.tail objs) in
+         chunked_count_non_black_in mh objs ==
+         (if SweepDefs.chunked_is_black mh obj then rest else rest + 1)))
+  = ()
+
+let chunked_count_non_black_equation
+    (mh: MH.major_heap)
+  : Lemma
+      (chunked_count_non_black mh ==
+       chunked_count_non_black_in mh (MH.major_objects mh))
+  = ()
+
 let chunked_push_children_bounded_done
     (mh: MH.major_heap)
     (st: seq obj_addr)

@@ -43,6 +43,7 @@ module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
 module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
+module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -904,6 +905,81 @@ let spot_chunked_mark_step_bounded_single_chunk_compat
   =
   ChunkedMarkBoundedCompat.chunked_mark_step_bounded_single_chunk_compat
     g st cap
+
+let spot_chunked_count_non_black_in_single_chunk_compat
+  (g: heap)
+  (objs: Seq.seq obj_addr)
+  : Lemma
+      (requires ChunkedMarkBoundedLoop.object_list_ready objs)
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black_in
+          (MH.single_chunk_major_heap g) objs ==
+        BMark.count_non_black_in g objs)
+  =
+  ChunkedMarkBoundedLoop.chunked_count_non_black_in_single_chunk_compat
+    g objs
+
+let spot_chunked_count_non_black_single_chunk_compat
+  (g: heap)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedLoop.object_list_ready
+          (Fields.objects zero_addr g))
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black
+          (MH.single_chunk_major_heap g) ==
+        BMark.count_non_black g)
+  =
+  ChunkedMarkBoundedLoop.chunked_count_non_black_single_chunk_compat g
+
+let spot_chunked_rescan_objects_single_chunk_compat
+  (g: heap)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires ChunkedMarkBoundedLoop.object_list_ready objs)
+      (ensures
+        ChunkedMarkBounded.chunked_rescan_objects
+          (MH.single_chunk_major_heap g) objs st cap ==
+        BMark.rescan_heap g objs st cap)
+  =
+  ChunkedMarkBoundedLoop.chunked_rescan_objects_single_chunk_compat
+    g objs st cap
+
+let spot_chunked_rescan_heap_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedLoop.object_list_ready
+          (Fields.objects zero_addr g))
+      (ensures
+        ChunkedMarkBounded.chunked_rescan_heap
+          (MH.single_chunk_major_heap g) st cap ==
+        BMark.rescan_heap g (Fields.objects zero_addr g) st cap)
+  =
+  ChunkedMarkBoundedLoop.chunked_rescan_heap_single_chunk_compat
+    g st cap
+
+let spot_chunked_mark_inner_loop_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedLoop.mark_inner_loop_single_chunk_ready
+          g st cap fuel)
+      (ensures
+        ChunkedMarkBounded.chunked_mark_inner_loop
+          (MH.single_chunk_major_heap g) st cap fuel ==
+        (let (g', st') = BMark.mark_inner_loop g st cap fuel in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkBoundedLoop.chunked_mark_inner_loop_single_chunk_compat
+    g st cap fuel
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
