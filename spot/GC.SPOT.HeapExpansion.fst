@@ -6145,6 +6145,42 @@ let spot_chunked_major_field_zero_no_minor_single_chunk_compat
   CReach.chunked_major_field_zero_no_minor_single_chunk_compat
     minor major
 
+let spot_chunked_major_field_zero_no_minor_preserved_by_expansion
+  (minor: minor_state) (major: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        CReach.chunked_major_field_zero_no_minor minor major /\
+        MH.chunk_disjoint_from_all fresh major /\
+        CG.chunked_all_major_object_expansion_safe
+          major fresh (MH.major_objects major) 0)
+      (ensures
+        CReach.chunked_major_field_zero_no_minor
+          minor (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  CReach.chunked_major_field_zero_no_minor_preserved_by_expansion
+    minor major fresh fp
+
+let spot_chunked_major_field_zero_no_minor_ensure_head_capacity
+  (minor: minor_state) (major: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CReach.chunked_major_field_zero_no_minor minor major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0))
+      (ensures
+        CReach.chunked_major_field_zero_no_minor
+          minor
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp fuel needed fresh).capacity_major_out)
+  =
+  CReach.chunked_major_field_zero_no_minor_ensure_head_capacity
+    minor major fp fuel needed fresh
+
 let spot_chunked_reachable_major_vertex_live_selected
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
   (roots: Seq.seq U64.t) (v: U64.t)

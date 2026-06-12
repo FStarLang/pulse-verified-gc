@@ -16,6 +16,7 @@ module MH = GC.Spec.MajorHeap
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 module ML = FStar.Math.Lemmas
 
 private let combined_vertex_cases (v: CG.combined_vertex)
@@ -35,6 +36,48 @@ private let aligned_gt_ge_plus_mword (x z: nat)
       assert ((x - z) % U64.v mword == 0);
       assert False
     end
+
+private let rec seq_mem_to_index (#a:eqtype) (x:a) (s:seq a)
+  : Ghost nat
+    (requires Seq.mem x s)
+    (ensures fun i -> i < Seq.length s /\ Seq.index s i == x)
+    (decreases Seq.length s)
+  =
+  if Seq.index s 0 == x then 0
+  else begin
+    let tl = Seq.slice s 1 (Seq.length s) in
+    Seq.lemma_count_slice s 1;
+    1 + seq_mem_to_index x tl
+  end
+
+private let rec major_object_address_disjoint_from_chunk
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (x: obj_addr)
+  : Lemma
+    (requires
+      MH.chunk_disjoint_from_all fresh mh /\
+      Seq.mem x (MH.major_objects mh))
+    (ensures ~(MH.chunk_contains_addr fresh x))
+    (decreases Seq.length mh)
+  =
+  if Seq.length mh = 0 then
+    assert False
+  else begin
+    let hd = Seq.head mh in
+    let tl = Seq.tail mh in
+    assert (MH.major_objects mh ==
+      Seq.append (MH.objects_in_chunk hd) (MH.major_objects tl));
+    Seq.lemma_mem_append (MH.objects_in_chunk hd) (MH.major_objects tl);
+    if Seq.mem x (MH.objects_in_chunk hd) then begin
+      MH.objects_in_chunk_member_in_chunk hd x;
+      assert (MH.chunk_contains_addr hd x);
+      MH.chunks_disjoint_symmetric fresh hd;
+      MH.chunks_disjoint_no_shared_addr hd fresh x
+    end else begin
+      assert (Seq.mem x (MH.major_objects tl));
+      MH.chunk_disjoint_from_all_tail fresh mh;
+      major_object_address_disjoint_from_chunk tl fresh x
+    end
+  end
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
 let chunked_roots_valid_nonblue_single_chunk_compat
@@ -309,6 +352,127 @@ let chunked_major_field_zero_no_minor_single_chunk_compat
         ~(is_minor_pointer (to_minor_offset raw) /\
           Seq.mem (to_minor_offset raw) (minor_objects minor)))
       prove)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_major_field_zero_no_minor_preserved_by_expansion
+  (minor: minor_state) (major: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+    (requires
+      chunked_major_field_zero_no_minor minor major /\
+      MH.chunk_disjoint_from_all fresh major /\
+      CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0)
+    (ensures
+      chunked_major_field_zero_no_minor
+        minor (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap major fresh fp).major_out in
+  let fresh_obj = SpecMajorAlloc.fresh_chunk_object fresh in
+  let prove (src: obj_addr) (field_addr: hp_addr) (raw: U64.t)
+    : Lemma
+      (requires
+        Seq.mem src (MH.major_objects expanded) /\
+        ~(GenInv.chunked_is_blue expanded src) /\
+        CG.chunked_is_no_scan expanded src == false /\
+        CG.chunked_major_field_slot src 0 == Some field_addr /\
+        MH.read_word_in_major expanded field_addr == Some raw)
+      (ensures
+        ~(is_minor_pointer (to_minor_offset raw) /\
+          Seq.mem (to_minor_offset raw) (minor_objects minor)))
+    =
+    if src == fresh_obj then begin
+      assert (src == fresh_obj);
+      assert (~(GenInv.chunked_is_blue expanded src));
+      SpecMajorAlloc.expand_major_heap_header_fields major fresh fp;
+      f_address_spec fresh.base;
+      hd_address_spec fresh_obj;
+      assert (hd_address fresh_obj == fresh.base);
+      match MH.read_word_in_major expanded fresh.base with
+      | Some hdr ->
+        assert (getColor hdr == GC.Lib.Header.Blue);
+        assert (MH.read_word_in_major expanded (hd_address fresh_obj) == Some hdr);
+        GenInv.chunked_is_blue_header expanded fresh_obj hdr;
+        assert (GenInv.chunked_is_blue expanded fresh_obj);
+        assert (GenInv.chunked_is_blue expanded src);
+        assert False
+      | None -> assert False
+    end else begin
+      SpecMajorAlloc.expand_major_heap_objects major fresh fp;
+      if ~(Seq.mem src (MH.major_objects major)) then begin
+        GC.Spec.SeqMemLemmas.seq_mem_cons_not_mem_implies_eq
+          fresh_obj src (MH.major_objects major);
+        assert False
+      end;
+      assert (Seq.mem src (MH.major_objects major));
+      let k = seq_mem_to_index src (MH.major_objects major) in
+      CG.chunked_all_major_object_expansion_safe_at
+        major fresh (MH.major_objects major) 0 k;
+      CG.chunked_major_object_expansion_safe_header major fresh src;
+      CG.chunked_major_object_expansion_safe_fields major fresh src;
+      GenInv.chunked_is_blue_preserved_by_expansion major fresh fp src;
+      CG.chunked_is_no_scan_preserved_by_expansion major fresh fp src;
+      CG.chunked_major_field_slot_elim src 0 field_addr;
+      assert (U64.v field_addr == U64.v src);
+      U64.v_inj field_addr src;
+      assert (field_addr == src);
+      major_object_address_disjoint_from_chunk major fresh src;
+      SpecMajorAlloc.expand_major_heap_old_read major fresh fp field_addr;
+      assert (MH.read_word_in_major major field_addr == Some raw);
+      assert (~(GenInv.chunked_is_blue major src));
+      assert (CG.chunked_is_no_scan major src == false)
+    end
+  in
+  FStar.Classical.forall_intro_3
+    #(obj_addr)
+    #(fun _ -> hp_addr)
+    #(fun _ _ -> U64.t)
+    #(fun src field_addr raw ->
+      Seq.mem src (MH.major_objects expanded) /\
+      ~(GenInv.chunked_is_blue expanded src) /\
+      CG.chunked_is_no_scan expanded src == false /\
+      CG.chunked_major_field_slot src 0 == Some field_addr /\
+      MH.read_word_in_major expanded field_addr == Some raw ==>
+      ~(is_minor_pointer (to_minor_offset raw) /\
+        Seq.mem (to_minor_offset raw) (minor_objects minor)))
+    (FStar.Classical.move_requires_3
+      #(obj_addr) #(fun _ -> hp_addr) #(fun _ _ -> U64.t)
+      #(fun src field_addr raw ->
+        Seq.mem src (MH.major_objects expanded) /\
+        ~(GenInv.chunked_is_blue expanded src) /\
+        CG.chunked_is_no_scan expanded src == false /\
+        CG.chunked_major_field_slot src 0 == Some field_addr /\
+        MH.read_word_in_major expanded field_addr == Some raw)
+      #(fun _ _ raw ->
+        ~(is_minor_pointer (to_minor_offset raw) /\
+          Seq.mem (to_minor_offset raw) (minor_objects minor)))
+      prove)
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_major_field_zero_no_minor_ensure_head_capacity
+  (minor: minor_state) (major: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_major_field_zero_no_minor minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       CG.chunked_all_major_object_expansion_safe
+           major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_major_field_zero_no_minor
+          minor
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp fuel needed fresh).capacity_major_out)
+  =
+  if SpecMajorAlloc.major_fl_head_wosize major fp >= needed then
+    ()
+  else
+    chunked_major_field_zero_no_minor_preserved_by_expansion
+      minor major fresh fp
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"

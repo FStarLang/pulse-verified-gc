@@ -16,6 +16,7 @@ module MH = GC.Spec.MajorHeap
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module RBridge = GC.Gen.ReachabilityBridge
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 /// Major roots must be valid active non-blue chunked-major objects when they
 /// classify as `MajorV`.
@@ -83,6 +84,36 @@ val chunked_major_field_zero_no_minor_single_chunk_compat
     (ensures
       chunked_major_field_zero_no_minor
         minor (MH.single_chunk_major_heap major))
+
+val chunked_major_field_zero_no_minor_preserved_by_expansion
+  (minor: minor_state) (major: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+    (requires
+      chunked_major_field_zero_no_minor minor major /\
+      MH.chunk_disjoint_from_all fresh major /\
+      CG.chunked_all_major_object_expansion_safe
+        major fresh (MH.major_objects major) 0)
+    (ensures
+      chunked_major_field_zero_no_minor
+        minor (SpecMajorAlloc.expand_major_heap major fresh fp).major_out)
+
+val chunked_major_field_zero_no_minor_ensure_head_capacity
+  (minor: minor_state) (major: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      chunked_major_field_zero_no_minor minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+       MH.chunk_disjoint_from_all fresh major /\
+       CG.chunked_all_major_object_expansion_safe
+         major fresh (MH.major_objects major) 0))
+    (ensures
+      chunked_major_field_zero_no_minor
+        minor
+        (SpecMajorAlloc.ensure_major_head_capacity_spec
+          major fp fuel needed fresh).capacity_major_out)
 
 /// Provisional direct remembered-root coverage: every non-field-0 active
 /// non-blue major edge to a minor vertex has that minor target in `roots`.
