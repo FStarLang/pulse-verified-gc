@@ -83,6 +83,8 @@ The collection-shape preflight invariant has the same reduction at the HeapInvar
 
 The budgeted multi-allocation preflight path now has the same value-safety reduction. `chunked_collection_heap_shape_ensure_head_capacity_alloc_list_with_budget_value_safety` supports arbitrary positive request lists bounded by a budget while requiring only chunk disjointness, fresh-chunk facts, and old-field-value freshness on the expansion branch.
 
+That reduction is also specialized to minor-promotion demand. `chunked_collection_heap_shape_ensure_minor_promotion_budget_alloc_list_value_safety` and `chunked_collection_heap_shape_ensure_minor_promotion_head_capacity_allocs_value_safety` let Cheney-facing callers use the old-field-value freshness surface directly, including the canonical `minor_promotion_requests` list.
+
 ## Remaining steps
 
 1. **Thread remaining side conditions through the final API.** The final graph theorem now has an append-based scanned-root construction wrapper, derives collection-root validity from base-root validity, derives collection-root fresh-disjointness from base-root fresh-disjointness plus fresh chunk base policy, derives old field-slot/header expansion safety from chunk disjointness and well-formedness, returns the full chunk-base/pointer-field/base-root-valid/constructed-root-valid/field-0 policy facts preserved by preflight expansion, has a fixed-heap wrapper from dense root/field-0 predicates, and the core collection-correctness bundle now also has a value-safety wrapper plus a compact-policy-to-core-branch bridge. The remaining API work is to supply the initial multi-chunk chunk-base/base-root-valid/base-root-fresh-disjoint/old-field-value-fresh-disjoint/field-0 policy from the actual runtime-facing collection boundary.
