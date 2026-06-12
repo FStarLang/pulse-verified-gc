@@ -33,6 +33,10 @@ let chunked_roots_disjoint_from_chunk
   forall (r: U64.t).
     Seq.mem r roots ==> ~(MH.pointer_in_chunk fresh r)
 
+let chunked_roots_all_minor_pointers (roots: seq U64.t) : prop =
+  forall (r: U64.t).
+    Seq.mem r roots ==> is_minor_pointer r
+
 val chunked_roots_valid_nonblue_single_chunk_compat
   (roots: seq U64.t) (major: heap)
   : Lemma
@@ -67,6 +71,15 @@ val chunked_roots_valid_nonblue_ensure_head_capacity
         roots
         (SpecMajorAlloc.ensure_major_head_capacity_spec
           major fp fuel needed fresh).capacity_major_out)
+
+val chunked_roots_valid_nonblue_append_minor_pointers
+  (roots suffix: seq U64.t) (major: MH.major_heap)
+  : Lemma
+    (requires
+      chunked_roots_valid_nonblue roots major /\
+      chunked_roots_all_minor_pointers suffix)
+    (ensures
+      chunked_roots_valid_nonblue (Seq.append roots suffix) major)
 
 /// Chunked active-major object addresses are valid legacy pointer field values.
 /// This is intentionally local to avoid a dependency cycle with

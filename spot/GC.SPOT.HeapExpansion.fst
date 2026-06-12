@@ -6168,6 +6168,38 @@ let spot_chunked_roots_valid_nonblue_ensure_head_capacity
   CReach.chunked_roots_valid_nonblue_ensure_head_capacity
     roots major fp fuel needed fresh
 
+let spot_chunked_roots_valid_nonblue_append_minor_pointers
+  (roots suffix: Seq.seq U64.t) (major: MH.major_heap)
+  : Lemma
+      (requires
+        CReach.chunked_roots_valid_nonblue roots major /\
+        CReach.chunked_roots_all_minor_pointers suffix)
+      (ensures
+        CReach.chunked_roots_valid_nonblue
+          (Seq.append roots suffix) major)
+  =
+  CReach.chunked_roots_valid_nonblue_append_minor_pointers
+    roots suffix major
+
+let spot_chunked_roots_valid_nonblue_collection_roots_ensure_head_capacity
+  (minor: minor_state) (major: MH.major_heap) (roots: Seq.seq U64.t)
+  (fp: U64.t) (fuel: nat) (needed: nat{needed > 0})
+  (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CReach.chunked_roots_valid_nonblue roots major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
+          CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+          MH.chunk_disjoint_from_all fresh major))
+      (ensures
+        CReach.chunked_roots_valid_nonblue
+          (CRem.chunked_minor_collection_roots minor major roots)
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp fuel needed fresh).capacity_major_out)
+  =
+  CRem.chunked_roots_valid_nonblue_collection_roots_ensure_head_capacity
+    minor major roots fp fuel needed fresh
+
 let spot_chunked_major_field_zero_no_minor_single_chunk_compat
   (minor: minor_state) (major: heap)
   : Lemma
@@ -6951,8 +6983,11 @@ let spot_chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachabl
             (PromotionDemand.minor_promotion_demand minor + 1) fresh in
          CReach.chunked_roots_valid_nonblue
            base_roots r.capacity_major_out /\
-         CheneyGraphReadiness.chunked_major_chunks_above_zero_addr
-           r.capacity_major_out /\
+          CReach.chunked_roots_valid_nonblue
+            (CRem.chunked_minor_collection_roots minor major base_roots)
+            r.capacity_major_out /\
+          CheneyGraphReadiness.chunked_major_chunks_above_zero_addr
+            r.capacity_major_out /\
          CheneyGraphReadiness.chunked_major_objects_are_pointer_fields
            r.capacity_major_out /\
          CReach.chunked_major_field_zero_no_minor

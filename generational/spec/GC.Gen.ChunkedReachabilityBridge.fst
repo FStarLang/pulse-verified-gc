@@ -194,6 +194,40 @@ let chunked_roots_valid_nonblue_ensure_head_capacity
   else
     chunked_roots_valid_nonblue_preserved_by_expansion
       roots major fresh fp
+
+let chunked_roots_valid_nonblue_append_minor_pointers
+  (roots suffix: seq U64.t) (major: MH.major_heap)
+  : Lemma
+    (requires
+      chunked_roots_valid_nonblue roots major /\
+      chunked_roots_all_minor_pointers suffix)
+    (ensures
+      chunked_roots_valid_nonblue (Seq.append roots suffix) major)
+  =
+  let prove (r: U64.t)
+    : Lemma
+      (ensures
+        Seq.mem r (Seq.append roots suffix) /\
+        ~(is_minor_pointer r) /\
+        is_val_addr r /\
+        Seq.mem (r <: obj_addr) (MH.major_objects major) ==>
+        ~(GenInv.chunked_is_blue major (r <: obj_addr)))
+    =
+    if Seq.mem r (Seq.append roots suffix) /\
+      ~(is_minor_pointer r) /\
+      is_val_addr r /\
+      Seq.mem (r <: obj_addr) (MH.major_objects major) then begin
+      Seq.lemma_mem_append roots suffix;
+      if Seq.mem r roots then
+        ()
+      else begin
+        assert (Seq.mem r suffix);
+        assert (is_minor_pointer r);
+        assert False
+      end
+    end
+  in
+  FStar.Classical.forall_intro prove
 #pop-options
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
