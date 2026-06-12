@@ -21,6 +21,7 @@ module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module CheneyCorrectness = GC.Gen.CheneyCorrectness
 module CheneyGraphReadiness = GC.Gen.CheneyGraphReadiness
+module SingleChunkInvariant = GC.Gen.SingleChunkInvariant
 module RBridge = GC.Gen.ReachabilityBridge
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CRem = GC.Gen.ChunkedRemembered
@@ -30,6 +31,26 @@ module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let spot_major_fl_head_wosize_single_chunk_from_dense
+  (g: heap) (fp: U64.t) (fuel: nat)
+  : Lemma
+    (requires
+      Fields.well_formed_heap g /\
+      GC.Gen.FreeListShape.fp_pointer_or_zero fp /\
+      GC.Spec.Allocator.Lemmas.fl_valid g fp fuel /\
+      fuel > 0)
+    (ensures
+      SpecMajorAlloc.major_fl_head_wosize
+        (MH.single_chunk_major_heap g) fp ==
+      (if fp = 0UL then 0
+       else if GC.Spec.HeapGraph.is_pointer_field fp
+       then U64.v (Obj.wosize_of_object (fp <: obj_addr) g)
+       else 0))
+  =
+  SingleChunkInvariant.major_fl_head_wosize_single_chunk_from_dense g fp fuel
+#pop-options
 
 let spot_expand_on_oom_pre
   (mh: MH.major_heap) (fp: U64.t) (requested_wz fuel: nat)

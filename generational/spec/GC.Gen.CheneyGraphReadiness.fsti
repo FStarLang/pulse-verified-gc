@@ -25,6 +25,7 @@ module CheneyPres = GC.Gen.CheneyPreservation
 module RBridge = GC.Gen.ReachabilityBridge
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CRem = GC.Gen.ChunkedRemembered
+module SCInv = GC.Gen.SingleChunkInvariant
 
 /// Heap-level separation fact needed to discharge major-target update stability
 /// from graph-edge membership: every active major object address lies outside

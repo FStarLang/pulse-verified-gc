@@ -30,6 +30,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CInj = GC.Gen.ChunkedCheneyInjectivity
 module CDisj = GC.Gen.ChunkedCheneyDisjointness
+module SCInv = GC.Gen.SingleChunkInvariant
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
 private let aligned_gt_ge_plus_mword (x z: nat)
