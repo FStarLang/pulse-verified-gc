@@ -419,6 +419,10 @@ val chunked_major_field_edges
 
 /// The old major field slots from `i` onward, and any old field values read
 /// there, do not point into the newly registered chunk.
+val chunked_major_field_values_miss_fresh
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> src:obj_addr -> wz:nat -> i:nat ->
+    Tot prop
+
 val chunked_major_field_expansion_safe
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> src:obj_addr -> wz:nat -> i:nat ->
     Tot prop
@@ -489,6 +493,17 @@ val chunked_major_object_expansion_safe_fields
         chunked_major_field_expansion_safe
           mh fresh obj (chunked_wosize_nat_of_object mh obj) 0)
 
+val chunked_major_object_expansion_safe_from_values_miss_fresh
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> obj:obj_addr ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        chunked_major_field_values_miss_fresh
+          mh fresh obj (chunked_wosize_nat_of_object mh obj) 0)
+      (ensures chunked_major_object_expansion_safe mh fresh obj)
+
 val chunked_major_object_edges_preserved_by_expansion
   : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
     fp:U64.t -> obj:obj_addr ->
@@ -523,6 +538,34 @@ val chunked_all_major_object_expansion_safe_tail
       (requires idx < Seq.length objs /\
                 chunked_all_major_object_expansion_safe mh fresh objs idx)
       (ensures chunked_all_major_object_expansion_safe mh fresh objs (idx + 1))
+
+val chunked_all_major_object_expansion_safe_from_values_miss_fresh
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> objs:seq obj_addr -> idx:nat ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        (forall (k:nat).
+          idx <= k /\ k < Seq.length objs ==>
+            Seq.mem (Seq.index objs k) (MH.major_objects mh) /\
+            chunked_major_field_values_miss_fresh
+              mh fresh (Seq.index objs k)
+              (chunked_wosize_nat_of_object mh (Seq.index objs k)) 0))
+      (ensures chunked_all_major_object_expansion_safe mh fresh objs idx)
+
+val chunked_major_objects_expansion_safe_from_values_miss_fresh
+  : mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        (forall (obj:obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==>
+            chunked_major_field_values_miss_fresh
+              mh fresh obj (chunked_wosize_nat_of_object mh obj) 0))
+      (ensures
+        chunked_all_major_object_expansion_safe
+          mh fresh (MH.major_objects mh) 0)
 
 val chunked_all_major_object_edges_preserved_by_expansion
   : ms:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->

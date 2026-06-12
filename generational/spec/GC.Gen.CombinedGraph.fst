@@ -756,6 +756,55 @@ let chunked_major_object_expansion_safe_fields
           mh fresh obj (chunked_wosize_nat_of_object mh obj) 0)
   = ()
 
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 5"
+let chunked_major_object_expansion_safe_from_values_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        chunked_major_field_values_miss_fresh
+          mh fresh obj (chunked_wosize_nat_of_object mh obj) 0)
+      (ensures chunked_major_object_expansion_safe mh fresh obj)
+  =
+  MH.major_object_header_disjoint_from_chunk mh fresh obj;
+  MH.major_objects_member_header_read_some mh obj;
+  match MH.read_word_in_major mh (hd_address obj) with
+  | None -> assert False
+  | Some hdr ->
+    chunked_wosize_nat_header mh obj hdr;
+    let wz = chunked_wosize_nat_of_object mh obj in
+    let slots (j:nat) (field_addr:hp_addr)
+      : Lemma
+        (ensures
+          0 <= j /\ j < wz /\
+          chunked_major_field_slot obj j == Some field_addr ==>
+            ~(MH.chunk_contains_addr fresh field_addr))
+      =
+      if j < wz && chunked_major_field_slot obj j == Some field_addr then begin
+        assert (j < U64.v (getWosize hdr));
+        chunked_major_field_slot_elim obj j field_addr;
+        MH.major_object_field_disjoint_from_chunk
+          mh fresh obj hdr j field_addr
+      end
+    in
+    let values (j:nat) (field_addr:hp_addr) (v:U64.t)
+      : Lemma
+        (ensures
+          0 <= j /\ j < wz /\
+          chunked_major_field_slot obj j == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some v ==>
+            ~(MH.pointer_in_chunk fresh v))
+      =
+      if j < wz && chunked_major_field_slot obj j == Some field_addr &&
+         MH.read_word_in_major mh field_addr == Some v then ()
+    in
+    FStar.Classical.forall_intro_2 slots;
+    FStar.Classical.forall_intro_3 values;
+    chunked_major_field_expansion_safe_intro mh fresh obj wz 0
+#pop-options
+
 let chunked_major_object_edges_preserved_by_expansion
   (ms: minor_state) (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
   (obj: obj_addr)
@@ -816,6 +865,67 @@ let chunked_all_major_object_expansion_safe_tail
   assert (idx <= idx + 1);
   assert (forall (k:nat).
     idx + 1 <= k /\ k < Seq.length objs ==> idx <= k /\ k < Seq.length objs)
+#pop-options
+
+#push-options "--split_queries always --fuel 0 --ifuel 0 --z3rlimit 5"
+let chunked_all_major_object_expansion_safe_from_values_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (objs: seq obj_addr) (idx: nat)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap mh /\
+      MH.chunk_disjoint_from_all fresh mh /\
+      (forall (k:nat).
+        idx <= k /\ k < Seq.length objs ==>
+          Seq.mem (Seq.index objs k) (MH.major_objects mh) /\
+          chunked_major_field_values_miss_fresh
+            mh fresh (Seq.index objs k)
+            (chunked_wosize_nat_of_object mh (Seq.index objs k)) 0))
+    (ensures chunked_all_major_object_expansion_safe mh fresh objs idx)
+  =
+  let prove (k:nat)
+  : Lemma
+    (ensures
+      idx <= k /\ k < Seq.length objs ==>
+        chunked_major_object_expansion_safe mh fresh (Seq.index objs k))
+  =
+  if idx <= k && k < Seq.length objs then
+    chunked_major_object_expansion_safe_from_values_miss_fresh
+      mh fresh (Seq.index objs k)
+  in
+  FStar.Classical.forall_intro prove
+
+let chunked_major_objects_expansion_safe_from_values_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap mh /\
+      MH.chunk_disjoint_from_all fresh mh /\
+      (forall (obj:obj_addr).
+        Seq.mem obj (MH.major_objects mh) ==>
+          chunked_major_field_values_miss_fresh
+            mh fresh obj (chunked_wosize_nat_of_object mh obj) 0))
+    (ensures
+      chunked_all_major_object_expansion_safe
+        mh fresh (MH.major_objects mh) 0)
+  =
+  let objs = MH.major_objects mh in
+  let prove_value (k:nat)
+  : Lemma
+    (ensures
+      0 <= k /\ k < Seq.length objs ==>
+        Seq.mem (Seq.index objs k) (MH.major_objects mh) /\
+        chunked_major_field_values_miss_fresh
+          mh fresh (Seq.index objs k)
+          (chunked_wosize_nat_of_object mh (Seq.index objs k)) 0)
+  =
+  if k < Seq.length objs then begin
+    FStar.Seq.Properties.lemma_index_is_nth objs k;
+    assert (Seq.mem (Seq.index objs k) objs)
+  end
+  in
+  FStar.Classical.forall_intro prove_value;
+  chunked_all_major_object_expansion_safe_from_values_miss_fresh
+  mh fresh objs 0
 #pop-options
 
 let rec chunked_all_major_object_edges_preserved_by_expansion

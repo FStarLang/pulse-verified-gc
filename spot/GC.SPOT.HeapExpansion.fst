@@ -3639,6 +3639,20 @@ let spot_chunked_major_object_edges_preserved_by_expansion
         spot_chunked_major_object_edges ms mh obj)
   = CG.chunked_major_object_edges_preserved_by_expansion ms mh fresh fp obj
 
+let spot_chunked_major_object_expansion_safe_from_values_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        CG.chunked_major_field_values_miss_fresh
+          mh fresh obj (CG.chunked_wosize_nat_of_object mh obj) 0)
+      (ensures CG.chunked_major_object_expansion_safe mh fresh obj)
+  =
+  CG.chunked_major_object_expansion_safe_from_values_miss_fresh
+    mh fresh obj
+
 let spot_chunked_all_major_object_edges
   (ms: minor_state) (mh: MH.major_heap) (objs: Seq.seq obj_addr) (idx: nat)
   : GTot (Seq.seq CG.combined_edge)
@@ -3656,6 +3670,41 @@ let spot_chunked_all_major_object_edges_preserved_by_expansion
         spot_chunked_all_major_object_edges ms mh objs idx)
   = CG.chunked_all_major_object_edges_preserved_by_expansion
       ms mh fresh fp objs idx
+
+let spot_chunked_all_major_object_expansion_safe_from_values_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk)
+  (objs: Seq.seq obj_addr) (idx: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        (forall (k:nat).
+          idx <= k /\ k < Seq.length objs ==>
+            Seq.mem (Seq.index objs k) (MH.major_objects mh) /\
+            CG.chunked_major_field_values_miss_fresh
+              mh fresh (Seq.index objs k)
+              (CG.chunked_wosize_nat_of_object mh (Seq.index objs k)) 0))
+      (ensures CG.chunked_all_major_object_expansion_safe mh fresh objs idx)
+  =
+  CG.chunked_all_major_object_expansion_safe_from_values_miss_fresh
+    mh fresh objs idx
+
+let spot_chunked_major_objects_expansion_safe_from_values_miss_fresh
+  (mh: MH.major_heap) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        (forall (obj:obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==>
+            CG.chunked_major_field_values_miss_fresh
+              mh fresh obj (CG.chunked_wosize_nat_of_object mh obj) 0))
+      (ensures
+        CG.chunked_all_major_object_expansion_safe
+          mh fresh (MH.major_objects mh) 0)
+  =
+  CG.chunked_major_objects_expansion_safe_from_values_miss_fresh
+    mh fresh
 
 let spot_chunked_all_major_field_edges
   (ms: minor_state) (mh: MH.major_heap) (objs: Seq.seq obj_addr)
@@ -7024,6 +7073,62 @@ let spot_chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachabl
            minor r.capacity_major_out))
   =
   CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_from_base_roots
+    minor major fp base_roots alloc_fuel fresh
+
+let spot_chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_from_base_roots_value_safety
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (base_roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CReach.chunked_roots_valid_nonblue base_roots major /\
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major /\
+        CReach.chunked_major_field_zero_no_minor minor major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          CReach.chunked_roots_disjoint_from_chunk base_roots fresh /\
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          (forall (obj:obj_addr).
+            Seq.mem obj (MH.major_objects major) ==>
+              CG.chunked_major_field_values_miss_fresh
+                major fresh obj
+                (CG.chunked_wosize_nat_of_object major obj) 0)))
+      (ensures
+        CheneyGraphReadiness.chunked_reachable_live_graph_post_reachable_image_isomorphism_prop
+          minor major fp
+          (CRem.chunked_minor_collection_roots minor major base_roots)
+          alloc_fuel fresh /\
+        (let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp alloc_fuel
+            (PromotionDemand.minor_promotion_demand minor + 1) fresh in
+         CReach.chunked_roots_valid_nonblue
+           base_roots r.capacity_major_out /\
+          CReach.chunked_roots_valid_nonblue
+            (CRem.chunked_minor_collection_roots minor major base_roots)
+            r.capacity_major_out /\
+          (SpecMajorAlloc.major_fl_head_wosize major fp <
+            PromotionDemand.minor_promotion_demand minor + 1 ==>
+            CReach.chunked_roots_disjoint_from_chunk
+              (CRem.chunked_minor_collection_roots minor major base_roots)
+              fresh) /\
+          CheneyGraphReadiness.chunked_major_chunks_above_zero_addr
+            r.capacity_major_out /\
+          CheneyGraphReadiness.chunked_major_objects_are_pointer_fields
+            r.capacity_major_out /\
+          CReach.chunked_major_field_zero_no_minor
+            minor r.capacity_major_out))
+  =
+  CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_full_policy_and_post_reachable_image_from_base_roots_value_safety
     minor major fp base_roots alloc_fuel fresh
 
 let spot_chunked_cheney_gc_correct_after_preflight_policy_and_post_reachable_image_single_chunk_from_dense_roots
