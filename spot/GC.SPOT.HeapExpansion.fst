@@ -6123,6 +6123,17 @@ let spot_chunked_reachable_major_valid_nonblue
   CReach.chunked_reachable_major_valid_nonblue
     minor major fp fuel roots
 
+let spot_chunked_roots_valid_nonblue_single_chunk_compat
+  (roots: Seq.seq U64.t) (major: heap)
+  : Lemma
+      (requires RBridge.roots_valid_nonblue roots major)
+      (ensures
+        CReach.chunked_roots_valid_nonblue
+          roots (MH.single_chunk_major_heap major))
+  =
+  CReach.chunked_roots_valid_nonblue_single_chunk_compat
+    roots major
+
 let spot_chunked_major_field_zero_no_minor_single_chunk_compat
   (minor: minor_state) (major: heap)
   : Lemma

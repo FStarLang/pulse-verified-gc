@@ -25,6 +25,13 @@ let chunked_roots_valid_nonblue (roots: seq U64.t) (major: MH.major_heap) : prop
     is_val_addr r /\ Seq.mem (r <: obj_addr) (MH.major_objects major) ==>
     ~(GenInv.chunked_is_blue major (r <: obj_addr))
 
+val chunked_roots_valid_nonblue_single_chunk_compat
+  (roots: seq U64.t) (major: heap)
+  : Lemma
+    (requires RBridge.roots_valid_nonblue roots major)
+    (ensures
+      chunked_roots_valid_nonblue roots (MH.single_chunk_major_heap major))
+
 /// Chunked active-major object addresses are valid legacy pointer field values.
 /// This is intentionally local to avoid a dependency cycle with
 /// `GC.Gen.CheneyGraphReadiness`, which provides construction lemmas for the

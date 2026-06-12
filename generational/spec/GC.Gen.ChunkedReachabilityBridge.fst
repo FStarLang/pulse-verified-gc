@@ -37,6 +37,50 @@ private let aligned_gt_ge_plus_mword (x z: nat)
     end
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
+let chunked_roots_valid_nonblue_single_chunk_compat
+  (roots: seq U64.t) (major: heap)
+  : Lemma
+    (requires RBridge.roots_valid_nonblue roots major)
+    (ensures
+      chunked_roots_valid_nonblue roots (MH.single_chunk_major_heap major))
+  =
+  let single = MH.single_chunk_major_heap major in
+  let prove (r: U64.t)
+    : Lemma
+      (ensures
+        Seq.mem r roots /\
+        ~(is_minor_pointer r) /\
+        is_val_addr r /\
+        Seq.mem (r <: obj_addr) (MH.major_objects single) ==>
+        ~(GenInv.chunked_is_blue single (r <: obj_addr)))
+    =
+    if Seq.mem r roots /\
+      ~(is_minor_pointer r) /\
+      is_val_addr r /\
+      Seq.mem (r <: obj_addr) (MH.major_objects single) then begin
+      is_val_addr_spec r;
+      let obj : obj_addr = r in
+      MH.single_chunk_major_objects_compat major;
+      assert (Seq.mem obj (objects zero_addr major));
+      objects_addresses_gt_start zero_addr major obj;
+      aligned_gt_ge_plus_mword (U64.v obj) (U64.v zero_addr);
+      hd_address_bounds obj;
+      hd_address_spec obj;
+      assert_norm (U64.v mword == 8);
+      assert (U64.v (hd_address obj) >= U64.v zero_addr);
+      let hdr = read_word major (hd_address obj) in
+      MH.single_chunk_read_word_compat major (hd_address obj);
+      GenInv.chunked_is_blue_header single obj hdr;
+      color_of_object_spec obj major;
+      is_blue_iff obj major;
+      assert (GenInv.chunked_is_blue single obj == is_blue obj major);
+      assert (~(is_blue obj major))
+    end
+  in
+  FStar.Classical.forall_intro prove
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
 let chunked_reachable_major_valid_nonblue
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t) (fuel: nat)
   (roots: seq U64.t)
