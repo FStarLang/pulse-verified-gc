@@ -17,6 +17,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module CC = GC.Gen.CheneyCorrectness
+module RBridge = GC.Gen.ReachabilityBridge
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CRem = GC.Gen.ChunkedRemembered
 
@@ -1787,6 +1788,47 @@ val chunked_cheney_gc_correct_after_preflight_policy_and_post_reachable_image_fr
         SpecMajorAlloc.ensure_major_head_capacity_spec
           major fp alloc_fuel (PromotionDemand.minor_promotion_demand minor + 1)
           fresh in
+       chunked_major_chunks_above_zero_addr r.capacity_major_out /\
+       chunked_major_objects_are_pointer_fields r.capacity_major_out /\
+       CReach.chunked_major_field_zero_no_minor
+         minor r.capacity_major_out))
+
+val chunked_cheney_gc_correct_after_preflight_policy_and_post_reachable_image_single_chunk_from_dense_roots
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (base_roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape
+        minor (MH.single_chunk_major_heap major) fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates
+        (MH.single_chunk_major_heap major) fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue
+        (MH.single_chunk_major_heap major) fp alloc_fuel /\
+      RBridge.roots_valid_nonblue base_roots major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize
+        (MH.single_chunk_major_heap major) fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh (MH.single_chunk_major_heap major) /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+       PromotionDemand.minor_promotion_demand minor + 1 /\
+       CG.chunked_all_major_object_expansion_safe
+       (MH.single_chunk_major_heap major) fresh
+       (MH.major_objects (MH.single_chunk_major_heap major)) 0))
+    (ensures
+      chunked_reachable_live_graph_post_reachable_image_isomorphism_prop
+        minor (MH.single_chunk_major_heap major) fp
+        (CRem.chunked_minor_collection_roots
+          minor (MH.single_chunk_major_heap major) base_roots)
+        alloc_fuel fresh /\
+      (let r =
+        SpecMajorAlloc.ensure_major_head_capacity_spec
+          (MH.single_chunk_major_heap major) fp alloc_fuel
+          (PromotionDemand.minor_promotion_demand minor + 1) fresh in
        chunked_major_chunks_above_zero_addr r.capacity_major_out /\
        chunked_major_objects_are_pointer_fields r.capacity_major_out /\
        CReach.chunked_major_field_zero_no_minor
