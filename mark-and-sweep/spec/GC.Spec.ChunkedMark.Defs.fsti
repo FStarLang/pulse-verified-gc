@@ -78,6 +78,11 @@ val chunked_pointer_field_as_obj_addr
   (v: U64.t{chunked_is_pointer_field mh v})
   : GTot obj_addr
 
+val chunked_pointer_field_as_obj_addr_step:
+  mh:MH.major_heap ->
+  v:U64.t{chunked_is_pointer_field mh v} ->
+  Lemma (chunked_pointer_field_as_obj_addr mh v == v)
+
 val chunked_parent_closure_addr_nat
   (infix_obj: obj_addr)
   (mh: MH.major_heap)

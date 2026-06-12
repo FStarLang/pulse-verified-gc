@@ -103,6 +103,12 @@ let chunked_pointer_field_as_obj_addr
   chunked_is_pointer_field_is_obj_addr mh v;
   v
 
+let chunked_pointer_field_as_obj_addr_step
+    (mh: MH.major_heap)
+    (v: U64.t{chunked_is_pointer_field mh v})
+  : Lemma (chunked_pointer_field_as_obj_addr mh v == v)
+  = ()
+
 let chunked_parent_closure_addr_nat
     (infix_obj: obj_addr)
     (mh: MH.major_heap)

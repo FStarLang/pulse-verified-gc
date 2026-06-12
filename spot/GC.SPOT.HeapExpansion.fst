@@ -38,6 +38,7 @@ module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMarkDefs = GC.Spec.ChunkedMark.Defs
 module ChunkedMarkCompat = GC.Spec.ChunkedMark.Compat
 module ChunkedMarkNoPointer = GC.Spec.ChunkedMark.NoPointerCompat
+module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -445,6 +446,14 @@ let spot_chunked_mark_pointer_field_is_obj_addr
   =
   ChunkedMarkDefs.chunked_is_pointer_field_is_obj_addr mh v
 
+let spot_chunked_mark_pointer_field_as_obj_addr_step
+  (mh: MH.major_heap)
+  (v: U64.t{ChunkedMarkDefs.chunked_is_pointer_field mh v})
+  : Lemma
+      (ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v == v)
+  =
+  ChunkedMarkDefs.chunked_pointer_field_as_obj_addr_step mh v
+
 let spot_chunked_make_gray_step
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -647,6 +656,44 @@ let spot_chunked_mark_step_scan_no_pointer_fields_single_chunk_compat
   =
   ChunkedMarkNoPointer.chunked_mark_step_scan_no_pointer_fields_single_chunk_compat
     g st
+
+let spot_chunked_push_children_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        ChunkedMarkPush.push_children_single_chunk_ready g obj i ws)
+      (ensures
+        ChunkedMarkDefs.chunked_push_children
+          (MH.single_chunk_major_heap g) st obj i ws ==
+        (let (g', st') = Mark.push_children g st obj i ws in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkPush.chunked_push_children_single_chunk_compat g st obj i ws
+
+let spot_chunked_mark_step_scan_single_chunk_compat
+  (g: heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        U64.v (Seq.head st) >= U64.v zero_addr + U64.v mword /\
+        ~(Obj.is_no_scan (Seq.head st) g) /\
+        ChunkedMarkPush.push_children_single_chunk_ready
+          (Obj.makeBlack (Seq.head st) g)
+          (Seq.head st)
+          1UL
+          (Obj.wosize_of_object (Seq.head st) g))
+      (ensures
+        ChunkedMarkDefs.chunked_mark_step
+          (MH.single_chunk_major_heap g) st ==
+        (let (g', st') = Mark.mark_step g st in
+         (MH.single_chunk_major_heap g', st')))
+  =
+  ChunkedMarkPush.chunked_mark_step_scan_single_chunk_compat g st
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
