@@ -108,6 +108,21 @@ val chunked_sweep_aux_step
          chunked_sweep_aux mh objs fp ==
          chunked_sweep_aux mh' (Seq.tail objs) fp'))
 
+val chunked_sweep_chunks_empty
+  (work: MH.major_heap) (fp: U64.t)
+  : Lemma (chunked_sweep_chunks Seq.empty work fp == (work, fp))
+
+val chunked_sweep_chunks_step
+  (source_chunks work: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (requires Seq.length source_chunks > 0)
+      (ensures
+        (let c = Seq.head source_chunks in
+         let (work', fp') =
+           chunked_sweep_aux work (MH.objects_in_chunk c) fp in
+         chunked_sweep_chunks source_chunks work fp ==
+         chunked_sweep_chunks (Seq.tail source_chunks) work' fp'))
+
 val chunked_fused_aux_empty
   (source work: MH.major_heap) (first_blue: U64.t) (run_words: nat)
   (fp: U64.t)

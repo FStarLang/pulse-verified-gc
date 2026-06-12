@@ -29,6 +29,7 @@ module CRem = GC.Gen.ChunkedRemembered
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
+module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -130,6 +131,95 @@ let spot_chunked_collection_heap_shape_single_chunk_from_dense
   =
   SingleChunkInvariant.chunked_collection_heap_shape_single_chunk_from_dense
     minor g fp
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let spot_chunked_sweep_chunks_step
+  (source_chunks work: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (requires Seq.length source_chunks > 0)
+      (ensures
+        (let c = Seq.head source_chunks in
+         let (work', fp') =
+           ChunkedSweepDefs.chunked_sweep_aux
+             work (MH.objects_in_chunk c) fp
+         in
+         ChunkedSweepDefs.chunked_sweep_chunks source_chunks work fp ==
+         ChunkedSweepDefs.chunked_sweep_chunks
+           (Seq.tail source_chunks) work' fp'))
+  =
+  ChunkedSweepDefs.chunked_sweep_chunks_step source_chunks work fp
+
+let spot_chunked_fused_aux_empty
+  (source work: MH.major_heap) (first_blue: U64.t) (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (ChunkedSweepDefs.chunked_fused_aux
+         source work Seq.empty first_blue run_words fp ==
+       ChunkedSweepDefs.chunked_flush_blue work first_blue run_words fp)
+  =
+  ChunkedSweepDefs.chunked_fused_aux_empty
+    source work first_blue run_words fp
+
+let spot_chunked_fused_aux_black_step
+  (source work: MH.major_heap) (objs: Seq.seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  : Lemma
+      (requires Seq.length objs > 0 /\
+                ChunkedSweepDefs.chunked_is_black source (Seq.head objs))
+      (ensures
+        (let obj = Seq.head objs in
+         let rest = Seq.tail objs in
+         let (work', fp') =
+           ChunkedSweepDefs.chunked_flush_blue
+             work first_blue run_words fp
+         in
+         let work'' = ChunkedSweepDefs.chunked_make_white work' obj in
+         ChunkedSweepDefs.chunked_fused_aux
+           source work objs first_blue run_words fp ==
+         ChunkedSweepDefs.chunked_fused_aux source work'' rest 0UL 0 fp'))
+  =
+  ChunkedSweepDefs.chunked_fused_aux_black_step
+    source work objs first_blue run_words fp
+
+let spot_chunked_fused_aux_nonblack_step
+  (source work: MH.major_heap) (objs: Seq.seq obj_addr)
+  (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  : Lemma
+      (requires Seq.length objs > 0 /\
+                ~(ChunkedSweepDefs.chunked_is_black source (Seq.head objs)))
+      (ensures
+        (let obj = Seq.head objs in
+         let rest = Seq.tail objs in
+         let ws =
+           U64.v (ChunkedSweepDefs.chunked_wosize_of_object source obj) in
+         let new_first : U64.t =
+           if run_words = 0 then obj else first_blue in
+         ChunkedSweepDefs.chunked_fused_aux
+           source work objs first_blue run_words fp ==
+         ChunkedSweepDefs.chunked_fused_aux
+           source work rest new_first (run_words + ws + 1) fp))
+  =
+  ChunkedSweepDefs.chunked_fused_aux_nonblack_step
+    source work objs first_blue run_words fp
+
+let spot_chunked_fused_sweep_coalesce_chunks_step
+  (source_chunks source work: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (requires Seq.length source_chunks > 0)
+      (ensures
+        (let c = Seq.head source_chunks in
+         let (work', fp') =
+           ChunkedSweepDefs.chunked_fused_aux
+             source work (MH.objects_in_chunk c) 0UL 0 fp
+         in
+         ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks
+           source_chunks source work fp ==
+         ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks
+           (Seq.tail source_chunks) source work' fp'))
+  =
+  ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks_step
+    source_chunks source work fp
 #pop-options
 
 let spot_expand_on_oom_pre
