@@ -7818,7 +7818,6 @@ let spot_fixed_heap_minor_collect_preflight_policy_no_expansion
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
   : Lemma
       (requires
-        minor_wf minor /\
         alloc_fuel > 1 /\
         Fields.well_formed_heap major /\
         alloc_fuel == SpecAlloc.alloc_search_fuel /\
@@ -7840,7 +7839,6 @@ let spot_chunked_cheney_collect_after_minor_promotion_head_preflight_single_chun
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
   : Lemma
       (requires
-        minor_wf minor /\
         alloc_fuel > 1 /\
         Fields.well_formed_heap major /\
         alloc_fuel == SpecAlloc.alloc_search_fuel /\

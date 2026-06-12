@@ -3734,7 +3734,6 @@ let fixed_heap_minor_collect_preflight_policy_no_expansion
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
   : Lemma
     (requires
-      minor_wf minor /\
       alloc_fuel > 1 /\
       Fields.well_formed_heap major /\
       alloc_fuel == SpecAlloc.alloc_search_fuel /\
@@ -3748,7 +3747,15 @@ let fixed_heap_minor_collect_preflight_policy_no_expansion
       fixed_heap_minor_collect_preflight_policy
         minor major fp roots alloc_fuel fresh)
   =
-  ()
+  let chunked_major = MH.single_chunk_major_heap major in
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  assert (~(SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed));
+  assert (SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+          CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+          MH.chunk_disjoint_from_all fresh chunked_major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >= needed)
 
 let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -3761,6 +3768,8 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_fro
       chunked_cheney_collect_after_minor_promotion_head_preflight_post
         minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
   =
+  GenInv.collection_heap_shape_elim minor major fp;
+  GenInv.minor_heap_shape_elim minor;
   chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
     minor major fp roots alloc_fuel fresh
 
@@ -3769,7 +3778,6 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_fro
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
   : Lemma
     (requires
-      minor_wf minor /\
       alloc_fuel > 1 /\
       Fields.well_formed_heap major /\
       alloc_fuel == SpecAlloc.alloc_search_fuel /\
