@@ -7541,6 +7541,76 @@ let spot_chunked_minor_preflight_value_policy_single_chunk_from_dense
   CheneyGraphReadiness.chunked_minor_preflight_value_policy_single_chunk_from_dense
     minor major fp base_roots fresh
 
+let spot_chunked_cheney_promote_after_minor_promotion_head_preflight_single_chunk_from_dense_value_safety
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape
+          minor (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap major) fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        RBridge.roots_valid_nonblue roots major /\
+        RBridge.major_field_zero_no_minor minor major /\
+        (let chunked_major = MH.single_chunk_major_heap major in
+         let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+         CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+         MH.chunk_disjoint_from_all fresh chunked_major /\
+         fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+         U64.v fresh.base >= U64.v zero_addr /\
+         SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+         (forall (obj:obj_addr).
+          Seq.mem obj (MH.major_objects chunked_major) ==>
+            CG.chunked_major_field_values_miss_fresh
+              chunked_major fresh obj
+              (CG.chunked_wosize_nat_of_object chunked_major obj) 0)))
+      (ensures
+        CheneyGraphReadiness.chunked_cheney_promote_after_minor_promotion_head_preflight_post
+          minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_cheney_promote_after_minor_promotion_head_preflight_single_chunk_from_dense_value_safety
+    minor major fp roots alloc_fuel fresh
+
+let spot_chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_value_safety
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape
+          minor (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          (MH.single_chunk_major_heap major) fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue
+          (MH.single_chunk_major_heap major) fp alloc_fuel /\
+        RBridge.roots_valid_nonblue roots major /\
+        RBridge.major_field_zero_no_minor minor major /\
+        (let chunked_major = MH.single_chunk_major_heap major in
+         let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+         SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+         CReach.chunked_roots_disjoint_from_chunk roots fresh /\
+         MH.chunk_disjoint_from_all fresh chunked_major /\
+         fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+         U64.v fresh.base >= U64.v zero_addr /\
+         SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+         (forall (obj:obj_addr).
+          Seq.mem obj (MH.major_objects chunked_major) ==>
+            CG.chunked_major_field_values_miss_fresh
+              chunked_major fresh obj
+              (CG.chunked_wosize_nat_of_object chunked_major obj) 0)))
+      (ensures
+        CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_post
+          minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_value_safety
+    minor major fp roots alloc_fuel fresh
+
 let spot_chunked_minor_preflight_value_policy_core_expansion_safety_single_chunk_from_dense
   (minor: minor_state) (major: heap) (fp: U64.t)
   (base_roots: Seq.seq U64.t) (fresh: MH.heap_chunk)
