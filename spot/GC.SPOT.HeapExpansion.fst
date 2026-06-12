@@ -571,6 +571,48 @@ let spot_chunked_collection_shape_ensure_head_capacity_alloc_list_budget
   = GenInv.chunked_collection_heap_shape_ensure_head_capacity_alloc_list_with_budget
       minor mh fp fuel fresh requests budget
 
+let spot_chunked_collection_shape_ensure_head_capacity_alloc_list_budget_value_safety
+  (minor: minor_state) (mh: MH.major_heap)
+  (fp: U64.t) (fuel: nat) (fresh: MH.heap_chunk)
+  (requests: list nat) (budget: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                GenInv.chunked_collection_heap_shape minor mh fp fuel /\
+                SpecMajorAllocMultiAlloc.all_requests_positive requests /\
+                SpecMajorAllocMultiAlloc.allocation_list_demand requests <=
+                  budget /\
+                (SpecMajorAlloc.major_fl_head_wosize mh fp < budget + 1 ==>
+                 MH.chunk_disjoint_from_all fresh mh /\
+                 fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+                 U64.v fresh.base >= U64.v zero_addr /\
+                 SpecMajorAlloc.fresh_chunk_wosize fresh >= budget + 1 /\
+                 (forall (obj:obj_addr).
+                  Seq.mem obj (MH.major_objects mh) ==>
+                    CG.chunked_major_field_values_miss_fresh
+                      mh fresh obj (CG.chunked_wosize_nat_of_object mh obj) 0)))
+      (ensures (
+        let needed = budget + 1 in
+        let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh in
+        let a =
+          SpecMajorAllocMultiAlloc.major_alloc_list_spec
+            r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out
+            requests in
+        GenInv.chunked_collection_heap_shape
+          minor r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          r.capacity_major_out r.capacity_fp_out >= needed /\
+        a.list_fp_out <> 0UL /\
+        GenInv.chunked_major_alloc_shape a.list_major_out a.list_fp_out
+          r.capacity_fuel_out /\
+        SpecMajorAlloc.major_fl_head_wosize
+          a.list_major_out a.list_fp_out >= 1 /\
+        SpecMajorAllocMultiAlloc.allocated_objects_nonzero
+          a.list_objs_out))
+  = GenInv.chunked_collection_heap_shape_ensure_head_capacity_alloc_list_with_budget_value_safety
+      minor mh fp fuel fresh requests budget
+
 let spot_chunked_collection_shape_ensure_minor_promotion_budget_alloc_list
   (minor: minor_state) (mh: MH.major_heap)
   (fp: U64.t) (fuel: nat) (fresh: MH.heap_chunk)
