@@ -11,6 +11,7 @@ open GC.Spec.Heap
 module Obj = GC.Spec.Object
 module Header = GC.Lib.Header
 module MH = GC.Spec.MajorHeap
+module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 val chunked_read_header
@@ -159,6 +160,118 @@ val chunked_sweep_step:
   mh:MH.major_heap ->
   fp:U64.t ->
   Lemma (chunked_sweep mh fp == chunked_sweep_chunks mh mh fp)
+
+val chunked_zero_fields_zero:
+  mh:MH.major_heap ->
+  addr:U64.t ->
+  Lemma (chunked_zero_fields mh addr 0 == mh)
+
+val chunked_zero_fields_no_room:
+  mh:MH.major_heap ->
+  addr:U64.t ->
+  n:nat ->
+  Lemma
+    (requires n <> 0 /\ U64.v addr + U64.v mword > heap_size)
+    (ensures chunked_zero_fields mh addr n == mh)
+
+val chunked_zero_fields_out_of_heap:
+  mh:MH.major_heap ->
+  addr:U64.t ->
+  n:nat ->
+  Lemma
+    (requires n <> 0 /\
+              ~(U64.v addr + U64.v mword > heap_size) /\
+              U64.v addr >= heap_size)
+    (ensures chunked_zero_fields mh addr n == mh)
+
+val chunked_zero_fields_unaligned:
+  mh:MH.major_heap ->
+  addr:U64.t ->
+  n:nat ->
+  Lemma
+    (requires n <> 0 /\
+              ~(U64.v addr + U64.v mword > heap_size) /\
+              ~(U64.v addr >= heap_size) /\
+              U64.v addr % U64.v mword <> 0)
+    (ensures chunked_zero_fields mh addr n == mh)
+
+val chunked_zero_fields_step:
+  mh:MH.major_heap ->
+  addr:U64.t ->
+  n:nat ->
+  Lemma
+    (requires n <> 0 /\
+              ~(U64.v addr + U64.v mword > heap_size) /\
+              ~(U64.v addr >= heap_size) /\
+              ~(U64.v addr % U64.v mword <> 0))
+    (ensures
+      chunked_zero_fields mh addr n ==
+      (let mh' =
+        SpecMajorAlloc.major_write_word_or_same mh (addr <: hp_addr) 0UL in
+       if U64.v addr + U64.v mword >= pow2 64 then mh'
+       else
+         chunked_zero_fields
+           mh' (U64.uint_to_t (U64.v addr + U64.v mword)) (n - 1)))
+
+val chunked_flush_blue_empty:
+  mh:MH.major_heap ->
+  first_blue:U64.t ->
+  fp:U64.t ->
+  Lemma (chunked_flush_blue mh first_blue 0 fp == (mh, fp))
+
+val chunked_flush_blue_invalid:
+  mh:MH.major_heap ->
+  first_blue:U64.t ->
+  run_words:nat{run_words > 0} ->
+  fp:U64.t ->
+  Lemma
+    (requires (U64.v first_blue < U64.v mword \/
+               U64.v first_blue >= heap_size \/
+               U64.v first_blue % U64.v mword <> 0))
+    (ensures chunked_flush_blue mh first_blue run_words fp == (mh, fp))
+
+val chunked_flush_blue_too_large:
+  mh:MH.major_heap ->
+  first_blue:U64.t ->
+  run_words:nat{run_words > 0} ->
+  fp:U64.t ->
+  Lemma
+    (requires ~(U64.v first_blue < U64.v mword) /\
+              ~(U64.v first_blue >= heap_size) /\
+              ~(U64.v first_blue % U64.v mword <> 0) /\
+              run_words - 1 >= pow2 54)
+    (ensures chunked_flush_blue mh first_blue run_words fp == (mh, fp))
+
+val chunked_flush_blue_step:
+  mh:MH.major_heap ->
+  first_blue:U64.t ->
+  run_words:nat{run_words > 0} ->
+  fp:U64.t ->
+  Lemma
+    (requires ~(U64.v first_blue < U64.v mword) /\
+              ~(U64.v first_blue >= heap_size) /\
+              ~(U64.v first_blue % U64.v mword <> 0) /\
+              run_words - 1 < pow2 54 /\
+              run_words - 1 < pow2 64)
+    (ensures
+      chunked_flush_blue mh first_blue run_words fp ==
+      (let fb : obj_addr = first_blue in
+       let hd = hd_address fb in
+       let wz : nat = run_words - 1 in
+       let wz_u64 : Obj.wosize = U64.uint_to_t wz in
+       let hdr = Obj.makeHeader wz_u64 Header.Blue 0UL in
+       let mh1 = SpecMajorAlloc.major_write_word_or_same mh hd hdr in
+       if wz >= 1 && U64.v hd + U64.v mword * 2 <= heap_size then
+         let mh2 = SpecMajorAlloc.major_write_word_or_same mh1 fb fp in
+         let zero_start_nat = U64.v fb + U64.v mword in
+         if wz >= 2 && zero_start_nat < pow2 64 then
+           let zero_start = U64.uint_to_t zero_start_nat in
+           let mh3 = chunked_zero_fields mh2 zero_start (wz - 1) in
+           (mh3, fb)
+         else
+           (mh2, fb)
+       else
+         (mh1, fp)))
 
 val chunked_set_object_color_some:
   mh:MH.major_heap ->

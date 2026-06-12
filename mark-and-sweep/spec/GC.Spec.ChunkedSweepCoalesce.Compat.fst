@@ -12,7 +12,9 @@ module Header = GC.Lib.Header
 module MH = GC.Spec.MajorHeap
 module Obj = GC.Spec.Object
 module Fields = GC.Spec.Fields
+module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module SpecCoalesce = GC.Spec.Coalesce
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 module SpecSweep = GC.Spec.Sweep
 
@@ -198,3 +200,160 @@ let chunked_sweep_single_chunk_compat
   assert (Seq.length (Seq.tail (MH.single_chunk_major_heap g)) == 0);
   Seq.lemma_empty (Seq.tail (MH.single_chunk_major_heap g));
   Defs.chunked_sweep_chunks_empty (MH.single_chunk_major_heap g') fp'
+
+let rec chunked_zero_fields_single_chunk_compat
+    (g: heap)
+    (addr: U64.t)
+    (n: nat)
+  : Lemma
+      (requires n = 0 \/ U64.v addr >= U64.v zero_addr)
+      (ensures
+        Defs.chunked_zero_fields (MH.single_chunk_major_heap g) addr n ==
+        MH.single_chunk_major_heap (SpecAlloc.zero_fields g addr n))
+      (decreases n)
+  =
+  assert (U64.v mword == 8);
+  if n = 0 then
+    Defs.chunked_zero_fields_zero (MH.single_chunk_major_heap g) addr
+  else if U64.v addr + U64.v mword > heap_size then
+    Defs.chunked_zero_fields_no_room
+      (MH.single_chunk_major_heap g) addr n
+  else if U64.v addr >= heap_size then
+    Defs.chunked_zero_fields_out_of_heap
+      (MH.single_chunk_major_heap g) addr n
+  else if U64.v addr % U64.v mword <> 0 then
+    Defs.chunked_zero_fields_unaligned
+      (MH.single_chunk_major_heap g) addr n
+  else begin
+    assert (n > 0);
+    assert (U64.v addr >= U64.v zero_addr);
+    assert (U64.v addr + U64.v mword <= heap_size);
+    Defs.chunked_zero_fields_step
+      (MH.single_chunk_major_heap g) addr n;
+    SpecMajorAlloc.major_write_word_or_same_single_chunk_compat
+      g (addr <: hp_addr) 0UL;
+    if U64.v addr + U64.v mword >= pow2 64 then ()
+    else begin
+      let next = U64.uint_to_t (U64.v addr + U64.v mword) in
+      assert (U64.v next >= U64.v zero_addr);
+      chunked_zero_fields_single_chunk_compat
+        (write_word g (addr <: hp_addr) 0UL) next (n - 1)
+    end
+  end
+
+private let chunked_zero_fields_tail_single_chunk_compat
+    (g: heap)
+    (addr: U64.t)
+    (n: nat)
+  : Lemma
+      (requires n = 0 \/ U64.v addr >= U64.v zero_addr)
+      (ensures
+        Defs.chunked_zero_fields (MH.single_chunk_major_heap g) addr n ==
+        MH.single_chunk_major_heap (SpecAlloc.zero_fields g addr n))
+  =
+  chunked_zero_fields_single_chunk_compat g addr n
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_flush_blue_single_chunk_compat
+    (g: heap)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Lemma
+      (requires
+        run_words = 0 \/
+        U64.v first_blue >= U64.v zero_addr + U64.v mword)
+      (ensures
+        Defs.chunked_flush_blue
+          (MH.single_chunk_major_heap g) first_blue run_words fp ==
+        (let (g', fp') =
+          SpecCoalesce.flush_blue g first_blue run_words fp in
+         (MH.single_chunk_major_heap g', fp')))
+  =
+  assert (U64.v mword == 8);
+  if run_words = 0 then
+    Defs.chunked_flush_blue_empty (MH.single_chunk_major_heap g) first_blue fp
+  else begin
+  assert (run_words > 0);
+  if U64.v first_blue < U64.v mword ||
+          U64.v first_blue >= heap_size ||
+          U64.v first_blue % U64.v mword <> 0
+  then
+    Defs.chunked_flush_blue_invalid
+      (MH.single_chunk_major_heap g) first_blue run_words fp
+  else begin
+    let fb : obj_addr = first_blue in
+    let hd = hd_address fb in
+    let wz : nat = run_words - 1 in
+    if wz >= pow2 54 then
+      Defs.chunked_flush_blue_too_large
+        (MH.single_chunk_major_heap g) first_blue run_words fp
+    else begin
+      FStar.Math.Lemmas.pow2_lt_compat 64 54;
+      assert (wz < pow2 64);
+      let wz_u64 : Obj.wosize = U64.uint_to_t wz in
+      let hdr = Obj.makeHeader wz_u64 Header.Blue 0UL in
+      Defs.chunked_flush_blue_step
+        (MH.single_chunk_major_heap g) first_blue run_words fp;
+      hd_address_spec fb;
+      assert (U64.v hd >= U64.v zero_addr);
+      assert (U64.v hd + U64.v mword == U64.v fb);
+      assert (U64.v hd + U64.v mword <= heap_size);
+      SpecMajorAlloc.major_write_word_or_same_single_chunk_compat g hd hdr;
+      let g1 = write_word g hd hdr in
+      if wz >= 1 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        assert (U64.v fb >= U64.v zero_addr);
+        assert (U64.v fb + U64.v mword <= heap_size);
+        SpecMajorAlloc.major_write_word_or_same_single_chunk_compat g1 fb fp;
+        let g2 = write_word g1 fb fp in
+        let zero_start_nat = U64.v fb + U64.v mword in
+        if wz >= 2 && zero_start_nat < pow2 64 then begin
+          assert (wz > 0);
+          let rem : nat = wz - 1 in
+          let zero_start = U64.uint_to_t zero_start_nat in
+          assert (U64.v zero_start >= U64.v zero_addr);
+          assert (rem = 0 \/ U64.v zero_start >= U64.v zero_addr);
+          assert (rem == wz - 1);
+          chunked_zero_fields_tail_single_chunk_compat g2 zero_start rem;
+          assert (Defs.chunked_zero_fields
+                    (MH.single_chunk_major_heap g2) zero_start rem ==
+                  MH.single_chunk_major_heap
+                    (SpecAlloc.zero_fields g2 zero_start rem));
+          assert (Defs.chunked_zero_fields
+                    (MH.single_chunk_major_heap g2) zero_start (wz - 1) ==
+                  Defs.chunked_zero_fields
+                    (MH.single_chunk_major_heap g2) zero_start rem);
+          assert (SpecAlloc.zero_fields g2 zero_start (wz - 1) ==
+                  SpecAlloc.zero_fields g2 zero_start rem);
+          assert (MH.single_chunk_major_heap
+                    (SpecAlloc.zero_fields g2 zero_start (wz - 1)) ==
+                  MH.single_chunk_major_heap
+                    (SpecAlloc.zero_fields g2 zero_start rem));
+          assert (Defs.chunked_zero_fields
+                    (MH.single_chunk_major_heap g2) zero_start (wz - 1) ==
+                  MH.single_chunk_major_heap
+                    (SpecAlloc.zero_fields g2 zero_start (wz - 1)));
+          assert (Defs.chunked_flush_blue
+                    (MH.single_chunk_major_heap g) first_blue run_words fp ==
+                  (MH.single_chunk_major_heap
+                    (SpecAlloc.zero_fields g2 zero_start (wz - 1)), fb));
+          assert (SpecCoalesce.flush_blue g first_blue run_words fp ==
+                  (SpecAlloc.zero_fields g2 zero_start (wz - 1), fb))
+        end else begin
+          assert (Defs.chunked_flush_blue
+                    (MH.single_chunk_major_heap g) first_blue run_words fp ==
+                  (MH.single_chunk_major_heap g2, fb));
+          assert (SpecCoalesce.flush_blue g first_blue run_words fp ==
+                  (g2, fb))
+        end
+      end else begin
+        assert (Defs.chunked_flush_blue
+                  (MH.single_chunk_major_heap g) first_blue run_words fp ==
+                (MH.single_chunk_major_heap g1, fp));
+        assert (SpecCoalesce.flush_blue g first_blue run_words fp ==
+                (g1, fp))
+      end
+    end
+  end
+  end
+#pop-options

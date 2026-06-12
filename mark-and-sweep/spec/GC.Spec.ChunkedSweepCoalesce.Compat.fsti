@@ -11,6 +11,8 @@ module MH = GC.Spec.MajorHeap
 module Obj = GC.Spec.Object
 module Fields = GC.Spec.Fields
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
+module SpecAlloc = GC.Spec.Allocator
+module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 
 val chunked_make_white_single_chunk_compat
@@ -55,3 +57,29 @@ val chunked_sweep_single_chunk_compat
       (Defs.chunked_sweep (MH.single_chunk_major_heap g) fp ==
        (let (g', fp') = SpecSweep.sweep g fp in
         (MH.single_chunk_major_heap g', fp')))
+
+val chunked_zero_fields_single_chunk_compat
+  (g: heap)
+  (addr: U64.t)
+  (n: nat)
+  : Lemma
+      (requires n = 0 \/ U64.v addr >= U64.v zero_addr)
+      (ensures
+        Defs.chunked_zero_fields (MH.single_chunk_major_heap g) addr n ==
+        MH.single_chunk_major_heap (SpecAlloc.zero_fields g addr n))
+
+val chunked_flush_blue_single_chunk_compat
+  (g: heap)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        run_words = 0 \/
+        U64.v first_blue >= U64.v zero_addr + U64.v mword)
+      (ensures
+        Defs.chunked_flush_blue
+          (MH.single_chunk_major_heap g) first_blue run_words fp ==
+        (let (g', fp') =
+          SpecCoalesce.flush_blue g first_blue run_words fp in
+         (MH.single_chunk_major_heap g', fp')))

@@ -31,6 +31,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
+module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
@@ -361,6 +362,38 @@ let spot_chunked_sweep_single_chunk_compat
         (MH.single_chunk_major_heap g', fp')))
   =
   ChunkedSweepCompat.chunked_sweep_single_chunk_compat g fp
+
+let spot_chunked_zero_fields_single_chunk_compat
+  (g: heap)
+  (addr: U64.t)
+  (n: nat)
+  : Lemma
+      (requires n = 0 \/ U64.v addr >= U64.v zero_addr)
+      (ensures
+        ChunkedSweepDefs.chunked_zero_fields
+          (MH.single_chunk_major_heap g) addr n ==
+        MH.single_chunk_major_heap (SpecAlloc.zero_fields g addr n))
+  =
+  ChunkedSweepCompat.chunked_zero_fields_single_chunk_compat g addr n
+
+let spot_chunked_flush_blue_single_chunk_compat
+  (g: heap)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        run_words = 0 \/
+        U64.v first_blue >= U64.v zero_addr + U64.v mword)
+      (ensures
+        ChunkedSweepDefs.chunked_flush_blue
+          (MH.single_chunk_major_heap g) first_blue run_words fp ==
+        (let (g', fp') =
+          SpecCoalesce.flush_blue g first_blue run_words fp in
+         (MH.single_chunk_major_heap g', fp')))
+  =
+  ChunkedSweepCompat.chunked_flush_blue_single_chunk_compat
+    g first_blue run_words fp
 #pop-options
 
 let spot_expand_on_oom_pre
