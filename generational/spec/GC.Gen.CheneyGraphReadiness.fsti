@@ -1997,6 +1997,41 @@ val chunked_minor_preflight_value_policy_single_chunk_from_dense
       chunked_minor_preflight_value_policy
         minor (MH.single_chunk_major_heap major) fp base_roots fresh)
 
+val chunked_minor_preflight_value_policy_core_expansion_safety_single_chunk_from_dense
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (base_roots: seq U64.t) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      RBridge.roots_valid_nonblue base_roots major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      (let chunked_major = MH.single_chunk_major_heap major in
+       let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+       SpecMajorAlloc.major_fl_head_wosize chunked_major fp < needed ==>
+       CReach.chunked_roots_disjoint_from_chunk base_roots fresh /\
+       MH.chunk_disjoint_from_all fresh chunked_major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >= needed /\
+       (forall (obj:obj_addr).
+        Seq.mem obj (MH.major_objects chunked_major) ==>
+          CG.chunked_major_field_values_miss_fresh
+            chunked_major fresh obj
+            (CG.chunked_wosize_nat_of_object chunked_major obj) 0)))
+    (ensures
+      (let chunked_major = MH.single_chunk_major_heap major in
+       SpecMajorAlloc.major_fl_head_wosize chunked_major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       MH.chunk_disjoint_from_all fresh chunked_major /\
+       fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+       U64.v fresh.base >= U64.v zero_addr /\
+       SpecMajorAlloc.fresh_chunk_wosize fresh >=
+         PromotionDemand.minor_promotion_demand minor + 1 /\
+       (forall (obj:obj_addr).
+         Seq.mem obj (MH.major_objects chunked_major) ==>
+           CG.chunked_major_field_values_miss_fresh
+             chunked_major fresh obj
+             (CG.chunked_wosize_nat_of_object chunked_major obj) 0)))
+
 val chunked_cheney_gc_correct_after_preflight_policy_and_post_reachable_image_single_chunk_from_dense_roots
   (minor: minor_state) (major: heap) (fp: U64.t)
   (base_roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
