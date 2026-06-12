@@ -6454,6 +6454,20 @@ let spot_chunked_reachable_live_graph_image_isomorphism_from_injective
   CheneyGraphReadiness.chunked_reachable_live_graph_image_isomorphism_from_injective
     minor major fp roots alloc_fuel fresh
 
+let spot_chunked_reachable_live_graph_image_subgraph_of_post_major_graph_from_maps
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_reachable_live_graph_maps_to_major_graph_prop
+          minor major fp roots alloc_fuel fresh)
+      (ensures
+        CheneyGraphReadiness.chunked_reachable_live_graph_image_subgraph_of_post_major_graph_prop
+          minor major fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_reachable_live_graph_image_subgraph_of_post_major_graph_from_maps
+    minor major fp roots alloc_fuel fresh
+
 let spot_chunked_reachable_live_graph_injective_from_minor_image_facts
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
@@ -6530,6 +6544,37 @@ let spot_chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_is
           minor major fp roots alloc_fuel fresh)
   =
   CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_isomorphism_from_chunk_bases_and_scan
+    minor major fp roots alloc_fuel fresh
+
+let spot_chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_subgraph_of_post_major_graph_from_chunk_bases_and_scan
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CReach.chunked_roots_valid_nonblue roots major /\
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major /\
+        CReach.chunked_major_field_zero_no_minor minor major /\
+        CRem.chunked_minor_roots_in_roots minor major roots /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          MH.chunk_disjoint_from_all fresh major /\
+          fp <> SpecMajorAlloc.fresh_chunk_object fresh /\
+          U64.v fresh.base >= U64.v zero_addr /\
+          SpecMajorAlloc.fresh_chunk_wosize fresh >=
+            PromotionDemand.minor_promotion_demand minor + 1 /\
+          CG.chunked_all_major_object_expansion_safe
+            major fresh (MH.major_objects major) 0))
+      (ensures
+        CheneyGraphReadiness.chunked_reachable_live_graph_image_subgraph_of_post_major_graph_prop
+          minor major fp roots alloc_fuel fresh)
+  =
+  CheneyGraphReadiness.chunked_cheney_gc_correct_after_preflight_reachable_live_graph_image_subgraph_of_post_major_graph_from_chunk_bases_and_scan
     minor major fp roots alloc_fuel fresh
 
 let spot_chunked_cheney_gc_correct_after_preflight_live_selected_graph_maps_to_major_graph
