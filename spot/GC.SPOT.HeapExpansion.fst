@@ -334,6 +334,33 @@ let spot_chunked_sweep_object_single_chunk_compat
         (MH.single_chunk_major_heap g', fp')))
   =
   ChunkedSweepCompat.chunked_sweep_object_single_chunk_compat g obj fp
+
+let spot_chunked_sweep_aux_single_chunk_compat
+  (g: heap)
+  (objs: Seq.seq obj_addr)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        forall (o: obj_addr).
+          Seq.mem o objs ==> U64.v o >= U64.v zero_addr + U64.v mword)
+      (ensures
+        ChunkedSweepDefs.chunked_sweep_aux
+          (MH.single_chunk_major_heap g) objs fp ==
+        (let (g', fp') = SpecSweep.sweep_aux g objs fp in
+         (MH.single_chunk_major_heap g', fp')))
+  =
+  ChunkedSweepCompat.chunked_sweep_aux_single_chunk_compat g objs fp
+
+let spot_chunked_sweep_single_chunk_compat
+  (g: heap)
+  (fp: U64.t)
+  : Lemma
+      (ChunkedSweepDefs.chunked_sweep
+        (MH.single_chunk_major_heap g) fp ==
+       (let (g', fp') = SpecSweep.sweep g fp in
+        (MH.single_chunk_major_heap g', fp')))
+  =
+  ChunkedSweepCompat.chunked_sweep_single_chunk_compat g fp
 #pop-options
 
 let spot_expand_on_oom_pre

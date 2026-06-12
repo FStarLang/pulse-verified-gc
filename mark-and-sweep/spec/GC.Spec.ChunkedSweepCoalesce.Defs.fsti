@@ -155,6 +155,11 @@ val chunked_sweep_aux_empty
   (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep_aux mh Seq.empty fp == (mh, fp))
 
+val chunked_sweep_step:
+  mh:MH.major_heap ->
+  fp:U64.t ->
+  Lemma (chunked_sweep mh fp == chunked_sweep_chunks mh mh fp)
+
 val chunked_set_object_color_some:
   mh:MH.major_heap ->
   obj:obj_addr ->

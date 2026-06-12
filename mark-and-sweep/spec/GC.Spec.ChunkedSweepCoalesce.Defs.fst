@@ -346,6 +346,10 @@ let chunked_sweep_aux_empty (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep_aux mh Seq.empty fp == (mh, fp))
   = ()
 
+let chunked_sweep_step (mh: MH.major_heap) (fp: U64.t)
+  : Lemma (chunked_sweep mh fp == chunked_sweep_chunks mh mh fp)
+  = ()
+
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_set_object_color_some
     (mh: MH.major_heap) (obj: obj_addr) (color: Header.color_sem)
