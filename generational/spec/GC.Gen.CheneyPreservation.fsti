@@ -682,6 +682,35 @@ val chunked_cheney_forward_one_budget_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> remaining:nat -> GTot prop
 
+val chunked_cheney_forward_one_budget_ready_elim
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    addr:U64.t -> remaining:nat ->
+    Lemma
+      (requires
+        chunked_cheney_forward_one_budget_ready minor cs addr remaining)
+      (ensures
+        remaining > 0 /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >= remaining /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         ~(is_infix_in_minor minor addr) /\
+         minor_wosize minor addr > 0 ==>
+           cs.ccs_fp <> 0UL /\
+           SpecMajorAlloc.major_fl_head_wosize
+            cs.ccs_major cs.ccs_fp >=
+           minor_wosize minor addr + 1 + remaining) /\
+        (cs.ccs_fwd addr = 0UL /\
+         is_infix_in_minor minor addr ==>
+           (let parent = infix_parent minor addr in
+            Seq.mem parent (minor_objects minor) /\
+            cs.ccs_fwd parent = 0UL /\
+            minor_wosize minor parent > 0 ==>
+              cs.ccs_fp <> 0UL /\
+              SpecMajorAlloc.major_fl_head_wosize
+                cs.ccs_major cs.ccs_fp >=
+              minor_wosize minor parent + 1 + remaining)))
+
 /// Every nonzero forwarding target is already outside the minor-address range
 /// and word-aligned, so applying the major-pointer updater to a forwarded value
 /// cannot rewrite it again.
@@ -867,6 +896,22 @@ val chunked_cheney_forward_roots_budget_ready
     roots:seq U64.t -> idx:nat -> alloc_fuel:nat -> remaining:nat ->
     GTot prop
 
+val chunked_cheney_forward_roots_budget_ready_step
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    roots:seq U64.t -> idx:nat -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        idx < Seq.length roots /\
+        chunked_cheney_forward_roots_budget_ready
+          minor cs roots idx alloc_fuel remaining)
+      (ensures
+        (let r = Seq.index roots idx in
+         let cs' =
+          ChunkedCheney.chunked_cheney_forward_one minor cs r alloc_fuel in
+         chunked_cheney_forward_one_budget_ready minor cs r remaining /\
+         chunked_cheney_forward_roots_budget_ready
+          minor cs' roots (idx + 1) alloc_fuel remaining))
+
 val chunked_cheney_forward_roots_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     roots:seq U64.t -> idx:nat -> alloc_fuel:nat -> remaining:nat ->
@@ -946,6 +991,25 @@ val chunked_cheney_forward_fields_budget_ready
     parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
     remaining:nat -> GTot prop
 
+val chunked_cheney_forward_fields_budget_ready_step
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
+    remaining:nat ->
+    Lemma
+      (requires
+        idx < wosize /\
+        chunked_cheney_forward_fields_budget_ready
+          minor cs parent idx wosize alloc_fuel remaining)
+      (ensures
+        (let field_val = to_minor_offset (minor_read_field minor parent idx) in
+         let cs' =
+          ChunkedCheney.chunked_cheney_forward_one
+            minor cs field_val alloc_fuel in
+         chunked_cheney_forward_one_budget_ready
+          minor cs field_val remaining /\
+         chunked_cheney_forward_fields_budget_ready
+          minor cs' parent (idx + 1) wosize alloc_fuel remaining))
+
 val chunked_cheney_forward_fields_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     parent:U64.t -> idx:nat -> wosize:nat -> alloc_fuel:nat ->
@@ -1024,6 +1088,27 @@ val chunked_cheney_scan_budget_ready
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> remaining:nat ->
     GTot prop
+
+val chunked_cheney_scan_budget_ready_step
+  : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
+    scan:nat -> scan_fuel:nat -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        scan_fuel > 0 /\
+        scan < Seq.length cs.ccs_queue /\
+        chunked_cheney_scan_budget_ready
+          minor cs scan scan_fuel alloc_fuel remaining)
+      (ensures
+        (let fuel' : f:nat{f < scan_fuel} = scan_fuel - 1 in
+         let obj = Seq.index cs.ccs_queue scan in
+         let wz = minor_wosize minor obj in
+         let cs' =
+          ChunkedCheney.chunked_cheney_forward_fields
+            minor cs obj 0 wz alloc_fuel in
+         chunked_cheney_forward_fields_budget_ready
+          minor cs obj 0 wz alloc_fuel remaining /\
+         chunked_cheney_scan_budget_ready
+          minor cs' (scan + 1) fuel' alloc_fuel remaining))
 
 val chunked_cheney_scan_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
@@ -1199,6 +1284,25 @@ val chunked_cheney_promote_head_split_preserves_old_non_blue_field
 val chunked_cheney_promote_budget_ready
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> remaining:nat -> GTot prop
+
+val chunked_cheney_promote_budget_ready_elim
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let cs0 : ChunkedCheney.chunked_cheney_state =
+          { ccs_major = major; ccs_fp = fp;
+            ccs_fwd = empty_forwarding; ccs_queue = Seq.empty } in
+         let cs1 =
+          ChunkedCheney.chunked_cheney_forward_roots
+            minor cs0 roots 0 alloc_fuel in
+         chunked_cheney_forward_roots_budget_ready
+          minor cs0 roots 0 alloc_fuel remaining /\
+         chunked_cheney_scan_budget_ready
+          minor cs1 0 (cheney_fuel minor) alloc_fuel remaining))
 
 val chunked_cheney_promote_head_split_preserves_remaining_head_wosize
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
