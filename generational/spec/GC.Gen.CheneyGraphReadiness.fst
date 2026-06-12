@@ -3729,6 +3729,27 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_fro
   chunked_cheney_collect_after_minor_promotion_head_preflight_from_preflight_value_policy
     minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh
 
+let fixed_heap_minor_collect_preflight_policy_no_expansion
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      Fields.well_formed_heap major /\
+      alloc_fuel == SpecAlloc.alloc_search_fuel /\
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.roots_valid_nonblue roots major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      SpecMajorAlloc.major_fl_head_wosize
+        (MH.single_chunk_major_heap major) fp >=
+        PromotionDemand.minor_promotion_demand minor + 1)
+    (ensures
+      fixed_heap_minor_collect_preflight_policy
+        minor major fp roots alloc_fuel fresh)
+  =
+  ()
+
 let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
@@ -3741,6 +3762,30 @@ let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_fro
         minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
   =
   chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_wf
+    minor major fp roots alloc_fuel fresh
+
+let chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_no_expansion
+  (minor: minor_state) (major: heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      Fields.well_formed_heap major /\
+      alloc_fuel == SpecAlloc.alloc_search_fuel /\
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.roots_valid_nonblue roots major /\
+      RBridge.major_field_zero_no_minor minor major /\
+      SpecMajorAlloc.major_fl_head_wosize
+        (MH.single_chunk_major_heap major) fp >=
+        PromotionDemand.minor_promotion_demand minor + 1)
+    (ensures
+      chunked_cheney_collect_after_minor_promotion_head_preflight_post
+        minor (MH.single_chunk_major_heap major) fp roots alloc_fuel fresh)
+  =
+  fixed_heap_minor_collect_preflight_policy_no_expansion
+    minor major fp roots alloc_fuel fresh;
+  chunked_cheney_collect_after_minor_promotion_head_preflight_single_chunk_from_dense_policy
     minor major fp roots alloc_fuel fresh
 #pop-options
 
