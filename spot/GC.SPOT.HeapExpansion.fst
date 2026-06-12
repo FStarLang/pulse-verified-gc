@@ -50,6 +50,20 @@ let spot_major_fl_head_wosize_single_chunk_from_dense
        else 0))
   =
   SingleChunkInvariant.major_fl_head_wosize_single_chunk_from_dense g fp fuel
+
+let spot_chunked_major_alloc_shape_single_chunk_from_dense
+  (g: heap) (fp: U64.t)
+  : Lemma
+    (requires GenInv.major_heap_shape g fp)
+    (ensures
+      GenInv.chunked_major_alloc_shape
+        (MH.single_chunk_major_heap g) fp SpecAlloc.alloc_search_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates
+        (MH.single_chunk_major_heap g) fp SpecAlloc.alloc_search_fuel = true /\
+      GenInv.chunked_chain_objects_blue
+        (MH.single_chunk_major_heap g) fp SpecAlloc.alloc_search_fuel)
+  =
+  SingleChunkInvariant.chunked_major_alloc_shape_single_chunk_from_dense g fp
 #pop-options
 
 let spot_expand_on_oom_pre
