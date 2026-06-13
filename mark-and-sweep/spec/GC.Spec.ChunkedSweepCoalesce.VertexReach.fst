@@ -364,3 +364,82 @@ let major_write_word_or_same_before_preserves_objects_from
   MH.write_word_in_chunk_preserves_range c addr value;
   assert (Seq.index (Seq.upd mh idx c') idx == c')
 #pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let rec chunked_zero_fields_before_preserves_objects_from
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (addr: U64.t)
+    (n: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        U64.v addr % U64.v mword == 0 /\
+        (n <> 0 ==> U64.v addr >= MH.chunk_start (Seq.index mh idx)) /\
+        U64.v addr + n * U64.v mword <= U64.v start /\
+        U64.v addr + n * U64.v mword <= MH.chunk_end (Seq.index mh idx))
+      (ensures
+        (let mh' = Defs.chunked_zero_fields mh addr n in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+      (decreases n)
+  =
+  if n = 0 then
+    Defs.chunked_zero_fields_zero mh addr
+  else if U64.v addr + U64.v mword > heap_size then
+    Defs.chunked_zero_fields_no_room mh addr n
+  else if U64.v addr >= heap_size then
+    Defs.chunked_zero_fields_out_of_heap mh addr n
+  else if U64.v addr % U64.v mword <> 0 then
+    Defs.chunked_zero_fields_unaligned mh addr n
+  else begin
+    assert (n <> 0);
+    nat_nonzero_pos n;
+    assert (n > 0);
+    assert (U64.v addr >= MH.chunk_start (Seq.index mh idx));
+    assert (n * U64.v mword >= U64.v mword);
+    assert (U64.v addr + U64.v mword <= MH.chunk_end (Seq.index mh idx));
+    let hp : hp_addr = addr in
+    assert (MH.word_in_chunk (Seq.index mh idx) hp);
+    major_write_word_or_same_before_preserves_objects_from
+      mh idx start hp 0UL;
+    let mh1 = SpecMajorAlloc.major_write_word_or_same mh hp 0UL in
+    Defs.chunked_zero_fields_step mh addr n;
+    if U64.v addr + U64.v mword >= pow2 64 then
+      ()
+    else begin
+      let n1 : nat = n - 1 in
+      MH.next_object_start_aligned hp 1;
+      let next_addr = U64.uint_to_t (U64.v addr + U64.v mword) in
+      assert (U64.v next_addr == U64.v addr + U64.v mword);
+      assert (U64.v next_addr % U64.v mword == 0);
+      assert (n == n1 + 1);
+      FStar.Math.Lemmas.distributivity_add_left
+        1 n1 (U64.v mword);
+      FStar.Math.Lemmas.paren_add_right
+        (U64.v addr) (U64.v mword) (n1 * U64.v mword);
+      assert (U64.v next_addr + n1 * U64.v mword ==
+              U64.v addr + n * U64.v mword);
+      assert (MH.well_formed_major_heap mh1);
+      assert (idx < Seq.length mh1);
+      assert (MH.chunk_end (Seq.index mh1 idx) ==
+              MH.chunk_end (Seq.index mh idx));
+      assert (MH.chunk_start (Seq.index mh1 idx) ==
+              MH.chunk_start (Seq.index mh idx));
+      assert (U64.v next_addr >= MH.chunk_start (Seq.index mh1 idx));
+      assert (U64.v next_addr + n1 * U64.v mword <= U64.v start);
+      assert (U64.v next_addr + n1 * U64.v mword <=
+              MH.chunk_end (Seq.index mh1 idx));
+      chunked_zero_fields_before_preserves_objects_from
+        mh1 idx start next_addr n1
+    end
+  end
+#pop-options
