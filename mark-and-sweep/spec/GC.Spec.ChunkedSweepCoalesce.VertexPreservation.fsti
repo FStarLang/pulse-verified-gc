@@ -182,3 +182,59 @@ val chunked_flush_blue_after_member_preserves_chunk_member
         Seq.mem obj (MH.objects_in_chunk (Seq.index final idx)) /\
         MH.object_wosize_in_chunk (Seq.index final idx) obj ==
         MH.object_wosize_in_chunk (Seq.index mh idx) obj))
+
+val chunked_make_white_preserves_chunk_member
+  (mh: MH.major_heap)
+  (idx: nat)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk (Seq.index mh idx)) /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.well_formed_major_heap (Defs.chunked_make_white mh obj) /\
+        idx < Seq.length (Defs.chunked_make_white mh obj) /\
+        Seq.mem obj
+         (MH.objects_in_chunk
+           (Seq.index (Defs.chunked_make_white mh obj) idx)) /\
+        MH.object_wosize_in_chunk
+         (Seq.index (Defs.chunked_make_white mh obj) idx)
+         obj ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) obj /\
+        MH.chunk_start (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_end (Seq.index mh idx))
+
+val chunked_make_white_after_member_preserves_chunk_member
+  (mh: MH.major_heap)
+  (idx: nat)
+  (protected: obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem protected (MH.objects_in_chunk (Seq.index mh idx)) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address protected) +
+         (1 + MH.object_wosize_in_chunk (Seq.index mh idx) protected) *
+           U64.v mword <=
+         U64.v (hd_address obj))
+      (ensures
+        MH.well_formed_major_heap (Defs.chunked_make_white mh obj) /\
+        idx < Seq.length (Defs.chunked_make_white mh obj) /\
+        Seq.mem protected
+         (MH.objects_in_chunk
+           (Seq.index (Defs.chunked_make_white mh obj) idx)) /\
+        MH.object_wosize_in_chunk
+         (Seq.index (Defs.chunked_make_white mh obj) idx)
+         protected ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) protected /\
+        MH.chunk_start (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_end (Seq.index mh idx))

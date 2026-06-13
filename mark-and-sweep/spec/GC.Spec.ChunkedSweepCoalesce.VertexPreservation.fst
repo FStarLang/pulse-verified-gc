@@ -492,3 +492,146 @@ let chunked_flush_blue_after_member_preserves_chunk_member
     end
   end
 #pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_make_white_preserves_chunk_member
+    (mh: MH.major_heap)
+    (idx: nat)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk (Seq.index mh idx)) /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.well_formed_major_heap (Defs.chunked_make_white mh obj) /\
+        idx < Seq.length (Defs.chunked_make_white mh obj) /\
+        Seq.mem obj
+          (MH.objects_in_chunk
+            (Seq.index (Defs.chunked_make_white mh obj) idx)) /\
+        MH.object_wosize_in_chunk
+          (Seq.index (Defs.chunked_make_white mh obj) idx)
+          obj ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) obj /\
+        MH.chunk_start (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_end (Seq.index mh idx))
+  =
+  let c = Seq.index mh idx in
+  Defs.chunked_make_white_step mh obj;
+  Defs.chunked_set_object_color_some mh obj Header.White hdr;
+  Defs.chunked_read_header_step mh obj;
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  MH.objects_in_chunk_member_header_fits c obj;
+  assert (MH.word_in_chunk c (hd_address obj));
+  MH.lookup_chunk_index_word_in_chunk mh (hd_address obj) idx;
+  MH.read_word_in_major_at_lookup_index mh (hd_address obj) idx;
+  assert (MH.read_word_in_chunk c (hd_address obj) == hdr);
+  MH.write_word_in_major_at_lookup_index
+    mh (hd_address obj) (Obj.colorHeader hdr Header.White) idx;
+  let c' =
+    MH.write_word_in_chunk c (hd_address obj)
+      (Obj.colorHeader hdr Header.White) in
+  assert (MH.write_word_in_major
+            mh (hd_address obj) (Obj.colorHeader hdr Header.White) ==
+          Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') (hd_address obj)
+    (Obj.colorHeader hdr Header.White);
+  Obj.colorHeader_preserves_wosize hdr Header.White;
+  assert (MH.object_wosize_in_chunk c obj == U64.v (Obj.getWosize hdr));
+  assert (U64.v (Obj.getWosize (Obj.colorHeader hdr Header.White)) ==
+          MH.object_wosize_in_chunk c obj);
+  MH.objects_in_chunk_from_write_member_header_same_wosize_preserves
+    c c.base obj (Obj.colorHeader hdr Header.White);
+  assert (MH.objects_in_chunk c' == MH.objects_in_chunk c);
+  assert (Seq.mem obj (MH.objects_in_chunk c'));
+  MH.write_word_at_index_preserves_wf
+    mh (hd_address obj) (Obj.colorHeader hdr Header.White) idx;
+  MH.write_word_in_chunk_preserves_range
+    c (hd_address obj) (Obj.colorHeader hdr Header.White);
+  MH.read_write_in_chunk_same
+    c (hd_address obj) (Obj.colorHeader hdr Header.White);
+  assert (MH.read_word_in_chunk c' (hd_address obj) ==
+          Obj.colorHeader hdr Header.White);
+  assert (Seq.index (Seq.upd mh idx c') idx == c');
+  assert (MH.chunk_start c' == MH.chunk_start c);
+  assert (MH.chunk_end c' == MH.chunk_end c);
+  assert (MH.object_wosize_in_chunk c' obj ==
+          MH.object_wosize_in_chunk c obj)
+
+let chunked_make_white_after_member_preserves_chunk_member
+    (mh: MH.major_heap)
+    (idx: nat)
+    (protected: obj_addr)
+    (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem protected (MH.objects_in_chunk (Seq.index mh idx)) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address protected) +
+          (1 + MH.object_wosize_in_chunk (Seq.index mh idx) protected) *
+            U64.v mword <=
+          U64.v (hd_address obj))
+      (ensures
+        MH.well_formed_major_heap (Defs.chunked_make_white mh obj) /\
+        idx < Seq.length (Defs.chunked_make_white mh obj) /\
+        Seq.mem protected
+          (MH.objects_in_chunk
+            (Seq.index (Defs.chunked_make_white mh obj) idx)) /\
+        MH.object_wosize_in_chunk
+          (Seq.index (Defs.chunked_make_white mh obj) idx)
+          protected ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) protected /\
+        MH.chunk_start (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end (Seq.index (Defs.chunked_make_white mh obj) idx) ==
+        MH.chunk_end (Seq.index mh idx))
+  =
+  Defs.chunked_make_white_step mh obj;
+  match Defs.chunked_read_header mh obj with
+  | None ->
+    Defs.chunked_set_object_color_none mh obj Header.White
+  | Some hdr ->
+    Defs.chunked_set_object_color_some mh obj Header.White hdr;
+    major_write_word_or_same_after_member_preserves_chunk_member
+      mh idx protected (hd_address obj) (Obj.colorHeader hdr Header.White)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let word_in_chunk_same_range
+    (c c': MH.heap_chunk)
+    (addr: hp_addr)
+  : Lemma
+      (requires
+        MH.chunk_start c' == MH.chunk_start c /\
+        MH.chunk_end c' == MH.chunk_end c /\
+        MH.word_in_chunk c addr)
+      (ensures MH.word_in_chunk c' addr)
+  = ()
+
+let protected_extent_le_after_same_wosize
+    (old_c new_c: MH.heap_chunk)
+    (protected: obj_addr)
+    (addr: nat)
+  : Lemma
+      (requires
+        MH.object_wosize_in_chunk new_c protected ==
+          MH.object_wosize_in_chunk old_c protected /\
+        U64.v (hd_address protected) +
+          (1 + MH.object_wosize_in_chunk old_c protected) *
+            U64.v mword <=
+          addr)
+      (ensures
+        U64.v (hd_address protected) +
+          (1 + MH.object_wosize_in_chunk new_c protected) *
+            U64.v mword <=
+          addr)
+  = ()
+
+#pop-options

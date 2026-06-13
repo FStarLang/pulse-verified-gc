@@ -946,6 +946,76 @@ let spot_chunked_flush_blue_after_member_preserves_chunk_member
   =
   ChunkedSweepVertex.chunked_flush_blue_after_member_preserves_chunk_member
     mh idx obj first_blue run_words fp
+
+let spot_chunked_make_white_preserves_chunk_member
+  (mh: MH.major_heap)
+  (idx: nat)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk (Seq.index mh idx)) /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedSweepDefs.chunked_make_white mh obj) /\
+        idx < Seq.length (ChunkedSweepDefs.chunked_make_white mh obj) /\
+        Seq.mem obj
+          (MH.objects_in_chunk
+            (Seq.index
+              (ChunkedSweepDefs.chunked_make_white mh obj) idx)) /\
+        MH.object_wosize_in_chunk
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx)
+          obj ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) obj /\
+        MH.chunk_start
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx) ==
+        MH.chunk_end (Seq.index mh idx))
+  =
+  ChunkedSweepVertex.chunked_make_white_preserves_chunk_member
+    mh idx obj hdr
+
+let spot_chunked_make_white_after_member_preserves_chunk_member
+  (mh: MH.major_heap)
+  (idx: nat)
+  (protected: obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem protected (MH.objects_in_chunk (Seq.index mh idx)) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address protected) +
+          (1 + MH.object_wosize_in_chunk (Seq.index mh idx) protected) *
+            U64.v mword <=
+          U64.v (hd_address obj))
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedSweepDefs.chunked_make_white mh obj) /\
+        idx < Seq.length (ChunkedSweepDefs.chunked_make_white mh obj) /\
+        Seq.mem protected
+          (MH.objects_in_chunk
+            (Seq.index
+              (ChunkedSweepDefs.chunked_make_white mh obj) idx)) /\
+        MH.object_wosize_in_chunk
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx)
+          protected ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) protected /\
+        MH.chunk_start
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx) ==
+        MH.chunk_end (Seq.index mh idx))
+  =
+  ChunkedSweepVertex.chunked_make_white_after_member_preserves_chunk_member
+    mh idx protected obj
 #pop-options
 
 let spot_major_fl_head_wosize_single_chunk_from_dense
