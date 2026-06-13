@@ -48,6 +48,7 @@ module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
+module ChunkedMajorGCGraph = GC.Spec.ChunkedMajorGC.Graph
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -1166,6 +1167,58 @@ let spot_chunked_major_gc_bounded_single_chunk_dense_graph_pillars
   =
   ChunkedMajorGCCorr.chunked_major_gc_bounded_single_chunk_dense_graph_pillars
     g roots fp cap fuel
+
+let spot_chunked_major_vertex_single_chunk_compat
+  (g: heap)
+  (x: obj_addr)
+  : Lemma
+      (ensures
+        (ChunkedMajorGCGraph.chunked_major_vertex
+          (MH.single_chunk_major_heap g) x <==>
+         Seq.mem x (Fields.objects zero_addr g)))
+  =
+  ChunkedMajorGCGraph.chunked_major_vertex_single_chunk_compat g x
+
+let spot_chunked_major_field_preserved_single_chunk_from_dense
+  (g_init: heap)
+  (g_final: heap)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem x (Fields.objects zero_addr g_init) /\
+        Seq.mem x (Fields.objects zero_addr g_final) /\
+        U64.v x >= U64.v zero_addr + U64.v mword /\
+        Obj.wosize_of_object x g_init ==
+          Obj.wosize_of_object x g_final /\
+        (forall (i: U64.t). U64.v i >= 1 /\
+          U64.v i <= U64.v (Obj.wosize_of_object x g_init) ==>
+          GC.Spec.HeapGraph.get_field g_init x i ==
+          GC.Spec.HeapGraph.get_field g_final x i))
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_field_preserved
+          (MH.single_chunk_major_heap g_init)
+          (MH.single_chunk_major_heap g_final)
+          x)
+  =
+  ChunkedMajorGCGraph.chunked_major_field_preserved_single_chunk_from_dense
+    g_init g_final x
+
+let spot_chunked_major_successors_preserved_from_fields
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_field_preserved
+          mh_init mh_final x /\
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          mh_init mh_final)
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_successors_preserved
+          mh_init mh_final x)
+  =
+  ChunkedMajorGCGraph.chunked_major_successors_preserved_from_fields
+    mh_init mh_final x
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
