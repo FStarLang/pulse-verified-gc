@@ -532,6 +532,109 @@ let chunked_fused_aux_black_prefix_prepare_tail
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_fused_aux_black_prefix_prepare_tail_from_pending
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start next_start: hp_addr)
+    (first: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap work /\
+        idx < Seq.length work /\
+        Pending.pending_run_before_start
+          work idx base start first_blue run_words /\
+        Seq.mem first (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index work idx) start) /\
+        Seq.mem first (MH.objects_in_chunk_from (Seq.index work idx) start) /\
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index work idx) next_start) /\
+        target <> first /\
+        hd_address first == start /\
+        MH.word_in_chunk (Seq.index work idx) start /\
+        U64.v start + U64.v mword <= U64.v next_start /\
+        U64.v next_start <= MH.chunk_end (Seq.index work idx) /\
+        Defs.chunked_read_header work target == Some hdr)
+      (ensures
+        (let flushed = Defs.chunked_flush_blue work first_blue run_words fp in
+         let work' = fst flushed in
+         let work'' = Defs.chunked_make_white work' first in
+         MH.well_formed_major_heap work'' /\
+         idx < Seq.length work'' /\
+         Pending.pending_run_before_start work'' idx base next_start 0UL 0 /\
+         Seq.mem first (MH.objects_in_chunk_from (Seq.index work'' idx) base) /\
+         Seq.mem target (MH.objects_in_chunk_from (Seq.index work'' idx) base) /\
+         Seq.mem target
+          (MH.objects_in_chunk_from (Seq.index work'' idx) next_start) /\
+         Defs.chunked_read_header work'' target == Some hdr /\
+         MH.objects_in_chunk_from (Seq.index work'' idx) start ==
+         MH.objects_in_chunk_from (Seq.index work idx) start /\
+         MH.objects_in_chunk_from (Seq.index work'' idx) next_start ==
+         MH.objects_in_chunk_from (Seq.index work idx) next_start /\
+         MH.chunk_start (Seq.index work'' idx) ==
+         MH.chunk_start (Seq.index work idx) /\
+         MH.chunk_end (Seq.index work'' idx) ==
+         MH.chunk_end (Seq.index work idx)))
+  =
+  if run_words = 0 then
+    ()
+  else begin
+    nat_nonzero_pos run_words;
+    let rw : pos = run_words in
+    Pending.pending_run_before_start_nonempty_elim
+      work idx base start first_blue rw;
+    let fb : obj_addr = first_blue in
+    hd_address_spec fb;
+    assert (U64.v (hd_address fb) + U64.v mword == U64.v first_blue);
+    assert (run_words == (run_words - 1) + 1);
+    FStar.Math.Lemmas.distributivity_add_left
+      (run_words - 1) 1 (U64.v mword);
+    FStar.Math.Lemmas.paren_add_right
+      (U64.v (hd_address fb)) (U64.v mword)
+      ((run_words - 1) * U64.v mword);
+    assert (U64.v (hd_address fb) + run_words * U64.v mword ==
+            U64.v first_blue + (run_words - 1) * U64.v mword);
+    assert (U64.v (hd_address fb) + run_words * U64.v mword <=
+            U64.v next_start)
+  end;
+  MH.objects_in_chunk_from_addresses_gt_start
+    (Seq.index work idx) next_start target;
+  object_after_start_header_at_or_after next_start target;
+  assert (U64.v (hd_address target) >= U64.v next_start);
+  let pending_for_black =
+    if run_words = 0 then
+      ()
+    else begin
+      nat_nonzero_pos run_words;
+      let rw : pos = run_words in
+      Pending.pending_run_before_start_nonempty_elim
+        work idx base start first_blue rw
+    end
+  in
+  chunked_fused_aux_black_prefix_prepare_tail
+    work idx base next_start first first_blue run_words fp target;
+  let flushed = Defs.chunked_flush_blue work first_blue run_words fp in
+  let work' = fst flushed in
+  let fp' = snd flushed in
+  let work'' = Defs.chunked_make_white work' first in
+  Defs.chunked_read_header_step work target;
+  Pres.chunked_flush_blue_preserves_other_read
+    work first_blue run_words fp (hd_address target) hdr;
+  Defs.chunked_read_header_step work' target;
+  assert (Defs.chunked_read_header work' target == Some hdr);
+  assert (U64.v start + U64.v mword <= U64.v (hd_address target));
+  Pres.chunked_make_white_preserves_other_read
+    work' first (hd_address target) hdr;
+  Defs.chunked_read_header_step work'' target;
+  assert (Defs.chunked_read_header work'' target == Some hdr);
+  Pending.pending_run_before_start_empty work'' idx base next_start
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
 let chunked_fused_aux_nonblack_prefix_prepare_tail
     (work: MH.major_heap)
     (idx: nat)
