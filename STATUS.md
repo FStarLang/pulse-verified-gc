@@ -186,6 +186,8 @@ Follow-up checkpoint: extended suffix framing from one write to zeroing ranges. 
 
 Follow-up checkpoint: composed the suffix-framing pieces through whole pending blue-run flushing. `VertexReachPrefix.chunked_flush_blue_before_preserves_objects_from` proves that flushing a pending blue run entirely before a suffix start preserves that suffix's chunk-local object walk and chunk range facts. The proof decomposes the flush into header/link/zero writes and reuses the small before-write/before-zero framing helpers instead of reopening fused traversal. SPOT audits the wrapper, broad mark-and-sweep/SPOT closure passed, and refreshed `VertexReachPrefix` profiling is about one second.
 
+Follow-up checkpoint: completed the one-chunk fused sweep/coalesce live-vertex recursion. `LivePreservation.chunked_fused_aux_live_vertex_preserved_from_chunk` now proves a black live target remains a final chunked-major vertex through prefix flushing, target whitening, and suffix traversal. `chunked_fused_aux_live_field_preserved_from_chunk` now derives that vertex fact internally, so clients no longer carry an explicit final-vertex premise. SPOT audits both wrappers, broad mark-and-sweep spec/SPOT closure passed, and refreshed `LivePreservation` profiling verifies in about one second.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.

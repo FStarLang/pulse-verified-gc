@@ -746,6 +746,43 @@ let spot_chunked_fused_aux_live_wosize_preserved_from_chunk
   ChunkedSweepLive.chunked_fused_aux_live_wosize_preserved_from_chunk
     source c fp target hdr
 
+let spot_chunked_fused_aux_live_vertex_preserved_from_chunk
+  (source: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        ChunkedSweepDefs.chunked_read_header source target == Some hdr /\
+        ChunkedSweepDefs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) target)
+      (ensures
+        (let c = Seq.index source idx in
+         let final =
+           fst (ChunkedSweepDefs.chunked_fused_aux
+             source source (MH.objects_in_chunk c) 0UL 0 fp) in
+         MH.well_formed_major_heap final /\
+         idx < Seq.length final /\
+         Seq.mem target
+           (MH.objects_in_chunk_from (Seq.index final idx) c.base) /\
+         ChunkedMajorGCGraph.chunked_major_vertex final target /\
+         MH.chunk_start (Seq.index final idx) ==
+         MH.chunk_start (Seq.index source idx) /\
+         MH.chunk_end (Seq.index final idx) ==
+         MH.chunk_end (Seq.index source idx)))
+  =
+  ChunkedSweepLive.chunked_fused_aux_live_vertex_preserved_from_chunk
+    source idx fp target hdr
+
 let spot_chunked_fused_aux_live_field_preserved_from_chunk
   (source: MH.major_heap)
   (idx: nat)
@@ -764,12 +801,7 @@ let spot_chunked_fused_aux_live_field_preserved_from_chunk
         ChunkedSweepDefs.chunked_read_header source target == Some hdr /\
         ChunkedSweepDefs.chunked_is_black source target /\
         U64.v (Obj.getWosize hdr) ==
-          MH.object_wosize_in_chunk (Seq.index source idx) target /\
-        (let final =
-          fst (ChunkedSweepDefs.chunked_fused_aux
-            source source (MH.objects_in_chunk (Seq.index source idx))
-            0UL 0 fp) in
-         ChunkedMajorGCGraph.chunked_major_vertex final target))
+          MH.object_wosize_in_chunk (Seq.index source idx) target)
       (ensures
         (let final =
           fst (ChunkedSweepDefs.chunked_fused_aux
