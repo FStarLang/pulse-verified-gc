@@ -10,6 +10,11 @@ module MH = GC.Spec.MajorHeap
 module Obj = GC.Spec.Object
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 
+val seq_mem_eq (#a:eqtype) (s t: Seq.seq a) (x: a)
+  : Lemma
+      (requires s == t /\ Seq.mem x s)
+      (ensures Seq.mem x t)
+
 val objects_in_chunk_from_write_member_header_preserves_member
     (c: MH.heap_chunk)
     (start: hp_addr)
@@ -56,3 +61,44 @@ val major_write_member_header_preserves_chunk_member
          MH.chunk_end (Seq.index mh' idx) ==
          MH.chunk_end (Seq.index mh idx)))
 
+val major_heap_eq_preserves_objects_from_member
+    (mh1 mh2: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+  : Lemma
+      (requires
+        mh1 == mh2 /\
+        idx < Seq.length mh2 /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh2 idx) start))
+      (ensures
+        idx < Seq.length mh1 /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh1 idx) start))
+
+val major_write_member_header_preserves_objects_from_member
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+    (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword <=
+          MH.chunk_end (Seq.index mh idx) /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword < pow2 64)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same
+                    mh (hd_address obj) value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh' idx) start) /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))

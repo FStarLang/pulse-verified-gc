@@ -21,14 +21,28 @@ let nat_nonzero_pos (n: nat)
   : Lemma (requires n <> 0) (ensures n > 0)
   = ()
 
+let seq_mem_elem_eq (#a:eqtype) (s: Seq.seq a) (x y: a)
+  : Lemma
+      (requires x == y /\ Seq.mem x s)
+      (ensures Seq.mem y s)
+  = ()
+
+[@@"opaque_to_smt"]
 let seq_mem_eq (#a:eqtype) (s t: Seq.seq a) (x: a)
   : Lemma
       (requires s == t /\ Seq.mem x s)
       (ensures Seq.mem x t)
   =
-  assert (Seq.equal s t);
+  Seq.lemma_eq_refl s t;
   Seq.lemma_eq_elim s t;
-  assert (Seq.mem x t)
+  let i0 = SeqProps.index_mem x s in
+  assert (i0 < Seq.length s);
+  assert (Seq.index s i0 == x);
+  assert (Seq.length t == Seq.length s);
+  let i : i:nat{i < Seq.length t} = i0 in
+  assert (Seq.index t i == x);
+  SeqProps.seq_mem_k t i;
+  seq_mem_elem_eq t (Seq.index t i) x
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
 let rec objects_in_chunk_from_write_member_header_preserves_member
@@ -194,6 +208,75 @@ let major_write_member_header_preserves_chunk_member
   MH.write_word_at_index_preserves_wf mh (hd_address obj) value idx;
   objects_in_chunk_from_write_member_header_preserves_member
     c c.base obj value;
+  assert (Seq.index (Seq.upd mh idx c') idx == c');
+  MH.write_word_in_chunk_preserves_range c (hd_address obj) value
+
+[@@"opaque_to_smt"]
+let major_heap_eq_preserves_objects_from_member
+    (mh1 mh2: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+  : Lemma
+      (requires
+        mh1 == mh2 /\
+        idx < Seq.length mh2 /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh2 idx) start))
+      (ensures
+        idx < Seq.length mh1 /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh1 idx) start))
+  =
+  assert (Seq.equal mh1 mh2);
+  Seq.lemma_eq_elim mh1 mh2;
+  assert (idx < Seq.length mh1);
+  assert (Seq.index mh1 idx == Seq.index mh2 idx);
+  let s = MH.objects_in_chunk_from (Seq.index mh2 idx) start in
+  let t = MH.objects_in_chunk_from (Seq.index mh1 idx) start in
+  assert (t == s);
+  assert (s == t);
+  seq_mem_eq s t obj
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let major_write_member_header_preserves_objects_from_member
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+    (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword <=
+          MH.chunk_end (Seq.index mh idx) /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword < pow2 64)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same
+                    mh (hd_address obj) value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh' idx) start) /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  let c = Seq.index mh idx in
+  let c' = MH.write_word_in_chunk c (hd_address obj) value in
+  MH.lookup_chunk_index_word_in_chunk mh (hd_address obj) idx;
+  MH.write_word_in_major_at_lookup_index mh (hd_address obj) value idx;
+  assert (MH.write_word_in_major mh (hd_address obj) value ==
+          Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') (hd_address obj) value;
+  MH.write_word_at_index_preserves_wf mh (hd_address obj) value idx;
+  objects_in_chunk_from_write_member_header_preserves_member
+    c start obj value;
   assert (Seq.index (Seq.upd mh idx c') idx == c');
   MH.write_word_in_chunk_preserves_range c (hd_address obj) value
 #pop-options
