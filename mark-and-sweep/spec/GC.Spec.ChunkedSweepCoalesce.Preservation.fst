@@ -1146,7 +1146,8 @@ let rec chunked_fused_aux_live_read_frame_ready_from_chunk_from
           field_addr)
       (decreases MH.chunk_end c - U64.v start)
   =
-  assert_spinoff
+  assert_spinoff True;
+  assert
     (run_words = 0 \/
      U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start);
   if U64.v start < MH.chunk_start c then
@@ -1583,7 +1584,8 @@ let chunked_fused_aux_live_field_data_preserved_from_chunk
             U64.v mword * U64.v i + U64.v mword <=
             U64.v target +
             MH.object_wosize_in_chunk c target * U64.v mword);
-    let field_addr = U64.add (hd_address target) (U64.mul mword i) in
+    let field_addr : hp_addr =
+      U64.add (hd_address target) (U64.mul mword i) in
     assert (U64.v target <= U64.v field_addr);
     assert (U64.v field_addr + U64.v mword ==
             U64.v (hd_address target) +
@@ -1625,4 +1627,80 @@ let chunked_fused_aux_live_field_data_preserved_from_chunk
   FStar.Classical.forall_intro field_data;
   ChunkedGraph.chunked_major_field_data_preserved_intro
     source final target
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_object_color_header_effect
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (color: Header.color_sem)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        (let new_hdr = Obj.colorHeader hdr color in
+        Defs.chunked_read_header
+          (Defs.chunked_set_object_color mh obj color)
+          obj == Some new_hdr /\
+        Obj.getWosize new_hdr == Obj.getWosize hdr /\
+        Defs.chunked_wosize_of_object
+          (Defs.chunked_set_object_color mh obj color)
+          obj ==
+        Obj.getWosize hdr))
+  =
+  Defs.chunked_read_header_step mh obj;
+  let hd = hd_address obj in
+  MH.read_word_in_major_lookup_index mh hd hdr;
+  let idx = MH.lookup_chunk_index_value mh hd in
+  assert (MH.lookup_chunk_index mh hd == Some idx);
+  assert (idx < Seq.length mh);
+  assert (MH.word_in_chunk (Seq.index mh idx) hd);
+  MH.lookup_chunk_index_some mh hd idx;
+  Defs.chunked_set_object_color_some mh obj color hdr;
+  let new_hdr = Obj.colorHeader hdr color in
+  Obj.colorHeader_preserves_wosize hdr color;
+  let c = Seq.index mh idx in
+  let c' = MH.write_word_in_chunk c hd new_hdr in
+  MH.write_word_in_major_at_lookup_index mh hd new_hdr idx;
+  assert (MH.write_word_in_major mh hd new_hdr == Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') hd new_hdr;
+  MH.read_write_in_chunk_same c hd new_hdr;
+  assert (MH.read_word_in_chunk c' hd == new_hdr);
+  MH.write_word_in_chunk_preserves_word c hd new_hdr hd;
+  assert (MH.word_in_chunk c' hd);
+  assert (Seq.index (Seq.upd mh idx c') idx == c');
+  let no_prior (k: nat{k < idx})
+    : Lemma (~(MH.chunk_contains_addr (Seq.index (Seq.upd mh idx c') k) hd))
+    =
+    assert (Seq.index (Seq.upd mh idx c') k == Seq.index mh k)
+  in
+  FStar.Classical.forall_intro no_prior;
+  MH.read_word_in_major_at_index (Seq.upd mh idx c') hd idx;
+  let mh' = Defs.chunked_set_object_color mh obj color in
+  Defs.chunked_read_header_step mh' obj;
+  assert (Defs.chunked_read_header mh' obj == Some new_hdr);
+  Defs.chunked_wosize_of_object_some mh' obj new_hdr
+
+let chunked_make_white_header_effect
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        (let new_hdr = Obj.colorHeader hdr Header.White in
+        Defs.chunked_read_header
+          (Defs.chunked_make_white mh obj)
+          obj == Some new_hdr /\
+        Obj.getWosize new_hdr == Obj.getWosize hdr /\
+        Defs.chunked_wosize_of_object
+          (Defs.chunked_make_white mh obj)
+          obj ==
+        Obj.getWosize hdr))
+  =
+  Defs.chunked_make_white_step mh obj;
+  chunked_set_object_color_header_effect mh obj Header.White hdr
 #pop-options

@@ -121,6 +121,49 @@ let spot_chunked_set_object_color_preserves_self_wosize
   ChunkedSweepPres.chunked_set_object_color_preserves_self_wosize
     mh obj color hdr
 
+let spot_chunked_set_object_color_header_effect
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        (let new_hdr = Obj.colorHeader hdr color in
+         ChunkedSweepDefs.chunked_read_header
+           (ChunkedSweepDefs.chunked_set_object_color mh obj color)
+           obj == Some new_hdr /\
+         Obj.getWosize new_hdr == Obj.getWosize hdr /\
+         ChunkedSweepDefs.chunked_wosize_of_object
+           (ChunkedSweepDefs.chunked_set_object_color mh obj color)
+           obj ==
+         Obj.getWosize hdr))
+  =
+  ChunkedSweepPres.chunked_set_object_color_header_effect
+    mh obj color hdr
+
+let spot_chunked_make_white_header_effect
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        (let new_hdr = Obj.colorHeader hdr Header.White in
+         ChunkedSweepDefs.chunked_read_header
+           (ChunkedSweepDefs.chunked_make_white mh obj)
+           obj == Some new_hdr /\
+         Obj.getWosize new_hdr == Obj.getWosize hdr /\
+         ChunkedSweepDefs.chunked_wosize_of_object
+           (ChunkedSweepDefs.chunked_make_white mh obj)
+           obj ==
+         Obj.getWosize hdr))
+  =
+  ChunkedSweepPres.chunked_make_white_header_effect mh obj hdr
+
 let spot_chunked_make_white_preserves_self_wosize
   (mh: MH.major_heap)
   (obj: obj_addr)
