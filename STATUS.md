@@ -164,6 +164,8 @@ Follow-up checkpoint: a new split module, `GC.Spec.ChunkedSweepCoalesce.VertexOr
 
 Follow-up checkpoint: `VertexOrder` now names the chunk-order traversal precondition (`after_member_chunk_order_pre`) and proves the nonblack-head precondition transfer to the tail start. This packages the wosize-tail transfer, protected-object extent monotonicity, and pending-blue-run arithmetic as a sub-second split proof for the future recursive readiness derivation.
 
+Follow-up checkpoint: `VertexOrder.black_tail_chunk_order_pre_from_head` now proves the black-head tail precondition transfer. It frames the protected object through pending blue-run flush and head whitening, preserves selected chunk range/wosize facts, transfers the tail wosize predicate, and resets the pending run to empty for the suffix. The split module still profiles at about one second with refreshed split queries.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
