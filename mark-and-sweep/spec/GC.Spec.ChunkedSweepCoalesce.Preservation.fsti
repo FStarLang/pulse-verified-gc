@@ -229,6 +229,22 @@ val chunked_fused_aux_read_frame_ready
   (read_addr: hp_addr)
   : Tot prop
 
+val chunked_fused_aux_read_frame_ready_from_all_after
+  (source: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (read_addr: hp_addr)
+  : Lemma
+      (requires
+        (run_words = 0 \/
+         U64.v read_addr + U64.v mword * 2 <= U64.v first_blue) /\
+        (forall (obj: obj_addr). Seq.mem obj objs ==>
+          U64.v read_addr + U64.v mword * 2 <= U64.v obj))
+      (ensures
+        chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words read_addr)
+
 val chunked_fused_aux_preserves_other_read
   (source work: MH.major_heap)
   (objs: Seq.seq obj_addr)

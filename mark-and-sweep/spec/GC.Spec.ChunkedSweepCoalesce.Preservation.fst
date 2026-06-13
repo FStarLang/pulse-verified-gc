@@ -533,6 +533,65 @@ let rec chunked_fused_aux_read_frame_ready
       chunked_fused_aux_read_frame_ready
         source rest new_first (run_words + ws + 1) read_addr
 
+let rec chunked_fused_aux_read_frame_ready_from_all_after
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        (run_words = 0 \/
+         U64.v read_addr + U64.v mword * 2 <= U64.v first_blue) /\
+        (forall (obj: obj_addr). Seq.mem obj objs ==>
+          U64.v read_addr + U64.v mword * 2 <= U64.v obj))
+      (ensures
+        chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words read_addr)
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    ()
+  else begin
+    assert (~(Seq.length objs = 0));
+    nat_nonzero_pos (Seq.length objs);
+    assert (Seq.length objs > 0);
+    let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    assert (Seq.length rest < Seq.length objs);
+    if Defs.chunked_is_black source obj then begin
+      assert (U64.v read_addr + U64.v mword * 2 <= U64.v obj);
+      hd_address_spec obj;
+      assert (U64.v (hd_address obj) + U64.v mword == U64.v obj);
+      assert (U64.v read_addr + U64.v mword <= U64.v (hd_address obj));
+      let aux (o: obj_addr) : Lemma
+          (requires Seq.mem o rest)
+          (ensures U64.v read_addr + U64.v mword * 2 <= U64.v o)
+        =
+        seq_tail_mem objs o
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+      chunked_fused_aux_read_frame_ready_from_all_after
+        source rest 0UL 0 read_addr
+    end else begin
+      let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      if run_words = 0 then
+        assert (U64.v read_addr + U64.v mword * 2 <= U64.v new_first)
+      else
+        assert (U64.v read_addr + U64.v mword * 2 <= U64.v new_first);
+      let aux (o: obj_addr) : Lemma
+          (requires Seq.mem o rest)
+          (ensures U64.v read_addr + U64.v mword * 2 <= U64.v o)
+        =
+        seq_tail_mem objs o
+      in
+      FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
+      chunked_fused_aux_read_frame_ready_from_all_after
+        source rest new_first (run_words + ws + 1) read_addr
+    end
+  end
+
 let rec chunked_fused_aux_preserves_other_read
     (source work: MH.major_heap)
     (objs: Seq.seq obj_addr)
