@@ -271,3 +271,149 @@ let chunked_fused_aux_nonblack_head_after_member_step
   assert (fst (Defs.chunked_fused_aux
             source work objs first_blue run_words fp) == tail_final)
 #pop-options
+
+let after_member_post
+    (work: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (protected: obj_addr)
+    (final: MH.major_heap)
+  =
+  idx < Seq.length work /\
+  MH.well_formed_major_heap final /\
+  idx < Seq.length final /\
+  Seq.mem protected
+    (MH.objects_in_chunk_from (Seq.index final idx) start) /\
+  MH.object_wosize_in_chunk (Seq.index final idx) protected ==
+  MH.object_wosize_in_chunk (Seq.index work idx) protected /\
+  MH.chunk_start (Seq.index final idx) ==
+  MH.chunk_start (Seq.index work idx) /\
+  MH.chunk_end (Seq.index final idx) ==
+  MH.chunk_end (Seq.index work idx)
+
+let rec chunked_fused_aux_after_member_ready
+    (source work: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (protected: obj_addr)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Tot prop
+      (decreases Seq.length objs)
+  =
+  MH.well_formed_major_heap work /\
+  idx < Seq.length work /\
+  Seq.mem protected
+    (MH.objects_in_chunk_from (Seq.index work idx) start) /\
+  (run_words = 0 \/
+   (~(U64.v first_blue < U64.v mword) /\
+    ~(U64.v first_blue >= heap_size) /\
+    ~(U64.v first_blue % U64.v mword <> 0) /\
+    (let fb : obj_addr = first_blue in
+     let hd = hd_address fb in
+     MH.word_in_chunk (Seq.index work idx) hd /\
+     U64.v (hd_address protected) +
+       (1 + MH.object_wosize_in_chunk (Seq.index work idx) protected) *
+         U64.v mword <=
+       U64.v hd /\
+     U64.v hd + run_words * U64.v mword <=
+       MH.chunk_end (Seq.index work idx)))) /\
+  (if Seq.length objs = 0 then
+    True
+  else if Defs.chunked_is_black source (Seq.head objs) then
+    MH.word_in_chunk (Seq.index work idx) (hd_address (Seq.head objs)) /\
+    U64.v (hd_address protected) +
+      (1 + MH.object_wosize_in_chunk (Seq.index work idx) protected) *
+        U64.v mword <=
+      U64.v (hd_address (Seq.head objs)) /\
+    (let flushed = Defs.chunked_flush_blue work first_blue run_words fp in
+     let work' = fst flushed in
+     let fp' = snd flushed in
+     let work'' = Defs.chunked_make_white work' (Seq.head objs) in
+     chunked_fused_aux_after_member_ready
+       source work'' idx start protected (Seq.tail objs) 0UL 0 fp')
+  else
+    (let obj = Seq.head objs in
+     let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+     let new_first : U64.t = if run_words = 0 then obj else first_blue in
+     chunked_fused_aux_after_member_ready
+       source work idx start protected (Seq.tail objs)
+       new_first (run_words + ws + 1) fp)
+  )
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_fused_aux_after_member_preserves_objects_from_ready
+    (source work: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (protected: obj_addr)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Lemma
+      (requires
+        chunked_fused_aux_after_member_ready
+          source work idx start protected objs first_blue run_words fp)
+      (ensures
+        after_member_post work idx start protected
+          (fst (Defs.chunked_fused_aux
+            source work objs first_blue run_words fp)))
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then begin
+    Defs.chunked_fused_aux_empty_length
+      source work objs first_blue run_words fp;
+    flush_after_member_pre_from_pending_run
+      work idx protected first_blue run_words;
+    Vertex.chunked_flush_blue_after_member_preserves_objects_from
+      work idx start protected first_blue run_words fp
+  end else if Defs.chunked_is_black source (Seq.head objs) then begin
+    assert (Seq.length objs > 0);
+    assert (Seq.length (Seq.tail objs) < Seq.length objs);
+    let flushed = Defs.chunked_flush_blue work first_blue run_words fp in
+    let work' = fst flushed in
+    let fp' = snd flushed in
+    flush_after_member_pre_from_pending_run
+      work idx protected first_blue run_words;
+    Vertex.chunked_flush_blue_after_member_preserves_objects_from
+      work idx start protected first_blue run_words fp;
+    word_in_chunk_same_range
+      (Seq.index work idx) (Seq.index work' idx)
+      (hd_address (Seq.head objs));
+    protected_extent_le_after_same_wosize
+      (Seq.index work idx) (Seq.index work' idx) protected
+      (U64.v (hd_address (Seq.head objs)));
+    Vertex.chunked_make_white_after_member_preserves_objects_from
+      work' idx start protected (Seq.head objs);
+    let work'' = Defs.chunked_make_white work' (Seq.head objs) in
+    chunked_fused_aux_after_member_preserves_objects_from_ready
+      source work'' idx start protected (Seq.tail objs) 0UL 0 fp';
+    let tail_final =
+      fst (Defs.chunked_fused_aux
+        source work'' (Seq.tail objs) 0UL 0 fp') in
+    assert (after_member_post work'' idx start protected tail_final);
+    assert (MH.object_wosize_in_chunk (Seq.index work'' idx) protected ==
+            MH.object_wosize_in_chunk (Seq.index work idx) protected);
+    assert (MH.chunk_start (Seq.index work'' idx) ==
+            MH.chunk_start (Seq.index work idx));
+    assert (MH.chunk_end (Seq.index work'' idx) ==
+            MH.chunk_end (Seq.index work idx));
+    assert (after_member_post work idx start protected tail_final);
+    chunked_fused_aux_black_head_after_member_step
+      source work idx start protected objs first_blue run_words fp
+  end else begin
+    assert (Seq.length objs > 0);
+    assert (Seq.length (Seq.tail objs) < Seq.length objs);
+    let obj = Seq.head objs in
+    let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+    let new_first : U64.t = if run_words = 0 then obj else first_blue in
+    let new_run = run_words + ws + 1 in
+    chunked_fused_aux_after_member_preserves_objects_from_ready
+      source work idx start protected (Seq.tail objs) new_first new_run fp;
+    chunked_fused_aux_nonblack_head_after_member_step
+      source work idx start protected objs first_blue run_words fp
+  end
+#pop-options
