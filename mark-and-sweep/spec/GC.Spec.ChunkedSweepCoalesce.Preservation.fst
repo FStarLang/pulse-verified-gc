@@ -12,6 +12,7 @@ module MHReadFrame = GC.Spec.MajorHeap.ReadFrame
 module Header = GC.Lib.Header
 module Obj = GC.Spec.Object
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
+module MarkDefs = GC.Spec.ChunkedMark.Defs
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
@@ -587,3 +588,36 @@ let rec chunked_fused_aux_preserves_other_read
         source work rest new_first (run_words + ws + 1) fp read_addr old
     end
   end
+
+let chunked_fused_aux_preserves_get_field_read_some
+    (source work: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size /\
+        field_addr == U64.add (hd_address obj) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words field_addr)
+      (ensures
+        MarkDefs.chunked_get_field
+          (fst (Defs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          obj i ==
+        MarkDefs.chunked_get_field work obj i)
+  =
+  let final =
+    fst (Defs.chunked_fused_aux source work objs first_blue run_words fp) in
+  assert (U64.add (hd_address obj) (U64.mul mword i) == field_addr);
+  MarkDefs.chunked_get_field_read_some work obj i old;
+  chunked_fused_aux_preserves_other_read
+    source work objs first_blue run_words fp field_addr old;
+  MarkDefs.chunked_get_field_read_some final obj i old

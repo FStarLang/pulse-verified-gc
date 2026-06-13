@@ -8,6 +8,7 @@ open GC.Spec.Heap
 
 module MH = GC.Spec.MajorHeap
 module Header = GC.Lib.Header
+module MarkDefs = GC.Spec.ChunkedMark.Defs
 
 val major_write_word_or_same_preserves_other_read
   (mh: MH.major_heap)
@@ -246,3 +247,28 @@ val chunked_fused_aux_preserves_other_read
           (fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
             source work objs first_blue run_words fp))
           read_addr == Some old)
+
+val chunked_fused_aux_preserves_get_field_read_some
+  (source work: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size /\
+        field_addr == U64.add (hd_address obj) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words field_addr)
+      (ensures
+        MarkDefs.chunked_get_field
+          (fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          obj i ==
+        MarkDefs.chunked_get_field work obj i)

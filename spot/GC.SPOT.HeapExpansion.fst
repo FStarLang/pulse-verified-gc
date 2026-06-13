@@ -356,6 +356,34 @@ let spot_chunked_fused_aux_preserves_other_read
   ChunkedSweepPres.chunked_fused_aux_preserves_other_read
     source work objs first_blue run_words fp read_addr old
 
+let spot_chunked_fused_aux_preserves_get_field_read_some
+  (source work: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size /\
+        field_addr == U64.add (hd_address obj) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        ChunkedSweepPres.chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words field_addr)
+      (ensures
+        ChunkedMarkDefs.chunked_get_field
+          (fst (ChunkedSweepDefs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          obj i ==
+        ChunkedMarkDefs.chunked_get_field work obj i)
+  =
+  ChunkedSweepPres.chunked_fused_aux_preserves_get_field_read_some
+    source work objs first_blue run_words fp obj i field_addr old
+
 let spot_major_fl_head_wosize_single_chunk_from_dense
   (g: heap) (fp: U64.t) (fuel: nat)
   : Lemma
