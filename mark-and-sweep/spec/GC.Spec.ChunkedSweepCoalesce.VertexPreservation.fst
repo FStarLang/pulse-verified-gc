@@ -196,7 +196,6 @@ let chunked_merged_block_step
     Fields.mem_cons_lemma x fb tail
   end
 #pop-options
-
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let major_write_word_or_same_after_member_preserves_chunk_member
     (mh: MH.major_heap)

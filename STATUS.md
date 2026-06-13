@@ -154,7 +154,7 @@ Update 2026-06-13: finished the prefix-flush support needed for that sequencing.
 
 ## Update: 2026-06-13
 
-The latest Stage 6 checkpoint keeps iteration small by committing only verified vertex-framing primitives, not the oversized recursive suffix proof attempt. `GC.Spec.ChunkedSweepCoalesce.VertexPreservation` now publicly exposes after-member `objects_from` preservation for `major_write_word_or_same`, `chunked_zero_fields`, `chunked_flush_blue`, and `chunked_make_white`, and `GC.SPOT.HeapExpansion` audits each contract.
+The latest Stage 6 checkpoint keeps iteration small by committing only verified vertex-framing primitives, not the oversized recursive suffix proof attempt. `GC.Spec.ChunkedSweepCoalesce.VertexPreservation` now publicly exposes after-member `objects_from` preservation for `major_write_word_or_same`, `chunked_zero_fields`, `chunked_flush_blue`, and `chunked_make_white`, and `GC.SPOT.HeapExpansion` audits each contract. The next branch-composition layer has been split into `GC.Spec.ChunkedSweepCoalesce.VertexSteps`, whose black-head and nonblack-head step lemmas each profile in about one second instead of forcing the larger vertex module to replay a monolithic recursive proof.
 
 This gives the next live-vertex proof the local tools needed to frame a protected live object through suffix writes and recoloring. The direct monolithic recursive helper over `chunked_fused_aux` was deliberately removed after proofdebugging showed hard whole-branch VCs; the next attempt should split it into small black-head/nonblack-head traversal lemmas instead of reintroducing one large recursive proof.
 
