@@ -160,6 +160,8 @@ This gives the next live-vertex proof the local tools needed to frame a protecte
 
 Follow-up checkpoint: `VertexSteps` now also has small readiness-step lemmas for the black-head and nonblack-head fused traversal branches, plus a tail wosize-match transfer helper over `objects_in_chunk_from`. These helpers verify cheaply and replace the abandoned all-in-one `chunked_fused_aux_after_member_ready_from_chunk_from` attempt as the next foundation for deriving traversal readiness from chunk-local object order.
 
+Follow-up checkpoint: a new split module, `GC.Spec.ChunkedSweepCoalesce.VertexOrder`, isolates the first chunk-order arithmetic obligation for that readiness derivation. It proves that a nonblack head step extends the pending blue run to the next object start while preserving the after-member bounds needed by the suffix traversal; the module verifies with refreshed split queries in under one second.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
