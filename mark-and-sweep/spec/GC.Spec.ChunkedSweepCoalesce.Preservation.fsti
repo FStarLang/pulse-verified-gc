@@ -10,6 +10,7 @@ module MH = GC.Spec.MajorHeap
 module Header = GC.Lib.Header
 module Obj = GC.Spec.Object
 module MarkDefs = GC.Spec.ChunkedMark.Defs
+module Pending = GC.Spec.ChunkedSweepCoalesce.PendingRun
 
 val major_write_word_or_same_preserves_other_read
   (mh: MH.major_heap)
@@ -309,6 +310,56 @@ val chunked_fused_aux_read_frame_ready_from_all_after
       (ensures
         chunked_fused_aux_read_frame_ready
           source objs first_blue run_words read_addr)
+
+val chunked_fused_aux_read_frame_ready_from_chunk_before
+  (source: MH.major_heap)
+  (idx: nat{idx < Seq.length source})
+  (base start: hp_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (read_addr: hp_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        Pending.pending_run_before_start
+          source idx base start first_blue run_words /\
+        MH.chunk_end (Seq.index source idx) <= U64.v read_addr /\
+        (forall (o: obj_addr).
+          Seq.mem o
+            (MH.objects_in_chunk_from (Seq.index source idx) start) ==>
+          Seq.mem o
+            (MH.objects_in_chunk_from (Seq.index source idx) base)) /\
+        (forall (o: obj_addr).
+          Seq.mem o
+            (MH.objects_in_chunk_from (Seq.index source idx) start) ==>
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+               source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o))
+      (ensures
+        chunked_fused_aux_read_frame_ready
+          source
+          (MH.objects_in_chunk_from (Seq.index source idx) start)
+          first_blue run_words read_addr)
+
+val chunked_fused_aux_read_frame_ready_from_chunk_after
+  (source: MH.major_heap)
+  (idx: nat{idx < Seq.length source})
+  (base start: hp_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (read_addr: hp_addr)
+  : Lemma
+      (requires
+        Pending.pending_run_before_start
+          source idx base start first_blue run_words /\
+        U64.v read_addr + U64.v mword * 2 <=
+          MH.chunk_start (Seq.index source idx))
+      (ensures
+        chunked_fused_aux_read_frame_ready
+          source
+          (MH.objects_in_chunk_from (Seq.index source idx) start)
+          first_blue run_words read_addr)
 
 val chunked_fused_aux_live_read_frame_ready
   (source: MH.major_heap)

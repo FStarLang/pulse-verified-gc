@@ -473,6 +473,60 @@ let spot_chunked_fused_aux_read_frame_ready_from_all_after
   ChunkedSweepPres.chunked_fused_aux_read_frame_ready_from_all_after
     source objs first_blue run_words read_addr
 
+let spot_chunked_fused_aux_read_frame_ready_from_chunk_before
+  (source: MH.major_heap)
+  (idx: nat{idx < Seq.length source})
+  (base start: hp_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (read_addr: hp_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        ChunkedSweepPending.pending_run_before_start
+          source idx base start first_blue run_words /\
+        MH.chunk_end (Seq.index source idx) <= U64.v read_addr /\
+        (forall (o: obj_addr).
+          Seq.mem o
+            (MH.objects_in_chunk_from (Seq.index source idx) start) ==>
+          Seq.mem o
+            (MH.objects_in_chunk_from (Seq.index source idx) base)) /\
+        (forall (o: obj_addr).
+          Seq.mem o
+            (MH.objects_in_chunk_from (Seq.index source idx) start) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o))
+      (ensures
+        ChunkedSweepPres.chunked_fused_aux_read_frame_ready
+          source
+          (MH.objects_in_chunk_from (Seq.index source idx) start)
+          first_blue run_words read_addr)
+  =
+  ChunkedSweepPres.chunked_fused_aux_read_frame_ready_from_chunk_before
+    source idx base start first_blue run_words read_addr
+
+let spot_chunked_fused_aux_read_frame_ready_from_chunk_after
+  (source: MH.major_heap)
+  (idx: nat{idx < Seq.length source})
+  (base start: hp_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (read_addr: hp_addr)
+  : Lemma
+      (requires
+        ChunkedSweepPending.pending_run_before_start
+          source idx base start first_blue run_words /\
+        U64.v read_addr + U64.v mword * 2 <=
+          MH.chunk_start (Seq.index source idx))
+      (ensures
+        ChunkedSweepPres.chunked_fused_aux_read_frame_ready
+          source
+          (MH.objects_in_chunk_from (Seq.index source idx) start)
+          first_blue run_words read_addr)
+  =
+  ChunkedSweepPres.chunked_fused_aux_read_frame_ready_from_chunk_after
+    source idx base start first_blue run_words read_addr
+
 let spot_chunked_fused_aux_read_frame_ready_from_live_target
   (source: MH.major_heap)
   (objs: Seq.seq obj_addr)
