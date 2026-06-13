@@ -579,6 +579,17 @@ let chunked_fused_aux_empty
        chunked_flush_blue work first_blue run_words fp)
   = ()
 
+let chunked_fused_aux_empty_length
+    (source work: MH.major_heap) (objs: seq obj_addr)
+    (first_blue: U64.t) (run_words: nat) (fp: U64.t)
+  : Lemma
+      (requires Seq.length objs = 0)
+      (ensures
+        chunked_fused_aux source work objs first_blue run_words fp ==
+        chunked_flush_blue work first_blue run_words fp)
+  =
+  ()
+
 let chunked_fused_aux_black_step
     (source work: MH.major_heap) (objs: seq obj_addr)
     (first_blue: U64.t) (run_words: nat) (fp: U64.t)

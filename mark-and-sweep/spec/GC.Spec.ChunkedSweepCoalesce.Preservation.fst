@@ -502,3 +502,88 @@ let rec chunked_sweep_aux_preserves_other_read
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux);
     chunked_sweep_aux_preserves_other_read mh' tail fp' read_addr old
   end
+
+let rec chunked_fused_aux_read_frame_ready
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (read_addr: hp_addr)
+  : Tot prop
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    run_words = 0 \/
+    U64.v read_addr + U64.v mword * 2 <= U64.v first_blue \/
+    U64.v first_blue + (run_words - 1) * U64.v mword <= U64.v read_addr
+  else
+    let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    if Defs.chunked_is_black source obj then
+      (run_words = 0 \/
+       U64.v read_addr + U64.v mword * 2 <= U64.v first_blue \/
+       U64.v first_blue + (run_words - 1) * U64.v mword <= U64.v read_addr) /\
+      (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+       U64.v read_addr + U64.v mword <= U64.v (hd_address obj)) /\
+      chunked_fused_aux_read_frame_ready source rest 0UL 0 read_addr
+    else
+      let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      chunked_fused_aux_read_frame_ready
+        source rest new_first (run_words + ws + 1) read_addr
+
+let rec chunked_fused_aux_preserves_other_read
+    (source work: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (read_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major work read_addr == Some old /\
+        chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words read_addr)
+      (ensures
+        MH.read_word_in_major
+          (fst (Defs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          read_addr == Some old)
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then begin
+    Defs.chunked_fused_aux_empty_length
+      source work objs first_blue run_words fp;
+    assert (run_words = 0 \/
+            U64.v read_addr + U64.v mword * 2 <= U64.v first_blue \/
+            U64.v first_blue + (run_words - 1) * U64.v mword <=
+              U64.v read_addr);
+    chunked_flush_blue_preserves_other_read
+      work first_blue run_words fp read_addr old
+  end else begin
+    assert (~(Seq.length objs = 0));
+    nat_nonzero_pos (Seq.length objs);
+    assert (Seq.length objs > 0);
+    let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    assert (Seq.length rest < Seq.length objs);
+    if Defs.chunked_is_black source obj then begin
+      Defs.chunked_fused_aux_black_step
+        source work objs first_blue run_words fp;
+      let (work', fp') =
+        Defs.chunked_flush_blue work first_blue run_words fp in
+      let work'' = Defs.chunked_make_white work' obj in
+      chunked_flush_blue_make_white_preserves_other_read
+        work first_blue run_words fp obj read_addr old;
+      chunked_fused_aux_preserves_other_read
+        source work'' rest 0UL 0 fp' read_addr old
+    end else begin
+      Defs.chunked_fused_aux_nonblack_step
+        source work objs first_blue run_words fp;
+      let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      chunked_fused_aux_preserves_other_read
+        source work rest new_first (run_words + ws + 1) fp read_addr old
+    end
+  end
