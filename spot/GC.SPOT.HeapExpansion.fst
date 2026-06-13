@@ -35,6 +35,7 @@ module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
+module SpecGCPost = GC.Spec.Correctness
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMarkDefs = GC.Spec.ChunkedMark.Defs
 module ChunkedMarkCompat = GC.Spec.ChunkedMark.Compat
@@ -46,6 +47,7 @@ module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
+module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -1027,6 +1029,26 @@ let spot_chunked_major_gc_bounded_single_chunk_compat
          (MH.single_chunk_major_heap h_final, fp_final)))
   =
   ChunkedMajorGC.chunked_major_gc_bounded_single_chunk_compat g cap fuel
+
+let spot_chunked_gc_postcondition_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCCorr.chunked_no_gray_or_black_objects mh)
+      (ensures ChunkedMajorGCCorr.chunked_gc_postcondition mh)
+  =
+  ChunkedMajorGCCorr.chunked_gc_postcondition_intro mh
+
+let spot_chunked_gc_postcondition_single_chunk_from_dense
+  (g: heap)
+  : Lemma
+      (requires SpecGCPost.gc_postcondition g)
+      (ensures
+        ChunkedMajorGCCorr.chunked_gc_postcondition
+          (MH.single_chunk_major_heap g))
+  =
+  ChunkedMajorGCCorr.chunked_gc_postcondition_single_chunk_from_dense g
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
