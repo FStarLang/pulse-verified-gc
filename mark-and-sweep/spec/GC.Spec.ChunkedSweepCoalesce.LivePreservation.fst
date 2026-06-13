@@ -432,6 +432,37 @@ let chunked_make_white_member_preserves_objects_from
           MH.object_wosize_in_chunk (Seq.index mh idx) obj);
   Reach.major_write_member_header_same_wosize_preserves_objects_from
     mh idx start obj (Obj.colorHeader hdr Header.White)
+
+let chunked_make_white_member_preserves_objects_from_at_index
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj))
+      (ensures
+        (let mh' = Defs.chunked_make_white mh obj in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.object_wosize_in_chunk (Seq.index mh' idx) obj ==
+         MH.object_wosize_in_chunk (Seq.index mh idx) obj /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  let hdr = MH.read_word_in_chunk (Seq.index mh idx) (hd_address obj) in
+  MH.lookup_chunk_index_word_in_chunk mh (hd_address obj) idx;
+  MH.read_word_in_major_at_lookup_index mh (hd_address obj) idx;
+  Defs.chunked_read_header_step mh obj;
+  assert (Defs.chunked_read_header mh obj == Some hdr);
+  chunked_make_white_member_preserves_objects_from mh idx start obj hdr
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
@@ -444,7 +475,6 @@ let chunked_fused_aux_black_prefix_prepare_tail
     (run_words: nat)
     (fp: U64.t)
     (target: obj_addr)
-    (first_hdr: U64.t)
   : Lemma
       (requires
         MH.well_formed_major_heap mh /\
@@ -458,9 +488,6 @@ let chunked_fused_aux_black_prefix_prepare_tail
           (MH.objects_in_chunk_from (Seq.index mh idx) suffix_start) /\
         Seq.mem target (MH.objects_in_chunk_from (Seq.index mh idx) base) /\
         target <> first /\
-        Defs.chunked_read_header mh first == Some first_hdr /\
-        (let mh1 = fst (Defs.chunked_flush_blue mh first_blue run_words fp) in
-         Defs.chunked_read_header mh1 first == Some first_hdr) /\
         MH.word_in_chunk (Seq.index mh idx) (hd_address first) /\
         U64.v (hd_address first) + U64.v mword <= U64.v suffix_start /\
         (run_words = 0 \/
@@ -484,9 +511,14 @@ let chunked_fused_aux_black_prefix_prepare_tail
          let mh2 = Defs.chunked_make_white mh1 first in
          MH.well_formed_major_heap mh2 /\
          idx < Seq.length mh2 /\
+         Seq.mem first (MH.objects_in_chunk_from (Seq.index mh2 idx) base) /\
          Seq.mem target (MH.objects_in_chunk_from (Seq.index mh2 idx) base) /\
          Seq.mem target
           (MH.objects_in_chunk_from (Seq.index mh2 idx) suffix_start) /\
+         MH.objects_in_chunk_from (Seq.index mh2 idx) (hd_address first) ==
+         MH.objects_in_chunk_from (Seq.index mh idx) (hd_address first) /\
+         MH.objects_in_chunk_from (Seq.index mh2 idx) suffix_start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) suffix_start /\
          MH.chunk_start (Seq.index mh2 idx) ==
          MH.chunk_start (Seq.index mh idx) /\
          MH.chunk_end (Seq.index mh2 idx) ==
@@ -508,18 +540,33 @@ let chunked_fused_aux_black_prefix_prepare_tail
       mh idx base fb rw (hd_address first) first fp;
     ReachPrefix.chunked_flush_blue_prefix_preserves_base_member
       mh idx base fb rw (hd_address first) target fp;
+    hd_address_spec fb;
+    assert (U64.v (hd_address fb) + U64.v mword == U64.v fb);
+    assert (run_words == (run_words - 1) + 1);
+    FStar.Math.Lemmas.distributivity_add_left
+      (run_words - 1) 1 (U64.v mword);
+    FStar.Math.Lemmas.paren_add_right
+      (U64.v (hd_address fb)) (U64.v mword)
+      ((run_words - 1) * U64.v mword);
+    assert (U64.v (hd_address fb) + run_words * U64.v mword ==
+            U64.v fb + (run_words - 1) * U64.v mword);
+    assert (U64.v (hd_address fb) + run_words * U64.v mword <=
+            U64.v (hd_address first));
+    ReachPrefix.chunked_flush_blue_before_preserves_objects_from
+      mh idx (hd_address first) first_blue run_words fp;
     assert (U64.v (hd_address fb) + run_words * U64.v mword <=
             U64.v suffix_start);
     ReachPrefix.chunked_flush_blue_before_preserves_objects_from
       mh idx suffix_start first_blue run_words fp;
     ()
   end;
-  assert (Defs.chunked_read_header mh1 first == Some first_hdr);
   assert (MH.word_in_chunk (Seq.index mh1 idx) (hd_address first));
-  chunked_make_white_member_preserves_objects_from
-    mh1 idx base first first_hdr;
-  Reach.chunked_make_white_before_preserves_objects_from
-    mh1 idx suffix_start first first_hdr;
+  chunked_make_white_member_preserves_objects_from_at_index
+    mh1 idx base first;
+  chunked_make_white_member_preserves_objects_from_at_index
+    mh1 idx (hd_address first) first;
+  Reach.chunked_make_white_before_preserves_objects_from_at_index
+    mh1 idx suffix_start first;
   let mh2 = Defs.chunked_make_white mh1 first in
   ()
 #pop-options
