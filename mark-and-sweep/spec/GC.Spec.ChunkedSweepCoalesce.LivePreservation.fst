@@ -12,6 +12,7 @@ module Obj = GC.Spec.Object
 module Header = GC.Lib.Header
 module Fields = GC.Spec.Fields
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
+module MarkDefs = GC.Spec.ChunkedMark.Defs
 module Pres = GC.Spec.ChunkedSweepCoalesce.Preservation
 module Pending = GC.Spec.ChunkedSweepCoalesce.PendingRun
 module Reach = GC.Spec.ChunkedSweepCoalesce.VertexReach
@@ -1687,6 +1688,92 @@ let chunked_fused_aux_live_subgraph_preserved_from_chunk
     source source (MH.objects_in_chunk c) 0UL 0 fp;
   ChunkedGraph.chunked_major_live_subgraph_preserved_from_fields
     source final live
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_fused_aux_preserves_get_field_from_chunk_before
+    (source work: MH.major_heap)
+    (idx: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        U64.v (hd_address target) + U64.v mword * U64.v i +
+          U64.v mword <= heap_size /\
+        field_addr == U64.add (hd_address target) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        MH.chunk_end (Seq.index source idx) <= U64.v field_addr /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o))
+      (ensures
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         MarkDefs.chunked_get_field final target i ==
+         MarkDefs.chunked_get_field work target i))
+  =
+  let c = Seq.index source idx in
+  assert (MH.objects_in_chunk c == MH.objects_in_chunk_from c c.base);
+  Pending.pending_run_before_start_empty source idx c.base c.base;
+  let base_mem (o: obj_addr)
+    : Lemma
+        (requires Seq.mem o (MH.objects_in_chunk_from c c.base))
+        (ensures Seq.mem o (MH.objects_in_chunk_from c c.base))
+    = ()
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires base_mem);
+  Pres.chunked_fused_aux_read_frame_ready_from_chunk_before
+    source idx c.base c.base 0UL 0 field_addr;
+  assert (Pres.chunked_fused_aux_read_frame_ready
+            source (MH.objects_in_chunk c) 0UL 0 field_addr);
+  Pres.chunked_fused_aux_preserves_get_field_read_some
+    source work (MH.objects_in_chunk c) 0UL 0 fp
+    target i field_addr old
+
+let chunked_fused_aux_preserves_get_field_from_chunk_after
+    (source work: MH.major_heap)
+    (idx: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        idx < Seq.length source /\
+        U64.v (hd_address target) + U64.v mword * U64.v i +
+          U64.v mword <= heap_size /\
+        field_addr == U64.add (hd_address target) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        U64.v field_addr + U64.v mword <=
+          MH.chunk_start (Seq.index source idx))
+      (ensures
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         MarkDefs.chunked_get_field final target i ==
+         MarkDefs.chunked_get_field work target i))
+  =
+  let c = Seq.index source idx in
+  assert (MH.objects_in_chunk c == MH.objects_in_chunk_from c c.base);
+  Pending.pending_run_before_start_empty source idx c.base c.base;
+  Pres.chunked_fused_aux_read_frame_ready_from_chunk_after
+    source idx c.base c.base 0UL 0 field_addr;
+  assert (Pres.chunked_fused_aux_read_frame_ready
+            source (MH.objects_in_chunk c) 0UL 0 field_addr);
+  Pres.chunked_fused_aux_preserves_get_field_read_some
+    source work (MH.objects_in_chunk c) 0UL 0 fp
+    target i field_addr old
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"

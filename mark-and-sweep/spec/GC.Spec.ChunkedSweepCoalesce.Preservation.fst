@@ -870,6 +870,45 @@ let rec chunked_fused_aux_read_frame_ready_from_all_after
     end
   end
 
+let word_before_chunk_end_before_read
+        (start: hp_addr)
+        (chunk_end: nat)
+        (read_addr: hp_addr)
+      : Lemma
+          (requires
+            U64.v start + U64.v mword < chunk_end /\
+            chunk_end <= U64.v read_addr)
+          (ensures U64.v start + U64.v mword <= U64.v read_addr)
+      = ()
+
+let header_word_before_read_from_start
+        (start: hp_addr)
+        (obj: obj_addr)
+        (read_addr: hp_addr)
+      : Lemma
+          (requires
+            hd_address obj == start /\
+            U64.v start + U64.v mword <= U64.v read_addr)
+          (ensures
+            U64.v (hd_address obj) + U64.v mword <= U64.v read_addr)
+      = ()
+
+let header_word_before_read_from_chunk_end
+        (start: hp_addr)
+        (obj: obj_addr)
+        (chunk_end: nat)
+        (read_addr: hp_addr)
+      : Lemma
+          (requires
+            hd_address obj == start /\
+            U64.v start + U64.v mword < chunk_end /\
+            chunk_end <= U64.v read_addr)
+          (ensures
+            U64.v (hd_address obj) + U64.v mword <= U64.v read_addr)
+      =
+      word_before_chunk_end_before_read start chunk_end read_addr;
+      header_word_before_read_from_start start obj read_addr
+
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
 let rec chunked_fused_aux_read_frame_ready_from_chunk_before
     (source: MH.major_heap)
@@ -947,7 +986,6 @@ let rec chunked_fused_aux_read_frame_ready_from_chunk_before
     assert (MH.object_wosize_in_chunk c obj == U64.v wz);
     assert (U64.v (Defs.chunked_wosize_of_object source obj) ==
             U64.v wz);
-    assert (U64.v start + U64.v mword <= U64.v read_addr);
     if Defs.chunked_is_black source obj then begin
       if run_words = 0 then
         ()
@@ -961,7 +999,8 @@ let rec chunked_fused_aux_read_frame_ready_from_chunk_before
         assert (U64.v first_blue + (run_words - 1) * U64.v mword <=
                 U64.v read_addr)
       end;
-      assert (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr);
+      header_word_before_read_from_chunk_end
+        start obj (MH.chunk_end c) read_addr;
       if next_start_nat >= MH.chunk_end c then begin
         assert (rest == Seq.empty);
         assert (chunked_fused_aux_read_frame_ready
@@ -994,6 +1033,8 @@ let rec chunked_fused_aux_read_frame_ready_from_chunk_before
           (FStar.Classical.move_requires wosize_tail);
         Pending.pending_run_before_start_empty
           source idx next_start next_start;
+        assert (Pending.pending_run_before_start
+                  source idx next_start next_start 0UL 0);
         chunked_fused_aux_read_frame_ready_from_chunk_before
           source idx next_start next_start 0UL 0 read_addr
       end
@@ -1015,6 +1056,8 @@ let rec chunked_fused_aux_read_frame_ready_from_chunk_before
         Pending.nonblack_tail_pending_run_before_start_from_nonempty
           source idx base start next_start obj wz first_blue rw
       end;
+      assert (Pending.pending_run_before_start
+                source idx base next_start new_first new_run);
       if next_start_nat >= MH.chunk_end c then begin
         assert (rest == Seq.empty);
         assert (new_run <> 0);
@@ -1074,7 +1117,7 @@ let chunked_fused_aux_read_frame_ready_from_chunk_after
       (requires
         Pending.pending_run_before_start
           source idx base start first_blue run_words /\
-        U64.v read_addr + U64.v mword * 2 <=
+        U64.v read_addr + U64.v mword <=
           MH.chunk_start (Seq.index source idx))
       (ensures
         chunked_fused_aux_read_frame_ready
@@ -1102,7 +1145,8 @@ let chunked_fused_aux_read_frame_ready_from_chunk_after
         (ensures U64.v read_addr + U64.v mword * 2 <= U64.v o)
     =
     MH.objects_in_chunk_from_member_in_chunk c start o;
-    assert (U64.v o >= MH.chunk_start c + U64.v mword)
+    assert (U64.v o >= MH.chunk_start c + U64.v mword);
+    assert (U64.v read_addr + U64.v mword * 2 <= U64.v o)
   in
   FStar.Classical.forall_intro
     (FStar.Classical.move_requires after_objs);
@@ -1575,6 +1619,9 @@ let rec chunked_fused_aux_live_read_frame_ready_from_chunk_from
             assert (field_addr == U64.add (hd_address target) (U64.mul mword i));
             assert (new_first == (if run_words = 0 then first else first_blue));
             assert (new_run == run_words + U64.v wz + 1);
+            assert (new_run = 0 \/
+                    U64.v new_first + (new_run - 1) * U64.v mword ==
+                      U64.v next_start);
             assert (U64.v field_addr >= U64.v next_start);
             chunked_fused_aux_nonblack_named_run_before_read
               start first first_blue run_words wz next_start
@@ -1583,6 +1630,8 @@ let rec chunked_fused_aux_live_read_frame_ready_from_chunk_from
               (new_run = 0 \/
                U64.v new_first + (new_run - 1) * U64.v mword <=
                  U64.v field_addr);
+            assert (Seq.length (MH.objects_in_chunk_from c next_start) <
+                   Seq.length (MH.objects_in_chunk_from c start));
             chunked_fused_aux_live_read_frame_ready_from_chunk_from
               source c next_start new_first new_run target i field_addr hdr;
             assert (chunked_fused_aux_live_read_frame_ready

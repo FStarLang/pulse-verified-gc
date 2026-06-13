@@ -353,7 +353,7 @@ val chunked_fused_aux_read_frame_ready_from_chunk_after
       (requires
         Pending.pending_run_before_start
           source idx base start first_blue run_words /\
-        U64.v read_addr + U64.v mword * 2 <=
+        U64.v read_addr + U64.v mword <=
           MH.chunk_start (Seq.index source idx))
       (ensures
         chunked_fused_aux_read_frame_ready
