@@ -39,6 +39,7 @@ module ChunkedSweepLive = GC.Spec.ChunkedSweepCoalesce.LivePreservation
 module ChunkedSweepVertex = GC.Spec.ChunkedSweepCoalesce.VertexPreservation
 module ChunkedSweepVertexSteps = GC.Spec.ChunkedSweepCoalesce.VertexSteps
 module ChunkedSweepVertexOrder = GC.Spec.ChunkedSweepCoalesce.VertexOrder
+module ChunkedSweepVertexReach = GC.Spec.ChunkedSweepCoalesce.VertexReach
 module ChunkedSweepVertexReachPrefix = GC.Spec.ChunkedSweepCoalesce.VertexReachPrefix
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
@@ -1160,6 +1161,55 @@ let spot_chunked_flush_blue_prefix_preserves_base_member
   =
   ChunkedSweepVertexReachPrefix.chunked_flush_blue_prefix_preserves_base_member
     mh idx base fb run_words start target fp
+
+let spot_base_member_and_header_member_implies_base_member
+  (final: MH.major_heap)
+  (idx: nat)
+  (base: hp_addr)
+  (fb: obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        idx < Seq.length final /\
+        Seq.mem fb (MH.objects_in_chunk_from (Seq.index final idx) base) /\
+        Seq.mem target
+          (MH.objects_in_chunk_from (Seq.index final idx) (hd_address fb)))
+      (ensures
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index final idx) base))
+  =
+  ChunkedSweepVertexReachPrefix.base_member_and_header_member_implies_base_member
+    final idx base fb target
+
+let spot_major_write_member_header_same_wosize_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (obj: obj_addr)
+  (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (Obj.getWosize value) ==
+          MH.object_wosize_in_chunk (Seq.index mh idx) obj)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same
+                    mh (hd_address obj) value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.object_wosize_in_chunk (Seq.index mh' idx) obj ==
+         MH.object_wosize_in_chunk (Seq.index mh idx) obj /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  ChunkedSweepVertexReach.major_write_member_header_same_wosize_preserves_objects_from
+    mh idx start obj value
 
 let spot_major_write_word_or_same_after_member_preserves_objects_from
   (mh: MH.major_heap)

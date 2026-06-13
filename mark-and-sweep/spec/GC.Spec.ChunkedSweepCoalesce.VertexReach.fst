@@ -280,3 +280,50 @@ let major_write_member_header_preserves_objects_from_member
   assert (Seq.index (Seq.upd mh idx c') idx == c');
   MH.write_word_in_chunk_preserves_range c (hd_address obj) value
 #pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let major_write_member_header_same_wosize_preserves_objects_from
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+    (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (Obj.getWosize value) ==
+          MH.object_wosize_in_chunk (Seq.index mh idx) obj)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same
+                    mh (hd_address obj) value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.object_wosize_in_chunk (Seq.index mh' idx) obj ==
+         MH.object_wosize_in_chunk (Seq.index mh idx) obj /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  let c = Seq.index mh idx in
+  let c' = MH.write_word_in_chunk c (hd_address obj) value in
+  MH.lookup_chunk_index_word_in_chunk mh (hd_address obj) idx;
+  MH.write_word_in_major_at_lookup_index mh (hd_address obj) value idx;
+  assert (MH.write_word_in_major mh (hd_address obj) value ==
+          Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') (hd_address obj) value;
+  MH.write_word_at_index_preserves_wf mh (hd_address obj) value idx;
+  MH.objects_in_chunk_from_write_member_header_same_wosize_preserves
+    c start obj value;
+  MH.write_word_in_chunk_preserves_range c (hd_address obj) value;
+  MH.read_write_in_chunk_same c (hd_address obj) value;
+  assert (Seq.index (Seq.upd mh idx c') idx == c');
+  assert (MH.object_wosize_in_chunk c' obj ==
+          MH.object_wosize_in_chunk c obj)
+#pop-options

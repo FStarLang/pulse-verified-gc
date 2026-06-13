@@ -174,6 +174,8 @@ Follow-up checkpoint: started the live-vertex reachability split in a new focuse
 
 Follow-up checkpoint: the prefix-flush/base-reachability support is now in its own small module, `GC.Spec.ChunkedSweepCoalesce.VertexReachPrefix`. It proves `chunked_flush_blue_prefix_preserves_base_member`: if the pending blue-run head is already visible from a chunk base and the live target is visible from the run end, flushing the run preserves the target's visibility from the original base. The proof keeps `VertexReach` as an opaque helper slice for sequence/object-list transfer, profiles under one second with refreshed split queries, and is audited by `GC.SPOT.HeapExpansion`.
 
+Follow-up checkpoint: added two small support contracts for the next live-vertex proof. `VertexReach.major_write_member_header_same_wosize_preserves_objects_from` shows same-wosize header rewrites preserve the whole chunk-local object walk from a base, and `VertexReachPrefix.base_member_and_header_member_implies_base_member` is now public for downstream order reasoning. SPOT audits both wrappers, broad mark-and-sweep/SPOT closure passed, and refreshed profiling keeps both split modules under one second.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.

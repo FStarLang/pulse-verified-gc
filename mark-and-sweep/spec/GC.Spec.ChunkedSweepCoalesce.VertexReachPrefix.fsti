@@ -9,6 +9,21 @@ open GC.Spec.Heap
 module MH = GC.Spec.MajorHeap
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 
+val base_member_and_header_member_implies_base_member
+    (final: MH.major_heap)
+    (idx: nat)
+    (base: hp_addr)
+    (fb: obj_addr)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        idx < Seq.length final /\
+        Seq.mem fb (MH.objects_in_chunk_from (Seq.index final idx) base) /\
+        Seq.mem target
+          (MH.objects_in_chunk_from (Seq.index final idx) (hd_address fb)))
+      (ensures
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index final idx) base))
+
 val chunked_flush_blue_prefix_preserves_base_member
     (mh: MH.major_heap)
     (idx: nat)
