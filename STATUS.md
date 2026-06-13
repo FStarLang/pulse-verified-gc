@@ -162,6 +162,8 @@ Follow-up checkpoint: `VertexSteps` now also has small readiness-step lemmas for
 
 Follow-up checkpoint: a new split module, `GC.Spec.ChunkedSweepCoalesce.VertexOrder`, isolates the first chunk-order arithmetic obligation for that readiness derivation. It proves that a nonblack head step extends the pending blue run to the next object start while preserving the after-member bounds needed by the suffix traversal; the module verifies with refreshed split queries in under one second.
 
+Follow-up checkpoint: `VertexOrder` now names the chunk-order traversal precondition (`after_member_chunk_order_pre`) and proves the nonblack-head precondition transfer to the tail start. This packages the wosize-tail transfer, protected-object extent monotonicity, and pending-blue-run arithmetic as a sub-second split proof for the future recursive readiness derivation.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
