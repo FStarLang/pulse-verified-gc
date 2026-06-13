@@ -34,6 +34,12 @@ let chunked_read_header (mh: MH.major_heap) (obj: obj_addr)
   : GTot (option U64.t)
   = MH.read_word_in_major mh (hd_address obj)
 
+let chunked_read_header_step (mh: MH.major_heap) (obj: obj_addr)
+  : Lemma
+      (chunked_read_header mh obj ==
+       MH.read_word_in_major mh (hd_address obj))
+  = ()
+
 let chunked_color_of_object (mh: MH.major_heap) (obj: obj_addr)
   : GTot (option Obj.color)
   = match chunked_read_header mh obj with
@@ -345,6 +351,14 @@ let chunked_is_infix_single_chunk_compat
 let chunked_sweep_aux_empty (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep_aux mh Seq.empty fp == (mh, fp))
   = ()
+
+let chunked_sweep_aux_empty_length
+    (mh: MH.major_heap) (objs: seq obj_addr) (fp: U64.t)
+  : Lemma
+      (requires Seq.length objs = 0)
+      (ensures chunked_sweep_aux mh objs fp == (mh, fp))
+  =
+  ()
 
 let chunked_sweep_step (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep mh fp == chunked_sweep_chunks mh mh fp)

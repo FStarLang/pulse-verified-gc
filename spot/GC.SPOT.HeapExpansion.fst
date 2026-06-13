@@ -34,6 +34,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
+module ChunkedSweepPres = GC.Spec.ChunkedSweepCoalesce.Preservation
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 module SpecGCPost = GC.Spec.Correctness
@@ -73,6 +74,249 @@ let spot_write_word_in_major_preserves_other_read
   =
   MHReadFrame.write_word_in_major_preserves_other_read
     mh write_addr value read_addr old
+
+let spot_chunked_sweep_read_header_step
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (ChunkedSweepDefs.chunked_read_header mh obj ==
+       MH.read_word_in_major mh (hd_address obj))
+  =
+  ChunkedSweepDefs.chunked_read_header_step mh obj
+
+let spot_chunked_set_object_color_preserves_other_read
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address obj)))
+      (ensures
+        MH.read_word_in_major
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color)
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_set_object_color_preserves_other_read
+    mh obj color read_addr old
+
+let spot_chunked_zero_fields_preserves_read_before
+  (mh: MH.major_heap)
+  (addr: U64.t)
+  (n: nat)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        U64.v read_addr + U64.v mword <= U64.v addr)
+      (ensures
+        MH.read_word_in_major
+          (ChunkedSweepDefs.chunked_zero_fields mh addr n)
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_zero_fields_preserves_read_before
+    mh addr n read_addr old
+
+let spot_chunked_zero_fields_preserves_read_after
+  (mh: MH.major_heap)
+  (addr: U64.t)
+  (n: nat)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        U64.v addr + n * U64.v mword <= U64.v read_addr)
+      (ensures
+        MH.read_word_in_major
+          (ChunkedSweepDefs.chunked_zero_fields mh addr n)
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_zero_fields_preserves_read_after
+    mh addr n read_addr old
+
+let spot_chunked_flush_blue_preserves_read_before
+  (mh: MH.major_heap)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        U64.v read_addr + U64.v mword * 2 <= U64.v first_blue)
+      (ensures
+        MH.read_word_in_major
+          (fst (ChunkedSweepDefs.chunked_flush_blue
+            mh first_blue run_words fp))
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_flush_blue_preserves_read_before
+    mh first_blue run_words fp read_addr old
+
+let spot_chunked_flush_blue_preserves_read_after
+  (mh: MH.major_heap)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword <= U64.v read_addr))
+      (ensures
+        MH.read_word_in_major
+          (fst (ChunkedSweepDefs.chunked_flush_blue
+            mh first_blue run_words fp))
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_flush_blue_preserves_read_after
+    mh first_blue run_words fp read_addr old
+
+let spot_chunked_flush_blue_preserves_other_read
+  (mh: MH.major_heap)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (run_words = 0 \/
+         U64.v read_addr + U64.v mword * 2 <= U64.v first_blue \/
+         U64.v first_blue + (run_words - 1) * U64.v mword <= U64.v read_addr))
+      (ensures
+        MH.read_word_in_major
+          (fst (ChunkedSweepDefs.chunked_flush_blue
+            mh first_blue run_words fp))
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_flush_blue_preserves_other_read
+    mh first_blue run_words fp read_addr old
+
+let spot_chunked_make_white_preserves_other_read
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address obj)))
+      (ensures
+        MH.read_word_in_major
+          (ChunkedSweepDefs.chunked_make_white mh obj)
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_make_white_preserves_other_read
+    mh obj read_addr old
+
+let spot_chunked_make_blue_preserves_other_read
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address obj)))
+      (ensures
+        MH.read_word_in_major
+          (ChunkedSweepDefs.chunked_make_blue mh obj)
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_make_blue_preserves_other_read
+    mh obj read_addr old
+
+let spot_chunked_flush_blue_make_white_preserves_other_read
+  (mh: MH.major_heap)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  (obj: obj_addr)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (run_words = 0 \/
+         U64.v read_addr + U64.v mword * 2 <= U64.v first_blue \/
+         U64.v first_blue + (run_words - 1) * U64.v mword <= U64.v read_addr) /\
+        (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address obj)))
+      (ensures
+        MH.read_word_in_major
+          (ChunkedSweepDefs.chunked_make_white
+            (fst (ChunkedSweepDefs.chunked_flush_blue
+              mh first_blue run_words fp))
+            obj)
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_flush_blue_make_white_preserves_other_read
+    mh first_blue run_words fp obj read_addr old
+
+let spot_chunked_sweep_aux_empty_length
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (fp: U64.t)
+  : Lemma
+      (requires Seq.length objs = 0)
+      (ensures ChunkedSweepDefs.chunked_sweep_aux mh objs fp == (mh, fp))
+  =
+  ChunkedSweepDefs.chunked_sweep_aux_empty_length mh objs fp
+
+let spot_chunked_sweep_object_preserves_other_read
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address obj)) /\
+        (U64.v obj + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v obj))
+      (ensures
+        MH.read_word_in_major
+          (fst (ChunkedSweepDefs.chunked_sweep_object mh obj fp))
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_sweep_object_preserves_other_read
+    mh obj fp read_addr old
+
+let spot_chunked_sweep_aux_preserves_other_read
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (forall (obj: obj_addr). Seq.mem obj objs ==>
+          (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+           U64.v read_addr + U64.v mword <= U64.v (hd_address obj)) /\
+          (U64.v obj + U64.v mword <= U64.v read_addr \/
+           U64.v read_addr + U64.v mword <= U64.v obj)))
+      (ensures
+        MH.read_word_in_major
+          (fst (ChunkedSweepDefs.chunked_sweep_aux mh objs fp))
+          read_addr == Some old)
+  =
+  ChunkedSweepPres.chunked_sweep_aux_preserves_other_read
+    mh objs fp read_addr old
 
 let spot_major_fl_head_wosize_single_chunk_from_dense
   (g: heap) (fp: U64.t) (fuel: nat)

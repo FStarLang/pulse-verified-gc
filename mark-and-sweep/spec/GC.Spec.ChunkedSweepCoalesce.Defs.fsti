@@ -18,6 +18,12 @@ val chunked_read_header
   (mh: MH.major_heap) (obj: obj_addr)
   : GTot (option U64.t)
 
+val chunked_read_header_step
+  (mh: MH.major_heap) (obj: obj_addr)
+  : Lemma
+      (chunked_read_header mh obj ==
+       MH.read_word_in_major mh (hd_address obj))
+
 val chunked_color_of_object
   (mh: MH.major_heap) (obj: obj_addr)
   : GTot (option Obj.color)
@@ -155,6 +161,12 @@ val chunked_is_infix_single_chunk_compat
 val chunked_sweep_aux_empty
   (mh: MH.major_heap) (fp: U64.t)
   : Lemma (chunked_sweep_aux mh Seq.empty fp == (mh, fp))
+
+val chunked_sweep_aux_empty_length
+  (mh: MH.major_heap) (objs: seq obj_addr) (fp: U64.t)
+  : Lemma
+      (requires Seq.length objs = 0)
+      (ensures chunked_sweep_aux mh objs fp == (mh, fp))
 
 val chunked_sweep_step:
   mh:MH.major_heap ->
