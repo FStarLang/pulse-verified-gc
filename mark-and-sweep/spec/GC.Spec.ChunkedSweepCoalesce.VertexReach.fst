@@ -443,3 +443,36 @@ let rec chunked_zero_fields_before_preserves_objects_from
     end
   end
 #pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_make_white_before_preserves_objects_from
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Defs.chunked_read_header mh obj == Some hdr /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address obj) + U64.v mword <= U64.v start)
+      (ensures
+        (let mh' = Defs.chunked_make_white mh obj in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  Defs.chunked_make_white_step mh obj;
+  Defs.chunked_set_object_color_some mh obj Header.White hdr;
+  Defs.chunked_read_header_step mh obj;
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  major_write_word_or_same_before_preserves_objects_from
+    mh idx start (hd_address obj) (Obj.colorHeader hdr Header.White)
+#pop-options

@@ -179,3 +179,27 @@ val chunked_zero_fields_before_preserves_objects_from
          MH.chunk_start (Seq.index mh idx) /\
          MH.chunk_end (Seq.index mh' idx) ==
          MH.chunk_end (Seq.index mh idx)))
+
+val chunked_make_white_before_preserves_objects_from
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Defs.chunked_read_header mh obj == Some hdr /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address obj) + U64.v mword <= U64.v start)
+      (ensures
+        (let mh' = Defs.chunked_make_white mh obj in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
