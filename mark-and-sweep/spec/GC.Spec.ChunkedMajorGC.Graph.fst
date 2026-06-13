@@ -87,6 +87,18 @@ let chunked_major_successors_preserved
     chunked_major_edge mh_init x y <==>
     chunked_major_edge mh_final x y
 
+let chunked_major_successors_preserved_elim
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (x: obj_addr)
+  : Lemma
+      (requires chunked_major_successors_preserved mh_init mh_final x)
+      (ensures
+        forall (y: obj_addr).
+          chunked_major_edge mh_init x y <==>
+          chunked_major_edge mh_final x y)
+  = ()
+
 let chunked_major_vertex_single_chunk_compat (g: heap) (x: obj_addr)
   : Lemma
       (ensures
