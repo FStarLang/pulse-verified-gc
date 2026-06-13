@@ -3553,6 +3553,22 @@ let spot_chunked_major_live_subgraph_edges_elim
   ChunkedMajorGCGraph.chunked_major_live_subgraph_edges_elim
     mh_init mh_final live
 
+let spot_chunked_major_live_subgraph_preserved_trans
+  (mh0 mh1 mh2: MH.major_heap)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh0 mh1 live /\
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh1 mh2 live)
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh0 mh2 live)
+  =
+  ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved_trans
+    mh0 mh1 mh2 live
+
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
   (st: Seq.seq obj_addr)

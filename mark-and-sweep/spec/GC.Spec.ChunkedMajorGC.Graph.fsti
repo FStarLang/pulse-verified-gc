@@ -186,6 +186,16 @@ val chunked_major_live_subgraph_edges_elim
           (chunked_major_edge mh_init x y <==>
            chunked_major_edge mh_final x y))
 
+val chunked_major_live_subgraph_preserved_trans
+  (mh0 mh1 mh2: MH.major_heap)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        chunked_major_live_subgraph_preserved mh0 mh1 live /\
+        chunked_major_live_subgraph_preserved mh1 mh2 live)
+      (ensures
+        chunked_major_live_subgraph_preserved mh0 mh2 live)
+
 val chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
