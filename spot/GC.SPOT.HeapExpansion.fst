@@ -12,6 +12,7 @@ open GC.Gen.Promote
 open GC.Gen.Cheney
 
 module MH = GC.Spec.MajorHeap
+module MHReadFrame = GC.Spec.MajorHeap.ReadFrame
 module Obj = GC.Spec.Object
 module Header = GC.Lib.Header
 module Fields = GC.Spec.Fields
@@ -54,6 +55,25 @@ module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let spot_write_word_in_major_preserves_other_read
+  (mh: MH.major_heap)
+  (write_addr: hp_addr)
+  (value: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.read_word_in_major mh read_addr == Some old /\
+        (U64.v write_addr + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v write_addr))
+      (ensures
+        (match MH.write_word_in_major mh write_addr value with
+        | Some mh' -> MH.read_word_in_major mh' read_addr == Some old
+        | None -> True))
+  =
+  MHReadFrame.write_word_in_major_preserves_other_read
+    mh write_addr value read_addr old
+
 let spot_major_fl_head_wosize_single_chunk_from_dense
   (g: heap) (fp: U64.t) (fuel: nat)
   : Lemma
