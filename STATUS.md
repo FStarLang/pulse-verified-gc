@@ -200,6 +200,8 @@ Follow-up checkpoint: added `LivePreservation.chunked_fused_aux_preserves_get_fi
 
 Follow-up checkpoint: split raw-read sequencing support into `GC.Spec.ChunkedSweepCoalesce.SequencePreservation`. The new module exposes before/after/other-chunk `chunked_fused_aux` read-framing helpers, so recursive chunk traversal proofs can preserve the raw protected field read needed by the next step instead of only preserving `chunked_get_field`. The split module verifies and profiles under one second with refreshed split queries, and SPOT audits the public helpers.
 
+Follow-up checkpoint: `SequencePreservation` now has the first recursive chunk-list framing theorem. `chunked_fused_sweep_coalesce_chunk_range_preserves_read` proves that any `Seq.slice source start stop` not containing the protected target chunk preserves the raw field read across `chunked_fused_sweep_coalesce_chunks`; thin prefix/suffix wrappers specialize it to chunks before and after the target chunk. The proof uses `Seq` slice head/tail lemmas and the raw other-chunk helper, remains sub-second under refreshed profiling, and is SPOT-audited.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.

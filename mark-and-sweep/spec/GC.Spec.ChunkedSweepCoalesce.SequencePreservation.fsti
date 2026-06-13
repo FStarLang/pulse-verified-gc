@@ -75,3 +75,79 @@ val chunked_fused_aux_preserves_read_from_other_chunk
            source work (MH.objects_in_chunk (Seq.index source proc_idx))
            0UL 0 fp) in
          MH.read_word_in_major final read_addr == Some old))
+
+val chunked_fused_sweep_coalesce_chunk_range_preserves_read
+  (source work: MH.major_heap)
+  (start stop target_idx: nat)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        start <= stop /\
+        stop <= Seq.length source /\
+        target_idx < Seq.length source /\
+        (target_idx < start \/ stop <= target_idx) /\
+        MH.word_in_chunk (Seq.index source target_idx) read_addr /\
+        MH.read_word_in_major work read_addr == Some old /\
+        (forall (idx: nat). start <= idx /\ idx < stop ==>
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                  source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o))
+      (ensures
+        (let final =
+          fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_sweep_coalesce_chunks
+            (Seq.slice source start stop) source work fp) in
+         MH.read_word_in_major final read_addr == Some old))
+
+val chunked_fused_sweep_coalesce_prefix_preserves_read
+  (source work: MH.major_heap)
+  (target_idx: nat)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        target_idx < Seq.length source /\
+        MH.word_in_chunk (Seq.index source target_idx) read_addr /\
+        MH.read_word_in_major work read_addr == Some old /\
+        (forall (idx: nat). idx < target_idx ==>
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                  source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o))
+      (ensures
+        (let final =
+          fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_sweep_coalesce_chunks
+            (Seq.slice source 0 target_idx) source work fp) in
+         MH.read_word_in_major final read_addr == Some old))
+
+val chunked_fused_sweep_coalesce_suffix_preserves_read
+  (source work: MH.major_heap)
+  (target_idx: nat)
+  (fp: U64.t)
+  (read_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        target_idx < Seq.length source /\
+        MH.word_in_chunk (Seq.index source target_idx) read_addr /\
+        MH.read_word_in_major work read_addr == Some old /\
+        (forall (idx: nat). target_idx < idx /\ idx < Seq.length source ==>
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                  source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o))
+      (ensures
+        (let final =
+          fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_sweep_coalesce_chunks
+            (Seq.slice source (target_idx + 1) (Seq.length source))
+            source work fp) in
+         MH.read_word_in_major final read_addr == Some old))
