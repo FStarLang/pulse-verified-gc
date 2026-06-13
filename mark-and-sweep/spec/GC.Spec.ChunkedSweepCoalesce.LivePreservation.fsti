@@ -37,6 +37,67 @@ val chunked_fused_aux_black_head_preserves_wosize
           target ==
         Obj.getWosize hdr)
 
+val chunked_fused_aux_black_head_preserves_vertex_from_chunk
+    (source work: MH.major_heap)
+    (idx: nat)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap work /\
+        idx < Seq.length work /\
+        MH.chunk_start (Seq.index work idx) == MH.chunk_start c /\
+        MH.chunk_end (Seq.index work idx) == MH.chunk_end c /\
+        Seq.mem target (MH.objects_in_chunk_from c start) /\
+        Seq.length (MH.objects_in_chunk_from c start) > 0 /\
+        Seq.head (MH.objects_in_chunk_from c start) == target /\
+        hd_address target == start /\
+        Seq.mem target
+          (MH.objects_in_chunk_from (Seq.index work idx) c.base) /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header
+          work target == Some hdr /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target /\
+        (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk_from c start) ==>
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                   source o) ==
+          MH.object_wosize_in_chunk c o) /\
+        (run_words = 0 \/
+         (~(U64.v first_blue < U64.v mword) /\
+          ~(U64.v first_blue >= heap_size) /\
+          ~(U64.v first_blue % U64.v mword <> 0) /\
+          run_words - 1 < pow2 54 /\
+          run_words - 1 < pow2 64 /\
+          U64.v first_blue + (run_words - 1) * U64.v mword ==
+            U64.v start /\
+          (let fb : obj_addr = first_blue in
+           Seq.mem fb
+             (MH.objects_in_chunk_from (Seq.index work idx) c.base) /\
+           U64.v fb < MH.chunk_end (Seq.index work idx) /\
+           U64.v start <= MH.chunk_end (Seq.index work idx) /\
+           MH.word_in_chunk (Seq.index work idx) (hd_address fb) /\
+           Seq.mem target
+             (MH.objects_in_chunk_from (Seq.index work idx) start)))))
+      (ensures
+        (let final =
+          fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk_from c start)
+            first_blue run_words fp) in
+         MH.well_formed_major_heap final /\
+         idx < Seq.length final /\
+         Seq.mem target
+           (MH.objects_in_chunk_from (Seq.index final idx) c.base) /\
+         GC.Spec.ChunkedMajorGC.Graph.chunked_major_vertex final target /\
+         MH.chunk_start (Seq.index final idx) ==
+         MH.chunk_start (Seq.index work idx) /\
+         MH.chunk_end (Seq.index final idx) ==
+         MH.chunk_end (Seq.index work idx)))
+
 val chunked_fused_aux_live_wosize_preserved_from_chunk
   (source: MH.major_heap)
   (c: MH.heap_chunk)
