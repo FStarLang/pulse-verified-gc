@@ -238,3 +238,97 @@ val chunked_make_white_after_member_preserves_chunk_member
         MH.chunk_start (Seq.index mh idx) /\
         MH.chunk_end (Seq.index (Defs.chunked_make_white mh obj) idx) ==
         MH.chunk_end (Seq.index mh idx))
+
+val major_write_word_or_same_payload_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (blk: obj_addr)
+  (addr: hp_addr)
+  (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem blk (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) addr /\
+        U64.v blk <= U64.v addr /\
+        U64.v addr + U64.v mword <=
+          U64.v blk +
+            MH.object_wosize_in_chunk (Seq.index mh idx) blk *
+              U64.v mword)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same mh addr value in
+        MH.well_formed_major_heap mh' /\
+        idx < Seq.length mh' /\
+        MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+        MH.objects_in_chunk_from (Seq.index mh idx) start /\
+        MH.object_wosize_in_chunk (Seq.index mh' idx) blk ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) blk /\
+        MH.chunk_start (Seq.index mh' idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end (Seq.index mh' idx) ==
+        MH.chunk_end (Seq.index mh idx)))
+
+val chunked_zero_fields_payload_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (blk: obj_addr)
+  (addr: U64.t)
+  (n: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem blk (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        U64.v addr % U64.v mword == 0 /\
+        U64.v blk <= U64.v addr /\
+        U64.v addr + n * U64.v mword <=
+          U64.v blk +
+            MH.object_wosize_in_chunk (Seq.index mh idx) blk *
+              U64.v mword)
+      (ensures
+        (let mh' = Defs.chunked_zero_fields mh addr n in
+        MH.well_formed_major_heap mh' /\
+        idx < Seq.length mh' /\
+        MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+        MH.objects_in_chunk_from (Seq.index mh idx) start /\
+        MH.object_wosize_in_chunk (Seq.index mh' idx) blk ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) blk /\
+        MH.chunk_start (Seq.index mh' idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end (Seq.index mh' idx) ==
+        MH.chunk_end (Seq.index mh idx)))
+
+val chunked_flush_blue_prefix_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (fb: obj_addr)
+  (run_words: pos)
+  (start: hp_addr)
+  (target: obj_addr)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        U64.v fb < MH.chunk_end (Seq.index mh idx) /\
+        U64.v fb + (run_words - 1) * U64.v mword == U64.v start /\
+        run_words - 1 < pow2 54 /\
+        run_words - 1 < pow2 64 /\
+        U64.v start <= MH.chunk_end (Seq.index mh idx) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address fb) /\
+        Seq.mem target
+          (MH.objects_in_chunk_from (Seq.index mh idx) start))
+      (ensures
+        (let final = fst (Defs.chunked_flush_blue mh fb run_words fp) in
+        MH.well_formed_major_heap final /\
+        idx < Seq.length final /\
+        Seq.mem target
+          (MH.objects_in_chunk_from
+            (Seq.index final idx) (hd_address fb)) /\
+        MH.chunk_start (Seq.index final idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end (Seq.index final idx) ==
+        MH.chunk_end (Seq.index mh idx)))
