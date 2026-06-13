@@ -130,3 +130,26 @@ val major_write_member_header_same_wosize_preserves_objects_from
          MH.chunk_start (Seq.index mh idx) /\
          MH.chunk_end (Seq.index mh' idx) ==
          MH.chunk_end (Seq.index mh idx)))
+
+val major_write_word_or_same_before_preserves_objects_from
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (addr: hp_addr)
+    (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.word_in_chunk (Seq.index mh idx) addr /\
+        U64.v addr + U64.v mword <= U64.v start)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same mh addr value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))

@@ -180,6 +180,8 @@ Follow-up checkpoint: proved the head case needed by live-vertex survival. `Vert
 
 Follow-up checkpoint: lifted the head case through the after-target suffix traversal. `LivePreservation.chunked_fused_aux_black_head_preserves_vertex_from_chunk` proves that once a black live target is the current fused-traversal head, prefix flushing, whitening, and the rest of that chunk's traversal preserve the target as a final chunked-major vertex. SPOT audits the contract, broad mark-and-sweep/SPOT closure passed, and refreshed `LivePreservation` profiling is about one second.
 
+Follow-up checkpoint: added the first suffix-framing helper for lifting live-vertex survival through prefixes before the target. `VertexReach.major_write_word_or_same_before_preserves_objects_from` proves that a chunked major write strictly before a suffix start preserves that suffix's object walk, giving the upcoming prefix-recursion proof a small reusable contract instead of reopening `MajorHeap`. SPOT audits the wrapper, broad mark-and-sweep/SPOT closure passed, and refreshed `VertexReach` profiling remains about one second.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.

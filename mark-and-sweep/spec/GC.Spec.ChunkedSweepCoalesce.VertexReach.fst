@@ -327,3 +327,40 @@ let major_write_member_header_same_wosize_preserves_objects_from
   assert (MH.object_wosize_in_chunk c' obj ==
           MH.object_wosize_in_chunk c obj)
 #pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let major_write_word_or_same_before_preserves_objects_from
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (addr: hp_addr)
+    (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.word_in_chunk (Seq.index mh idx) addr /\
+        U64.v addr + U64.v mword <= U64.v start)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same mh addr value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  let c = Seq.index mh idx in
+  let c' = MH.write_word_in_chunk c addr value in
+  MH.lookup_chunk_index_word_in_chunk mh addr idx;
+  MH.write_word_in_major_at_lookup_index mh addr value idx;
+  assert (MH.write_word_in_major mh addr value == Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') addr value;
+  MH.write_word_at_index_preserves_wf mh addr value idx;
+  MH.objects_in_chunk_from_write_before_preserves c start addr value;
+  MH.write_word_in_chunk_preserves_range c addr value;
+  assert (Seq.index (Seq.upd mh idx c') idx == c')
+#pop-options
