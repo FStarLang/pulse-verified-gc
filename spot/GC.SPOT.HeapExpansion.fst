@@ -1452,6 +1452,25 @@ let spot_chunked_major_successors_preserved_from_fields
   ChunkedMajorGCGraph.chunked_major_successors_preserved_from_fields
     mh_init mh_final x
 
+let spot_chunked_major_live_subgraph_preserved_from_fields
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          live x ==>
+          ChunkedMajorGCGraph.chunked_major_field_preserved
+            mh_init mh_final x) /\
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          mh_init mh_final)
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh_init mh_final live)
+  =
+  ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved_from_fields
+    mh_init mh_final live
+
 let spot_chunked_major_successors_preserved_elim
   (mh_init: MH.major_heap)
   (mh_final: MH.major_heap)

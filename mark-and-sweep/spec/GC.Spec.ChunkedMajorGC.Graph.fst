@@ -362,3 +362,41 @@ let chunked_major_successors_preserved_from_fields
     FStar.Classical.forall_intro (FStar.Classical.move_requires backward)
   in
   FStar.Classical.forall_intro eqv
+
+let chunked_major_live_subgraph_preserved_from_fields
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          live x ==>
+          chunked_major_field_preserved mh_init mh_final x) /\
+        chunked_major_pointer_classification_preserved mh_init mh_final)
+      (ensures
+        chunked_major_live_subgraph_preserved mh_init mh_final live)
+  =
+  let vertices (x: obj_addr)
+    : Lemma
+        (requires live x)
+        (ensures
+          chunked_major_vertex mh_init x /\
+          chunked_major_vertex mh_final x)
+    =
+    assert (chunked_major_field_preserved mh_init mh_final x)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires vertices);
+  let edges (x: obj_addr)
+    : Lemma
+        (requires live x)
+        (ensures
+          forall (y: obj_addr).
+            chunked_major_edge mh_init x y <==>
+            chunked_major_edge mh_final x y)
+    =
+    assert (chunked_major_field_preserved mh_init mh_final x);
+    chunked_major_successors_preserved_from_fields mh_init mh_final x;
+    chunked_major_successors_preserved_elim mh_init mh_final x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires edges);
+  chunked_major_live_subgraph_preserved_intro mh_init mh_final live

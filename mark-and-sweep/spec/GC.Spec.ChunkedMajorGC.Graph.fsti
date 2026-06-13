@@ -178,3 +178,16 @@ val chunked_major_successors_preserved_from_fields
         chunked_major_pointer_classification_preserved mh_init mh_final)
       (ensures
         chunked_major_successors_preserved mh_init mh_final x)
+
+val chunked_major_live_subgraph_preserved_from_fields
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          live x ==>
+          chunked_major_field_preserved mh_init mh_final x) /\
+        chunked_major_pointer_classification_preserved mh_init mh_final)
+      (ensures
+        chunked_major_live_subgraph_preserved mh_init mh_final live)
