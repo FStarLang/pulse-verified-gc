@@ -15,6 +15,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module MH = GC.Spec.MajorHeap
 module DenseCorrectness = GC.Spec.Correctness
 module SweepInv = GC.Spec.SweepInv
+module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 
@@ -84,4 +85,38 @@ val chunked_major_gc_bounded_single_chunk_postcondition
         (let (mh_final, fp_final) =
            ChunkedMajorGC.chunked_major_gc_bounded
              (MH.single_chunk_major_heap h_init) cap fuel in
+         chunked_gc_postcondition mh_final))
+
+val chunked_major_gc_bounded_single_chunk_full_correctness
+  (h_init: heap)
+  (roots: Seq.seq obj_addr)
+  (fp: U64.t)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        well_formed_heap h_init /\
+        Seq.length (objects zero_addr h_init) > 0 /\
+        SweepInv.heap_objects_dense h_init /\
+        root_props h_init roots /\
+        GC.Spec.Sweep.fp_in_heap fp h_init /\
+        no_black_objects h_init /\
+        no_pointer_to_blue h_init /\
+        no_scan_invariant h_init /\
+        fuel >= GC.Spec.MarkBounded.count_non_black h_init /\
+        ChunkedMarkOuter.mark_bounded_single_chunk_ready h_init cap fuel /\
+        (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) /\
+          (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
+        (let graph = create_graph h_init in
+         let roots' = HeapGraph.coerce_to_vertex_list roots in
+         graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+      (ensures
+        (let h_mark = GC.Spec.MarkBounded.mark_bounded h_init cap fuel in
+         let (h_final, dense_fp_final) =
+           DenseFused.fused_sweep_coalesce h_mark in
+         let (mh_final, chunked_fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded
+             (MH.single_chunk_major_heap h_init) cap fuel in
+         mh_final == MH.single_chunk_major_heap h_final /\
+         DenseCorrectness.full_gc_correctness h_init h_final roots /\
          chunked_gc_postcondition mh_final))

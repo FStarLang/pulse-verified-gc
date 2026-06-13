@@ -93,6 +93,32 @@ let chunked_gc_postcondition_single_chunk_from_dense (g: heap)
   MH.single_chunk_major_heap_wf g;
   chunked_no_gray_or_black_single_chunk_from_dense g
 
+let bounded_mark_no_gray_for_fused
+    (h_init: heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        well_formed_heap h_init /\
+        Seq.length (objects zero_addr h_init) > 0 /\
+        SweepInv.heap_objects_dense h_init /\
+        fuel >= BMark.count_non_black h_init)
+      (ensures
+        (let h_mark = BMark.mark_bounded h_init cap fuel in
+         forall (x: obj_addr). Seq.mem x (Fields.objects zero_addr h_mark) ==>
+           ~(Obj.is_gray x h_mark)))
+  =
+  let h_mark = BMark.mark_bounded h_init cap fuel in
+  BMark.mark_bounded_completes h_init cap fuel;
+  let no_gray (x: obj_addr)
+    : Lemma
+        (requires Seq.mem x (Fields.objects zero_addr h_mark))
+        (ensures ~(Obj.is_gray x h_mark))
+    =
+    SweepInv.no_gray_elim x h_mark
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_gray)
+
 let chunked_major_gc_bounded_single_chunk_postcondition
     (h_init: heap)
     (roots: Seq.seq obj_addr)
@@ -128,15 +154,7 @@ let chunked_major_gc_bounded_single_chunk_postcondition
   DenseCorrectness.mark_post_elim_density h_init h_mark roots fp;
   DenseCorrectness.mark_post_elim_fp h_init h_mark roots fp;
   DenseCorrectness.mark_post_elim_no_grey h_init h_mark roots fp;
-  BMark.mark_bounded_completes h_init cap fuel;
-  let no_gray (x: obj_addr)
-    : Lemma
-        (requires Seq.mem x (Fields.objects zero_addr h_mark))
-        (ensures ~(Obj.is_gray x h_mark))
-    =
-    SweepInv.no_gray_elim x h_mark
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires no_gray);
+  bounded_mark_no_gray_for_fused h_init cap fuel;
   assert (forall (x: obj_addr). Seq.mem x (Fields.objects zero_addr h_mark) ==>
     ~(Obj.is_gray x h_mark));
   SpecSweepCoalesce.fused_eq_sweep_coalesce h_mark fp;
@@ -146,3 +164,56 @@ let chunked_major_gc_bounded_single_chunk_postcondition
   let (h_final, fp_final) = DenseFused.fused_sweep_coalesce h_mark in
   assert (DenseCorrectness.gc_postcondition h_final);
   chunked_gc_postcondition_single_chunk_from_dense h_final
+
+let chunked_major_gc_bounded_single_chunk_full_correctness
+    (h_init: heap)
+    (roots: Seq.seq obj_addr)
+    (fp: U64.t)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        well_formed_heap h_init /\
+        Seq.length (objects zero_addr h_init) > 0 /\
+        SweepInv.heap_objects_dense h_init /\
+        root_props h_init roots /\
+        GC.Spec.Sweep.fp_in_heap fp h_init /\
+        no_black_objects h_init /\
+        no_pointer_to_blue h_init /\
+        no_scan_invariant h_init /\
+        fuel >= BMark.count_non_black h_init /\
+        ChunkedMarkOuter.mark_bounded_single_chunk_ready h_init cap fuel /\
+        (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) /\
+          (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
+        (let graph = create_graph h_init in
+         let roots' = HeapGraph.coerce_to_vertex_list roots in
+         graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+      (ensures
+        (let h_mark = BMark.mark_bounded h_init cap fuel in
+         let (h_final, dense_fp_final) =
+           DenseFused.fused_sweep_coalesce h_mark in
+         let (mh_final, chunked_fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded
+             (MH.single_chunk_major_heap h_init) cap fuel in
+         mh_final == MH.single_chunk_major_heap h_final /\
+         DenseCorrectness.full_gc_correctness h_init h_final roots /\
+         chunked_gc_postcondition mh_final))
+  =
+  let h_mark = BMark.mark_bounded h_init cap fuel in
+  BMarkCorr.mark_bounded_satisfies_mark_post h_init roots fp cap fuel;
+  DenseCorrectness.mark_post_elim_wfh h_init h_mark roots fp;
+  DenseCorrectness.mark_post_elim_density h_init h_mark roots fp;
+  DenseCorrectness.mark_post_elim_fp h_init h_mark roots fp;
+  bounded_mark_no_gray_for_fused h_init cap fuel;
+  assert (forall (x: obj_addr). Seq.mem x (Fields.objects zero_addr h_mark) ==>
+    ~(Obj.is_gray x h_mark));
+  SpecSweepCoalesce.fused_eq_sweep_coalesce h_mark fp;
+  DenseCorrectness.full_gc_correctness_through_coalesce_gen
+    h_init h_mark roots fp;
+  ChunkedMajorGC.chunked_major_gc_bounded_single_chunk_compat
+    h_init cap fuel;
+  let (h_final, dense_fp_final) =
+    DenseFused.fused_sweep_coalesce h_mark in
+  assert (DenseCorrectness.full_gc_correctness h_init h_final roots);
+  chunked_major_gc_bounded_single_chunk_postcondition
+    h_init roots fp cap fuel
