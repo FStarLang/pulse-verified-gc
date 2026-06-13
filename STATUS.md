@@ -168,6 +168,8 @@ Follow-up checkpoint: `VertexOrder.black_tail_chunk_order_pre_from_head` now pro
 
 Follow-up checkpoint: `VertexOrder` now also has black-head and nonblack-head readiness composition lemmas. These bridge the named chunk-order precondition plus a tail readiness fact into `VertexSteps.chunked_fused_aux_after_member_ready`, isolating the final recursive proof from the branch-level readiness unfolding that previously produced a hard whole-branch VC.
 
+Follow-up checkpoint: the chunk-order readiness derivation is now proved. `VertexOrder.chunked_fused_aux_after_member_ready_from_chunk_order` recursively derives `VertexSteps.chunked_fused_aux_after_member_ready` from the named `after_member_chunk_order_pre`, using the split tail-transfer and branch-composition lemmas instead of the abandoned monolithic proof. The module profiles at about one second with refreshed split queries, and `GC.SPOT.HeapExpansion` audits the new theorem.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.

@@ -37,6 +37,8 @@ module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
 module ChunkedSweepPres = GC.Spec.ChunkedSweepCoalesce.Preservation
 module ChunkedSweepLive = GC.Spec.ChunkedSweepCoalesce.LivePreservation
 module ChunkedSweepVertex = GC.Spec.ChunkedSweepCoalesce.VertexPreservation
+module ChunkedSweepVertexSteps = GC.Spec.ChunkedSweepCoalesce.VertexSteps
+module ChunkedSweepVertexOrder = GC.Spec.ChunkedSweepCoalesce.VertexOrder
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 module SpecGCPost = GC.Spec.Correctness
@@ -1273,6 +1275,28 @@ let spot_chunked_make_white_after_member_preserves_objects_from
   =
   ChunkedSweepVertex.chunked_make_white_after_member_preserves_objects_from
     mh idx start protected obj
+
+let spot_chunked_fused_aux_after_member_ready_from_chunk_order
+    (source work: MH.major_heap)
+    (idx: nat)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (protected_start: hp_addr)
+    (protected: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Lemma
+      (requires
+        ChunkedSweepVertexOrder.after_member_chunk_order_pre
+          source work idx c start protected_start protected first_blue run_words)
+      (ensures
+        ChunkedSweepVertexSteps.chunked_fused_aux_after_member_ready
+          source work idx protected_start protected
+          (MH.objects_in_chunk_from c start) first_blue run_words fp)
+  =
+  ChunkedSweepVertexOrder.chunked_fused_aux_after_member_ready_from_chunk_order
+    source work idx c start protected_start protected first_blue run_words fp
 #pop-options
 
 let spot_major_fl_head_wosize_single_chunk_from_dense
