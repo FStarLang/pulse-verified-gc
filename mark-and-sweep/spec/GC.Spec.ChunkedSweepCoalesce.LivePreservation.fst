@@ -389,6 +389,114 @@ let object_after_start_header_at_or_after
   assert (U64.v (hd_address target) + U64.v mword == U64.v target)
 #pop-options
 
+let pending_run_before_start
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+  =
+  idx < Seq.length work /\
+  (run_words = 0 \/
+   (~(U64.v first_blue < U64.v mword) /\
+    ~(U64.v first_blue >= heap_size) /\
+    ~(U64.v first_blue % U64.v mword <> 0) /\
+    run_words - 1 < pow2 54 /\
+    run_words - 1 < pow2 64 /\
+    U64.v first_blue + (run_words - 1) * U64.v mword ==
+      U64.v start /\
+    (let fb : obj_addr = first_blue in
+     let hd = hd_address fb in
+     Seq.mem fb (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+     U64.v fb < MH.chunk_end (Seq.index work idx) /\
+     U64.v start <= MH.chunk_end (Seq.index work idx) /\
+     MH.word_in_chunk (Seq.index work idx) hd)))
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let nonblack_tail_pending_run_before_start_from_empty
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start next_start: hp_addr)
+    (first: obj_addr)
+    (wz: Obj.wosize)
+  : Lemma
+      (requires
+        idx < Seq.length work /\
+        hd_address first == start /\
+        U64.v first == U64.v start + U64.v mword /\
+        Seq.mem first (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+        U64.v first < MH.chunk_end (Seq.index work idx) /\
+        MH.word_in_chunk (Seq.index work idx) start /\
+        U64.v start + (U64.v wz + 1) * U64.v mword ==
+          U64.v next_start /\
+        U64.v next_start <= MH.chunk_end (Seq.index work idx))
+      (ensures
+        pending_run_before_start work idx base next_start first (U64.v wz + 1))
+  =
+  let new_run = U64.v wz + 1 in
+  chunked_fused_aux_nonblack_run_end_at_next_start
+    start first 0UL 0 wz next_start;
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  assert (new_run > 0);
+  assert (new_run <> 0);
+  assert (new_run - 1 == U64.v wz);
+  assert (new_run - 1 < pow2 54);
+  assert (new_run - 1 < pow2 64);
+  assert (U64.v first + (new_run - 1) * U64.v mword ==
+          U64.v next_start);
+  assert (new_run * U64.v mword == (U64.v wz + 1) * U64.v mword);
+  assert (U64.v (hd_address first) + new_run * U64.v mword ==
+          U64.v next_start);
+  assert (U64.v first < MH.chunk_end (Seq.index work idx))
+
+let nonblack_tail_pending_run_before_start_from_nonempty
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start next_start: hp_addr)
+    (first: obj_addr)
+    (wz: Obj.wosize)
+    (first_blue: obj_addr)
+    (run_words: pos)
+  : Lemma
+      (requires
+        idx < Seq.length work /\
+        pending_run_before_start work idx base start first_blue run_words /\
+        U64.v first == U64.v start + U64.v mword /\
+        run_words + U64.v wz < pow2 54 /\
+        U64.v start + (U64.v wz + 1) * U64.v mword ==
+          U64.v next_start /\
+        U64.v next_start <= MH.chunk_end (Seq.index work idx))
+      (ensures
+        pending_run_before_start
+          work idx base next_start first_blue
+          (run_words + U64.v wz + 1))
+  =
+  let new_run = run_words + U64.v wz + 1 in
+  chunked_fused_aux_nonblack_run_end_at_next_start
+    start first first_blue run_words wz next_start;
+  FStar.Math.Lemmas.pow2_lt_compat 64 54;
+  assert (run_words > 0);
+  assert (run_words >= 1);
+  assert (new_run - 1 == (run_words - 1) + U64.v wz + 1);
+  assert (new_run - 1 == run_words + U64.v wz);
+  assert (new_run > run_words);
+  assert (new_run > 0);
+  assert (new_run <> 0);
+  assert (new_run - 1 < pow2 54);
+  assert (new_run - 1 < pow2 64);
+  assert (U64.v first_blue + (new_run - 1) * U64.v mword ==
+          U64.v next_start);
+  hd_address_spec first_blue;
+  assert (U64.v (hd_address first_blue) + U64.v mword == U64.v first_blue);
+  FStar.Math.Lemmas.distributivity_add_left
+    (new_run - 1) 1 (U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v (hd_address first_blue)) (U64.v mword)
+    ((new_run - 1) * U64.v mword);
+  assert (U64.v (hd_address first_blue) + new_run * U64.v mword ==
+          U64.v next_start)
+#pop-options
+
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_make_white_member_preserves_objects_from
     (mh: MH.major_heap)
