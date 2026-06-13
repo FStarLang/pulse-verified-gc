@@ -1354,6 +1354,31 @@ let spot_chunked_make_white_before_preserves_objects_from
   ChunkedSweepVertexReach.chunked_make_white_before_preserves_objects_from
     mh idx start obj hdr
 
+let spot_chunked_make_white_before_preserves_objects_from_at_index
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address obj) + U64.v mword <= U64.v start)
+      (ensures
+        (let mh' = ChunkedSweepDefs.chunked_make_white mh obj in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  ChunkedSweepVertexReach.chunked_make_white_before_preserves_objects_from_at_index
+    mh idx start obj
+
 let spot_chunked_flush_blue_then_make_white_head_preserves_base_member
   (mh: MH.major_heap)
   (idx: nat)
