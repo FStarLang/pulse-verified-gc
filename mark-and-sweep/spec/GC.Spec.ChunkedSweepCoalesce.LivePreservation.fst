@@ -314,6 +314,41 @@ let object_after_start_header_at_or_after
   assert (U64.v (hd_address target) + U64.v mword == U64.v target)
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let objects_in_chunk_tail_member_in_base
+    (c: MH.heap_chunk)
+    (base: hp_addr)
+    (start: hp_addr{U64.v start + U64.v mword < heap_size})
+    (next_start: hp_addr{U64.v next_start + U64.v mword < heap_size})
+    (first x: obj_addr)
+  : Lemma
+      (requires
+        U64.v base <= U64.v start /\
+        first == f_address start /\
+        Seq.mem first (MH.objects_in_chunk_from c base) /\
+        Seq.mem x (MH.objects_in_chunk_from c next_start) /\
+        U64.v start >= MH.chunk_start c /\
+        U64.v start + U64.v mword < MH.chunk_end c /\
+        (let header = MH.read_word_in_chunk c start in
+         let wz = Obj.getWosize header in
+         let obj_size_words = U64.v wz + 1 in
+         let next_start_nat =
+           U64.v start + obj_size_words * U64.v mword in
+         U64.v next_start == next_start_nat /\
+         next_start_nat < MH.chunk_end c /\
+         next_start_nat < pow2 64))
+      (ensures Seq.mem x (MH.objects_in_chunk_from c base))
+  =
+  let header = MH.read_word_in_chunk c start in
+  let wz = Obj.getWosize header in
+  let obj_size_words = U64.v wz + 1 in
+  let next_start_nat =
+    U64.v start + obj_size_words * U64.v mword in
+  MH.objects_in_chunk_from_tail_mem c start next_start x;
+  assert (Seq.mem x (MH.objects_in_chunk_from c start));
+  MH.objects_in_chunk_from_later_in_earlier c base start x
+#pop-options
+
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_make_white_member_preserves_objects_from
     (mh: MH.major_heap)
@@ -494,6 +529,63 @@ let chunked_fused_aux_black_prefix_prepare_tail
     mh1 idx suffix_start first;
   let mh2 = Defs.chunked_make_white mh1 first in
   ()
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_fused_aux_nonblack_prefix_prepare_tail
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start next_start: hp_addr)
+    (first: obj_addr)
+    (wz: Obj.wosize)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        idx < Seq.length work /\
+        Pending.pending_run_before_start
+          work idx base start first_blue run_words /\
+        Seq.mem first (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index work idx) start) /\
+        target <> first /\
+        hd_address first == start /\
+        U64.v first == U64.v start + U64.v mword /\
+        U64.v first < MH.chunk_end (Seq.index work idx) /\
+        MH.word_in_chunk (Seq.index work idx) start /\
+        MH.object_wosize_in_chunk (Seq.index work idx) first == U64.v wz /\
+        U64.v start + (U64.v wz + 1) * U64.v mword ==
+          U64.v next_start /\
+        U64.v next_start < MH.chunk_end (Seq.index work idx))
+      (ensures
+        (let new_first : U64.t = if run_words = 0 then first else first_blue in
+         let new_run = run_words + U64.v wz + 1 in
+         Pending.pending_run_before_start
+          work idx base next_start new_first new_run /\
+         Seq.mem target (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+         Seq.mem target
+           (MH.objects_in_chunk_from (Seq.index work idx) next_start)))
+  =
+  let c = Seq.index work idx in
+  let objs = MH.objects_in_chunk_from c start in
+  f_hd_roundtrip first;
+  assert (f_address start == first);
+  MH.objects_in_chunk_from_cons_step c start;
+  assert (Seq.head objs == first);
+  assert (Seq.tail objs == MH.objects_in_chunk_from c next_start);
+  Fields.mem_cons_lemma target first (Seq.tail objs);
+  assert (Seq.mem target (Seq.tail objs));
+  assert (Seq.mem target (MH.objects_in_chunk_from c next_start));
+  if run_words = 0 then begin
+    Pending.nonblack_tail_pending_run_before_start_from_empty
+      work idx base start next_start first wz
+  end else begin
+    nat_nonzero_pos run_words;
+    let rw : pos = run_words in
+    Pending.nonblack_tail_pending_run_before_start_from_nonempty
+      work idx base start next_start first wz first_blue rw
+  end
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"

@@ -1837,6 +1837,63 @@ let spot_chunked_fused_aux_nonblack_run_end_at_next_start
   ChunkedSweepPending.chunked_fused_aux_nonblack_run_end_at_next_start
     start first first_blue run_words wz next_start
 
+let spot_pending_run_before_start_index
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+  : Lemma
+      (requires
+        ChunkedSweepPending.pending_run_before_start
+          work idx base start first_blue run_words)
+      (ensures idx < Seq.length work)
+  =
+  ChunkedSweepPending.pending_run_before_start_index
+    work idx base start first_blue run_words
+
+let spot_pending_run_before_start_empty
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start: hp_addr)
+  : Lemma
+      (requires idx < Seq.length work)
+      (ensures
+        ChunkedSweepPending.pending_run_before_start
+          work idx base start 0UL 0)
+  =
+  ChunkedSweepPending.pending_run_before_start_empty
+    work idx base start
+
+let spot_pending_run_before_start_nonempty_elim
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: pos)
+  : Lemma
+      (requires
+        ChunkedSweepPending.pending_run_before_start
+          work idx base start first_blue run_words)
+      (ensures
+        idx < Seq.length work /\
+        ~(U64.v first_blue < U64.v mword) /\
+        ~(U64.v first_blue >= heap_size) /\
+        ~(U64.v first_blue % U64.v mword <> 0) /\
+        run_words - 1 < pow2 54 /\
+        run_words - 1 < pow2 64 /\
+        U64.v first_blue + (run_words - 1) * U64.v mword ==
+          U64.v start /\
+        (let fb : obj_addr = first_blue in
+         let hd = hd_address fb in
+         Seq.mem fb (MH.objects_in_chunk_from (Seq.index work idx) base) /\
+         U64.v fb < MH.chunk_end (Seq.index work idx) /\
+         U64.v start <= MH.chunk_end (Seq.index work idx) /\
+         MH.word_in_chunk (Seq.index work idx) hd))
+  =
+  ChunkedSweepPending.pending_run_before_start_nonempty_elim
+    work idx base start first_blue run_words
+
 let spot_nonblack_tail_pending_run_before_start_from_empty
     (work: MH.major_heap)
     (idx: nat)
@@ -1867,7 +1924,7 @@ let spot_nonblack_tail_pending_run_before_start_from_nonempty
     (base start next_start: hp_addr)
     (first: obj_addr)
     (wz: Obj.wosize)
-    (first_blue: obj_addr)
+    (first_blue: U64.t)
     (run_words: pos)
   : Lemma
       (requires
