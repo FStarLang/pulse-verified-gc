@@ -15,6 +15,7 @@ module Fields = GC.Spec.Fields
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module ChunkedGraph = GC.Spec.ChunkedMajorGC.Graph
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -1511,3 +1512,117 @@ let chunked_fused_aux_preserves_get_field_from_live_target
     source objs first_blue run_words obj field_addr;
   chunked_fused_aux_preserves_get_field_read_some
     source work objs first_blue run_words fp obj i field_addr old
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_fused_aux_live_field_data_preserved_from_chunk
+  (source: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        Defs.chunked_read_header source target == Some hdr /\
+        Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) target /\
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         ChunkedGraph.chunked_major_vertex final target))
+      (ensures
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+        ChunkedGraph.chunked_major_field_data_preserved source final target))
+  =
+  let c = Seq.index source idx in
+  let objs = MH.objects_in_chunk c in
+  let final = fst (Defs.chunked_fused_aux source source objs 0UL 0 fp) in
+  let field_data_refined
+      (i: U64.t{U64.v i >= 1})
+    : Lemma
+      (requires U64.v i <=
+        U64.v (Defs.chunked_wosize_of_object source target))
+      (ensures
+        MarkDefs.chunked_get_field source target i ==
+        MarkDefs.chunked_get_field final target i)
+    =
+    Defs.chunked_wosize_of_object_some source target hdr;
+    assert (U64.v i <= U64.v (Obj.getWosize hdr));
+    MH.objects_in_chunk_member_header_fits c target;
+    assert (MH.object_header_size_fits_in_chunk c target);
+    assert (MH.word_in_chunk c (hd_address target));
+    MH.lookup_chunk_index_word_in_chunk source (hd_address target) idx;
+    assert (MH.lookup_chunk_index source (hd_address target) == Some idx);
+    MH.lookup_chunk_index_some source (hd_address target) idx;
+    assert (MH.chunk_contains_addr c (hd_address target));
+    hd_address_spec target;
+    assert (U64.v (hd_address target) + U64.v mword == U64.v target);
+    FStar.Math.Lemmas.lemma_mult_le_right
+      (U64.v mword) (U64.v i)
+      (MH.object_wosize_in_chunk c target);
+    assert (U64.v mword * U64.v i <=
+            U64.v mword * MH.object_wosize_in_chunk c target);
+    assert (U64.v target + U64.v mword * U64.v i <=
+            U64.v target +
+            MH.object_wosize_in_chunk c target * U64.v mword);
+    assert (U64.v (hd_address target) +
+            U64.v mword * U64.v i + U64.v mword ==
+            U64.v target + U64.v mword * U64.v i);
+    assert (U64.v (hd_address target) +
+            U64.v mword * U64.v i + U64.v mword <=
+            U64.v target +
+            MH.object_wosize_in_chunk c target * U64.v mword);
+    let field_addr = U64.add (hd_address target) (U64.mul mword i) in
+    assert (U64.v target <= U64.v field_addr);
+    assert (U64.v field_addr + U64.v mword ==
+            U64.v (hd_address target) +
+            U64.v mword * U64.v i + U64.v mword);
+    assert (U64.v field_addr + U64.v mword <=
+            U64.v target +
+            MH.object_wosize_in_chunk c target * U64.v mword);
+    MH.major_objects_member_at_index source idx target;
+    MH.major_object_payload_word_in_lookup_chunk
+      source idx target field_addr;
+    MH.read_word_in_major_at_lookup_index source field_addr idx;
+    let old = MH.read_word_in_chunk c field_addr in
+    assert (MH.read_word_in_major source field_addr == Some old);
+    chunked_fused_aux_live_read_frame_ready_from_chunk
+      source c target i field_addr hdr;
+    chunked_fused_aux_preserves_get_field_from_live_target
+      source source objs 0UL 0 fp target i field_addr old;
+    assert (MarkDefs.chunked_get_field final target i ==
+            MarkDefs.chunked_get_field source target i)
+  in
+  let field_data (i: U64.t)
+    : Lemma
+        (ensures
+          U64.v i >= 1 /\
+          U64.v i <= U64.v (Defs.chunked_wosize_of_object source target) ==>
+          MarkDefs.chunked_get_field source target i ==
+          MarkDefs.chunked_get_field final target i)
+    =
+    if U64.v i >= 1 &&
+       U64.v i <= U64.v (Defs.chunked_wosize_of_object source target) then begin
+      let ii : i':U64.t{U64.v i' >= 1} = i in
+      field_data_refined ii;
+      assert (MarkDefs.chunked_get_field source target i ==
+              MarkDefs.chunked_get_field final target i)
+    end
+  in
+  MH.major_objects_member_at_index source idx target;
+  ChunkedGraph.chunked_major_vertex_intro source target;
+  FStar.Classical.forall_intro field_data;
+  ChunkedGraph.chunked_major_field_data_preserved_intro
+    source final target
+#pop-options

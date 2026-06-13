@@ -429,3 +429,37 @@ val chunked_fused_aux_preserves_get_field_from_live_target
             source work objs first_blue run_words fp))
           obj i ==
         MarkDefs.chunked_get_field work obj i)
+
+val chunked_fused_aux_live_field_data_preserved_from_chunk
+  (source: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                   source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header
+          source target == Some hdr /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) target /\
+        (let final =
+          fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         GC.Spec.ChunkedMajorGC.Graph.chunked_major_vertex final target))
+      (ensures
+        (let final =
+          fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+        GC.Spec.ChunkedMajorGC.Graph.chunked_major_field_data_preserved
+          source final target))

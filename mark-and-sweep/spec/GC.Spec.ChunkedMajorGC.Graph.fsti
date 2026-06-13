@@ -19,6 +19,13 @@ val chunked_major_vertex
   (x: obj_addr)
   : prop
 
+val chunked_major_vertex_intro
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  : Lemma
+      (requires Seq.mem x (MH.major_objects mh))
+      (ensures chunked_major_vertex mh x)
+
 val chunked_major_field_preserved
   (mh_init: MH.major_heap)
   (mh_final: MH.major_heap)
@@ -88,6 +95,36 @@ val chunked_major_live_subgraph_preserved_intro
           (chunked_major_edge mh_init x y <==>
            chunked_major_edge mh_final x y)))
       (ensures chunked_major_live_subgraph_preserved mh_init mh_final live)
+
+val chunked_major_field_preserved_intro
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (x: obj_addr)
+  : Lemma
+      (requires
+       chunked_major_vertex mh_init x /\
+       chunked_major_vertex mh_final x /\
+       SweepDefs.chunked_wosize_of_object mh_init x ==
+         SweepDefs.chunked_wosize_of_object mh_final x /\
+       (forall (i: U64.t). U64.v i >= 1 /\
+         U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh_init x) ==>
+         MarkDefs.chunked_get_field mh_init x i ==
+           MarkDefs.chunked_get_field mh_final x i))
+      (ensures chunked_major_field_preserved mh_init mh_final x)
+
+val chunked_major_field_data_preserved_intro
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        chunked_major_vertex mh_init x /\
+        chunked_major_vertex mh_final x /\
+        (forall (i: U64.t). U64.v i >= 1 /\
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh_init x) ==>
+          MarkDefs.chunked_get_field mh_init x i ==
+            MarkDefs.chunked_get_field mh_final x i))
+      (ensures chunked_major_field_data_preserved mh_init mh_final x)
 
 val chunked_major_live_subgraph_vertices_elim
   (mh_init: MH.major_heap)
