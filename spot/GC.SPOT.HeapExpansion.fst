@@ -36,6 +36,7 @@ module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedSweepPending = GC.Spec.ChunkedSweepCoalesce.PendingRun
 module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
 module ChunkedSweepPres = GC.Spec.ChunkedSweepCoalesce.Preservation
+module ChunkedSweepRange = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedSweepLive = GC.Spec.ChunkedSweepCoalesce.LivePreservation
 module ChunkedSweepVertex = GC.Spec.ChunkedSweepCoalesce.VertexPreservation
 module ChunkedSweepVertexSteps = GC.Spec.ChunkedSweepCoalesce.VertexSteps
@@ -812,6 +813,86 @@ let spot_chunked_fused_aux_live_field_preserved_from_chunk
   =
   ChunkedSweepLive.chunked_fused_aux_live_field_preserved_from_chunk
     source idx fp target hdr
+
+let spot_same_chunk_ranges_refl
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures ChunkedSweepRange.same_chunk_ranges mh mh)
+  =
+  ChunkedSweepRange.same_chunk_ranges_refl mh
+
+let spot_same_chunk_ranges_trans
+  (mh0 mh1 mh2: MH.major_heap)
+  : Lemma
+      (requires
+        ChunkedSweepRange.same_chunk_ranges mh0 mh1 /\
+        ChunkedSweepRange.same_chunk_ranges mh1 mh2)
+      (ensures ChunkedSweepRange.same_chunk_ranges mh0 mh2)
+  =
+  ChunkedSweepRange.same_chunk_ranges_trans mh0 mh1 mh2
+
+let spot_chunked_fused_aux_preserves_ranges
+  (source work: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges work
+          (fst (ChunkedSweepDefs.chunked_fused_aux
+            source work objs first_blue run_words fp)))
+  =
+  ChunkedSweepRange.chunked_fused_aux_preserves_ranges
+    source work objs first_blue run_words fp
+
+let spot_chunked_fused_aux_pointer_classification_preserved
+  (source work: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          work
+          (fst (ChunkedSweepDefs.chunked_fused_aux
+            source work objs first_blue run_words fp)))
+  =
+  ChunkedSweepRange.chunked_fused_aux_pointer_classification_preserved
+    source work objs first_blue run_words fp
+
+let spot_chunked_fused_aux_live_subgraph_preserved_from_chunk
+  (source: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (live: obj_addr -> prop)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        (forall (target: obj_addr).
+          live target ==>
+          Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+          ChunkedSweepDefs.chunked_read_header source target == Some (live_hdr target) /\
+          ChunkedSweepDefs.chunked_is_black source target /\
+          U64.v (Obj.getWosize (live_hdr target)) ==
+            MH.object_wosize_in_chunk (Seq.index source idx) target))
+      (ensures
+        (let final =
+          fst (ChunkedSweepDefs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+           source final live))
+  =
+  ChunkedSweepLive.chunked_fused_aux_live_subgraph_preserved_from_chunk
+    source idx fp live live_hdr
 
 let spot_chunked_set_object_color_preserves_major_objects
   (mh: MH.major_heap)
@@ -3279,6 +3360,21 @@ let spot_chunked_major_field_data_preserved_single_chunk_from_dense
   =
   ChunkedMajorGCGraph.chunked_major_field_data_preserved_single_chunk_from_dense
     g_init g_final x
+
+let spot_chunked_major_pointer_classification_preserved_intro
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  : Lemma
+      (requires
+        (forall (v: U64.t).
+          ChunkedMarkDefs.chunked_is_pointer_field mh_init v ==
+          ChunkedMarkDefs.chunked_is_pointer_field mh_final v))
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          mh_init mh_final)
+  =
+  ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved_intro
+    mh_init mh_final
 
 let spot_chunked_major_pointer_classification_preserved_single_chunk
   (g_init: heap)

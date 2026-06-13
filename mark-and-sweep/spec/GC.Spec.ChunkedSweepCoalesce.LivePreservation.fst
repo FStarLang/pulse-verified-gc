@@ -18,6 +18,7 @@ module Reach = GC.Spec.ChunkedSweepCoalesce.VertexReach
 module ReachPrefix = GC.Spec.ChunkedSweepCoalesce.VertexReachPrefix
 module VertexSteps = GC.Spec.ChunkedSweepCoalesce.VertexSteps
 module VertexOrder = GC.Spec.ChunkedSweepCoalesce.VertexOrder
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedGraph = GC.Spec.ChunkedMajorGC.Graph
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 
@@ -1639,6 +1640,54 @@ let chunked_fused_aux_live_field_preserved_from_chunk
   assert (Defs.chunked_wosize_of_object final target == Obj.getWosize hdr);
   ChunkedGraph.chunked_major_field_preserved_intro
     source final target
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_fused_aux_live_subgraph_preserved_from_chunk
+    (source: MH.major_heap)
+    (idx: nat)
+    (fp: U64.t)
+    (live: obj_addr -> prop)
+    (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        (forall (target: obj_addr).
+          live target ==>
+          Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+          Defs.chunked_read_header source target == Some (live_hdr target) /\
+          Defs.chunked_is_black source target /\
+          U64.v (Obj.getWosize (live_hdr target)) ==
+            MH.object_wosize_in_chunk (Seq.index source idx) target))
+      (ensures
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         ChunkedGraph.chunked_major_live_subgraph_preserved
+           source final live))
+  =
+  let c = Seq.index source idx in
+  let final =
+    fst (Defs.chunked_fused_aux source source (MH.objects_in_chunk c) 0UL 0 fp) in
+  let fields (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures ChunkedGraph.chunked_major_field_preserved source final target)
+    =
+    chunked_fused_aux_live_field_preserved_from_chunk
+      source idx fp target (live_hdr target)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  RangePres.chunked_fused_aux_pointer_classification_preserved
+    source source (MH.objects_in_chunk c) 0UL 0 fp;
+  ChunkedGraph.chunked_major_live_subgraph_preserved_from_fields
+    source final live
+#pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_set_object_color_preserves_major_objects

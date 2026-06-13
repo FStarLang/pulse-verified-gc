@@ -97,6 +97,19 @@ let chunked_major_pointer_classification_preserved
     MarkDefs.chunked_is_pointer_field mh_init v ==
     MarkDefs.chunked_is_pointer_field mh_final v
 
+let chunked_major_pointer_classification_preserved_intro
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+  : Lemma
+      (requires
+        (forall (v: U64.t).
+          MarkDefs.chunked_is_pointer_field mh_init v ==
+          MarkDefs.chunked_is_pointer_field mh_final v))
+      (ensures
+        chunked_major_pointer_classification_preserved mh_init mh_final)
+  =
+  ()
+
 let chunked_major_successors_preserved
     (mh_init: MH.major_heap)
     (mh_final: MH.major_heap)
