@@ -36,6 +36,7 @@ module ChunkedSweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedSweepCompat = GC.Spec.ChunkedSweepCoalesce.Compat
 module ChunkedSweepPres = GC.Spec.ChunkedSweepCoalesce.Preservation
 module ChunkedSweepLive = GC.Spec.ChunkedSweepCoalesce.LivePreservation
+module ChunkedSweepVertex = GC.Spec.ChunkedSweepCoalesce.VertexPreservation
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 module SpecGCPost = GC.Spec.Correctness
@@ -771,6 +772,36 @@ let spot_chunked_make_blue_preserves_major_objects
   =
   ChunkedSweepLive.chunked_make_blue_preserves_major_objects
     mh idx obj hdr
+
+let spot_chunked_merged_block_step
+  (c: MH.heap_chunk)
+  (fb: obj_addr)
+  (run_words: pos)
+  (start: hp_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        U64.v fb >= U64.v mword /\
+        U64.v fb < heap_size /\
+        U64.v fb < MH.chunk_end c /\
+        U64.v fb % U64.v mword == 0 /\
+        U64.v fb + (run_words - 1) * U64.v mword == U64.v start /\
+        run_words - 1 < pow2 54 /\
+        run_words - 1 < pow2 64 /\
+        U64.v start <= MH.chunk_end c /\
+        MH.word_in_chunk c (hd_address fb) /\
+        MH.read_word_in_chunk c (hd_address fb) ==
+          Obj.makeHeader
+            (U64.uint_to_t (run_words - 1)) Header.Blue 0UL /\
+        (U64.v start < MH.chunk_end c ==>
+          Seq.mem x (MH.objects_in_chunk_from c start)))
+      (ensures
+        Seq.mem fb (MH.objects_in_chunk_from c (hd_address fb)) /\
+        (U64.v start < MH.chunk_end c ==>
+          Seq.mem x (MH.objects_in_chunk_from c (hd_address fb))))
+  =
+  ChunkedSweepVertex.chunked_merged_block_step
+    c fb run_words start x
 
 let spot_major_fl_head_wosize_single_chunk_from_dense
   (g: heap) (fp: U64.t) (fuel: nat)
@@ -2124,6 +2155,18 @@ let spot_chunked_major_vertex_intro
       (ensures ChunkedMajorGCGraph.chunked_major_vertex mh x)
   =
   ChunkedMajorGCGraph.chunked_major_vertex_intro mh x
+
+let spot_chunked_major_vertex_from_chunk
+  (mh: MH.major_heap)
+  (idx: nat)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        idx < Seq.length mh /\
+        Seq.mem x (MH.objects_in_chunk (Seq.index mh idx)))
+      (ensures ChunkedMajorGCGraph.chunked_major_vertex mh x)
+  =
+  ChunkedMajorGCGraph.chunked_major_vertex_from_chunk mh idx x
 
 let spot_chunked_major_field_preserved_intro
   (mh_init: MH.major_heap)
