@@ -1120,6 +1120,159 @@ let spot_chunked_flush_blue_prefix_preserves_objects_from
   =
   ChunkedSweepVertex.chunked_flush_blue_prefix_preserves_objects_from
     mh idx fb run_words start target fp
+
+let spot_major_write_word_or_same_after_member_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (addr: hp_addr)
+  (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) addr /\
+        U64.v (hd_address protected) +
+          (1 + MH.object_wosize_in_chunk (Seq.index mh idx) protected) *
+            U64.v mword <=
+          U64.v addr)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same mh addr value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         Seq.mem protected
+           (MH.objects_in_chunk_from (Seq.index mh' idx) start) /\
+         MH.object_wosize_in_chunk (Seq.index mh' idx) protected ==
+         MH.object_wosize_in_chunk (Seq.index mh idx) protected /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  ChunkedSweepVertex.major_write_word_or_same_after_member_preserves_objects_from
+    mh idx start protected addr value
+
+let spot_chunked_zero_fields_after_member_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (addr: U64.t)
+  (n: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        U64.v addr % U64.v mword == 0 /\
+        U64.v addr + n * U64.v mword <= MH.chunk_end (Seq.index mh idx) /\
+        U64.v (hd_address protected) +
+          (1 + MH.object_wosize_in_chunk (Seq.index mh idx) protected) *
+            U64.v mword <=
+          U64.v addr)
+      (ensures
+        (let mh' = ChunkedSweepDefs.chunked_zero_fields mh addr n in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         Seq.mem protected
+           (MH.objects_in_chunk_from (Seq.index mh' idx) start) /\
+         MH.object_wosize_in_chunk (Seq.index mh' idx) protected ==
+         MH.object_wosize_in_chunk (Seq.index mh idx) protected /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  ChunkedSweepVertex.chunked_zero_fields_after_member_preserves_objects_from
+    mh idx start protected addr n
+
+let spot_chunked_flush_blue_after_member_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        (run_words <> 0 /\
+         ~(U64.v first_blue < U64.v mword) /\
+         ~(U64.v first_blue >= heap_size) /\
+         ~(U64.v first_blue % U64.v mword <> 0) /\
+         run_words - 1 < pow2 54 ==>
+          (let fb : obj_addr = first_blue in
+           let hd = hd_address fb in
+           MH.word_in_chunk (Seq.index mh idx) hd /\
+           U64.v (hd_address protected) +
+             (1 + MH.object_wosize_in_chunk (Seq.index mh idx) protected) *
+               U64.v mword <=
+             U64.v hd /\
+           U64.v hd + run_words * U64.v mword <=
+             MH.chunk_end (Seq.index mh idx))))
+      (ensures
+        (let final =
+          fst (ChunkedSweepDefs.chunked_flush_blue
+            mh first_blue run_words fp) in
+         MH.well_formed_major_heap final /\
+         idx < Seq.length final /\
+         Seq.mem protected
+           (MH.objects_in_chunk_from (Seq.index final idx) start) /\
+         MH.object_wosize_in_chunk (Seq.index final idx) protected ==
+         MH.object_wosize_in_chunk (Seq.index mh idx) protected /\
+         MH.chunk_start (Seq.index final idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index final idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  ChunkedSweepVertex.chunked_flush_blue_after_member_preserves_objects_from
+    mh idx start protected first_blue run_words fp
+
+let spot_chunked_make_white_after_member_preserves_objects_from
+  (mh: MH.major_heap)
+  (idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh idx) start) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address protected) +
+          (1 + MH.object_wosize_in_chunk (Seq.index mh idx) protected) *
+            U64.v mword <=
+          U64.v (hd_address obj))
+      (ensures
+        MH.well_formed_major_heap (ChunkedSweepDefs.chunked_make_white mh obj) /\
+        idx < Seq.length (ChunkedSweepDefs.chunked_make_white mh obj) /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from
+            (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx)
+            start) /\
+        MH.object_wosize_in_chunk
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx)
+          protected ==
+        MH.object_wosize_in_chunk (Seq.index mh idx) protected /\
+        MH.chunk_start
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx) ==
+        MH.chunk_start (Seq.index mh idx) /\
+        MH.chunk_end
+          (Seq.index (ChunkedSweepDefs.chunked_make_white mh obj) idx) ==
+        MH.chunk_end (Seq.index mh idx))
+  =
+  ChunkedSweepVertex.chunked_make_white_after_member_preserves_objects_from
+    mh idx start protected obj
 #pop-options
 
 let spot_major_fl_head_wosize_single_chunk_from_dense
