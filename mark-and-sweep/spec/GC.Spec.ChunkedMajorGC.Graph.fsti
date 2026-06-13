@@ -100,6 +100,15 @@ val chunked_major_field_data_preserved_single_chunk_from_dense
           (MH.single_chunk_major_heap g_final)
           x)
 
+val chunked_major_pointer_classification_preserved_single_chunk
+  (g_init: heap)
+  (g_final: heap)
+  : Lemma
+      (ensures
+        chunked_major_pointer_classification_preserved
+          (MH.single_chunk_major_heap g_init)
+          (MH.single_chunk_major_heap g_final))
+
 val chunked_major_successors_preserved_from_fields
   (mh_init: MH.major_heap)
   (mh_final: MH.major_heap)

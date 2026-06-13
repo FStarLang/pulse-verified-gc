@@ -171,6 +171,30 @@ let chunked_major_field_data_preserved_single_chunk_from_dense
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires field_eq)
 
+let chunked_major_pointer_classification_preserved_single_chunk
+    (g_init: heap)
+    (g_final: heap)
+  : Lemma
+      (ensures
+        chunked_major_pointer_classification_preserved
+          (MH.single_chunk_major_heap g_init)
+          (MH.single_chunk_major_heap g_final))
+  =
+  let aux (v: U64.t)
+    : Lemma
+        (ensures
+          MarkDefs.chunked_is_pointer_field (MH.single_chunk_major_heap g_init) v ==
+          MarkDefs.chunked_is_pointer_field (MH.single_chunk_major_heap g_final) v)
+    =
+    MarkDefs.chunked_is_pointer_field_step
+      (MH.single_chunk_major_heap g_init) v;
+    MarkDefs.chunked_is_pointer_field_step
+      (MH.single_chunk_major_heap g_final) v;
+    MH.single_chunk_major_pointer_compat g_init v;
+    MH.single_chunk_major_pointer_compat g_final v
+  in
+  FStar.Classical.forall_intro aux
+
 let chunked_major_field_points_to_preserved_forward
     (mh_init: MH.major_heap)
     (mh_final: MH.major_heap)

@@ -1208,6 +1208,86 @@ let spot_chunked_major_gc_bounded_single_chunk_live_field_data_preserved
   ChunkedMajorGCCorr.chunked_major_gc_bounded_single_chunk_live_field_data_preserved
     g roots fp cap fuel
 
+let spot_chunked_major_gc_bounded_single_chunk_live_field_preserved
+  (g: heap)
+  (roots: Seq.seq obj_addr)
+  (fp: U64.t)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        Fields.well_formed_heap g /\
+        Seq.length (Fields.objects zero_addr g) > 0 /\
+        GC.Spec.SweepInv.heap_objects_dense g /\
+        Mark.root_props g roots /\
+        SpecSweep.fp_in_heap fp g /\
+        Mark.no_black_objects g /\
+        Mark.no_pointer_to_blue g /\
+        Fields.no_scan_invariant g /\
+        fuel >= BMark.count_non_black g /\
+        ChunkedMarkBoundedOuter.mark_bounded_single_chunk_ready
+          g cap fuel /\
+        (forall (x: obj_addr). Seq.mem x (Fields.objects zero_addr g) /\
+          (Obj.is_gray x g \/ Obj.is_black x g) ==> Seq.mem x roots) /\
+        (let graph = GC.Spec.HeapModel.create_graph g in
+         let roots' = GC.Spec.HeapGraph.coerce_to_vertex_list roots in
+         GC.Spec.Graph.graph_wf graph /\
+         GC.Spec.Graph.is_vertex_set roots' /\
+         GC.Spec.Graph.subset_vertices roots' graph.vertices))
+      (ensures
+        (let (mh_final, chunked_fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded
+             (MH.single_chunk_major_heap g) cap fuel in
+         forall (x: obj_addr).
+           SpecGCPost.heap_reachable g roots x ==>
+           ChunkedMajorGCGraph.chunked_major_field_preserved
+             (MH.single_chunk_major_heap g)
+             mh_final
+             x))
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_single_chunk_live_field_preserved
+    g roots fp cap fuel
+
+let spot_chunked_major_gc_bounded_single_chunk_live_successors_preserved
+  (g: heap)
+  (roots: Seq.seq obj_addr)
+  (fp: U64.t)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        Fields.well_formed_heap g /\
+        Seq.length (Fields.objects zero_addr g) > 0 /\
+        GC.Spec.SweepInv.heap_objects_dense g /\
+        Mark.root_props g roots /\
+        SpecSweep.fp_in_heap fp g /\
+        Mark.no_black_objects g /\
+        Mark.no_pointer_to_blue g /\
+        Fields.no_scan_invariant g /\
+        fuel >= BMark.count_non_black g /\
+        ChunkedMarkBoundedOuter.mark_bounded_single_chunk_ready
+          g cap fuel /\
+        (forall (x: obj_addr). Seq.mem x (Fields.objects zero_addr g) /\
+          (Obj.is_gray x g \/ Obj.is_black x g) ==> Seq.mem x roots) /\
+        (let graph = GC.Spec.HeapModel.create_graph g in
+         let roots' = GC.Spec.HeapGraph.coerce_to_vertex_list roots in
+         GC.Spec.Graph.graph_wf graph /\
+         GC.Spec.Graph.is_vertex_set roots' /\
+         GC.Spec.Graph.subset_vertices roots' graph.vertices))
+      (ensures
+        (let (mh_final, chunked_fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded
+             (MH.single_chunk_major_heap g) cap fuel in
+         forall (x: obj_addr).
+           SpecGCPost.heap_reachable g roots x ==>
+           ChunkedMajorGCGraph.chunked_major_successors_preserved
+             (MH.single_chunk_major_heap g)
+             mh_final
+             x))
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_single_chunk_live_successors_preserved
+    g roots fp cap fuel
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
@@ -1264,6 +1344,18 @@ let spot_chunked_major_field_data_preserved_single_chunk_from_dense
   =
   ChunkedMajorGCGraph.chunked_major_field_data_preserved_single_chunk_from_dense
     g_init g_final x
+
+let spot_chunked_major_pointer_classification_preserved_single_chunk
+  (g_init: heap)
+  (g_final: heap)
+  : Lemma
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          (MH.single_chunk_major_heap g_init)
+          (MH.single_chunk_major_heap g_final))
+  =
+  ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved_single_chunk
+    g_init g_final
 
 let spot_chunked_major_successors_preserved_from_fields
   (mh_init: MH.major_heap)
