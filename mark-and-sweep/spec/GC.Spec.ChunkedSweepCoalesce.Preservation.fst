@@ -55,6 +55,105 @@ let major_write_word_or_same_preserves_other_read
   | Some mh' ->
     SpecMajorAlloc.major_write_word_or_same_some mh mh' write_addr value
 
+let major_write_word_or_same_read_same
+    (mh: MH.major_heap)
+    (write_addr: hp_addr)
+    (value: U64.t)
+    (idx: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh write_addr == Some idx /\
+        MH.word_in_chunk (Seq.index mh idx) write_addr)
+      (ensures
+        MH.read_word_in_major
+          (SpecMajorAlloc.major_write_word_or_same mh write_addr value)
+          write_addr == Some value)
+  =
+  let c = Seq.index mh idx in
+  MH.write_word_in_major_at_lookup_index mh write_addr value idx;
+  MH.write_word_at_index_preserves_wf mh write_addr value idx;
+  let c' = MH.write_word_in_chunk c write_addr value in
+  assert (MH.write_word_in_major mh write_addr value ==
+          Some (Seq.upd mh idx c'));
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh (Seq.upd mh idx c') write_addr value;
+  MH.read_write_in_chunk_same c write_addr value;
+  assert (MH.read_word_in_chunk c' write_addr == value);
+  MH.write_word_in_chunk_preserves_word c write_addr value write_addr;
+  assert (MH.word_in_chunk c' write_addr);
+  MH.lookup_chunk_index_word_in_chunk (Seq.upd mh idx c') write_addr idx;
+  assert (MH.lookup_chunk_index (Seq.upd mh idx c') write_addr == Some idx);
+  MH.read_word_in_major_at_lookup_index (Seq.upd mh idx c') write_addr idx
+
+let chunked_set_object_color_preserves_self_wosize
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (color: Header.color_sem)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        Defs.chunked_wosize_of_object
+          (Defs.chunked_set_object_color mh obj color)
+          obj ==
+        Obj.getWosize hdr)
+  =
+  Defs.chunked_read_header_step mh obj;
+  let hd = hd_address obj in
+  MH.read_word_in_major_lookup_index mh hd hdr;
+  let idx = MH.lookup_chunk_index_value mh hd in
+  assert (MH.lookup_chunk_index mh hd == Some idx);
+  assert (idx < Seq.length mh);
+  assert (MH.word_in_chunk (Seq.index mh idx) hd);
+  Defs.chunked_set_object_color_some mh obj color hdr;
+  let new_hdr = Obj.colorHeader hdr color in
+  Obj.colorHeader_preserves_wosize hdr color;
+  major_write_word_or_same_read_same mh hd new_hdr idx;
+  let mh' = Defs.chunked_set_object_color mh obj color in
+  Defs.chunked_read_header_step mh' obj;
+  assert (Defs.chunked_read_header mh' obj == Some new_hdr);
+  Defs.chunked_wosize_of_object_some mh' obj new_hdr
+
+let chunked_make_white_preserves_self_wosize
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        Defs.chunked_wosize_of_object
+          (Defs.chunked_make_white mh obj)
+          obj ==
+        Obj.getWosize hdr)
+  =
+  Defs.chunked_make_white_step mh obj;
+  chunked_set_object_color_preserves_self_wosize
+    mh obj Header.White hdr
+
+let chunked_make_blue_preserves_self_wosize
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        Defs.chunked_wosize_of_object
+          (Defs.chunked_make_blue mh obj)
+          obj ==
+        Obj.getWosize hdr)
+  =
+  Defs.chunked_make_blue_step mh obj;
+  chunked_set_object_color_preserves_self_wosize
+    mh obj Header.Blue hdr
+
 let chunked_set_object_color_preserves_other_read
     (mh: MH.major_heap)
     (obj: obj_addr)

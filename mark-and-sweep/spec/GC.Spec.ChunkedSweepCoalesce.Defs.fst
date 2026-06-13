@@ -52,6 +52,20 @@ let chunked_wosize_of_object (mh: MH.major_heap) (obj: obj_addr)
     | Some hdr -> Obj.getWosize hdr
     | None -> 0UL
 
+let chunked_wosize_of_object_some
+    (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires chunked_read_header mh obj == Some hdr)
+      (ensures chunked_wosize_of_object mh obj == Obj.getWosize hdr)
+  = ()
+
+let chunked_wosize_of_object_none
+    (mh: MH.major_heap) (obj: obj_addr)
+  : Lemma
+      (requires chunked_read_header mh obj == None)
+      (ensures chunked_wosize_of_object mh obj == 0UL)
+  = ()
+
 let chunked_tag_of_object (mh: MH.major_heap) (obj: obj_addr)
   : GTot U64.t
   = match chunked_read_header mh obj with

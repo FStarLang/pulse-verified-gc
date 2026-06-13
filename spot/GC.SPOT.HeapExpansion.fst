@@ -84,6 +84,75 @@ let spot_chunked_sweep_read_header_step
   =
   ChunkedSweepDefs.chunked_read_header_step mh obj
 
+let spot_major_write_word_or_same_read_same
+  (mh: MH.major_heap)
+  (write_addr: hp_addr)
+  (value: U64.t)
+  (idx: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh write_addr == Some idx /\
+        MH.word_in_chunk (Seq.index mh idx) write_addr)
+      (ensures
+        MH.read_word_in_major
+          (SpecMajorAlloc.major_write_word_or_same mh write_addr value)
+          write_addr == Some value)
+  =
+  ChunkedSweepPres.major_write_word_or_same_read_same
+    mh write_addr value idx
+
+let spot_chunked_set_object_color_preserves_self_wosize
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color)
+          obj ==
+        Obj.getWosize hdr)
+  =
+  ChunkedSweepPres.chunked_set_object_color_preserves_self_wosize
+    mh obj color hdr
+
+let spot_chunked_make_white_preserves_self_wosize
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedSweepDefs.chunked_make_white mh obj)
+          obj ==
+        Obj.getWosize hdr)
+  =
+  ChunkedSweepPres.chunked_make_white_preserves_self_wosize mh obj hdr
+
+let spot_chunked_make_blue_preserves_self_wosize
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedSweepDefs.chunked_make_blue mh obj)
+          obj ==
+        Obj.getWosize hdr)
+  =
+  ChunkedSweepPres.chunked_make_blue_preserves_self_wosize mh obj hdr
+
 let spot_chunked_set_object_color_preserves_other_read
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -714,6 +783,27 @@ let spot_chunked_sweep_is_infix_single_chunk_compat
        Obj.is_infix obj g)
   =
   ChunkedSweepDefs.chunked_is_infix_single_chunk_compat g obj
+
+let spot_chunked_wosize_of_object_some
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object mh obj ==
+        Obj.getWosize hdr)
+  =
+  ChunkedSweepDefs.chunked_wosize_of_object_some mh obj hdr
+
+let spot_chunked_wosize_of_object_none
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_read_header mh obj == None)
+      (ensures ChunkedSweepDefs.chunked_wosize_of_object mh obj == 0UL)
+  =
+  ChunkedSweepDefs.chunked_wosize_of_object_none mh obj
 
 let spot_chunked_make_white_single_chunk_compat
   (g: heap)

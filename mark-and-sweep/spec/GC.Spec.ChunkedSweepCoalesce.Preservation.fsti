@@ -8,6 +8,7 @@ open GC.Spec.Heap
 
 module MH = GC.Spec.MajorHeap
 module Header = GC.Lib.Header
+module Obj = GC.Spec.Object
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 
 val major_write_word_or_same_preserves_other_read
@@ -26,6 +27,70 @@ val major_write_word_or_same_preserves_other_read
           (GC.Spec.MajorAllocator.major_write_word_or_same
             mh write_addr value)
           read_addr == Some old)
+
+val major_write_word_or_same_read_same
+  (mh: MH.major_heap)
+  (write_addr: hp_addr)
+  (value: U64.t)
+  (idx: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh write_addr == Some idx /\
+        MH.word_in_chunk (Seq.index mh idx) write_addr)
+      (ensures
+        MH.read_word_in_major
+          (GC.Spec.MajorAllocator.major_write_word_or_same
+            mh write_addr value)
+          write_addr == Some value)
+
+val chunked_set_object_color_preserves_self_wosize
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header mh obj ==
+          Some hdr)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
+            mh obj color)
+          obj ==
+        Obj.getWosize hdr)
+
+val chunked_make_white_preserves_self_wosize
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header mh obj ==
+          Some hdr)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_make_white mh obj)
+          obj ==
+        Obj.getWosize hdr)
+
+val chunked_make_blue_preserves_self_wosize
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header mh obj ==
+          Some hdr)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_make_blue mh obj)
+          obj ==
+        Obj.getWosize hdr)
 
 val chunked_set_object_color_preserves_other_read
   (mh: MH.major_heap)
