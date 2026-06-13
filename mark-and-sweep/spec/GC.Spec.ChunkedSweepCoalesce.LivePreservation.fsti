@@ -273,6 +273,38 @@ val chunked_fused_aux_preserves_get_field_from_chunk_after
          GC.Spec.ChunkedMark.Defs.chunked_get_field final target i ==
          GC.Spec.ChunkedMark.Defs.chunked_get_field work target i))
 
+val chunked_fused_aux_preserves_get_field_from_other_chunk
+  (source work: MH.major_heap)
+  (proc_idx target_idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        proc_idx < Seq.length source /\
+        target_idx < Seq.length source /\
+        proc_idx <> target_idx /\
+        MH.word_in_chunk (Seq.index source target_idx) field_addr /\
+        U64.v (hd_address target) + U64.v mword * U64.v i +
+          U64.v mword <= heap_size /\
+        field_addr == U64.add (hd_address target) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source proc_idx)) ==>
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                  source o) ==
+          MH.object_wosize_in_chunk (Seq.index source proc_idx) o))
+      (ensures
+        (let final =
+          fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+           source work (MH.objects_in_chunk (Seq.index source proc_idx))
+           0UL 0 fp) in
+         GC.Spec.ChunkedMark.Defs.chunked_get_field final target i ==
+         GC.Spec.ChunkedMark.Defs.chunked_get_field work target i))
+
 val chunked_set_object_color_preserves_major_objects
   (mh: MH.major_heap)
   (idx: nat)

@@ -196,6 +196,8 @@ Follow-up checkpoint: added cross-chunk read-frame readiness constructors for fu
 
 Follow-up checkpoint: the cross-chunk read-frame layer now feeds a first cross-chunk live-field surface. `Preservation.chunked_fused_aux_read_frame_ready_from_chunk_after` was weakened to the tight one-word precondition needed for adjacent chunks, and the proof was stabilized with small arithmetic helpers instead of raising rlimits. `LivePreservation.chunked_fused_aux_preserves_get_field_from_chunk_before` and `_after` prove that one chunk's fused traversal preserves a protected payload field in a later or earlier chunk, respectively. SPOT audits both wrappers, focused `LivePreservation` verification passed, and refreshed split-query profiling shows the new wrappers verify cheaply at local rlimit 5.
 
+Follow-up checkpoint: added `LivePreservation.chunked_fused_aux_preserves_get_field_from_other_chunk`, a small selector that derives the before/after case from `MH.well_formed_major_heap` chunk disjointness plus a protected field word in the target chunk. This packages the interval split needed by the upcoming whole-chunk traversal recursion, is SPOT-audited, and keeps refreshed `LivePreservation` profiling around one second.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.

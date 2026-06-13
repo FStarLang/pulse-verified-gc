@@ -1774,6 +1774,54 @@ let chunked_fused_aux_preserves_get_field_from_chunk_after
   Pres.chunked_fused_aux_preserves_get_field_read_some
     source work (MH.objects_in_chunk c) 0UL 0 fp
     target i field_addr old
+
+let chunked_fused_aux_preserves_get_field_from_other_chunk
+    (source work: MH.major_heap)
+    (proc_idx target_idx: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        proc_idx < Seq.length source /\
+        target_idx < Seq.length source /\
+        proc_idx <> target_idx /\
+        MH.word_in_chunk (Seq.index source target_idx) field_addr /\
+        U64.v (hd_address target) + U64.v mword * U64.v i +
+          U64.v mword <= heap_size /\
+        field_addr == U64.add (hd_address target) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source proc_idx)) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source proc_idx) o))
+      (ensures
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk (Seq.index source proc_idx))
+            0UL 0 fp) in
+         MarkDefs.chunked_get_field final target i ==
+         MarkDefs.chunked_get_field work target i))
+  =
+  let proc_chunk = Seq.index source proc_idx in
+  let target_chunk = Seq.index source target_idx in
+  MH.chunks_pairwise_disjoint_index source proc_idx target_idx;
+  assert (MH.chunks_disjoint proc_chunk target_chunk);
+  if MH.chunk_end proc_chunk <= MH.chunk_start target_chunk then begin
+    assert (U64.v field_addr >= MH.chunk_start target_chunk);
+    assert (MH.chunk_end proc_chunk <= U64.v field_addr);
+    chunked_fused_aux_preserves_get_field_from_chunk_before
+      source work proc_idx fp target i field_addr old
+  end else begin
+    assert (MH.chunk_end target_chunk <= MH.chunk_start proc_chunk);
+    assert (U64.v field_addr + U64.v mword <= MH.chunk_end target_chunk);
+    assert (U64.v field_addr + U64.v mword <= MH.chunk_start proc_chunk);
+    chunked_fused_aux_preserves_get_field_from_chunk_after
+      source work proc_idx fp target i field_addr old
+  end
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
