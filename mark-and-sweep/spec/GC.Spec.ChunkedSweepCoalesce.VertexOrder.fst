@@ -314,3 +314,91 @@ let black_tail_chunk_order_pre_from_head
     MH.object_wosize_in_chunk c o);
   assert (pending_run_after_member_at_start work'' idx protected 0UL 0 next_start)
 #pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let nonblack_head_ready_from_chunk_order_step
+    (source work: MH.major_heap)
+    (idx: nat)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (protected_start: hp_addr)
+    (protected: obj_addr)
+    (objs: Seq.seq obj_addr)
+    (first: obj_addr)
+    (wz: nat)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Lemma
+      (requires
+        after_member_chunk_order_pre
+          source work idx c start protected_start protected first_blue run_words /\
+        objs == MH.objects_in_chunk_from c start /\
+        Seq.length objs > 0 /\
+        Seq.head objs == first /\
+        ~(Defs.chunked_is_black source first) /\
+        hd_address first == start /\
+        MH.word_in_chunk (Seq.index work idx) start /\
+        U64.v (Defs.chunked_wosize_of_object source first) == wz /\
+        (let new_first : U64.t = if run_words = 0 then first else first_blue in
+         let new_run = run_words + wz + 1 in
+         VS.chunked_fused_aux_after_member_ready
+           source work idx protected_start protected (Seq.tail objs)
+           new_first new_run fp))
+      (ensures
+        VS.chunked_fused_aux_after_member_ready
+          source work idx protected_start protected objs first_blue run_words fp)
+  =
+  assert (Defs.chunked_is_black source (Seq.head objs) ==
+          Defs.chunked_is_black source first);
+  assert (U64.v (Defs.chunked_wosize_of_object source (Seq.head objs)) == wz);
+  assert (MH.word_in_chunk (Seq.index work idx) (hd_address (Seq.head objs)));
+  assert (U64.v (hd_address protected) +
+            (1 + MH.object_wosize_in_chunk (Seq.index work idx) protected) *
+              U64.v mword <=
+          U64.v (hd_address (Seq.head objs)));
+  VS.chunked_fused_aux_nonblack_head_after_member_ready_step
+    source work idx protected_start protected objs first_blue run_words fp
+
+let black_head_ready_from_chunk_order_step
+    (source work: MH.major_heap)
+    (idx: nat)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (protected_start: hp_addr)
+    (protected: obj_addr)
+    (objs: Seq.seq obj_addr)
+    (first: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Lemma
+      (requires
+        after_member_chunk_order_pre
+          source work idx c start protected_start protected first_blue run_words /\
+        objs == MH.objects_in_chunk_from c start /\
+        Seq.length objs > 0 /\
+        Seq.head objs == first /\
+        Defs.chunked_is_black source first /\
+        hd_address first == start /\
+        MH.word_in_chunk (Seq.index work idx) start /\
+        (let flushed = Defs.chunked_flush_blue work first_blue run_words fp in
+         let work' = fst flushed in
+         let fp' = snd flushed in
+         let work'' = Defs.chunked_make_white work' first in
+         VS.chunked_fused_aux_after_member_ready
+           source work'' idx protected_start protected (Seq.tail objs) 0UL 0 fp'))
+      (ensures
+        VS.chunked_fused_aux_after_member_ready
+          source work idx protected_start protected objs first_blue run_words fp)
+  =
+  assert (Defs.chunked_is_black source (Seq.head objs) ==
+          Defs.chunked_is_black source first);
+  assert (MH.word_in_chunk (Seq.index work idx) (hd_address (Seq.head objs)));
+  assert (U64.v (hd_address protected) +
+            (1 + MH.object_wosize_in_chunk (Seq.index work idx) protected) *
+              U64.v mword <=
+          U64.v (hd_address (Seq.head objs)));
+  VS.chunked_fused_aux_black_head_after_member_ready_step
+    source work idx protected_start protected objs first_blue run_words fp
+#pop-options
