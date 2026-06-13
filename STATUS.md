@@ -158,6 +158,8 @@ The latest Stage 6 checkpoint keeps iteration small by committing only verified 
 
 This gives the next live-vertex proof the local tools needed to frame a protected live object through suffix writes and recoloring. The direct monolithic recursive helper over `chunked_fused_aux` was deliberately removed after proofdebugging showed hard whole-branch VCs; the next attempt should split it into small black-head/nonblack-head traversal lemmas instead of reintroducing one large recursive proof.
 
+Follow-up checkpoint: `VertexSteps` now also has small readiness-step lemmas for the black-head and nonblack-head fused traversal branches, plus a tail wosize-match transfer helper over `objects_in_chunk_from`. These helpers verify cheaply and replace the abandoned all-in-one `chunked_fused_aux_after_member_ready_from_chunk_from` attempt as the next foundation for deriving traversal readiness from chunk-local object order.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
