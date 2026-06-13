@@ -13,6 +13,7 @@ module Header = GC.Lib.Header
 module Fields = GC.Spec.Fields
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 module Pres = GC.Spec.ChunkedSweepCoalesce.Preservation
+module Pending = GC.Spec.ChunkedSweepCoalesce.PendingRun
 module Reach = GC.Spec.ChunkedSweepCoalesce.VertexReach
 module ReachPrefix = GC.Spec.ChunkedSweepCoalesce.VertexReachPrefix
 module VertexSteps = GC.Spec.ChunkedSweepCoalesce.VertexSteps
@@ -272,82 +273,6 @@ let seq_mem_eq (#a:eqtype) (s t: Seq.seq a) (x: a)
   assert (Seq.equal s t);
   Seq.lemma_eq_elim s t
 
-let blue_run_empty_end_at_next_start
-    (start: hp_addr)
-    (first: obj_addr)
-    (wz: nat)
-  : Lemma
-      (requires U64.v first == U64.v start + U64.v mword)
-      (ensures
-        U64.v first + wz * U64.v mword ==
-        U64.v start + (wz + 1) * U64.v mword)
-  =
-  FStar.Math.Lemmas.distributivity_add_left wz 1 (U64.v mword);
-  FStar.Math.Lemmas.paren_add_right
-    (U64.v start) (U64.v mword) (wz * U64.v mword)
-
-let blue_run_extended_end_at_next_start
-    (first_blue: U64.t)
-    (run_words: nat)
-    (start: hp_addr)
-    (wz: nat)
-  : Lemma
-      (requires
-        run_words > 0 /\
-        U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start)
-      (ensures
-        U64.v first_blue + (run_words + wz + 1 - 1) * U64.v mword ==
-        U64.v start + (wz + 1) * U64.v mword)
-  =
-  assert (run_words + wz + 1 - 1 == (run_words - 1) + (wz + 1));
-  FStar.Math.Lemmas.distributivity_add_left
-    (run_words - 1) (wz + 1) (U64.v mword);
-  FStar.Math.Lemmas.paren_add_right
-    (U64.v first_blue)
-    ((run_words - 1) * U64.v mword)
-    ((wz + 1) * U64.v mword)
-
-let chunked_fused_aux_nonblack_run_end_at_next_start
-    (start: hp_addr)
-    (first: obj_addr)
-    (first_blue: U64.t)
-    (run_words: nat)
-    (wz: U64.t)
-    (next_start: hp_addr)
-  : Lemma
-      (requires
-        U64.v first == U64.v start + U64.v mword /\
-        U64.v next_start ==
-          U64.v start + (U64.v wz + 1) * U64.v mword /\
-        (run_words = 0 \/
-         U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start))
-      (ensures
-        (let new_first : U64.t = if run_words = 0 then first else first_blue in
-         let new_run = run_words + U64.v wz + 1 in
-         new_run = 0 \/
-         U64.v new_first + (new_run - 1) * U64.v mword == U64.v next_start))
-  =
-  let new_first : U64.t = if run_words = 0 then first else first_blue in
-  let new_run = run_words + U64.v wz + 1 in
-  match run_words with
-  | 0 ->
-    assert (new_run - 1 == U64.v wz);
-    blue_run_empty_end_at_next_start start first (U64.v wz);
-    assert (U64.v new_first + (new_run - 1) * U64.v mword ==
-            U64.v start + (U64.v wz + 1) * U64.v mword);
-    assert (U64.v new_first + (new_run - 1) * U64.v mword ==
-            U64.v next_start)
-  | _ ->
-    assert (run_words > 0);
-    assert (U64.v first_blue +
-            (run_words - 1) * U64.v mword == U64.v start);
-    assert (new_run - 1 == (run_words - 1) + U64.v wz + 1);
-    blue_run_extended_end_at_next_start first_blue run_words start (U64.v wz);
-    assert (U64.v first_blue + (new_run - 1) * U64.v mword ==
-            U64.v start + (U64.v wz + 1) * U64.v mword);
-    assert (U64.v first_blue + (new_run - 1) * U64.v mword ==
-            U64.v next_start)
-
 #push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
 let suffix_object_after_header_addr
     (c: MH.heap_chunk)
@@ -387,114 +312,6 @@ let object_after_start_header_at_or_after
   assert (U64.v target >= U64.v start + U64.v mword);
   hd_address_spec target;
   assert (U64.v (hd_address target) + U64.v mword == U64.v target)
-#pop-options
-
-let pending_run_before_start
-    (work: MH.major_heap)
-    (idx: nat)
-    (base start: hp_addr)
-    (first_blue: U64.t)
-    (run_words: nat)
-  =
-  idx < Seq.length work /\
-  (run_words = 0 \/
-   (~(U64.v first_blue < U64.v mword) /\
-    ~(U64.v first_blue >= heap_size) /\
-    ~(U64.v first_blue % U64.v mword <> 0) /\
-    run_words - 1 < pow2 54 /\
-    run_words - 1 < pow2 64 /\
-    U64.v first_blue + (run_words - 1) * U64.v mword ==
-      U64.v start /\
-    (let fb : obj_addr = first_blue in
-     let hd = hd_address fb in
-     Seq.mem fb (MH.objects_in_chunk_from (Seq.index work idx) base) /\
-     U64.v fb < MH.chunk_end (Seq.index work idx) /\
-     U64.v start <= MH.chunk_end (Seq.index work idx) /\
-     MH.word_in_chunk (Seq.index work idx) hd)))
-
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
-let nonblack_tail_pending_run_before_start_from_empty
-    (work: MH.major_heap)
-    (idx: nat)
-    (base start next_start: hp_addr)
-    (first: obj_addr)
-    (wz: Obj.wosize)
-  : Lemma
-      (requires
-        idx < Seq.length work /\
-        hd_address first == start /\
-        U64.v first == U64.v start + U64.v mword /\
-        Seq.mem first (MH.objects_in_chunk_from (Seq.index work idx) base) /\
-        U64.v first < MH.chunk_end (Seq.index work idx) /\
-        MH.word_in_chunk (Seq.index work idx) start /\
-        U64.v start + (U64.v wz + 1) * U64.v mword ==
-          U64.v next_start /\
-        U64.v next_start <= MH.chunk_end (Seq.index work idx))
-      (ensures
-        pending_run_before_start work idx base next_start first (U64.v wz + 1))
-  =
-  let new_run = U64.v wz + 1 in
-  chunked_fused_aux_nonblack_run_end_at_next_start
-    start first 0UL 0 wz next_start;
-  FStar.Math.Lemmas.pow2_lt_compat 64 54;
-  assert (new_run > 0);
-  assert (new_run <> 0);
-  assert (new_run - 1 == U64.v wz);
-  assert (new_run - 1 < pow2 54);
-  assert (new_run - 1 < pow2 64);
-  assert (U64.v first + (new_run - 1) * U64.v mword ==
-          U64.v next_start);
-  assert (new_run * U64.v mword == (U64.v wz + 1) * U64.v mword);
-  assert (U64.v (hd_address first) + new_run * U64.v mword ==
-          U64.v next_start);
-  assert (U64.v first < MH.chunk_end (Seq.index work idx))
-
-let nonblack_tail_pending_run_before_start_from_nonempty
-    (work: MH.major_heap)
-    (idx: nat)
-    (base start next_start: hp_addr)
-    (first: obj_addr)
-    (wz: Obj.wosize)
-    (first_blue: obj_addr)
-    (run_words: pos)
-  : Lemma
-      (requires
-        idx < Seq.length work /\
-        pending_run_before_start work idx base start first_blue run_words /\
-        U64.v first == U64.v start + U64.v mword /\
-        run_words + U64.v wz < pow2 54 /\
-        U64.v start + (U64.v wz + 1) * U64.v mword ==
-          U64.v next_start /\
-        U64.v next_start <= MH.chunk_end (Seq.index work idx))
-      (ensures
-        pending_run_before_start
-          work idx base next_start first_blue
-          (run_words + U64.v wz + 1))
-  =
-  let new_run = run_words + U64.v wz + 1 in
-  chunked_fused_aux_nonblack_run_end_at_next_start
-    start first first_blue run_words wz next_start;
-  FStar.Math.Lemmas.pow2_lt_compat 64 54;
-  assert (run_words > 0);
-  assert (run_words >= 1);
-  assert (new_run - 1 == (run_words - 1) + U64.v wz + 1);
-  assert (new_run - 1 == run_words + U64.v wz);
-  assert (new_run > run_words);
-  assert (new_run > 0);
-  assert (new_run <> 0);
-  assert (new_run - 1 < pow2 54);
-  assert (new_run - 1 < pow2 64);
-  assert (U64.v first_blue + (new_run - 1) * U64.v mword ==
-          U64.v next_start);
-  hd_address_spec first_blue;
-  assert (U64.v (hd_address first_blue) + U64.v mword == U64.v first_blue);
-  FStar.Math.Lemmas.distributivity_add_left
-    (new_run - 1) 1 (U64.v mword);
-  FStar.Math.Lemmas.paren_add_right
-    (U64.v (hd_address first_blue)) (U64.v mword)
-    ((new_run - 1) * U64.v mword);
-  assert (U64.v (hd_address first_blue) + new_run * U64.v mword ==
-          U64.v next_start)
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
@@ -851,7 +668,7 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
                     U64.v start + (U64.v wz + 1) * U64.v mword);
             assert (new_run ==
                     run_words + U64.v wz + 1);
-            chunked_fused_aux_nonblack_run_end_at_next_start
+            Pending.chunked_fused_aux_nonblack_run_end_at_next_start
               start first first_blue run_words wz next_start;
             assert (new_first == (if run_words = 0 then first else first_blue));
             Defs.chunked_fused_aux_nonblack_step
