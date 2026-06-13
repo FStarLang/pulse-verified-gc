@@ -45,6 +45,7 @@ module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
+module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -997,6 +998,35 @@ let spot_chunked_mark_bounded_single_chunk_compat
   =
   ChunkedMarkBoundedOuter.chunked_mark_bounded_single_chunk_compat
     g cap fuel
+
+let spot_chunked_major_gc_bounded_equation
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel ==
+       ChunkedSweepDefs.chunked_fused_sweep_coalesce
+         (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel))
+  =
+  ChunkedMajorGC.chunked_major_gc_bounded_equation mh cap fuel
+
+let spot_chunked_major_gc_bounded_single_chunk_compat
+  (g: heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedOuter.mark_bounded_single_chunk_ready
+          g cap fuel)
+      (ensures
+        ChunkedMajorGC.chunked_major_gc_bounded
+          (MH.single_chunk_major_heap g) cap fuel ==
+        (let h_mark = BMark.mark_bounded g cap fuel in
+         let (h_final, fp_final) =
+           DenseFused.fused_sweep_coalesce h_mark in
+         (MH.single_chunk_major_heap h_final, fp_final)))
+  =
+  ChunkedMajorGC.chunked_major_gc_bounded_single_chunk_compat g cap fuel
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
