@@ -371,3 +371,118 @@ let chunked_flush_blue_then_make_white_head_preserves_base_member
   assert (MH.object_wosize_in_chunk (Seq.index work'' idx) target ==
           U64.v (Obj.getWosize hdr))
 #pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_flush_blue_before_preserves_objects_from
+    (mh: MH.major_heap)
+    (idx: nat)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        (run_words = 0 \/
+         (~(U64.v first_blue < U64.v mword) /\
+          ~(U64.v first_blue >= heap_size) /\
+          ~(U64.v first_blue % U64.v mword <> 0) /\
+          run_words - 1 < pow2 54 /\
+          run_words - 1 < pow2 64 /\
+          U64.v start <= MH.chunk_end (Seq.index mh idx) /\
+          (let fb : obj_addr = first_blue in
+           let hd = hd_address fb in
+           MH.word_in_chunk (Seq.index mh idx) hd /\
+           U64.v hd + run_words * U64.v mword <= U64.v start))))
+      (ensures
+        (let final = fst (Defs.chunked_flush_blue mh first_blue run_words fp) in
+         MH.well_formed_major_heap final /\
+         idx < Seq.length final /\
+         MH.objects_in_chunk_from (Seq.index final idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh idx) start /\
+         MH.chunk_start (Seq.index final idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index final idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  if run_words = 0 then
+    Defs.chunked_flush_blue_empty mh first_blue fp
+  else begin
+    nat_nonzero_pos run_words;
+    let rw : pos = run_words in
+    if U64.v first_blue < U64.v mword ||
+       U64.v first_blue >= heap_size ||
+       U64.v first_blue % U64.v mword <> 0
+    then
+      Defs.chunked_flush_blue_invalid mh first_blue rw fp
+    else if run_words - 1 >= pow2 54 then
+      Defs.chunked_flush_blue_too_large mh first_blue rw fp
+    else begin
+      assert (run_words - 1 < pow2 54);
+      assert (run_words - 1 < pow2 64);
+      let fb : obj_addr = first_blue in
+      let hd = hd_address fb in
+      let wz : nat = run_words - 1 in
+      let wz_u64 : Obj.wosize = U64.uint_to_t wz in
+      let hdr = Obj.makeHeader wz_u64 Header.Blue 0UL in
+      Defs.chunked_flush_blue_step mh first_blue rw fp;
+      assert (rw == run_words);
+      Reach.major_write_word_or_same_before_preserves_objects_from
+        mh idx start hd hdr;
+      let mh1 = SpecMajorAlloc.major_write_word_or_same mh hd hdr in
+      assert (MH.well_formed_major_heap mh1);
+      assert (idx < Seq.length mh1);
+      assert (MH.objects_in_chunk_from (Seq.index mh1 idx) start ==
+              MH.objects_in_chunk_from (Seq.index mh idx) start);
+      assert (MH.chunk_start (Seq.index mh1 idx) ==
+              MH.chunk_start (Seq.index mh idx));
+      assert (MH.chunk_end (Seq.index mh1 idx) ==
+              MH.chunk_end (Seq.index mh idx));
+      if wz >= 1 && U64.v hd + U64.v mword * 2 <= heap_size then begin
+        hd_address_spec fb;
+        assert (U64.v hd + U64.v mword == U64.v fb);
+        assert (run_words == wz + 1);
+        assert (wz >= 1);
+        assert (U64.v fb + U64.v mword <= U64.v start);
+        assert (MH.word_in_chunk (Seq.index mh1 idx) fb);
+        Reach.major_write_word_or_same_before_preserves_objects_from
+          mh1 idx start fb fp;
+        let mh2 = SpecMajorAlloc.major_write_word_or_same mh1 fb fp in
+        assert (MH.well_formed_major_heap mh2);
+        assert (idx < Seq.length mh2);
+        assert (MH.objects_in_chunk_from (Seq.index mh2 idx) start ==
+                MH.objects_in_chunk_from (Seq.index mh idx) start);
+        assert (MH.chunk_start (Seq.index mh2 idx) ==
+                MH.chunk_start (Seq.index mh idx));
+        assert (MH.chunk_end (Seq.index mh2 idx) ==
+                MH.chunk_end (Seq.index mh idx));
+        let zero_start_nat = U64.v fb + U64.v mword in
+        if wz >= 2 && zero_start_nat < pow2 64 then begin
+          let zero_start = U64.uint_to_t zero_start_nat in
+          MH.next_object_start_aligned fb 1;
+          assert (U64.v zero_start == zero_start_nat);
+          assert (U64.v zero_start % U64.v mword == 0);
+          FStar.Math.Lemmas.distributivity_add_left
+            2 (wz - 1) (U64.v mword);
+          FStar.Math.Lemmas.paren_add_right
+            (U64.v hd) (2 * U64.v mword) ((wz - 1) * U64.v mword);
+          assert (U64.v zero_start + (wz - 1) * U64.v mword ==
+                  U64.v hd + run_words * U64.v mword);
+          assert (U64.v zero_start + (wz - 1) * U64.v mword <=
+                  U64.v start);
+          assert (U64.v zero_start + (wz - 1) * U64.v mword <=
+                  MH.chunk_end (Seq.index mh2 idx));
+          assert (U64.v zero_start >= MH.chunk_start (Seq.index mh2 idx));
+          Reach.chunked_zero_fields_before_preserves_objects_from
+            mh2 idx start zero_start (wz - 1);
+          Defs.chunked_flush_blue_fst_zero_step mh fb run_words fp
+        end else begin
+          Defs.chunked_flush_blue_fst_link_step mh fb run_words fp
+        end
+      end else begin
+        Defs.chunked_flush_blue_fst_header_step mh fb run_words fp
+      end
+    end
+  end
+#pop-options
