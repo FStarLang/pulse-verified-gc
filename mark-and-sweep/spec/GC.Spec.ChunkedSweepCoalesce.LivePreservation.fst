@@ -14,6 +14,7 @@ module Fields = GC.Spec.Fields
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 module Pres = GC.Spec.ChunkedSweepCoalesce.Preservation
 module ChunkedGraph = GC.Spec.ChunkedMajorGC.Graph
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 #set-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always --warn_error -321"
 
@@ -471,3 +472,86 @@ let chunked_fused_aux_live_field_preserved_from_chunk
   assert (Defs.chunked_wosize_of_object final target == Obj.getWosize hdr);
   ChunkedGraph.chunked_major_field_preserved_intro
     source final target
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_object_color_preserves_major_objects
+    (mh: MH.major_heap)
+    (idx: nat)
+    (obj: obj_addr)
+    (color: Header.color_sem)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address obj) == Some idx /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.major_objects (Defs.chunked_set_object_color mh obj color) ==
+        MH.major_objects mh)
+  =
+  Defs.chunked_read_header_step mh obj;
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  MH.lookup_chunk_index_some mh (hd_address obj) idx;
+  assert (MH.word_in_chunk (Seq.index mh idx) (hd_address obj));
+  MH.read_word_in_major_at_lookup_index mh (hd_address obj) idx;
+  assert (MH.read_word_in_chunk (Seq.index mh idx) (hd_address obj) == hdr);
+  assert (MH.object_wosize_in_chunk (Seq.index mh idx) obj ==
+          U64.v (Obj.getWosize hdr));
+  Obj.colorHeader_preserves_wosize hdr color;
+  assert (U64.v (Obj.getWosize (Obj.colorHeader hdr color)) ==
+          MH.object_wosize_in_chunk (Seq.index mh idx) obj);
+  Defs.chunked_set_object_color_some mh obj color hdr;
+  MH.major_objects_write_member_header_same_wosize_preserves
+    mh idx obj (Obj.colorHeader hdr color);
+  MH.write_word_in_major_at_lookup_index
+    mh (hd_address obj) (Obj.colorHeader hdr color) idx;
+  SpecMajorAlloc.major_write_word_or_same_some
+    mh
+    (Seq.upd mh idx
+      (MH.write_word_in_chunk
+        (Seq.index mh idx) (hd_address obj) (Obj.colorHeader hdr color)))
+    (hd_address obj)
+    (Obj.colorHeader hdr color)
+
+let chunked_make_white_preserves_major_objects
+    (mh: MH.major_heap)
+    (idx: nat)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address obj) == Some idx /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.major_objects (Defs.chunked_make_white mh obj) ==
+        MH.major_objects mh)
+  =
+  Defs.chunked_make_white_step mh obj;
+  chunked_set_object_color_preserves_major_objects
+    mh idx obj Header.White hdr
+
+let chunked_make_blue_preserves_major_objects
+    (mh: MH.major_heap)
+    (idx: nat)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address obj) == Some idx /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Defs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.major_objects (Defs.chunked_make_blue mh obj) ==
+        MH.major_objects mh)
+  =
+  Defs.chunked_make_blue_step mh obj;
+  chunked_set_object_color_preserves_major_objects
+    mh idx obj Header.Blue hdr
+#pop-options

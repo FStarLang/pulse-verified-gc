@@ -713,6 +713,65 @@ let spot_chunked_fused_aux_live_field_preserved_from_chunk
   ChunkedSweepLive.chunked_fused_aux_live_field_preserved_from_chunk
     source idx fp target hdr
 
+let spot_chunked_set_object_color_preserves_major_objects
+  (mh: MH.major_heap)
+  (idx: nat)
+  (obj: obj_addr)
+  (color: GC.Lib.Header.color_sem)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address obj) == Some idx /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.major_objects
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) ==
+        MH.major_objects mh)
+  =
+  ChunkedSweepLive.chunked_set_object_color_preserves_major_objects
+    mh idx obj color hdr
+
+let spot_chunked_make_white_preserves_major_objects
+  (mh: MH.major_heap)
+  (idx: nat)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address obj) == Some idx /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.major_objects (ChunkedSweepDefs.chunked_make_white mh obj) ==
+        MH.major_objects mh)
+  =
+  ChunkedSweepLive.chunked_make_white_preserves_major_objects
+    mh idx obj hdr
+
+let spot_chunked_make_blue_preserves_major_objects
+  (mh: MH.major_heap)
+  (idx: nat)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        MH.lookup_chunk_index mh (hd_address obj) == Some idx /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        MH.major_objects (ChunkedSweepDefs.chunked_make_blue mh obj) ==
+        MH.major_objects mh)
+  =
+  ChunkedSweepLive.chunked_make_blue_preserves_major_objects
+    mh idx obj hdr
+
 let spot_major_fl_head_wosize_single_chunk_from_dense
   (g: heap) (fp: U64.t) (fuel: nat)
   : Lemma
