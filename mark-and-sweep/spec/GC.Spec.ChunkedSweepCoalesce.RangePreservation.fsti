@@ -74,3 +74,37 @@ val chunked_fused_aux_pointer_classification_preserved
           work
           (fst (Defs.chunked_fused_aux
             source work objs first_blue run_words fp)))
+
+val chunked_fused_sweep_coalesce_chunks_preserves_ranges
+  (source_chunks source work: MH.major_heap)
+  (fp: U64.t)
+  : Lemma
+      (ensures
+        same_chunk_ranges work
+          (fst (Defs.chunked_fused_sweep_coalesce_chunks
+            source_chunks source work fp)))
+
+val chunked_fused_sweep_coalesce_preserves_ranges
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (fst (Defs.chunked_fused_sweep_coalesce mh)))
+
+val chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
+  (source_chunks source work: MH.major_heap)
+  (fp: U64.t)
+  : Lemma
+      (ensures
+        ChunkedGraph.chunked_major_pointer_classification_preserved
+          work
+          (fst (Defs.chunked_fused_sweep_coalesce_chunks
+            source_chunks source work fp)))
+
+val chunked_fused_sweep_coalesce_pointer_classification_preserved
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        ChunkedGraph.chunked_major_pointer_classification_preserved
+          mh
+          (fst (Defs.chunked_fused_sweep_coalesce mh)))

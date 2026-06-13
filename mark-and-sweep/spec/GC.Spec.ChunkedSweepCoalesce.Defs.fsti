@@ -529,6 +529,14 @@ val chunked_fused_sweep_coalesce_chunks_empty
       (chunked_fused_sweep_coalesce_chunks Seq.empty source work fp ==
        (work, fp))
 
+val chunked_fused_sweep_coalesce_chunks_empty_length
+  (source_chunks source work: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (requires Seq.length source_chunks = 0)
+      (ensures
+        chunked_fused_sweep_coalesce_chunks source_chunks source work fp ==
+        (work, fp))
+
 val chunked_fused_sweep_coalesce_chunks_step
   (source_chunks source work: MH.major_heap) (fp: U64.t)
   : Lemma

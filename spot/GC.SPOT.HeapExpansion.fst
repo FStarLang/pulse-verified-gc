@@ -862,6 +862,50 @@ let spot_chunked_fused_aux_pointer_classification_preserved
   ChunkedSweepRange.chunked_fused_aux_pointer_classification_preserved
     source work objs first_blue run_words fp
 
+let spot_chunked_fused_sweep_coalesce_chunks_preserves_ranges
+  (source_chunks source work: MH.major_heap)
+  (fp: U64.t)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges work
+          (fst (ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks
+            source_chunks source work fp)))
+  =
+  ChunkedSweepRange.chunked_fused_sweep_coalesce_chunks_preserves_ranges
+    source_chunks source work fp
+
+let spot_chunked_fused_sweep_coalesce_preserves_ranges
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (fst (ChunkedSweepDefs.chunked_fused_sweep_coalesce mh)))
+  =
+  ChunkedSweepRange.chunked_fused_sweep_coalesce_preserves_ranges mh
+
+let spot_chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
+  (source_chunks source work: MH.major_heap)
+  (fp: U64.t)
+  : Lemma
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          work
+          (fst (ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks
+            source_chunks source work fp)))
+  =
+  ChunkedSweepRange.chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
+    source_chunks source work fp
+
+let spot_chunked_fused_sweep_coalesce_pointer_classification_preserved
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          mh
+          (fst (ChunkedSweepDefs.chunked_fused_sweep_coalesce mh)))
+  =
+  ChunkedSweepRange.chunked_fused_sweep_coalesce_pointer_classification_preserved mh
+
 let spot_chunked_fused_aux_live_subgraph_preserved_from_chunk
   (source: MH.major_heap)
   (idx: nat)
@@ -2055,6 +2099,18 @@ let spot_nonblack_tail_pending_run_before_start_from_nonempty
   =
   ChunkedSweepPending.nonblack_tail_pending_run_before_start_from_nonempty
     work idx base start next_start first wz first_blue run_words
+
+let spot_chunked_fused_sweep_coalesce_chunks_empty_length
+  (source_chunks source work: MH.major_heap) (fp: U64.t)
+  : Lemma
+      (requires Seq.length source_chunks = 0)
+      (ensures
+        ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks
+          source_chunks source work fp ==
+        (work, fp))
+  =
+  ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks_empty_length
+    source_chunks source work fp
 
 let spot_chunked_fused_sweep_coalesce_chunks_step
   (source_chunks source work: MH.major_heap) (fp: U64.t)

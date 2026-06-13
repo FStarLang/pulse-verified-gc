@@ -407,3 +407,96 @@ let chunked_fused_aux_pointer_classification_preserved
   in
   FStar.Classical.forall_intro classify;
   ChunkedGraph.chunked_major_pointer_classification_preserved_intro work final
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+let rec chunked_fused_sweep_coalesce_chunks_preserves_ranges
+    (source_chunks source work: MH.major_heap)
+    (fp: U64.t)
+  : Lemma
+      (ensures
+        same_chunk_ranges work
+          (fst (Defs.chunked_fused_sweep_coalesce_chunks
+            source_chunks source work fp)))
+      (decreases Seq.length source_chunks)
+  =
+  if Seq.length source_chunks = 0 then begin
+    Defs.chunked_fused_sweep_coalesce_chunks_empty_length
+      source_chunks source work fp;
+    same_chunk_ranges_refl work;
+    assert (
+      fst (Defs.chunked_fused_sweep_coalesce_chunks
+        source_chunks source work fp) == work)
+  end else begin
+    assert (Seq.length source_chunks > 0);
+    let c = Seq.head source_chunks in
+    let rest = Seq.tail source_chunks in
+    assert (Seq.length rest < Seq.length source_chunks);
+    let one =
+      Defs.chunked_fused_aux source work (MH.objects_in_chunk c) 0UL 0 fp in
+    let work' = fst one in
+    let fp' = snd one in
+    Defs.chunked_fused_sweep_coalesce_chunks_step
+      source_chunks source work fp;
+    chunked_fused_aux_preserves_ranges
+      source work (MH.objects_in_chunk c) 0UL 0 fp;
+    chunked_fused_sweep_coalesce_chunks_preserves_ranges
+      rest source work' fp';
+    same_chunk_ranges_trans work work'
+      (fst (Defs.chunked_fused_sweep_coalesce_chunks
+        rest source work' fp'));
+    assert (
+      fst (Defs.chunked_fused_sweep_coalesce_chunks
+        source_chunks source work fp) ==
+      fst (Defs.chunked_fused_sweep_coalesce_chunks
+        rest source work' fp'))
+  end
+#pop-options
+
+let chunked_fused_sweep_coalesce_preserves_ranges
+    (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (fst (Defs.chunked_fused_sweep_coalesce mh)))
+  =
+  Defs.chunked_fused_sweep_coalesce_step mh;
+  chunked_fused_sweep_coalesce_chunks_preserves_ranges mh mh mh 0UL
+
+let chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
+    (source_chunks source work: MH.major_heap)
+    (fp: U64.t)
+  : Lemma
+      (ensures
+        ChunkedGraph.chunked_major_pointer_classification_preserved
+          work
+          (fst (Defs.chunked_fused_sweep_coalesce_chunks
+            source_chunks source work fp)))
+  =
+  let final =
+    fst (Defs.chunked_fused_sweep_coalesce_chunks source_chunks source work fp) in
+  chunked_fused_sweep_coalesce_chunks_preserves_ranges
+    source_chunks source work fp;
+  let classify (v: U64.t)
+    : Lemma
+        (ensures
+          MarkDefs.chunked_is_pointer_field work v ==
+          MarkDefs.chunked_is_pointer_field final v)
+    =
+    MarkDefs.chunked_is_pointer_field_step work v;
+    MarkDefs.chunked_is_pointer_field_step final v;
+    same_chunk_ranges_preserves_is_major_pointer work final v
+  in
+  FStar.Classical.forall_intro classify;
+  ChunkedGraph.chunked_major_pointer_classification_preserved_intro work final
+
+let chunked_fused_sweep_coalesce_pointer_classification_preserved
+    (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        ChunkedGraph.chunked_major_pointer_classification_preserved
+          mh
+          (fst (Defs.chunked_fused_sweep_coalesce mh)))
+  =
+  Defs.chunked_fused_sweep_coalesce_step mh;
+  chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
+    mh mh mh 0UL
