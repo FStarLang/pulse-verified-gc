@@ -245,6 +245,30 @@ val chunked_fused_aux_read_frame_ready_from_all_after
         chunked_fused_aux_read_frame_ready
           source objs first_blue run_words read_addr)
 
+val chunked_fused_aux_live_read_frame_ready
+  (source: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (target: obj_addr)
+  (read_addr: hp_addr)
+  : Tot prop
+
+val chunked_fused_aux_read_frame_ready_from_live_target
+  (source: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (target: obj_addr)
+  (read_addr: hp_addr)
+  : Lemma
+      (requires
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words target read_addr)
+      (ensures
+        chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words read_addr)
+
 val chunked_fused_aux_preserves_other_read
   (source work: MH.major_heap)
   (objs: Seq.seq obj_addr)
@@ -282,6 +306,31 @@ val chunked_fused_aux_preserves_get_field_read_some
         MH.read_word_in_major work field_addr == Some old /\
         chunked_fused_aux_read_frame_ready
           source objs first_blue run_words field_addr)
+      (ensures
+        MarkDefs.chunked_get_field
+          (fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          obj i ==
+        MarkDefs.chunked_get_field work obj i)
+
+val chunked_fused_aux_preserves_get_field_from_live_target
+  (source work: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size /\
+        field_addr == U64.add (hd_address obj) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words obj field_addr)
       (ensures
         MarkDefs.chunked_get_field
           (fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux

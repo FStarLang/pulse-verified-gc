@@ -592,6 +592,84 @@ let rec chunked_fused_aux_read_frame_ready_from_all_after
     end
   end
 
+let rec chunked_fused_aux_live_read_frame_ready
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (target: obj_addr)
+    (read_addr: hp_addr)
+  : Tot prop
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    False
+  else
+    let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    if obj = target then
+      Defs.chunked_is_black source obj /\
+      (run_words = 0 \/
+       U64.v first_blue + (run_words - 1) * U64.v mword <=
+         U64.v read_addr) /\
+      (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+       U64.v read_addr + U64.v mword <= U64.v (hd_address obj)) /\
+      (forall (o: obj_addr). Seq.mem o rest ==>
+        U64.v read_addr + U64.v mword * 2 <= U64.v o)
+    else if Defs.chunked_is_black source obj then
+      (run_words = 0 \/
+       U64.v first_blue + (run_words - 1) * U64.v mword <=
+         U64.v read_addr) /\
+      (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+       U64.v read_addr + U64.v mword <= U64.v (hd_address obj)) /\
+      chunked_fused_aux_live_read_frame_ready
+        source rest 0UL 0 target read_addr
+    else
+      let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      chunked_fused_aux_live_read_frame_ready
+        source rest new_first (run_words + ws + 1) target read_addr
+
+let rec chunked_fused_aux_read_frame_ready_from_live_target
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (target: obj_addr)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words target read_addr)
+      (ensures
+        chunked_fused_aux_read_frame_ready
+          source objs first_blue run_words read_addr)
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    assert False
+  else begin
+    assert (~(Seq.length objs = 0));
+    nat_nonzero_pos (Seq.length objs);
+    assert (Seq.length objs > 0);
+    let obj = Seq.head objs in
+    let rest = Seq.tail objs in
+    assert (Seq.length rest < Seq.length objs);
+    if obj = target then begin
+      assert (Defs.chunked_is_black source obj);
+      chunked_fused_aux_read_frame_ready_from_all_after
+        source rest 0UL 0 read_addr
+    end else if Defs.chunked_is_black source obj then
+      chunked_fused_aux_read_frame_ready_from_live_target
+        source rest 0UL 0 target read_addr
+    else begin
+      let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+      let new_first : U64.t = if run_words = 0 then obj else first_blue in
+      chunked_fused_aux_read_frame_ready_from_live_target
+        source rest new_first (run_words + ws + 1) target read_addr
+    end
+  end
+
 let rec chunked_fused_aux_preserves_other_read
     (source work: MH.major_heap)
     (objs: Seq.seq obj_addr)
@@ -680,3 +758,33 @@ let chunked_fused_aux_preserves_get_field_read_some
   chunked_fused_aux_preserves_other_read
     source work objs first_blue run_words fp field_addr old;
   MarkDefs.chunked_get_field_read_some final obj i old
+
+let chunked_fused_aux_preserves_get_field_from_live_target
+    (source work: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        U64.v (hd_address obj) + U64.v mword * U64.v i + U64.v mword <=
+          heap_size /\
+        field_addr == U64.add (hd_address obj) (U64.mul mword i) /\
+        MH.read_word_in_major work field_addr == Some old /\
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words obj field_addr)
+      (ensures
+        MarkDefs.chunked_get_field
+          (fst (Defs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          obj i ==
+        MarkDefs.chunked_get_field work obj i)
+  =
+  chunked_fused_aux_read_frame_ready_from_live_target
+    source objs first_blue run_words obj field_addr;
+  chunked_fused_aux_preserves_get_field_read_some
+    source work objs first_blue run_words fp obj i field_addr old
