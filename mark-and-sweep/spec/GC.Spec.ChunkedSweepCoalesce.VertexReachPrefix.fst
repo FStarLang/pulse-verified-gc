@@ -10,6 +10,7 @@ module MH = GC.Spec.MajorHeap
 module Obj = GC.Spec.Object
 module Header = GC.Lib.Header
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
+module Pres = GC.Spec.ChunkedSweepCoalesce.Preservation
 module Vertex = GC.Spec.ChunkedSweepCoalesce.VertexPreservation
 module Reach = GC.Spec.ChunkedSweepCoalesce.VertexReach
 module SpecMajorAlloc = GC.Spec.MajorAllocator
@@ -247,4 +248,126 @@ let chunked_flush_blue_prefix_preserves_base_member
       final idx base fb target
   end;
   ()
+#pop-options
+
+let nat_nonzero_pos (n: nat)
+  : Lemma (requires n <> 0) (ensures n > 0)
+  = ()
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunk_member_read_header_wosize
+    (mh: MH.major_heap)
+    (idx: nat)
+    (base: hp_addr)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem target
+          (MH.objects_in_chunk_from (Seq.index mh idx) base) /\
+        Defs.chunked_read_header mh target == Some hdr)
+      (ensures
+        MH.word_in_chunk (Seq.index mh idx) (hd_address target) /\
+        MH.object_wosize_in_chunk (Seq.index mh idx) target ==
+        U64.v (Obj.getWosize hdr))
+  =
+  MH.objects_in_chunk_from_member_header_fits
+    (Seq.index mh idx) base target;
+  assert (MH.object_header_size_fits_in_chunk (Seq.index mh idx) target);
+  assert (MH.word_in_chunk (Seq.index mh idx) (hd_address target));
+  MH.lookup_chunk_index_word_in_chunk mh (hd_address target) idx;
+  MH.read_word_in_major_at_lookup_index mh (hd_address target) idx;
+  Defs.chunked_read_header_step mh target;
+  assert (MH.read_word_in_chunk (Seq.index mh idx) (hd_address target) == hdr)
+
+let chunked_flush_blue_then_make_white_head_preserves_base_member
+    (mh: MH.major_heap)
+    (idx: nat)
+    (base: hp_addr)
+    (target: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem target (MH.objects_in_chunk_from (Seq.index mh idx) base) /\
+        Defs.chunked_read_header mh target == Some hdr /\
+        (run_words = 0 \/
+         (~(U64.v first_blue < U64.v mword) /\
+          ~(U64.v first_blue >= heap_size) /\
+          ~(U64.v first_blue % U64.v mword <> 0) /\
+          run_words - 1 < pow2 54 /\
+          run_words - 1 < pow2 64 /\
+          U64.v first_blue + (run_words - 1) * U64.v mword ==
+            U64.v (hd_address target) /\
+          (let fb : obj_addr = first_blue in
+           Seq.mem fb (MH.objects_in_chunk_from (Seq.index mh idx) base) /\
+           U64.v fb < MH.chunk_end (Seq.index mh idx) /\
+           U64.v (hd_address target) <= MH.chunk_end (Seq.index mh idx) /\
+           MH.word_in_chunk (Seq.index mh idx) (hd_address fb) /\
+           Seq.mem target
+             (MH.objects_in_chunk_from
+               (Seq.index mh idx) (hd_address target))))))
+      (ensures
+        (let flushed = Defs.chunked_flush_blue mh first_blue run_words fp in
+         let work' = fst flushed in
+         let work'' = Defs.chunked_make_white work' target in
+         MH.well_formed_major_heap work'' /\
+         idx < Seq.length work'' /\
+         Seq.mem target
+           (MH.objects_in_chunk_from (Seq.index work'' idx) base) /\
+         MH.object_wosize_in_chunk (Seq.index work'' idx) target ==
+         U64.v (Obj.getWosize hdr) /\
+         MH.chunk_start (Seq.index work'' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index work'' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+  =
+  Defs.chunked_read_header_step mh target;
+  assert (MH.read_word_in_major mh (hd_address target) == Some hdr);
+  let flushed = Defs.chunked_flush_blue mh first_blue run_words fp in
+  let work' = fst flushed in
+  let fp' = snd flushed in
+  if run_words = 0 then begin
+    Defs.chunked_flush_blue_empty mh first_blue fp;
+    assert (work' == mh)
+  end else begin
+    nat_nonzero_pos run_words;
+    let rw : pos = run_words in
+    let fb : obj_addr = first_blue in
+    assert (rw == run_words);
+    chunked_flush_blue_prefix_preserves_base_member
+      mh idx base fb rw (hd_address target) target fp;
+    Pres.chunked_flush_blue_preserves_other_read
+      mh first_blue run_words fp (hd_address target) hdr
+  end;
+  assert (MH.well_formed_major_heap work');
+  assert (idx < Seq.length work');
+  assert (Seq.mem target (MH.objects_in_chunk_from (Seq.index work' idx) base));
+  assert (MH.chunk_start (Seq.index work' idx) ==
+          MH.chunk_start (Seq.index mh idx));
+  assert (MH.chunk_end (Seq.index work' idx) ==
+          MH.chunk_end (Seq.index mh idx));
+  Defs.chunked_read_header_step work' target;
+  assert (Defs.chunked_read_header work' target == Some hdr);
+  chunk_member_read_header_wosize work' idx base target hdr;
+  Obj.colorHeader_preserves_wosize hdr Header.White;
+  Defs.chunked_make_white_step work' target;
+  Defs.chunked_set_object_color_some work' target Header.White hdr;
+  Reach.major_write_member_header_same_wosize_preserves_objects_from
+    work' idx base target (Obj.colorHeader hdr Header.White);
+  let work'' = Defs.chunked_make_white work' target in
+  assert (MH.well_formed_major_heap work'');
+  assert (idx < Seq.length work'');
+  assert (Seq.mem target
+    (MH.objects_in_chunk_from (Seq.index work'' idx) base));
+  assert (MH.object_wosize_in_chunk (Seq.index work'' idx) target ==
+          MH.object_wosize_in_chunk (Seq.index work' idx) target);
+  assert (MH.object_wosize_in_chunk (Seq.index work'' idx) target ==
+          U64.v (Obj.getWosize hdr))
 #pop-options
