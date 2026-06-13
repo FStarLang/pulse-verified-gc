@@ -87,6 +87,22 @@ let chunked_major_successors_preserved
     chunked_major_edge mh_init x y <==>
     chunked_major_edge mh_final x y
 
+let chunked_major_live_subgraph_preserved
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (live: obj_addr -> prop)
+  : prop
+  =
+  (forall (x: obj_addr).
+    live x ==>
+    chunked_major_vertex mh_init x /\
+    chunked_major_vertex mh_final x) /\
+  (forall (x: obj_addr).
+    live x ==>
+    forall (y: obj_addr).
+    (chunked_major_edge mh_init x y <==>
+     chunked_major_edge mh_final x y))
+
 let chunked_major_successors_preserved_elim
     (mh_init: MH.major_heap)
     (mh_final: MH.major_heap)
@@ -97,6 +113,51 @@ let chunked_major_successors_preserved_elim
         forall (y: obj_addr).
           chunked_major_edge mh_init x y <==>
           chunked_major_edge mh_final x y)
+  = ()
+
+let chunked_major_live_subgraph_preserved_intro
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          live x ==>
+          chunked_major_vertex mh_init x /\
+          chunked_major_vertex mh_final x) /\
+        (forall (x: obj_addr).
+          live x ==>
+          forall (y: obj_addr).
+          (chunked_major_edge mh_init x y <==>
+           chunked_major_edge mh_final x y)))
+      (ensures chunked_major_live_subgraph_preserved mh_init mh_final live)
+  = ()
+
+let chunked_major_live_subgraph_vertices_elim
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (live: obj_addr -> prop)
+  : Lemma
+      (requires chunked_major_live_subgraph_preserved mh_init mh_final live)
+      (ensures
+        forall (x: obj_addr).
+          live x ==>
+          chunked_major_vertex mh_init x /\
+          chunked_major_vertex mh_final x)
+  = ()
+
+let chunked_major_live_subgraph_edges_elim
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (live: obj_addr -> prop)
+  : Lemma
+      (requires chunked_major_live_subgraph_preserved mh_init mh_final live)
+      (ensures
+        forall (x: obj_addr).
+          live x ==>
+          forall (y: obj_addr).
+          (chunked_major_edge mh_init x y <==>
+           chunked_major_edge mh_final x y))
   = ()
 
 let chunked_major_vertex_single_chunk_compat (g: heap) (x: obj_addr)

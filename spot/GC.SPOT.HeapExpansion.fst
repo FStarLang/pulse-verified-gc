@@ -1328,6 +1328,44 @@ let spot_chunked_major_gc_bounded_single_chunk_live_edges_preserved
   ChunkedMajorGCCorr.chunked_major_gc_bounded_single_chunk_live_edges_preserved
     g roots fp cap fuel
 
+let spot_chunked_major_gc_bounded_single_chunk_live_subgraph_preserved
+  (g: heap)
+  (roots: Seq.seq obj_addr)
+  (fp: U64.t)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        Fields.well_formed_heap g /\
+        Seq.length (Fields.objects zero_addr g) > 0 /\
+        GC.Spec.SweepInv.heap_objects_dense g /\
+        Mark.root_props g roots /\
+        SpecSweep.fp_in_heap fp g /\
+        Mark.no_black_objects g /\
+        Mark.no_pointer_to_blue g /\
+        Fields.no_scan_invariant g /\
+        fuel >= BMark.count_non_black g /\
+        ChunkedMarkBoundedOuter.mark_bounded_single_chunk_ready
+          g cap fuel /\
+        (forall (x: obj_addr). Seq.mem x (Fields.objects zero_addr g) /\
+          (Obj.is_gray x g \/ Obj.is_black x g) ==> Seq.mem x roots) /\
+        (let graph = GC.Spec.HeapModel.create_graph g in
+         let roots' = GC.Spec.HeapGraph.coerce_to_vertex_list roots in
+         GC.Spec.Graph.graph_wf graph /\
+         GC.Spec.Graph.is_vertex_set roots' /\
+         GC.Spec.Graph.subset_vertices roots' graph.vertices))
+      (ensures
+        (let (mh_final, chunked_fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded
+             (MH.single_chunk_major_heap g) cap fuel in
+         ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+           (MH.single_chunk_major_heap g)
+           mh_final
+           (fun (x: obj_addr) -> SpecGCPost.heap_reachable g roots x)))
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_single_chunk_live_subgraph_preserved
+    g roots fp cap fuel
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
@@ -1429,6 +1467,63 @@ let spot_chunked_major_successors_preserved_elim
   =
   ChunkedMajorGCGraph.chunked_major_successors_preserved_elim
     mh_init mh_final x
+
+let spot_chunked_major_live_subgraph_preserved_intro
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          live x ==>
+          ChunkedMajorGCGraph.chunked_major_vertex mh_init x /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh_final x) /\
+        (forall (x: obj_addr).
+          live x ==>
+          forall (y: obj_addr).
+          (ChunkedMajorGCGraph.chunked_major_edge mh_init x y <==>
+           ChunkedMajorGCGraph.chunked_major_edge mh_final x y)))
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh_init mh_final live)
+  =
+  ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved_intro
+    mh_init mh_final live
+
+let spot_chunked_major_live_subgraph_vertices_elim
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh_init mh_final live)
+      (ensures
+        forall (x: obj_addr).
+          live x ==>
+          ChunkedMajorGCGraph.chunked_major_vertex mh_init x /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh_final x)
+  =
+  ChunkedMajorGCGraph.chunked_major_live_subgraph_vertices_elim
+    mh_init mh_final live
+
+let spot_chunked_major_live_subgraph_edges_elim
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh_init mh_final live)
+      (ensures
+        forall (x: obj_addr).
+          live x ==>
+          forall (y: obj_addr).
+          (ChunkedMajorGCGraph.chunked_major_edge mh_init x y <==>
+           ChunkedMajorGCGraph.chunked_major_edge mh_final x y))
+  =
+  ChunkedMajorGCGraph.chunked_major_live_subgraph_edges_elim
+    mh_init mh_final live
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)
