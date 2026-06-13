@@ -1,0 +1,58 @@
+module GC.Spec.ChunkedSweepCoalesce.VertexReach
+
+module U64 = FStar.UInt64
+module Seq = FStar.Seq
+
+open GC.Spec.Base
+open GC.Spec.Heap
+
+module MH = GC.Spec.MajorHeap
+module Obj = GC.Spec.Object
+module SpecMajorAlloc = GC.Spec.MajorAllocator
+
+val objects_in_chunk_from_write_member_header_preserves_member
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (obj: obj_addr)
+    (value: U64.t)
+  : Lemma
+      (requires
+        Seq.mem obj (MH.objects_in_chunk_from c start) /\
+        MH.word_in_chunk c (hd_address obj) /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword <=
+          MH.chunk_end c /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword < pow2 64)
+      (ensures
+        Seq.mem obj
+          (MH.objects_in_chunk_from
+            (MH.write_word_in_chunk c (hd_address obj) value) start))
+
+val major_write_member_header_preserves_chunk_member
+    (mh: MH.major_heap)
+    (idx: nat)
+    (obj: obj_addr)
+    (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        idx < Seq.length mh /\
+        Seq.mem obj (MH.objects_in_chunk (Seq.index mh idx)) /\
+        MH.word_in_chunk (Seq.index mh idx) (hd_address obj) /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword <=
+          MH.chunk_end (Seq.index mh idx) /\
+        U64.v (hd_address obj) +
+          (U64.v (Obj.getWosize value) + 1) * U64.v mword < pow2 64)
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same
+                    mh (hd_address obj) value in
+         MH.well_formed_major_heap mh' /\
+         idx < Seq.length mh' /\
+         Seq.mem obj (MH.objects_in_chunk (Seq.index mh' idx)) /\
+         MH.chunk_start (Seq.index mh' idx) ==
+         MH.chunk_start (Seq.index mh idx) /\
+         MH.chunk_end (Seq.index mh' idx) ==
+         MH.chunk_end (Seq.index mh idx)))
+

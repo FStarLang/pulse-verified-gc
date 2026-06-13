@@ -482,7 +482,82 @@ let chunked_flush_blue_step
              (mh2, fb)
          else
            (mh1, fp)))
-  = ()
+  =   ()
+
+let chunked_flush_blue_fst_zero_step
+    (mh: MH.major_heap)
+    (fb: obj_addr)
+    (run_words: nat{run_words > 0})
+    (fp: U64.t)
+  : Lemma
+      (requires ~(U64.v fb < U64.v mword) /\
+                ~(U64.v fb >= heap_size) /\
+                ~(U64.v fb % U64.v mword <> 0) /\
+                run_words - 1 < pow2 54 /\
+                run_words - 1 < pow2 64 /\
+                run_words - 1 >= 2 /\
+                U64.v (hd_address fb) + U64.v mword * 2 <= heap_size /\
+                U64.v fb + U64.v mword < pow2 64)
+      (ensures
+        (let hd = hd_address fb in
+         let wz : nat = run_words - 1 in
+         let wz_u64 : Obj.wosize = U64.uint_to_t wz in
+         let hdr = Obj.makeHeader wz_u64 Header.Blue 0UL in
+         let mh1 = SpecMajorAlloc.major_write_word_or_same mh hd hdr in
+         let mh2 = SpecMajorAlloc.major_write_word_or_same mh1 fb fp in
+         let zero_start = U64.uint_to_t (U64.v fb + U64.v mword) in
+         fst (chunked_flush_blue mh fb run_words fp) ==
+         chunked_zero_fields mh2 zero_start (wz - 1)))
+  =
+  chunked_flush_blue_step mh fb run_words fp
+
+let chunked_flush_blue_fst_link_step
+    (mh: MH.major_heap)
+    (fb: obj_addr)
+    (run_words: nat{run_words > 0})
+    (fp: U64.t)
+  : Lemma
+      (requires ~(U64.v fb < U64.v mword) /\
+                ~(U64.v fb >= heap_size) /\
+                ~(U64.v fb % U64.v mword <> 0) /\
+                run_words - 1 < pow2 54 /\
+                run_words - 1 < pow2 64 /\
+                run_words - 1 >= 1 /\
+                U64.v (hd_address fb) + U64.v mword * 2 <= heap_size /\
+                ~(run_words - 1 >= 2 /\ U64.v fb + U64.v mword < pow2 64))
+      (ensures
+        (let hd = hd_address fb in
+         let wz : nat = run_words - 1 in
+         let wz_u64 : Obj.wosize = U64.uint_to_t wz in
+         let hdr = Obj.makeHeader wz_u64 Header.Blue 0UL in
+         let mh1 = SpecMajorAlloc.major_write_word_or_same mh hd hdr in
+         let mh2 = SpecMajorAlloc.major_write_word_or_same mh1 fb fp in
+         fst (chunked_flush_blue mh fb run_words fp) == mh2))
+  =
+  chunked_flush_blue_step mh fb run_words fp
+
+let chunked_flush_blue_fst_header_step
+    (mh: MH.major_heap)
+    (fb: obj_addr)
+    (run_words: nat{run_words > 0})
+    (fp: U64.t)
+  : Lemma
+      (requires ~(U64.v fb < U64.v mword) /\
+                ~(U64.v fb >= heap_size) /\
+                ~(U64.v fb % U64.v mword <> 0) /\
+                run_words - 1 < pow2 54 /\
+                run_words - 1 < pow2 64 /\
+                ~(run_words - 1 >= 1 /\
+                  U64.v (hd_address fb) + U64.v mword * 2 <= heap_size))
+      (ensures
+        (let hd = hd_address fb in
+         let wz : nat = run_words - 1 in
+         let wz_u64 : Obj.wosize = U64.uint_to_t wz in
+         let hdr = Obj.makeHeader wz_u64 Header.Blue 0UL in
+         let mh1 = SpecMajorAlloc.major_write_word_or_same mh hd hdr in
+         fst (chunked_flush_blue mh fb run_words fp) == mh1))
+  =
+  chunked_flush_blue_step mh fb run_words fp
 
 let chunked_set_object_color_some
     (mh: MH.major_heap) (obj: obj_addr) (color: Header.color_sem)

@@ -170,6 +170,8 @@ Follow-up checkpoint: `VertexOrder` now also has black-head and nonblack-head re
 
 Follow-up checkpoint: the chunk-order readiness derivation is now proved. `VertexOrder.chunked_fused_aux_after_member_ready_from_chunk_order` recursively derives `VertexSteps.chunked_fused_aux_after_member_ready` from the named `after_member_chunk_order_pre`, using the split tail-transfer and branch-composition lemmas instead of the abandoned monolithic proof. The module profiles at about one second with refreshed split queries, and `GC.SPOT.HeapExpansion` audits the new theorem.
 
+Follow-up checkpoint: started the live-vertex reachability split in a new focused module, `GC.Spec.ChunkedSweepCoalesce.VertexReach`. The verified slice proves that rewriting a listed object's header with a new in-chunk fitting header preserves that object's chunk membership, and exposes major-heap lifting for the same fact. `Defs` now also has small `fst` branch lemmas for the three successful `chunked_flush_blue` shapes; the larger prefix-flush/base-reachability recursion was deliberately not kept after proofdebugging showed the branch-level membership transfer needed another split.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
