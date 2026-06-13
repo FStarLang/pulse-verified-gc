@@ -987,6 +987,61 @@ let rec objects_in_chunk_from (c: heap_chunk) (start: hp_addr) : Tot (seq obj_ad
 let objects_in_chunk (c: heap_chunk) : seq obj_addr =
   objects_in_chunk_from c c.base
 
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let objects_in_chunk_from_cons_step (c: heap_chunk) (start: hp_addr)
+  : Lemma
+      (requires
+        U64.v start >= chunk_start c /\
+        U64.v start + U64.v mword < chunk_end c /\
+        (let header = read_word_in_chunk c start in
+         let wz = Obj.getWosize header in
+         let obj_size_words = U64.v wz + 1 in
+         let next_start_nat =
+           U64.v start + obj_size_words * U64.v mword in
+         next_start_nat <= chunk_end c /\
+         next_start_nat < pow2 64 /\
+         (next_start_nat < chunk_end c ==>
+          next_start_nat % U64.v mword == 0)))
+      (ensures
+        (let header = read_word_in_chunk c start in
+         let wz = Obj.getWosize header in
+         let obj_size_words = U64.v wz + 1 in
+         let next_start_nat =
+           U64.v start + obj_size_words * U64.v mword in
+         let tail =
+           if next_start_nat >= chunk_end c then Seq.empty
+           else
+             objects_in_chunk_from c (U64.uint_to_t next_start_nat) in
+         objects_in_chunk_from c start == Seq.cons (f_address start) tail /\
+         Seq.length (objects_in_chunk_from c start) > 0 /\
+         Seq.head (objects_in_chunk_from c start) == f_address start /\
+         Seq.tail (objects_in_chunk_from c start) == tail))
+  =
+  let header = read_word_in_chunk c start in
+  let wz = Obj.getWosize header in
+  let obj_size_words = U64.v wz + 1 in
+  let next_start_nat : nat =
+    U64.v start + obj_size_words * U64.v mword in
+  f_address_spec start;
+  let first = f_address start in
+  let tail =
+    if next_start_nat >= chunk_end c then Seq.empty
+    else begin
+      assert (next_start_nat < heap_size);
+      assert (next_start_nat < pow2 64);
+      next_object_start_aligned start obj_size_words;
+      assert (next_start_nat % U64.v mword == 0);
+      let next_start : hp_addr = U64.uint_to_t next_start_nat in
+      objects_in_chunk_from c next_start
+    end
+  in
+  assert (objects_in_chunk_from c start == Seq.cons first tail);
+  assert (Seq.length (objects_in_chunk_from c start) > 0);
+  assert (Seq.head (objects_in_chunk_from c start) == first);
+  assert (Seq.equal (Seq.tail (objects_in_chunk_from c start)) tail);
+  Seq.lemma_eq_elim (Seq.tail (objects_in_chunk_from c start)) tail
+#pop-options
+
 #push-options "--fuel 3 --ifuel 1 --z3rlimit 20 --split_queries always"
 let rec objects_in_chunk_from_write_before_preserves
   (c: heap_chunk) (start: hp_addr)
@@ -2088,6 +2143,9 @@ let major_object_payload_word_in_lookup_chunk
   let wz = object_wosize_in_chunk c obj in
   assert (word_in_chunk c (hd_address obj));
   assert (U64.v (hd_address obj) + (1 + wz) * U64.v mword <= chunk_end c);
+  FStar.Math.Lemmas.distributivity_add_left 1 wz (U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v (hd_address obj)) (U64.v mword) (wz * U64.v mword);
   assert (U64.v obj + wz * U64.v mword <= chunk_end c);
   assert (U64.v addr + U64.v mword <= chunk_end c);
   assert (word_in_chunk c addr);

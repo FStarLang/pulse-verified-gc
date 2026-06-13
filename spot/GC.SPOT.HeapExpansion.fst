@@ -440,6 +440,33 @@ let spot_chunked_fused_aux_read_frame_ready_from_live_target
   ChunkedSweepPres.chunked_fused_aux_read_frame_ready_from_live_target
     source objs first_blue run_words target read_addr
 
+let spot_chunked_fused_aux_live_read_frame_ready_from_chunk
+  (source: MH.major_heap)
+  (c: MH.heap_chunk)
+  (target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        Seq.mem target (MH.objects_in_chunk c) /\
+        (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk c) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk c o) /\
+        ChunkedSweepDefs.chunked_read_header source target == Some hdr /\
+        ChunkedSweepDefs.chunked_is_black source target /\
+        U64.v i <= U64.v (Obj.getWosize hdr) /\
+        U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target /\
+        U64.v (hd_address target) + U64.v mword * U64.v i +
+          U64.v mword <= heap_size /\
+        field_addr == U64.add (hd_address target) (U64.mul mword i))
+      (ensures
+        ChunkedSweepPres.chunked_fused_aux_live_read_frame_ready
+          source (MH.objects_in_chunk c) 0UL 0 target field_addr)
+  =
+  ChunkedSweepPres.chunked_fused_aux_live_read_frame_ready_from_chunk
+    source c target i field_addr hdr
+
 let spot_chunked_fused_aux_preserves_other_read
   (source work: MH.major_heap)
   (objs: Seq.seq obj_addr)

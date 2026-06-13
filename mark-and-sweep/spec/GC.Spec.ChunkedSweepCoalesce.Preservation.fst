@@ -11,6 +11,7 @@ module MH = GC.Spec.MajorHeap
 module MHReadFrame = GC.Spec.MajorHeap.ReadFrame
 module Header = GC.Lib.Header
 module Obj = GC.Spec.Object
+module Fields = GC.Spec.Fields
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module SpecMajorAlloc = GC.Spec.MajorAllocator
@@ -19,6 +20,10 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 
 let nat_nonzero_pos (n: nat)
   : Lemma (requires n <> 0) (ensures n > 0)
+  = ()
+
+let nat_pred_succ (n: nat)
+  : Lemma (requires n > 0) (ensures n == (n - 1) + 1)
   = ()
 
 let seq_tail_mem (#a:eqtype) (s: Seq.seq a) (x: a)
@@ -30,6 +35,177 @@ let seq_tail_mem (#a:eqtype) (s: Seq.seq a) (x: a)
   let tl = Seq.tail s in
   assert (s == Seq.cons hd tl);
   SeqProps.lemma_mem_append (Seq.create 1 hd) tl
+
+let seq_mem_eq (#a:eqtype) (s t: Seq.seq a) (x: a)
+  : Lemma
+      (requires s == t /\ Seq.mem x s)
+      (ensures Seq.mem x t)
+  =
+  assert (t == s);
+  assert (Seq.mem x t == Seq.mem x s)
+
+let blue_run_empty_end_at_next_start
+    (start: hp_addr)
+    (first: obj_addr)
+    (wz: nat)
+  : Lemma
+      (requires U64.v first == U64.v start + U64.v mword)
+      (ensures
+        U64.v first + wz * U64.v mword ==
+        U64.v start + (wz + 1) * U64.v mword)
+  =
+  FStar.Math.Lemmas.distributivity_add_left wz 1 (U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v start) (U64.v mword) (wz * U64.v mword)
+
+let blue_run_extended_end_at_next_start
+    (first_blue: U64.t)
+    (run_words: nat)
+    (start: hp_addr)
+    (wz: nat)
+  : Lemma
+      (requires
+        run_words > 0 /\
+        U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start)
+      (ensures
+        U64.v first_blue + (run_words + wz + 1 - 1) * U64.v mword ==
+        U64.v start + (wz + 1) * U64.v mword)
+  =
+  assert (run_words + wz + 1 - 1 == (run_words - 1) + (wz + 1));
+  FStar.Math.Lemmas.distributivity_add_left
+    (run_words - 1) (wz + 1) (U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v first_blue)
+    ((run_words - 1) * U64.v mword)
+    ((wz + 1) * U64.v mword)
+
+let chunked_fused_aux_nonblack_run_end_at_next_start
+    (start: hp_addr)
+    (first: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (wz: U64.t)
+    (next_start: hp_addr)
+  : Lemma
+      (requires
+        U64.v first == U64.v start + U64.v mword /\
+        U64.v next_start ==
+          U64.v start + (U64.v wz + 1) * U64.v mword /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start))
+      (ensures
+        (let new_first : U64.t = if run_words = 0 then first else first_blue in
+         let new_run = run_words + U64.v wz + 1 in
+         new_run = 0 \/
+         U64.v new_first + (new_run - 1) * U64.v mword == U64.v next_start))
+  =
+  let new_first : U64.t = if run_words = 0 then first else first_blue in
+  let new_run = run_words + U64.v wz + 1 in
+  match run_words with
+  | 0 ->
+    assert (new_run - 1 == U64.v wz);
+    blue_run_empty_end_at_next_start start first (U64.v wz);
+    assert (U64.v new_first + (new_run - 1) * U64.v mword ==
+            U64.v start + (U64.v wz + 1) * U64.v mword);
+    assert (U64.v new_first + (new_run - 1) * U64.v mword ==
+            U64.v next_start)
+  | _ ->
+    assert (run_words > 0);
+    assert (U64.v first_blue +
+            (run_words - 1) * U64.v mword == U64.v start);
+    assert (new_run - 1 == (run_words - 1) + U64.v wz + 1);
+    blue_run_extended_end_at_next_start first_blue run_words start (U64.v wz);
+    assert (U64.v first_blue + (new_run - 1) * U64.v mword ==
+            U64.v start + (U64.v wz + 1) * U64.v mword);
+    assert (U64.v first_blue + (new_run - 1) * U64.v mword ==
+            U64.v next_start)
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_fused_aux_nonblack_named_run_before_read
+    (start: hp_addr)
+    (first: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (wz: U64.t)
+    (next_start: hp_addr)
+    (new_first: U64.t)
+    (new_run: nat)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        U64.v first == U64.v start + U64.v mword /\
+        U64.v next_start ==
+          U64.v start + (U64.v wz + 1) * U64.v mword /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start) /\
+        new_first == (if run_words = 0 then first else first_blue) /\
+        new_run == run_words + U64.v wz + 1 /\
+        U64.v read_addr >= U64.v next_start)
+      (ensures
+        new_run = 0 \/
+        U64.v new_first + (new_run - 1) * U64.v mword <= U64.v read_addr)
+  =
+  chunked_fused_aux_nonblack_run_end_at_next_start
+    start first first_blue run_words wz next_start;
+  assert (new_run == run_words + U64.v wz + 1);
+  assert (new_first == (if run_words = 0 then first else first_blue));
+  assert (new_run = 0 \/
+          U64.v new_first + (new_run - 1) * U64.v mword ==
+            U64.v next_start);
+  assert (new_run = 0 \/
+          U64.v new_first + (new_run - 1) * U64.v mword <= U64.v read_addr)
+#pop-options
+
+let field_addr_two_words_before_next_payload
+    (start: hp_addr)
+    (i: U64.t{U64.v i >= 1})
+    (wz: U64.t)
+    (field_addr: hp_addr)
+  : Lemma
+      (requires
+        U64.v i <= U64.v wz /\
+        U64.v field_addr == U64.v start + U64.v mword * U64.v i)
+      (ensures
+        U64.v field_addr + U64.v mword * 2 <=
+        U64.v start + (U64.v wz + 2) * U64.v mword)
+  =
+  assert (U64.v mword == 8);
+  assert (U64.v i + 2 <= U64.v wz + 2);
+  assert (U64.v field_addr + U64.v mword * 2 ==
+          U64.v start + (U64.v i + 2) * U64.v mword);
+  assert (U64.v start + (U64.v i + 2) * U64.v mword <=
+          U64.v start + (U64.v wz + 2) * U64.v mword)
+
+let chunk_suffix_object_after_field_addr
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (next_start: hp_addr)
+    (o: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (wz: U64.t)
+    (field_addr: hp_addr)
+  : Lemma
+      (requires
+        Seq.mem o (MH.objects_in_chunk_from c next_start) /\
+        U64.v next_start == U64.v start + (U64.v wz + 1) * U64.v mword /\
+        U64.v i <= U64.v wz /\
+        U64.v field_addr == U64.v start + U64.v mword * U64.v i)
+      (ensures U64.v field_addr + U64.v mword * 2 <= U64.v o)
+  =
+  MH.objects_in_chunk_from_addresses_gt_start c next_start o;
+  assert (U64.v o > U64.v next_start);
+  assert (U64.v o % U64.v mword == 0);
+  assert (U64.v next_start % U64.v mword == 0);
+  MH.word_aligned_gt_at_least_mword (U64.v o) (U64.v next_start);
+  assert (U64.v o >= U64.v next_start + U64.v mword);
+  field_addr_two_words_before_next_payload start i wz field_addr;
+  FStar.Math.Lemmas.distributivity_add_left (U64.v wz + 1) 1 (U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v start) ((U64.v wz + 1) * U64.v mword) (U64.v mword);
+  assert ((U64.v wz + 1) + 1 == U64.v wz + 2);
+  assert (U64.v next_start + U64.v mword ==
+          U64.v start + (U64.v wz + 2) * U64.v mword);
+  assert (U64.v field_addr + U64.v mword * 2 <= U64.v o)
 
 let major_write_word_or_same_preserves_other_read
     (mh: MH.major_heap)
@@ -264,6 +440,7 @@ let rec chunked_zero_fields_preserves_read_after
     else begin
       let next = U64.uint_to_t (U64.v addr + U64.v mword) in
       assert (U64.v next == U64.v addr + U64.v mword);
+      nat_pred_succ n;
       assert (n == (n - 1) + 1);
       FStar.Math.Lemmas.distributivity_add_left
         (n - 1) 1 (U64.v mword);
@@ -729,6 +906,169 @@ let rec chunked_fused_aux_live_read_frame_ready
       chunked_fused_aux_live_read_frame_ready
         source rest new_first (run_words + ws + 1) target read_addr
 
+let chunked_fused_aux_live_read_frame_ready_seq_eq
+    (source: MH.major_heap)
+    (s t: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (target: obj_addr)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        s == t /\
+        chunked_fused_aux_live_read_frame_ready
+          source s first_blue run_words target read_addr)
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source t first_blue run_words target read_addr)
+  =
+  assert (t == s)
+
+let chunked_fused_aux_live_read_frame_ready_at_head
+    (source: MH.major_heap)
+    (target: obj_addr)
+    (rest: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        Defs.chunked_is_black source target /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword <=
+           U64.v read_addr) /\
+        (U64.v (hd_address target) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address target)) /\
+        (forall (o: obj_addr). Seq.mem o rest ==>
+          U64.v read_addr + U64.v mword * 2 <= U64.v o))
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source (Seq.cons target rest) first_blue run_words target read_addr)
+  =
+  assert (Seq.length (Seq.cons target rest) > 0);
+  assert (Seq.head (Seq.cons target rest) == target);
+  assert (Seq.equal (Seq.tail (Seq.cons target rest)) rest);
+  Seq.lemma_eq_elim (Seq.tail (Seq.cons target rest)) rest;
+  assert (Seq.tail (Seq.cons target rest) == rest)
+
+let chunked_fused_aux_live_read_frame_ready_current_head
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (rest: Seq.seq obj_addr)
+    (target: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        Seq.length objs > 0 /\
+        Seq.head objs == target /\
+        Seq.tail objs == rest /\
+        Defs.chunked_is_black source target /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword <=
+           U64.v read_addr) /\
+        (U64.v (hd_address target) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address target)) /\
+        (forall (o: obj_addr). Seq.mem o rest ==>
+          U64.v read_addr + U64.v mword * 2 <= U64.v o))
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words target read_addr)
+  = ()
+
+let chunked_fused_aux_live_read_frame_ready_black_head
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (obj: obj_addr)
+    (rest: Seq.seq obj_addr)
+    (target: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        Seq.length objs > 0 /\
+        Seq.head objs == obj /\
+        Seq.tail objs == rest /\
+        obj <> target /\
+        Defs.chunked_is_black source obj /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword <=
+           U64.v read_addr) /\
+        (U64.v (hd_address obj) + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v (hd_address obj)) /\
+        chunked_fused_aux_live_read_frame_ready
+          source rest 0UL 0 target read_addr)
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words target read_addr)
+  = ()
+
+let chunked_fused_aux_live_read_frame_ready_nonblack_head
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (obj: obj_addr)
+    (rest: Seq.seq obj_addr)
+    (target: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        Seq.length objs > 0 /\
+        Seq.head objs == obj /\
+        Seq.tail objs == rest /\
+        obj <> target /\
+        ~(Defs.chunked_is_black source obj) /\
+        (let ws = U64.v (Defs.chunked_wosize_of_object source obj) in
+         let new_first : U64.t = if run_words = 0 then obj else first_blue in
+         chunked_fused_aux_live_read_frame_ready
+           source rest new_first (run_words + ws + 1) target read_addr))
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words target read_addr)
+  = ()
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_fused_aux_live_read_frame_ready_nonblack_head_named_run
+    (source: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (obj: obj_addr)
+    (rest: Seq.seq obj_addr)
+    (target: obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (new_first: U64.t)
+    (new_run: nat)
+    (read_addr: hp_addr)
+  : Lemma
+      (requires
+        Seq.length objs > 0 /\
+        Seq.head objs == obj /\
+        Seq.tail objs == rest /\
+        obj <> target /\
+        ~(Defs.chunked_is_black source obj) /\
+        new_first == (if run_words = 0 then obj else first_blue) /\
+        new_run ==
+          run_words + U64.v (Defs.chunked_wosize_of_object source obj) + 1 /\
+        chunked_fused_aux_live_read_frame_ready
+          source rest new_first new_run target read_addr)
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source objs first_blue run_words target read_addr)
+  =
+  assert (new_run ==
+          run_words + U64.v (Defs.chunked_wosize_of_object source obj) + 1);
+  assert (new_first == (if run_words = 0 then obj else first_blue));
+  assert (chunked_fused_aux_live_read_frame_ready
+            source rest new_first
+            (run_words + U64.v (Defs.chunked_wosize_of_object source obj) + 1)
+            target read_addr);
+  chunked_fused_aux_live_read_frame_ready_nonblack_head
+    source objs obj rest target first_blue run_words read_addr
+#pop-options
+
 let rec chunked_fused_aux_read_frame_ready_from_live_target
     (source: MH.major_heap)
     (objs: Seq.seq obj_addr)
@@ -768,6 +1108,290 @@ let rec chunked_fused_aux_read_frame_ready_from_live_target
         source rest new_first (run_words + ws + 1) target read_addr
     end
   end
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_fused_aux_live_read_frame_ready_from_chunk_from
+    (source: MH.major_heap)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        Seq.mem target (MH.objects_in_chunk_from c start) /\
+        (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk_from c start) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk c o) /\
+        Defs.chunked_read_header source target == Some hdr /\
+        Defs.chunked_is_black source target /\
+        U64.v i <= U64.v (Obj.getWosize hdr) /\
+        U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target /\
+        U64.v (hd_address target) + U64.v mword * U64.v i +
+          U64.v mword <= heap_size /\
+        field_addr == U64.add (hd_address target) (U64.mul mword i) /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start))
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source
+          (MH.objects_in_chunk_from c start)
+          first_blue
+          run_words
+          target
+          field_addr)
+      (decreases MH.chunk_end c - U64.v start)
+  =
+  assert_spinoff
+    (run_words = 0 \/
+     U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start);
+  if U64.v start < MH.chunk_start c then
+    assert False
+  else if U64.v start + U64.v mword >= MH.chunk_end c then
+    assert False
+  else begin
+    let header = MH.read_word_in_chunk c start in
+    let wz = Obj.getWosize header in
+    let obj_size_words = U64.v wz + 1 in
+    let start_nat : nat = U64.v start in
+    let word_nat : nat = U64.v mword in
+    let next_start_nat : nat =
+      start_nat + obj_size_words * word_nat in
+    assert (next_start_nat ==
+            U64.v start + obj_size_words * U64.v mword);
+    if next_start_nat > MH.chunk_end c || next_start_nat >= pow2 64 then
+      assert False
+    else begin
+      f_address_spec start;
+      let first : obj_addr = f_address start in
+      let tail =
+        if next_start_nat >= MH.chunk_end c then
+          Seq.empty
+        else begin
+          assert (next_start_nat < heap_size);
+          assert (next_start_nat < pow2 64);
+          MH.next_object_start_aligned start obj_size_words;
+          assert (next_start_nat % U64.v mword == 0);
+          let next_start_nat_u : n:nat{n < pow2 64} = next_start_nat in
+          let next_start : hp_addr = U64.uint_to_t next_start_nat_u in
+          MH.objects_in_chunk_from c next_start
+        end
+      in
+      let objs = MH.objects_in_chunk_from c start in
+      assert (U64.v start >= MH.chunk_start c);
+      assert (U64.v start + U64.v mword < MH.chunk_end c);
+      assert (next_start_nat <= MH.chunk_end c);
+      assert (next_start_nat < pow2 64);
+      if next_start_nat < MH.chunk_end c then begin
+        MH.next_object_start_aligned start obj_size_words;
+        assert (next_start_nat % U64.v mword == 0)
+      end;
+      assert (next_start_nat < MH.chunk_end c ==>
+              next_start_nat % U64.v mword == 0);
+      MH.objects_in_chunk_from_cons_step c start;
+      assert (objs == Seq.cons first tail);
+      assert (Seq.length objs > 0);
+      assert (Seq.head objs == first);
+      assert (Seq.tail objs == tail);
+      Fields.mem_cons_lemma target first tail;
+      if target = first then begin
+        assert (Defs.chunked_is_black source first);
+        hd_f_roundtrip start;
+        assert (hd_address first == start);
+        assert (MH.word_in_chunk c (hd_address first));
+        assert (MH.object_wosize_in_chunk c first == U64.v wz);
+        assert (U64.v i <= U64.v wz);
+        assert (U64.v i >= 1);
+        assert (U64.v field_addr ==
+                U64.v start + U64.v mword * U64.v i);
+        assert (run_words = 0 \/
+                U64.v first_blue + (run_words - 1) * U64.v mword <=
+                  U64.v field_addr);
+        assert (U64.v (hd_address first) + U64.v mword <=
+                U64.v field_addr);
+        let suffix_after (o: obj_addr) : Lemma
+            (requires Seq.mem o tail)
+            (ensures U64.v field_addr + U64.v mword * 2 <= U64.v o)
+          =
+          if next_start_nat >= MH.chunk_end c then
+            assert False
+          else begin
+            let next_start_nat_u : n:nat{n < pow2 64} = next_start_nat in
+            let next_start : hp_addr = U64.uint_to_t next_start_nat_u in
+            assert (tail == MH.objects_in_chunk_from c next_start);
+            assert (next_start_nat ==
+                    U64.v start + (U64.v wz + 1) * U64.v mword);
+            assert (U64.v i <= U64.v wz);
+            chunk_suffix_object_after_field_addr
+              c start next_start o i wz field_addr
+          end
+        in
+        FStar.Classical.forall_intro
+          (FStar.Classical.move_requires suffix_after);
+        assert (Seq.head objs == target);
+        chunked_fused_aux_live_read_frame_ready_current_head
+          source objs tail target first_blue run_words field_addr
+      end else begin
+        assert (Seq.mem target tail);
+        if next_start_nat >= MH.chunk_end c then
+          assert False
+        else begin
+          assert (next_start_nat < heap_size);
+          assert (next_start_nat < pow2 64);
+          MH.next_object_start_aligned start obj_size_words;
+          assert (next_start_nat % U64.v mword == 0);
+          let next_start_nat_u : n:nat{n < pow2 64} = next_start_nat in
+          let next_start : hp_addr = U64.uint_to_t next_start_nat_u in
+          assert (tail == MH.objects_in_chunk_from c next_start);
+          let wosize_match_tail (o: obj_addr)
+            : Lemma
+                (requires Seq.mem o (MH.objects_in_chunk_from c next_start))
+                (ensures
+                  U64.v (Defs.chunked_wosize_of_object source o) ==
+                  MH.object_wosize_in_chunk c o)
+            =
+            assert (MH.objects_in_chunk_from c next_start == tail);
+            seq_mem_eq (MH.objects_in_chunk_from c next_start) tail o;
+            assert (Seq.mem o tail);
+            assert (Seq.tail objs == tail);
+            seq_tail_mem objs o;
+            assert (Seq.mem o objs);
+            assert (objs == MH.objects_in_chunk_from c start);
+            seq_mem_eq objs (MH.objects_in_chunk_from c start) o
+          in
+          FStar.Classical.forall_intro
+            (FStar.Classical.move_requires wosize_match_tail);
+          MH.objects_in_chunk_from_addresses_gt_start c next_start target;
+          assert (U64.v target > U64.v next_start);
+          hd_address_spec target;
+          assert (U64.v (hd_address target) + U64.v mword == U64.v target);
+          assert (U64.v field_addr >= U64.v target);
+          assert (U64.v field_addr >= U64.v next_start);
+          if Defs.chunked_is_black source first then begin
+            assert (run_words = 0 \/
+                    U64.v first_blue + (run_words - 1) * U64.v mword <=
+                      U64.v field_addr);
+            hd_f_roundtrip start;
+            assert (hd_address first == start);
+            assert (U64.v (hd_address first) + U64.v mword <=
+                    U64.v field_addr);
+            chunked_fused_aux_live_read_frame_ready_from_chunk_from
+              source c next_start 0UL 0 target i field_addr hdr;
+            chunked_fused_aux_live_read_frame_ready_black_head
+              source objs first tail target first_blue run_words field_addr
+          end else begin
+            let new_first : U64.t =
+              if run_words = 0 then first else first_blue in
+            let new_run = run_words + U64.v wz + 1 in
+            hd_f_roundtrip start;
+            assert (hd_address first == start);
+            hd_address_spec first;
+            assert (U64.v (hd_address first) + U64.v mword == U64.v first);
+            assert (U64.v first == U64.v start + U64.v mword);
+            assert (U64.v next_start == next_start_nat);
+            assert (next_start_nat ==
+                    U64.v start + (U64.v wz + 1) * U64.v mword);
+            assert (U64.v next_start ==
+                    U64.v start + (U64.v wz + 1) * U64.v mword);
+            assert (U64.v mword > 0);
+            assert (U64.v wz + 1 > 0);
+            assert (U64.v next_start > U64.v start);
+            assert (U64.v next_start < MH.chunk_end c);
+            assert (MH.chunk_end c - U64.v next_start <
+                    MH.chunk_end c - U64.v start);
+            MH.objects_in_chunk_from_head_mem c start;
+            assert (Seq.mem first (MH.objects_in_chunk_from c start));
+            assert (MH.object_wosize_in_chunk c first == U64.v wz);
+            assert (U64.v (Defs.chunked_wosize_of_object source first) ==
+                    MH.object_wosize_in_chunk c first);
+            assert (U64.v (Defs.chunked_wosize_of_object source first) ==
+                    U64.v wz);
+            assert (new_run ==
+                    run_words +
+                    U64.v (Defs.chunked_wosize_of_object source first) + 1);
+            assert_spinoff True;
+            assert (run_words = 0 \/
+                    U64.v first_blue + (run_words - 1) * U64.v mword ==
+                      U64.v start);
+            chunked_fused_aux_nonblack_run_end_at_next_start
+              start first first_blue run_words wz next_start;
+            assert (tail == MH.objects_in_chunk_from c next_start);
+            assert (Seq.mem target tail);
+            seq_mem_eq tail (MH.objects_in_chunk_from c next_start) target;
+            assert (Seq.mem target (MH.objects_in_chunk_from c next_start));
+            assert (Defs.chunked_read_header source target == Some hdr);
+            assert (Defs.chunked_is_black source target);
+            assert (U64.v i <= U64.v (Obj.getWosize hdr));
+            assert (U64.v (Obj.getWosize hdr) ==
+                    MH.object_wosize_in_chunk c target);
+            assert (U64.v (hd_address target) +
+                    U64.v mword * U64.v i + U64.v mword <= heap_size);
+            assert (field_addr == U64.add (hd_address target) (U64.mul mword i));
+            assert (new_first == (if run_words = 0 then first else first_blue));
+            assert (new_run == run_words + U64.v wz + 1);
+            assert (U64.v field_addr >= U64.v next_start);
+            chunked_fused_aux_nonblack_named_run_before_read
+              start first first_blue run_words wz next_start
+              new_first new_run field_addr;
+            assert_spinoff
+              (new_run = 0 \/
+               U64.v new_first + (new_run - 1) * U64.v mword <=
+                 U64.v field_addr);
+            chunked_fused_aux_live_read_frame_ready_from_chunk_from
+              source c next_start new_first new_run target i field_addr hdr;
+            assert (chunked_fused_aux_live_read_frame_ready
+                      source
+                      (MH.objects_in_chunk_from c next_start)
+                      new_first new_run target field_addr);
+            chunked_fused_aux_live_read_frame_ready_seq_eq
+              source (MH.objects_in_chunk_from c next_start) tail
+              new_first new_run target field_addr;
+            assert (chunked_fused_aux_live_read_frame_ready
+                      source tail new_first new_run target field_addr);
+            assert (~(Defs.chunked_is_black source first));
+            assert (Seq.length objs > 0);
+            assert (Seq.head objs == first);
+            assert (Seq.tail objs == tail);
+            assert (first <> target);
+            chunked_fused_aux_live_read_frame_ready_nonblack_head_named_run
+              source objs first tail target first_blue run_words
+              new_first new_run field_addr
+          end
+        end
+      end
+    end
+  end
+
+let chunked_fused_aux_live_read_frame_ready_from_chunk
+    (source: MH.major_heap)
+    (c: MH.heap_chunk)
+    (target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        Seq.mem target (MH.objects_in_chunk c) /\
+        (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk c) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk c o) /\
+        Defs.chunked_read_header source target == Some hdr /\
+        Defs.chunked_is_black source target /\
+        U64.v i <= U64.v (Obj.getWosize hdr) /\
+        U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target /\
+        U64.v (hd_address target) + U64.v mword * U64.v i +
+          U64.v mword <= heap_size /\
+        field_addr == U64.add (hd_address target) (U64.mul mword i))
+      (ensures
+        chunked_fused_aux_live_read_frame_ready
+          source (MH.objects_in_chunk c) 0UL 0 target field_addr)
+  =
+  chunked_fused_aux_live_read_frame_ready_from_chunk_from
+    source c c.base 0UL 0 target i field_addr hdr
+#pop-options
 
 let rec chunked_fused_aux_preserves_other_read
     (source work: MH.major_heap)
