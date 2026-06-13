@@ -25,6 +25,12 @@ val chunked_major_field_preserved
   (x: obj_addr)
   : prop
 
+val chunked_major_field_data_preserved
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (x: obj_addr)
+  : prop
+
 val chunked_major_field_points_to
   (mh: MH.major_heap)
   (x: obj_addr)
@@ -72,6 +78,24 @@ val chunked_major_field_preserved_single_chunk_from_dense
           HeapGraph.get_field g_init x i == HeapGraph.get_field g_final x i))
       (ensures
         chunked_major_field_preserved
+          (MH.single_chunk_major_heap g_init)
+          (MH.single_chunk_major_heap g_final)
+          x)
+
+val chunked_major_field_data_preserved_single_chunk_from_dense
+  (g_init: heap)
+  (g_final: heap)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem x (objects zero_addr g_init) /\
+        Seq.mem x (objects zero_addr g_final) /\
+        U64.v x >= U64.v zero_addr + U64.v mword /\
+        (forall (i: U64.t). U64.v i >= 1 /\
+          U64.v i <= U64.v (wosize_of_object x g_init) ==>
+          HeapGraph.get_field g_init x i == HeapGraph.get_field g_final x i))
+      (ensures
+        chunked_major_field_data_preserved
           (MH.single_chunk_major_heap g_init)
           (MH.single_chunk_major_heap g_final)
           x)

@@ -24,6 +24,7 @@ module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
+module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -275,3 +276,66 @@ let chunked_major_gc_bounded_single_chunk_dense_graph_pillars
     h_init h_final roots);
   assert (DenseCorrectness.major_gc_unreachable_final_blue
     h_init h_final roots)
+
+let chunked_major_gc_bounded_single_chunk_live_field_data_preserved
+    (h_init: heap)
+    (roots: Seq.seq obj_addr)
+    (fp: U64.t)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        well_formed_heap h_init /\
+        Seq.length (objects zero_addr h_init) > 0 /\
+        SweepInv.heap_objects_dense h_init /\
+        root_props h_init roots /\
+        GC.Spec.Sweep.fp_in_heap fp h_init /\
+        no_black_objects h_init /\
+        no_pointer_to_blue h_init /\
+        no_scan_invariant h_init /\
+        fuel >= BMark.count_non_black h_init /\
+        ChunkedMarkOuter.mark_bounded_single_chunk_ready h_init cap fuel /\
+        (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) /\
+          (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
+        (let graph = create_graph h_init in
+         let roots' = HeapGraph.coerce_to_vertex_list roots in
+         graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
+      (ensures
+        (let (mh_final, chunked_fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded
+             (MH.single_chunk_major_heap h_init) cap fuel in
+         forall (x: obj_addr).
+           DenseCorrectness.heap_reachable h_init roots x ==>
+           ChunkedMajorGraph.chunked_major_field_data_preserved
+             (MH.single_chunk_major_heap h_init)
+             mh_final
+             x))
+  =
+  chunked_major_gc_bounded_single_chunk_dense_graph_pillars
+    h_init roots fp cap fuel;
+  let h_mark = BMark.mark_bounded h_init cap fuel in
+  let (h_final, dense_fp_final) =
+    DenseFused.fused_sweep_coalesce h_mark in
+  let (mh_final, chunked_fp_final) =
+    ChunkedMajorGC.chunked_major_gc_bounded
+      (MH.single_chunk_major_heap h_init) cap fuel in
+  let aux (x: obj_addr)
+    : Lemma
+        (requires DenseCorrectness.heap_reachable h_init roots x)
+        (ensures
+          ChunkedMajorGraph.chunked_major_field_data_preserved
+            (MH.single_chunk_major_heap h_init)
+            mh_final
+            x)
+    =
+    assert (mh_final == MH.single_chunk_major_heap h_final);
+    assert (DenseCorrectness.major_gc_live_subgraph_isomorphism
+      h_init h_final roots);
+    assert (Seq.mem x (Fields.objects zero_addr h_final));
+    graph_vertices_mem h_init x;
+    assert (Seq.mem x (Fields.objects zero_addr h_init));
+    fields_object_after_zero_addr h_init x;
+    ChunkedMajorGraph.chunked_major_field_data_preserved_single_chunk_from_dense
+      h_init h_final x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)

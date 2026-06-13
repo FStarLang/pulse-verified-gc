@@ -34,6 +34,19 @@ let chunked_major_field_preserved
     MarkDefs.chunked_get_field mh_init x i ==
       MarkDefs.chunked_get_field mh_final x i)
 
+let chunked_major_field_data_preserved
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (x: obj_addr)
+  : prop
+  =
+  chunked_major_vertex mh_init x /\
+  chunked_major_vertex mh_final x /\
+  (forall (i: U64.t). U64.v i >= 1 /\
+    U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh_init x) ==>
+    MarkDefs.chunked_get_field mh_init x i ==
+      MarkDefs.chunked_get_field mh_final x i)
+
 let chunked_major_field_points_to
     (mh: MH.major_heap)
     (x: obj_addr)
@@ -105,6 +118,43 @@ let chunked_major_field_preserved_single_chunk_from_dense
   chunked_major_vertex_single_chunk_compat g_final x;
   SweepDefs.chunked_wosize_of_object_single_chunk_compat g_init x;
   SweepDefs.chunked_wosize_of_object_single_chunk_compat g_final x;
+  let field_eq (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object
+            (MH.single_chunk_major_heap g_init) x))
+        (ensures
+          MarkDefs.chunked_get_field
+            (MH.single_chunk_major_heap g_init) x i ==
+          MarkDefs.chunked_get_field
+            (MH.single_chunk_major_heap g_final) x i)
+    =
+    MarkCompat.chunked_get_field_single_chunk_compat g_init x i;
+    MarkCompat.chunked_get_field_single_chunk_compat g_final x i
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires field_eq)
+
+let chunked_major_field_data_preserved_single_chunk_from_dense
+    (g_init: heap)
+    (g_final: heap)
+    (x: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem x (objects zero_addr g_init) /\
+        Seq.mem x (objects zero_addr g_final) /\
+        U64.v x >= U64.v zero_addr + U64.v mword /\
+        (forall (i: U64.t). U64.v i >= 1 /\
+          U64.v i <= U64.v (wosize_of_object x g_init) ==>
+          HeapGraph.get_field g_init x i == HeapGraph.get_field g_final x i))
+      (ensures
+        chunked_major_field_data_preserved
+          (MH.single_chunk_major_heap g_init)
+          (MH.single_chunk_major_heap g_final)
+          x)
+  =
+  chunked_major_vertex_single_chunk_compat g_init x;
+  chunked_major_vertex_single_chunk_compat g_final x;
+  SweepDefs.chunked_wosize_of_object_single_chunk_compat g_init x;
   let field_eq (i: U64.t{U64.v i >= 1})
     : Lemma
         (requires
