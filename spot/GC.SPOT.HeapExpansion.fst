@@ -653,6 +653,66 @@ let spot_chunked_fused_aux_black_head_preserves_wosize
   ChunkedSweepLive.chunked_fused_aux_black_head_preserves_wosize
     source work objs first_blue run_words fp target hdr
 
+let spot_chunked_fused_aux_live_wosize_preserved_from_chunk
+  (source: MH.major_heap)
+  (c: MH.heap_chunk)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        Seq.mem target (MH.objects_in_chunk c) /\
+        (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk c) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk c o) /\
+        ChunkedSweepDefs.chunked_read_header source target == Some hdr /\
+        ChunkedSweepDefs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target)
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (fst (ChunkedSweepDefs.chunked_fused_aux
+            source source (MH.objects_in_chunk c) 0UL 0 fp))
+          target ==
+        Obj.getWosize hdr)
+  =
+  ChunkedSweepLive.chunked_fused_aux_live_wosize_preserved_from_chunk
+    source c fp target hdr
+
+let spot_chunked_fused_aux_live_field_preserved_from_chunk
+  (source: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        ChunkedSweepDefs.chunked_read_header source target == Some hdr /\
+        ChunkedSweepDefs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) target /\
+        (let final =
+          fst (ChunkedSweepDefs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         ChunkedMajorGCGraph.chunked_major_vertex final target))
+      (ensures
+        (let final =
+          fst (ChunkedSweepDefs.chunked_fused_aux
+            source source (MH.objects_in_chunk (Seq.index source idx))
+            0UL 0 fp) in
+         ChunkedMajorGCGraph.chunked_major_field_preserved
+           source final target))
+  =
+  ChunkedSweepLive.chunked_fused_aux_live_field_preserved_from_chunk
+    source idx fp target hdr
+
 let spot_major_fl_head_wosize_single_chunk_from_dense
   (g: heap) (fp: U64.t) (fuel: nat)
   : Lemma
@@ -2046,6 +2106,26 @@ let spot_chunked_major_field_data_preserved_intro
           mh_init mh_final x)
   =
   ChunkedMajorGCGraph.chunked_major_field_data_preserved_intro
+    mh_init mh_final x
+
+let spot_chunked_major_field_data_preserved_elim
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_field_data_preserved
+          mh_init mh_final x)
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_vertex mh_init x /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh_final x /\
+        (forall (i: U64.t). U64.v i >= 1 /\
+          U64.v i <=
+            U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh_init x) ==>
+          ChunkedMarkDefs.chunked_get_field mh_init x i ==
+            ChunkedMarkDefs.chunked_get_field mh_final x i))
+  =
+  ChunkedMajorGCGraph.chunked_major_field_data_preserved_elim
     mh_init mh_final x
 
 let spot_chunked_major_field_preserved_single_chunk_from_dense
