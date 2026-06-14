@@ -319,6 +319,74 @@ val chunked_make_black_preserves_other_blue_status
           (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) target ==
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue mh target)
 
+val chunked_make_gray_not_white
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj) obj))
+
+val chunked_make_black_not_white
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) obj))
+
+val chunked_make_gray_preserves_other_white_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires obj <> target)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white mh target)
+
+val chunked_make_black_preserves_other_white_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires obj <> target)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white mh target)
+
+val chunked_make_gray_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        GC.Spec.ChunkedMark.Defs.chunked_is_no_scan
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj) target ==
+        GC.Spec.ChunkedMark.Defs.chunked_is_no_scan mh target)
+
+val chunked_make_black_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        GC.Spec.ChunkedMark.Defs.chunked_is_no_scan
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) target ==
+        GC.Spec.ChunkedMark.Defs.chunked_is_no_scan mh target)
+
 val chunked_set_object_color_preserves_other_black
   (mh: MH.major_heap)
   (obj target: obj_addr)

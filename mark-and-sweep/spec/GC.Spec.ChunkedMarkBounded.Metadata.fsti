@@ -53,6 +53,25 @@ val chunked_push_children_bounded_preserves_get_field
          MarkDefs.chunked_get_field mh' target j ==
          MarkDefs.chunked_get_field mh target j))
 
+val chunked_push_children_bounded_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) =
+         BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         MarkDefs.chunked_is_no_scan mh' target ==
+         MarkDefs.chunked_is_no_scan mh target))
+
 val chunked_push_children_bounded_preserves_ranges
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -100,6 +119,22 @@ val chunked_mark_step_bounded_preserves_get_field
          MarkDefs.chunked_get_field mh' target j ==
          MarkDefs.chunked_get_field mh target j))
 
+val chunked_mark_step_bounded_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        BReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_step_bounded mh st cap in
+         MarkDefs.chunked_is_no_scan mh' target ==
+         MarkDefs.chunked_is_no_scan mh target))
+
 val chunked_mark_step_bounded_preserves_ranges
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -145,6 +180,23 @@ val chunked_mark_inner_loop_preserves_get_field
          MarkDefs.chunked_get_field mh' target j ==
          MarkDefs.chunked_get_field mh target j))
 
+val chunked_mark_inner_loop_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        BReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap fuel in
+         MarkDefs.chunked_is_no_scan mh' target ==
+         MarkDefs.chunked_is_no_scan mh target))
+
 val chunked_mark_inner_loop_preserves_ranges
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -186,6 +238,21 @@ val chunked_mark_bounded_preserves_get_field
         MarkDefs.chunked_get_field
           (BDefs.chunked_mark_bounded mh cap fuel) target j ==
         MarkDefs.chunked_get_field mh target j)
+
+val chunked_mark_bounded_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        MarkDefs.chunked_is_no_scan
+          (BDefs.chunked_mark_bounded mh cap fuel) target ==
+        MarkDefs.chunked_is_no_scan mh target)
 
 val chunked_mark_bounded_preserves_ranges
   (mh: MH.major_heap)

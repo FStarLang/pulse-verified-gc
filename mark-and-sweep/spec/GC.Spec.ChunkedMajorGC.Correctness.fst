@@ -28,6 +28,7 @@ module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
 module MarkDefs = GC.Spec.ChunkedMark.Defs
+module MarkCompat = GC.Spec.ChunkedMark.Compat
 module ChunkedMarkMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMarkStackReady = GC.Spec.ChunkedMarkBounded.StackReady
@@ -299,6 +300,18 @@ let chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
       mh cap fuel target
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let no_scan (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          MarkDefs.chunked_is_no_scan mh target ==
+          MarkDefs.chunked_is_no_scan marked target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    ChunkedMarkMetadata.chunked_mark_bounded_preserves_no_scan_status
+      mh cap fuel target
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_scan);
   chunked_major_gc_bounded_mark_phase_pointer_classification_preserved
     mh cap fuel;
   ChunkedMajorGraph.chunked_major_live_subgraph_preserved_from_fields
@@ -1244,6 +1257,73 @@ let bounded_major_gc_live_wosize_preserved_dense
   wosize_of_object_spec x h_sweep;
   wosize_of_object_spec x h_final
 
+let bounded_major_gc_live_no_scan_preserved_dense
+    (h_init: heap)
+    (roots: Seq.seq obj_addr)
+    (fp: U64.t)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+    (x: obj_addr)
+  : Lemma
+      (requires
+        well_formed_heap h_init /\
+        Seq.length (objects zero_addr h_init) > 0 /\
+        SweepInv.heap_objects_dense h_init /\
+        root_props h_init roots /\
+        GC.Spec.Sweep.fp_in_heap fp h_init /\
+        no_black_objects h_init /\
+        no_pointer_to_blue h_init /\
+        no_scan_invariant h_init /\
+        fuel >= BMark.count_non_black h_init /\
+        (forall (x: obj_addr). Seq.mem x (objects zero_addr h_init) /\
+          (is_gray x h_init \/ is_black x h_init) ==> Seq.mem x roots) /\
+        (let graph = create_graph h_init in
+         let roots' = HeapGraph.coerce_to_vertex_list roots in
+         graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices) /\
+        DenseCorrectness.heap_reachable h_init roots x)
+      (ensures
+        (let h_mark = BMark.mark_bounded h_init cap fuel in
+         let (h_final, dense_fp_final) =
+           DenseFused.fused_sweep_coalesce h_mark in
+         is_no_scan x h_final == is_no_scan x h_init))
+  =
+  let h_mark = BMark.mark_bounded h_init cap fuel in
+  BMarkCorr.mark_color_inv_init h_init;
+  BMarkCorr.mark_bounded_preserves_color_inv h_init h_init cap fuel;
+  assert (BMarkCorr.mark_color_inv h_init h_mark);
+  graph_vertices_mem h_init x;
+  assert (Seq.mem x (Fields.objects zero_addr h_init));
+  assert (is_no_scan x h_mark == is_no_scan x h_init);
+  BMarkCorr.mark_bounded_reachable_is_black h_init roots cap fuel;
+  BMarkCorr.mark_bounded_satisfies_mark_post h_init roots fp cap fuel;
+  DenseCorrectness.mark_post_elim_wfh h_init h_mark roots fp;
+  DenseCorrectness.mark_post_elim_density h_init h_mark roots fp;
+  DenseCorrectness.mark_post_elim_fp h_init h_mark roots fp;
+  DenseCorrectness.mark_post_elim_objects h_init h_mark roots fp;
+  DenseCorrectness.mark_post_elim_no_grey h_init h_mark roots fp;
+  bounded_mark_no_gray_for_fused h_init cap fuel;
+  assert (forall (y: obj_addr). Seq.mem y (Fields.objects zero_addr h_mark) ==>
+    ~(Obj.is_gray y h_mark));
+  SpecSweepCoalesce.fused_eq_sweep_coalesce h_mark fp;
+  DenseCorrectness.sweep_post_sweep_strong_gen h_init h_mark roots fp;
+  assert (Seq.mem x (Fields.objects zero_addr h_mark));
+  assert (Obj.is_black x h_mark);
+  let h_sweep = fst (SpecSweep.sweep h_mark fp) in
+  SpecSweep.sweep_preserves_tag_black h_mark fp x;
+  SpecSweep.sweep_black_survives h_mark fp;
+  assert (Seq.mem x (Fields.objects zero_addr h_sweep));
+  assert (Obj.is_white x h_sweep);
+  SpecCoalesce.coalesce_preserves_survivor_header h_sweep x;
+  let (h_final, dense_fp_final) =
+    DenseFused.fused_sweep_coalesce h_mark in
+  assert (h_final == fst (SpecCoalesce.coalesce h_sweep));
+  tag_of_object_spec x h_mark;
+  tag_of_object_spec x h_sweep;
+  tag_of_object_spec x h_final;
+  is_no_scan_spec x h_mark;
+  is_no_scan_spec x h_sweep;
+  is_no_scan_spec x h_final
+
 let chunked_major_gc_bounded_single_chunk_live_field_preserved
     (h_init: heap)
     (roots: Seq.seq obj_addr)
@@ -1355,6 +1435,8 @@ let bounded_major_gc_live_successors_preserved_at
     h_init cap fuel;
   ChunkedMajorGraph.chunked_major_pointer_classification_preserved_single_chunk
     h_init h_final;
+  bounded_major_gc_live_no_scan_preserved_dense
+    h_init roots fp cap fuel x;
   assert (mh_final == MH.single_chunk_major_heap h_final);
   assert (DenseCorrectness.major_gc_live_subgraph_isomorphism
     h_init h_final roots);
@@ -1362,12 +1444,17 @@ let bounded_major_gc_live_successors_preserved_at
   graph_vertices_mem h_init x;
   assert (Seq.mem x (Fields.objects zero_addr h_init));
   fields_object_after_zero_addr h_init x;
+  fields_object_after_zero_addr h_final x;
+  MarkCompat.chunked_is_no_scan_single_chunk_compat h_init x;
+  MarkCompat.chunked_is_no_scan_single_chunk_compat h_final x;
   bounded_major_gc_live_wosize_preserved_dense
     h_init roots fp cap fuel x;
   ChunkedMajorGraph.chunked_major_field_preserved_single_chunk_from_dense
     h_init h_final x;
   assert (ChunkedMajorGraph.chunked_major_field_preserved
     (MH.single_chunk_major_heap h_init) mh_final x);
+  assert (MarkDefs.chunked_is_no_scan (MH.single_chunk_major_heap h_init) x ==
+          MarkDefs.chunked_is_no_scan mh_final x);
   assert (ChunkedMajorGraph.chunked_major_pointer_classification_preserved
     (MH.single_chunk_major_heap h_init) mh_final);
   ChunkedMajorGraph.chunked_major_successors_preserved_from_fields
@@ -1433,6 +1520,8 @@ let chunked_major_gc_bounded_single_chunk_live_successors_preserved
       h_init cap fuel;
     ChunkedMajorGraph.chunked_major_pointer_classification_preserved_single_chunk
       h_init h_final;
+    bounded_major_gc_live_no_scan_preserved_dense
+      h_init roots fp cap fuel x;
     assert (mh_final == MH.single_chunk_major_heap h_final);
     assert (DenseCorrectness.major_gc_live_subgraph_isomorphism
       h_init h_final roots);
@@ -1440,12 +1529,17 @@ let chunked_major_gc_bounded_single_chunk_live_successors_preserved
     graph_vertices_mem h_init x;
     assert (Seq.mem x (Fields.objects zero_addr h_init));
     fields_object_after_zero_addr h_init x;
+    fields_object_after_zero_addr h_final x;
+    MarkCompat.chunked_is_no_scan_single_chunk_compat h_init x;
+    MarkCompat.chunked_is_no_scan_single_chunk_compat h_final x;
     bounded_major_gc_live_wosize_preserved_dense
       h_init roots fp cap fuel x;
     ChunkedMajorGraph.chunked_major_field_preserved_single_chunk_from_dense
       h_init h_final x;
     assert (ChunkedMajorGraph.chunked_major_field_preserved
       (MH.single_chunk_major_heap h_init) mh_final x);
+    assert (MarkDefs.chunked_is_no_scan (MH.single_chunk_major_heap h_init) x ==
+            MarkDefs.chunked_is_no_scan mh_final x);
     assert (ChunkedMajorGraph.chunked_major_pointer_classification_preserved
       (MH.single_chunk_major_heap h_init) mh_final);
     ChunkedMajorGraph.chunked_major_successors_preserved_from_fields
@@ -1521,6 +1615,8 @@ let chunked_major_gc_bounded_single_chunk_live_edges_preserved
       h_init cap fuel;
     ChunkedMajorGraph.chunked_major_pointer_classification_preserved_single_chunk
       h_init h_final;
+    bounded_major_gc_live_no_scan_preserved_dense
+      h_init roots fp cap fuel x;
     assert (mh_final == MH.single_chunk_major_heap h_final);
     assert (DenseCorrectness.major_gc_live_subgraph_isomorphism
       h_init h_final roots);
@@ -1528,12 +1624,17 @@ let chunked_major_gc_bounded_single_chunk_live_edges_preserved
     graph_vertices_mem h_init x;
     assert (Seq.mem x (Fields.objects zero_addr h_init));
     fields_object_after_zero_addr h_init x;
+    fields_object_after_zero_addr h_final x;
+    MarkCompat.chunked_is_no_scan_single_chunk_compat h_init x;
+    MarkCompat.chunked_is_no_scan_single_chunk_compat h_final x;
     bounded_major_gc_live_wosize_preserved_dense
       h_init roots fp cap fuel x;
     ChunkedMajorGraph.chunked_major_field_preserved_single_chunk_from_dense
       h_init h_final x;
     assert (ChunkedMajorGraph.chunked_major_field_preserved
       (MH.single_chunk_major_heap h_init) mh_final x);
+    assert (MarkDefs.chunked_is_no_scan (MH.single_chunk_major_heap h_init) x ==
+            MarkDefs.chunked_is_no_scan mh_final x);
     assert (ChunkedMajorGraph.chunked_major_pointer_classification_preserved
       (MH.single_chunk_major_heap h_init) mh_final);
     ChunkedMajorGraph.chunked_major_successors_preserved_from_fields

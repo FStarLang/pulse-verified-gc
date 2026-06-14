@@ -91,7 +91,9 @@ val chunked_fused_sweep_coalesce_target_suffix_live_field_preserved_work
              (Seq.slice source (idx + 1) (Seq.length source))
              source work' fp') in
          GC.Spec.ChunkedMajorGC.Graph.chunked_major_field_preserved
-           source final target))
+           source final target /\
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan source target ==
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan final target))
 
 val chunked_fused_sweep_coalesce_live_field_preserved
   (source: MH.major_heap)
@@ -120,7 +122,9 @@ val chunked_fused_sweep_coalesce_live_field_preserved
            fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_sweep_coalesce_chunks
              source source source fp) in
          GC.Spec.ChunkedMajorGC.Graph.chunked_major_field_preserved
-           source final target))
+           source final target /\
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan source target ==
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan final target))
 
 val chunked_fused_sweep_coalesce_live_subgraph_preserved
   (source: MH.major_heap)

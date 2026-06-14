@@ -119,6 +119,7 @@ val chunked_resolved_pointer_field_reachable_from_roots
   : Lemma
       (requires
         Reach.chunked_major_reachable_from_roots mh roots obj /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
         U64.v i <=
           U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
             mh obj) /\
@@ -142,6 +143,7 @@ val chunked_non_infix_pointer_field_reachable_from_roots
   : Lemma
       (requires
         Reach.chunked_major_reachable_from_roots mh roots obj /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
         U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj) /\
         (let v = MarkDefs.chunked_get_field mh obj i in
          MarkDefs.chunked_is_pointer_field mh v /\
@@ -306,6 +308,7 @@ val chunked_push_children_bounded_preserves_stack_reachable_from_roots
         BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
         chunked_push_children_bounded_reachability_ready mh obj i ws /\
         ws == SweepDefs.chunked_wosize_of_object mh obj /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
         Reach.chunked_major_reachable_from_roots mh roots obj /\
         chunked_stack_reachable_from_roots mh roots st)
       (ensures
@@ -327,6 +330,7 @@ val chunked_push_children_bounded_preserves_gray_black_reachable
         BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
         chunked_push_children_bounded_reachability_ready mh obj i ws /\
         ws == SweepDefs.chunked_wosize_of_object mh obj /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
         Reach.chunked_major_reachable_from_roots mh roots obj /\
         Reach.chunked_gray_black_reachable mh roots)
       (ensures

@@ -204,6 +204,7 @@ let chunked_resolved_pointer_field_reachable_from_roots
   : Lemma
       (requires
         Reach.chunked_major_reachable_from_roots mh roots obj /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
         U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj) /\
         (let v = MarkDefs.chunked_get_field mh obj i in
          MarkDefs.chunked_is_pointer_field mh v /\
@@ -233,6 +234,7 @@ let chunked_non_infix_pointer_field_reachable_from_roots
   : Lemma
       (requires
         Reach.chunked_major_reachable_from_roots mh roots obj /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
         U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj) /\
         (let v = MarkDefs.chunked_get_field mh obj i in
          MarkDefs.chunked_is_pointer_field mh v /\
@@ -403,6 +405,17 @@ let chunked_make_gray_preserves_reachable_from_roots
     ChunkedMajorGraph.chunked_major_field_preserved_intro mh mh' x
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let no_scan (x: obj_addr)
+    : Lemma
+        (requires live x)
+        (ensures
+          MarkDefs.chunked_is_no_scan mh x ==
+          MarkDefs.chunked_is_no_scan mh' x)
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh x;
+    MarkPres.chunked_make_gray_preserves_no_scan_status mh obj x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_scan);
   let pc (v: U64.t)
     : Lemma
         (MarkDefs.chunked_is_pointer_field mh v ==
@@ -486,6 +499,17 @@ let chunked_make_black_preserves_reachable_from_roots
     ChunkedMajorGraph.chunked_major_field_preserved_intro mh mh' x
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let no_scan (x: obj_addr)
+    : Lemma
+        (requires live x)
+        (ensures
+          MarkDefs.chunked_is_no_scan mh x ==
+          MarkDefs.chunked_is_no_scan mh' x)
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh x;
+    MarkPres.chunked_make_black_preserves_no_scan_status mh obj x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_scan);
   let pc (v: U64.t)
     : Lemma
         (MarkDefs.chunked_is_pointer_field mh v ==
@@ -641,6 +665,7 @@ let rec chunked_push_children_bounded_preserves_stack_reachable_from_roots
         BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
         chunked_push_children_bounded_reachability_ready mh obj i ws /\
         ws == SweepDefs.chunked_wosize_of_object mh obj /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
         Reach.chunked_major_reachable_from_roots mh roots obj /\
         chunked_stack_reachable_from_roots mh roots st)
       (ensures
@@ -690,6 +715,8 @@ let rec chunked_push_children_bounded_preserves_stack_reachable_from_roots
           chunked_push_children_bounded_reachability_ready_next
             mh obj i ws;
           assert (ws == SweepDefs.chunked_wosize_of_object mh_gray obj);
+          MarkPres.chunked_make_gray_preserves_no_scan_status mh child obj;
+          assert (~(MarkDefs.chunked_is_no_scan mh_gray obj));
           chunked_push_children_bounded_preserves_stack_reachable_from_roots
             mh_gray roots st' obj (U64.add i 1UL) ws cap
         end
@@ -726,6 +753,7 @@ let rec chunked_push_children_bounded_preserves_gray_black_reachable
       BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
       chunked_push_children_bounded_reachability_ready mh obj i ws /\
       ws == SweepDefs.chunked_wosize_of_object mh obj /\
+      ~(MarkDefs.chunked_is_no_scan mh obj) /\
       Reach.chunked_major_reachable_from_roots mh roots obj /\
       Reach.chunked_gray_black_reachable mh roots)
       (ensures
@@ -771,6 +799,8 @@ let rec chunked_push_children_bounded_preserves_gray_black_reachable
         chunked_push_children_bounded_reachability_ready_next
           mh obj i ws;
         assert (ws == SweepDefs.chunked_wosize_of_object mh_gray obj);
+        MarkPres.chunked_make_gray_preserves_no_scan_status mh child obj;
+        assert (~(MarkDefs.chunked_is_no_scan mh_gray obj));
         chunked_push_children_bounded_preserves_gray_black_reachable
           mh_gray roots st' obj (U64.add i 1UL) ws cap
       end
@@ -856,6 +886,8 @@ let chunked_mark_step_bounded_preserves_stack_reachable_from_roots
       chunked_make_black_preserves_stack_reachable_from_roots
         mh roots obj st_tail;
       assert (ws == SweepDefs.chunked_wosize_of_object mh_black obj);
+      MarkPres.chunked_make_black_preserves_no_scan_status mh obj obj;
+      assert (~(MarkDefs.chunked_is_no_scan mh_black obj));
       chunked_push_children_bounded_preserves_stack_reachable_from_roots
         mh_black roots st_tail obj 1UL ws cap
     end
@@ -909,6 +941,8 @@ let chunked_mark_step_bounded_preserves_gray_black_reachable
       chunked_make_black_preserves_gray_black_reachable
         mh roots obj;
       assert (ws == SweepDefs.chunked_wosize_of_object mh_black obj);
+      MarkPres.chunked_make_black_preserves_no_scan_status mh obj obj;
+      assert (~(MarkDefs.chunked_is_no_scan mh_black obj));
       chunked_push_children_bounded_preserves_gray_black_reachable
         mh_black roots st_tail obj 1UL ws cap
     end

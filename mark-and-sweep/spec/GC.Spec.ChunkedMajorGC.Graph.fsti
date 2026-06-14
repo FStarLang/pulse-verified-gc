@@ -76,6 +76,7 @@ val chunked_major_field_points_to_intro
   : Lemma
       (requires
         chunked_major_vertex mh x /\
+        ~(MarkDefs.chunked_is_no_scan mh x) /\
         U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh x) /\
         (let v = MarkDefs.chunked_get_field mh x i in
          MarkDefs.chunked_is_pointer_field mh v /\
@@ -90,6 +91,14 @@ val chunked_major_edge_intro
       (requires chunked_major_field_points_to mh x i y)
       (ensures chunked_major_edge mh x y)
 
+val chunked_major_edge_elim
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  : Lemma
+      (requires chunked_major_edge mh x y)
+      (ensures exists (i: U64.t{U64.v i >= 1}).
+        chunked_major_field_points_to mh x i y)
+
 val chunked_major_field_points_to_source_vertex
   (mh: MH.major_heap)
   (x: obj_addr)
@@ -99,12 +108,28 @@ val chunked_major_field_points_to_source_vertex
       (requires chunked_major_field_points_to mh x i y)
       (ensures chunked_major_vertex mh x)
 
+val chunked_major_field_points_to_source_not_no_scan
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires chunked_major_field_points_to mh x i y)
+      (ensures ~(MarkDefs.chunked_is_no_scan mh x))
+
 val chunked_major_edge_source_vertex
   (mh: MH.major_heap)
   (x y: obj_addr)
   : Lemma
       (requires chunked_major_edge mh x y)
       (ensures chunked_major_vertex mh x)
+
+val chunked_major_edge_source_not_no_scan
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  : Lemma
+      (requires chunked_major_edge mh x y)
+      (ensures ~(MarkDefs.chunked_is_no_scan mh x))
 
 val chunked_major_pointer_classification_preserved
   (mh_init: MH.major_heap)
@@ -318,6 +343,8 @@ val chunked_major_successors_preserved_from_fields
   : Lemma
       (requires
         chunked_major_field_preserved mh_init mh_final x /\
+        (MarkDefs.chunked_is_no_scan mh_init x ==
+         MarkDefs.chunked_is_no_scan mh_final x) /\
         chunked_major_pointer_classification_preserved mh_init mh_final)
       (ensures
         chunked_major_successors_preserved mh_init mh_final x)
@@ -331,6 +358,10 @@ val chunked_major_live_subgraph_preserved_from_fields
         (forall (x: obj_addr).
           live x ==>
           chunked_major_field_preserved mh_init mh_final x) /\
+        (forall (x: obj_addr).
+          live x ==>
+          MarkDefs.chunked_is_no_scan mh_init x ==
+          MarkDefs.chunked_is_no_scan mh_final x) /\
         chunked_major_pointer_classification_preserved mh_init mh_final)
       (ensures
         chunked_major_live_subgraph_preserved mh_init mh_final live)

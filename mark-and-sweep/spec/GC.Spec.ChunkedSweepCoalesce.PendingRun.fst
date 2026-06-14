@@ -122,6 +122,20 @@ let pending_run_before_start_index
   =
   ()
 
+let pending_run_before_start_end
+    (work: MH.major_heap)
+    (idx: nat)
+    (base start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+  : Lemma
+      (requires pending_run_before_start work idx base start first_blue run_words)
+      (ensures
+        run_words = 0 \/
+        U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start)
+  =
+  ()
+
 let pending_run_before_start_empty
     (work: MH.major_heap)
     (idx: nat)

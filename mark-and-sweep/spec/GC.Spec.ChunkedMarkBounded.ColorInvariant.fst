@@ -11,6 +11,7 @@ module MarkPres = GC.Spec.ChunkedMark.Preservation
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
+module BMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module BStackStep = GC.Spec.ChunkedMarkBounded.StackStep
@@ -201,6 +202,192 @@ let rec chunked_mark_bounded_no_new_blue
       let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
       assert (~(SweepDefs.chunked_is_blue mh' target));
       chunked_mark_bounded_no_new_blue mh' cap (fuel - 1) target
+    end
+  end
+#pop-options
+
+#push-options "--z3rlimit 10"
+let rec chunked_push_children_bounded_no_new_white
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+    (cap: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         ~(SweepDefs.chunked_is_white mh' target)))
+      (decreases (U64.v ws - U64.v i))
+  =
+  if U64.v i > U64.v ws then
+    BDefs.chunked_push_children_bounded_done mh st obj i ws cap
+  else begin
+    BDefs.chunked_push_children_bounded_step mh st obj i ws cap;
+    let v = MarkDefs.chunked_get_field mh obj i in
+    if MarkDefs.chunked_is_pointer_field mh v then begin
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child = MarkDefs.chunked_resolve_object mh child_raw in
+      if SweepDefs.chunked_is_white mh child then begin
+        BPres.chunked_push_children_bounded_preservation_ready_child
+          mh obj i ws;
+        assert (Seq.mem child (MH.major_objects mh));
+        if target = child then
+          assert False
+        else begin
+          MarkPres.chunked_make_gray_preserves_other_white_status
+            mh child target;
+          let mh_gray = MarkDefs.chunked_make_gray mh child in
+          assert (~(SweepDefs.chunked_is_white mh_gray target));
+          let st' =
+            if Seq.length st < cap then Seq.cons child st else st in
+          if U64.v i < U64.v ws then begin
+            MarkPres.chunked_make_gray_preserves_well_formed mh child;
+            MarkPres.chunked_make_gray_preserves_major_objects mh child;
+            BPres.chunked_push_children_bounded_preservation_ready_next
+              mh obj i ws;
+            chunked_push_children_bounded_no_new_white
+              mh_gray st' obj (U64.add i 1UL) ws cap target
+          end
+        end
+      end else if U64.v i < U64.v ws then begin
+        BPres.chunked_push_children_bounded_preservation_ready_next
+          mh obj i ws;
+        chunked_push_children_bounded_no_new_white
+          mh st obj (U64.add i 1UL) ws cap target
+      end
+    end else if U64.v i < U64.v ws then begin
+      BPres.chunked_push_children_bounded_preservation_ready_next
+        mh obj i ws;
+      chunked_push_children_bounded_no_new_white
+        mh st obj (U64.add i 1UL) ws cap target
+    end
+  end
+#pop-options
+
+#push-options "--z3rlimit 10"
+let chunked_mark_step_bounded_no_new_white
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        BReady.chunked_bounded_stack_props mh st /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           BDefs.chunked_mark_step_bounded mh st cap in
+         ~(SweepDefs.chunked_is_white mh' target)))
+  =
+  if Seq.length st = 0 then
+    BDefs.chunked_mark_step_bounded_empty mh st cap
+  else begin
+    BReady.chunked_bounded_stack_head mh st;
+    let obj = Seq.head st in
+    let mh_black = MarkDefs.chunked_make_black mh obj in
+    let st_tail = Seq.tail st in
+    if target = obj then
+      MarkPres.chunked_make_black_not_white mh obj
+    else begin
+      MarkPres.chunked_make_black_preserves_other_white_status
+        mh obj target;
+      assert (~(SweepDefs.chunked_is_white mh_black target))
+    end;
+    if MarkDefs.chunked_is_no_scan mh obj then
+      BDefs.chunked_mark_step_bounded_no_scan mh st cap
+    else begin
+      BDefs.chunked_mark_step_bounded_scan mh st cap;
+      BPres.chunked_mark_step_bounded_preservation_ready_scan mh st cap;
+      MarkPres.chunked_make_black_preserves_well_formed mh obj;
+      MarkPres.chunked_make_black_preserves_major_objects mh obj;
+      let ws = SweepDefs.chunked_wosize_of_object mh obj in
+      chunked_push_children_bounded_no_new_white
+        mh_black st_tail obj 1UL ws cap target
+    end
+  end
+#pop-options
+
+#push-options "--z3rlimit 10"
+let rec chunked_mark_inner_loop_no_new_white
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        BReady.chunked_bounded_stack_props mh st /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           BDefs.chunked_mark_inner_loop mh st cap fuel in
+         ~(SweepDefs.chunked_is_white mh' target)))
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then
+    BDefs.chunked_mark_inner_loop_base mh st cap fuel
+  else begin
+    BPres.chunked_mark_inner_loop_preservation_ready_step mh st cap fuel;
+    BStackStep.chunked_mark_step_bounded_preserves_bounded_stack_props
+      mh st cap;
+    BPres.chunked_mark_step_bounded_preserves_well_formed mh st cap;
+    BPres.chunked_mark_step_bounded_preserves_major_objects mh st cap;
+    chunked_mark_step_bounded_no_new_white mh st cap target;
+    let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+    assert (~(SweepDefs.chunked_is_white mh' target));
+    chunked_mark_inner_loop_no_new_white
+      mh' st' cap (fuel - 1) target;
+    BDefs.chunked_mark_inner_loop_step mh st cap fuel
+  end
+#pop-options
+
+#push-options "--z3rlimit 10"
+let rec chunked_mark_bounded_no_new_white
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        ~(SweepDefs.chunked_is_white
+          (BDefs.chunked_mark_bounded mh cap fuel) target))
+      (decreases fuel)
+  =
+  if fuel = 0 then
+    BDefs.chunked_mark_bounded_base mh cap
+  else begin
+    BDefs.chunked_mark_bounded_step mh cap fuel;
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then
+      ()
+    else begin
+      BReady.chunked_rescan_heap_bounded_stack_props mh cap;
+      BPres.chunked_mark_bounded_preservation_ready_step mh cap fuel;
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      chunked_mark_inner_loop_no_new_white
+        mh st cap inner_fuel target;
+      BPres.chunked_mark_inner_loop_preserves_well_formed
+        mh st cap inner_fuel;
+      BPres.chunked_mark_inner_loop_preserves_major_objects
+        mh st cap inner_fuel;
+      let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+      assert (~(SweepDefs.chunked_is_white mh' target));
+      chunked_mark_bounded_no_new_white mh' cap (fuel - 1) target
     end
   end
 #pop-options
@@ -925,6 +1112,8 @@ let chunked_mark_bounded_preserves_no_pointer_to_blue
     ChunkedMajorGraph.chunked_major_vertex_elim mh_mark src;
     ChunkedMajorGraph.chunked_major_vertex_intro mh src;
     chunked_mark_bounded_field_preserved mh cap fuel src;
+    BMetadata.chunked_mark_bounded_preserves_no_scan_status
+      mh cap fuel src;
     ChunkedMajorGraph.chunked_major_successors_preserved_from_fields
       mh mh_mark src;
     ChunkedMajorGraph.chunked_major_successors_preserved_elim

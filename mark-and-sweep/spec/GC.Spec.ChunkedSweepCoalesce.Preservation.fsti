@@ -531,11 +531,17 @@ val chunked_set_object_color_header_effect
              mh obj color)
           obj == Some new_hdr /\
         Obj.getWosize new_hdr == Obj.getWosize hdr /\
+        Obj.getTag new_hdr == Obj.getTag hdr /\
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
           (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
              mh obj color)
           obj ==
-        Obj.getWosize hdr))
+        Obj.getWosize hdr /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_tag_of_object
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
+             mh obj color)
+          obj ==
+        Obj.getTag hdr))
 
 val chunked_make_white_header_effect
   (mh: MH.major_heap)
@@ -551,7 +557,12 @@ val chunked_make_white_header_effect
           (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_make_white mh obj)
           obj == Some new_hdr /\
         Obj.getWosize new_hdr == Obj.getWosize hdr /\
+        Obj.getTag new_hdr == Obj.getTag hdr /\
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
           (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_make_white mh obj)
           obj ==
-        Obj.getWosize hdr))
+        Obj.getWosize hdr /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_tag_of_object
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_make_white mh obj)
+          obj ==
+        Obj.getTag hdr))

@@ -1940,10 +1940,15 @@ let chunked_set_object_color_header_effect
           (Defs.chunked_set_object_color mh obj color)
           obj == Some new_hdr /\
         Obj.getWosize new_hdr == Obj.getWosize hdr /\
+        Obj.getTag new_hdr == Obj.getTag hdr /\
         Defs.chunked_wosize_of_object
           (Defs.chunked_set_object_color mh obj color)
           obj ==
-        Obj.getWosize hdr))
+        Obj.getWosize hdr /\
+        Defs.chunked_tag_of_object
+          (Defs.chunked_set_object_color mh obj color)
+          obj ==
+        Obj.getTag hdr))
   =
   Defs.chunked_read_header_step mh obj;
   let hd = hd_address obj in
@@ -1956,6 +1961,7 @@ let chunked_set_object_color_header_effect
   Defs.chunked_set_object_color_some mh obj color hdr;
   let new_hdr = Obj.colorHeader hdr color in
   Obj.colorHeader_preserves_wosize hdr color;
+  Obj.colorHeader_preserves_tag hdr color;
   let c = Seq.index mh idx in
   let c' = MH.write_word_in_chunk c hd new_hdr in
   MH.write_word_in_major_at_lookup_index mh hd new_hdr idx;
@@ -1977,7 +1983,8 @@ let chunked_set_object_color_header_effect
   let mh' = Defs.chunked_set_object_color mh obj color in
   Defs.chunked_read_header_step mh' obj;
   assert (Defs.chunked_read_header mh' obj == Some new_hdr);
-  Defs.chunked_wosize_of_object_some mh' obj new_hdr
+  Defs.chunked_wosize_of_object_some mh' obj new_hdr;
+  Defs.chunked_tag_of_object_some mh' obj new_hdr
 
 let chunked_make_white_header_effect
     (mh: MH.major_heap)
@@ -1992,10 +1999,15 @@ let chunked_make_white_header_effect
           (Defs.chunked_make_white mh obj)
           obj == Some new_hdr /\
         Obj.getWosize new_hdr == Obj.getWosize hdr /\
+        Obj.getTag new_hdr == Obj.getTag hdr /\
         Defs.chunked_wosize_of_object
           (Defs.chunked_make_white mh obj)
           obj ==
-        Obj.getWosize hdr))
+        Obj.getWosize hdr /\
+        Defs.chunked_tag_of_object
+          (Defs.chunked_make_white mh obj)
+          obj ==
+        Obj.getTag hdr))
   =
   Defs.chunked_make_white_step mh obj;
   chunked_set_object_color_header_effect mh obj Header.White hdr

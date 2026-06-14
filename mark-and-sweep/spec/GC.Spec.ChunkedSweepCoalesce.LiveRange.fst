@@ -530,7 +530,9 @@ let chunked_fused_sweep_coalesce_target_suffix_live_field_preserved_work
            fst (Defs.chunked_fused_sweep_coalesce_chunks
              (Seq.slice source (idx + 1) (Seq.length source))
              source work' fp') in
-         ChunkedGraph.chunked_major_field_preserved source final target))
+         ChunkedGraph.chunked_major_field_preserved source final target /\
+         MarkDefs.chunked_is_no_scan source target ==
+         MarkDefs.chunked_is_no_scan final target))
   =
   let c = Seq.index source idx in
   let step =
@@ -549,6 +551,8 @@ let chunked_fused_sweep_coalesce_target_suffix_live_field_preserved_work
   LivePres.chunked_fused_aux_live_vertex_preserved_from_chunk_work
     source work idx fp target hdr;
   LivePres.chunked_fused_aux_live_wosize_preserved_from_chunk_work
+    source work idx fp target hdr;
+  LivePres.chunked_fused_aux_live_no_scan_preserved_from_chunk_work
     source work idx fp target hdr;
   RangePres.chunked_fused_aux_preserves_ranges
     source work (MH.objects_in_chunk c) 0UL 0 fp;
@@ -605,6 +609,14 @@ let chunked_fused_sweep_coalesce_target_suffix_live_field_preserved_work
   Defs.chunked_read_header_step final target;
   assert (Defs.chunked_read_header work' target == Some work_hdr);
   assert (Defs.chunked_read_header final target == Some work_hdr);
+  Defs.chunked_tag_of_object_some work' target work_hdr;
+  Defs.chunked_tag_of_object_some final target work_hdr;
+  MarkDefs.chunked_is_no_scan_step work' target;
+  MarkDefs.chunked_is_no_scan_step final target;
+  assert (MarkDefs.chunked_is_no_scan work' target ==
+          MarkDefs.chunked_is_no_scan final target);
+  assert (MarkDefs.chunked_is_no_scan source target ==
+          MarkDefs.chunked_is_no_scan work' target);
   Defs.chunked_wosize_of_object_some work' target work_hdr;
   Defs.chunked_wosize_of_object_some final target work_hdr;
   assert (Defs.chunked_wosize_of_object source target == Obj.getWosize hdr);
@@ -688,7 +700,9 @@ let chunked_fused_sweep_coalesce_live_field_preserved
         (let final =
            fst (Defs.chunked_fused_sweep_coalesce_chunks
              source source source fp) in
-         ChunkedGraph.chunked_major_field_preserved source final target))
+        ChunkedGraph.chunked_major_field_preserved source final target /\
+        MarkDefs.chunked_is_no_scan source target ==
+        MarkDefs.chunked_is_no_scan final target))
   =
   let c = Seq.index source idx in
   let prefix =
@@ -757,6 +771,8 @@ let chunked_fused_sweep_coalesce_live_field_preserved
 
   chunked_fused_sweep_coalesce_target_suffix_live_field_preserved_work
     source work idx fp0 target hdr;
+  assert (MarkDefs.chunked_is_no_scan source target ==
+          MarkDefs.chunked_is_no_scan composed_final target);
 
   chunked_fused_sweep_coalesce_chunks_split_range
     source source 0 idx (Seq.length source) fp;
@@ -830,6 +846,17 @@ let chunked_fused_sweep_coalesce_live_subgraph_preserved
       source (live_idx target) fp target (live_hdr target)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let no_scan (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          MarkDefs.chunked_is_no_scan source target ==
+          MarkDefs.chunked_is_no_scan final target)
+    =
+    chunked_fused_sweep_coalesce_live_field_preserved
+      source (live_idx target) fp target (live_hdr target)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_scan);
   RangePres.chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
     source source source fp;
   ChunkedGraph.chunked_major_live_subgraph_preserved_from_fields
@@ -889,6 +916,32 @@ let chunked_fused_sweep_coalesce_live_subgraph_preserved_from_black_membership
         source (live_idx target) fp target hdr
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let no_scan (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          MarkDefs.chunked_is_no_scan source target ==
+          MarkDefs.chunked_is_no_scan final target)
+    =
+    assert (live_idx target < Seq.length source);
+    assert (Seq.mem target
+      (MH.objects_in_chunk (Seq.index source (live_idx target))));
+    assert (Defs.chunked_is_black source target);
+    Defs.chunked_is_black_read_header source target;
+    match Defs.chunked_read_header source target with
+    | None -> assert False
+    | Some hdr ->
+      Defs.chunked_wosize_of_object_some source target hdr;
+      assert (U64.v (Defs.chunked_wosize_of_object source target) ==
+              MH.object_wosize_in_chunk
+                (Seq.index source (live_idx target)) target);
+      assert (U64.v (Obj.getWosize hdr) ==
+              MH.object_wosize_in_chunk
+                (Seq.index source (live_idx target)) target);
+      chunked_fused_sweep_coalesce_live_field_preserved
+        source (live_idx target) fp target hdr
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_scan);
   RangePres.chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
     source source source fp;
   ChunkedGraph.chunked_major_live_subgraph_preserved_from_fields

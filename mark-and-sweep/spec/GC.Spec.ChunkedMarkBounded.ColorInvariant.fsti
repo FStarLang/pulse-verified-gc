@@ -77,6 +77,71 @@ val chunked_mark_bounded_no_new_blue
         ~(SweepDefs.chunked_is_blue
           (BDefs.chunked_mark_bounded mh cap fuel) target))
 
+val chunked_push_children_bounded_no_new_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         ~(SweepDefs.chunked_is_white mh' target)))
+
+val chunked_mark_step_bounded_no_new_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        BReady.chunked_bounded_stack_props mh st /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           BDefs.chunked_mark_step_bounded mh st cap in
+         ~(SweepDefs.chunked_is_white mh' target)))
+
+val chunked_mark_inner_loop_no_new_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        BReady.chunked_bounded_stack_props mh st /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           BDefs.chunked_mark_inner_loop mh st cap fuel in
+         ~(SweepDefs.chunked_is_white mh' target)))
+
+val chunked_mark_bounded_no_new_white
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        ~(SweepDefs.chunked_is_white mh target))
+      (ensures
+        ~(SweepDefs.chunked_is_white
+          (BDefs.chunked_mark_bounded mh cap fuel) target))
+
 val chunked_push_children_bounded_preserves_blue
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)

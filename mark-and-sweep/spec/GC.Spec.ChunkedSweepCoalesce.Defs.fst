@@ -93,6 +93,20 @@ let chunked_tag_of_object (mh: MH.major_heap) (obj: obj_addr)
     | Some hdr -> Obj.getTag hdr
     | None -> 0UL
 
+let chunked_tag_of_object_some
+    (mh: MH.major_heap) (obj: obj_addr) (hdr: U64.t)
+  : Lemma
+      (requires chunked_read_header mh obj == Some hdr)
+      (ensures chunked_tag_of_object mh obj == Obj.getTag hdr)
+  = ()
+
+let chunked_tag_of_object_none
+    (mh: MH.major_heap) (obj: obj_addr)
+  : Lemma
+      (requires chunked_read_header mh obj == None)
+      (ensures chunked_tag_of_object mh obj == 0UL)
+  = ()
+
 let chunked_is_white (mh: MH.major_heap) (obj: obj_addr)
   : GTot bool
   = match chunked_color_of_object mh obj with

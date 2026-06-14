@@ -7252,6 +7252,88 @@ let spot_chunked_mark_bounded_no_new_blue
   ChunkedMarkBoundedColor.chunked_mark_bounded_no_new_blue
     mh cap fuel target
 
+let spot_chunked_push_children_bounded_no_new_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        ~(ChunkedSweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           ChunkedMarkBounded.chunked_push_children_bounded
+             mh st obj i ws cap in
+         ~(ChunkedSweepDefs.chunked_is_white mh' target)))
+  =
+  ChunkedMarkBoundedColor.chunked_push_children_bounded_no_new_white
+    mh st obj i ws cap target
+
+let spot_chunked_mark_step_bounded_no_new_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        ~(ChunkedSweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ~(ChunkedSweepDefs.chunked_is_white mh' target)))
+  =
+  ChunkedMarkBoundedColor.chunked_mark_step_bounded_no_new_white
+    mh st cap target
+
+let spot_chunked_mark_inner_loop_no_new_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        ~(ChunkedSweepDefs.chunked_is_white mh target))
+      (ensures
+        (let (mh', _) =
+           ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ~(ChunkedSweepDefs.chunked_is_white mh' target)))
+  =
+  ChunkedMarkBoundedColor.chunked_mark_inner_loop_no_new_white
+    mh st cap fuel target
+
+let spot_chunked_mark_bounded_no_new_white
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        ~(ChunkedSweepDefs.chunked_is_white mh target))
+      (ensures
+        ~(ChunkedSweepDefs.chunked_is_white
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target))
+  =
+  ChunkedMarkBoundedColor.chunked_mark_bounded_no_new_white
+    mh cap fuel target
+
 let spot_chunked_push_children_bounded_preserves_blue
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -7685,6 +7767,7 @@ let spot_chunked_resolved_pointer_field_reachable_from_roots
   : Lemma
       (requires
         ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots obj /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
         U64.v i <=
           U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
         (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
@@ -7715,6 +7798,7 @@ let spot_chunked_non_infix_pointer_field_reachable_from_roots
   : Lemma
       (requires
         ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots obj /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
         U64.v i <=
           U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
         (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
@@ -7914,6 +7998,7 @@ let spot_chunked_push_children_bounded_preserves_stack_reachable_from_roots
         ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready
           mh obj i ws /\
         ws == ChunkedSweepDefs.chunked_wosize_of_object mh obj /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
         ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots obj /\
         ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
           mh roots st)
@@ -7943,6 +8028,7 @@ let spot_chunked_push_children_bounded_preserves_gray_black_reachable
         ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready
           mh obj i ws /\
         ws == ChunkedSweepDefs.chunked_wosize_of_object mh obj /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
         ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots obj /\
         ChunkedMajorGCReach.chunked_gray_black_reachable mh roots)
       (ensures
@@ -8117,6 +8203,7 @@ let spot_chunked_major_field_points_to_intro
   : Lemma
       (requires
         ChunkedMajorGCGraph.chunked_major_vertex mh x /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh x) /\
         U64.v i <=
           U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh x) /\
         (let v = ChunkedMarkDefs.chunked_get_field mh x i in
@@ -8138,6 +8225,16 @@ let spot_chunked_major_edge_intro
   =
   ChunkedMajorGCGraph.chunked_major_edge_intro mh x y i
 
+let spot_chunked_major_gc_edge_elim
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  : Lemma
+      (requires ChunkedMajorGCGraph.chunked_major_edge mh x y)
+      (ensures exists (i: U64.t{U64.v i >= 1}).
+        ChunkedMajorGCGraph.chunked_major_field_points_to mh x i y)
+  =
+  ChunkedMajorGCGraph.chunked_major_edge_elim mh x y
+
 let spot_chunked_major_field_points_to_source_vertex
   (mh: MH.major_heap)
   (x: obj_addr)
@@ -8150,6 +8247,19 @@ let spot_chunked_major_field_points_to_source_vertex
   =
   ChunkedMajorGCGraph.chunked_major_field_points_to_source_vertex mh x i y
 
+let spot_chunked_major_field_points_to_source_not_no_scan
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_field_points_to mh x i y)
+      (ensures ~(ChunkedMarkDefs.chunked_is_no_scan mh x))
+  =
+  ChunkedMajorGCGraph.chunked_major_field_points_to_source_not_no_scan
+    mh x i y
+
 let spot_chunked_major_edge_source_vertex
   (mh: MH.major_heap)
   (x y: obj_addr)
@@ -8158,6 +8268,15 @@ let spot_chunked_major_edge_source_vertex
       (ensures ChunkedMajorGCGraph.chunked_major_vertex mh x)
   =
   ChunkedMajorGCGraph.chunked_major_edge_source_vertex mh x y
+
+let spot_chunked_major_edge_source_not_no_scan
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  : Lemma
+      (requires ChunkedMajorGCGraph.chunked_major_edge mh x y)
+      (ensures ~(ChunkedMarkDefs.chunked_is_no_scan mh x))
+  =
+  ChunkedMajorGCGraph.chunked_major_edge_source_not_no_scan mh x y
 
 let spot_chunked_major_field_preserved_intro
   (mh_init: MH.major_heap)
@@ -8324,6 +8443,8 @@ let spot_chunked_major_successors_preserved_from_fields
       (requires
         ChunkedMajorGCGraph.chunked_major_field_preserved
           mh_init mh_final x /\
+        ChunkedMarkDefs.chunked_is_no_scan mh_init x ==
+          ChunkedMarkDefs.chunked_is_no_scan mh_final x /\
         ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
           mh_init mh_final)
       (ensures
@@ -8343,6 +8464,10 @@ let spot_chunked_major_live_subgraph_preserved_from_fields
           live x ==>
           ChunkedMajorGCGraph.chunked_major_field_preserved
             mh_init mh_final x) /\
+        (forall (x: obj_addr).
+          live x ==>
+          ChunkedMarkDefs.chunked_is_no_scan mh_init x ==
+            ChunkedMarkDefs.chunked_is_no_scan mh_final x) /\
         ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
           mh_init mh_final)
       (ensures

@@ -29,6 +29,90 @@ let nat_nonzero_pos (n: nat)
   : Lemma (requires n <> 0) (ensures n > 0)
   = ()
 
+let mword_mul_at_least_mword (n: nat)
+  : Lemma
+      (requires n >= 1)
+      (ensures n * U64.v mword >= U64.v mword)
+  =
+  assert_norm (U64.v mword == 8)
+
+let next_start_nat_aligned
+    (start: hp_addr)
+    (obj_size_words: nat)
+    (next_start_nat: nat)
+  : Lemma
+      (requires
+        next_start_nat ==
+        U64.v start + obj_size_words * U64.v mword)
+      (ensures next_start_nat % U64.v mword == 0)
+  =
+  MH.next_object_start_aligned start obj_size_words
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let objects_in_chunk_from_cons_step_light (c: MH.heap_chunk) (start: hp_addr)
+  : Lemma
+      (requires
+        U64.v start >= MH.chunk_start c /\
+        U64.v start + U64.v mword < MH.chunk_end c /\
+        (let header = MH.read_word_in_chunk c start in
+         let wz = Obj.getWosize header in
+         let obj_size_words : nat = U64.v wz + 1 in
+         let next_start_nat =
+           U64.v start + obj_size_words * U64.v mword in
+         next_start_nat <= MH.chunk_end c /\
+         next_start_nat < pow2 64))
+      (ensures
+        (let objs = MH.objects_in_chunk_from c start in
+         Seq.length (MH.objects_in_chunk_from c start) > 0 /\
+         Seq.head (MH.objects_in_chunk_from c start) == f_address start))
+  =
+  let header = MH.read_word_in_chunk c start in
+  let wz = Obj.getWosize header in
+  let obj_size_words : nat = U64.v wz + 1 in
+  assert (U64.v start >= 0);
+  assert (U64.v mword >= 0);
+  assert_norm (U64.v mword == 8);
+  assert (obj_size_words * U64.v mword >= 0);
+  assert (U64.v start + obj_size_words * U64.v mword >= 0);
+  let next_start_nat : nat =
+    U64.v start + obj_size_words * U64.v mword in
+  if next_start_nat < MH.chunk_end c then begin
+    assert (next_start_nat < pow2 64);
+    next_start_nat_aligned start obj_size_words next_start_nat
+  end;
+  MH.objects_in_chunk_from_cons_step c start;
+  let objs = MH.objects_in_chunk_from c start in
+  assert (Seq.length objs > 0);
+  assert (Seq.head objs == f_address start)
+
+let objects_in_chunk_from_tail_at_next_start
+    (c: MH.heap_chunk)
+    (start next_start: hp_addr)
+  : Lemma
+      (requires
+        U64.v start >= MH.chunk_start c /\
+        U64.v start + U64.v mword < MH.chunk_end c /\
+        (let header = MH.read_word_in_chunk c start in
+         let wz = Obj.getWosize header in
+         let obj_size_words = U64.v wz + 1 in
+         let next_start_nat =
+           U64.v start + obj_size_words * U64.v mword in
+         next_start_nat < MH.chunk_end c /\
+         next_start_nat < pow2 64 /\
+         U64.v next_start == next_start_nat))
+      (ensures
+        Seq.tail (MH.objects_in_chunk_from c start) ==
+        MH.objects_in_chunk_from c next_start)
+  =
+  let header = MH.read_word_in_chunk c start in
+  let wz = Obj.getWosize header in
+  let obj_size_words = U64.v wz + 1 in
+  let next_start_nat =
+    U64.v start + obj_size_words * U64.v mword in
+  assert (next_start_nat % U64.v mword == 0);
+  MH.objects_in_chunk_from_cons_step c start
+#pop-options
+
 let chunk_wosize_match
     (work: MH.major_heap)
     (idx: nat)
@@ -64,7 +148,12 @@ let chunked_fused_aux_black_head_preserves_wosize
           (fst (Defs.chunked_fused_aux
             source work objs first_blue run_words fp))
           target ==
-        Obj.getWosize hdr)
+        Obj.getWosize hdr /\
+        Defs.chunked_tag_of_object
+          (fst (Defs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          target ==
+        Obj.getTag hdr)
   =
   let rest = Seq.tail objs in
   let target_hd = hd_address target in
@@ -96,6 +185,79 @@ let chunked_fused_aux_black_head_preserves_wosize
   Defs.chunked_read_header_step final_tail target;
   assert (Defs.chunked_read_header final_tail target == Some new_hdr);
   Defs.chunked_wosize_of_object_some final_tail target new_hdr;
+  Defs.chunked_tag_of_object_some final_tail target new_hdr;
+  Obj.colorHeader_preserves_tag hdr Header.White;
+  assert (fst (Defs.chunked_fused_aux
+           source work objs first_blue run_words fp) == final_tail)
+
+let chunked_fused_aux_black_head_preserves_no_scan
+    (source work: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        Seq.length objs > 0 /\
+        Seq.head objs == target /\
+        Defs.chunked_is_black source target /\
+        Defs.chunked_read_header work target == Some hdr /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword <=
+           U64.v (hd_address target)) /\
+        (forall (o: obj_addr). Seq.mem o (Seq.tail objs) ==>
+          U64.v (hd_address target) + U64.v mword * 2 <= U64.v o))
+      (ensures
+        MarkDefs.chunked_is_no_scan work target ==
+        MarkDefs.chunked_is_no_scan
+          (fst (Defs.chunked_fused_aux
+           source work objs first_blue run_words fp))
+          target)
+  =
+  let rest = Seq.tail objs in
+  let target_hd = hd_address target in
+  Defs.chunked_fused_aux_black_step
+    source work objs first_blue run_words fp;
+  Defs.chunked_read_header_step work target;
+  assert (MH.read_word_in_major work target_hd == Some hdr);
+  Pres.chunked_flush_blue_preserves_other_read
+    work first_blue run_words fp target_hd hdr;
+  let flushed = Defs.chunked_flush_blue work first_blue run_words fp in
+  let work' = fst flushed in
+  let fp' = snd flushed in
+  Defs.chunked_read_header_step work' target;
+  assert (Defs.chunked_read_header work' target == Some hdr);
+  Pres.chunked_make_white_header_effect work' target hdr;
+  let work'' = Defs.chunked_make_white work' target in
+  let new_hdr = Obj.colorHeader hdr Header.White in
+  assert (Defs.chunked_read_header work'' target == Some new_hdr);
+  assert (Obj.getTag new_hdr == Obj.getTag hdr);
+  Defs.chunked_tag_of_object_some work target hdr;
+  Defs.chunked_tag_of_object_some work'' target new_hdr;
+  assert (Defs.chunked_tag_of_object work target ==
+          Defs.chunked_tag_of_object work'' target);
+  Obj.colorHeader_preserves_tag hdr Header.White;
+  MarkDefs.chunked_is_no_scan_step work target;
+  MarkDefs.chunked_is_no_scan_step work'' target;
+  assert (MarkDefs.chunked_is_no_scan work target ==
+          MarkDefs.chunked_is_no_scan work'' target);
+  Defs.chunked_read_header_step work'' target;
+  assert (MH.read_word_in_major work'' target_hd == Some new_hdr);
+  Pres.chunked_fused_aux_read_frame_ready_from_all_after
+    source rest 0UL 0 target_hd;
+  Pres.chunked_fused_aux_preserves_other_read
+    source work'' rest 0UL 0 fp' target_hd new_hdr;
+  let final_tail =
+    fst (Defs.chunked_fused_aux source work'' rest 0UL 0 fp') in
+  assert (MH.read_word_in_major final_tail target_hd == Some new_hdr);
+  Defs.chunked_read_header_step final_tail target;
+  assert (Defs.chunked_read_header final_tail target == Some new_hdr);
+  Defs.chunked_tag_of_object_some final_tail target new_hdr;
+  MarkDefs.chunked_is_no_scan_step final_tail target;
+  assert (MarkDefs.chunked_is_no_scan work'' target ==
+          MarkDefs.chunked_is_no_scan final_tail target);
   assert (fst (Defs.chunked_fused_aux
            source work objs first_blue run_words fp) == final_tail)
 
@@ -109,7 +271,7 @@ let seq_tail_mem_for_head_vertex (#a:eqtype) (s: Seq.seq a) (x: a)
   assert (s == Seq.cons hd tl);
   SeqProps.lemma_mem_append (Seq.create 1 hd) tl
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1 --split_queries always"
 let chunked_fused_aux_black_head_preserves_vertex_from_chunk
     (source work: MH.major_heap)
     (idx: nat)
@@ -1002,6 +1164,11 @@ let rec chunked_fused_aux_live_vertex_preserved_from_chunk_from
   let header = MH.read_word_in_chunk c start in
   let wz = Obj.getWosize header in
   let obj_size_words : nat = U64.v wz + 1 in
+  assert (U64.v start >= 0);
+  assert (U64.v mword >= 0);
+  assert_norm (U64.v mword == 8);
+  assert (obj_size_words * U64.v mword >= 0);
+  assert (U64.v start + obj_size_words * U64.v mword >= 0);
   let next_start_nat : nat =
     U64.v start + obj_size_words * U64.v mword in
   if U64.v start < MH.chunk_start c then
@@ -1066,6 +1233,10 @@ let rec chunked_fused_aux_live_vertex_preserved_from_chunk_from
         assert (next_start_nat < MH.chunk_end c);
         let next_start : hp_addr = U64.uint_to_t next_start_nat in
         assert (U64.v next_start == next_start_nat);
+        assert (obj_size_words >= 1);
+        assert (U64.v mword > 0);
+        mword_mul_at_least_mword obj_size_words;
+        assert (obj_size_words * U64.v mword >= U64.v mword);
         assert (U64.v start + U64.v mword <= U64.v next_start);
         assert (U64.v next_start <= MH.chunk_end (Seq.index work idx));
         assert (U64.v next_start == U64.v start +
@@ -1204,14 +1375,8 @@ let rec chunked_fused_aux_live_vertex_preserved_from_chunk_from
           assert (U64.v first == U64.v start + U64.v mword);
           assert (U64.v next_start ==
                   U64.v start + (U64.v wz + 1) * U64.v mword);
-          if run_words = 0 then
-            ()
-          else begin
-            nat_nonzero_pos run_words;
-            let rw : pos = run_words in
-            Pending.pending_run_before_start_nonempty_elim
-              work idx c.base start first_blue rw
-          end;
+          Pending.pending_run_before_start_end
+            work idx c.base start first_blue run_words;
           Pending.chunked_fused_aux_nonblack_run_end_at_next_start
             start first first_blue run_words wz next_start;
           chunked_fused_aux_nonblack_prefix_prepare_tail
@@ -1334,6 +1499,72 @@ let objects_in_chunk_base_head_mem_from_member
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+[@@"opaque_to_smt"]
+let fused_aux_live_wosize_tag_post
+    (source work: MH.major_heap)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  =
+  let final =
+    fst (Defs.chunked_fused_aux
+      source work (MH.objects_in_chunk_from c start)
+      first_blue run_words fp) in
+  Defs.chunked_wosize_of_object final target == Obj.getWosize hdr /\
+  Defs.chunked_tag_of_object final target == Obj.getTag hdr
+
+let fused_aux_live_wosize_tag_post_elim
+    (source work: MH.major_heap)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        fused_aux_live_wosize_tag_post
+          source work c start first_blue run_words fp target hdr)
+      (ensures
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk_from c start)
+            first_blue run_words fp) in
+        Defs.chunked_wosize_of_object final target == Obj.getWosize hdr /\
+        Defs.chunked_tag_of_object final target == Obj.getTag hdr))
+  =
+  reveal_opaque (`%fused_aux_live_wosize_tag_post)
+    fused_aux_live_wosize_tag_post
+
+let fused_aux_live_wosize_tag_post_intro
+    (source work: MH.major_heap)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        (let final =
+          fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk_from c start)
+            first_blue run_words fp) in
+        Defs.chunked_wosize_of_object final target == Obj.getWosize hdr /\
+        Defs.chunked_tag_of_object final target == Obj.getTag hdr))
+      (ensures
+        fused_aux_live_wosize_tag_post
+          source work c start first_blue run_words fp target hdr)
+  =
+  reveal_opaque (`%fused_aux_live_wosize_tag_post)
+    fused_aux_live_wosize_tag_post
+
 let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
     (source work: MH.major_heap)
     (c: MH.heap_chunk)
@@ -1355,12 +1586,8 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
         (run_words = 0 \/
          U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start))
       (ensures
-        Defs.chunked_wosize_of_object
-          (fst (Defs.chunked_fused_aux
-            source work (MH.objects_in_chunk_from c start)
-            first_blue run_words fp))
-          target ==
-        Obj.getWosize hdr)
+        fused_aux_live_wosize_tag_post
+          source work c start first_blue run_words fp target hdr)
       (decreases MH.chunk_end c - U64.v start)
   =
   MH.objects_in_chunk_from_member_header_fits c start target;
@@ -1371,36 +1598,21 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
   else begin
     let header = MH.read_word_in_chunk c start in
     let wz = Obj.getWosize header in
-    let obj_size_words = U64.v wz + 1 in
-    let next_start_nat =
+    let obj_size_words : nat = U64.v wz + 1 in
+    let next_start_nat : nat =
       U64.v start + obj_size_words * U64.v mword in
     if next_start_nat > MH.chunk_end c || next_start_nat >= pow2 64 then
       assert False
     else begin
       f_address_spec start;
       let first : obj_addr = f_address start in
-      let tail =
-        if next_start_nat >= MH.chunk_end c then
-          Seq.empty
-        else begin
-          assert (next_start_nat < heap_size);
-          assert (next_start_nat < pow2 64);
-          MH.next_object_start_aligned start obj_size_words;
-          assert (next_start_nat % U64.v mword == 0);
-          let next_start_nat_u : n:nat{n < pow2 64} = next_start_nat in
-          let next_start : hp_addr = U64.uint_to_t next_start_nat_u in
-          MH.objects_in_chunk_from c next_start
-        end
-      in
       let objs = MH.objects_in_chunk_from c start in
-      if next_start_nat < MH.chunk_end c then begin
-        MH.next_object_start_aligned start obj_size_words;
-        assert (next_start_nat % U64.v mword == 0)
-      end;
-      MH.objects_in_chunk_from_cons_step c start;
-      assert (objs == Seq.cons first tail);
+      objects_in_chunk_from_cons_step_light c start;
       assert (Seq.length objs > 0);
+      let tail = Seq.tail objs in
       assert (Seq.head objs == first);
+      SeqProps.cons_head_tail objs;
+      assert (objs == Seq.cons first tail);
       assert (Seq.tail objs == tail);
       Fields.mem_cons_lemma target first tail;
       if target = first then begin
@@ -1420,8 +1632,21 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
           if next_start_nat >= MH.chunk_end c then
             assert False
           else begin
+            assert (next_start_nat < pow2 64);
+            next_start_nat_aligned start obj_size_words next_start_nat;
+            assert (next_start_nat % U64.v mword == 0);
             let next_start_nat_u : n:nat{n < pow2 64} = next_start_nat in
             let next_start : hp_addr = U64.uint_to_t next_start_nat_u in
+            mword_mul_at_least_mword obj_size_words;
+            assert (next_start_nat ==
+                    U64.v start + obj_size_words * U64.v mword);
+            assert (U64.v start + U64.v mword <= next_start_nat);
+            assert (U64.v next_start == next_start_nat);
+            assert (U64.v start < U64.v next_start);
+            assert (U64.v next_start < MH.chunk_end c);
+            assert (MH.chunk_end c - U64.v next_start <
+                    MH.chunk_end c - U64.v start);
+            objects_in_chunk_from_tail_at_next_start c start next_start;
             assert (tail == MH.objects_in_chunk_from c next_start);
             suffix_object_after_header_addr c start next_start o wz
           end
@@ -1429,7 +1654,25 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
         FStar.Classical.forall_intro
           (FStar.Classical.move_requires suffix_after);
         chunked_fused_aux_black_head_preserves_wosize
-          source work objs first_blue run_words fp target hdr
+          source work objs first_blue run_words fp target hdr;
+        let final =
+          fst (Defs.chunked_fused_aux
+            source work objs first_blue run_words fp) in
+        assert (Defs.chunked_wosize_of_object final target ==
+                Obj.getWosize hdr);
+        assert (Defs.chunked_tag_of_object final target ==
+                Obj.getTag hdr);
+        let post_final =
+          fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk_from c start)
+            first_blue run_words fp) in
+        assert (post_final == final);
+        assert (Defs.chunked_wosize_of_object post_final target ==
+                Obj.getWosize hdr);
+        assert (Defs.chunked_tag_of_object post_final target ==
+                Obj.getTag hdr);
+        fused_aux_live_wosize_tag_post_intro
+          source work c start first_blue run_words fp target hdr
       end else begin
         assert (Seq.mem target tail);
         if next_start_nat >= MH.chunk_end c then
@@ -1437,10 +1680,11 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
         else begin
           assert (next_start_nat < heap_size);
           assert (next_start_nat < pow2 64);
-          MH.next_object_start_aligned start obj_size_words;
+          next_start_nat_aligned start obj_size_words next_start_nat;
           assert (next_start_nat % U64.v mword == 0);
           let next_start_nat_u : n:nat{n < pow2 64} = next_start_nat in
           let next_start : hp_addr = U64.uint_to_t next_start_nat_u in
+          objects_in_chunk_from_tail_at_next_start c start next_start;
           assert (tail == MH.objects_in_chunk_from c next_start);
           let wosize_match_tail (o: obj_addr)
             : Lemma
@@ -1459,6 +1703,7 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
           in
           FStar.Classical.forall_intro
             (FStar.Classical.move_requires wosize_match_tail);
+          assert (Seq.mem target (MH.objects_in_chunk_from c next_start));
           MH.objects_in_chunk_from_addresses_gt_start c next_start target;
           assert (U64.v target > U64.v next_start);
           object_after_start_header_at_or_after next_start target;
@@ -1466,6 +1711,14 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
           if Defs.chunked_is_black source first then begin
             hd_f_roundtrip start;
             assert (hd_address first == start);
+            mword_mul_at_least_mword obj_size_words;
+            assert (next_start_nat ==
+                    U64.v start + obj_size_words * U64.v mword);
+            assert (U64.v start + U64.v mword <= next_start_nat);
+            assert (U64.v next_start == next_start_nat);
+            assert (U64.v start + U64.v mword <= U64.v next_start);
+            assert (U64.v start == U64.v (hd_address first));
+            assert (U64.v next_start <= U64.v (hd_address target));
             assert (U64.v (hd_address first) + U64.v mword <=
                     U64.v (hd_address target));
             chunked_fused_aux_black_step_fst
@@ -1485,10 +1738,46 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
             assert (Defs.chunked_read_header work'' target == Some hdr);
             chunked_fused_aux_live_wosize_preserved_from_chunk_from
               source work'' c next_start 0UL 0 fp' target hdr;
-            assert (fst (Defs.chunked_fused_aux
-                     source work objs first_blue run_words fp) ==
-                    fst (Defs.chunked_fused_aux
-                     source work'' tail 0UL 0 fp'))
+            fused_aux_live_wosize_tag_post_elim
+              source work'' c next_start 0UL 0 fp' target hdr;
+            let rec_tail_final =
+              fst (Defs.chunked_fused_aux
+                source work'' (MH.objects_in_chunk_from c next_start)
+                0UL 0 fp') in
+            assert (Defs.chunked_wosize_of_object rec_tail_final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object rec_tail_final target ==
+                    Obj.getTag hdr);
+            let tail_final =
+              fst (Defs.chunked_fused_aux
+                source work'' tail 0UL 0 fp') in
+            assert (tail == MH.objects_in_chunk_from c next_start);
+            assert (tail_final == rec_tail_final);
+            assert (Defs.chunked_wosize_of_object tail_final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object tail_final target ==
+                    Obj.getTag hdr);
+            let final =
+              fst (Defs.chunked_fused_aux
+                source work objs first_blue run_words fp) in
+            assert (final == tail_final);
+            assert (Defs.chunked_wosize_of_object final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object final target ==
+                    Defs.chunked_tag_of_object tail_final target);
+            assert (Defs.chunked_tag_of_object final target ==
+                    Obj.getTag hdr);
+            let post_final =
+              fst (Defs.chunked_fused_aux
+                source work (MH.objects_in_chunk_from c start)
+                first_blue run_words fp) in
+            assert (post_final == final);
+            assert (Defs.chunked_wosize_of_object post_final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object post_final target ==
+                    Obj.getTag hdr);
+            fused_aux_live_wosize_tag_post_intro
+              source work c start first_blue run_words fp target hdr
           end else begin
             let new_first : U64.t =
               if run_words = 0 then first else first_blue in
@@ -1512,15 +1801,131 @@ let rec chunked_fused_aux_live_wosize_preserved_from_chunk_from
               source work objs first_blue run_words fp;
             chunked_fused_aux_live_wosize_preserved_from_chunk_from
               source work c next_start new_first new_run fp target hdr;
-            assert (fst (Defs.chunked_fused_aux
-                     source work objs first_blue run_words fp) ==
-                    fst (Defs.chunked_fused_aux
-                     source work tail new_first new_run fp))
+            fused_aux_live_wosize_tag_post_elim
+              source work c next_start new_first new_run fp target hdr;
+            let rec_tail_final =
+              fst (Defs.chunked_fused_aux
+                source work (MH.objects_in_chunk_from c next_start)
+                new_first new_run fp) in
+            assert (Defs.chunked_wosize_of_object rec_tail_final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object rec_tail_final target ==
+                    Obj.getTag hdr);
+            let tail_final =
+              fst (Defs.chunked_fused_aux
+                source work tail new_first new_run fp) in
+            assert (tail == MH.objects_in_chunk_from c next_start);
+            assert (tail_final == rec_tail_final);
+            assert (Defs.chunked_wosize_of_object tail_final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object tail_final target ==
+                    Obj.getTag hdr);
+            let final =
+              fst (Defs.chunked_fused_aux
+                source work objs first_blue run_words fp) in
+            assert (final == tail_final);
+            assert (Defs.chunked_wosize_of_object final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object final target ==
+                    Defs.chunked_tag_of_object tail_final target);
+            assert (Defs.chunked_tag_of_object final target ==
+                    Obj.getTag hdr);
+            let post_final =
+              fst (Defs.chunked_fused_aux
+                source work (MH.objects_in_chunk_from c start)
+                first_blue run_words fp) in
+            assert (post_final == final);
+            assert (Defs.chunked_wosize_of_object post_final target ==
+                    Obj.getWosize hdr);
+            assert (Defs.chunked_tag_of_object post_final target ==
+                    Obj.getTag hdr);
+            fused_aux_live_wosize_tag_post_intro
+              source work c start first_blue run_words fp target hdr
           end
         end
       end
     end
   end
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_fused_aux_live_tag_preserved_from_chunk_from
+    (source work: MH.major_heap)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        Seq.mem target (MH.objects_in_chunk_from c start) /\
+        (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk_from c start) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk c o) /\
+        Defs.chunked_read_header work target == Some hdr /\
+        Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start))
+      (ensures
+        Defs.chunked_tag_of_object
+          (fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk_from c start)
+            first_blue run_words fp))
+          target ==
+        Obj.getTag hdr)
+  =
+  chunked_fused_aux_live_wosize_preserved_from_chunk_from
+    source work c start first_blue run_words fp target hdr;
+  fused_aux_live_wosize_tag_post_elim
+    source work c start first_blue run_words fp target hdr
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_fused_aux_live_no_scan_preserved_from_chunk_from
+    (source work: MH.major_heap)
+    (c: MH.heap_chunk)
+    (start: hp_addr)
+    (first_blue: U64.t)
+    (run_words: nat)
+    (fp: U64.t)
+    (target: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires
+        Seq.mem target (MH.objects_in_chunk_from c start) /\
+        (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk_from c start) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk c o) /\
+        Defs.chunked_read_header source target == Some hdr /\
+        Defs.chunked_read_header work target == Some hdr /\
+        Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target /\
+        (run_words = 0 \/
+         U64.v first_blue + (run_words - 1) * U64.v mword == U64.v start))
+      (ensures
+        MarkDefs.chunked_is_no_scan source target ==
+        MarkDefs.chunked_is_no_scan
+          (fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk_from c start)
+            first_blue run_words fp))
+          target)
+      (decreases MH.chunk_end c - U64.v start)
+  =
+  let final =
+    fst (Defs.chunked_fused_aux
+      source work (MH.objects_in_chunk_from c start)
+      first_blue run_words fp) in
+  chunked_fused_aux_live_tag_preserved_from_chunk_from
+    source work c start first_blue run_words fp target hdr;
+  Defs.chunked_tag_of_object_some source target hdr;
+  assert (Defs.chunked_tag_of_object final target == Obj.getTag hdr);
+  assert (Defs.chunked_tag_of_object source target ==
+          Defs.chunked_tag_of_object final target);
+  MarkDefs.chunked_is_no_scan_step source target;
+  MarkDefs.chunked_is_no_scan_step final target
 #pop-options
 
 let chunked_fused_aux_live_wosize_preserved_from_chunk
@@ -1546,6 +1951,8 @@ let chunked_fused_aux_live_wosize_preserved_from_chunk
         Obj.getWosize hdr)
   =
   chunked_fused_aux_live_wosize_preserved_from_chunk_from
+    source source c c.base 0UL 0 fp target hdr;
+  fused_aux_live_wosize_tag_post_elim
     source source c c.base 0UL 0 fp target hdr
 
 let chunked_fused_aux_live_vertex_preserved_from_chunk
@@ -1626,6 +2033,40 @@ let chunked_fused_aux_live_wosize_preserved_from_chunk_work
   let c = Seq.index source idx in
   assert (MH.objects_in_chunk c == MH.objects_in_chunk_from c c.base);
   chunked_fused_aux_live_wosize_preserved_from_chunk_from
+    source work c c.base 0UL 0 fp target hdr;
+  fused_aux_live_wosize_tag_post_elim
+    source work c c.base 0UL 0 fp target hdr
+
+let chunked_fused_aux_live_no_scan_preserved_from_chunk_work
+  (source work: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (o: obj_addr).
+         Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+         U64.v (Defs.chunked_wosize_of_object source o) ==
+         MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        Defs.chunked_read_header source target == Some hdr /\
+        Defs.chunked_read_header work target == Some hdr /\
+        Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+         MH.object_wosize_in_chunk (Seq.index source idx) target)
+      (ensures
+        (let c = Seq.index source idx in
+         MarkDefs.chunked_is_no_scan source target ==
+         MarkDefs.chunked_is_no_scan
+          (fst (Defs.chunked_fused_aux
+            source work (MH.objects_in_chunk c) 0UL 0 fp))
+          target))
+  =
+  let c = Seq.index source idx in
+  assert (MH.objects_in_chunk c == MH.objects_in_chunk_from c c.base);
+  chunked_fused_aux_live_no_scan_preserved_from_chunk_from
     source work c c.base 0UL 0 fp target hdr
 
 let chunked_fused_aux_live_vertex_preserved_from_chunk_work
@@ -1708,7 +2149,9 @@ let chunked_fused_aux_live_field_preserved_from_chunk
             source source (MH.objects_in_chunk (Seq.index source idx))
             0UL 0 fp) in
          ChunkedGraph.chunked_major_field_preserved
-           source final target))
+           source final target /\
+         MarkDefs.chunked_is_no_scan source target ==
+         MarkDefs.chunked_is_no_scan final target))
   =
   let c = Seq.index source idx in
   let final =
@@ -1725,6 +2168,8 @@ let chunked_fused_aux_live_field_preserved_from_chunk
   Defs.chunked_wosize_of_object_some source target hdr;
   assert (Defs.chunked_wosize_of_object source target == Obj.getWosize hdr);
   assert (Defs.chunked_wosize_of_object final target == Obj.getWosize hdr);
+  chunked_fused_aux_live_no_scan_preserved_from_chunk_work
+    source source idx fp target hdr;
   ChunkedGraph.chunked_major_field_preserved_intro
     source final target
 
@@ -1770,6 +2215,17 @@ let chunked_fused_aux_live_subgraph_preserved_from_chunk
       source idx fp target (live_hdr target)
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let no_scan (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          MarkDefs.chunked_is_no_scan source target ==
+          MarkDefs.chunked_is_no_scan final target)
+    =
+    chunked_fused_aux_live_field_preserved_from_chunk
+      source idx fp target (live_hdr target)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires no_scan);
   RangePres.chunked_fused_aux_pointer_classification_preserved
     source source (MH.objects_in_chunk c) 0UL 0 fp;
   ChunkedGraph.chunked_major_live_subgraph_preserved_from_fields

@@ -35,7 +35,12 @@ val chunked_fused_aux_black_head_preserves_wosize
           (fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
             source work objs first_blue run_words fp))
           target ==
-        Obj.getWosize hdr)
+        Obj.getWosize hdr /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_tag_of_object
+          (fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+            source work objs first_blue run_words fp))
+          target ==
+        Obj.getTag hdr)
 
 val chunked_fused_aux_black_head_preserves_vertex_from_chunk
     (source work: MH.major_heap)
@@ -186,6 +191,36 @@ val chunked_fused_aux_live_wosize_preserved_from_chunk_work
           target ==
          Obj.getWosize hdr))
 
+val chunked_fused_aux_live_no_scan_preserved_from_chunk_work
+  (source work: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (o: obj_addr).
+         Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+         U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                 source o) ==
+         MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header
+         source target == Some hdr /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header
+         work target == Some hdr /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+         MH.object_wosize_in_chunk (Seq.index source idx) target)
+      (ensures
+        (let c = Seq.index source idx in
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan source target ==
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan
+         (fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_aux
+           source work (MH.objects_in_chunk c) 0UL 0 fp))
+         target))
+
 val chunked_fused_aux_live_vertex_preserved_from_chunk_work
   (source work: MH.major_heap)
   (idx: nat)
@@ -256,7 +291,9 @@ val chunked_fused_aux_live_field_preserved_from_chunk
             source source (MH.objects_in_chunk (Seq.index source idx))
             0UL 0 fp) in
          GC.Spec.ChunkedMajorGC.Graph.chunked_major_field_preserved
-           source final target))
+           source final target /\
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan source target ==
+         GC.Spec.ChunkedMark.Defs.chunked_is_no_scan final target))
 
 val chunked_fused_aux_live_subgraph_preserved_from_chunk
   (source: MH.major_heap)

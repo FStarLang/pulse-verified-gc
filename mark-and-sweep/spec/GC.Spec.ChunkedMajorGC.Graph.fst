@@ -83,6 +83,7 @@ let chunked_major_field_points_to
   : prop
   =
   chunked_major_vertex mh x /\
+  ~(MarkDefs.chunked_is_no_scan mh x) /\
   U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh x) /\
   (let v = MarkDefs.chunked_get_field mh x i in
    MarkDefs.chunked_is_pointer_field mh v /\
@@ -104,6 +105,7 @@ let chunked_major_field_points_to_intro
   : Lemma
       (requires
         chunked_major_vertex mh x /\
+        ~(MarkDefs.chunked_is_no_scan mh x) /\
         U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh x) /\
         (let v = MarkDefs.chunked_get_field mh x i in
          MarkDefs.chunked_is_pointer_field mh v /\
@@ -124,6 +126,16 @@ let chunked_major_edge_intro
       chunked_major_field_points_to mh x j y)
     i
 
+let chunked_major_edge_elim
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  : Lemma
+     (requires chunked_major_edge mh x y)
+     (ensures exists (i: U64.t{U64.v i >= 1}).
+       chunked_major_field_points_to mh x i y)
+  =
+  ()
+
 let chunked_major_field_points_to_source_vertex
   (mh: MH.major_heap)
   (x: obj_addr)
@@ -132,6 +144,17 @@ let chunked_major_field_points_to_source_vertex
   : Lemma
       (requires chunked_major_field_points_to mh x i y)
       (ensures chunked_major_vertex mh x)
+  =
+  ()
+
+let chunked_major_field_points_to_source_not_no_scan
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires chunked_major_field_points_to mh x i y)
+      (ensures ~(MarkDefs.chunked_is_no_scan mh x))
   =
   ()
 
@@ -149,6 +172,21 @@ let chunked_major_edge_source_vertex
       chunked_major_field_points_to mh x i y)
     ()
     (fun i -> chunked_major_field_points_to_source_vertex mh x i y)
+
+let chunked_major_edge_source_not_no_scan
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  : Lemma
+      (requires chunked_major_edge mh x y)
+      (ensures ~(MarkDefs.chunked_is_no_scan mh x))
+  =
+  FStar.Classical.exists_elim
+    (~(MarkDefs.chunked_is_no_scan mh x))
+    #_
+    #(fun (i: U64.t{U64.v i >= 1}) ->
+      chunked_major_field_points_to mh x i y)
+    ()
+    (fun i -> chunked_major_field_points_to_source_not_no_scan mh x i y)
 
 let chunked_major_pointer_classification_preserved
     (mh_init: MH.major_heap)
@@ -485,6 +523,8 @@ let chunked_major_field_points_to_preserved_forward
   : Lemma
       (requires
         chunked_major_field_preserved mh_init mh_final x /\
+        MarkDefs.chunked_is_no_scan mh_init x ==
+          MarkDefs.chunked_is_no_scan mh_final x /\
         chunked_major_pointer_classification_preserved mh_init mh_final /\
         chunked_major_field_points_to mh_init x i y)
       (ensures
@@ -505,6 +545,8 @@ let chunked_major_field_points_to_preserved_backward
   : Lemma
       (requires
         chunked_major_field_preserved mh_init mh_final x /\
+        MarkDefs.chunked_is_no_scan mh_init x ==
+          MarkDefs.chunked_is_no_scan mh_final x /\
         chunked_major_pointer_classification_preserved mh_init mh_final /\
         chunked_major_field_points_to mh_final x i y)
       (ensures
@@ -523,6 +565,8 @@ let chunked_major_successors_preserved_from_fields
   : Lemma
       (requires
         chunked_major_field_preserved mh_init mh_final x /\
+        MarkDefs.chunked_is_no_scan mh_init x ==
+          MarkDefs.chunked_is_no_scan mh_final x /\
         chunked_major_pointer_classification_preserved mh_init mh_final)
       (ensures
         chunked_major_successors_preserved mh_init mh_final x)
@@ -580,6 +624,10 @@ let chunked_major_live_subgraph_preserved_from_fields
         (forall (x: obj_addr).
           live x ==>
           chunked_major_field_preserved mh_init mh_final x) /\
+        (forall (x: obj_addr).
+          live x ==>
+          MarkDefs.chunked_is_no_scan mh_init x ==
+          MarkDefs.chunked_is_no_scan mh_final x) /\
         chunked_major_pointer_classification_preserved mh_init mh_final)
       (ensures
         chunked_major_live_subgraph_preserved mh_init mh_final live)
@@ -603,6 +651,8 @@ let chunked_major_live_subgraph_preserved_from_fields
             chunked_major_edge mh_final x y)
     =
     assert (chunked_major_field_preserved mh_init mh_final x);
+    assert (MarkDefs.chunked_is_no_scan mh_init x ==
+            MarkDefs.chunked_is_no_scan mh_final x);
     chunked_major_successors_preserved_from_fields mh_init mh_final x;
     chunked_major_successors_preserved_elim mh_init mh_final x
   in
