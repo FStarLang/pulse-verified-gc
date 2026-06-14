@@ -4590,6 +4590,58 @@ let spot_chunked_mark_bounded_rescan_head_ready
   ChunkedMarkBoundedReady.chunked_mark_bounded_marks_rescan_head_ready
     mh cap fuel target
 
+let spot_chunked_push_children_bounded_preserves_stack_member
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires Seq.mem target st)
+      (ensures
+        (let (_, st') =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         Seq.mem target st'))
+  =
+  ChunkedMarkBoundedReady.chunked_push_children_bounded_preserves_stack_member
+    mh st obj i ws cap target
+
+let spot_chunked_mark_step_bounded_preserves_tail_member
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        Seq.mem target (Seq.tail st))
+      (ensures
+        (let (_, st') =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         Seq.mem target st'))
+  =
+  ChunkedMarkBoundedReady.chunked_mark_step_bounded_preserves_tail_member
+    mh st cap target
+
+let spot_chunked_rescan_heap_adds_gray_with_capacity
+  (mh: MH.major_heap)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem target (MH.major_objects mh) /\
+        ChunkedMarkBounded.chunked_is_gray mh target /\
+        Seq.length (MH.major_objects mh) <= cap)
+      (ensures
+        Seq.mem target
+          (ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap))
+  =
+  ChunkedMarkBoundedReady.chunked_rescan_heap_adds_gray_with_capacity
+    mh cap target
+
 let spot_chunked_bounded_is_gray_single_chunk_compat
   (g: heap)
   (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})

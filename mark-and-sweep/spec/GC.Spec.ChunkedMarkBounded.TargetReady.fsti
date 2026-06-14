@@ -30,6 +30,75 @@ val chunked_count_non_black_has_nonblack
       (ensures
         BDefs.chunked_count_non_black mh > 0)
 
+val chunked_push_children_bounded_preserves_stack_member
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: FStar.UInt64.t{FStar.UInt64.v i >= 1})
+  (ws: FStar.UInt64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires Seq.mem target st)
+      (ensures
+        (let (_, st') =
+          BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         Seq.mem target st'))
+
+val chunked_mark_step_bounded_preserves_tail_member
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        Seq.mem target (Seq.tail st))
+      (ensures
+        (let (_, st') =
+          BDefs.chunked_mark_step_bounded mh st cap in
+         Seq.mem target st'))
+
+val chunked_rescan_objects_preserves_stack_member
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires Seq.mem target st)
+      (ensures
+        Seq.mem target
+          (BDefs.chunked_rescan_objects mh objs st cap))
+
+val chunked_rescan_objects_adds_gray_with_capacity
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem target objs /\
+        BDefs.chunked_is_gray mh target /\
+        Seq.length st + Seq.length objs <= cap)
+      (ensures
+        Seq.mem target
+          (BDefs.chunked_rescan_objects mh objs st cap))
+
+val chunked_rescan_heap_adds_gray_with_capacity
+  (mh: MH.major_heap)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem target (MH.major_objects mh) /\
+        BDefs.chunked_is_gray mh target /\
+        Seq.length (MH.major_objects mh) <= cap)
+      (ensures
+        Seq.mem target
+          (BDefs.chunked_rescan_heap mh Seq.empty cap))
+
 val chunked_mark_bounded_marks_rescan_head_ready
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
