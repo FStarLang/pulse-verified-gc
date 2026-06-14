@@ -220,11 +220,11 @@ The verified code should not call `malloc` directly. The C runtime bridge acquir
 
 Once those facts hold, the verified expansion path treats the memory as a fresh `heap_chunk`: initialize it as one or more blue free-list blocks, prepend/link the fresh block chain to the global major free list, prove old reads/objects/graph facts are framed, and retry allocation or start Cheney promotion with enough head capacity. If promotion would otherwise fail because of OOM, the intended architecture is that preflight has already prevented that state by expanding before promotion begins.
 
-## Update: fused multi-chunk live-field preservation
+## Update: fused multi-chunk live-subgraph preservation
 
-The current Stage 6 proof has advanced from prefix/target/suffix fragments to a true all-chunks field-preservation theorem for one black live target. `GC.Spec.ChunkedSweepCoalesce.LiveRange` now has a work-state target+suffix theorem, a small traversal-split helper, and `chunked_fused_sweep_coalesce_live_field_preserved`, which composes prefix framing, target-chunk live preservation, and suffix framing into `ChunkedMajorGC.Graph.chunked_major_field_preserved source final target` for the actual full `chunked_fused_sweep_coalesce_chunks source source source fp` traversal.
+The current Stage 6 proof has advanced from prefix/target/suffix fragments to a true all-chunks live-subgraph theorem for selected black live objects. `GC.Spec.ChunkedSweepCoalesce.LiveRange` now has a work-state target+suffix theorem, a small traversal-split helper, `chunked_fused_sweep_coalesce_live_field_preserved` for one target, and `chunked_fused_sweep_coalesce_live_subgraph_preserved`, which quantifies the one-target theorem and feeds it into `ChunkedMajorGC.Graph.chunked_major_live_subgraph_preserved_from_fields` for the actual full `chunked_fused_sweep_coalesce_chunks source source source fp` traversal.
 
-The proof stays split and cheap: the refreshed `LiveRange` split-query profile remains about one second overall, and `GC.SPOT.HeapExpansion` audits the new public wrappers. The next proof step is to lift this one-target all-chunks field preservation over all live black targets and feed it into `ChunkedMajorGC.Graph.chunked_major_live_subgraph_preserved_from_fields`.
+The proof stays split and cheap: the refreshed `LiveRange` split-query profile remains about 1.06 seconds overall, broad mark-and-sweep spec verification passes, and `GC.SPOT.HeapExpansion` audits the new public wrapper. The next proof step is to integrate this fused traversal theorem into the chunked major-GC shell by supplying the live-object index/header witnesses from the marked heap and then threading it toward the Stage 6 chunked major-GC correctness surface.
 
 ## Audit checklist
 

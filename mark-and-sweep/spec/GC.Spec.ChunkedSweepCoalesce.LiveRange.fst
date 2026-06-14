@@ -788,6 +788,55 @@ let chunked_fused_sweep_coalesce_live_field_preserved
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_fused_sweep_coalesce_live_subgraph_preserved
+  (source: MH.major_heap)
+  (fp: U64.t)
+  (live: obj_addr -> prop)
+  (live_idx: obj_addr -> nat)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        (forall (j: nat). j < Seq.length source ==>
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source j)) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source j) o) /\
+        (forall (target: obj_addr).
+          live target ==>
+          live_idx target < Seq.length source /\
+          Seq.mem target
+            (MH.objects_in_chunk (Seq.index source (live_idx target))) /\
+          Defs.chunked_read_header source target == Some (live_hdr target) /\
+          Defs.chunked_is_black source target /\
+          U64.v (Obj.getWosize (live_hdr target)) ==
+            MH.object_wosize_in_chunk
+              (Seq.index source (live_idx target)) target))
+      (ensures
+        (let final =
+           fst (Defs.chunked_fused_sweep_coalesce_chunks
+             source source source fp) in
+         ChunkedGraph.chunked_major_live_subgraph_preserved
+           source final live))
+  =
+  let final =
+    fst (Defs.chunked_fused_sweep_coalesce_chunks source source source fp) in
+  let fields (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures ChunkedGraph.chunked_major_field_preserved source final target)
+    =
+    chunked_fused_sweep_coalesce_live_field_preserved
+      source (live_idx target) fp target (live_hdr target)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  RangePres.chunked_fused_sweep_coalesce_chunks_pointer_classification_preserved
+    source source source fp;
+  ChunkedGraph.chunked_major_live_subgraph_preserved_from_fields
+    source final live
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_fused_sweep_coalesce_target_suffix_live_field_preserved
   (source: MH.major_heap)
   (idx: nat)

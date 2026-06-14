@@ -2709,6 +2709,41 @@ let spot_chunked_fused_sweep_coalesce_live_field_preserved
   ChunkedSweepLiveRange.chunked_fused_sweep_coalesce_live_field_preserved
     source idx fp target hdr
 
+let spot_chunked_fused_sweep_coalesce_live_subgraph_preserved
+  (source: MH.major_heap)
+  (fp: U64.t)
+  (live: obj_addr -> prop)
+  (live_idx: obj_addr -> nat)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        (forall (j: nat). j < Seq.length source ==>
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source j)) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source j) o) /\
+        (forall (target: obj_addr).
+          live target ==>
+          live_idx target < Seq.length source /\
+          Seq.mem target
+            (MH.objects_in_chunk (Seq.index source (live_idx target))) /\
+          ChunkedSweepDefs.chunked_read_header source target ==
+            Some (live_hdr target) /\
+          ChunkedSweepDefs.chunked_is_black source target /\
+          U64.v (Obj.getWosize (live_hdr target)) ==
+            MH.object_wosize_in_chunk
+              (Seq.index source (live_idx target)) target))
+      (ensures
+        (let final =
+           fst (ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks
+             source source source fp) in
+         ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+           source final live))
+  =
+  ChunkedSweepLiveRange.chunked_fused_sweep_coalesce_live_subgraph_preserved
+    source fp live live_idx live_hdr
+
 let spot_chunked_fused_sweep_coalesce_target_suffix_live_field_preserved
   (source: MH.major_heap)
   (idx: nat)
