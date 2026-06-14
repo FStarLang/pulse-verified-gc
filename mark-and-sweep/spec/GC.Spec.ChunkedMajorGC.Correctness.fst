@@ -342,6 +342,85 @@ let chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membershi
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership_no_header
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         (forall (target: obj_addr).
+           live target ==>
+           Seq.mem target (MH.major_objects marked) /\
+           SweepDefs.chunked_is_black marked target)))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let (mh_final, fp_final) =
+    ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+  let live_idx (target: obj_addr) =
+    MH.lookup_chunk_index_value marked (hd_address target) in
+  let wosize_facts (j: nat{j < Seq.length marked})
+    : Lemma
+        (ensures
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index marked j)) ==>
+          U64.v (SweepDefs.chunked_wosize_of_object marked o) ==
+          MH.object_wosize_in_chunk (Seq.index marked j) o)
+    =
+    let one (o: obj_addr)
+      : Lemma
+          (requires Seq.mem o (MH.objects_in_chunk (Seq.index marked j)))
+          (ensures
+            U64.v (SweepDefs.chunked_wosize_of_object marked o) ==
+            MH.object_wosize_in_chunk (Seq.index marked j) o)
+      =
+      chunked_wosize_of_object_from_chunk_member marked j o
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+  in
+  FStar.Classical.forall_intro wosize_facts;
+  let live_facts (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          live_idx target < Seq.length marked /\
+          Seq.mem target
+            (MH.objects_in_chunk (Seq.index marked (live_idx target))) /\
+          SweepDefs.chunked_is_black marked target)
+    =
+    assert (Seq.mem target (MH.major_objects marked));
+    assert (SweepDefs.chunked_is_black marked target);
+    SweepDefs.chunked_is_black_read_header marked target;
+    match SweepDefs.chunked_read_header marked target with
+    | None -> assert False
+    | Some hdr ->
+      SweepDefs.chunked_read_header_step marked target;
+      assert (MH.read_word_in_major marked (hd_address target) ==
+              Some hdr);
+      MH.read_word_in_major_lookup_index
+        marked (hd_address target) hdr;
+      let idx = live_idx target in
+      assert (idx < Seq.length marked);
+      assert (MH.word_in_chunk (Seq.index marked idx) (hd_address target));
+      MH.major_objects_member_in_lookup_chunk marked idx target;
+      assert (Seq.mem target (MH.objects_in_chunk (Seq.index marked idx)))
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires live_facts);
+  ChunkedMajorGC.chunked_major_gc_bounded_equation mh cap fuel;
+  SweepDefs.chunked_fused_sweep_coalesce_step marked;
+  ChunkedLiveRange.chunked_fused_sweep_coalesce_live_subgraph_preserved_from_black_membership
+    marked 0UL live live_idx
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -393,6 +472,49 @@ let chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready_no_header
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        (forall (target: obj_addr).
+          live target ==>
+          Seq.mem target (MH.major_objects mh) /\
+          ChunkedMarkPres.chunked_mark_bounded_marks_target_ready
+            mh cap fuel target))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  chunked_major_gc_bounded_mark_phase_preserves_shape mh cap fuel;
+  let marked_live_facts (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          Seq.mem target (MH.major_objects marked) /\
+          SweepDefs.chunked_is_black marked target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    assert (MH.major_objects marked == MH.major_objects mh);
+    assert (Seq.mem target (MH.major_objects marked));
+    chunked_major_gc_bounded_mark_phase_marks_target_black
+      mh cap fuel target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires marked_live_facts);
+  chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership_no_header
+    mh cap fuel live
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_major_gc_bounded_live_subgraph_preserved_from_gray_rescan
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -441,6 +563,48 @@ let chunked_major_gc_bounded_live_subgraph_preserved_from_gray_rescan
     (FStar.Classical.move_requires target_ready);
   chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
     mh cap fuel live live_hdr
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_live_subgraph_preserved_from_gray_rescan_no_header
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        (forall (target: obj_addr).
+          live target ==>
+          Seq.mem target (MH.major_objects mh) /\
+          ChunkedMark.chunked_is_gray mh target))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let target_ready (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          Seq.mem target (MH.major_objects mh) /\
+          ChunkedMarkPres.chunked_mark_bounded_marks_target_ready
+            mh cap fuel target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    assert (ChunkedMark.chunked_is_gray mh target);
+    ChunkedMarkStackReady.chunked_mark_bounded_marks_rescan_member_ready
+      mh cap fuel target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires target_ready);
+  chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready_no_header
+    mh cap fuel live
 #pop-options
 
 let bounded_mark_no_gray_for_fused
