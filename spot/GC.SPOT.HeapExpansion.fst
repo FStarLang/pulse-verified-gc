@@ -3848,6 +3848,23 @@ let spot_chunked_set_object_color_preserves_other_gray
   ChunkedMarkPres.chunked_set_object_color_preserves_other_gray
     mh obj target color
 
+let spot_chunked_set_object_color_preserves_other_gray_back
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) target ==
+        Some Header.Gray)
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object mh target ==
+        Some Header.Gray)
+  =
+  ChunkedMarkPres.chunked_set_object_color_preserves_other_gray_back
+    mh obj target color
+
 let spot_chunked_make_gray_preserves_other_gray
   (mh: MH.major_heap)
   (obj target: obj_addr)
@@ -3862,6 +3879,21 @@ let spot_chunked_make_gray_preserves_other_gray
   =
   ChunkedMarkPres.chunked_make_gray_preserves_other_gray mh obj target
 
+let spot_chunked_make_gray_preserves_other_gray_back
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedMarkDefs.chunked_make_gray mh obj) target ==
+        Some Header.Gray)
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object mh target ==
+        Some Header.Gray)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_other_gray_back mh obj target
+
 let spot_chunked_make_black_preserves_other_gray
   (mh: MH.major_heap)
   (obj target: obj_addr)
@@ -3875,6 +3907,21 @@ let spot_chunked_make_black_preserves_other_gray
         Some Header.Gray)
   =
   ChunkedMarkPres.chunked_make_black_preserves_other_gray mh obj target
+
+let spot_chunked_make_black_preserves_other_gray_back
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedMarkDefs.chunked_make_black mh obj) target ==
+        Some Header.Gray)
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object mh target ==
+        Some Header.Gray)
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_other_gray_back mh obj target
 
 let spot_chunked_set_object_color_member_preserves_well_formed
   (mh: MH.major_heap)
@@ -6923,6 +6970,21 @@ let spot_chunked_gray_black_reachable_init
   =
   ChunkedMajorGCReach.chunked_gray_black_reachable_init mh roots
 
+let spot_chunked_gray_black_reachable_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          ChunkedMajorGCGraph.chunked_major_vertex mh x /\
+          (ChunkedMarkBounded.chunked_is_gray mh x \/
+           ChunkedSweepDefs.chunked_is_black mh x) ==>
+          ChunkedMajorGCReach.chunked_major_reachable_from_roots
+            mh roots x))
+      (ensures ChunkedMajorGCReach.chunked_gray_black_reachable mh roots)
+  =
+  ChunkedMajorGCReach.chunked_gray_black_reachable_intro mh roots
+
 let spot_chunked_gray_black_reachable_elim
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -7250,6 +7312,42 @@ let spot_chunked_make_black_preserves_stack_reachable_from_roots
   =
   ChunkedMajorGCMarkReach.chunked_make_black_preserves_stack_reachable_from_roots
     mh roots obj st
+
+let spot_chunked_make_gray_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots obj /\
+        ChunkedMajorGCReach.chunked_gray_black_reachable mh roots)
+      (ensures
+        ChunkedMajorGCReach.chunked_gray_black_reachable
+          (ChunkedMarkDefs.chunked_make_gray mh obj) roots)
+  =
+  ChunkedMajorGCMarkReach.chunked_make_gray_preserves_gray_black_reachable
+    mh roots obj
+
+let spot_chunked_make_black_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots obj /\
+        ChunkedMajorGCReach.chunked_gray_black_reachable mh roots)
+      (ensures
+        ChunkedMajorGCReach.chunked_gray_black_reachable
+          (ChunkedMarkDefs.chunked_make_black mh obj) roots)
+  =
+  ChunkedMajorGCMarkReach.chunked_make_black_preserves_gray_black_reachable
+    mh roots obj
 
 let spot_chunked_push_children_bounded_preserves_stack_reachable_from_roots
   (mh: MH.major_heap)

@@ -264,6 +264,34 @@ val chunked_make_black_preserves_stack_reachable_from_roots
         chunked_stack_reachable_from_roots
           (MarkDefs.chunked_make_black mh obj) roots st)
 
+val chunked_make_gray_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Reach.chunked_major_reachable_from_roots mh roots obj /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        Reach.chunked_gray_black_reachable
+          (MarkDefs.chunked_make_gray mh obj) roots)
+
+val chunked_make_black_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Reach.chunked_major_reachable_from_roots mh roots obj /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        Reach.chunked_gray_black_reachable
+          (MarkDefs.chunked_make_black mh obj) roots)
+
 val chunked_push_children_bounded_preserves_stack_reachable_from_roots
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

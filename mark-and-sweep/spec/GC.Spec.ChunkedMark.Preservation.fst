@@ -822,6 +822,48 @@ let chunked_set_object_color_preserves_other_gray
         SweepDefs.chunked_read_header_step mh' target;
         SweepDefs.chunked_color_of_object_some mh' target target_hdr
 
+let chunked_set_object_color_preserves_other_gray_back
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+    (color: Header.color_sem)
+  : Lemma
+      (requires
+        obj <> target /\
+        SweepDefs.chunked_color_of_object
+          (SweepDefs.chunked_set_object_color mh obj color) target ==
+        Some Header.Gray)
+      (ensures SweepDefs.chunked_color_of_object mh target == Some Header.Gray)
+  =
+  let target_hd = hd_address target in
+  let obj_hd = hd_address obj in
+  hd_address_injective obj target;
+  SweepDefs.chunked_read_header_step mh obj;
+  match SweepDefs.chunked_read_header mh obj with
+  | None ->
+    SweepDefs.chunked_set_object_color_none mh obj color
+  | Some obj_hdr ->
+    let new_hdr = Obj.colorHeader obj_hdr color in
+    SweepDefs.chunked_set_object_color_some mh obj color obj_hdr;
+    match MH.write_word_in_major mh obj_hd new_hdr with
+    | None ->
+      SpecMajorAlloc.major_write_word_or_same_none mh obj_hd new_hdr
+    | Some mh' ->
+      SpecMajorAlloc.major_write_word_or_same_some mh mh' obj_hd new_hdr;
+      assert (SweepDefs.chunked_set_object_color mh obj color == mh');
+      SweepDefs.chunked_color_of_object_elim mh' target Header.Gray;
+      SweepDefs.chunked_read_header_step mh' target;
+      match SweepDefs.chunked_read_header mh' target with
+      | None -> assert False
+      | Some target_hdr ->
+        assert (obj_hd <> target_hd);
+        distinct_word_aligned_addrs_disjoint obj_hd target_hd;
+        assert (MH.read_word_in_major mh' target_hd == Some target_hdr);
+        MHReadFrame.write_word_in_major_preserves_other_read_back
+          mh obj_hd new_hdr target_hd target_hdr;
+        SweepDefs.chunked_read_header_step mh target;
+        assert (SweepDefs.chunked_read_header mh target == Some target_hdr);
+        SweepDefs.chunked_color_of_object_some mh target target_hdr
+
 let chunked_make_gray_preserves_other_black
     (mh: MH.major_heap)
     (obj target: obj_addr)
@@ -847,6 +889,20 @@ let chunked_make_gray_preserves_other_black_status
   =
   MarkDefs.chunked_make_gray_step mh obj;
   chunked_set_object_color_preserves_other_black_status mh obj target Header.Gray
+
+let chunked_make_gray_preserves_other_gray_back
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+  : Lemma
+      (requires
+        obj <> target /\
+        SweepDefs.chunked_color_of_object
+          (MarkDefs.chunked_make_gray mh obj) target ==
+        Some Header.Gray)
+      (ensures SweepDefs.chunked_color_of_object mh target == Some Header.Gray)
+  =
+  MarkDefs.chunked_make_gray_step mh obj;
+  chunked_set_object_color_preserves_other_gray_back mh obj target Header.Gray
 
 let chunked_make_gray_preserves_other_gray
     (mh: MH.major_heap)
@@ -889,6 +945,20 @@ let chunked_make_black_preserves_other_gray
   =
   MarkDefs.chunked_make_black_step mh obj;
   chunked_set_object_color_preserves_other_gray mh obj target Header.Black
+
+let chunked_make_black_preserves_other_gray_back
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+  : Lemma
+      (requires
+        obj <> target /\
+        SweepDefs.chunked_color_of_object
+          (MarkDefs.chunked_make_black mh obj) target ==
+        Some Header.Gray)
+      (ensures SweepDefs.chunked_color_of_object mh target == Some Header.Gray)
+  =
+  MarkDefs.chunked_make_black_step mh obj;
+  chunked_set_object_color_preserves_other_gray_back mh obj target Header.Black
 
 let chunked_set_object_color_member_preserves_well_formed
     (mh: MH.major_heap)

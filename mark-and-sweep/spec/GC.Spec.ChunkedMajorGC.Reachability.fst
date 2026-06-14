@@ -364,6 +364,20 @@ let chunked_gray_black_reachable_init
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
+let chunked_gray_black_reachable_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh x /\
+          (BDefs.chunked_is_gray mh x \/
+           SweepDefs.chunked_is_black mh x) ==>
+          chunked_major_reachable_from_roots mh roots x))
+      (ensures chunked_gray_black_reachable mh roots)
+  =
+  ()
+
 let chunked_gray_black_reachable_elim
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
