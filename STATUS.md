@@ -210,6 +210,8 @@ Follow-up checkpoint: added `GC.Spec.ChunkedSweepCoalesce.VertexRange`, lifting 
 
 Follow-up checkpoint: added `GC.Spec.ChunkedSweepCoalesce.LiveRange`, the first cross-chunk live-field composition surface after `VertexRange`. The public theorem proves that processing a black live target's own chunk and then all later chunks preserves `ChunkedMajorGC.Graph.chunked_major_field_preserved` for that target. The proof composes one-chunk live vertex/wosize/field-data preservation with suffix raw-read framing, suffix object-suffix framing, and range preservation, keeping the next prefix/general-work composition as the remaining step. The split module profiles in about one second with `--z3refresh --split_queries always`, and `GC.SPOT.HeapExpansion` audits the wrapper.
 
+Follow-up checkpoint: generalized the one-chunk live target support lemmas in `LivePreservation` so the target chunk can be processed from a prefix-mutated `work` heap instead of only from `source`. The new work-state wosize and vertex wrappers are SPOT-audited and profile in about one second; they are the next building block for composing prefix traversal, target-chunk traversal, and suffix traversal into a full all-chunks live-field theorem.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.

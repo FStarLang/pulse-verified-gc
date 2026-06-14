@@ -1597,6 +1597,92 @@ let chunked_fused_aux_live_vertex_preserved_from_chunk
   chunked_fused_aux_live_vertex_preserved_from_chunk_from
     source source idx c c.base 0UL 0 fp target hdr
 
+let chunked_fused_aux_live_wosize_preserved_from_chunk_work
+  (source work: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source idx)) ==>
+          U64.v (Defs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) o) /\
+        Defs.chunked_read_header work target == Some hdr /\
+        Defs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) target)
+      (ensures
+        (let c = Seq.index source idx in
+         Defs.chunked_wosize_of_object
+           (fst (Defs.chunked_fused_aux
+             source work (MH.objects_in_chunk c) 0UL 0 fp))
+           target ==
+         Obj.getWosize hdr))
+  =
+  let c = Seq.index source idx in
+  assert (MH.objects_in_chunk c == MH.objects_in_chunk_from c c.base);
+  chunked_fused_aux_live_wosize_preserved_from_chunk_from
+    source work c c.base 0UL 0 fp target hdr
+
+let chunked_fused_aux_live_vertex_preserved_from_chunk_work
+  (source work: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap work /\
+        idx < Seq.length source /\
+        idx < Seq.length work /\
+        (let c = Seq.index source idx in
+         MH.chunk_start (Seq.index work idx) == MH.chunk_start c /\
+         MH.chunk_end (Seq.index work idx) == MH.chunk_end c /\
+         Seq.mem target (MH.objects_in_chunk c) /\
+         MH.objects_in_chunk_from (Seq.index work idx) c.base ==
+           MH.objects_in_chunk c /\
+         (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk c) ==>
+           MH.object_wosize_in_chunk (Seq.index work idx) o ==
+           MH.object_wosize_in_chunk c o) /\
+         (forall (o: obj_addr). Seq.mem o (MH.objects_in_chunk c) ==>
+           U64.v (Defs.chunked_wosize_of_object source o) ==
+           MH.object_wosize_in_chunk c o) /\
+         Defs.chunked_read_header work target == Some hdr /\
+         Defs.chunked_is_black source target /\
+         U64.v (Obj.getWosize hdr) == MH.object_wosize_in_chunk c target))
+      (ensures
+        (let c = Seq.index source idx in
+         let final =
+           fst (Defs.chunked_fused_aux
+             source work (MH.objects_in_chunk c) 0UL 0 fp) in
+         MH.well_formed_major_heap final /\
+         idx < Seq.length final /\
+         Seq.mem target
+           (MH.objects_in_chunk_from (Seq.index final idx) c.base) /\
+         ChunkedGraph.chunked_major_vertex final target /\
+         MH.chunk_start (Seq.index final idx) ==
+         MH.chunk_start (Seq.index work idx) /\
+         MH.chunk_end (Seq.index final idx) ==
+         MH.chunk_end (Seq.index work idx)))
+  =
+  let c = Seq.index source idx in
+  assert (MH.objects_in_chunk c == MH.objects_in_chunk_from c c.base);
+  assert (Seq.mem target (MH.objects_in_chunk_from c c.base));
+  objects_in_chunk_base_head_mem_from_member c target;
+  assert (Seq.mem (f_address c.base) (MH.objects_in_chunk c));
+  assert (Seq.mem (f_address c.base)
+    (MH.objects_in_chunk_from (Seq.index work idx) c.base));
+  assert (Seq.mem target
+    (MH.objects_in_chunk_from (Seq.index work idx) c.base));
+  assert (chunk_wosize_match work idx c (MH.objects_in_chunk_from c c.base));
+  Pending.pending_run_before_start_empty work idx c.base c.base;
+  chunked_fused_aux_live_vertex_preserved_from_chunk_from
+    source work idx c c.base 0UL 0 fp target hdr
+
 let chunked_fused_aux_live_field_preserved_from_chunk
     (source: MH.major_heap)
     (idx: nat)
