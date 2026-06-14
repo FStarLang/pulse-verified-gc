@@ -36,6 +36,10 @@ module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMarkReach = GC.Spec.ChunkedMajorGC.MarkReachability
+module ChunkedMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
+module ChunkedMarkLiveNoBlack = GC.Spec.ChunkedMajorGC.MarkLivenessNoBlack
+module ChunkedMarkEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
+module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module ChunkedLiveRange = GC.Spec.ChunkedSweepCoalesce.LiveRange
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
@@ -945,6 +949,79 @@ let chunked_major_gc_bounded_live_subgraph_preserved_from_selected_live
   chunked_major_gc_selected_live_elim mh cap fuel live;
   chunked_major_gc_bounded_live_subgraph_preserved_from_initial_gray_or_black_rescan_no_header
     mh cap fuel live
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMark.chunked_count_non_black mh /\
+        ChunkedMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMarkNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh /\
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         forall (target: obj_addr).
+           live target ==>
+           ChunkedMajorReach.chunked_major_reachable_from_roots
+             marked roots target))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let (mh_final, fp_final) =
+    ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+  chunked_major_gc_bounded_mark_phase_preserves_shape mh cap fuel;
+  let live_mem (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures Seq.mem target (MH.major_objects mh))
+    =
+    assert (ChunkedMajorReach.chunked_major_reachable_from_roots
+      marked roots target);
+    ChunkedMajorReach.chunked_major_reachable_from_roots_vertex
+      marked roots target;
+    ChunkedMajorGraph.chunked_major_vertex_elim marked target;
+    assert (Seq.mem target (MH.major_objects marked));
+    assert (MH.major_objects marked == MH.major_objects mh)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires live_mem);
+  chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
+    mh cap fuel live;
+  let marked_live_facts (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          Seq.mem target (MH.major_objects marked) /\
+          SweepDefs.chunked_is_black marked target)
+    =
+    assert (ChunkedMajorReach.chunked_major_reachable_from_roots
+      marked roots target);
+    ChunkedMajorReach.chunked_major_reachable_from_roots_vertex
+      marked roots target;
+    ChunkedMajorGraph.chunked_major_vertex_elim marked target;
+    assert (Seq.mem target (MH.major_objects marked));
+    ChunkedMarkLiveNoBlack.chunked_mark_bounded_reachable_black_from_vertex_no_black
+      mh roots cap fuel target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires marked_live_facts);
+  chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership_no_header
+    mh cap fuel live;
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_trans
+    mh marked mh_final live
 #pop-options
 
 let bounded_mark_no_gray_for_fused

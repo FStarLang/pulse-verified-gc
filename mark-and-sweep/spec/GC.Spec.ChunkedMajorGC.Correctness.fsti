@@ -29,6 +29,10 @@ module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMarkReach = GC.Spec.ChunkedMajorGC.MarkReachability
+module ChunkedMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
+module ChunkedMarkLiveNoBlack = GC.Spec.ChunkedMajorGC.MarkLivenessNoBlack
+module ChunkedMarkEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
+module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 
 val chunked_no_gray_or_black_objects
   (mh: MH.major_heap)
@@ -485,6 +489,34 @@ val chunked_major_gc_bounded_live_subgraph_preserved_from_selected_live
   (live: obj_addr -> prop)
   : Lemma
       (requires chunked_major_gc_selected_live mh cap fuel live)
+      (ensures
+        (let (mh_final, fp_final) =
+         ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+         mh mh_final live))
+
+val chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMark.chunked_count_non_black mh /\
+        ChunkedMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMarkNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh /\
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         forall (target: obj_addr).
+          live target ==>
+          ChunkedMajorReach.chunked_major_reachable_from_roots
+            marked roots target))
       (ensures
         (let (mh_final, fp_final) =
          ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
