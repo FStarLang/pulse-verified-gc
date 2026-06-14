@@ -96,6 +96,34 @@ val chunked_major_gc_bounded_marked_live_subgraph_preserved
          ChunkedMajorGraph.chunked_major_live_subgraph_preserved
            marked mh_final live))
 
+val chunked_major_gc_bounded_marked_black_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         (forall (j: nat). j < Seq.length marked ==>
+           forall (o: obj_addr).
+           Seq.mem o (MH.objects_in_chunk (Seq.index marked j)) ==>
+           U64.v (SweepDefs.chunked_wosize_of_object marked o) ==
+           MH.object_wosize_in_chunk (Seq.index marked j) o) /\
+         (forall (target: obj_addr).
+           live target ==>
+           Seq.mem target (MH.major_objects marked) /\
+           SweepDefs.chunked_read_header marked target ==
+             Some (live_hdr target) /\
+           SweepDefs.chunked_is_black marked target)))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+
 val chunked_major_gc_bounded_single_chunk_postcondition
   (h_init: heap)
   (roots: Seq.seq obj_addr)

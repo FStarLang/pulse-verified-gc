@@ -142,6 +142,104 @@ let chunked_major_gc_bounded_marked_live_subgraph_preserved
     marked 0UL live live_idx live_hdr
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_wosize_of_object_from_chunk_member
+  (mh: MH.major_heap)
+  (j: nat)
+  (o: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        j < Seq.length mh /\
+        Seq.mem o (MH.objects_in_chunk (Seq.index mh j)))
+      (ensures
+        U64.v (SweepDefs.chunked_wosize_of_object mh o) ==
+        MH.object_wosize_in_chunk (Seq.index mh j) o)
+  =
+  let c = Seq.index mh j in
+  MH.objects_in_chunk_member_header_fits c o;
+  assert (MH.object_header_size_fits_in_chunk c o);
+  assert (MH.word_in_chunk c (hd_address o));
+  MH.lookup_chunk_index_word_in_chunk mh (hd_address o) j;
+  assert (MH.lookup_chunk_index mh (hd_address o) == Some j);
+  MH.read_word_in_major_at_lookup_index mh (hd_address o) j;
+  let hdr = MH.read_word_in_chunk c (hd_address o) in
+  assert (MH.read_word_in_major mh (hd_address o) == Some hdr);
+  SweepDefs.chunked_read_header_step mh o;
+  assert (SweepDefs.chunked_read_header mh o == Some hdr);
+  SweepDefs.chunked_wosize_of_object_some mh o hdr;
+  assert (SweepDefs.chunked_wosize_of_object mh o == Obj.getWosize hdr);
+  assert (MH.object_wosize_in_chunk c o == U64.v (Obj.getWosize hdr))
+
+let chunked_major_gc_bounded_marked_black_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         (forall (j: nat). j < Seq.length marked ==>
+           forall (o: obj_addr).
+           Seq.mem o (MH.objects_in_chunk (Seq.index marked j)) ==>
+           U64.v (SweepDefs.chunked_wosize_of_object marked o) ==
+           MH.object_wosize_in_chunk (Seq.index marked j) o) /\
+         (forall (target: obj_addr).
+           live target ==>
+           Seq.mem target (MH.major_objects marked) /\
+           SweepDefs.chunked_read_header marked target ==
+             Some (live_hdr target) /\
+           SweepDefs.chunked_is_black marked target)))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let live_idx (target: obj_addr) =
+    MH.lookup_chunk_index_value marked (hd_address target) in
+  let live_facts (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          live_idx target < Seq.length marked /\
+          Seq.mem target
+            (MH.objects_in_chunk (Seq.index marked (live_idx target))) /\
+          SweepDefs.chunked_read_header marked target ==
+            Some (live_hdr target) /\
+          SweepDefs.chunked_is_black marked target /\
+          U64.v (Obj.getWosize (live_hdr target)) ==
+            MH.object_wosize_in_chunk
+              (Seq.index marked (live_idx target)) target)
+    =
+    assert (Seq.mem target (MH.major_objects marked));
+    assert (SweepDefs.chunked_read_header marked target ==
+      Some (live_hdr target));
+    assert (SweepDefs.chunked_is_black marked target);
+    SweepDefs.chunked_read_header_step marked target;
+    assert (MH.read_word_in_major marked (hd_address target) ==
+      Some (live_hdr target));
+    MH.read_word_in_major_lookup_index
+      marked (hd_address target) (live_hdr target);
+    let idx = live_idx target in
+    assert (idx < Seq.length marked);
+    assert (MH.word_in_chunk (Seq.index marked idx) (hd_address target));
+    MH.major_objects_member_in_lookup_chunk marked idx target;
+    assert (Seq.mem target (MH.objects_in_chunk (Seq.index marked idx)));
+    assert (MH.read_word_in_chunk (Seq.index marked idx) (hd_address target) ==
+            live_hdr target);
+    assert (MH.object_wosize_in_chunk (Seq.index marked idx) target ==
+            U64.v (Obj.getWosize (live_hdr target)))
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires live_facts);
+  chunked_major_gc_bounded_marked_live_subgraph_preserved
+    mh cap fuel live live_idx live_hdr
+#pop-options
+
 let bounded_mark_no_gray_for_fused
     (h_init: heap)
     (cap: nat{cap > 0})

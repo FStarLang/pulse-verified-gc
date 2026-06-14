@@ -228,6 +228,8 @@ The proof stays split and cheap: the refreshed `LiveRange` split-query profile r
 
 Follow-up checkpoint: the fused theorem is now connected to the chunked major-GC shell at the marked-heap boundary. `GC.Spec.ChunkedMajorGC.Correctness.chunked_major_gc_bounded_marked_live_subgraph_preserved` unfolds `chunked_major_gc_bounded` into `chunked_mark_bounded` followed by fused sweep/coalesce and proves that any selected black live subgraph of the marked chunked heap survives the sweep/coalesce phase. This keeps mark correctness as a separate remaining obligation while making the major-GC composition point explicit. `GC.SPOT.HeapExpansion` audits the wrapper, refreshed `ChunkedMajorGC.Correctness` profiling is about 1.24 seconds, and broad mark-and-sweep spec plus full SPOT verification pass.
 
+Follow-up checkpoint: added a reduced marked-black live-subgraph surface. `chunked_major_gc_bounded_marked_black_live_subgraph_preserved` now derives the selected target chunk index and chunk-local membership internally from `MH.major_objects` membership plus a marked-heap header witness, so clients no longer need to provide a `live_idx` function. The all-object wosize consistency invariant remains explicit for now, which keeps the proof small and avoids a larger predicate refactor. The wrapper is SPOT-audited, refreshed `ChunkedMajorGC.Correctness` profiling remains about 1.23 seconds, and broad mark-and-sweep spec plus full SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
