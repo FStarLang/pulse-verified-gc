@@ -46,6 +46,7 @@ module ChunkedSweepVertexReach = GC.Spec.ChunkedSweepCoalesce.VertexReach
 module ChunkedSweepVertexReachPrefix = GC.Spec.ChunkedSweepCoalesce.VertexReachPrefix
 module ChunkedSweepVertexSeq = GC.Spec.ChunkedSweepCoalesce.VertexSequence
 module ChunkedSweepVertexRange = GC.Spec.ChunkedSweepCoalesce.VertexRange
+module ChunkedSweepLiveRange = GC.Spec.ChunkedSweepCoalesce.LiveRange
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweep = GC.Spec.Sweep
 module SpecGCPost = GC.Spec.Correctness
@@ -2521,6 +2522,43 @@ let spot_chunked_fused_sweep_coalesce_suffix_preserves_objects_from
   =
   ChunkedSweepVertexRange.chunked_fused_sweep_coalesce_suffix_preserves_objects_from
     source work target_idx target_start protected fp
+
+let spot_chunked_fused_sweep_coalesce_target_suffix_live_field_preserved
+  (source: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (j: nat). idx <= j /\ j < Seq.length source ==>
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source j)) ==>
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object source o) ==
+          MH.object_wosize_in_chunk (Seq.index source j) o) /\
+        ChunkedSweepDefs.chunked_read_header source target == Some hdr /\
+        ChunkedSweepDefs.chunked_is_black source target /\
+        U64.v (Obj.getWosize hdr) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) target)
+      (ensures
+        (let c = Seq.index source idx in
+         let step =
+           ChunkedSweepDefs.chunked_fused_aux
+             source source (MH.objects_in_chunk c) 0UL 0 fp in
+         let work = fst step in
+         let fp' = snd step in
+         let final =
+           fst (ChunkedSweepDefs.chunked_fused_sweep_coalesce_chunks
+             (Seq.slice source (idx + 1) (Seq.length source))
+             source work fp') in
+         ChunkedMajorGCGraph.chunked_major_field_preserved
+           source final target))
+  =
+  ChunkedSweepLiveRange.chunked_fused_sweep_coalesce_target_suffix_live_field_preserved
+    source idx fp target hdr
 
 let spot_chunked_fused_aux_after_member_ready_from_chunk_order
     (source work: MH.major_heap)
