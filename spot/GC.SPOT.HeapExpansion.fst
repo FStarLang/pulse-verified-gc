@@ -6942,6 +6942,29 @@ let spot_chunked_major_reachable_from_roots_field
   ChunkedMajorGCReach.chunked_major_reachable_from_roots_field
     mh roots x i y
 
+let spot_chunked_major_reachable_from_roots_induct
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (p: obj_addr -> prop)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots x /\
+        (forall (r: obj_addr).
+          ChunkedMajorGCGraph.chunked_major_vertex mh r /\
+          Seq.mem r roots ==>
+          p r) /\
+        (forall (y z: obj_addr).
+          ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots y /\
+          p y /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh z /\
+          ChunkedMajorGCGraph.chunked_major_edge mh y z ==>
+          p z))
+      (ensures p x)
+  =
+  ChunkedMajorGCReach.chunked_major_reachable_from_roots_induct
+    mh roots p x
+
 let spot_chunked_major_reachable_preserved_by_live_subgraph
   (mh0 mh1: MH.major_heap)
   (live: obj_addr -> prop)
