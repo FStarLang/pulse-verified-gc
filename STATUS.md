@@ -234,6 +234,8 @@ Follow-up checkpoint: started the true chunked mark-side preservation layer in a
 
 Follow-up checkpoint: lifted the same preservation facts through `chunked_mark_aux` and the top-level unbounded `chunked_mark` wrapper. `GC.Spec.ChunkedMark.Preservation` now exposes exact recursive readiness predicates for mark steps and mark loops, and proves `MH.major_objects` plus `MH.well_formed_major_heap` preservation through the full fuel-bounded traversal. The split module still profiles at about one second with `--z3refresh --split_queries always`, and `GC.SPOT.HeapExpansion` audits the new loop-level wrappers. The next preservation target is the bounded-mark/rescan pipeline used by `chunked_major_gc_bounded`.
 
+Follow-up checkpoint: added `GC.Spec.ChunkedMarkBounded.Preservation`, a second focused split module for the bounded mark/rescan pipeline. It proves `MH.major_objects` and `MH.well_formed_major_heap` preservation for bounded child pushing, bounded mark steps, the inner drain loop, and the full `chunked_mark_bounded` outer loop under exact readiness predicates that mirror `GC.Spec.ChunkedMarkBounded.Defs`. The module profiles at about one second with refreshed split queries and is audited by `GC.SPOT.HeapExpansion`. This gives the chunked major-GC shell a reusable preservation path from the pre-mark heap to the marked heap; the remaining harder mark-side correctness work is to prove that live/reachable selected objects are members with black headers after bounded marking, not just that the object set and chunk well-formedness are preserved.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

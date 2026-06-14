@@ -58,6 +58,7 @@ module ChunkedMarkNoPointer = GC.Spec.ChunkedMark.NoPointerCompat
 module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
 module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
+module ChunkedMarkBoundedPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -4089,6 +4090,151 @@ let spot_chunked_mark_bounded_step
               mh' cap (fuel - 1))))
   =
   ChunkedMarkBounded.chunked_mark_bounded_step mh cap fuel
+
+let spot_chunked_push_children_bounded_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkBoundedPres.chunked_push_children_bounded_preserves_major_objects
+    mh st obj i ws cap
+
+let spot_chunked_push_children_bounded_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkBoundedPres.chunked_push_children_bounded_preserves_well_formed
+    mh st obj i ws cap
+
+let spot_chunked_mark_step_bounded_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_step_bounded_preserves_major_objects
+    mh st cap
+
+let spot_chunked_mark_step_bounded_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_step_bounded_preserves_well_formed
+    mh st cap
+
+let spot_chunked_mark_inner_loop_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_inner_loop_preserves_major_objects
+    mh st cap fuel
+
+let spot_chunked_mark_inner_loop_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_inner_loop_preserves_well_formed
+    mh st cap fuel
+
+let spot_chunked_mark_bounded_preserves_major_objects
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+      (ensures
+        MH.major_objects
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) ==
+        MH.major_objects mh)
+  =
+  ChunkedMarkBoundedPres.chunked_mark_bounded_preserves_major_objects
+    mh cap fuel
+
+let spot_chunked_mark_bounded_preserves_well_formed
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_bounded_preserves_well_formed
+    mh cap fuel
 
 let spot_chunked_bounded_is_gray_single_chunk_compat
   (g: heap)
