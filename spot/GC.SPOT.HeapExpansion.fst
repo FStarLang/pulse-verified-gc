@@ -73,6 +73,7 @@ module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
 module ChunkedMajorGCGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorGCReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMajorGCMarkReach = GC.Spec.ChunkedMajorGC.MarkReachability
+module ChunkedMajorGCMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -6964,6 +6965,44 @@ let spot_chunked_major_reachable_from_roots_induct
   =
   ChunkedMajorGCReach.chunked_major_reachable_from_roots_induct
     mh roots p x
+
+let spot_chunked_roots_gray_or_black_elim
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (root: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh root /\
+        Seq.mem root roots)
+      (ensures
+        ChunkedMarkBounded.chunked_is_gray mh root \/
+        ChunkedSweepDefs.chunked_is_black mh root)
+  =
+  ChunkedMajorGCMarkLive.chunked_roots_gray_or_black_elim mh roots root
+
+let spot_chunked_mark_bounded_root_ready
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (root: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        ChunkedMajorGCMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh root /\
+        Seq.mem root roots)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel root)
+  =
+  ChunkedMajorGCMarkLive.chunked_mark_bounded_root_ready
+    mh roots cap fuel root
 
 let spot_chunked_major_reachable_preserved_by_live_subgraph
   (mh0 mh1: MH.major_heap)
