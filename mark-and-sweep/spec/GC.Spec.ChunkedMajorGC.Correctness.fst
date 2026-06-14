@@ -131,6 +131,24 @@ let chunked_major_gc_bounded_mark_phase_preserves_membership
           (MH.major_objects (ChunkedMark.chunked_mark_bounded mh cap fuel)))
   =
   chunked_major_gc_bounded_mark_phase_preserves_shape mh cap fuel
+
+let chunked_major_gc_bounded_mark_phase_marks_target_black
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        ChunkedMarkPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel target)
+      (ensures
+        SweepDefs.chunked_is_black
+          (ChunkedMark.chunked_mark_bounded mh cap fuel) target)
+  =
+  ChunkedMarkPres.chunked_mark_bounded_marks_target_black
+    mh cap fuel target
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"

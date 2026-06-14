@@ -4456,6 +4456,27 @@ let spot_chunked_mark_inner_loop_preserves_black
   ChunkedMarkBoundedPres.chunked_mark_inner_loop_preserves_black
     mh st cap fuel target
 
+let spot_chunked_mark_inner_loop_marks_target_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_ready
+          mh st cap fuel target)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ChunkedSweepDefs.chunked_is_black mh' target))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_black
+    mh st cap fuel target
+
 let spot_chunked_mark_bounded_preserves_major_objects
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -4505,6 +4526,25 @@ let spot_chunked_mark_bounded_preserves_black
           (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target)
   =
   ChunkedMarkBoundedPres.chunked_mark_bounded_preserves_black
+    mh cap fuel target
+
+let spot_chunked_mark_bounded_marks_target_black
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel target)
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target)
+  =
+  ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_black
     mh cap fuel target
 
 let spot_chunked_bounded_is_gray_single_chunk_compat
@@ -5057,6 +5097,25 @@ let spot_chunked_major_gc_bounded_mark_phase_preserves_membership
   =
   ChunkedMajorGCCorr.chunked_major_gc_bounded_mark_phase_preserves_membership
     mh cap fuel obj
+
+let spot_chunked_major_gc_bounded_mark_phase_marks_target_black
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel target)
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target)
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_mark_phase_marks_target_black
+    mh cap fuel target
 
 let spot_chunked_major_gc_bounded_marked_live_subgraph_preserved
   (mh: MH.major_heap)

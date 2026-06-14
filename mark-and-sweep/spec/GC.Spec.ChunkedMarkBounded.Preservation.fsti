@@ -184,6 +184,31 @@ val chunked_mark_inner_loop_preserves_black
             mh st cap fuel in
          GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black mh' target))
 
+val chunked_mark_inner_loop_marks_target_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : GTot prop
+
+val chunked_mark_inner_loop_marks_target_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        chunked_mark_inner_loop_marks_target_ready mh st cap fuel target)
+      (ensures
+        (let (mh', _) =
+          GC.Spec.ChunkedMarkBounded.Defs.chunked_mark_inner_loop
+            mh st cap fuel in
+         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black mh' target))
+
 val chunked_mark_bounded_preservation_ready
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -227,6 +252,28 @@ val chunked_mark_bounded_preserves_black
         MH.well_formed_major_heap mh /\
         chunked_mark_bounded_preservation_ready mh cap fuel /\
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black mh target)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black
+          (GC.Spec.ChunkedMarkBounded.Defs.chunked_mark_bounded
+            mh cap fuel) target)
+
+val chunked_mark_bounded_marks_target_ready
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : GTot prop
+
+val chunked_mark_bounded_marks_target_black
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_bounded_preservation_ready mh cap fuel /\
+        chunked_mark_bounded_marks_target_ready mh cap fuel target)
       (ensures
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black
           (GC.Spec.ChunkedMarkBounded.Defs.chunked_mark_bounded
