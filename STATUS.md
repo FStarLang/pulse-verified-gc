@@ -204,6 +204,8 @@ Follow-up checkpoint: `SequencePreservation` now has the first recursive chunk-l
 
 Follow-up checkpoint: extended `GC.Spec.ChunkedSweepCoalesce.VertexPreservation` with other-chunk primitive framing. `major_write_word_or_same`, `chunked_zero_fields`, `chunked_flush_blue`, and `chunked_make_white` now preserve a protected object suffix in a different chunk, including the protected object's wosize and the protected chunk range; the write helper also exposes the processed chunk range needed for recursive zero/flush framing. The split module still profiles at about one second with refreshed split queries, and SPOT audits all four public contracts.
 
+Follow-up checkpoint: added `GC.Spec.ChunkedSweepCoalesce.VertexSequence`, sequencing the other-chunk primitive framing through one `chunked_fused_aux` traversal. The public theorem says processing one source chunk preserves a protected object suffix, wosize, and chunk range in a different target chunk, both from an arbitrary chunk-local start and from the whole processed chunk. The proof uses a lighter pending-run predicate plus small local wrappers for flush-prefix/no-op cases to avoid high rlimits; refreshed split-query profiling verifies the module in about one second, `make verify-spec` passes, and `GC.SPOT.HeapExpansion` audits both public wrappers.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
