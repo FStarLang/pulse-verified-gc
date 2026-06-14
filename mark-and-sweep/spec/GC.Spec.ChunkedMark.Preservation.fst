@@ -15,6 +15,7 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module SweepLive = GC.Spec.ChunkedSweepCoalesce.LivePreservation
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -504,6 +505,24 @@ let chunked_set_object_color_preserves_get_field
         MarkDefs.chunked_get_field_read_some mh' target i old
 #pop-options
 
+let chunked_set_object_color_preserves_ranges
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (color: Header.color_sem)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (SweepDefs.chunked_set_object_color mh obj color))
+  =
+  match SweepDefs.chunked_read_header mh obj with
+  | None ->
+    SweepDefs.chunked_set_object_color_none mh obj color;
+    RangePres.same_chunk_ranges_refl mh
+  | Some hdr ->
+    SweepDefs.chunked_set_object_color_some mh obj color hdr;
+    RangePres.major_write_word_or_same_preserves_ranges
+      mh (hd_address obj) (Obj.colorHeader hdr color)
+
 let chunked_set_object_color_member_sets_color
     (mh: MH.major_heap)
     (obj: obj_addr)
@@ -579,6 +598,16 @@ let chunked_make_gray_preserves_get_field
   chunked_set_object_color_preserves_get_field
     mh obj target Header.Gray i
 
+let chunked_make_gray_preserves_ranges
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh (MarkDefs.chunked_make_gray mh obj))
+  =
+  MarkDefs.chunked_make_gray_step mh obj;
+  chunked_set_object_color_preserves_ranges mh obj Header.Gray
+
 let chunked_make_black_makes_black
     (mh: MH.major_heap)
     (obj: obj_addr)
@@ -627,6 +656,16 @@ let chunked_make_black_preserves_get_field
   MarkDefs.chunked_make_black_step mh obj;
   chunked_set_object_color_preserves_get_field
     mh obj target Header.Black i
+
+let chunked_make_black_preserves_ranges
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh (MarkDefs.chunked_make_black mh obj))
+  =
+  MarkDefs.chunked_make_black_step mh obj;
+  chunked_set_object_color_preserves_ranges mh obj Header.Black
 
 let chunked_set_object_color_preserves_other_black
     (mh: MH.major_heap)

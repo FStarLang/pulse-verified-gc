@@ -20,6 +20,9 @@ module DenseFused = GC.Spec.SweepCoalesce.Defs
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
+module MarkDefs = GC.Spec.ChunkedMark.Defs
+module ChunkedMarkMetadata = GC.Spec.ChunkedMarkBounded.Metadata
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMarkStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -105,6 +108,44 @@ val chunked_major_gc_bounded_mark_phase_marks_target_black
       (ensures
         SweepDefs.chunked_is_black
           (ChunkedMark.chunked_mark_bounded mh cap fuel) target)
+
+val chunked_major_gc_bounded_mark_phase_pointer_classification_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (ensures
+        ChunkedMajorGraph.chunked_major_pointer_classification_preserved
+          mh (ChunkedMark.chunked_mark_bounded mh cap fuel))
+
+val chunked_major_gc_bounded_mark_phase_field_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedMajorGraph.chunked_major_field_preserved
+          mh (ChunkedMark.chunked_mark_bounded mh cap fuel) target)
+
+val chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        (forall (target: obj_addr).
+          live target ==> Seq.mem target (MH.major_objects mh)))
+      (ensures
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh (ChunkedMark.chunked_mark_bounded mh cap fuel) live)
 
 val chunked_major_gc_bounded_marked_live_subgraph_preserved
   (mh: MH.major_heap)
@@ -354,6 +395,28 @@ val chunked_major_gc_bounded_live_subgraph_preserved_from_gray_or_black_rescan_n
            ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
          ChunkedMajorGraph.chunked_major_live_subgraph_preserved
            marked mh_final live))
+
+val chunked_major_gc_bounded_live_subgraph_preserved_from_initial_gray_or_black_rescan_no_header
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        (forall (target: obj_addr).
+         live target ==>
+         Seq.mem target (MH.major_objects mh) /\
+         (ChunkedMark.chunked_is_gray mh target \/
+          SweepDefs.chunked_is_black mh target)))
+      (ensures
+        (let (mh_final, fp_final) =
+         ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final live))
 
 val chunked_major_gc_bounded_single_chunk_postcondition
   (h_init: heap)

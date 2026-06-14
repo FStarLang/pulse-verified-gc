@@ -9,6 +9,7 @@ module MH = GC.Spec.MajorHeap
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module MarkPres = GC.Spec.ChunkedMark.Preservation
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
@@ -177,6 +178,70 @@ let rec chunked_push_children_bounded_preserves_get_field
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_push_children_bounded_preserves_ranges
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+    (cap: nat)
+  : Lemma
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         RangePres.same_chunk_ranges mh mh'))
+      (decreases U64.v ws - U64.v i)
+  =
+  if U64.v i > U64.v ws then begin
+    BDefs.chunked_push_children_bounded_done mh st obj i ws cap;
+    RangePres.same_chunk_ranges_refl mh
+  end else begin
+    BDefs.chunked_push_children_bounded_step mh st obj i ws cap;
+    let v = MarkDefs.chunked_get_field mh obj i in
+    let mh1, st1 =
+      if MarkDefs.chunked_is_pointer_field mh v then
+        let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+        let child = MarkDefs.chunked_resolve_object mh child_raw in
+        if SweepDefs.chunked_is_white mh child then
+          let mh_gray = MarkDefs.chunked_make_gray mh child in
+          if Seq.length st < cap then
+            (mh_gray, Seq.cons child st)
+          else
+            (mh_gray, st)
+        else
+          (mh, st)
+      else
+        (mh, st)
+    in
+    if MarkDefs.chunked_is_pointer_field mh v then begin
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child = MarkDefs.chunked_resolve_object mh child_raw in
+      if SweepDefs.chunked_is_white mh child then begin
+        MarkPres.chunked_make_gray_preserves_ranges mh child;
+        assert (mh1 == MarkDefs.chunked_make_gray mh child)
+      end else begin
+        assert (mh1 == mh);
+        RangePres.same_chunk_ranges_refl mh
+      end
+    end else begin
+      assert (mh1 == mh);
+      RangePres.same_chunk_ranges_refl mh
+    end;
+    if U64.v i < U64.v ws then begin
+      assert (U64.v (U64.add i 1UL) == U64.v i + 1);
+      assert (U64.v ws - U64.v (U64.add i 1UL) <
+              U64.v ws - U64.v i);
+      chunked_push_children_bounded_preserves_ranges
+        mh1 st1 obj (U64.add i 1UL) ws cap;
+      RangePres.same_chunk_ranges_trans
+        mh mh1
+        (fst (BDefs.chunked_push_children_bounded
+          mh1 st1 obj (U64.add i 1UL) ws cap))
+    end
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
 let chunked_mark_step_bounded_preserves_wosize_of_object
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)
@@ -275,6 +340,41 @@ let chunked_mark_step_bounded_preserves_get_field
         mh_black (Seq.tail st) obj 1UL ws cap target j;
       assert (MarkDefs.chunked_get_field mh_black target j ==
               MarkDefs.chunked_get_field mh target j)
+    end
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_mark_step_bounded_preserves_ranges
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : Lemma
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_step_bounded mh st cap in
+         RangePres.same_chunk_ranges mh mh'))
+  =
+  if Seq.length st = 0 then begin
+    BDefs.chunked_mark_step_bounded_empty mh st cap;
+    RangePres.same_chunk_ranges_refl mh
+  end else begin
+    assert (Seq.length st <> 0);
+    nat_nonzero_pos (Seq.length st);
+    assert (Seq.length st > 0);
+    let obj = Seq.head st in
+    MarkPres.chunked_make_black_preserves_ranges mh obj;
+    let mh_black = MarkDefs.chunked_make_black mh obj in
+    if MarkDefs.chunked_is_no_scan mh obj then
+      BDefs.chunked_mark_step_bounded_no_scan mh st cap
+    else begin
+      BDefs.chunked_mark_step_bounded_scan mh st cap;
+      let ws = SweepDefs.chunked_wosize_of_object mh obj in
+      chunked_push_children_bounded_preserves_ranges
+        mh_black (Seq.tail st) obj 1UL ws cap;
+      RangePres.same_chunk_ranges_trans
+        mh mh_black
+        (fst (BDefs.chunked_push_children_bounded
+          mh_black (Seq.tail st) obj 1UL ws cap))
     end
   end
 #pop-options
@@ -382,6 +482,33 @@ let rec chunked_mark_inner_loop_preserves_get_field
             MarkDefs.chunked_get_field mh target j)
   end
 
+let rec chunked_mark_inner_loop_preserves_ranges
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Lemma
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap fuel in
+         RangePres.same_chunk_ranges mh mh'))
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then begin
+    BDefs.chunked_mark_inner_loop_base mh st cap fuel;
+    RangePres.same_chunk_ranges_refl mh
+  end else begin
+    assert (fuel <> 0);
+    nat_nonzero_pos fuel;
+    assert (fuel > 0);
+    BDefs.chunked_mark_inner_loop_step mh st cap fuel;
+    let mh1, st1 = BDefs.chunked_mark_step_bounded mh st cap in
+    chunked_mark_step_bounded_preserves_ranges mh st cap;
+    chunked_mark_inner_loop_preserves_ranges mh1 st1 cap (fuel - 1);
+    RangePres.same_chunk_ranges_trans
+      mh mh1
+      (fst (BDefs.chunked_mark_inner_loop mh1 st1 cap (fuel - 1)))
+  end
+
 let rec chunked_mark_bounded_preserves_wosize_of_object
     (mh: MH.major_heap)
     (cap: nat{cap > 0})
@@ -485,6 +612,38 @@ let rec chunked_mark_bounded_preserves_get_field
         mh1 cap (fuel - 1) target j;
       assert (MarkDefs.chunked_get_field mh1 target j ==
               MarkDefs.chunked_get_field mh target j)
+    end
+  end
+
+let rec chunked_mark_bounded_preserves_ranges
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (BDefs.chunked_mark_bounded mh cap fuel))
+      (decreases fuel)
+  =
+  if fuel = 0 then begin
+    BDefs.chunked_mark_bounded_base mh cap;
+    RangePres.same_chunk_ranges_refl mh
+  end else begin
+    assert (fuel > 0);
+    BDefs.chunked_mark_bounded_step mh cap fuel;
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then
+      RangePres.same_chunk_ranges_refl mh
+    else begin
+      assert (Seq.length st <> 0);
+      nat_nonzero_pos (Seq.length st);
+      assert (Seq.length st > 0);
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      let mh1, st1 = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+      chunked_mark_inner_loop_preserves_ranges mh st cap inner_fuel;
+      chunked_mark_bounded_preserves_ranges mh1 cap (fuel - 1);
+      RangePres.same_chunk_ranges_trans
+        mh mh1 (BDefs.chunked_mark_bounded mh1 cap (fuel - 1))
     end
   end
 #pop-options

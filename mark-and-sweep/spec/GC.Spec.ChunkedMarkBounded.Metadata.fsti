@@ -8,6 +8,7 @@ open GC.Spec.Base
 module MH = GC.Spec.MajorHeap
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
@@ -52,6 +53,19 @@ val chunked_push_children_bounded_preserves_get_field
          MarkDefs.chunked_get_field mh' target j ==
          MarkDefs.chunked_get_field mh target j))
 
+val chunked_push_children_bounded_preserves_ranges
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (ensures
+        (let (mh', _) =
+         BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         RangePres.same_chunk_ranges mh mh'))
+
 val chunked_mark_step_bounded_preserves_wosize_of_object
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -85,6 +99,15 @@ val chunked_mark_step_bounded_preserves_get_field
         (let (mh', _) = BDefs.chunked_mark_step_bounded mh st cap in
          MarkDefs.chunked_get_field mh' target j ==
          MarkDefs.chunked_get_field mh target j))
+
+val chunked_mark_step_bounded_preserves_ranges
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_step_bounded mh st cap in
+         RangePres.same_chunk_ranges mh mh'))
 
 val chunked_mark_inner_loop_preserves_wosize_of_object
   (mh: MH.major_heap)
@@ -122,6 +145,16 @@ val chunked_mark_inner_loop_preserves_get_field
          MarkDefs.chunked_get_field mh' target j ==
          MarkDefs.chunked_get_field mh target j))
 
+val chunked_mark_inner_loop_preserves_ranges
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap fuel in
+         RangePres.same_chunk_ranges mh mh'))
+
 val chunked_mark_bounded_preserves_wosize_of_object
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -153,3 +186,12 @@ val chunked_mark_bounded_preserves_get_field
         MarkDefs.chunked_get_field
           (BDefs.chunked_mark_bounded mh cap fuel) target j ==
         MarkDefs.chunked_get_field mh target j)
+
+val chunked_mark_bounded_preserves_ranges
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (BDefs.chunked_mark_bounded mh cap fuel))

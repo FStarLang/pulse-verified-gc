@@ -8,6 +8,7 @@ open GC.Spec.Heap
 
 module Header = GC.Lib.Header
 module MH = GC.Spec.MajorHeap
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
 val stack_objects_in_major
   (mh: MH.major_heap)
@@ -147,6 +148,16 @@ val chunked_set_object_color_preserves_get_field
           target i ==
         GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
 
+val chunked_set_object_color_preserves_ranges
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
+            mh obj color))
+
 val chunked_set_object_color_member_sets_color
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -206,6 +217,14 @@ val chunked_make_gray_preserves_get_field
           target i ==
         GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
 
+val chunked_make_gray_preserves_ranges
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj))
+
 val chunked_make_black_makes_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -249,6 +268,14 @@ val chunked_make_black_preserves_get_field
           (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj)
           target i ==
         GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
+
+val chunked_make_black_preserves_ranges
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj))
 
 val chunked_set_object_color_preserves_other_black
   (mh: MH.major_heap)

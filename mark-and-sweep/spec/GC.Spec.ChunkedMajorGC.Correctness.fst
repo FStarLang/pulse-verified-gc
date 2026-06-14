@@ -27,6 +27,9 @@ module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
+module MarkDefs = GC.Spec.ChunkedMark.Defs
+module ChunkedMarkMetadata = GC.Spec.ChunkedMarkBounded.Metadata
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMarkStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
@@ -150,6 +153,99 @@ let chunked_major_gc_bounded_mark_phase_marks_target_black
   =
   ChunkedMarkPres.chunked_mark_bounded_marks_target_black
     mh cap fuel target
+
+let chunked_major_gc_bounded_mark_phase_pointer_classification_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (ensures
+        ChunkedMajorGraph.chunked_major_pointer_classification_preserved
+          mh (ChunkedMark.chunked_mark_bounded mh cap fuel))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  ChunkedMarkMetadata.chunked_mark_bounded_preserves_ranges mh cap fuel;
+  let one (v: U64.t)
+    : Lemma
+        (ensures
+          MarkDefs.chunked_is_pointer_field mh v ==
+          MarkDefs.chunked_is_pointer_field marked v)
+    =
+    MarkDefs.chunked_is_pointer_field_step mh v;
+    MarkDefs.chunked_is_pointer_field_step marked v;
+    RangePres.same_chunk_ranges_preserves_is_major_pointer mh marked v
+  in
+  FStar.Classical.forall_intro one;
+  ChunkedMajorGraph.chunked_major_pointer_classification_preserved_intro
+    mh marked
+
+let chunked_major_gc_bounded_mark_phase_field_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedMajorGraph.chunked_major_field_preserved
+          mh (ChunkedMark.chunked_mark_bounded mh cap fuel) target)
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  chunked_major_gc_bounded_mark_phase_preserves_shape mh cap fuel;
+  assert (MH.major_objects marked == MH.major_objects mh);
+  ChunkedMajorGraph.chunked_major_vertex_intro mh target;
+  ChunkedMajorGraph.chunked_major_vertex_intro marked target;
+  ChunkedMarkMetadata.chunked_mark_bounded_preserves_wosize_of_object
+    mh cap fuel target;
+  let field_eq (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target))
+        (ensures
+          MarkDefs.chunked_get_field mh target i ==
+          MarkDefs.chunked_get_field marked target i)
+    =
+    ChunkedMarkMetadata.chunked_mark_bounded_preserves_get_field
+      mh cap fuel target i
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires field_eq);
+  ChunkedMajorGraph.chunked_major_field_preserved_intro mh marked target
+
+let chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        (forall (target: obj_addr).
+          live target ==> Seq.mem target (MH.major_objects mh)))
+      (ensures
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh (ChunkedMark.chunked_mark_bounded mh cap fuel) live)
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let fields (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          ChunkedMajorGraph.chunked_major_field_preserved
+            mh marked target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    chunked_major_gc_bounded_mark_phase_field_preserved
+      mh cap fuel target
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  chunked_major_gc_bounded_mark_phase_pointer_classification_preserved
+    mh cap fuel;
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_from_fields
+    mh marked live
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
@@ -700,6 +796,46 @@ let chunked_major_gc_bounded_live_subgraph_preserved_from_gray_or_black_rescan_n
     (FStar.Classical.move_requires target_ready);
   chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready_no_header
     mh cap fuel live
+
+let chunked_major_gc_bounded_live_subgraph_preserved_from_initial_gray_or_black_rescan_no_header
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        (forall (target: obj_addr).
+          live target ==>
+          Seq.mem target (MH.major_objects mh) /\
+          (ChunkedMark.chunked_is_gray mh target \/
+           SweepDefs.chunked_is_black mh target)))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           mh mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let (mh_final, fp_final) =
+    ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+  let live_mem (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures Seq.mem target (MH.major_objects mh))
+    =
+    assert (Seq.mem target (MH.major_objects mh))
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires live_mem);
+  chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
+    mh cap fuel live;
+  chunked_major_gc_bounded_live_subgraph_preserved_from_gray_or_black_rescan_no_header
+    mh cap fuel live;
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_trans
+    mh marked mh_final live
 #pop-options
 
 let bounded_mark_no_gray_for_fused
