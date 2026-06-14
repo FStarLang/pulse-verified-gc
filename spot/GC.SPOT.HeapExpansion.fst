@@ -7065,6 +7065,71 @@ let spot_chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable
   ChunkedMajorGCCorr.chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable
     mh roots cap fuel live
 
+let spot_chunked_major_marked_reachable_live_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel)
+          roots target)
+      (ensures
+        ChunkedMajorGCCorr.chunked_major_marked_reachable_live
+          mh roots cap fuel target)
+  =
+  ChunkedMajorGCCorr.chunked_major_marked_reachable_live_intro
+    mh roots cap fuel target
+
+let spot_chunked_major_marked_reachable_live_elim
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCCorr.chunked_major_marked_reachable_live
+          mh roots cap fuel target)
+      (ensures
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel)
+          roots target)
+  =
+  ChunkedMajorGCCorr.chunked_major_marked_reachable_live_elim
+    mh roots cap fuel target
+
+let spot_chunked_major_gc_bounded_marked_reachable_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMarkBounded.chunked_count_non_black mh /\
+        ChunkedMajorGCMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets
+          mh /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_marked_reachable_live
+            mh roots cap fuel)))
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_marked_reachable_live_subgraph_preserved
+    mh roots cap fuel
+
 let spot_chunked_major_reachable_refl
   (mh: MH.major_heap)
   (x: obj_addr)
