@@ -12,6 +12,7 @@ module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
+module BStackStep = GC.Spec.ChunkedMarkBounded.StackStep
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -136,6 +137,106 @@ let chunked_mark_step_bounded_preserves_wosize_of_object
       chunked_push_children_bounded_preserves_wosize_of_object
         mh_black (Seq.tail st) obj 1UL ws cap target;
       assert (SweepDefs.chunked_wosize_of_object mh_black target ==
+              SweepDefs.chunked_wosize_of_object mh target)
+    end
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_mark_inner_loop_preserves_wosize_of_object
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        BReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap fuel in
+         SweepDefs.chunked_wosize_of_object mh' target ==
+         SweepDefs.chunked_wosize_of_object mh target))
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then
+    BDefs.chunked_mark_inner_loop_base mh st cap fuel
+  else begin
+    assert (fuel <> 0);
+    nat_nonzero_pos fuel;
+    assert (fuel > 0);
+    assert (Seq.length st <> 0);
+    nat_nonzero_pos (Seq.length st);
+    assert (Seq.length st > 0);
+    BDefs.chunked_mark_inner_loop_step mh st cap fuel;
+    BPres.chunked_mark_inner_loop_preservation_ready_step mh st cap fuel;
+    let mh1, st1 = BDefs.chunked_mark_step_bounded mh st cap in
+    chunked_mark_step_bounded_preserves_wosize_of_object
+      mh st cap target;
+    BPres.chunked_mark_step_bounded_preserves_well_formed mh st cap;
+    BPres.chunked_mark_step_bounded_preserves_major_objects mh st cap;
+    BStackStep.chunked_mark_step_bounded_preserves_bounded_stack_props
+      mh st cap;
+    assert (MH.well_formed_major_heap mh1);
+    assert (MH.major_objects mh1 == MH.major_objects mh);
+    assert (Seq.mem target (MH.major_objects mh1));
+    assert (BReady.chunked_bounded_stack_props mh1 st1);
+    assert (BPres.chunked_mark_inner_loop_preservation_ready
+      mh1 st1 cap (fuel - 1));
+    chunked_mark_inner_loop_preserves_wosize_of_object
+      mh1 st1 cap (fuel - 1) target;
+    assert (SweepDefs.chunked_wosize_of_object mh1 target ==
+            SweepDefs.chunked_wosize_of_object mh target)
+  end
+
+let rec chunked_mark_bounded_preserves_wosize_of_object
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_wosize_of_object
+          (BDefs.chunked_mark_bounded mh cap fuel) target ==
+        SweepDefs.chunked_wosize_of_object mh target)
+      (decreases fuel)
+  =
+  if fuel = 0 then
+    BDefs.chunked_mark_bounded_base mh cap
+  else begin
+    assert (fuel > 0);
+    BDefs.chunked_mark_bounded_step mh cap fuel;
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then
+      ()
+    else begin
+      assert (Seq.length st <> 0);
+      nat_nonzero_pos (Seq.length st);
+      assert (Seq.length st > 0);
+      BReady.chunked_rescan_heap_bounded_stack_props mh cap;
+      BPres.chunked_mark_bounded_preservation_ready_step mh cap fuel;
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      let mh1, st1 = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+      chunked_mark_inner_loop_preserves_wosize_of_object
+        mh st cap inner_fuel target;
+      BPres.chunked_mark_inner_loop_preserves_well_formed
+        mh st cap inner_fuel;
+      BPres.chunked_mark_inner_loop_preserves_major_objects
+        mh st cap inner_fuel;
+      assert (MH.well_formed_major_heap mh1);
+      assert (MH.major_objects mh1 == MH.major_objects mh);
+      assert (Seq.mem target (MH.major_objects mh1));
+      assert (BPres.chunked_mark_bounded_preservation_ready
+        mh1 cap (fuel - 1));
+      chunked_mark_bounded_preserves_wosize_of_object
+        mh1 cap (fuel - 1) target;
+      assert (SweepDefs.chunked_wosize_of_object mh1 target ==
               SweepDefs.chunked_wosize_of_object mh target)
     end
   end

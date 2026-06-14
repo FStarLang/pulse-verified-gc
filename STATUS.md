@@ -284,6 +284,8 @@ Follow-up checkpoint: started exposing mark-phase graph-stability support facts.
 
 Follow-up checkpoint: split the first bounded-mark metadata lift into `GC.Spec.ChunkedMarkBounded.Metadata`. The new helper proves bounded child-pushing preserves a selected active object's wosize and lifts that through one `chunked_mark_step_bounded` under the existing step-readiness plus bounded-stack-shape premises. This keeps loop-level metadata preservation out of the large bounded preservation module while providing the next building block for pre-mark-to-post-sweep graph stability. `GC.SPOT.HeapExpansion` audits the new split module, and refreshed split-query profiling keeps it around one second.
 
+Follow-up checkpoint: lifted bounded-mark wosize preservation through the recursive loops. `GC.Spec.ChunkedMarkBounded.Metadata` now proves both `chunked_mark_inner_loop_preserves_wosize_of_object` and `chunked_mark_bounded_preserves_wosize_of_object`, sequencing the one-step metadata theorem with bounded-stack-shape and preservation-readiness transfer. This completes the wosize half of mark-phase metadata stability for selected active objects under the existing bounded-mark readiness predicates. `GC.SPOT.HeapExpansion` audits the new public wrappers, the refreshed split-query profile for the metadata module is about one second, and broad mark-and-sweep spec plus SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

@@ -45,3 +45,35 @@ val chunked_mark_step_bounded_preserves_wosize_of_object
         (let (mh', _) = BDefs.chunked_mark_step_bounded mh st cap in
          SweepDefs.chunked_wosize_of_object mh' target ==
          SweepDefs.chunked_wosize_of_object mh target))
+
+val chunked_mark_inner_loop_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        BReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap fuel in
+         SweepDefs.chunked_wosize_of_object mh' target ==
+         SweepDefs.chunked_wosize_of_object mh target))
+
+val chunked_mark_bounded_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_wosize_of_object
+          (BDefs.chunked_mark_bounded mh cap fuel) target ==
+        SweepDefs.chunked_wosize_of_object mh target)

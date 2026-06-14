@@ -4997,6 +4997,47 @@ let spot_chunked_mark_step_bounded_preserves_wosize_of_object
   ChunkedMarkBoundedMetadata.chunked_mark_step_bounded_preserves_wosize_of_object
     mh st cap target
 
+let spot_chunked_mark_inner_loop_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ChunkedSweepDefs.chunked_wosize_of_object mh' target ==
+         ChunkedSweepDefs.chunked_wosize_of_object mh target))
+  =
+  ChunkedMarkBoundedMetadata.chunked_mark_inner_loop_preserves_wosize_of_object
+    mh st cap fuel target
+
+let spot_chunked_mark_bounded_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target ==
+        ChunkedSweepDefs.chunked_wosize_of_object mh target)
+  =
+  ChunkedMarkBoundedMetadata.chunked_mark_bounded_preserves_wosize_of_object
+    mh cap fuel target
+
 let spot_chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
