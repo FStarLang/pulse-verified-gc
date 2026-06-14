@@ -6070,6 +6070,36 @@ let spot_chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
   ChunkedMajorGCCorr.chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
     mh cap fuel live live_hdr
 
+let spot_chunked_major_gc_bounded_live_subgraph_preserved_from_gray_rescan
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        (let marked = ChunkedMarkBounded.chunked_mark_bounded mh cap fuel in
+         fuel > 0 /\
+         MH.well_formed_major_heap mh /\
+         ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+           mh cap fuel /\
+         Seq.length (MH.major_objects mh) <= cap /\
+         (forall (target: obj_addr).
+           live target ==>
+           Seq.mem target (MH.major_objects mh) /\
+           ChunkedMarkBounded.chunked_is_gray mh target /\
+           ChunkedSweepDefs.chunked_read_header marked target ==
+             Some (live_hdr target))))
+      (ensures
+        (let marked = ChunkedMarkBounded.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_live_subgraph_preserved_from_gray_rescan
+    mh cap fuel live live_hdr
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)

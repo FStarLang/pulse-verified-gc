@@ -274,6 +274,8 @@ Follow-up checkpoint: proved the first eventual-pop target-readiness theorem for
 
 Follow-up checkpoint: lifted stack-member readiness to the outer bounded-mark rescan. `GC.Spec.ChunkedMarkBounded.Preservation` now exposes outer-loop step constructors for the abstract preservation and target-readiness predicates, and `GC.Spec.ChunkedMarkBounded.StackReady.chunked_mark_bounded_marks_rescan_member_ready` proves that a gray selected object in `MH.major_objects` becomes target-ready for the full bounded mark when the rescan capacity can hold the whole object list. This removes the earlier first-rescan-head restriction. `GC.SPOT.HeapExpansion` audits the new constructors and wrapper; focused bounded-mark dependency verification, full SPOT verification, and refreshed `StackReady` profiling all passed with the split module still around one second.
 
+Follow-up checkpoint: connected gray-rescan target readiness to the chunked major-GC live-subgraph shell. `GC.Spec.ChunkedMajorGC.Correctness.chunked_major_gc_bounded_live_subgraph_preserved_from_gray_rescan` now replaces the explicit per-target bounded-mark readiness premise with: selected live objects are active major objects, initially gray, and the bounded rescan capacity can hold `MH.major_objects`. The wrapper still requires the marked-heap header witness for each selected live object, so the next proof step is to derive that witness from marked membership/blackness rather than asking clients to provide it. `GC.SPOT.HeapExpansion` audits the wrapper, focused correctness verification passed, full SPOT verification passed, and refreshed `ChunkedMajorGC.Correctness` profiling completes in about 1.3 seconds.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

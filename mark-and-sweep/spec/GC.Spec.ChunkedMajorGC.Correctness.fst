@@ -27,6 +27,7 @@ module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
+module ChunkedMarkStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedLiveRange = GC.Spec.ChunkedSweepCoalesce.LiveRange
@@ -388,6 +389,57 @@ let chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
   FStar.Classical.forall_intro
     (FStar.Classical.move_requires marked_live_facts);
   chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership
+    mh cap fuel live live_hdr
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_live_subgraph_preserved_from_gray_rescan
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         fuel > 0 /\
+         MH.well_formed_major_heap mh /\
+         ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+         Seq.length (MH.major_objects mh) <= cap /\
+         (forall (target: obj_addr).
+           live target ==>
+           Seq.mem target (MH.major_objects mh) /\
+           ChunkedMark.chunked_is_gray mh target /\
+           SweepDefs.chunked_read_header marked target ==
+             Some (live_hdr target))))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let target_ready (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          Seq.mem target (MH.major_objects mh) /\
+          SweepDefs.chunked_read_header marked target ==
+            Some (live_hdr target) /\
+          ChunkedMarkPres.chunked_mark_bounded_marks_target_ready
+            mh cap fuel target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    assert (ChunkedMark.chunked_is_gray mh target);
+    assert (SweepDefs.chunked_read_header marked target ==
+            Some (live_hdr target));
+    ChunkedMarkStackReady.chunked_mark_bounded_marks_rescan_member_ready
+      mh cap fuel target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires target_ready);
+  chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
     mh cap fuel live live_hdr
 #pop-options
 
