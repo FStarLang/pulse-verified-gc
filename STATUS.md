@@ -256,6 +256,8 @@ Follow-up checkpoint: added cheap non-black count bounds in `GC.Spec.ChunkedMark
 
 Follow-up checkpoint: added the first chunked bounded-stack color predicate in the target-ready split module. `chunked_stack_points_to_gray` states every object on a bounded mark stack is gray, with elim/empty/cons helpers plus rescan preservation and top-level `chunked_rescan_heap_stack_gray`. This mirrors the dense bounded-stack color invariant needed before proving count decrease: rescan-produced stacks now expose that their heads and members are gray without unfolding rescan. SPOT audits the stack-gray surface, the split helper profile stays around one second, and broad mark-and-sweep spec plus SPOT verification pass.
 
+Follow-up checkpoint: added no-duplicate preservation for chunked bounded rescans. `GC.Spec.ChunkedMarkBounded.TargetReady` now reuses dense `GC.Spec.Mark.stack_no_dups` for chunked stacks and proves `chunked_rescan_objects_preserves_stack_no_dups` plus `chunked_rescan_heap_stack_no_dups`; the proof uses explicit `Seq.cons` head/tail normalization rather than higher rlimits. SPOT audits both contracts, the split helper profile stays around one second, and broad mark-and-sweep spec plus SPOT verification pass. This completes the rescan-produced stack-shape prerequisites (gray entries and no duplicates) needed before lifting bounded-step count decrease.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

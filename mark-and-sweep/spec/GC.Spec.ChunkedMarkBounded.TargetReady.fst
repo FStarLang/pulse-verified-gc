@@ -7,6 +7,7 @@ open GC.Spec.Base
 module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkDefs = GC.Spec.ChunkedMark.Defs
+module SpecMark = GC.Spec.Mark
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
 module SeqMem = GC.Spec.SeqMemLemmas
@@ -254,6 +255,43 @@ let rec chunked_rescan_objects_preserves_stack_gray
       mh (Seq.tail objs) st' cap
   end
 
+let rec chunked_rescan_objects_preserves_stack_no_dups
+    (mh: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : Lemma
+      (requires SpecMark.stack_no_dups st)
+      (ensures
+        SpecMark.stack_no_dups
+          (BDefs.chunked_rescan_objects mh objs st cap))
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    BDefs.chunked_rescan_objects_empty mh objs st cap
+  else begin
+    BDefs.chunked_rescan_objects_step mh objs st cap;
+    let obj = Seq.head objs in
+    let st' =
+      if BDefs.chunked_is_gray mh obj && not (Seq.mem obj st) &&
+         Seq.length st < cap then begin
+        assert (~ (Seq.mem obj st));
+        assert (Seq.head (Seq.cons obj st) == obj);
+        assert (Seq.equal (Seq.tail (Seq.cons obj st)) st);
+        Seq.lemma_eq_elim (Seq.tail (Seq.cons obj st)) st;
+        assert (Seq.tail (Seq.cons obj st) == st);
+        assert (~ (Seq.mem
+          (Seq.head (Seq.cons obj st))
+          (Seq.tail (Seq.cons obj st))));
+        assert (SpecMark.stack_no_dups (Seq.tail (Seq.cons obj st)));
+        assert (SpecMark.stack_no_dups (Seq.cons obj st));
+        Seq.cons obj st
+      end else
+        st in
+    chunked_rescan_objects_preserves_stack_no_dups
+      mh (Seq.tail objs) st' cap
+  end
+
 let rec chunked_rescan_objects_adds_gray_with_capacity
     (mh: MH.major_heap)
     (objs: Seq.seq obj_addr)
@@ -316,6 +354,19 @@ let chunked_rescan_heap_adds_gray_with_capacity
   BDefs.chunked_rescan_heap_equation mh Seq.empty cap;
   chunked_rescan_objects_adds_gray_with_capacity
     mh (MH.major_objects mh) Seq.empty cap target
+
+let chunked_rescan_heap_stack_no_dups
+    (mh: MH.major_heap)
+    (cap: nat)
+  : Lemma
+      (ensures
+        SpecMark.stack_no_dups
+          (BDefs.chunked_rescan_heap mh Seq.empty cap))
+  =
+  BDefs.chunked_rescan_heap_equation mh Seq.empty cap;
+  assert (SpecMark.stack_no_dups Seq.empty);
+  chunked_rescan_objects_preserves_stack_no_dups
+    mh (MH.major_objects mh) Seq.empty cap
 
 let chunked_rescan_heap_stack_gray
     (mh: MH.major_heap)

@@ -4738,6 +4738,30 @@ let spot_chunked_rescan_heap_stack_gray
   =
   ChunkedMarkBoundedReady.chunked_rescan_heap_stack_gray mh cap
 
+let spot_chunked_rescan_objects_preserves_stack_no_dups
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires Mark.stack_no_dups st)
+      (ensures
+        Mark.stack_no_dups
+          (ChunkedMarkBounded.chunked_rescan_objects mh objs st cap))
+  =
+  ChunkedMarkBoundedReady.chunked_rescan_objects_preserves_stack_no_dups
+    mh objs st cap
+
+let spot_chunked_rescan_heap_stack_no_dups
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        Mark.stack_no_dups
+          (ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap))
+  =
+  ChunkedMarkBoundedReady.chunked_rescan_heap_stack_no_dups mh cap
+
 let spot_chunked_bounded_is_gray_single_chunk_compat
   (g: heap)
   (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})

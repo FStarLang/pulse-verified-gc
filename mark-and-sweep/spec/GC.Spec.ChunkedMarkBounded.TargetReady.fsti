@@ -126,6 +126,17 @@ val chunked_rescan_objects_preserves_stack_gray
         chunked_stack_points_to_gray mh
           (BDefs.chunked_rescan_objects mh objs st cap))
 
+val chunked_rescan_objects_preserves_stack_no_dups
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires GC.Spec.Mark.stack_no_dups st)
+      (ensures
+        GC.Spec.Mark.stack_no_dups
+          (BDefs.chunked_rescan_objects mh objs st cap))
+
 val chunked_rescan_objects_adds_gray_with_capacity
   (mh: MH.major_heap)
   (objs: Seq.seq obj_addr)
@@ -152,6 +163,14 @@ val chunked_rescan_heap_adds_gray_with_capacity
         Seq.length (MH.major_objects mh) <= cap)
       (ensures
         Seq.mem target
+          (BDefs.chunked_rescan_heap mh Seq.empty cap))
+
+val chunked_rescan_heap_stack_no_dups
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        GC.Spec.Mark.stack_no_dups
           (BDefs.chunked_rescan_heap mh Seq.empty cap))
 
 val chunked_rescan_heap_stack_gray
