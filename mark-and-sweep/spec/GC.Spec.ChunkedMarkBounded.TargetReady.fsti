@@ -72,6 +72,37 @@ val chunked_mark_step_bounded_preserves_tail_member
           BDefs.chunked_mark_step_bounded mh st cap in
          Seq.mem target st'))
 
+val chunked_stack_points_to_gray
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : GTot prop
+
+val chunked_stack_points_to_gray_elim
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        chunked_stack_points_to_gray mh st /\
+        Seq.mem target st)
+      (ensures BDefs.chunked_is_gray mh target)
+
+val chunked_stack_points_to_gray_empty
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures chunked_stack_points_to_gray mh Seq.empty)
+
+val chunked_stack_points_to_gray_cons
+  (mh: MH.major_heap)
+  (target: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        BDefs.chunked_is_gray mh target /\
+        chunked_stack_points_to_gray mh st)
+      (ensures
+        chunked_stack_points_to_gray mh (Seq.cons target st))
+
 val chunked_rescan_objects_preserves_stack_member
   (mh: MH.major_heap)
   (objs: Seq.seq obj_addr)
@@ -82,6 +113,17 @@ val chunked_rescan_objects_preserves_stack_member
       (requires Seq.mem target st)
       (ensures
         Seq.mem target
+          (BDefs.chunked_rescan_objects mh objs st cap))
+
+val chunked_rescan_objects_preserves_stack_gray
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires chunked_stack_points_to_gray mh st)
+      (ensures
+        chunked_stack_points_to_gray mh
           (BDefs.chunked_rescan_objects mh objs st cap))
 
 val chunked_rescan_objects_adds_gray_with_capacity
@@ -110,6 +152,14 @@ val chunked_rescan_heap_adds_gray_with_capacity
         Seq.length (MH.major_objects mh) <= cap)
       (ensures
         Seq.mem target
+          (BDefs.chunked_rescan_heap mh Seq.empty cap))
+
+val chunked_rescan_heap_stack_gray
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        chunked_stack_points_to_gray mh
           (BDefs.chunked_rescan_heap mh Seq.empty cap))
 
 val chunked_mark_bounded_marks_rescan_head_ready

@@ -4715,6 +4715,29 @@ let spot_chunked_rescan_heap_adds_gray_with_capacity
   ChunkedMarkBoundedReady.chunked_rescan_heap_adds_gray_with_capacity
     mh cap target
 
+let spot_chunked_stack_points_to_gray_elim
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedReady.chunked_stack_points_to_gray mh st /\
+        Seq.mem target st)
+      (ensures ChunkedMarkBounded.chunked_is_gray mh target)
+  =
+  ChunkedMarkBoundedReady.chunked_stack_points_to_gray_elim
+    mh st target
+
+let spot_chunked_rescan_heap_stack_gray
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        ChunkedMarkBoundedReady.chunked_stack_points_to_gray mh
+          (ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap))
+  =
+  ChunkedMarkBoundedReady.chunked_rescan_heap_stack_gray mh cap
+
 let spot_chunked_bounded_is_gray_single_chunk_compat
   (g: heap)
   (obj: obj_addr{U64.v obj >= U64.v zero_addr + U64.v mword})

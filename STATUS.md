@@ -254,6 +254,8 @@ Follow-up checkpoint: exposed the next target-ready constructors without unfoldi
 
 Follow-up checkpoint: added cheap non-black count bounds in `GC.Spec.ChunkedMarkBounded.TargetReady`. The split helper now proves `chunked_count_non_black_in mh objs <= Seq.length objs` and the top-level bound over `MH.major_objects`; SPOT audits both. This is a small prerequisite for fuel/count arguments in the eventual-pop proof, and the refreshed split-query profile remains about one second with broad mark-and-sweep spec plus SPOT verification passing.
 
+Follow-up checkpoint: added the first chunked bounded-stack color predicate in the target-ready split module. `chunked_stack_points_to_gray` states every object on a bounded mark stack is gray, with elim/empty/cons helpers plus rescan preservation and top-level `chunked_rescan_heap_stack_gray`. This mirrors the dense bounded-stack color invariant needed before proving count decrease: rescan-produced stacks now expose that their heads and members are gray without unfolding rescan. SPOT audits the stack-gray surface, the split helper profile stays around one second, and broad mark-and-sweep spec plus SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

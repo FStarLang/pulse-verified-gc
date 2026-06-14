@@ -140,6 +140,63 @@ let chunked_mark_step_bounded_preserves_tail_member
       mh' st_tail obj 1UL ws cap target
   end
 
+let chunked_stack_points_to_gray
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+  : GTot prop
+  =
+  forall (target: obj_addr). Seq.mem target st ==>
+    BDefs.chunked_is_gray mh target
+
+let chunked_stack_points_to_gray_elim
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        chunked_stack_points_to_gray mh st /\
+        Seq.mem target st)
+      (ensures BDefs.chunked_is_gray mh target)
+  = ()
+
+let chunked_stack_points_to_gray_empty
+    (mh: MH.major_heap)
+  : Lemma
+      (ensures chunked_stack_points_to_gray mh Seq.empty)
+  =
+  let each (target: obj_addr)
+    : Lemma
+        (requires Seq.mem target Seq.empty)
+        (ensures BDefs.chunked_is_gray mh target)
+    = ()
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires each)
+
+let chunked_stack_points_to_gray_cons
+    (mh: MH.major_heap)
+    (target: obj_addr)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        BDefs.chunked_is_gray mh target /\
+        chunked_stack_points_to_gray mh st)
+      (ensures
+        chunked_stack_points_to_gray mh (Seq.cons target st))
+  =
+  let each (obj: obj_addr)
+    : Lemma
+        (requires Seq.mem obj (Seq.cons target st))
+        (ensures BDefs.chunked_is_gray mh obj)
+    =
+    if Seq.mem obj st then
+      chunked_stack_points_to_gray_elim mh st obj
+    else begin
+      SeqMem.seq_mem_cons_not_mem_implies_eq target obj st;
+      assert (obj == target)
+    end
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires each)
+
 let rec chunked_rescan_objects_preserves_stack_member
     (mh: MH.major_heap)
     (objs: Seq.seq obj_addr)
@@ -167,6 +224,34 @@ let rec chunked_rescan_objects_preserves_stack_member
         st in
     chunked_rescan_objects_preserves_stack_member
       mh (Seq.tail objs) st' cap target
+  end
+
+let rec chunked_rescan_objects_preserves_stack_gray
+    (mh: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : Lemma
+      (requires chunked_stack_points_to_gray mh st)
+      (ensures
+        chunked_stack_points_to_gray mh
+          (BDefs.chunked_rescan_objects mh objs st cap))
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    BDefs.chunked_rescan_objects_empty mh objs st cap
+  else begin
+    BDefs.chunked_rescan_objects_step mh objs st cap;
+    let obj = Seq.head objs in
+    let st' =
+      if BDefs.chunked_is_gray mh obj && not (Seq.mem obj st) &&
+         Seq.length st < cap then begin
+        chunked_stack_points_to_gray_cons mh obj st;
+        Seq.cons obj st
+      end else
+        st in
+    chunked_rescan_objects_preserves_stack_gray
+      mh (Seq.tail objs) st' cap
   end
 
 let rec chunked_rescan_objects_adds_gray_with_capacity
@@ -231,6 +316,19 @@ let chunked_rescan_heap_adds_gray_with_capacity
   BDefs.chunked_rescan_heap_equation mh Seq.empty cap;
   chunked_rescan_objects_adds_gray_with_capacity
     mh (MH.major_objects mh) Seq.empty cap target
+
+let chunked_rescan_heap_stack_gray
+    (mh: MH.major_heap)
+    (cap: nat)
+  : Lemma
+      (ensures
+        chunked_stack_points_to_gray mh
+          (BDefs.chunked_rescan_heap mh Seq.empty cap))
+  =
+  BDefs.chunked_rescan_heap_equation mh Seq.empty cap;
+  chunked_stack_points_to_gray_empty mh;
+  chunked_rescan_objects_preserves_stack_gray
+    mh (MH.major_objects mh) Seq.empty cap
 
 let chunked_mark_bounded_marks_rescan_head_ready
     (mh: MH.major_heap)
