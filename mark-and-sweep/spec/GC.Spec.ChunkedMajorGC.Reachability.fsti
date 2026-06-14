@@ -91,6 +91,33 @@ val chunked_major_reachable_from_roots_field
         ChunkedMajorGraph.chunked_major_field_points_to mh x i y)
       (ensures chunked_major_reachable_from_roots mh roots y)
 
+val chunked_major_reachable_preserved_by_live_subgraph
+  (mh0 mh1: MH.major_heap)
+  (live: obj_addr -> prop)
+  (x y: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh0 mh1 live /\
+        (forall (v: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh0 v ==> live v) /\
+        chunked_major_reachable mh0 x y)
+      (ensures chunked_major_reachable mh1 x y)
+
+val chunked_major_reachable_from_roots_preserved_by_live_subgraph
+  (mh0 mh1: MH.major_heap)
+  (live: obj_addr -> prop)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh0 mh1 live /\
+        (forall (v: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh0 v ==> live v) /\
+        chunked_major_reachable_from_roots mh0 roots x)
+      (ensures chunked_major_reachable_from_roots mh1 roots x)
+
 val chunked_gray_black_reachable
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

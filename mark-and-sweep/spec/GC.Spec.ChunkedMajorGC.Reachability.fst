@@ -227,6 +227,107 @@ let chunked_major_reachable_from_roots_field
   ChunkedMajorGraph.chunked_major_edge_intro mh x y i;
   chunked_major_reachable_from_roots_extend_edge mh roots x y
 
+#push-options "--z3rlimit 5 --fuel 2 --ifuel 0 --split_queries always"
+let rec chunked_major_path_preserved_by_live_subgraph
+  (mh0 mh1: MH.major_heap)
+  (live: obj_addr -> prop)
+  (cur: obj_addr)
+  (path: Seq.seq obj_addr)
+  (dst: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh0 mh1 live /\
+        (forall (v: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh0 v ==> live v) /\
+        ChunkedMajorGraph.chunked_major_vertex mh0 cur /\
+        chunked_major_path mh0 cur path dst)
+      (ensures chunked_major_path mh1 cur path dst)
+      (decreases Seq.length path)
+  =
+  ChunkedMajorGraph.chunked_major_live_subgraph_vertices_elim
+    mh0 mh1 live;
+  ChunkedMajorGraph.chunked_major_live_subgraph_edges_elim
+    mh0 mh1 live;
+  assert (live cur);
+  if Seq.length path = 0 then
+    assert (cur == dst)
+  else begin
+    Seq.cons_head_tail path;
+    let next = Seq.head path in
+    let tail = Seq.tail path in
+    assert (path == Seq.cons next tail);
+    assert (ChunkedMajorGraph.chunked_major_vertex mh0 next);
+    assert (ChunkedMajorGraph.chunked_major_edge mh0 cur next);
+    assert (chunked_major_path mh0 next tail dst);
+    assert (live next);
+    assert (ChunkedMajorGraph.chunked_major_vertex mh1 next);
+    assert (ChunkedMajorGraph.chunked_major_edge mh1 cur next);
+    chunked_major_path_preserved_by_live_subgraph mh0 mh1 live next tail dst;
+    chunked_major_path_cons mh1 cur next tail dst
+  end
+#pop-options
+
+let chunked_major_reachable_preserved_by_live_subgraph
+  (mh0 mh1: MH.major_heap)
+  (live: obj_addr -> prop)
+  (x y: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh0 mh1 live /\
+        (forall (v: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh0 v ==> live v) /\
+        chunked_major_reachable mh0 x y)
+      (ensures chunked_major_reachable mh1 x y)
+  =
+  ChunkedMajorGraph.chunked_major_live_subgraph_vertices_elim
+    mh0 mh1 live;
+  assert (live x);
+  assert (live y);
+  FStar.Classical.exists_elim
+    (chunked_major_reachable mh1 x y)
+    #_
+    #(fun (path: Seq.seq obj_addr) -> chunked_major_path mh0 x path y)
+    ()
+    (fun path ->
+      chunked_major_path_preserved_by_live_subgraph mh0 mh1 live x path y;
+      FStar.Classical.exists_intro
+        (fun (path': Seq.seq obj_addr) -> chunked_major_path mh1 x path' y)
+        path)
+
+let chunked_major_reachable_from_roots_preserved_by_live_subgraph
+  (mh0 mh1: MH.major_heap)
+  (live: obj_addr -> prop)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh0 mh1 live /\
+        (forall (v: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh0 v ==> live v) /\
+        chunked_major_reachable_from_roots mh0 roots x)
+      (ensures chunked_major_reachable_from_roots mh1 roots x)
+  =
+  FStar.Classical.exists_elim
+    (chunked_major_reachable_from_roots mh1 roots x)
+    #_
+    #(fun (root: obj_addr) ->
+      ChunkedMajorGraph.chunked_major_vertex mh0 root /\
+      Seq.mem root roots /\
+      chunked_major_reachable mh0 root x)
+    ()
+    (fun root ->
+      chunked_major_reachable_preserved_by_live_subgraph
+        mh0 mh1 live root x;
+      FStar.Classical.exists_intro
+        (fun (root': obj_addr) ->
+          ChunkedMajorGraph.chunked_major_vertex mh1 root' /\
+          Seq.mem root' roots /\
+          chunked_major_reachable mh1 root' x)
+        root)
+
 let chunked_gray_black_reachable
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

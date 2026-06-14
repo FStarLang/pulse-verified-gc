@@ -26,6 +26,13 @@ val chunked_major_vertex_intro
       (requires Seq.mem x (MH.major_objects mh))
       (ensures chunked_major_vertex mh x)
 
+val chunked_major_vertex_elim
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  : Lemma
+      (requires chunked_major_vertex mh x)
+      (ensures Seq.mem x (MH.major_objects mh))
+
 val chunked_major_vertex_from_chunk
   (mh: MH.major_heap)
   (idx: nat)

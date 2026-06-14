@@ -141,3 +141,30 @@ val chunked_non_infix_pointer_field_reachable_from_roots
          let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
          let child = MarkDefs.chunked_resolve_object mh child_raw in
          Reach.chunked_major_reachable_from_roots mh roots child))
+
+val chunked_make_gray_preserves_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Reach.chunked_major_reachable_from_roots mh roots target)
+      (ensures
+        Reach.chunked_major_reachable_from_roots
+          (MarkDefs.chunked_make_gray mh obj) roots target)
+
+val chunked_make_gray_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        chunked_stack_reachable_from_roots
+          (MarkDefs.chunked_make_gray mh obj) roots st)

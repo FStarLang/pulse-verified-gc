@@ -27,6 +27,14 @@ let chunked_major_vertex_intro
         (ensures chunked_major_vertex mh x)
     = ()
 
+let chunked_major_vertex_elim
+    (mh: MH.major_heap)
+    (x: obj_addr)
+    : Lemma
+        (requires chunked_major_vertex mh x)
+        (ensures Seq.mem x (MH.major_objects mh))
+    = ()
+
 let chunked_major_vertex_from_chunk
     (mh: MH.major_heap)
     (idx: nat)

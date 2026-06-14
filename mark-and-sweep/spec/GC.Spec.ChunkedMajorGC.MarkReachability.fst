@@ -9,6 +9,7 @@ module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkPres = GC.Spec.ChunkedMark.Preservation
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module Reach = GC.Spec.ChunkedMajorGC.Reachability
 
@@ -215,3 +216,86 @@ let chunked_non_infix_pointer_field_reachable_from_roots
   let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
   MarkDefs.chunked_resolve_non_infix mh child_raw;
   chunked_resolved_pointer_field_reachable_from_roots mh roots obj i
+
+let chunked_make_gray_preserves_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Reach.chunked_major_reachable_from_roots mh roots target)
+      (ensures
+        Reach.chunked_major_reachable_from_roots
+          (MarkDefs.chunked_make_gray mh obj) roots target)
+  =
+  let mh' = MarkDefs.chunked_make_gray mh obj in
+  MarkPres.chunked_make_gray_preserves_major_objects mh obj;
+  MarkPres.chunked_make_gray_preserves_well_formed mh obj;
+  MarkPres.chunked_make_gray_preserves_ranges mh obj;
+  let live (x: obj_addr) : prop = ChunkedMajorGraph.chunked_major_vertex mh x in
+  let fields (x: obj_addr)
+    : Lemma
+        (requires live x)
+        (ensures ChunkedMajorGraph.chunked_major_field_preserved mh mh' x)
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh x;
+    assert (Seq.mem x (MH.major_objects mh'));
+    ChunkedMajorGraph.chunked_major_vertex_intro mh' x;
+    MarkPres.chunked_make_gray_preserves_wosize_of_object mh obj x;
+    let same_field (i: U64.t{U64.v i >= 1})
+      : Lemma
+          (requires
+            U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh x))
+          (ensures
+            MarkDefs.chunked_get_field mh x i ==
+            MarkDefs.chunked_get_field mh' x i)
+      =
+      MarkPres.chunked_make_gray_preserves_get_field mh obj x i
+    in
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires same_field);
+    ChunkedMajorGraph.chunked_major_field_preserved_intro mh mh' x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let pc (v: U64.t)
+    : Lemma
+        (MarkDefs.chunked_is_pointer_field mh v ==
+         MarkDefs.chunked_is_pointer_field mh' v)
+    =
+    MarkDefs.chunked_is_pointer_field_step mh v;
+    MarkDefs.chunked_is_pointer_field_step mh' v;
+    RangePres.same_chunk_ranges_preserves_is_major_pointer mh mh' v
+  in
+  FStar.Classical.forall_intro pc;
+  ChunkedMajorGraph.chunked_major_pointer_classification_preserved_intro mh mh';
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_from_fields
+    mh mh' live;
+  Reach.chunked_major_reachable_from_roots_preserved_by_live_subgraph
+    mh mh' live roots target
+
+let chunked_make_gray_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        chunked_stack_reachable_from_roots
+          (MarkDefs.chunked_make_gray mh obj) roots st)
+  =
+  let mh' = MarkDefs.chunked_make_gray mh obj in
+  let one (target: obj_addr)
+    : Lemma
+        (requires Seq.mem target st)
+        (ensures Reach.chunked_major_reachable_from_roots mh' roots target)
+    =
+    chunked_stack_reachable_from_roots_elim mh roots st target;
+    chunked_make_gray_preserves_reachable_from_roots mh roots obj target
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires one)
