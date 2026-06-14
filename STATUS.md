@@ -206,6 +206,8 @@ Follow-up checkpoint: extended `GC.Spec.ChunkedSweepCoalesce.VertexPreservation`
 
 Follow-up checkpoint: added `GC.Spec.ChunkedSweepCoalesce.VertexSequence`, sequencing the other-chunk primitive framing through one `chunked_fused_aux` traversal. The public theorem says processing one source chunk preserves a protected object suffix, wosize, and chunk range in a different target chunk, both from an arbitrary chunk-local start and from the whole processed chunk. The proof uses a lighter pending-run predicate plus small local wrappers for flush-prefix/no-op cases to avoid high rlimits; refreshed split-query profiling verifies the module in about one second, `make verify-spec` passes, and `GC.SPOT.HeapExpansion` audits both public wrappers.
 
+Follow-up checkpoint: added `GC.Spec.ChunkedSweepCoalesce.VertexRange`, lifting the one-chunk `VertexSequence` theorem through `chunked_fused_sweep_coalesce_chunks` ranges that exclude the protected target chunk. The module exposes range, prefix, and suffix preservation wrappers for a protected target chunk's object suffix, protected-object wosize, and chunk range. It mirrors the existing raw-read `SequencePreservation` recursion, composes `RangePreservation.same_chunk_ranges` after each processed chunk, profiles at about one second with `--z3refresh --split_queries always`, and is SPOT-audited.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
