@@ -220,6 +220,12 @@ The verified code should not call `malloc` directly. The C runtime bridge acquir
 
 Once those facts hold, the verified expansion path treats the memory as a fresh `heap_chunk`: initialize it as one or more blue free-list blocks, prepend/link the fresh block chain to the global major free list, prove old reads/objects/graph facts are framed, and retry allocation or start Cheney promotion with enough head capacity. If promotion would otherwise fail because of OOM, the intended architecture is that preflight has already prevented that state by expanding before promotion begins.
 
+## Update: fused multi-chunk live-field preservation
+
+The current Stage 6 proof has advanced from prefix/target/suffix fragments to a true all-chunks field-preservation theorem for one black live target. `GC.Spec.ChunkedSweepCoalesce.LiveRange` now has a work-state target+suffix theorem, a small traversal-split helper, and `chunked_fused_sweep_coalesce_live_field_preserved`, which composes prefix framing, target-chunk live preservation, and suffix framing into `ChunkedMajorGC.Graph.chunked_major_field_preserved source final target` for the actual full `chunked_fused_sweep_coalesce_chunks source source source fp` traversal.
+
+The proof stays split and cheap: the refreshed `LiveRange` split-query profile remains about one second overall, and `GC.SPOT.HeapExpansion` audits the new public wrappers. The next proof step is to lift this one-target all-chunks field preservation over all live black targets and feed it into `ChunkedMajorGC.Graph.chunked_major_live_subgraph_preserved_from_fields`.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
