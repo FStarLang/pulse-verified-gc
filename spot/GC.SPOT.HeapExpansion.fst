@@ -79,6 +79,7 @@ module ChunkedMajorGCGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorGCReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMajorGCMarkReach = GC.Spec.ChunkedMajorGC.MarkReachability
 module ChunkedMajorGCMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
+module ChunkedMajorGCMarkLiveNoBlack = GC.Spec.ChunkedMajorGC.MarkLivenessNoBlack
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -7617,6 +7618,45 @@ let spot_chunked_vertex_edge_targets_non_infix_elim
   ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix_elim
     mh src dst
 
+let spot_chunked_mark_step_bounded_preserves_vertex_edge_targets_non_infix
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh'))
+  =
+  ChunkedMarkBoundedEdge.chunked_mark_step_bounded_preserves_vertex_edge_targets_non_infix
+    mh st cap
+
+let spot_chunked_mark_inner_loop_preserves_vertex_edge_targets_non_infix
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh'))
+  =
+  ChunkedMarkBoundedEdge.chunked_mark_inner_loop_preserves_vertex_edge_targets_non_infix
+    mh st cap fuel
+
 let spot_chunked_mark_bounded_preserves_vertex_edge_targets_non_infix
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -7709,6 +7749,45 @@ let spot_chunked_mark_step_bounded_preserves_no_black_to_white
   =
   ChunkedMarkBoundedNoBlack.chunked_mark_step_bounded_preserves_no_black_to_white
     mh st cap
+
+let spot_chunked_mark_inner_loop_preserves_no_black_to_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh'))
+  =
+  ChunkedMarkBoundedNoBlack.chunked_mark_inner_loop_preserves_no_black_to_white
+    mh st cap fuel
+
+let spot_chunked_mark_bounded_preserves_no_black_to_white
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel))
+  =
+  ChunkedMarkBoundedNoBlack.chunked_mark_bounded_preserves_no_black_to_white
+    mh cap fuel
 
 let spot_chunked_mark_bounded_preserves_no_pointer_to_blue
   (mh: MH.major_heap)
@@ -7828,6 +7907,54 @@ let spot_chunked_major_reachable_from_roots_black_from_invariants
   =
   ChunkedMajorGCMarkLive.chunked_major_reachable_from_roots_black_from_invariants
     mh roots target
+
+let spot_chunked_major_reachable_from_roots_black_from_vertex_target_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCMarkLive.chunked_roots_black mh roots /\
+        ChunkedMajorGCMarkLive.chunked_no_gray_objects mh /\
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh target /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots target)
+      (ensures ChunkedSweepDefs.chunked_is_black mh target)
+  =
+  ChunkedMajorGCMarkLiveNoBlack.chunked_major_reachable_from_roots_black_from_vertex_target_invariants
+    mh roots target
+
+let spot_chunked_mark_bounded_reachable_black_from_vertex_no_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMarkBounded.chunked_count_non_black mh /\
+        ChunkedMajorGCMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh /\
+        (let mh_mark = ChunkedMarkBounded.chunked_mark_bounded mh cap fuel in
+         ChunkedMajorGCGraph.chunked_major_vertex mh_mark target /\
+         ChunkedMajorGCReach.chunked_major_reachable_from_roots
+           mh_mark roots target))
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target)
+  =
+  ChunkedMajorGCMarkLiveNoBlack.chunked_mark_bounded_reachable_black_from_vertex_no_black
+    mh roots cap fuel target
 
 let spot_chunked_major_reachable_preserved_by_live_subgraph
   (mh0 mh1: MH.major_heap)

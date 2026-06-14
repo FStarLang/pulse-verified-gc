@@ -12,6 +12,7 @@ module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
+module BStackStep = GC.Spec.ChunkedMarkBounded.StackStep
 module BColor = GC.Spec.ChunkedMarkBounded.ColorInvariant
 module BMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module BTag = GC.Spec.ChunkedMarkBounded.TagInvariant
@@ -638,4 +639,90 @@ let chunked_mark_step_bounded_preserves_no_black_to_white
     (FStar.Classical.move_requires_2 edge_no_white);
   chunked_no_black_to_white_vertex_targets_intro
     (fst (BDefs.chunked_mark_step_bounded mh st cap))
+#pop-options
+
+#push-options "--z3rlimit 10"
+let rec chunked_mark_inner_loop_preserves_no_black_to_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        BReady.chunked_bounded_stack_props mh st /\
+        chunked_no_black_to_white_vertex_targets mh /\
+        BEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_mark_inner_loop mh st cap fuel in
+         chunked_no_black_to_white_vertex_targets mh'))
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then begin
+    BDefs.chunked_mark_inner_loop_base mh st cap fuel;
+    assert (BDefs.chunked_mark_inner_loop mh st cap fuel == (mh, st))
+  end else begin
+    BDefs.chunked_mark_inner_loop_step mh st cap fuel;
+    BPres.chunked_mark_inner_loop_preservation_ready_step mh st cap fuel;
+    BPres.chunked_mark_step_bounded_preserves_well_formed mh st cap;
+    BStackStep.chunked_mark_step_bounded_preserves_bounded_stack_props
+      mh st cap;
+    BEdge.chunked_mark_step_bounded_preserves_vertex_edge_targets_non_infix
+      mh st cap;
+    chunked_mark_step_bounded_preserves_no_black_to_white mh st cap;
+    let (mh_step, st_step) = BDefs.chunked_mark_step_bounded mh st cap in
+    assert (fuel - 1 < fuel);
+    chunked_mark_inner_loop_preserves_no_black_to_white
+      mh_step st_step cap (fuel - 1);
+    assert (
+      BDefs.chunked_mark_inner_loop mh st cap fuel ==
+      BDefs.chunked_mark_inner_loop mh_step st_step cap (fuel - 1))
+  end
+#pop-options
+
+#push-options "--z3rlimit 10"
+let rec chunked_mark_bounded_preserves_no_black_to_white
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        chunked_no_black_to_white_vertex_targets mh /\
+        BEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        chunked_no_black_to_white_vertex_targets
+          (BDefs.chunked_mark_bounded mh cap fuel))
+      (decreases fuel)
+  =
+  if fuel = 0 then
+    BDefs.chunked_mark_bounded_base mh cap
+  else begin
+    BDefs.chunked_mark_bounded_step mh cap fuel;
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then
+      assert (BDefs.chunked_mark_bounded mh cap fuel == mh)
+    else begin
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      BPres.chunked_mark_bounded_preservation_ready_step mh cap fuel;
+      BReady.chunked_rescan_heap_bounded_stack_props mh cap;
+      chunked_mark_inner_loop_preserves_no_black_to_white
+        mh st cap inner_fuel;
+      BEdge.chunked_mark_inner_loop_preserves_vertex_edge_targets_non_infix
+        mh st cap inner_fuel;
+      BPres.chunked_mark_inner_loop_preserves_well_formed
+        mh st cap inner_fuel;
+      let (mh_inner, _) =
+        BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+      assert (fuel - 1 < fuel);
+      chunked_mark_bounded_preserves_no_black_to_white
+        mh_inner cap (fuel - 1);
+      assert (
+        BDefs.chunked_mark_bounded mh cap fuel ==
+        BDefs.chunked_mark_bounded mh_inner cap (fuel - 1))
+    end
+  end
 #pop-options

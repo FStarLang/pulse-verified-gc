@@ -75,3 +75,36 @@ val chunked_mark_step_bounded_preserves_no_black_to_white
       (ensures
         (let (mh', _) = BDefs.chunked_mark_step_bounded mh st cap in
          chunked_no_black_to_white_vertex_targets mh'))
+
+val chunked_mark_inner_loop_preserves_no_black_to_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        BReady.chunked_bounded_stack_props mh st /\
+        chunked_no_black_to_white_vertex_targets mh /\
+        GC.Spec.ChunkedMarkBounded.EdgeInvariant.chunked_vertex_edge_targets_non_infix
+          mh)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_mark_inner_loop mh st cap fuel in
+         chunked_no_black_to_white_vertex_targets mh'))
+
+val chunked_mark_bounded_preserves_no_black_to_white
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        chunked_no_black_to_white_vertex_targets mh /\
+        GC.Spec.ChunkedMarkBounded.EdgeInvariant.chunked_vertex_edge_targets_non_infix
+          mh)
+      (ensures
+        chunked_no_black_to_white_vertex_targets
+          (BDefs.chunked_mark_bounded mh cap fuel))
