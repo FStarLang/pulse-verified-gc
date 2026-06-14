@@ -126,6 +126,27 @@ val chunked_set_object_color_preserves_wosize_of_object
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
           mh target)
 
+val chunked_set_object_color_preserves_get_field
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+              mh target))
+      (ensures
+        GC.Spec.ChunkedMark.Defs.chunked_get_field
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
+            mh obj color)
+          target i ==
+        GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
+
 val chunked_set_object_color_member_sets_color
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -166,6 +187,25 @@ val chunked_make_gray_preserves_wosize_of_object
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
           mh target)
 
+val chunked_make_gray_preserves_get_field
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+              mh target))
+      (ensures
+        GC.Spec.ChunkedMark.Defs.chunked_get_field
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj)
+          target i ==
+        GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
+
 val chunked_make_black_makes_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -190,6 +230,25 @@ val chunked_make_black_preserves_wosize_of_object
           (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) target ==
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
           mh target)
+
+val chunked_make_black_preserves_get_field
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+              mh target))
+      (ensures
+        GC.Spec.ChunkedMark.Defs.chunked_get_field
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj)
+          target i ==
+        GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
 
 val chunked_set_object_color_preserves_other_black
   (mh: MH.major_heap)

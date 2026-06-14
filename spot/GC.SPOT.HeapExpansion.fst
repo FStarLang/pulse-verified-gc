@@ -3590,6 +3590,25 @@ let spot_chunked_set_object_color_preserves_wosize_of_object
   ChunkedMarkPres.chunked_set_object_color_preserves_wosize_of_object
     mh obj target color
 
+let spot_chunked_set_object_color_preserves_get_field
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        ChunkedMarkDefs.chunked_get_field
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) target i ==
+        ChunkedMarkDefs.chunked_get_field mh target i)
+  =
+  ChunkedMarkPres.chunked_set_object_color_preserves_get_field
+    mh obj target color i
+
 let spot_chunked_set_object_color_member_sets_color
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -3635,6 +3654,24 @@ let spot_chunked_make_gray_preserves_wosize_of_object
   ChunkedMarkPres.chunked_make_gray_preserves_wosize_of_object
     mh obj target
 
+let spot_chunked_make_gray_preserves_get_field
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        ChunkedMarkDefs.chunked_get_field
+          (ChunkedMarkDefs.chunked_make_gray mh obj) target i ==
+        ChunkedMarkDefs.chunked_get_field mh target i)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_get_field
+    mh obj target i
+
 let spot_chunked_make_black_makes_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -3663,6 +3700,24 @@ let spot_chunked_make_black_preserves_wosize_of_object
   =
   ChunkedMarkPres.chunked_make_black_preserves_wosize_of_object
     mh obj target
+
+let spot_chunked_make_black_preserves_get_field
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        ChunkedMarkDefs.chunked_get_field
+          (ChunkedMarkDefs.chunked_make_black mh obj) target i ==
+        ChunkedMarkDefs.chunked_get_field mh target i)
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_get_field
+    mh obj target i
 
 let spot_chunked_set_object_color_preserves_other_black
   (mh: MH.major_heap)
@@ -4976,6 +5031,32 @@ let spot_chunked_push_children_bounded_preserves_wosize_of_object
   ChunkedMarkBoundedMetadata.chunked_push_children_bounded_preserves_wosize_of_object
     mh st obj i ws cap target
 
+let spot_chunked_push_children_bounded_preserves_get_field
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  (j: U64.t{U64.v j >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v j <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         ChunkedMarkDefs.chunked_get_field mh' target j ==
+         ChunkedMarkDefs.chunked_get_field mh target j))
+  =
+  ChunkedMarkBoundedMetadata.chunked_push_children_bounded_preserves_get_field
+    mh st obj i ws cap target j
+
 let spot_chunked_mark_step_bounded_preserves_wosize_of_object
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -4996,6 +5077,29 @@ let spot_chunked_mark_step_bounded_preserves_wosize_of_object
   =
   ChunkedMarkBoundedMetadata.chunked_mark_step_bounded_preserves_wosize_of_object
     mh st cap target
+
+let spot_chunked_mark_step_bounded_preserves_get_field
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  (j: U64.t{U64.v j >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v j <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedMarkDefs.chunked_get_field mh' target j ==
+         ChunkedMarkDefs.chunked_get_field mh target j))
+  =
+  ChunkedMarkBoundedMetadata.chunked_mark_step_bounded_preserves_get_field
+    mh st cap target j
 
 let spot_chunked_mark_inner_loop_preserves_wosize_of_object
   (mh: MH.major_heap)
@@ -5019,6 +5123,30 @@ let spot_chunked_mark_inner_loop_preserves_wosize_of_object
   ChunkedMarkBoundedMetadata.chunked_mark_inner_loop_preserves_wosize_of_object
     mh st cap fuel target
 
+let spot_chunked_mark_inner_loop_preserves_get_field
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  (j: U64.t{U64.v j >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v j <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ChunkedMarkDefs.chunked_get_field mh' target j ==
+         ChunkedMarkDefs.chunked_get_field mh target j))
+  =
+  ChunkedMarkBoundedMetadata.chunked_mark_inner_loop_preserves_get_field
+    mh st cap fuel target j
+
 let spot_chunked_mark_bounded_preserves_wosize_of_object
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -5037,6 +5165,27 @@ let spot_chunked_mark_bounded_preserves_wosize_of_object
   =
   ChunkedMarkBoundedMetadata.chunked_mark_bounded_preserves_wosize_of_object
     mh cap fuel target
+
+let spot_chunked_mark_bounded_preserves_get_field
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  (j: U64.t{U64.v j >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v j <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        ChunkedMarkDefs.chunked_get_field
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target j ==
+        ChunkedMarkDefs.chunked_get_field mh target j)
+  =
+  ChunkedMarkBoundedMetadata.chunked_mark_bounded_preserves_get_field
+    mh cap fuel target j
 
 let spot_chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)

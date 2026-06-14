@@ -286,6 +286,8 @@ Follow-up checkpoint: split the first bounded-mark metadata lift into `GC.Spec.C
 
 Follow-up checkpoint: lifted bounded-mark wosize preservation through the recursive loops. `GC.Spec.ChunkedMarkBounded.Metadata` now proves both `chunked_mark_inner_loop_preserves_wosize_of_object` and `chunked_mark_bounded_preserves_wosize_of_object`, sequencing the one-step metadata theorem with bounded-stack-shape and preservation-readiness transfer. This completes the wosize half of mark-phase metadata stability for selected active objects under the existing bounded-mark readiness predicates. `GC.SPOT.HeapExpansion` audits the new public wrappers, the refreshed split-query profile for the metadata module is about one second, and broad mark-and-sweep spec plus SPOT verification pass.
 
+Follow-up checkpoint: completed the field-data half of bounded-mark metadata stability. `GC.Spec.ChunkedMark.Preservation` now exposes color-write/gray/black `chunked_get_field` framing for active objects and payload slots, backed by a local payload-slot-vs-header separation proof over chunked object membership. `GC.Spec.ChunkedMarkBounded.Metadata` lifts that through bounded child pushing, one bounded mark step, the inner drain loop, and full `chunked_mark_bounded`. `GC.SPOT.HeapExpansion` audits the new public wrappers. Refreshed split-query profiles keep both changed proof modules around one second, and broad mark-and-sweep spec plus SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
