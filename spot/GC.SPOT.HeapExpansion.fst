@@ -4309,6 +4309,27 @@ let spot_chunked_push_children_bounded_preserves_well_formed
   ChunkedMarkBoundedPres.chunked_push_children_bounded_preserves_well_formed
     mh st obj i ws cap
 
+let spot_chunked_push_children_bounded_preserves_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        ChunkedSweepDefs.chunked_is_black mh target)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         ChunkedSweepDefs.chunked_is_black mh' target))
+  =
+  ChunkedMarkBoundedPres.chunked_push_children_bounded_preserves_black
+    mh st obj target i ws cap
+
 let spot_chunked_mark_step_bounded_preserves_major_objects
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -4342,6 +4363,42 @@ let spot_chunked_mark_step_bounded_preserves_well_formed
   =
   ChunkedMarkBoundedPres.chunked_mark_step_bounded_preserves_well_formed
     mh st cap
+
+let spot_chunked_mark_step_bounded_marks_head_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedSweepDefs.chunked_is_black mh' (Seq.head st)))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_step_bounded_marks_head_black mh st cap
+
+let spot_chunked_mark_step_bounded_preserves_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedSweepDefs.chunked_is_black mh target)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedSweepDefs.chunked_is_black mh' target))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_step_bounded_preserves_black
+    mh st cap target
 
 let spot_chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)
@@ -4379,6 +4436,26 @@ let spot_chunked_mark_inner_loop_preserves_well_formed
   ChunkedMarkBoundedPres.chunked_mark_inner_loop_preserves_well_formed
     mh st cap fuel
 
+let spot_chunked_mark_inner_loop_preserves_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedSweepDefs.chunked_is_black mh target)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ChunkedSweepDefs.chunked_is_black mh' target))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_inner_loop_preserves_black
+    mh st cap fuel target
+
 let spot_chunked_mark_bounded_preserves_major_objects
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -4411,6 +4488,24 @@ let spot_chunked_mark_bounded_preserves_well_formed
   =
   ChunkedMarkBoundedPres.chunked_mark_bounded_preserves_well_formed
     mh cap fuel
+
+let spot_chunked_mark_bounded_preserves_black
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        ChunkedSweepDefs.chunked_is_black mh target)
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target)
+  =
+  ChunkedMarkBoundedPres.chunked_mark_bounded_preserves_black
+    mh cap fuel target
 
 let spot_chunked_bounded_is_gray_single_chunk_compat
   (g: heap)
