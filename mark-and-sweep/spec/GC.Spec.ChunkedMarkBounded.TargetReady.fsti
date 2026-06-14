@@ -30,6 +30,19 @@ val chunked_count_non_black_has_nonblack
       (ensures
         BDefs.chunked_count_non_black mh > 0)
 
+val chunked_count_non_black_in_bound
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        BDefs.chunked_count_non_black_in mh objs <= Seq.length objs)
+
+val chunked_count_non_black_bound
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        BDefs.chunked_count_non_black mh <= Seq.length (MH.major_objects mh))
+
 val chunked_push_children_bounded_preserves_stack_member
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)

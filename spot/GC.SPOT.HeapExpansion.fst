@@ -4644,6 +4644,25 @@ let spot_chunked_mark_bounded_ready_from_later_rescan
   ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready_from_later_rescan
     mh cap fuel target
 
+let spot_chunked_count_non_black_in_bound
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black_in mh objs <=
+        Seq.length objs)
+  =
+  ChunkedMarkBoundedReady.chunked_count_non_black_in_bound mh objs
+
+let spot_chunked_count_non_black_bound
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black mh <=
+        Seq.length (MH.major_objects mh))
+  =
+  ChunkedMarkBoundedReady.chunked_count_non_black_bound mh
+
 let spot_chunked_push_children_bounded_preserves_stack_member
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)

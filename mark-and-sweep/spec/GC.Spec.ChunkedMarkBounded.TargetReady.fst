@@ -49,6 +49,30 @@ let chunked_count_non_black_has_nonblack
   chunked_count_non_black_in_has_nonblack
     mh target (MH.major_objects mh)
 
+let rec chunked_count_non_black_in_bound
+    (mh: MH.major_heap)
+    (objs: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        BDefs.chunked_count_non_black_in mh objs <= Seq.length objs)
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    BDefs.chunked_count_non_black_in_empty mh objs
+  else begin
+    BDefs.chunked_count_non_black_in_step mh objs;
+    chunked_count_non_black_in_bound mh (Seq.tail objs)
+  end
+
+let chunked_count_non_black_bound
+    (mh: MH.major_heap)
+  : Lemma
+      (ensures
+        BDefs.chunked_count_non_black mh <= Seq.length (MH.major_objects mh))
+  =
+  BDefs.chunked_count_non_black_equation mh;
+  chunked_count_non_black_in_bound mh (MH.major_objects mh)
+
 let rec chunked_push_children_bounded_preserves_stack_member
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)

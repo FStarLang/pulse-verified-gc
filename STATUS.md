@@ -252,6 +252,8 @@ Follow-up checkpoint: added the first stack-membership and rescan-membership fac
 
 Follow-up checkpoint: exposed the next target-ready constructors without unfolding the abstract predicates in downstream modules. `GC.Spec.ChunkedMarkBounded.Preservation` now has public lemmas that fold the inner-loop readiness predicate for a target that is not the current head but is ready after the next bounded step, and fold the outer bounded-readiness predicate for a target that becomes ready in a later rescan after the current inner loop does not pop it. These small constructors are SPOT-audited, the refreshed preservation profile remains about one second, and broad mark-and-sweep spec plus SPOT verification pass. This gives the upcoming eventual-pop proof explicit induction steps instead of forcing clients to depend on the private predicate definitions.
 
+Follow-up checkpoint: added cheap non-black count bounds in `GC.Spec.ChunkedMarkBounded.TargetReady`. The split helper now proves `chunked_count_non_black_in mh objs <= Seq.length objs` and the top-level bound over `MH.major_objects`; SPOT audits both. This is a small prerequisite for fuel/count arguments in the eventual-pop proof, and the refreshed split-query profile remains about one second with broad mark-and-sweep spec plus SPOT verification passing.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
