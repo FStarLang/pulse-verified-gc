@@ -678,3 +678,53 @@ let chunked_mark_step_bounded_preserves_stack_reachable_from_roots
         mh_black roots st_tail obj 1UL ws cap
     end
   end
+
+[@@"opaque_to_smt"]
+let rec chunked_mark_inner_loop_reachability_ready
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Tot prop
+    (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then True
+  else
+    chunked_mark_step_bounded_reachability_ready mh st cap /\
+    (let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+     chunked_mark_inner_loop_reachability_ready mh' st' cap (fuel - 1))
+
+let rec chunked_mark_inner_loop_preserves_stack_reachable_from_roots
+    (mh: MH.major_heap)
+    (roots: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        chunked_mark_inner_loop_reachability_ready mh st cap fuel /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        (let (mh', st') =
+          BDefs.chunked_mark_inner_loop mh st cap fuel in
+         chunked_stack_reachable_from_roots mh' roots st'))
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then
+    BDefs.chunked_mark_inner_loop_base mh st cap fuel
+  else begin
+    assert (fuel > 0);
+    assert (Seq.length st > 0);
+    reveal_opaque (`%chunked_mark_inner_loop_reachability_ready)
+      (chunked_mark_inner_loop_reachability_ready mh st cap fuel);
+    BDefs.chunked_mark_inner_loop_step mh st cap fuel;
+    BPres.chunked_mark_inner_loop_preservation_ready_step mh st cap fuel;
+    let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+    chunked_mark_step_bounded_preserves_stack_reachable_from_roots
+      mh roots st cap;
+    BPres.chunked_mark_step_bounded_preserves_well_formed mh st cap;
+    chunked_mark_inner_loop_preserves_stack_reachable_from_roots
+      mh' roots st' cap (fuel - 1)
+  end

@@ -306,3 +306,27 @@ val chunked_mark_step_bounded_preserves_stack_reachable_from_roots
         (let (mh', st') =
           BDefs.chunked_mark_step_bounded mh st cap in
          chunked_stack_reachable_from_roots mh' roots st'))
+
+val chunked_mark_inner_loop_reachability_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : GTot prop
+
+val chunked_mark_inner_loop_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        chunked_mark_inner_loop_reachability_ready mh st cap fuel /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        (let (mh', st') =
+          BDefs.chunked_mark_inner_loop mh st cap fuel in
+         chunked_stack_reachable_from_roots mh' roots st'))

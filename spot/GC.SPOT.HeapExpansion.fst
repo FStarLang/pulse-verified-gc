@@ -7303,6 +7303,30 @@ let spot_chunked_mark_step_bounded_preserves_stack_reachable_from_roots
   ChunkedMajorGCMarkReach.chunked_mark_step_bounded_preserves_stack_reachable_from_roots
     mh roots st cap
 
+let spot_chunked_mark_inner_loop_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMajorGCMarkReach.chunked_mark_inner_loop_reachability_ready
+          mh st cap fuel /\
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots st)
+      (ensures
+        (let (mh', st') =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap fuel in
+         ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+           mh' roots st'))
+  =
+  ChunkedMajorGCMarkReach.chunked_mark_inner_loop_preserves_stack_reachable_from_roots
+    mh roots st cap fuel
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
