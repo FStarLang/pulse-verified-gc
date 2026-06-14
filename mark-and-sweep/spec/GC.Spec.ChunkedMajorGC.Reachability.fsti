@@ -86,3 +86,15 @@ val chunked_gray_black_reachable_init
            SweepDefs.chunked_is_black mh x) ==>
           Seq.mem x roots))
       (ensures chunked_gray_black_reachable mh roots)
+
+val chunked_gray_black_reachable_elim
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        chunked_gray_black_reachable mh roots /\
+        ChunkedMajorGraph.chunked_major_vertex mh x /\
+        (BDefs.chunked_is_gray mh x \/
+         SweepDefs.chunked_is_black mh x))
+      (ensures chunked_major_reachable_from_roots mh roots x)
