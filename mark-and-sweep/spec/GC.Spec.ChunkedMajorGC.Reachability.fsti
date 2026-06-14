@@ -49,6 +49,14 @@ val chunked_major_reachable_from_roots
   (x: obj_addr)
   : prop
 
+val chunked_major_reachable_from_roots_vertex
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires chunked_major_reachable_from_roots mh roots x)
+      (ensures ChunkedMajorGraph.chunked_major_vertex mh x)
+
 val chunked_major_root_reachable
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -68,6 +76,19 @@ val chunked_major_reachable_from_roots_extend_edge
         chunked_major_reachable_from_roots mh roots x /\
         ChunkedMajorGraph.chunked_major_vertex mh y /\
         ChunkedMajorGraph.chunked_major_edge mh x y)
+      (ensures chunked_major_reachable_from_roots mh roots y)
+
+val chunked_major_reachable_from_roots_field
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  (i: FStar.UInt64.t{FStar.UInt64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires
+        chunked_major_reachable_from_roots mh roots x /\
+        ChunkedMajorGraph.chunked_major_vertex mh y /\
+        ChunkedMajorGraph.chunked_major_field_points_to mh x i y)
       (ensures chunked_major_reachable_from_roots mh roots y)
 
 val chunked_gray_black_reachable

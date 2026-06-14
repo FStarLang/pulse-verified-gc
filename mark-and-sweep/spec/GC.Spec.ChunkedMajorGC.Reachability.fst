@@ -156,6 +156,15 @@ let chunked_major_reachable_from_roots
     Seq.mem root roots /\
     chunked_major_reachable mh root x
 
+let chunked_major_reachable_from_roots_vertex
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires chunked_major_reachable_from_roots mh roots x)
+      (ensures ChunkedMajorGraph.chunked_major_vertex mh x)
+  = ()
+
 let chunked_major_root_reachable
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -201,6 +210,22 @@ let chunked_major_reachable_from_roots_extend_edge
           Seq.mem root' roots /\
           chunked_major_reachable mh root' y)
         root)
+
+let chunked_major_reachable_from_roots_field
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  (i: FStar.UInt64.t{FStar.UInt64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires
+        chunked_major_reachable_from_roots mh roots x /\
+        ChunkedMajorGraph.chunked_major_vertex mh y /\
+        ChunkedMajorGraph.chunked_major_field_points_to mh x i y)
+      (ensures chunked_major_reachable_from_roots mh roots y)
+  =
+  ChunkedMajorGraph.chunked_major_edge_intro mh x y i;
+  chunked_major_reachable_from_roots_extend_edge mh roots x y
 
 let chunked_gray_black_reachable
   (mh: MH.major_heap)

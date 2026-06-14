@@ -6831,6 +6831,18 @@ let spot_chunked_major_root_reachable
   =
   ChunkedMajorGCReach.chunked_major_root_reachable mh roots x
 
+let spot_chunked_major_reachable_from_roots_vertex
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots x)
+      (ensures ChunkedMajorGCGraph.chunked_major_vertex mh x)
+  =
+  ChunkedMajorGCReach.chunked_major_reachable_from_roots_vertex
+    mh roots x
+
 let spot_chunked_major_reachable_from_roots_extend_edge
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -6845,6 +6857,23 @@ let spot_chunked_major_reachable_from_roots_extend_edge
   =
   ChunkedMajorGCReach.chunked_major_reachable_from_roots_extend_edge
     mh roots x y
+
+let spot_chunked_major_reachable_from_roots_field
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots x /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh y /\
+        ChunkedMajorGCGraph.chunked_major_field_points_to mh x i y)
+      (ensures
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots y)
+  =
+  ChunkedMajorGCReach.chunked_major_reachable_from_roots_field
+    mh roots x i y
 
 let spot_chunked_gray_black_reachable_init
   (mh: MH.major_heap)
@@ -6987,6 +7016,36 @@ let spot_chunked_rescan_heap_stack_reachable_from_gray_black
   ChunkedMajorGCMarkReach.chunked_rescan_heap_stack_reachable_from_gray_black
     mh roots cap
 
+let spot_chunked_resolved_pointer_field_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots obj /\
+        U64.v i <=
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         ChunkedMarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+           ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child =
+           ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+          child == child_raw /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh child)))
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         let child_raw =
+           ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         let child =
+           ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+         ChunkedMajorGCReach.chunked_major_reachable_from_roots
+           mh roots child))
+  =
+  ChunkedMajorGCMarkReach.chunked_resolved_pointer_field_reachable_from_roots
+    mh roots obj i
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
@@ -7018,6 +7077,35 @@ let spot_chunked_major_vertex_from_chunk
       (ensures ChunkedMajorGCGraph.chunked_major_vertex mh x)
   =
   ChunkedMajorGCGraph.chunked_major_vertex_from_chunk mh idx x
+
+let spot_chunked_major_field_points_to_intro
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_vertex mh x /\
+        U64.v i <=
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh x) /\
+        (let v = ChunkedMarkDefs.chunked_get_field mh x i in
+         ChunkedMarkDefs.chunked_is_pointer_field mh v /\
+         ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v == y))
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_field_points_to mh x i y)
+  =
+  ChunkedMajorGCGraph.chunked_major_field_points_to_intro mh x i y
+
+let spot_chunked_major_edge_intro
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_field_points_to mh x i y)
+      (ensures ChunkedMajorGCGraph.chunked_major_edge mh x y)
+  =
+  ChunkedMajorGCGraph.chunked_major_edge_intro mh x y i
 
 let spot_chunked_major_field_preserved_intro
   (mh_init: MH.major_heap)

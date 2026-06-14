@@ -161,3 +161,32 @@ let chunked_rescan_heap_stack_reachable_from_gray_black
   BReady.chunked_rescan_heap_stack_gray mh cap;
   chunked_stack_reachable_from_gray_black
     mh roots (BDefs.chunked_rescan_heap mh Seq.empty cap)
+
+let chunked_resolved_pointer_field_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        Reach.chunked_major_reachable_from_roots mh roots obj /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj) /\
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         MarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child = MarkDefs.chunked_resolve_object mh child_raw in
+          child == child_raw /\
+          ChunkedMajorGraph.chunked_major_vertex mh child)))
+      (ensures
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         let child = MarkDefs.chunked_resolve_object mh child_raw in
+         Reach.chunked_major_reachable_from_roots mh roots child))
+  =
+  Reach.chunked_major_reachable_from_roots_vertex mh roots obj;
+  let v = MarkDefs.chunked_get_field mh obj i in
+  let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+  let child = MarkDefs.chunked_resolve_object mh child_raw in
+  assert (child == child_raw);
+  ChunkedMajorGraph.chunked_major_field_points_to_intro mh obj i child;
+  Reach.chunked_major_reachable_from_roots_field mh roots obj i child

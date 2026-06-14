@@ -1,13 +1,16 @@
 module GC.Spec.ChunkedMajorGC.MarkReachability
 
 module Seq = FStar.Seq
+module U64 = FStar.UInt64
 
 open GC.Spec.Base
 
 module MH = GC.Spec.MajorHeap
+module MarkDefs = GC.Spec.ChunkedMark.Defs
 module MarkPres = GC.Spec.ChunkedMark.Preservation
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
+module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module Reach = GC.Spec.ChunkedMajorGC.Reachability
 
 val chunked_stack_reachable_from_roots
@@ -94,3 +97,26 @@ val chunked_rescan_heap_stack_reachable_from_gray_black
       (ensures
         chunked_stack_reachable_from_roots mh roots
           (BDefs.chunked_rescan_heap mh Seq.empty cap))
+
+val chunked_resolved_pointer_field_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        Reach.chunked_major_reachable_from_roots mh roots obj /\
+        U64.v i <=
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+            mh obj) /\
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         MarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child = MarkDefs.chunked_resolve_object mh child_raw in
+          child == child_raw /\
+          ChunkedMajorGraph.chunked_major_vertex mh child)))
+      (ensures
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         let child = MarkDefs.chunked_resolve_object mh child_raw in
+         Reach.chunked_major_reachable_from_roots mh roots child))

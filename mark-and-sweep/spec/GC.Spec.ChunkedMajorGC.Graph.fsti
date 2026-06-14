@@ -61,6 +61,28 @@ val chunked_major_edge
   (y: obj_addr)
   : prop
 
+val chunked_major_field_points_to_intro
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (y: obj_addr)
+  : Lemma
+      (requires
+        chunked_major_vertex mh x /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh x) /\
+        (let v = MarkDefs.chunked_get_field mh x i in
+         MarkDefs.chunked_is_pointer_field mh v /\
+         MarkDefs.chunked_pointer_field_as_obj_addr mh v == y))
+      (ensures chunked_major_field_points_to mh x i y)
+
+val chunked_major_edge_intro
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires chunked_major_field_points_to mh x i y)
+      (ensures chunked_major_edge mh x y)
+
 val chunked_major_pointer_classification_preserved
   (mh_init: MH.major_heap)
   (mh_final: MH.major_heap)
