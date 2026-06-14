@@ -9,6 +9,38 @@ open GC.Spec.Heap
 module MH = GC.Spec.MajorHeap
 module Obj = GC.Spec.Object
 
+val chunked_fused_sweep_coalesce_prefix_live_field_data_preserved
+  (source: MH.major_heap)
+  (idx: nat)
+  (fp: U64.t)
+  (target: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap source /\
+        idx < Seq.length source /\
+        Seq.mem target (MH.objects_in_chunk (Seq.index source idx)) /\
+        (forall (j: nat). j < idx ==>
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index source j)) ==>
+          U64.v (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                  source o) ==
+          MH.object_wosize_in_chunk (Seq.index source j) o) /\
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header
+          source target == Some hdr /\
+        U64.v (Obj.getWosize hdr) ==
+          MH.object_wosize_in_chunk (Seq.index source idx) target)
+      (ensures
+        (let work =
+           fst (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_fused_sweep_coalesce_chunks
+             (Seq.slice source 0 idx) source source fp) in
+         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_read_header
+           work target == Some hdr /\
+         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+           work target == Obj.getWosize hdr /\
+         GC.Spec.ChunkedMajorGC.Graph.chunked_major_field_data_preserved
+           source work target))
+
 val chunked_fused_sweep_coalesce_target_suffix_live_field_preserved
   (source: MH.major_heap)
   (idx: nat)

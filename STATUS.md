@@ -212,6 +212,8 @@ Follow-up checkpoint: added `GC.Spec.ChunkedSweepCoalesce.LiveRange`, the first 
 
 Follow-up checkpoint: generalized the one-chunk live target support lemmas in `LivePreservation` so the target chunk can be processed from a prefix-mutated `work` heap instead of only from `source`. The new work-state wosize and vertex wrappers are SPOT-audited and profile in about one second; they are the next building block for composing prefix traversal, target-chunk traversal, and suffix traversal into a full all-chunks live-field theorem.
 
+Follow-up checkpoint: added the prefix half of that composition in `LiveRange`. `chunked_fused_sweep_coalesce_prefix_live_field_data_preserved` proves that processing all chunks before a protected live target preserves the target header/wosize and payload field data, producing the exact `chunked_major_field_data_preserved source work target` fact needed before processing the target chunk itself. The proof uses `SequencePreservation` for raw header/field reads and `VertexRange` for target chunk membership/wosize, profiles in about one second with refreshed split queries, and is SPOT-audited.
+
 ## Strategy for acquiring new heap chunks
 
 The verified code should not call `malloc` directly. The C runtime bridge acquires raw memory, page-rounds it, registers it with OCaml's page table, and checks the facts required by the verified model: base alignment, size, no overflow, virtual address bounds, disjointness from active major chunks, and disjointness from the minor range.
