@@ -23,6 +23,37 @@ val same_chunk_ranges_trans
       (requires same_chunk_ranges mh0 mh1 /\ same_chunk_ranges mh1 mh2)
       (ensures same_chunk_ranges mh0 mh2)
 
+val same_chunk_ranges_length
+  (before after: MH.major_heap)
+  : Lemma
+      (requires same_chunk_ranges before after)
+      (ensures Seq.length before == Seq.length after)
+
+val same_chunk_ranges_index
+  (before after: MH.major_heap)
+  (idx: nat)
+  : Lemma
+      (requires same_chunk_ranges before after /\ idx < Seq.length before)
+      (ensures
+        idx < Seq.length after /\
+        MH.chunk_start (Seq.index after idx) ==
+        MH.chunk_start (Seq.index before idx) /\
+        MH.chunk_end (Seq.index after idx) ==
+        MH.chunk_end (Seq.index before idx))
+
+val same_chunk_ranges_word_in_chunk
+  (before after: MH.major_heap)
+  (idx: nat)
+  (addr: hp_addr)
+  : Lemma
+      (requires
+        same_chunk_ranges before after /\
+        idx < Seq.length before /\
+        MH.word_in_chunk (Seq.index before idx) addr)
+      (ensures
+        idx < Seq.length after /\
+        MH.word_in_chunk (Seq.index after idx) addr)
+
 val same_chunk_ranges_preserves_is_major_pointer
   (mh0 mh1: MH.major_heap)
   (v: U64.t)

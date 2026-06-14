@@ -49,6 +49,41 @@ let same_chunk_ranges_trans
   in
   FStar.Classical.forall_intro ranges
 
+let same_chunk_ranges_length
+    (before after: MH.major_heap)
+  : Lemma
+      (requires same_chunk_ranges before after)
+      (ensures Seq.length before == Seq.length after)
+  = ()
+
+let same_chunk_ranges_index
+    (before after: MH.major_heap)
+    (idx: nat)
+  : Lemma
+      (requires same_chunk_ranges before after /\ idx < Seq.length before)
+      (ensures
+        idx < Seq.length after /\
+        MH.chunk_start (Seq.index after idx) ==
+        MH.chunk_start (Seq.index before idx) /\
+        MH.chunk_end (Seq.index after idx) ==
+        MH.chunk_end (Seq.index before idx))
+  = ()
+
+let same_chunk_ranges_word_in_chunk
+    (before after: MH.major_heap)
+    (idx: nat)
+    (addr: hp_addr)
+  : Lemma
+      (requires
+        same_chunk_ranges before after /\
+        idx < Seq.length before /\
+        MH.word_in_chunk (Seq.index before idx) addr)
+      (ensures
+        idx < Seq.length after /\
+        MH.word_in_chunk (Seq.index after idx) addr)
+  =
+  same_chunk_ranges_index before after idx
+
 let pointer_in_chunk_same_range
     (c0 c1: MH.heap_chunk)
     (v: U64.t)

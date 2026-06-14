@@ -1138,6 +1138,45 @@ let spot_same_chunk_ranges_trans
   =
   ChunkedSweepRange.same_chunk_ranges_trans mh0 mh1 mh2
 
+let spot_same_chunk_ranges_length
+  (before after: MH.major_heap)
+  : Lemma
+      (requires ChunkedSweepRange.same_chunk_ranges before after)
+      (ensures Seq.length before == Seq.length after)
+  =
+  ChunkedSweepRange.same_chunk_ranges_length before after
+
+let spot_same_chunk_ranges_index
+  (before after: MH.major_heap)
+  (idx: nat)
+  : Lemma
+      (requires
+        ChunkedSweepRange.same_chunk_ranges before after /\
+        idx < Seq.length before)
+      (ensures
+        idx < Seq.length after /\
+        MH.chunk_start (Seq.index after idx) ==
+        MH.chunk_start (Seq.index before idx) /\
+        MH.chunk_end (Seq.index after idx) ==
+        MH.chunk_end (Seq.index before idx))
+  =
+  ChunkedSweepRange.same_chunk_ranges_index before after idx
+
+let spot_same_chunk_ranges_word_in_chunk
+  (before after: MH.major_heap)
+  (idx: nat)
+  (addr: hp_addr)
+  : Lemma
+      (requires
+        ChunkedSweepRange.same_chunk_ranges before after /\
+        idx < Seq.length before /\
+        MH.word_in_chunk (Seq.index before idx) addr)
+      (ensures
+        idx < Seq.length after /\
+        MH.word_in_chunk (Seq.index after idx) addr)
+  =
+  ChunkedSweepRange.same_chunk_ranges_word_in_chunk before after idx addr
+
 let spot_chunked_fused_aux_preserves_ranges
   (source work: MH.major_heap)
   (objs: Seq.seq obj_addr)
