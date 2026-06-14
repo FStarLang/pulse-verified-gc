@@ -3699,6 +3699,26 @@ let spot_chunked_stack_objects_in_major_tail
   =
   ChunkedMarkPres.stack_objects_in_major_tail mh st
 
+let spot_chunked_stack_objects_in_major_empty
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures ChunkedMarkPres.stack_objects_in_major mh Seq.empty)
+  =
+  ChunkedMarkPres.stack_objects_in_major_empty mh
+
+let spot_chunked_stack_objects_in_major_cons
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedMarkPres.stack_objects_in_major mh st)
+      (ensures
+        ChunkedMarkPres.stack_objects_in_major mh (Seq.cons obj st))
+  =
+  ChunkedMarkPres.stack_objects_in_major_cons mh obj st
+
 let spot_chunked_mark_step_empty_preserves_major_objects
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -4761,6 +4781,41 @@ let spot_chunked_rescan_heap_stack_no_dups
           (ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap))
   =
   ChunkedMarkBoundedReady.chunked_rescan_heap_stack_no_dups mh cap
+
+let spot_chunked_rescan_heap_stack_objects_in_major
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        ChunkedMarkPres.stack_objects_in_major mh
+          (ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap))
+  =
+  ChunkedMarkBoundedReady.chunked_rescan_heap_stack_objects_in_major
+    mh cap
+
+let spot_chunked_rescan_heap_bounded_stack_props
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh
+          (ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap))
+  =
+  ChunkedMarkBoundedReady.chunked_rescan_heap_bounded_stack_props
+    mh cap
+
+let spot_chunked_bounded_stack_head
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st)
+      (ensures
+        Seq.mem (Seq.head st) (MH.major_objects mh) /\
+        ChunkedMarkBounded.chunked_is_gray mh (Seq.head st))
+  =
+  ChunkedMarkBoundedReady.chunked_bounded_stack_head mh st
 
 let spot_chunked_bounded_is_gray_single_chunk_compat
   (g: heap)

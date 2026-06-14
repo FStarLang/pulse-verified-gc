@@ -33,6 +33,21 @@ val stack_objects_in_major_tail
         stack_objects_in_major mh st)
       (ensures stack_objects_in_major mh (Seq.tail st))
 
+val stack_objects_in_major_empty
+  (mh: MH.major_heap)
+  : Lemma
+      (ensures stack_objects_in_major mh Seq.empty)
+
+val stack_objects_in_major_cons
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.mem obj (MH.major_objects mh) /\
+        stack_objects_in_major mh st)
+      (ensures stack_objects_in_major mh (Seq.cons obj st))
+
 val stack_objects_in_major_preserved_by_major_objects
   (mh mh': MH.major_heap)
   (st: Seq.seq obj_addr)

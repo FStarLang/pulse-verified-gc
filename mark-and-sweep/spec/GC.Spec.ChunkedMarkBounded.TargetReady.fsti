@@ -103,6 +103,34 @@ val chunked_stack_points_to_gray_cons
       (ensures
         chunked_stack_points_to_gray mh (Seq.cons target st))
 
+val chunked_bounded_stack_props
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : GTot prop
+
+val chunked_bounded_stack_head
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        chunked_bounded_stack_props mh st)
+      (ensures
+        Seq.mem (Seq.head st) (MH.major_objects mh) /\
+        BDefs.chunked_is_gray mh (Seq.head st))
+
+val chunked_stack_objects_in_major_cons
+  (mh: MH.major_heap)
+  (target: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.mem target (MH.major_objects mh) /\
+        GC.Spec.ChunkedMark.Preservation.stack_objects_in_major mh st)
+      (ensures
+        GC.Spec.ChunkedMark.Preservation.stack_objects_in_major
+          mh (Seq.cons target st))
+
 val chunked_rescan_objects_preserves_stack_member
   (mh: MH.major_heap)
   (objs: Seq.seq obj_addr)
@@ -114,6 +142,20 @@ val chunked_rescan_objects_preserves_stack_member
       (ensures
         Seq.mem target
           (BDefs.chunked_rescan_objects mh objs st cap))
+
+val chunked_rescan_objects_preserves_stack_objects_in_major
+  (mh: MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        GC.Spec.ChunkedMark.Preservation.stack_objects_in_major mh st /\
+        (forall (obj: obj_addr).
+          Seq.mem obj objs ==> Seq.mem obj (MH.major_objects mh)))
+      (ensures
+        GC.Spec.ChunkedMark.Preservation.stack_objects_in_major
+          mh (BDefs.chunked_rescan_objects mh objs st cap))
 
 val chunked_rescan_objects_preserves_stack_gray
   (mh: MH.major_heap)
@@ -165,6 +207,14 @@ val chunked_rescan_heap_adds_gray_with_capacity
         Seq.mem target
           (BDefs.chunked_rescan_heap mh Seq.empty cap))
 
+val chunked_rescan_heap_stack_objects_in_major
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        GC.Spec.ChunkedMark.Preservation.stack_objects_in_major
+          mh (BDefs.chunked_rescan_heap mh Seq.empty cap))
+
 val chunked_rescan_heap_stack_no_dups
   (mh: MH.major_heap)
   (cap: nat)
@@ -179,6 +229,14 @@ val chunked_rescan_heap_stack_gray
   : Lemma
       (ensures
         chunked_stack_points_to_gray mh
+          (BDefs.chunked_rescan_heap mh Seq.empty cap))
+
+val chunked_rescan_heap_bounded_stack_props
+  (mh: MH.major_heap)
+  (cap: nat)
+  : Lemma
+      (ensures
+        chunked_bounded_stack_props mh
           (BDefs.chunked_rescan_heap mh Seq.empty cap))
 
 val chunked_mark_bounded_marks_rescan_head_ready

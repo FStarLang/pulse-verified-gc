@@ -258,6 +258,8 @@ Follow-up checkpoint: added the first chunked bounded-stack color predicate in t
 
 Follow-up checkpoint: added no-duplicate preservation for chunked bounded rescans. `GC.Spec.ChunkedMarkBounded.TargetReady` now reuses dense `GC.Spec.Mark.stack_no_dups` for chunked stacks and proves `chunked_rescan_objects_preserves_stack_no_dups` plus `chunked_rescan_heap_stack_no_dups`; the proof uses explicit `Seq.cons` head/tail normalization rather than higher rlimits. SPOT audits both contracts, the split helper profile stays around one second, and broad mark-and-sweep spec plus SPOT verification pass. This completes the rescan-produced stack-shape prerequisites (gray entries and no duplicates) needed before lifting bounded-step count decrease.
 
+Follow-up checkpoint: packaged the rescan-produced bounded stack shape. `GC.Spec.ChunkedMark.Preservation` now exposes `stack_objects_in_major_empty` and `stack_objects_in_major_cons`, keeping its abstract stack-membership predicate usable by clients. `GC.Spec.ChunkedMarkBounded.TargetReady` uses those constructors to prove rescan stacks contain only active major objects, then bundles active-object membership, grayness, and no-duplicates as `chunked_bounded_stack_props` with a head eliminator. SPOT audits the constructors and the bounded rescan-stack wrapper, refreshed profiles for both changed split modules stay around one second, and broad mark-and-sweep spec plus SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
