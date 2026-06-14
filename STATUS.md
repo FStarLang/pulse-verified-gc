@@ -280,6 +280,8 @@ Follow-up checkpoint: removed the explicit marked-header witness from the live-s
 
 Follow-up checkpoint: reduced the bounded-mark live-readiness side condition from initially gray live objects to initially gray-or-black live objects. `GC.Spec.ChunkedMarkBounded.StackReady.chunked_mark_bounded_marks_rescan_gray_or_black_member_ready` uses the existing black-target constructor for already-black objects and the rescan-member eventual-pop theorem for gray objects. `GC.Spec.ChunkedMajorGC.Correctness` now exposes header and no-header gray-or-black live-subgraph wrappers, and `GC.SPOT.HeapExpansion` audits both surfaces. Refreshed split-query profiling keeps `StackReady` around one second and `ChunkedMajorGC.Correctness` around 1.3 seconds.
 
+Follow-up checkpoint: started exposing mark-phase graph-stability support facts. `GC.Spec.ChunkedMark.Preservation` now proves that `chunked_set_object_color`, `chunked_make_gray`, and `chunked_make_black` preserve `chunked_wosize_of_object` for every active major object, using the small major-heap read-framing helper around the header write. These are the first public metadata-framing facts needed to lift live-subgraph preservation from the marked heap back through the chunked bounded mark phase. `GC.SPOT.HeapExpansion` audits the wrappers, and refreshed split-query profiling keeps the mark-preservation module around one second.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

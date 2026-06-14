@@ -110,6 +110,22 @@ val chunked_set_object_color_member_read_header
            Some (GC.Spec.Object.colorHeader hdr color)
          | None -> False))
 
+val chunked_set_object_color_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
+           mh obj color) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          mh target)
+
 val chunked_set_object_color_member_sets_color
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -136,6 +152,20 @@ val chunked_make_gray_makes_gray
           (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj) obj ==
         Some Header.Gray)
 
+val chunked_make_gray_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          mh target)
+
 val chunked_make_black_makes_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -146,6 +176,20 @@ val chunked_make_black_makes_black
       (ensures
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black
           (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) obj)
+
+val chunked_make_black_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+          mh target)
 
 val chunked_set_object_color_preserves_other_black
   (mh: MH.major_heap)

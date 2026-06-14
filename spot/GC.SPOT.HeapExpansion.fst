@@ -3572,6 +3572,23 @@ let spot_chunked_set_object_color_member_read_header
   =
   ChunkedMarkPres.chunked_set_object_color_member_read_header mh obj color
 
+let spot_chunked_set_object_color_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) target ==
+        ChunkedSweepDefs.chunked_wosize_of_object mh target)
+  =
+  ChunkedMarkPres.chunked_set_object_color_preserves_wosize_of_object
+    mh obj target color
+
 let spot_chunked_set_object_color_member_sets_color
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -3601,6 +3618,22 @@ let spot_chunked_make_gray_makes_gray
   =
   ChunkedMarkPres.chunked_make_gray_makes_gray mh obj
 
+let spot_chunked_make_gray_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedMarkDefs.chunked_make_gray mh obj) target ==
+        ChunkedSweepDefs.chunked_wosize_of_object mh target)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_wosize_of_object
+    mh obj target
+
 let spot_chunked_make_black_makes_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -3613,6 +3646,22 @@ let spot_chunked_make_black_makes_black
           (ChunkedMarkDefs.chunked_make_black mh obj) obj)
   =
   ChunkedMarkPres.chunked_make_black_makes_black mh obj
+
+let spot_chunked_make_black_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedMarkDefs.chunked_make_black mh obj) target ==
+        ChunkedSweepDefs.chunked_wosize_of_object mh target)
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_wosize_of_object
+    mh obj target
 
 let spot_chunked_set_object_color_preserves_other_black
   (mh: MH.major_heap)
