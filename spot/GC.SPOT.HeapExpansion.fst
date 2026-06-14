@@ -59,6 +59,7 @@ module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
 module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkBoundedPres = GC.Spec.ChunkedMarkBounded.Preservation
+module ChunkedMarkBoundedReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -4477,6 +4478,26 @@ let spot_chunked_mark_inner_loop_marks_target_black
   ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_black
     mh st cap fuel target
 
+let spot_chunked_mark_inner_loop_marks_head_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length st > 0 /\
+        target == Seq.head st /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_ready
+          mh st cap fuel target)
+  =
+  ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_head_ready
+    mh st cap fuel target
+
 let spot_chunked_mark_bounded_preserves_major_objects
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -4545,6 +4566,28 @@ let spot_chunked_mark_bounded_marks_target_black
           (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target)
   =
   ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_black
+    mh cap fuel target
+
+let spot_chunked_mark_bounded_rescan_head_ready
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        (let st =
+          ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap in
+         Seq.length st > 0 /\
+         target == Seq.head st /\
+         Seq.mem target (MH.major_objects mh)))
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel target)
+  =
+  ChunkedMarkBoundedReady.chunked_mark_bounded_marks_rescan_head_ready
     mh cap fuel target
 
 let spot_chunked_bounded_is_gray_single_chunk_compat

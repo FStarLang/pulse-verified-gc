@@ -192,6 +192,32 @@ val chunked_mark_inner_loop_marks_target_ready
   (target: obj_addr)
   : GTot prop
 
+val chunked_mark_inner_loop_marks_black_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black mh target)
+      (ensures
+        chunked_mark_inner_loop_marks_target_ready mh st cap fuel target)
+
+val chunked_mark_inner_loop_marks_head_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length st > 0 /\
+        target == Seq.head st /\
+        chunked_mark_inner_loop_preservation_ready mh st cap fuel)
+      (ensures
+        chunked_mark_inner_loop_marks_target_ready mh st cap fuel target)
+
 val chunked_mark_inner_loop_marks_target_black
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -263,6 +289,34 @@ val chunked_mark_bounded_marks_target_ready
   (fuel: nat)
   (target: obj_addr)
   : GTot prop
+
+val chunked_mark_bounded_marks_black_ready
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black mh target)
+      (ensures
+        chunked_mark_bounded_marks_target_ready mh cap fuel target)
+
+val chunked_mark_bounded_marks_rescan_head_ready_from_inner_fuel
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        chunked_mark_bounded_preservation_ready mh cap fuel /\
+        (let st =
+          GC.Spec.ChunkedMarkBounded.Defs.chunked_rescan_heap
+            mh Seq.empty cap in
+         Seq.length st > 0 /\
+         target == Seq.head st /\
+         GC.Spec.ChunkedMarkBounded.Defs.chunked_count_non_black mh > 0))
+      (ensures
+        chunked_mark_bounded_marks_target_ready mh cap fuel target)
 
 val chunked_mark_bounded_marks_target_black
   (mh: MH.major_heap)
