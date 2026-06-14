@@ -1,6 +1,7 @@
 module GC.Spec.ChunkedMajorGC.MarkReachability
 
 module Seq = FStar.Seq
+module U64 = FStar.UInt64
 
 open GC.Spec.Base
 
@@ -8,6 +9,7 @@ module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkPres = GC.Spec.ChunkedMark.Preservation
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
+module BPres = GC.Spec.ChunkedMarkBounded.Preservation
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
@@ -89,7 +91,7 @@ let chunked_stack_reachable_from_roots_cons
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
-#push-options "--z3rlimit 1 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 5 --fuel 2 --ifuel 1 --split_queries always"
 let chunked_gray_or_black_from_gray
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -217,6 +219,117 @@ let chunked_non_infix_pointer_field_reachable_from_roots
   MarkDefs.chunked_resolve_non_infix mh child_raw;
   chunked_resolved_pointer_field_reachable_from_roots mh roots obj i
 
+[@@"opaque_to_smt"]
+let rec chunked_push_children_bounded_reachability_ready
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+  : Tot prop
+    (decreases (U64.v ws - U64.v i))
+  =
+  if U64.v i > U64.v ws then True
+  else
+    let v = MarkDefs.chunked_get_field mh obj i in
+    let mh' =
+      if MarkDefs.chunked_is_pointer_field mh v then
+        let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+        let child = MarkDefs.chunked_resolve_object mh child_raw in
+        if SweepDefs.chunked_is_white mh child then
+          MarkDefs.chunked_make_gray mh child
+        else
+          mh
+      else
+        mh in
+    (if MarkDefs.chunked_is_pointer_field mh v then
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child = MarkDefs.chunked_resolve_object mh child_raw in
+      if SweepDefs.chunked_is_white mh child then
+        ~(SweepDefs.chunked_is_infix mh child_raw) /\
+        ChunkedMajorGraph.chunked_major_vertex mh child_raw
+      else
+        True
+     else
+      True) /\
+    (if U64.v i < U64.v ws then
+      chunked_push_children_bounded_reachability_ready
+        mh' obj (U64.add i 1UL) ws
+     else
+      True)
+
+#push-options "--z3rlimit 1 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_push_children_bounded_reachability_ready_child
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        chunked_push_children_bounded_reachability_ready mh obj i ws /\
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         MarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+            MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child = MarkDefs.chunked_resolve_object mh child_raw in
+          SweepDefs.chunked_is_white mh child)))
+      (ensures
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         let child_raw =
+           MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         ~(SweepDefs.chunked_is_infix mh child_raw) /\
+         ChunkedMajorGraph.chunked_major_vertex mh child_raw))
+  =
+  reveal_opaque (`%chunked_push_children_bounded_reachability_ready)
+    (chunked_push_children_bounded_reachability_ready mh obj i ws);
+  if U64.v i > U64.v ws then
+    assert False
+  else begin
+    let v = MarkDefs.chunked_get_field mh obj i in
+    let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+    let child = MarkDefs.chunked_resolve_object mh child_raw in
+    assert (MarkDefs.chunked_is_pointer_field mh v);
+    assert (SweepDefs.chunked_is_white mh child);
+    assert
+      (~(SweepDefs.chunked_is_infix mh child_raw) /\
+       ChunkedMajorGraph.chunked_major_vertex mh child_raw)
+  end
+
+let chunked_push_children_bounded_reachability_ready_next
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        U64.v i < U64.v ws /\
+        chunked_push_children_bounded_reachability_ready mh obj i ws)
+      (ensures
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         let mh' =
+           if MarkDefs.chunked_is_pointer_field mh v then
+             let child_raw =
+               MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+             let child =
+               MarkDefs.chunked_resolve_object mh child_raw in
+             if SweepDefs.chunked_is_white mh child then
+               MarkDefs.chunked_make_gray mh child
+             else
+               mh
+           else
+             mh in
+         chunked_push_children_bounded_reachability_ready
+           mh' obj (U64.add i 1UL) ws))
+  =
+  reveal_opaque (`%chunked_push_children_bounded_reachability_ready)
+    (chunked_push_children_bounded_reachability_ready mh obj i ws);
+  if U64.v i > U64.v ws then
+    assert False
+  else
+    ()
+#pop-options
+
 let chunked_make_gray_preserves_reachable_from_roots
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -299,3 +412,87 @@ let chunked_make_gray_preserves_stack_reachable_from_roots
     chunked_make_gray_preserves_reachable_from_roots mh roots obj target
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+
+let rec chunked_push_children_bounded_preserves_stack_reachable_from_roots
+    (mh: MH.major_heap)
+    (roots: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+    (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        chunked_push_children_bounded_reachability_ready mh obj i ws /\
+        ws == SweepDefs.chunked_wosize_of_object mh obj /\
+        Reach.chunked_major_reachable_from_roots mh roots obj /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        (let (mh', st') =
+          BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         chunked_stack_reachable_from_roots mh' roots st'))
+      (decreases (U64.v ws - U64.v i))
+  =
+  Reach.chunked_major_reachable_from_roots_vertex mh roots obj;
+  ChunkedMajorGraph.chunked_major_vertex_elim mh obj;
+  if U64.v i > U64.v ws then
+    BDefs.chunked_push_children_bounded_done mh st obj i ws cap
+  else begin
+    assert (U64.v i <= U64.v ws);
+    assert (U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj));
+    BDefs.chunked_push_children_bounded_step mh st obj i ws cap;
+    let v = MarkDefs.chunked_get_field mh obj i in
+    if MarkDefs.chunked_is_pointer_field mh v then begin
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child = MarkDefs.chunked_resolve_object mh child_raw in
+      if SweepDefs.chunked_is_white mh child then begin
+        let mh_gray = MarkDefs.chunked_make_gray mh child in
+        BPres.chunked_push_children_bounded_preservation_ready_child
+          mh obj i ws;
+        chunked_push_children_bounded_reachability_ready_child
+          mh obj i ws;
+        chunked_non_infix_pointer_field_reachable_from_roots
+          mh roots obj i;
+        MarkPres.chunked_make_gray_preserves_well_formed mh child;
+        MarkPres.chunked_make_gray_preserves_wosize_of_object mh child obj;
+        chunked_make_gray_preserves_reachable_from_roots
+          mh roots child obj;
+        chunked_make_gray_preserves_reachable_from_roots
+          mh roots child child;
+        chunked_make_gray_preserves_stack_reachable_from_roots
+          mh roots child st;
+        let st' =
+          if Seq.length st < cap then begin
+            chunked_stack_reachable_from_roots_cons
+              mh_gray roots child st;
+            Seq.cons child st
+          end else
+            st in
+        if U64.v i < U64.v ws then begin
+          BPres.chunked_push_children_bounded_preservation_ready_next
+            mh obj i ws;
+          chunked_push_children_bounded_reachability_ready_next
+            mh obj i ws;
+          assert (ws == SweepDefs.chunked_wosize_of_object mh_gray obj);
+          chunked_push_children_bounded_preserves_stack_reachable_from_roots
+            mh_gray roots st' obj (U64.add i 1UL) ws cap
+        end
+      end else if U64.v i < U64.v ws then begin
+        BPres.chunked_push_children_bounded_preservation_ready_next
+          mh obj i ws;
+        chunked_push_children_bounded_reachability_ready_next
+          mh obj i ws;
+        chunked_push_children_bounded_preserves_stack_reachable_from_roots
+          mh roots st obj (U64.add i 1UL) ws cap
+      end
+    end else if U64.v i < U64.v ws then begin
+      BPres.chunked_push_children_bounded_preservation_ready_next
+        mh obj i ws;
+      chunked_push_children_bounded_reachability_ready_next
+        mh obj i ws;
+      chunked_push_children_bounded_preserves_stack_reachable_from_roots
+        mh roots st obj (U64.add i 1UL) ws cap
+    end
+  end

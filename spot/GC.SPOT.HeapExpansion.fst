@@ -7125,6 +7125,110 @@ let spot_chunked_make_gray_preserves_reachable_from_roots
   ChunkedMajorGCMarkReach.chunked_make_gray_preserves_reachable_from_roots
     mh roots obj target
 
+let spot_chunked_push_children_bounded_reachability_ready_child
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready
+          mh obj i ws /\
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         ChunkedMarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+           ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child = ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+          ChunkedSweepDefs.chunked_is_white mh child)))
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         let child_raw =
+          ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         ~(ChunkedSweepDefs.chunked_is_infix mh child_raw) /\
+         ChunkedMajorGCGraph.chunked_major_vertex mh child_raw))
+  =
+  ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready_child
+    mh obj i ws
+
+let spot_chunked_push_children_bounded_reachability_ready_next
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        U64.v i < U64.v ws /\
+        ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready
+          mh obj i ws)
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         let mh' =
+           if ChunkedMarkDefs.chunked_is_pointer_field mh v then
+             let child_raw =
+               ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+             let child =
+               ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+             if ChunkedSweepDefs.chunked_is_white mh child then
+               ChunkedMarkDefs.chunked_make_gray mh child
+             else
+               mh
+           else
+             mh in
+         ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready
+           mh' obj (U64.add i 1UL) ws))
+  =
+  ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready_next
+    mh obj i ws
+
+let spot_chunked_make_gray_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots st)
+      (ensures
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          (ChunkedMarkDefs.chunked_make_gray mh obj) roots st)
+  =
+  ChunkedMajorGCMarkReach.chunked_make_gray_preserves_stack_reachable_from_roots
+    mh roots obj st
+
+let spot_chunked_push_children_bounded_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        ChunkedMajorGCMarkReach.chunked_push_children_bounded_reachability_ready
+          mh obj i ws /\
+        ws == ChunkedSweepDefs.chunked_wosize_of_object mh obj /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots obj /\
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots st)
+      (ensures
+        (let (mh', st') =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+           mh' roots st'))
+  =
+  ChunkedMajorGCMarkReach.chunked_push_children_bounded_preserves_stack_reachable_from_roots
+    mh roots st obj i ws cap
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
