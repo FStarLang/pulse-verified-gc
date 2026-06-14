@@ -27,6 +27,8 @@ module ChunkedMarkStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
+module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
+module ChunkedMarkReach = GC.Spec.ChunkedMajorGC.MarkReachability
 
 val chunked_no_gray_or_black_objects
   (mh: MH.major_heap)
@@ -189,6 +191,21 @@ val chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
       (ensures
         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
           mh (ChunkedMark.chunked_mark_bounded mh cap fuel) live)
+
+val chunked_major_gc_bounded_mark_phase_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        ChunkedMarkReach.chunked_mark_bounded_reachability_ready mh cap fuel /\
+        ChunkedMajorReach.chunked_gray_black_reachable mh roots)
+      (ensures
+        ChunkedMajorReach.chunked_gray_black_reachable
+          (ChunkedMark.chunked_mark_bounded mh cap fuel) roots)
 
 val chunked_major_gc_bounded_marked_live_subgraph_preserved
   (mh: MH.major_heap)

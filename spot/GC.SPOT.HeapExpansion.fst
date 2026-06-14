@@ -6463,6 +6463,26 @@ let spot_chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
   ChunkedMajorGCCorr.chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
     mh cap fuel live
 
+let spot_chunked_major_gc_bounded_mark_phase_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        ChunkedMajorGCMarkReach.chunked_mark_bounded_reachability_ready
+          mh cap fuel /\
+        ChunkedMajorGCReach.chunked_gray_black_reachable mh roots)
+      (ensures
+        ChunkedMajorGCReach.chunked_gray_black_reachable
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) roots)
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_mark_phase_preserves_gray_black_reachable
+    mh roots cap fuel
+
 let spot_chunked_major_gc_bounded_marked_live_subgraph_preserved
   (mh: MH.major_heap)
   (cap: nat{cap > 0})

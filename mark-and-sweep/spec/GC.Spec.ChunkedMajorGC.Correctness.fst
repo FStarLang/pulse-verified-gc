@@ -33,6 +33,8 @@ module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMarkStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
+module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
+module ChunkedMarkReach = GC.Spec.ChunkedMajorGC.MarkReachability
 module ChunkedLiveRange = GC.Spec.ChunkedSweepCoalesce.LiveRange
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
@@ -301,6 +303,26 @@ let chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
     mh cap fuel;
   ChunkedMajorGraph.chunked_major_live_subgraph_preserved_from_fields
     mh marked live
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_mark_phase_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        ChunkedMarkReach.chunked_mark_bounded_reachability_ready mh cap fuel /\
+        ChunkedMajorReach.chunked_gray_black_reachable mh roots)
+      (ensures
+        ChunkedMajorReach.chunked_gray_black_reachable
+          (ChunkedMark.chunked_mark_bounded mh cap fuel) roots)
+  =
+  ChunkedMarkReach.chunked_mark_bounded_preserves_gray_black_reachable
+    mh roots cap fuel
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
