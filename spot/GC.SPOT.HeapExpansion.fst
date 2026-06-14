@@ -7046,6 +7046,34 @@ let spot_chunked_resolved_pointer_field_reachable_from_roots
   ChunkedMajorGCMarkReach.chunked_resolved_pointer_field_reachable_from_roots
     mh roots obj i
 
+let spot_chunked_non_infix_pointer_field_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots obj /\
+        U64.v i <=
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         ChunkedMarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+          ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          ~(ChunkedSweepDefs.chunked_is_infix mh child_raw) /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh child_raw)))
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         let child_raw =
+          ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         let child =
+          ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+         ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots child))
+  =
+  ChunkedMajorGCMarkReach.chunked_non_infix_pointer_field_reachable_from_roots
+    mh roots obj i
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
