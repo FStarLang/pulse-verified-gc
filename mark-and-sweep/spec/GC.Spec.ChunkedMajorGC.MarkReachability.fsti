@@ -313,6 +313,27 @@ val chunked_push_children_bounded_preserves_stack_reachable_from_roots
           BDefs.chunked_push_children_bounded mh st obj i ws cap in
          chunked_stack_reachable_from_roots mh' roots st'))
 
+val chunked_push_children_bounded_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        chunked_push_children_bounded_reachability_ready mh obj i ws /\
+        ws == SweepDefs.chunked_wosize_of_object mh obj /\
+        Reach.chunked_major_reachable_from_roots mh roots obj /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        (let (mh', _) =
+         BDefs.chunked_push_children_bounded mh st obj i ws cap in
+        Reach.chunked_gray_black_reachable mh' roots))
+
 val chunked_mark_step_bounded_reachability_ready
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -334,6 +355,23 @@ val chunked_mark_step_bounded_preserves_stack_reachable_from_roots
         (let (mh', st') =
           BDefs.chunked_mark_step_bounded mh st cap in
          chunked_stack_reachable_from_roots mh' roots st'))
+
+val chunked_mark_step_bounded_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        chunked_mark_step_bounded_reachability_ready mh st cap /\
+        chunked_stack_reachable_from_roots mh roots st /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_mark_step_bounded mh st cap in
+         Reach.chunked_gray_black_reachable mh' roots))
 
 val chunked_mark_inner_loop_reachability_ready
   (mh: MH.major_heap)
@@ -358,3 +396,42 @@ val chunked_mark_inner_loop_preserves_stack_reachable_from_roots
         (let (mh', st') =
           BDefs.chunked_mark_inner_loop mh st cap fuel in
          chunked_stack_reachable_from_roots mh' roots st'))
+
+val chunked_mark_inner_loop_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        chunked_mark_inner_loop_reachability_ready mh st cap fuel /\
+        chunked_stack_reachable_from_roots mh roots st /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_mark_inner_loop mh st cap fuel in
+         Reach.chunked_gray_black_reachable mh' roots))
+
+val chunked_mark_bounded_reachability_ready
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : GTot prop
+
+val chunked_mark_bounded_preserves_gray_black_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        chunked_mark_bounded_reachability_ready mh cap fuel /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        Reach.chunked_gray_black_reachable
+          (BDefs.chunked_mark_bounded mh cap fuel) roots)

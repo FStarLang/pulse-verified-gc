@@ -711,6 +711,88 @@ let rec chunked_push_children_bounded_preserves_stack_reachable_from_roots
     end
   end
 
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_push_children_bounded_preserves_gray_black_reachable
+    (mh: MH.major_heap)
+    (roots: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+    (cap: nat)
+  : Lemma
+      (requires
+      MH.well_formed_major_heap mh /\
+      BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
+      chunked_push_children_bounded_reachability_ready mh obj i ws /\
+      ws == SweepDefs.chunked_wosize_of_object mh obj /\
+      Reach.chunked_major_reachable_from_roots mh roots obj /\
+      Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+      (let (mh', _) =
+        BDefs.chunked_push_children_bounded mh st obj i ws cap in
+       Reach.chunked_gray_black_reachable mh' roots))
+      (decreases (U64.v ws - U64.v i))
+  =
+  Reach.chunked_major_reachable_from_roots_vertex mh roots obj;
+  ChunkedMajorGraph.chunked_major_vertex_elim mh obj;
+  if U64.v i > U64.v ws then
+    BDefs.chunked_push_children_bounded_done mh st obj i ws cap
+  else begin
+    assert (U64.v i <= U64.v ws);
+    assert (U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj));
+    BDefs.chunked_push_children_bounded_step mh st obj i ws cap;
+    let v = MarkDefs.chunked_get_field mh obj i in
+    if MarkDefs.chunked_is_pointer_field mh v then begin
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child = MarkDefs.chunked_resolve_object mh child_raw in
+      if SweepDefs.chunked_is_white mh child then begin
+      let mh_gray = MarkDefs.chunked_make_gray mh child in
+      BPres.chunked_push_children_bounded_preservation_ready_child
+        mh obj i ws;
+      chunked_push_children_bounded_reachability_ready_child
+        mh obj i ws;
+      chunked_non_infix_pointer_field_reachable_from_roots
+        mh roots obj i;
+      MarkPres.chunked_make_gray_preserves_well_formed mh child;
+      MarkPres.chunked_make_gray_preserves_wosize_of_object mh child obj;
+      chunked_make_gray_preserves_reachable_from_roots
+        mh roots child obj;
+      chunked_make_gray_preserves_gray_black_reachable
+        mh roots child;
+      let st' =
+        if Seq.length st < cap then
+          Seq.cons child st
+        else
+          st in
+      if U64.v i < U64.v ws then begin
+        BPres.chunked_push_children_bounded_preservation_ready_next
+          mh obj i ws;
+        chunked_push_children_bounded_reachability_ready_next
+          mh obj i ws;
+        assert (ws == SweepDefs.chunked_wosize_of_object mh_gray obj);
+        chunked_push_children_bounded_preserves_gray_black_reachable
+          mh_gray roots st' obj (U64.add i 1UL) ws cap
+      end
+      end else if U64.v i < U64.v ws then begin
+      BPres.chunked_push_children_bounded_preservation_ready_next
+        mh obj i ws;
+      chunked_push_children_bounded_reachability_ready_next
+        mh obj i ws;
+      chunked_push_children_bounded_preserves_gray_black_reachable
+        mh roots st obj (U64.add i 1UL) ws cap
+      end
+    end else if U64.v i < U64.v ws then begin
+      BPres.chunked_push_children_bounded_preservation_ready_next
+      mh obj i ws;
+      chunked_push_children_bounded_reachability_ready_next
+      mh obj i ws;
+      chunked_push_children_bounded_preserves_gray_black_reachable
+      mh roots st obj (U64.add i 1UL) ws cap
+    end
+  end
+#pop-options
+
 let chunked_mark_step_bounded_reachability_ready
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)
@@ -779,6 +861,60 @@ let chunked_mark_step_bounded_preserves_stack_reachable_from_roots
     end
   end
 
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_mark_step_bounded_preserves_gray_black_reachable
+    (mh: MH.major_heap)
+    (roots: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        chunked_mark_step_bounded_reachability_ready mh st cap /\
+        chunked_stack_reachable_from_roots mh roots st /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_mark_step_bounded mh st cap in
+         Reach.chunked_gray_black_reachable mh' roots))
+  =
+  if Seq.length st = 0 then
+    BDefs.chunked_mark_step_bounded_empty mh st cap
+  else begin
+    let obj = Seq.head st in
+    let st_tail = Seq.tail st in
+    assert (Seq.length st > 0);
+    assert (st == Seq.cons obj st_tail);
+    GC.Spec.Fields.mem_cons_lemma obj obj st_tail;
+    assert (Seq.mem obj st);
+    chunked_stack_reachable_from_roots_elim mh roots st obj;
+    Reach.chunked_major_reachable_from_roots_vertex mh roots obj;
+    ChunkedMajorGraph.chunked_major_vertex_elim mh obj;
+    assert (Seq.mem obj (MH.major_objects mh));
+    if MarkDefs.chunked_is_no_scan mh obj then begin
+      BDefs.chunked_mark_step_bounded_no_scan mh st cap;
+      chunked_make_black_preserves_gray_black_reachable
+        mh roots obj
+    end else begin
+      let mh_black = MarkDefs.chunked_make_black mh obj in
+      let ws = SweepDefs.chunked_wosize_of_object mh obj in
+      BDefs.chunked_mark_step_bounded_scan mh st cap;
+      BPres.chunked_mark_step_bounded_preservation_ready_scan
+        mh st cap;
+      MarkPres.chunked_make_black_preserves_well_formed mh obj;
+      MarkPres.chunked_make_black_preserves_wosize_of_object mh obj obj;
+      chunked_make_black_preserves_reachable_from_roots
+        mh roots obj obj;
+      chunked_make_black_preserves_gray_black_reachable
+        mh roots obj;
+      assert (ws == SweepDefs.chunked_wosize_of_object mh_black obj);
+      chunked_push_children_bounded_preserves_gray_black_reachable
+        mh_black roots st_tail obj 1UL ws cap
+    end
+  end
+#pop-options
+
 [@@"opaque_to_smt"]
 let rec chunked_mark_inner_loop_reachability_ready
     (mh: MH.major_heap)
@@ -828,3 +964,104 @@ let rec chunked_mark_inner_loop_preserves_stack_reachable_from_roots
     chunked_mark_inner_loop_preserves_stack_reachable_from_roots
       mh' roots st' cap (fuel - 1)
   end
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_mark_inner_loop_preserves_gray_black_reachable
+    (mh: MH.major_heap)
+    (roots: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_inner_loop_preservation_ready mh st cap fuel /\
+        chunked_mark_inner_loop_reachability_ready mh st cap fuel /\
+        chunked_stack_reachable_from_roots mh roots st /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_mark_inner_loop mh st cap fuel in
+         Reach.chunked_gray_black_reachable mh' roots))
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then
+    BDefs.chunked_mark_inner_loop_base mh st cap fuel
+  else begin
+    assert (fuel > 0);
+    assert (Seq.length st > 0);
+    reveal_opaque (`%chunked_mark_inner_loop_reachability_ready)
+      (chunked_mark_inner_loop_reachability_ready mh st cap fuel);
+    BDefs.chunked_mark_inner_loop_step mh st cap fuel;
+    BPres.chunked_mark_inner_loop_preservation_ready_step mh st cap fuel;
+    let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+    chunked_mark_step_bounded_preserves_stack_reachable_from_roots
+      mh roots st cap;
+    chunked_mark_step_bounded_preserves_gray_black_reachable
+      mh roots st cap;
+    BPres.chunked_mark_step_bounded_preserves_well_formed mh st cap;
+    chunked_mark_inner_loop_preserves_gray_black_reachable
+      mh' roots st' cap (fuel - 1)
+  end
+
+[@@"opaque_to_smt"]
+let rec chunked_mark_bounded_reachability_ready
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Tot prop
+    (decreases fuel)
+  =
+  if fuel = 0 then True
+  else
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then True
+    else
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      chunked_mark_inner_loop_reachability_ready mh st cap inner_fuel /\
+      (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+       chunked_mark_bounded_reachability_ready mh' cap (fuel - 1))
+
+let rec chunked_mark_bounded_preserves_gray_black_reachable
+    (mh: MH.major_heap)
+    (roots: Seq.seq obj_addr)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        chunked_mark_bounded_reachability_ready mh cap fuel /\
+        Reach.chunked_gray_black_reachable mh roots)
+      (ensures
+        Reach.chunked_gray_black_reachable
+          (BDefs.chunked_mark_bounded mh cap fuel) roots)
+      (decreases fuel)
+  =
+  if fuel = 0 then
+    BDefs.chunked_mark_bounded_base mh cap
+  else begin
+    assert (fuel > 0);
+    reveal_opaque (`%chunked_mark_bounded_reachability_ready)
+      (chunked_mark_bounded_reachability_ready mh cap fuel);
+    BDefs.chunked_mark_bounded_step mh cap fuel;
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then
+      ()
+    else begin
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      BPres.chunked_mark_bounded_preservation_ready_step mh cap fuel;
+      let (mh', st') =
+        BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+      chunked_rescan_heap_stack_reachable_from_gray_black mh roots cap;
+      chunked_mark_inner_loop_preserves_stack_reachable_from_roots
+        mh roots st cap inner_fuel;
+      chunked_mark_inner_loop_preserves_gray_black_reachable
+        mh roots st cap inner_fuel;
+      BPres.chunked_mark_inner_loop_preserves_well_formed
+        mh st cap inner_fuel;
+      chunked_mark_bounded_preserves_gray_black_reachable
+        mh' roots cap (fuel - 1)
+    end
+  end
+#pop-options
