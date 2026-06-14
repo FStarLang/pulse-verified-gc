@@ -26,6 +26,7 @@ module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
+module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedLiveRange = GC.Spec.ChunkedSweepCoalesce.LiveRange
@@ -97,6 +98,40 @@ let chunked_gc_postcondition_single_chunk_from_dense (g: heap)
   DenseCorrectness.gc_postcondition_elim g;
   MH.single_chunk_major_heap_wf g;
   chunked_no_gray_or_black_single_chunk_from_dense g
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_mark_phase_preserves_shape
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel)
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         MH.major_objects marked == MH.major_objects mh))
+  =
+  ChunkedMarkPres.chunked_mark_bounded_preserves_well_formed mh cap fuel;
+  ChunkedMarkPres.chunked_mark_bounded_preserves_major_objects mh cap fuel
+
+let chunked_major_gc_bounded_mark_phase_preserves_membership
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        Seq.mem obj
+          (MH.major_objects (ChunkedMark.chunked_mark_bounded mh cap fuel)))
+  =
+  chunked_major_gc_bounded_mark_phase_preserves_shape mh cap fuel
+#pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_major_gc_bounded_marked_live_subgraph_preserved

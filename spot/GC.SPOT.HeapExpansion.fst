@@ -4751,6 +4751,42 @@ let spot_chunked_major_gc_bounded_single_chunk_live_subgraph_preserved
   ChunkedMajorGCCorr.chunked_major_gc_bounded_single_chunk_live_subgraph_preserved
     g roots fp cap fuel
 
+let spot_chunked_major_gc_bounded_mark_phase_preserves_shape
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+      (ensures
+        (let marked = ChunkedMarkBounded.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         MH.major_objects marked == MH.major_objects mh))
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_mark_phase_preserves_shape
+    mh cap fuel
+
+let spot_chunked_major_gc_bounded_mark_phase_preserves_membership
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        Seq.mem obj
+          (MH.major_objects
+            (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel)))
+  =
+  ChunkedMajorGCCorr.chunked_major_gc_bounded_mark_phase_preserves_membership
+    mh cap fuel obj
+
 let spot_chunked_major_gc_bounded_marked_live_subgraph_preserved
   (mh: MH.major_heap)
   (cap: nat{cap > 0})

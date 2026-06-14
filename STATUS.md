@@ -236,6 +236,8 @@ Follow-up checkpoint: lifted the same preservation facts through `chunked_mark_a
 
 Follow-up checkpoint: added `GC.Spec.ChunkedMarkBounded.Preservation`, a second focused split module for the bounded mark/rescan pipeline. It proves `MH.major_objects` and `MH.well_formed_major_heap` preservation for bounded child pushing, bounded mark steps, the inner drain loop, and the full `chunked_mark_bounded` outer loop under exact readiness predicates that mirror `GC.Spec.ChunkedMarkBounded.Defs`. The module profiles at about one second with refreshed split queries and is audited by `GC.SPOT.HeapExpansion`. This gives the chunked major-GC shell a reusable preservation path from the pre-mark heap to the marked heap; the remaining harder mark-side correctness work is to prove that live/reachable selected objects are members with black headers after bounded marking, not just that the object set and chunk well-formedness are preserved.
 
+Follow-up checkpoint: connected bounded-mark preservation to the chunked major-GC correctness shell. `GC.Spec.ChunkedMajorGC.Correctness.chunked_major_gc_bounded_mark_phase_preserves_shape` now derives marked-heap well-formedness and `MH.major_objects` equality from the bounded-mark preservation readiness predicate, and `chunked_major_gc_bounded_mark_phase_preserves_membership` gives the direct old-object-to-marked-object membership corollary. `GC.SPOT.HeapExpansion` audits both wrappers, and the refreshed `ChunkedMajorGC.Correctness` profile remains about 1.25 seconds. This reduces the remaining live-subgraph shell inputs to the genuinely semantic mark facts: selected live objects must have readable black headers after marking.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

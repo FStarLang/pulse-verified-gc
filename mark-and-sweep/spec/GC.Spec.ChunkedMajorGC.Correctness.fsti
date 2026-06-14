@@ -19,6 +19,7 @@ module SweepInv = GC.Spec.SweepInv
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
+module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
@@ -61,6 +62,33 @@ val chunked_gc_postcondition_single_chunk_from_dense
       (requires DenseCorrectness.gc_postcondition g)
       (ensures
         chunked_gc_postcondition (MH.single_chunk_major_heap g))
+
+val chunked_major_gc_bounded_mark_phase_preserves_shape
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel)
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         MH.major_objects marked == MH.major_objects mh))
+
+val chunked_major_gc_bounded_mark_phase_preserves_membership
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        Seq.mem obj
+          (MH.major_objects (ChunkedMark.chunked_mark_bounded mh cap fuel)))
 
 val chunked_major_gc_bounded_marked_live_subgraph_preserved
   (mh: MH.major_heap)
