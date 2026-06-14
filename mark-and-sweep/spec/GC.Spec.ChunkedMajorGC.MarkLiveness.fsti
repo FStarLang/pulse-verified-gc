@@ -8,6 +8,7 @@ module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
+module BComplete = GC.Spec.ChunkedMarkBounded.Completion
 module BStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 
@@ -34,6 +35,17 @@ val chunked_roots_black
   (roots: Seq.seq obj_addr)
   : prop
 
+val chunked_roots_black_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        forall (root: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh root /\
+          Seq.mem root roots ==>
+          SweepDefs.chunked_is_black mh root)
+      (ensures chunked_roots_black mh roots)
+
 val chunked_roots_black_elim
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -57,6 +69,20 @@ val chunked_no_gray_objects_elim
         chunked_no_gray_objects mh /\
         ChunkedMajorGraph.chunked_major_vertex mh obj)
       (ensures ~(BDefs.chunked_is_gray mh obj))
+
+val chunked_mark_bounded_no_gray_objects
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= BDefs.chunked_count_non_black mh)
+      (ensures
+        chunked_no_gray_objects
+          (BDefs.chunked_mark_bounded mh cap fuel))
 
 val chunked_no_pointer_to_blue
   (mh: MH.major_heap)
@@ -139,3 +165,19 @@ val chunked_mark_bounded_root_ready
       (ensures
         BPres.chunked_mark_bounded_marks_target_ready
           mh cap fuel root)
+
+val chunked_mark_bounded_roots_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        chunked_roots_gray_or_black mh roots)
+      (ensures
+        chunked_roots_black
+          (BDefs.chunked_mark_bounded mh cap fuel) roots)

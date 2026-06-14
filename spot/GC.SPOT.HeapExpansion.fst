@@ -64,6 +64,7 @@ module ChunkedMarkBoundedCount = GC.Spec.ChunkedMarkBounded.Count
 module ChunkedMarkBoundedCountStep = GC.Spec.ChunkedMarkBounded.CountStep
 module ChunkedMarkBoundedStackStep = GC.Spec.ChunkedMarkBounded.StackStep
 module ChunkedMarkBoundedStackReady = GC.Spec.ChunkedMarkBounded.StackReady
+module ChunkedMarkBoundedComplete = GC.Spec.ChunkedMarkBounded.Completion
 module ChunkedMarkBoundedMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
@@ -7057,6 +7058,66 @@ let spot_chunked_mark_bounded_root_ready
   =
   ChunkedMajorGCMarkLive.chunked_mark_bounded_root_ready
     mh roots cap fuel root
+
+let spot_chunked_mark_bounded_roots_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        ChunkedMajorGCMarkLive.chunked_roots_gray_or_black mh roots)
+      (ensures
+        ChunkedMajorGCMarkLive.chunked_roots_black
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) roots)
+  =
+  ChunkedMajorGCMarkLive.chunked_mark_bounded_roots_black
+    mh roots cap fuel
+
+let spot_chunked_mark_bounded_completes
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMarkBounded.chunked_count_non_black mh /\
+        Seq.mem obj
+          (MH.major_objects
+            (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel)))
+      (ensures
+        ~(ChunkedMarkBounded.chunked_is_gray
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) obj))
+  =
+  ChunkedMarkBoundedComplete.chunked_mark_bounded_completes
+    mh cap fuel
+
+let spot_chunked_mark_bounded_no_gray_objects
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMarkBounded.chunked_count_non_black mh)
+      (ensures
+        ChunkedMajorGCMarkLive.chunked_no_gray_objects
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel))
+  =
+  ChunkedMajorGCMarkLive.chunked_mark_bounded_no_gray_objects
+    mh cap fuel
 
 let spot_chunked_roots_black_elim
   (mh: MH.major_heap)

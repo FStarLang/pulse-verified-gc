@@ -10,6 +10,7 @@ module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module BPres = GC.Spec.ChunkedMarkBounded.Preservation
+module BComplete = GC.Spec.ChunkedMarkBounded.Completion
 module BStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module Reach = GC.Spec.ChunkedMajorGC.Reachability
@@ -53,6 +54,19 @@ let chunked_roots_black
     SweepDefs.chunked_is_black mh root
 
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_roots_black_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        forall (root: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh root /\
+          Seq.mem root roots ==>
+          SweepDefs.chunked_is_black mh root)
+      (ensures chunked_roots_black mh roots)
+  =
+  ()
+
 let chunked_roots_black_elim
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -86,6 +100,34 @@ let chunked_no_gray_objects_elim
       (ensures ~(BDefs.chunked_is_gray mh obj))
   =
   ()
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_mark_bounded_no_gray_objects
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= BDefs.chunked_count_non_black mh)
+      (ensures
+        chunked_no_gray_objects
+          (BDefs.chunked_mark_bounded mh cap fuel))
+  =
+  let mh_mark = BDefs.chunked_mark_bounded mh cap fuel in
+  BComplete.chunked_mark_bounded_completes mh cap fuel;
+  let no_gray (obj: obj_addr)
+    : Lemma
+        (requires ChunkedMajorGraph.chunked_major_vertex mh_mark obj)
+        (ensures ~(BDefs.chunked_is_gray mh_mark obj))
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh_mark obj
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires no_gray)
 #pop-options
 
 let chunked_no_pointer_to_blue
@@ -267,4 +309,40 @@ let chunked_mark_bounded_root_ready
   chunked_roots_gray_or_black_elim mh roots root;
   BStackReady.chunked_mark_bounded_marks_rescan_gray_or_black_member_ready
     mh cap fuel root
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_mark_bounded_roots_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        chunked_roots_gray_or_black mh roots)
+      (ensures
+        chunked_roots_black
+          (BDefs.chunked_mark_bounded mh cap fuel) roots)
+  =
+  let mh_mark = BDefs.chunked_mark_bounded mh cap fuel in
+  BPres.chunked_mark_bounded_preserves_major_objects mh cap fuel;
+  let root_black (root: obj_addr)
+    : Lemma
+        (requires
+          ChunkedMajorGraph.chunked_major_vertex mh_mark root /\
+          Seq.mem root roots)
+        (ensures SweepDefs.chunked_is_black mh_mark root)
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh_mark root;
+    assert (Seq.mem root (MH.major_objects mh));
+    ChunkedMajorGraph.chunked_major_vertex_intro mh root;
+    chunked_mark_bounded_root_ready mh roots cap fuel root;
+    BPres.chunked_mark_bounded_marks_target_black mh cap fuel root
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires root_black)
 #pop-options
