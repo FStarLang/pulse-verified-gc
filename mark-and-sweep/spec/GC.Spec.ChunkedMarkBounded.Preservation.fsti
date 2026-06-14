@@ -240,6 +240,23 @@ val chunked_mark_inner_loop_preservation_ready
   (fuel: nat)
   : GTot prop
 
+val chunked_mark_inner_loop_preservation_ready_step
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length st > 0 /\
+        chunked_mark_inner_loop_preservation_ready mh st cap fuel)
+      (ensures
+        chunked_mark_step_bounded_preservation_ready mh st cap /\
+        (let (mh', st') =
+          GC.Spec.ChunkedMarkBounded.Defs.chunked_mark_step_bounded
+            mh st cap in
+         chunked_mark_inner_loop_preservation_ready mh' st' cap (fuel - 1)))
+
 val chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)

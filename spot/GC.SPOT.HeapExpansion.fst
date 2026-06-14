@@ -63,6 +63,7 @@ module ChunkedMarkBoundedReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkBoundedCount = GC.Spec.ChunkedMarkBounded.Count
 module ChunkedMarkBoundedCountStep = GC.Spec.ChunkedMarkBounded.CountStep
 module ChunkedMarkBoundedStackStep = GC.Spec.ChunkedMarkBounded.StackStep
+module ChunkedMarkBoundedStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -4733,6 +4734,49 @@ let spot_chunked_mark_step_bounded_preserves_stack_props
   =
   ChunkedMarkBoundedStackStep.chunked_mark_step_bounded_preserves_bounded_stack_props
     mh st cap
+
+let spot_chunked_mark_inner_loop_preservation_ready_step
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length st > 0 /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        (let (mh', st') =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+           mh' st' cap (fuel - 1)))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready_step
+    mh st cap fuel
+
+let spot_chunked_mark_inner_loop_marks_stack_member_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        fuel >= ChunkedMarkBounded.chunked_count_non_black mh /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target st)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_ready
+          mh st cap fuel target)
+  =
+  ChunkedMarkBoundedStackReady.chunked_mark_inner_loop_marks_stack_member_ready
+    mh st cap fuel target
 
 let spot_chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)
