@@ -68,6 +68,7 @@ module ChunkedMarkBoundedComplete = GC.Spec.ChunkedMarkBounded.Completion
 module ChunkedMarkBoundedMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module ChunkedMarkBoundedColor = GC.Spec.ChunkedMarkBounded.ColorInvariant
 module ChunkedMarkBoundedTag = GC.Spec.ChunkedMarkBounded.TagInvariant
+module ChunkedMarkBoundedEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -7504,6 +7505,22 @@ let spot_chunked_mark_bounded_field_preserved
   ChunkedMarkBoundedColor.chunked_mark_bounded_field_preserved
     mh cap fuel target
 
+let spot_chunked_mark_bounded_pointer_classification_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          mh (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel))
+  =
+  ChunkedMarkBoundedColor.chunked_mark_bounded_pointer_classification_preserved
+    mh cap fuel
+
 let spot_chunked_push_children_bounded_preserves_infix_status
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -7585,6 +7602,36 @@ let spot_chunked_mark_bounded_preserves_infix_status
   =
   ChunkedMarkBoundedTag.chunked_mark_bounded_preserves_infix_status
     mh cap fuel target
+
+let spot_chunked_vertex_edge_targets_non_infix_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh /\
+        ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh dst)
+      (ensures ~(ChunkedSweepDefs.chunked_is_infix mh dst))
+  =
+  ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix_elim
+    mh src dst
+
+let spot_chunked_mark_bounded_preserves_vertex_edge_targets_non_infix
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel))
+  =
+  ChunkedMarkBoundedEdge.chunked_mark_bounded_preserves_vertex_edge_targets_non_infix
+    mh cap fuel
 
 let spot_chunked_mark_bounded_preserves_no_pointer_to_blue
   (mh: MH.major_heap)

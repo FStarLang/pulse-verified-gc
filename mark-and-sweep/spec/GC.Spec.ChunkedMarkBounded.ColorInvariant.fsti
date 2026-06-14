@@ -221,6 +221,18 @@ val chunked_mark_bounded_field_preserved
         ChunkedMajorGraph.chunked_major_field_preserved
           mh (BDefs.chunked_mark_bounded mh cap fuel) obj)
 
+val chunked_mark_bounded_pointer_classification_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel)
+      (ensures
+        ChunkedMajorGraph.chunked_major_pointer_classification_preserved
+          mh (BDefs.chunked_mark_bounded mh cap fuel))
+
 val chunked_mark_bounded_preserves_no_pointer_to_blue
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
