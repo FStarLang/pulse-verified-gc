@@ -119,6 +119,22 @@ let chunked_is_black_from_color
       (ensures chunked_is_black mh obj)
   = ()
 
+let chunked_is_white_from_color
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+  : Lemma
+      (requires chunked_color_of_object mh obj == Some Header.White)
+      (ensures chunked_is_white mh obj)
+  = ()
+
+let chunked_is_blue_from_color
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+  : Lemma
+      (requires chunked_color_of_object mh obj == Some Header.Blue)
+      (ensures chunked_is_blue mh obj)
+  = ()
+
 let chunked_is_black_read_header
     (mh: MH.major_heap)
     (obj: obj_addr)
@@ -138,6 +154,17 @@ let chunked_is_white_read_header
       (ensures
         (match chunked_read_header mh obj with
          | Some hdr -> Obj.getColor hdr == Header.White
+         | None -> False))
+  = ()
+
+let chunked_is_blue_read_header
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+  : Lemma
+      (requires chunked_is_blue mh obj)
+      (ensures
+        (match chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == Header.Blue
          | None -> False))
   = ()
 

@@ -29,6 +29,98 @@ val chunked_roots_gray_or_black_elim
         BDefs.chunked_is_gray mh root \/
         SweepDefs.chunked_is_black mh root)
 
+val chunked_roots_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : prop
+
+val chunked_roots_black_elim
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (root: obj_addr)
+  : Lemma
+      (requires
+        chunked_roots_black mh roots /\
+        ChunkedMajorGraph.chunked_major_vertex mh root /\
+        Seq.mem root roots)
+      (ensures SweepDefs.chunked_is_black mh root)
+
+val chunked_no_gray_objects
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_no_gray_objects_elim
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        chunked_no_gray_objects mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh obj)
+      (ensures ~(BDefs.chunked_is_gray mh obj))
+
+val chunked_no_pointer_to_blue
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_no_pointer_to_blue_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        chunked_no_pointer_to_blue mh /\
+        ChunkedMajorGraph.chunked_major_edge mh src dst /\
+        ~(SweepDefs.chunked_is_blue mh src))
+      (ensures ~(SweepDefs.chunked_is_blue mh dst))
+
+val chunked_no_black_to_white
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_no_black_to_white_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        chunked_no_black_to_white mh /\
+        ChunkedMajorGraph.chunked_major_edge mh src dst /\
+        SweepDefs.chunked_is_black mh src)
+      (ensures ~(SweepDefs.chunked_is_white mh dst))
+
+val chunked_is_black_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires SweepDefs.chunked_is_black mh obj)
+      (ensures ~(SweepDefs.chunked_is_blue mh obj))
+
+val chunked_not_white_gray_blue_implies_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh obj /\
+        ~(SweepDefs.chunked_is_white mh obj) /\
+        ~(BDefs.chunked_is_gray mh obj) /\
+        ~(SweepDefs.chunked_is_blue mh obj))
+      (ensures SweepDefs.chunked_is_black mh obj)
+
+val chunked_major_reachable_from_roots_black_from_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_roots_black mh roots /\
+        chunked_no_gray_objects mh /\
+        chunked_no_pointer_to_blue mh /\
+        chunked_no_black_to_white mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh target /\
+        GC.Spec.ChunkedMajorGC.Reachability.chunked_major_reachable_from_roots
+          mh roots target)
+      (ensures SweepDefs.chunked_is_black mh target)
+
 val chunked_mark_bounded_root_ready
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

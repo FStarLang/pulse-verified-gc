@@ -86,6 +86,20 @@ val chunked_is_black_from_color
       (requires chunked_color_of_object mh obj == Some Header.Black)
       (ensures chunked_is_black mh obj)
 
+val chunked_is_white_from_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires chunked_color_of_object mh obj == Some Header.White)
+      (ensures chunked_is_white mh obj)
+
+val chunked_is_blue_from_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires chunked_color_of_object mh obj == Some Header.Blue)
+      (ensures chunked_is_blue mh obj)
+
 val chunked_is_black_read_header
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -104,6 +118,16 @@ val chunked_is_white_read_header
       (ensures
         (match chunked_read_header mh obj with
          | Some hdr -> Obj.getColor hdr == Header.White
+         | None -> False))
+
+val chunked_is_blue_read_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires chunked_is_blue mh obj)
+      (ensures
+        (match chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == Header.Blue
          | None -> False))
 
 val chunked_is_white_not_black

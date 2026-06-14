@@ -75,6 +75,23 @@ val chunked_is_gray_step:
       | Some Header.Gray -> true
       | _ -> false))
 
+val chunked_is_gray_from_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires SweepDefs.chunked_color_of_object mh obj == Some Header.Gray)
+      (ensures chunked_is_gray mh obj)
+
+val chunked_is_gray_read_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires chunked_is_gray mh obj)
+      (ensures
+        (match SweepDefs.chunked_read_header mh obj with
+         | Some hdr -> GC.Spec.Object.getColor hdr == Header.Gray
+         | None -> False))
+
 val chunked_count_non_black_in_empty:
   mh:MH.major_heap ->
   objs:seq obj_addr ->

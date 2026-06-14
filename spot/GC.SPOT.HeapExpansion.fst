@@ -146,6 +146,18 @@ let spot_chunked_is_white_read_header
   =
   ChunkedSweepDefs.chunked_is_white_read_header mh obj
 
+let spot_chunked_is_blue_read_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_is_blue mh obj)
+      (ensures
+        (match ChunkedSweepDefs.chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == Header.Blue
+         | None -> False))
+  =
+  ChunkedSweepDefs.chunked_is_blue_read_header mh obj
+
 let spot_major_write_word_or_same_read_same
   (mh: MH.major_heap)
   (write_addr: hp_addr)
@@ -3312,6 +3324,26 @@ let spot_chunked_is_black_from_color
   =
   ChunkedSweepDefs.chunked_is_black_from_color mh obj
 
+let spot_chunked_is_white_from_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        ChunkedSweepDefs.chunked_color_of_object mh obj == Some Header.White)
+      (ensures ChunkedSweepDefs.chunked_is_white mh obj)
+  =
+  ChunkedSweepDefs.chunked_is_white_from_color mh obj
+
+let spot_chunked_is_blue_from_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        ChunkedSweepDefs.chunked_color_of_object mh obj == Some Header.Blue)
+      (ensures ChunkedSweepDefs.chunked_is_blue mh obj)
+  =
+  ChunkedSweepDefs.chunked_is_blue_from_color mh obj
+
 let spot_chunked_is_black_read_header
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -4540,6 +4572,28 @@ let spot_chunked_mark_bounded_is_gray_step
         | _ -> false))
   =
   ChunkedMarkBounded.chunked_is_gray_step mh obj
+
+let spot_chunked_is_gray_from_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        ChunkedSweepDefs.chunked_color_of_object mh obj == Some Header.Gray)
+      (ensures ChunkedMarkBounded.chunked_is_gray mh obj)
+  =
+  ChunkedMarkBounded.chunked_is_gray_from_color mh obj
+
+let spot_chunked_is_gray_read_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedMarkBounded.chunked_is_gray mh obj)
+      (ensures
+        (match ChunkedSweepDefs.chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == Header.Gray
+         | None -> False))
+  =
+  ChunkedMarkBounded.chunked_is_gray_read_header mh obj
 
 let spot_chunked_push_children_bounded_step
   (mh: MH.major_heap)
@@ -7003,6 +7057,96 @@ let spot_chunked_mark_bounded_root_ready
   =
   ChunkedMajorGCMarkLive.chunked_mark_bounded_root_ready
     mh roots cap fuel root
+
+let spot_chunked_roots_black_elim
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (root: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCMarkLive.chunked_roots_black mh roots /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh root /\
+        Seq.mem root roots)
+      (ensures ChunkedSweepDefs.chunked_is_black mh root)
+  =
+  ChunkedMajorGCMarkLive.chunked_roots_black_elim mh roots root
+
+let spot_chunked_no_gray_objects_elim
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCMarkLive.chunked_no_gray_objects mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh obj)
+      (ensures ~(ChunkedMarkBounded.chunked_is_gray mh obj))
+  =
+  ChunkedMajorGCMarkLive.chunked_no_gray_objects_elim mh obj
+
+let spot_chunked_no_pointer_to_blue_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+        ~(ChunkedSweepDefs.chunked_is_blue mh src))
+      (ensures ~(ChunkedSweepDefs.chunked_is_blue mh dst))
+  =
+  ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_elim mh src dst
+
+let spot_chunked_no_black_to_white_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCMarkLive.chunked_no_black_to_white mh /\
+        ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+        ChunkedSweepDefs.chunked_is_black mh src)
+      (ensures ~(ChunkedSweepDefs.chunked_is_white mh dst))
+  =
+  ChunkedMajorGCMarkLive.chunked_no_black_to_white_elim mh src dst
+
+let spot_chunked_is_black_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_is_black mh obj)
+      (ensures ~(ChunkedSweepDefs.chunked_is_blue mh obj))
+  =
+  ChunkedMajorGCMarkLive.chunked_is_black_not_blue mh obj
+
+let spot_chunked_not_white_gray_blue_implies_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh obj /\
+        ~(ChunkedSweepDefs.chunked_is_white mh obj) /\
+        ~(ChunkedMarkBounded.chunked_is_gray mh obj) /\
+        ~(ChunkedSweepDefs.chunked_is_blue mh obj))
+      (ensures ChunkedSweepDefs.chunked_is_black mh obj)
+  =
+  ChunkedMajorGCMarkLive.chunked_not_white_gray_blue_implies_black mh obj
+
+let spot_chunked_major_reachable_from_roots_black_from_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCMarkLive.chunked_roots_black mh roots /\
+        ChunkedMajorGCMarkLive.chunked_no_gray_objects mh /\
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMajorGCMarkLive.chunked_no_black_to_white mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh target /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots target)
+      (ensures ChunkedSweepDefs.chunked_is_black mh target)
+  =
+  ChunkedMajorGCMarkLive.chunked_major_reachable_from_roots_black_from_invariants
+    mh roots target
 
 let spot_chunked_major_reachable_preserved_by_live_subgraph
   (mh0 mh1: MH.major_heap)
