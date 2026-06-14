@@ -282,3 +282,60 @@ val chunked_mark_step_preserves_well_formed
       (ensures
         (let (mh', _) = GC.Spec.ChunkedMark.Defs.chunked_mark_step mh st in
          MH.well_formed_major_heap mh'))
+
+val chunked_mark_aux_preservation_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat)
+  : GTot prop
+
+val chunked_mark_aux_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_aux_preservation_ready mh st fuel)
+      (ensures
+        MH.major_objects (GC.Spec.ChunkedMark.Defs.chunked_mark_aux mh st fuel) ==
+        MH.major_objects mh)
+
+val chunked_mark_aux_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_aux_preservation_ready mh st fuel)
+      (ensures
+        MH.well_formed_major_heap
+          (GC.Spec.ChunkedMark.Defs.chunked_mark_aux mh st fuel))
+
+val chunked_mark_preservation_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : GTot prop
+
+val chunked_mark_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_preservation_ready mh st)
+      (ensures
+        MH.major_objects (GC.Spec.ChunkedMark.Defs.chunked_mark mh st) ==
+        MH.major_objects mh)
+
+val chunked_mark_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_preservation_ready mh st)
+      (ensures
+        MH.well_formed_major_heap
+          (GC.Spec.ChunkedMark.Defs.chunked_mark mh st))

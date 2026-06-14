@@ -558,3 +558,111 @@ let chunked_mark_step_preserves_well_formed
       chunked_mark_step_scan_preserves_well_formed mh st
     end
   end
+
+let rec chunked_mark_aux_preservation_ready
+      (mh: MH.major_heap)
+      (st: Seq.seq obj_addr)
+      (fuel: nat)
+    : Tot prop
+      (decreases fuel)
+    =
+    if Seq.length st = 0 then True
+    else if fuel = 0 then True
+    else
+      let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+      chunked_mark_step_preservation_ready mh st /\
+      (let (mh', st') = MarkDefs.chunked_mark_step mh st in
+       chunked_mark_aux_preservation_ready mh' st' fuel_pred)
+
+let rec chunked_mark_aux_preserves_major_objects
+      (mh: MH.major_heap)
+      (st: Seq.seq obj_addr)
+      (fuel: nat)
+    : Lemma
+        (requires
+          MH.well_formed_major_heap mh /\
+          chunked_mark_aux_preservation_ready mh st fuel)
+        (ensures
+          MH.major_objects (MarkDefs.chunked_mark_aux mh st fuel) ==
+          MH.major_objects mh)
+        (decreases fuel)
+    =
+    if Seq.length st = 0 then
+      MarkDefs.chunked_mark_aux_empty mh st fuel
+    else if fuel = 0 then
+      MarkDefs.chunked_mark_aux_out_of_fuel mh st
+    else begin
+      nat_nonzero_pos fuel;
+      MarkDefs.chunked_mark_aux_step mh st fuel;
+      let (mh', st') = MarkDefs.chunked_mark_step mh st in
+      assert (chunked_mark_step_preservation_ready mh st);
+      chunked_mark_step_preserves_major_objects mh st;
+      chunked_mark_step_preserves_well_formed mh st;
+      assert (MH.major_objects mh' == MH.major_objects mh);
+      assert (MH.well_formed_major_heap mh');
+      assert (chunked_mark_aux_preservation_ready mh' st' (fuel - 1));
+      chunked_mark_aux_preserves_major_objects mh' st' (fuel - 1)
+    end
+
+let rec chunked_mark_aux_preserves_well_formed
+      (mh: MH.major_heap)
+      (st: Seq.seq obj_addr)
+      (fuel: nat)
+    : Lemma
+        (requires
+          MH.well_formed_major_heap mh /\
+          chunked_mark_aux_preservation_ready mh st fuel)
+        (ensures
+          MH.well_formed_major_heap (MarkDefs.chunked_mark_aux mh st fuel))
+        (decreases fuel)
+    =
+    if Seq.length st = 0 then
+      MarkDefs.chunked_mark_aux_empty mh st fuel
+    else if fuel = 0 then
+      MarkDefs.chunked_mark_aux_out_of_fuel mh st
+    else begin
+      nat_nonzero_pos fuel;
+      MarkDefs.chunked_mark_aux_step mh st fuel;
+      let (mh', st') = MarkDefs.chunked_mark_step mh st in
+      assert (chunked_mark_step_preservation_ready mh st);
+      chunked_mark_step_preserves_well_formed mh st;
+      assert (MH.well_formed_major_heap mh');
+      assert (chunked_mark_aux_preservation_ready mh' st' (fuel - 1));
+      chunked_mark_aux_preserves_well_formed mh' st' (fuel - 1)
+    end
+
+let chunked_mark_preservation_ready
+      (mh: MH.major_heap)
+      (st: Seq.seq obj_addr)
+    : GTot prop
+    =
+    chunked_mark_aux_preservation_ready mh st (heap_size / U64.v mword)
+
+let chunked_mark_preserves_major_objects
+      (mh: MH.major_heap)
+      (st: Seq.seq obj_addr)
+    : Lemma
+        (requires
+          MH.well_formed_major_heap mh /\
+          chunked_mark_preservation_ready mh st)
+        (ensures
+          MH.major_objects (MarkDefs.chunked_mark mh st) ==
+          MH.major_objects mh)
+    =
+    MarkDefs.chunked_mark_equation mh st;
+    chunked_mark_aux_preserves_major_objects
+      mh st (heap_size / U64.v mword)
+
+let chunked_mark_preserves_well_formed
+      (mh: MH.major_heap)
+      (st: Seq.seq obj_addr)
+    : Lemma
+        (requires
+          MH.well_formed_major_heap mh /\
+          chunked_mark_preservation_ready mh st)
+        (ensures
+          MH.well_formed_major_heap (MarkDefs.chunked_mark mh st))
+    =
+    MarkDefs.chunked_mark_equation mh st;
+    chunked_mark_aux_preserves_well_formed
+      mh st (heap_size / U64.v mword)

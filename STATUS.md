@@ -232,6 +232,8 @@ Follow-up checkpoint: added a membership-only marked-black live-subgraph surface
 
 Follow-up checkpoint: started the true chunked mark-side preservation layer in a new split module, `GC.Spec.ChunkedMark.Preservation`, rather than adding weight to the compatibility modules. The module now proves that chunked mark color writes, `chunked_push_children`, and all `chunked_mark_step` branches preserve `MH.major_objects` and `MH.well_formed_major_heap` under an exact scanner-readiness predicate that mirrors the mark traversal. It also introduces a small stack-membership predicate for later loop preservation. The refreshed split-query profile remains about one second, and `GC.SPOT.HeapExpansion` audits the public contracts. Remaining mark-side work is to lift these facts through `chunked_mark_aux`, then through `ChunkedMarkBounded` rescan/inner/outer loops, and finally prove the marked-heap membership/header/black facts needed by the membership-only major-GC live-subgraph shell.
 
+Follow-up checkpoint: lifted the same preservation facts through `chunked_mark_aux` and the top-level unbounded `chunked_mark` wrapper. `GC.Spec.ChunkedMark.Preservation` now exposes exact recursive readiness predicates for mark steps and mark loops, and proves `MH.major_objects` plus `MH.well_formed_major_heap` preservation through the full fuel-bounded traversal. The split module still profiles at about one second with `--z3refresh --split_queries always`, and `GC.SPOT.HeapExpansion` audits the new loop-level wrappers. The next preservation target is the bounded-mark/rescan pipeline used by `chunked_major_gc_bounded`.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

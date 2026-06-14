@@ -3668,6 +3668,59 @@ let spot_chunked_mark_step_preserves_well_formed
   =
   ChunkedMarkPres.chunked_mark_step_preserves_well_formed mh st
 
+let spot_chunked_mark_aux_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_aux_preservation_ready mh st fuel)
+      (ensures
+        MH.major_objects (ChunkedMarkDefs.chunked_mark_aux mh st fuel) ==
+        MH.major_objects mh)
+  =
+  ChunkedMarkPres.chunked_mark_aux_preserves_major_objects mh st fuel
+
+let spot_chunked_mark_aux_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_aux_preservation_ready mh st fuel)
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedMarkDefs.chunked_mark_aux mh st fuel))
+  =
+  ChunkedMarkPres.chunked_mark_aux_preserves_well_formed mh st fuel
+
+let spot_chunked_mark_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_preservation_ready mh st)
+      (ensures
+        MH.major_objects (ChunkedMarkDefs.chunked_mark mh st) ==
+        MH.major_objects mh)
+  =
+  ChunkedMarkPres.chunked_mark_preserves_major_objects mh st
+
+let spot_chunked_mark_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_preservation_ready mh st)
+      (ensures
+        MH.well_formed_major_heap (ChunkedMarkDefs.chunked_mark mh st))
+  =
+  ChunkedMarkPres.chunked_mark_preserves_well_formed mh st
+
 let spot_chunked_mark_step_empty
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
