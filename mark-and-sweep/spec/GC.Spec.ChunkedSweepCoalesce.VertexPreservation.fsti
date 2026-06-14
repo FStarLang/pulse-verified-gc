@@ -467,3 +467,149 @@ val chunked_make_white_after_member_preserves_objects_from
         MH.chunk_start (Seq.index mh idx) /\
         MH.chunk_end (Seq.index (Defs.chunked_make_white mh obj) idx) ==
         MH.chunk_end (Seq.index mh idx))
+
+val major_write_word_or_same_other_chunk_preserves_objects_from
+  (mh: MH.major_heap)
+  (proc_idx target_idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (addr: hp_addr)
+  (value: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        proc_idx < Seq.length mh /\
+        target_idx < Seq.length mh /\
+        proc_idx <> target_idx /\
+        MH.word_in_chunk (Seq.index mh proc_idx) addr /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh target_idx) start))
+      (ensures
+        (let mh' = SpecMajorAlloc.major_write_word_or_same mh addr value in
+         MH.well_formed_major_heap mh' /\
+         proc_idx < Seq.length mh' /\
+         target_idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' target_idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh target_idx) start /\
+         Seq.mem protected
+           (MH.objects_in_chunk_from (Seq.index mh' target_idx) start) /\
+         MH.object_wosize_in_chunk (Seq.index mh' target_idx) protected ==
+         MH.object_wosize_in_chunk (Seq.index mh target_idx) protected /\
+         MH.chunk_start (Seq.index mh' proc_idx) ==
+         MH.chunk_start (Seq.index mh proc_idx) /\
+         MH.chunk_end (Seq.index mh' proc_idx) ==
+         MH.chunk_end (Seq.index mh proc_idx) /\
+         MH.chunk_start (Seq.index mh' target_idx) ==
+         MH.chunk_start (Seq.index mh target_idx) /\
+         MH.chunk_end (Seq.index mh' target_idx) ==
+         MH.chunk_end (Seq.index mh target_idx)))
+
+val chunked_zero_fields_other_chunk_preserves_objects_from
+  (mh: MH.major_heap)
+  (proc_idx target_idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (addr: U64.t)
+  (n: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        proc_idx < Seq.length mh /\
+        target_idx < Seq.length mh /\
+        proc_idx <> target_idx /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh target_idx) start) /\
+        U64.v addr % U64.v mword == 0 /\
+        U64.v addr + n * U64.v mword <=
+          MH.chunk_end (Seq.index mh proc_idx) /\
+        (n <> 0 ==> MH.chunk_start (Seq.index mh proc_idx) <= U64.v addr))
+      (ensures
+        (let mh' = Defs.chunked_zero_fields mh addr n in
+         MH.well_formed_major_heap mh' /\
+         target_idx < Seq.length mh' /\
+         MH.objects_in_chunk_from (Seq.index mh' target_idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh target_idx) start /\
+         Seq.mem protected
+           (MH.objects_in_chunk_from (Seq.index mh' target_idx) start) /\
+         MH.object_wosize_in_chunk (Seq.index mh' target_idx) protected ==
+         MH.object_wosize_in_chunk (Seq.index mh target_idx) protected /\
+         MH.chunk_start (Seq.index mh' target_idx) ==
+         MH.chunk_start (Seq.index mh target_idx) /\
+         MH.chunk_end (Seq.index mh' target_idx) ==
+         MH.chunk_end (Seq.index mh target_idx)))
+
+val chunked_flush_blue_other_chunk_preserves_objects_from
+  (mh: MH.major_heap)
+  (proc_idx target_idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (first_blue: U64.t)
+  (run_words: nat)
+  (fp: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        proc_idx < Seq.length mh /\
+        target_idx < Seq.length mh /\
+        proc_idx <> target_idx /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh target_idx) start) /\
+        (run_words <> 0 /\
+         ~(U64.v first_blue < U64.v mword) /\
+         ~(U64.v first_blue >= heap_size) /\
+         ~(U64.v first_blue % U64.v mword <> 0) /\
+         run_words - 1 < pow2 54 ==>
+          (let fb : obj_addr = first_blue in
+           let hd = hd_address fb in
+           MH.word_in_chunk (Seq.index mh proc_idx) hd /\
+           U64.v hd + run_words * U64.v mword <=
+             MH.chunk_end (Seq.index mh proc_idx))))
+      (ensures
+        (let final = fst (Defs.chunked_flush_blue mh first_blue run_words fp) in
+         MH.well_formed_major_heap final /\
+         target_idx < Seq.length final /\
+         MH.objects_in_chunk_from (Seq.index final target_idx) start ==
+         MH.objects_in_chunk_from (Seq.index mh target_idx) start /\
+         Seq.mem protected
+           (MH.objects_in_chunk_from (Seq.index final target_idx) start) /\
+         MH.object_wosize_in_chunk (Seq.index final target_idx) protected ==
+         MH.object_wosize_in_chunk (Seq.index mh target_idx) protected /\
+         MH.chunk_start (Seq.index final target_idx) ==
+         MH.chunk_start (Seq.index mh target_idx) /\
+         MH.chunk_end (Seq.index final target_idx) ==
+         MH.chunk_end (Seq.index mh target_idx)))
+
+val chunked_make_white_other_chunk_preserves_objects_from
+  (mh: MH.major_heap)
+  (proc_idx target_idx: nat)
+  (start: hp_addr)
+  (protected: obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        proc_idx < Seq.length mh /\
+        target_idx < Seq.length mh /\
+        proc_idx <> target_idx /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from (Seq.index mh target_idx) start) /\
+        MH.word_in_chunk (Seq.index mh proc_idx) (hd_address obj))
+      (ensures
+        MH.well_formed_major_heap (Defs.chunked_make_white mh obj) /\
+        target_idx < Seq.length (Defs.chunked_make_white mh obj) /\
+        MH.objects_in_chunk_from
+          (Seq.index (Defs.chunked_make_white mh obj) target_idx) start ==
+        MH.objects_in_chunk_from (Seq.index mh target_idx) start /\
+        Seq.mem protected
+          (MH.objects_in_chunk_from
+            (Seq.index (Defs.chunked_make_white mh obj) target_idx) start) /\
+        MH.object_wosize_in_chunk
+          (Seq.index (Defs.chunked_make_white mh obj) target_idx)
+          protected ==
+        MH.object_wosize_in_chunk (Seq.index mh target_idx) protected /\
+        MH.chunk_start
+          (Seq.index (Defs.chunked_make_white mh obj) target_idx) ==
+        MH.chunk_start (Seq.index mh target_idx) /\
+        MH.chunk_end
+          (Seq.index (Defs.chunked_make_white mh obj) target_idx) ==
+        MH.chunk_end (Seq.index mh target_idx))
