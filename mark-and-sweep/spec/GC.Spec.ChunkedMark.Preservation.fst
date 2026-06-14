@@ -1115,6 +1115,134 @@ let chunked_make_black_preserves_no_scan_status
 #pop-options
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_object_color_preserves_tag_of_object
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+    (color: Header.color_sem)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_tag_of_object
+          (SweepDefs.chunked_set_object_color mh obj color) target ==
+        SweepDefs.chunked_tag_of_object mh target)
+  =
+  color_member_read_witness mh obj;
+  color_member_read_witness mh target;
+  SweepDefs.chunked_read_header_step mh target;
+  match SweepDefs.chunked_read_header mh target with
+  | None -> assert False
+  | Some target_hdr ->
+    SweepDefs.chunked_tag_of_object_some mh target target_hdr;
+    if obj = target then begin
+      chunked_set_object_color_member_read_header mh obj color;
+      assert (SweepDefs.chunked_read_header
+        (SweepDefs.chunked_set_object_color mh obj color) target ==
+        Some (Obj.colorHeader target_hdr color));
+      Obj.colorHeader_preserves_tag target_hdr color;
+      SweepDefs.chunked_tag_of_object_some
+        (SweepDefs.chunked_set_object_color mh obj color)
+        target
+        (Obj.colorHeader target_hdr color)
+    end else begin
+      match SweepDefs.chunked_read_header mh obj with
+      | None -> assert False
+      | Some obj_hdr ->
+        let obj_hd = hd_address obj in
+        let target_hd = hd_address target in
+        let new_hdr = Obj.colorHeader obj_hdr color in
+        SweepDefs.chunked_read_header_step mh obj;
+        SweepDefs.chunked_set_object_color_some mh obj color obj_hdr;
+        MHReadFrame.write_word_in_major_preserves_same_read
+          mh obj_hd obj_hdr new_hdr;
+        match MH.write_word_in_major mh obj_hd new_hdr with
+        | None -> assert False
+        | Some mh' ->
+          SpecMajorAlloc.major_write_word_or_same_some
+            mh mh' obj_hd new_hdr;
+          assert (SweepDefs.chunked_set_object_color mh obj color == mh');
+          hd_address_injective obj target;
+          assert (obj_hd <> target_hd);
+          distinct_word_aligned_addrs_disjoint obj_hd target_hd;
+          assert (MH.read_word_in_major mh target_hd == Some target_hdr);
+          MHReadFrame.write_word_in_major_preserves_other_read
+            mh obj_hd new_hdr target_hd target_hdr;
+          assert (MH.read_word_in_major mh' target_hd == Some target_hdr);
+          SweepDefs.chunked_read_header_step mh' target;
+          assert (SweepDefs.chunked_read_header mh' target == Some target_hdr);
+          SweepDefs.chunked_tag_of_object_some mh' target target_hdr
+    end
+
+let chunked_make_gray_preserves_tag_of_object
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_tag_of_object
+          (MarkDefs.chunked_make_gray mh obj) target ==
+        SweepDefs.chunked_tag_of_object mh target)
+  =
+  MarkDefs.chunked_make_gray_step mh obj;
+  chunked_set_object_color_preserves_tag_of_object mh obj target Header.Gray
+
+let chunked_make_black_preserves_tag_of_object
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_tag_of_object
+          (MarkDefs.chunked_make_black mh obj) target ==
+        SweepDefs.chunked_tag_of_object mh target)
+  =
+  MarkDefs.chunked_make_black_step mh obj;
+  chunked_set_object_color_preserves_tag_of_object mh obj target Header.Black
+
+let chunked_make_gray_preserves_infix_status
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_is_infix
+          (MarkDefs.chunked_make_gray mh obj) target ==
+        SweepDefs.chunked_is_infix mh target)
+  =
+  chunked_make_gray_preserves_tag_of_object mh obj target;
+  SweepDefs.chunked_is_infix_step mh target;
+  SweepDefs.chunked_is_infix_step (MarkDefs.chunked_make_gray mh obj) target
+
+let chunked_make_black_preserves_infix_status
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_is_infix
+          (MarkDefs.chunked_make_black mh obj) target ==
+        SweepDefs.chunked_is_infix mh target)
+  =
+  chunked_make_black_preserves_tag_of_object mh obj target;
+  SweepDefs.chunked_is_infix_step mh target;
+  SweepDefs.chunked_is_infix_step (MarkDefs.chunked_make_black mh obj) target
+#pop-options
+
 let chunked_set_object_color_preserves_other_black
     (mh: MH.major_heap)
     (obj target: obj_addr)

@@ -112,6 +112,16 @@ val chunked_no_black_to_white
   (mh: MH.major_heap)
   : prop
 
+val chunked_no_black_to_white_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          SweepDefs.chunked_is_black mh src ==>
+          ~(SweepDefs.chunked_is_white mh dst))
+      (ensures chunked_no_black_to_white mh)
+
 val chunked_no_black_to_white_elim
   (mh: MH.major_heap)
   (src dst: obj_addr)

@@ -160,6 +160,75 @@ let spot_chunked_is_blue_read_header
   =
   ChunkedSweepDefs.chunked_is_blue_read_header mh obj
 
+let spot_chunked_is_infix_step
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (ChunkedSweepDefs.chunked_is_infix mh obj ==
+       (ChunkedSweepDefs.chunked_tag_of_object mh obj = Obj.infix_tag))
+  =
+  ChunkedSweepDefs.chunked_is_infix_step mh obj
+
+let spot_chunked_make_gray_preserves_tag_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_tag_of_object
+          (ChunkedMarkDefs.chunked_make_gray mh obj) target ==
+        ChunkedSweepDefs.chunked_tag_of_object mh target)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_tag_of_object mh obj target
+
+let spot_chunked_make_black_preserves_tag_of_object
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_tag_of_object
+          (ChunkedMarkDefs.chunked_make_black mh obj) target ==
+        ChunkedSweepDefs.chunked_tag_of_object mh target)
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_tag_of_object mh obj target
+
+let spot_chunked_make_gray_preserves_infix_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_is_infix
+          (ChunkedMarkDefs.chunked_make_gray mh obj) target ==
+        ChunkedSweepDefs.chunked_is_infix mh target)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_infix_status mh obj target
+
+let spot_chunked_make_black_preserves_infix_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_is_infix
+          (ChunkedMarkDefs.chunked_make_black mh obj) target ==
+        ChunkedSweepDefs.chunked_is_infix mh target)
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_infix_status mh obj target
+
 let spot_major_write_word_or_same_read_same
   (mh: MH.major_heap)
   (write_addr: hp_addr)

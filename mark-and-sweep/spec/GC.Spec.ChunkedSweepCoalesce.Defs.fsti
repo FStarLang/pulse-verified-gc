@@ -153,6 +153,13 @@ val chunked_is_infix
   (mh: MH.major_heap) (obj: obj_addr)
   : GTot bool
 
+val chunked_is_infix_step
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (chunked_is_infix mh obj ==
+       (chunked_tag_of_object mh obj = Obj.infix_tag))
+
 val chunked_set_object_color
   (mh: MH.major_heap) (obj: obj_addr) (color: Header.color_sem)
   : GTot MH.major_heap
