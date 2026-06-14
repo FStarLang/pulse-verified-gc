@@ -6952,6 +6952,41 @@ let spot_chunked_stack_reachable_from_gray_black
   ChunkedMajorGCMarkReach.chunked_stack_reachable_from_gray_black
     mh roots st
 
+let spot_chunked_rescan_objects_stack_reachable_from_gray_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (objs: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_gray_black_reachable mh roots /\
+        ChunkedMarkPres.stack_objects_in_major mh st /\
+        ChunkedMarkBoundedReady.chunked_stack_points_to_gray mh st /\
+        (forall (obj: obj_addr).
+          Seq.mem obj objs ==> Seq.mem obj (MH.major_objects mh)))
+      (ensures
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots
+          (ChunkedMarkBounded.chunked_rescan_objects mh objs st cap))
+  =
+  ChunkedMajorGCMarkReach.chunked_rescan_objects_stack_reachable_from_gray_black
+    mh roots objs st cap
+
+let spot_chunked_rescan_heap_stack_reachable_from_gray_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires ChunkedMajorGCReach.chunked_gray_black_reachable mh roots)
+      (ensures
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots
+          (ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap))
+  =
+  ChunkedMajorGCMarkReach.chunked_rescan_heap_stack_reachable_from_gray_black
+    mh roots cap
+
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)
