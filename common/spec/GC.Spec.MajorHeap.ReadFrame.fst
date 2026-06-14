@@ -126,6 +126,77 @@ let rec write_word_in_major_preserves_other_read
     end
   end
 
+let rec write_word_in_major_preserves_other_read_back
+    (mh: MH.major_heap)
+    (write_addr: hp_addr)
+    (value: U64.t)
+    (read_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        (match MH.write_word_in_major mh write_addr value with
+         | Some mh' -> MH.read_word_in_major mh' read_addr == Some old
+         | None -> False) /\
+        (U64.v write_addr + U64.v mword <= U64.v read_addr \/
+         U64.v read_addr + U64.v mword <= U64.v write_addr))
+      (ensures MH.read_word_in_major mh read_addr == Some old)
+      (decreases Seq.length mh)
+  =
+  if Seq.length mh = 0 then
+    assert False
+  else begin
+    let c = Seq.head mh in
+    let tl = Seq.tail mh in
+    if MH.word_in_chunk c write_addr then begin
+      let c' = MH.write_word_in_chunk c write_addr value in
+      MH.write_word_in_chunk_preserves_range c write_addr value;
+      assert (MH.write_word_in_major mh write_addr value == Some (Seq.cons c' tl));
+      if MH.chunk_contains_addr c' read_addr then begin
+        assert (MH.chunk_contains_addr c read_addr);
+        assert (MH.word_in_chunk c' read_addr);
+        MH.write_word_in_chunk_preserves_word c write_addr value read_addr;
+        assert (MH.word_in_chunk c read_addr);
+        read_word_in_major_cons_hit c' tl read_addr;
+        assert (MH.read_word_in_chunk c' read_addr == old);
+        MH.read_write_in_chunk_different c write_addr read_addr value;
+        assert (MH.read_word_in_chunk c read_addr == old);
+        read_word_in_major_cons_hit c tl read_addr
+      end else begin
+        assert (~(MH.chunk_contains_addr c read_addr));
+        read_word_in_major_cons_miss c' tl read_addr;
+        assert (MH.read_word_in_major (Seq.cons c' tl) read_addr ==
+                MH.read_word_in_major tl read_addr);
+        assert (MH.read_word_in_major tl read_addr == Some old);
+        read_word_in_major_cons_miss c tl read_addr
+      end
+    end else begin
+      assert (MH.write_word_in_major mh write_addr value ==
+              (match MH.write_word_in_major tl write_addr value with
+               | None -> None
+               | Some tl' -> Some (Seq.cons c tl')));
+      if MH.chunk_contains_addr c read_addr then begin
+        match MH.write_word_in_major tl write_addr value with
+        | None -> assert False
+        | Some tl' ->
+          read_word_in_major_cons_hit c tl' read_addr;
+          assert (MH.read_word_in_major (Seq.cons c tl') read_addr == Some old);
+          assert (MH.word_in_chunk c read_addr);
+          assert (MH.read_word_in_chunk c read_addr == old);
+          read_word_in_major_cons_hit c tl read_addr
+      end else begin
+        read_word_in_major_cons_miss c tl read_addr;
+        match MH.write_word_in_major tl write_addr value with
+        | None -> assert False
+        | Some tl' ->
+          read_word_in_major_cons_miss c tl' read_addr;
+          assert (MH.read_word_in_major tl' read_addr == Some old);
+          write_word_in_major_preserves_other_read_back
+            tl write_addr value read_addr old;
+          assert (MH.read_word_in_major tl read_addr == Some old)
+      end
+    end
+  end
+
 let rec write_word_in_major_preserves_same_read
       (mh: MH.major_heap)
       (addr: hp_addr)
