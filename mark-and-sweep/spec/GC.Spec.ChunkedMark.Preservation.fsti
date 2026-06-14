@@ -277,6 +277,48 @@ val chunked_make_black_preserves_ranges
         RangePres.same_chunk_ranges mh
           (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj))
 
+val chunked_make_gray_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj) obj))
+
+val chunked_make_black_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) obj))
+
+val chunked_make_gray_preserves_other_blue_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires obj <> target)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue mh target)
+
+val chunked_make_black_preserves_other_blue_status
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires obj <> target)
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue
+          (GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue mh target)
+
 val chunked_set_object_color_preserves_other_black
   (mh: MH.major_heap)
   (obj target: obj_addr)

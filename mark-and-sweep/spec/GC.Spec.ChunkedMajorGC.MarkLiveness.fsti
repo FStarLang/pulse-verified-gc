@@ -88,6 +88,16 @@ val chunked_no_pointer_to_blue
   (mh: MH.major_heap)
   : prop
 
+val chunked_no_pointer_to_blue_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ~(SweepDefs.chunked_is_blue mh src) ==>
+          ~(SweepDefs.chunked_is_blue mh dst))
+      (ensures chunked_no_pointer_to_blue mh)
+
 val chunked_no_pointer_to_blue_elim
   (mh: MH.major_heap)
   (src dst: obj_addr)

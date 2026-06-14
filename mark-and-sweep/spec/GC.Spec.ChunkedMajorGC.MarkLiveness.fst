@@ -140,6 +140,28 @@ let chunked_no_pointer_to_blue
     ~(SweepDefs.chunked_is_blue mh dst)
 
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_no_pointer_to_blue_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ~(SweepDefs.chunked_is_blue mh src) ==>
+          ~(SweepDefs.chunked_is_blue mh dst))
+      (ensures chunked_no_pointer_to_blue mh)
+  =
+  let aux (src dst: obj_addr)
+    : Lemma
+        (requires
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ~(SweepDefs.chunked_is_blue mh src))
+        (ensures ~(SweepDefs.chunked_is_blue mh dst))
+    =
+    ()
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 aux)
+
 let chunked_no_pointer_to_blue_elim
   (mh: MH.major_heap)
   (src dst: obj_addr)
