@@ -6805,6 +6805,18 @@ let spot_chunked_major_edge_reachable
   =
   ChunkedMajorGCReach.chunked_major_edge_reachable mh x y
 
+let spot_chunked_major_reachable_extend_edge
+  (mh: MH.major_heap)
+  (x y z: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable mh x y /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh z /\
+        ChunkedMajorGCGraph.chunked_major_edge mh y z)
+      (ensures ChunkedMajorGCReach.chunked_major_reachable mh x z)
+  =
+  ChunkedMajorGCReach.chunked_major_reachable_extend_edge mh x y z
+
 let spot_chunked_major_root_reachable
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -6817,6 +6829,21 @@ let spot_chunked_major_root_reachable
         ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots x)
   =
   ChunkedMajorGCReach.chunked_major_root_reachable mh roots x
+
+let spot_chunked_major_reachable_from_roots_extend_edge
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x y: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots x /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh y /\
+        ChunkedMajorGCGraph.chunked_major_edge mh x y)
+      (ensures
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots y)
+  =
+  ChunkedMajorGCReach.chunked_major_reachable_from_roots_extend_edge
+    mh roots x y
 
 let spot_chunked_gray_black_reachable_init
   (mh: MH.major_heap)

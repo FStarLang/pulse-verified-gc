@@ -33,6 +33,16 @@ val chunked_major_edge_reachable
         ChunkedMajorGraph.chunked_major_edge mh x y)
       (ensures chunked_major_reachable mh x y)
 
+val chunked_major_reachable_extend_edge
+  (mh: MH.major_heap)
+  (x y z: obj_addr)
+  : Lemma
+      (requires
+        chunked_major_reachable mh x y /\
+        ChunkedMajorGraph.chunked_major_vertex mh z /\
+        ChunkedMajorGraph.chunked_major_edge mh y z)
+      (ensures chunked_major_reachable mh x z)
+
 val chunked_major_reachable_from_roots
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -48,6 +58,17 @@ val chunked_major_root_reachable
         ChunkedMajorGraph.chunked_major_vertex mh x /\
         Seq.mem x roots)
       (ensures chunked_major_reachable_from_roots mh roots x)
+
+val chunked_major_reachable_from_roots_extend_edge
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x y: obj_addr)
+  : Lemma
+      (requires
+        chunked_major_reachable_from_roots mh roots x /\
+        ChunkedMajorGraph.chunked_major_vertex mh y /\
+        ChunkedMajorGraph.chunked_major_edge mh x y)
+      (ensures chunked_major_reachable_from_roots mh roots y)
 
 val chunked_gray_black_reachable
   (mh: MH.major_heap)
