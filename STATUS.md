@@ -266,6 +266,8 @@ Follow-up checkpoint: avoided the missing `MH.major_objects` no-duplicate theore
 
 Follow-up checkpoint: added the non-target black-status framing needed to instantiate the target-flip count lemma. `GC.Spec.MajorHeap.ReadFrame` now has a reverse disjoint-read framing lemma for `write_word_in_major`, and `GC.Spec.ChunkedMark.Preservation` exposes backward/status-equality wrappers for `chunked_set_object_color`, `chunked_make_gray`, and `chunked_make_black` on non-target objects. This lets future bounded-step proofs show only the popped gray head changes from nonblack to black while child graying cannot change any other object's black status. SPOT audits the new API, refreshed profiles remain around one second or less, and common, mark-and-sweep spec, and SPOT verification pass.
 
+Follow-up checkpoint: proved the first concrete bounded-mark count decrease. `GC.Spec.ChunkedMarkBounded.Preservation` now shows bounded child pushing preserves black status for every object and a bounded mark step preserves every non-head object's black status, while `GC.Spec.ChunkedMarkBounded.CountStep` proves one bounded step strictly decreases `chunked_count_non_black` when the stack head is gray and active. This avoids relying on `MH.major_objects` uniqueness by using the target-flip count lemma. SPOT audits the preservation and count-step contracts; targeted profiles stay around one second, and broad mark-and-sweep spec plus SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

@@ -11,6 +11,7 @@ module MarkDefs = GC.Spec.ChunkedMark.Defs
 module MarkPres = GC.Spec.ChunkedMark.Preservation
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
+module BCount = GC.Spec.ChunkedMarkBounded.Count
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -186,6 +187,61 @@ let rec chunked_push_children_bounded_preserves_black
         mh st obj target (U64.add i 1UL) ws cap
   end
 
+let rec chunked_push_children_bounded_preserves_black_status
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (obj target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+    (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_push_children_bounded_preservation_ready mh obj i ws)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         SweepDefs.chunked_is_black mh' target ==
+         SweepDefs.chunked_is_black mh target))
+      (decreases (U64.v ws - U64.v i))
+  =
+  if U64.v i > U64.v ws then
+    BDefs.chunked_push_children_bounded_done mh st obj i ws cap
+  else begin
+    BDefs.chunked_push_children_bounded_step mh st obj i ws cap;
+    let v = MarkDefs.chunked_get_field mh obj i in
+    if MarkDefs.chunked_is_pointer_field mh v then begin
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child = MarkDefs.chunked_resolve_object mh child_raw in
+      if SweepDefs.chunked_is_white mh child then begin
+        let mh_gray = MarkDefs.chunked_make_gray mh child in
+        let st' =
+          if Seq.length st < cap then Seq.cons child st else st in
+        assert (Seq.mem child (MH.major_objects mh));
+        MarkPres.chunked_make_gray_preserves_well_formed mh child;
+        if child = target then begin
+          if SweepDefs.chunked_is_black mh target then begin
+            SweepDefs.chunked_is_white_not_black mh target;
+            assert False
+          end;
+          MarkPres.chunked_make_gray_makes_gray mh child;
+          BDefs.chunked_is_gray_step mh_gray target;
+          assert (BDefs.chunked_is_gray mh_gray target);
+          BCount.chunked_is_gray_not_black mh_gray target
+        end else
+          MarkPres.chunked_make_gray_preserves_other_black_status
+            mh child target;
+        if U64.v i < U64.v ws then
+          chunked_push_children_bounded_preserves_black_status
+            mh_gray st' obj target (U64.add i 1UL) ws cap
+      end else if U64.v i < U64.v ws then
+        chunked_push_children_bounded_preserves_black_status
+          mh st obj target (U64.add i 1UL) ws cap
+    end else if U64.v i < U64.v ws then
+      chunked_push_children_bounded_preserves_black_status
+        mh st obj target (U64.add i 1UL) ws cap
+  end
+
 let chunked_mark_step_bounded_preservation_ready
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)
@@ -276,6 +332,38 @@ let chunked_mark_step_bounded_preserves_black
           mh_black st' obj target 1UL ws cap
       end
     end
+  end
+
+let chunked_mark_step_bounded_preserves_other_black_status
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        target <> Seq.head st /\
+        MH.well_formed_major_heap mh /\
+        chunked_mark_step_bounded_preservation_ready mh st cap)
+      (ensures
+        (let (mh', _) = BDefs.chunked_mark_step_bounded mh st cap in
+         SweepDefs.chunked_is_black mh' target ==
+         SweepDefs.chunked_is_black mh target))
+  =
+  let obj = Seq.head st in
+  let st' = Seq.tail st in
+  assert (Seq.mem obj (MH.major_objects mh));
+  if MarkDefs.chunked_is_no_scan mh obj then begin
+    BDefs.chunked_mark_step_bounded_no_scan mh st cap;
+    MarkPres.chunked_make_black_preserves_other_black_status mh obj target
+  end else begin
+    let mh_black = MarkDefs.chunked_make_black mh obj in
+    let ws = SweepDefs.chunked_wosize_of_object mh obj in
+    BDefs.chunked_mark_step_bounded_scan mh st cap;
+    MarkPres.chunked_make_black_preserves_other_black_status mh obj target;
+    MarkPres.chunked_make_black_preserves_well_formed mh obj;
+    chunked_push_children_bounded_preserves_black_status
+      mh_black st' obj target 1UL ws cap
   end
 
 let chunked_mark_step_bounded_preserves_major_objects
