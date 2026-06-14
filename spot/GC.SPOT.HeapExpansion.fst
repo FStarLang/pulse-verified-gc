@@ -60,6 +60,7 @@ module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkBoundedPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkBoundedReady = GC.Spec.ChunkedMarkBounded.TargetReady
+module ChunkedMarkBoundedCount = GC.Spec.ChunkedMarkBounded.Count
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -4682,6 +4683,47 @@ let spot_chunked_count_non_black_bound
         Seq.length (MH.major_objects mh))
   =
   ChunkedMarkBoundedReady.chunked_count_non_black_bound mh
+
+let spot_chunked_count_non_black_in_preserved_by_black_status
+  (mh mh': MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        (forall (obj: obj_addr).
+          Seq.mem obj objs ==>
+            ChunkedSweepDefs.chunked_is_black mh' obj ==
+            ChunkedSweepDefs.chunked_is_black mh obj))
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black_in mh' objs ==
+        ChunkedMarkBounded.chunked_count_non_black_in mh objs)
+  =
+  ChunkedMarkBoundedCount.chunked_count_non_black_in_preserved_by_black_status
+    mh mh' objs
+
+let spot_chunked_count_non_black_preserved_by_black_status
+  (mh mh': MH.major_heap)
+  : Lemma
+      (requires
+        MH.major_objects mh' == MH.major_objects mh /\
+        (forall (obj: obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==>
+            ChunkedSweepDefs.chunked_is_black mh' obj ==
+            ChunkedSweepDefs.chunked_is_black mh obj))
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black mh' ==
+        ChunkedMarkBounded.chunked_count_non_black mh)
+  =
+  ChunkedMarkBoundedCount.chunked_count_non_black_preserved_by_black_status
+    mh mh'
+
+let spot_chunked_is_gray_not_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedMarkBounded.chunked_is_gray mh obj)
+      (ensures ~(ChunkedSweepDefs.chunked_is_black mh obj))
+  =
+  ChunkedMarkBoundedCount.chunked_is_gray_not_black mh obj
 
 let spot_chunked_push_children_bounded_preserves_stack_member
   (mh: MH.major_heap)

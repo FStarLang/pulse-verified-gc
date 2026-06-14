@@ -260,6 +260,8 @@ Follow-up checkpoint: added no-duplicate preservation for chunked bounded rescan
 
 Follow-up checkpoint: packaged the rescan-produced bounded stack shape. `GC.Spec.ChunkedMark.Preservation` now exposes `stack_objects_in_major_empty` and `stack_objects_in_major_cons`, keeping its abstract stack-membership predicate usable by clients. `GC.Spec.ChunkedMarkBounded.TargetReady` uses those constructors to prove rescan stacks contain only active major objects, then bundles active-object membership, grayness, and no-duplicates as `chunked_bounded_stack_props` with a head eliminator. SPOT audits the constructors and the bounded rescan-stack wrapper, refreshed profiles for both changed split modules stay around one second, and broad mark-and-sweep spec plus SPOT verification pass.
 
+Follow-up checkpoint: split out the first bounded-mark count helper module. `GC.Spec.ChunkedMarkBounded.Count` now proves that `chunked_count_non_black_in` is preserved by pointwise black-status preservation, lifts that to `chunked_count_non_black` when `MH.major_objects` is unchanged, and exposes `chunked_is_gray_not_black`. These are deliberately small prerequisites for the later bounded-step count-decrease proof; the exact global decrease still needs an exposed uniqueness/no-duplicate fact for `MH.major_objects` or a proof that does not require it. SPOT audits the new count wrappers, the split module profiles under one second, and broad mark-and-sweep spec plus SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
