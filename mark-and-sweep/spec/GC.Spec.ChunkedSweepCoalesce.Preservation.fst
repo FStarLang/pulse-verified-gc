@@ -1623,13 +1623,19 @@ let rec chunked_fused_aux_live_read_frame_ready_from_chunk_from
                     U64.v new_first + (new_run - 1) * U64.v mword ==
                       U64.v next_start);
             assert (U64.v field_addr >= U64.v next_start);
-            chunked_fused_aux_nonblack_named_run_before_read
-              start first first_blue run_words wz next_start
-              new_first new_run field_addr;
-            assert_spinoff
-              (new_run = 0 \/
-               U64.v new_first + (new_run - 1) * U64.v mword <=
-                 U64.v field_addr);
+            if new_run = 0 then
+              assert (new_run = 0 \/
+                      U64.v new_first + (new_run - 1) * U64.v mword <=
+                        U64.v field_addr)
+            else begin
+              assert (U64.v new_first + (new_run - 1) * U64.v mword ==
+                      U64.v next_start);
+              assert (U64.v new_first + (new_run - 1) * U64.v mword <=
+                      U64.v field_addr);
+              assert (new_run = 0 \/
+                      U64.v new_first + (new_run - 1) * U64.v mword <=
+                        U64.v field_addr)
+            end;
             assert (Seq.length (MH.objects_in_chunk_from c next_start) <
                    Seq.length (MH.objects_in_chunk_from c start));
             chunked_fused_aux_live_read_frame_ready_from_chunk_from

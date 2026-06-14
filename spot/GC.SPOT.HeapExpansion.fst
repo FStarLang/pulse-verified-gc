@@ -89,6 +89,20 @@ let spot_write_word_in_major_preserves_other_read
   MHReadFrame.write_word_in_major_preserves_other_read
     mh write_addr value read_addr old
 
+let spot_write_word_in_major_preserves_same_read
+  (mh: MH.major_heap)
+  (addr: hp_addr)
+  (old: U64.t)
+  (value: U64.t)
+  : Lemma
+      (requires MH.read_word_in_major mh addr == Some old)
+      (ensures
+        (match MH.write_word_in_major mh addr value with
+         | Some mh' -> MH.read_word_in_major mh' addr == Some value
+         | None -> False))
+  =
+  MHReadFrame.write_word_in_major_preserves_same_read mh addr old value
+
 let spot_chunked_sweep_read_header_step
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -3213,6 +3227,49 @@ let spot_chunked_sweep_is_infix_single_chunk_compat
   =
   ChunkedSweepDefs.chunked_is_infix_single_chunk_compat g obj
 
+let spot_chunked_color_of_object_some
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object mh obj ==
+        Some (Obj.getColor hdr))
+  =
+  ChunkedSweepDefs.chunked_color_of_object_some mh obj hdr
+
+let spot_chunked_is_black_from_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        ChunkedSweepDefs.chunked_color_of_object mh obj == Some Header.Black)
+      (ensures ChunkedSweepDefs.chunked_is_black mh obj)
+  =
+  ChunkedSweepDefs.chunked_is_black_from_color mh obj
+
+let spot_chunked_is_black_read_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_is_black mh obj)
+      (ensures
+        (match ChunkedSweepDefs.chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == Header.Black
+         | None -> False))
+  =
+  ChunkedSweepDefs.chunked_is_black_read_header mh obj
+
+let spot_chunked_is_white_not_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_is_black mh obj)
+      (ensures ~(ChunkedSweepDefs.chunked_is_white mh obj))
+  =
+  ChunkedSweepDefs.chunked_is_white_not_black mh obj
+
 let spot_chunked_wosize_of_object_some
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -3438,6 +3495,94 @@ let spot_chunked_make_black_preserves_major_objects
   =
   ChunkedMarkPres.chunked_make_black_preserves_major_objects mh obj
 
+let spot_chunked_set_object_color_member_read_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        (match ChunkedSweepDefs.chunked_read_header mh obj with
+         | Some hdr ->
+           ChunkedSweepDefs.chunked_read_header
+             (ChunkedSweepDefs.chunked_set_object_color mh obj color) obj ==
+           Some (Obj.colorHeader hdr color)
+         | None -> False))
+  =
+  ChunkedMarkPres.chunked_set_object_color_member_read_header mh obj color
+
+let spot_chunked_set_object_color_member_sets_color
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) obj ==
+        Some color)
+  =
+  ChunkedMarkPres.chunked_set_object_color_member_sets_color mh obj color
+
+let spot_chunked_make_gray_makes_gray
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedMarkDefs.chunked_make_gray mh obj) obj ==
+        Some Header.Gray)
+  =
+  ChunkedMarkPres.chunked_make_gray_makes_gray mh obj
+
+let spot_chunked_make_black_makes_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMarkDefs.chunked_make_black mh obj) obj)
+  =
+  ChunkedMarkPres.chunked_make_black_makes_black mh obj
+
+let spot_chunked_set_object_color_preserves_other_black
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_is_black mh target)
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) target)
+  =
+  ChunkedMarkPres.chunked_set_object_color_preserves_other_black
+    mh obj target color
+
+let spot_chunked_make_gray_preserves_other_black
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_is_black mh target)
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMarkDefs.chunked_make_gray mh obj) target)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_other_black mh obj target
+
 let spot_chunked_set_object_color_member_preserves_well_formed
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -3512,6 +3657,23 @@ let spot_chunked_push_children_preserves_well_formed
   =
   ChunkedMarkPres.chunked_push_children_preserves_well_formed
     mh st obj i ws
+
+let spot_chunked_push_children_preserves_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        ChunkedMarkPres.chunked_push_children_preservation_ready mh obj i ws /\
+        ChunkedSweepDefs.chunked_is_black mh target)
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_push_children mh st obj i ws in
+         ChunkedSweepDefs.chunked_is_black mh' target))
+  =
+  ChunkedMarkPres.chunked_push_children_preserves_black
+    mh st obj target i ws
 
 let spot_chunked_stack_objects_in_major_elim
   (mh: MH.major_heap)
@@ -3655,6 +3817,20 @@ let spot_chunked_mark_step_preserves_major_objects
          MH.major_objects mh' == MH.major_objects mh))
   =
   ChunkedMarkPres.chunked_mark_step_preserves_major_objects mh st
+
+let spot_chunked_mark_step_marks_head_black
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_step_preservation_ready mh st)
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         ChunkedSweepDefs.chunked_is_black mh' (Seq.head st)))
+  =
+  ChunkedMarkPres.chunked_mark_step_marks_head_black mh st
 
 let spot_chunked_mark_step_preserves_well_formed
   (mh: MH.major_heap)

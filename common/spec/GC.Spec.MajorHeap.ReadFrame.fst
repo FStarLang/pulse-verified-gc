@@ -125,3 +125,54 @@ let rec write_word_in_major_preserves_other_read
       end
     end
   end
+
+let rec write_word_in_major_preserves_same_read
+      (mh: MH.major_heap)
+      (addr: hp_addr)
+      (old: U64.t)
+      (value: U64.t)
+    : Lemma
+        (requires MH.read_word_in_major mh addr == Some old)
+        (ensures
+          (match MH.write_word_in_major mh addr value with
+           | Some mh' -> MH.read_word_in_major mh' addr == Some value
+           | None -> False))
+        (decreases Seq.length mh)
+    =
+    if Seq.length mh = 0 then
+      assert False
+    else begin
+      let c = Seq.head mh in
+      let tl = Seq.tail mh in
+      if MH.word_in_chunk c addr then begin
+        let c' = MH.write_word_in_chunk c addr value in
+        MH.write_word_in_chunk_preserves_range c addr value;
+        MH.read_write_in_chunk_same c addr value;
+        assert (MH.write_word_in_major mh addr value == Some (Seq.cons c' tl));
+        assert (MH.chunk_contains_addr c' addr);
+        assert (MH.word_in_chunk c' addr);
+        assert (MH.read_word_in_chunk c' addr == value);
+        read_word_in_major_cons_hit c' tl addr
+      end else begin
+        if MH.chunk_contains_addr c addr then begin
+          assert (MH.read_word_in_major mh addr == None);
+          assert False
+        end;
+        assert (~(MH.chunk_contains_addr c addr));
+        lookup_chunk_cons_miss c tl addr;
+        read_word_in_major_cons_miss c tl addr;
+        assert (MH.read_word_in_major mh addr == MH.read_word_in_major tl addr);
+        assert (MH.read_word_in_major tl addr == Some old);
+        assert (MH.write_word_in_major mh addr value ==
+                (match MH.write_word_in_major tl addr value with
+                 | None -> None
+                 | Some tl' -> Some (Seq.cons c tl')));
+        write_word_in_major_preserves_same_read tl addr old value;
+        match MH.write_word_in_major tl addr value with
+        | None -> assert False
+        | Some tl' ->
+          assert (MH.read_word_in_major tl' addr == Some value);
+          lookup_chunk_cons_miss c tl' addr;
+          read_word_in_major_cons_miss c tl' addr
+      end
+    end
