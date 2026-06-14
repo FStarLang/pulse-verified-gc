@@ -238,6 +238,53 @@ let chunked_major_gc_bounded_marked_black_live_subgraph_preserved
   FStar.Classical.forall_intro (FStar.Classical.move_requires live_facts);
   chunked_major_gc_bounded_marked_live_subgraph_preserved
     mh cap fuel live live_idx live_hdr
+
+let chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         (forall (target: obj_addr).
+           live target ==>
+           Seq.mem target (MH.major_objects marked) /\
+           SweepDefs.chunked_read_header marked target ==
+             Some (live_hdr target) /\
+           SweepDefs.chunked_is_black marked target)))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let wosize_facts (j: nat{j < Seq.length marked})
+    : Lemma
+        (ensures
+          forall (o: obj_addr).
+          Seq.mem o (MH.objects_in_chunk (Seq.index marked j)) ==>
+          U64.v (SweepDefs.chunked_wosize_of_object marked o) ==
+          MH.object_wosize_in_chunk (Seq.index marked j) o)
+    =
+    let one (o: obj_addr)
+      : Lemma
+          (requires Seq.mem o (MH.objects_in_chunk (Seq.index marked j)))
+          (ensures
+            U64.v (SweepDefs.chunked_wosize_of_object marked o) ==
+            MH.object_wosize_in_chunk (Seq.index marked j) o)
+      =
+      chunked_wosize_of_object_from_chunk_member marked j o
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+  in
+  FStar.Classical.forall_intro wosize_facts;
+  chunked_major_gc_bounded_marked_black_live_subgraph_preserved
+    mh cap fuel live live_hdr
 #pop-options
 
 let bounded_mark_no_gray_for_fused
