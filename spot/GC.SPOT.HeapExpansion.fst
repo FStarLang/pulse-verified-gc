@@ -69,6 +69,7 @@ module ChunkedMarkBoundedMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module ChunkedMarkBoundedColor = GC.Spec.ChunkedMarkBounded.ColorInvariant
 module ChunkedMarkBoundedTag = GC.Spec.ChunkedMarkBounded.TagInvariant
 module ChunkedMarkBoundedEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
+module ChunkedMarkBoundedNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -7632,6 +7633,82 @@ let spot_chunked_mark_bounded_preserves_vertex_edge_targets_non_infix
   =
   ChunkedMarkBoundedEdge.chunked_mark_bounded_preserves_vertex_edge_targets_non_infix
     mh cap fuel
+
+let spot_chunked_no_black_to_white_vertex_targets_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh dst /\
+          ChunkedSweepDefs.chunked_is_black mh src ==>
+          ~(ChunkedSweepDefs.chunked_is_white mh dst))
+      (ensures
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh)
+  =
+  ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets_intro mh
+
+let spot_chunked_no_black_to_white_vertex_targets_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh dst /\
+        ChunkedSweepDefs.chunked_is_black mh src)
+      (ensures ~(ChunkedSweepDefs.chunked_is_white mh dst))
+  =
+  ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets_elim
+    mh src dst
+
+let spot_chunked_push_children_bounded_field_target_non_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (j: U64.t{U64.v j >= 1})
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        U64.v i <= U64.v j /\
+        U64.v j <= U64.v ws /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh target /\
+        ChunkedMajorGCGraph.chunked_major_field_points_to mh obj j target /\
+        ~(ChunkedSweepDefs.chunked_is_infix mh target))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         ~(ChunkedSweepDefs.chunked_is_white mh' target)))
+  =
+  ChunkedMarkBoundedNoBlack.chunked_push_children_bounded_field_target_non_white
+    mh st obj i ws cap j target
+
+let spot_chunked_mark_step_bounded_preserves_no_black_to_white
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix
+          (fst (ChunkedMarkBounded.chunked_mark_step_bounded mh st cap)))
+      (ensures
+        (let (mh', _) = ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh'))
+  =
+  ChunkedMarkBoundedNoBlack.chunked_mark_step_bounded_preserves_no_black_to_white
+    mh st cap
 
 let spot_chunked_mark_bounded_preserves_no_pointer_to_blue
   (mh: MH.major_heap)

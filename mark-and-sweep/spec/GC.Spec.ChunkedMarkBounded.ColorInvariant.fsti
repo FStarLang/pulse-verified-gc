@@ -207,6 +207,40 @@ val chunked_mark_bounded_preserves_blue
         SweepDefs.chunked_is_blue
           (BDefs.chunked_mark_bounded mh cap fuel) target)
 
+val chunked_push_children_bounded_field_preserved
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        ChunkedMajorGraph.chunked_major_vertex mh target)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         ChunkedMajorGraph.chunked_major_field_preserved mh mh' target))
+
+val chunked_mark_step_bounded_field_preserved
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        BReady.chunked_bounded_stack_props mh st /\
+        ChunkedMajorGraph.chunked_major_vertex mh target)
+      (ensures
+        (let (mh', _) =
+          BDefs.chunked_mark_step_bounded mh st cap in
+         ChunkedMajorGraph.chunked_major_field_preserved mh mh' target))
+
 val chunked_mark_bounded_field_preserved
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
