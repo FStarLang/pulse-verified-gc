@@ -26,3 +26,18 @@ val chunked_mark_inner_loop_marks_stack_member_ready
         BPres.chunked_mark_inner_loop_marks_target_ready
           mh st cap fuel target)
 
+val chunked_mark_bounded_marks_rescan_member_ready
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh) /\
+        BDefs.chunked_is_gray mh target /\
+        Seq.length (MH.major_objects mh) <= cap)
+      (ensures
+        BPres.chunked_mark_bounded_marks_target_ready mh cap fuel target)

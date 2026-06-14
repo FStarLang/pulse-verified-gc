@@ -912,6 +912,62 @@ let rec chunked_mark_bounded_marks_target_ready
        else
          chunked_mark_bounded_marks_target_ready mh' cap fuel_pred target)
 
+let chunked_mark_bounded_preservation_ready_step
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+       fuel > 0 /\
+       chunked_mark_bounded_preservation_ready mh cap fuel /\
+       (let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+        Seq.length st > 0))
+      (ensures
+       (let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+        let inner_fuel = BDefs.chunked_count_non_black mh in
+        chunked_mark_inner_loop_preservation_ready mh st cap inner_fuel /\
+        (let (mh', _) =
+          BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+         chunked_mark_bounded_preservation_ready mh' cap (fuel - 1))))
+  =
+  assert (fuel <> 0);
+  let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+  let inner_fuel = BDefs.chunked_count_non_black mh in
+  let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+  let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+  assert (Seq.length st <> 0);
+  assert (chunked_mark_inner_loop_preservation_ready mh st cap inner_fuel);
+  assert (chunked_mark_bounded_preservation_ready mh' cap fuel_pred)
+
+let chunked_mark_bounded_marks_rescan_ready_from_inner
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+       fuel > 0 /\
+       ~ (SweepDefs.chunked_is_black mh target) /\
+       chunked_mark_bounded_preservation_ready mh cap fuel /\
+       (let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+        Seq.length st > 0 /\
+        (let inner_fuel = BDefs.chunked_count_non_black mh in
+         chunked_mark_inner_loop_marks_target_ready
+           mh st cap inner_fuel target)))
+      (ensures
+       chunked_mark_bounded_marks_target_ready mh cap fuel target)
+  =
+  let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+  let inner_fuel = BDefs.chunked_count_non_black mh in
+  let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+  let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+  assert (fuel <> 0);
+  assert (Seq.length st <> 0);
+  assert (chunked_mark_inner_loop_preservation_ready mh st cap inner_fuel);
+  assert (chunked_mark_inner_loop_marks_target_ready
+         mh st cap inner_fuel target);
+  assert (chunked_mark_bounded_preservation_ready mh' cap fuel_pred)
+
 let chunked_mark_bounded_marks_black_ready
     (mh: MH.major_heap)
     (cap: nat{cap > 0})

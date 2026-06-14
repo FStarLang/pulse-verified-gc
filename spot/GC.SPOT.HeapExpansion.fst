@@ -4778,6 +4778,79 @@ let spot_chunked_mark_inner_loop_marks_stack_member_ready
   ChunkedMarkBoundedStackReady.chunked_mark_inner_loop_marks_stack_member_ready
     mh st cap fuel target
 
+let spot_chunked_mark_bounded_preservation_ready_step
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        (let st =
+          ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap in
+         Seq.length st > 0))
+      (ensures
+        (let st =
+          ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap in
+         let inner_fuel =
+          ChunkedMarkBounded.chunked_count_non_black mh in
+         ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap inner_fuel /\
+         (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_inner_loop mh st cap inner_fuel in
+          ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+            mh' cap (fuel - 1))))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready_step
+    mh cap fuel
+
+let spot_chunked_mark_bounded_marks_rescan_ready_from_inner
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        ~ (ChunkedSweepDefs.chunked_is_black mh target) /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        (let st =
+          ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap in
+         Seq.length st > 0 /\
+         (let inner_fuel =
+          ChunkedMarkBounded.chunked_count_non_black mh in
+          ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_ready
+            mh st cap inner_fuel target)))
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel target)
+  =
+  ChunkedMarkBoundedPres.chunked_mark_bounded_marks_rescan_ready_from_inner
+    mh cap fuel target
+
+let spot_chunked_mark_bounded_marks_rescan_member_ready
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.mem target (MH.major_objects mh) /\
+        ChunkedMarkBounded.chunked_is_gray mh target /\
+        Seq.length (MH.major_objects mh) <= cap)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel target)
+  =
+  ChunkedMarkBoundedStackReady.chunked_mark_bounded_marks_rescan_member_ready
+    mh cap fuel target
+
 let spot_chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)

@@ -47,6 +47,18 @@ let seq_mem_tail_of_nonhead (#a:eqtype)
   assert (Seq.mem x (Seq.cons hd tl));
   assert (x = hd \/ Seq.mem x tl)
 
+let seq_mem_implies_nonempty (#a:eqtype)
+    (s: Seq.seq a)
+    (x: a)
+  : Lemma
+      (requires Seq.mem x s)
+      (ensures Seq.length s > 0)
+  =
+  if Seq.length s = 0 then begin
+    assert (s == Seq.empty);
+    assert False
+  end
+
 let rec chunked_mark_inner_loop_marks_stack_member_ready
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)
@@ -107,4 +119,41 @@ let rec chunked_mark_inner_loop_marks_stack_member_ready
           mh st cap fuel target
       end
     end
+  end
+
+let chunked_mark_bounded_marks_rescan_member_ready
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh) /\
+        BDefs.chunked_is_gray mh target /\
+        Seq.length (MH.major_objects mh) <= cap)
+      (ensures
+        BPres.chunked_mark_bounded_marks_target_ready mh cap fuel target)
+  =
+  if SweepDefs.chunked_is_black mh target then
+    BPres.chunked_mark_bounded_marks_black_ready mh cap fuel target
+  else begin
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    BReady.chunked_rescan_heap_adds_gray_with_capacity mh cap target;
+    assert (Seq.mem target st);
+    seq_mem_implies_nonempty st target;
+    assert (Seq.length st > 0);
+    BReady.chunked_rescan_heap_bounded_stack_props mh cap;
+    let inner_fuel = BDefs.chunked_count_non_black mh in
+    BPres.chunked_mark_bounded_preservation_ready_step mh cap fuel;
+    assert (BPres.chunked_mark_inner_loop_preservation_ready
+            mh st cap inner_fuel);
+    chunked_mark_inner_loop_marks_stack_member_ready
+      mh st cap inner_fuel target;
+    assert (BPres.chunked_mark_inner_loop_marks_target_ready
+            mh st cap inner_fuel target);
+    BPres.chunked_mark_bounded_marks_rescan_ready_from_inner
+      mh cap fuel target
   end
