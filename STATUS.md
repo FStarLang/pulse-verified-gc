@@ -278,6 +278,8 @@ Follow-up checkpoint: connected gray-rescan target readiness to the chunked majo
 
 Follow-up checkpoint: removed the explicit marked-header witness from the live-subgraph preservation surface by adding no-header wrappers below the function-valued API. `GC.Spec.ChunkedSweepCoalesce.LiveRange.chunked_fused_sweep_coalesce_live_subgraph_preserved_from_black_membership` recovers each target header from `chunked_is_black` and live membership, then applies the lower live-range preservation theorem. `GC.Spec.ChunkedMajorGC.Correctness` now exposes no-header live-subgraph wrappers for marked black membership, explicit bounded target readiness, and gray-rescan readiness. `GC.SPOT.HeapExpansion` audits the new public contracts. Refreshed split-query profiling keeps `LiveRange` around 1.1 seconds and `ChunkedMajorGC.Correctness` around 1.3 seconds, full SPOT verification passed, and hygiene scans found no new admits or assumptions.
 
+Follow-up checkpoint: reduced the bounded-mark live-readiness side condition from initially gray live objects to initially gray-or-black live objects. `GC.Spec.ChunkedMarkBounded.StackReady.chunked_mark_bounded_marks_rescan_gray_or_black_member_ready` uses the existing black-target constructor for already-black objects and the rescan-member eventual-pop theorem for gray objects. `GC.Spec.ChunkedMajorGC.Correctness` now exposes header and no-header gray-or-black live-subgraph wrappers, and `GC.SPOT.HeapExpansion` audits both surfaces. Refreshed split-query profiling keeps `StackReady` around one second and `ChunkedMajorGC.Correctness` around 1.3 seconds.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

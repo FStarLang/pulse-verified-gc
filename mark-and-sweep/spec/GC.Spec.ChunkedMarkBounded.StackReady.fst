@@ -157,3 +157,27 @@ let chunked_mark_bounded_marks_rescan_member_ready
     BPres.chunked_mark_bounded_marks_rescan_ready_from_inner
       mh cap fuel target
   end
+
+let chunked_mark_bounded_marks_rescan_gray_or_black_member_ready
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.mem target (MH.major_objects mh) /\
+        (BDefs.chunked_is_gray mh target \/
+         SweepDefs.chunked_is_black mh target) /\
+        Seq.length (MH.major_objects mh) <= cap)
+      (ensures
+        BPres.chunked_mark_bounded_marks_target_ready mh cap fuel target)
+  =
+  if SweepDefs.chunked_is_black mh target then
+    BPres.chunked_mark_bounded_marks_black_ready mh cap fuel target
+  else begin
+    assert (BDefs.chunked_is_gray mh target);
+    chunked_mark_bounded_marks_rescan_member_ready mh cap fuel target
+  end
