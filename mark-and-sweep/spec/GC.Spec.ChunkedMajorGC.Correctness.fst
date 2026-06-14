@@ -45,6 +45,23 @@ let chunked_gc_postcondition (mh: MH.major_heap) : prop =
   MH.well_formed_major_heap mh /\
   chunked_no_gray_or_black_objects mh
 
+let chunked_major_gc_selected_live
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : prop
+  =
+  fuel > 0 /\
+  MH.well_formed_major_heap mh /\
+  ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+  Seq.length (MH.major_objects mh) <= cap /\
+  (forall (target: obj_addr).
+    live target ==>
+    Seq.mem target (MH.major_objects mh) /\
+    (ChunkedMark.chunked_is_gray mh target \/
+     SweepDefs.chunked_is_black mh target))
+
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let fields_object_after_zero_addr (g: heap) (x: obj_addr)
   : Lemma
@@ -53,6 +70,44 @@ let fields_object_after_zero_addr (g: heap) (x: obj_addr)
   =
   Fields.objects_addresses_gt_start zero_addr g x
 #pop-options
+
+let chunked_major_gc_selected_live_intro
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        (forall (target: obj_addr).
+          live target ==>
+          Seq.mem target (MH.major_objects mh) /\
+          (ChunkedMark.chunked_is_gray mh target \/
+           SweepDefs.chunked_is_black mh target)))
+      (ensures chunked_major_gc_selected_live mh cap fuel live)
+  = ()
+
+let chunked_major_gc_selected_live_elim
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires chunked_major_gc_selected_live mh cap fuel live)
+      (ensures
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        (forall (target: obj_addr).
+          live target ==>
+          Seq.mem target (MH.major_objects mh) /\
+          (ChunkedMark.chunked_is_gray mh target \/
+           SweepDefs.chunked_is_black mh target)))
+  = ()
 
 let chunked_gc_postcondition_intro (mh: MH.major_heap)
   : Lemma
@@ -836,6 +891,25 @@ let chunked_major_gc_bounded_live_subgraph_preserved_from_initial_gray_or_black_
     mh cap fuel live;
   ChunkedMajorGraph.chunked_major_live_subgraph_preserved_trans
     mh marked mh_final live
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_live_subgraph_preserved_from_selected_live
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires chunked_major_gc_selected_live mh cap fuel live)
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final live))
+  =
+  chunked_major_gc_selected_live_elim mh cap fuel live;
+  chunked_major_gc_bounded_live_subgraph_preserved_from_initial_gray_or_black_rescan_no_header
+    mh cap fuel live
 #pop-options
 
 let bounded_mark_no_gray_for_fused
