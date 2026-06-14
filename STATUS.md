@@ -262,6 +262,8 @@ Follow-up checkpoint: packaged the rescan-produced bounded stack shape. `GC.Spec
 
 Follow-up checkpoint: split out the first bounded-mark count helper module. `GC.Spec.ChunkedMarkBounded.Count` now proves that `chunked_count_non_black_in` is preserved by pointwise black-status preservation, lifts that to `chunked_count_non_black` when `MH.major_objects` is unchanged, and exposes `chunked_is_gray_not_black`. These are deliberately small prerequisites for the later bounded-step count-decrease proof; the exact global decrease still needs an exposed uniqueness/no-duplicate fact for `MH.major_objects` or a proof that does not require it. SPOT audits the new count wrappers, the split module profiles under one second, and broad mark-and-sweep spec plus SPOT verification pass.
 
+Follow-up checkpoint: avoided the missing `MH.major_objects` no-duplicate theorem by proving target-flip count facts that do not require uniqueness. `GC.Spec.ChunkedMarkBounded.Count` now shows that if the selected target is black after a step and every non-target object preserves black status, the non-black count cannot increase; if the target was present and nonblack before, the count strictly decreases. This is the right shape for bounded mark: the stack head is gray/nonblack, the step makes it black, and later child-gray writes should be proved to preserve non-target black status. SPOT audits both target-flip lemmas, the split profile remains under one second, and broad mark-and-sweep spec plus SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

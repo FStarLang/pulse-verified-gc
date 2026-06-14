@@ -4716,6 +4716,44 @@ let spot_chunked_count_non_black_preserved_by_black_status
   ChunkedMarkBoundedCount.chunked_count_non_black_preserved_by_black_status
     mh mh'
 
+let spot_chunked_count_non_black_in_black_status_flip_le
+  (mh mh': MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        ChunkedSweepDefs.chunked_is_black mh' target /\
+        (forall (obj: obj_addr).
+          Seq.mem obj objs /\ obj <> target ==>
+            ChunkedSweepDefs.chunked_is_black mh' obj ==
+            ChunkedSweepDefs.chunked_is_black mh obj))
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black_in mh' objs <=
+        ChunkedMarkBounded.chunked_count_non_black_in mh objs)
+  =
+  ChunkedMarkBoundedCount.chunked_count_non_black_in_black_status_flip_le
+    mh mh' objs target
+
+let spot_chunked_count_non_black_in_black_status_flip_decreases
+  (mh mh': MH.major_heap)
+  (objs: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem target objs /\
+        ~(ChunkedSweepDefs.chunked_is_black mh target) /\
+        ChunkedSweepDefs.chunked_is_black mh' target /\
+        (forall (obj: obj_addr).
+          Seq.mem obj objs /\ obj <> target ==>
+            ChunkedSweepDefs.chunked_is_black mh' obj ==
+            ChunkedSweepDefs.chunked_is_black mh obj))
+      (ensures
+        ChunkedMarkBounded.chunked_count_non_black_in mh' objs <
+        ChunkedMarkBounded.chunked_count_non_black_in mh objs)
+  =
+  ChunkedMarkBoundedCount.chunked_count_non_black_in_black_status_flip_decreases
+    mh mh' objs target
+
 let spot_chunked_is_gray_not_black
   (mh: MH.major_heap)
   (obj: obj_addr)

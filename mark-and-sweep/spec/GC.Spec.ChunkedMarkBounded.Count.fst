@@ -68,6 +68,98 @@ let chunked_count_non_black_preserved_by_black_status
   chunked_count_non_black_in_preserved_by_black_status
     mh mh' (MH.major_objects mh)
 
+let rec chunked_count_non_black_in_black_status_flip_le
+    (mh mh': MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        SweepDefs.chunked_is_black mh' target /\
+        (forall (obj: obj_addr).
+          Seq.mem obj objs /\ obj <> target ==>
+            SweepDefs.chunked_is_black mh' obj ==
+            SweepDefs.chunked_is_black mh obj))
+      (ensures
+        BDefs.chunked_count_non_black_in mh' objs <=
+        BDefs.chunked_count_non_black_in mh objs)
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then begin
+    BDefs.chunked_count_non_black_in_empty mh objs;
+    BDefs.chunked_count_non_black_in_empty mh' objs
+  end else begin
+    BDefs.chunked_count_non_black_in_step mh objs;
+    BDefs.chunked_count_non_black_in_step mh' objs;
+    let head = Seq.head objs in
+    let tail = Seq.tail objs in
+    let each_tail (obj: obj_addr)
+      : Lemma
+          (requires Seq.mem obj tail /\ obj <> target)
+          (ensures
+            SweepDefs.chunked_is_black mh' obj ==
+            SweepDefs.chunked_is_black mh obj)
+      =
+      assert (Seq.mem obj objs)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires each_tail);
+    chunked_count_non_black_in_black_status_flip_le mh mh' tail target;
+    if head <> target then
+      assert (
+        SweepDefs.chunked_is_black mh' head ==
+        SweepDefs.chunked_is_black mh head)
+    else
+      assert (SweepDefs.chunked_is_black mh' head)
+  end
+
+let rec chunked_count_non_black_in_black_status_flip_decreases
+    (mh mh': MH.major_heap)
+    (objs: Seq.seq obj_addr)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        Seq.mem target objs /\
+        ~(SweepDefs.chunked_is_black mh target) /\
+        SweepDefs.chunked_is_black mh' target /\
+        (forall (obj: obj_addr).
+          Seq.mem obj objs /\ obj <> target ==>
+            SweepDefs.chunked_is_black mh' obj ==
+            SweepDefs.chunked_is_black mh obj))
+      (ensures
+        BDefs.chunked_count_non_black_in mh' objs <
+        BDefs.chunked_count_non_black_in mh objs)
+      (decreases Seq.length objs)
+  =
+  if Seq.length objs = 0 then
+    ()
+  else begin
+    BDefs.chunked_count_non_black_in_step mh objs;
+    BDefs.chunked_count_non_black_in_step mh' objs;
+    let head = Seq.head objs in
+    let tail = Seq.tail objs in
+    let each_tail (obj: obj_addr)
+      : Lemma
+          (requires Seq.mem obj tail /\ obj <> target)
+          (ensures
+            SweepDefs.chunked_is_black mh' obj ==
+            SweepDefs.chunked_is_black mh obj)
+      =
+      assert (Seq.mem obj objs)
+    in
+    FStar.Classical.forall_intro (FStar.Classical.move_requires each_tail);
+    if head = target then begin
+      chunked_count_non_black_in_black_status_flip_le mh mh' tail target;
+      assert (~(SweepDefs.chunked_is_black mh head));
+      assert (SweepDefs.chunked_is_black mh' head)
+    end else begin
+      assert (
+        SweepDefs.chunked_is_black mh' head ==
+        SweepDefs.chunked_is_black mh head);
+      assert (Seq.mem target tail);
+      chunked_count_non_black_in_black_status_flip_decreases
+        mh mh' tail target
+    end
+  end
+
 let chunked_is_gray_not_black
     (mh: MH.major_heap)
     (obj: obj_addr)
@@ -87,4 +179,3 @@ let chunked_is_gray_not_black
       assert (GC.Spec.Object.getColor hdr == Header.Black);
       assert False
   end
-
