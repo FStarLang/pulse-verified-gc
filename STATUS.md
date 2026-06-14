@@ -226,6 +226,8 @@ The current Stage 6 proof has advanced from prefix/target/suffix fragments to a 
 
 The proof stays split and cheap: the refreshed `LiveRange` split-query profile remains about 1.06 seconds overall, broad mark-and-sweep spec verification passes, and `GC.SPOT.HeapExpansion` audits the new public wrapper. The next proof step is to integrate this fused traversal theorem into the chunked major-GC shell by supplying the live-object index/header witnesses from the marked heap and then threading it toward the Stage 6 chunked major-GC correctness surface.
 
+Follow-up checkpoint: the fused theorem is now connected to the chunked major-GC shell at the marked-heap boundary. `GC.Spec.ChunkedMajorGC.Correctness.chunked_major_gc_bounded_marked_live_subgraph_preserved` unfolds `chunked_major_gc_bounded` into `chunked_mark_bounded` followed by fused sweep/coalesce and proves that any selected black live subgraph of the marked chunked heap survives the sweep/coalesce phase. This keeps mark correctness as a separate remaining obligation while making the major-GC composition point explicit. `GC.SPOT.HeapExpansion` audits the wrapper, refreshed `ChunkedMajorGC.Correctness` profiling is about 1.24 seconds, and broad mark-and-sweep spec plus full SPOT verification pass.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

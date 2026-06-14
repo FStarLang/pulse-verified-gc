@@ -25,8 +25,10 @@ module SpecCoalesce = GC.Spec.Coalesce
 module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
+module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
+module ChunkedLiveRange = GC.Spec.ChunkedSweepCoalesce.LiveRange
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -95,6 +97,50 @@ let chunked_gc_postcondition_single_chunk_from_dense (g: heap)
   DenseCorrectness.gc_postcondition_elim g;
   MH.single_chunk_major_heap_wf g;
   chunked_no_gray_or_black_single_chunk_from_dense g
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_marked_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  (live_idx: obj_addr -> nat)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap marked /\
+         (forall (j: nat). j < Seq.length marked ==>
+           forall (o: obj_addr).
+           Seq.mem o (MH.objects_in_chunk (Seq.index marked j)) ==>
+           U64.v (SweepDefs.chunked_wosize_of_object marked o) ==
+           MH.object_wosize_in_chunk (Seq.index marked j) o) /\
+         (forall (target: obj_addr).
+           live target ==>
+           live_idx target < Seq.length marked /\
+           Seq.mem target
+             (MH.objects_in_chunk (Seq.index marked (live_idx target))) /\
+           SweepDefs.chunked_read_header marked target ==
+             Some (live_hdr target) /\
+           SweepDefs.chunked_is_black marked target /\
+           U64.v (Obj.getWosize (live_hdr target)) ==
+             MH.object_wosize_in_chunk
+               (Seq.index marked (live_idx target)) target)))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let (mh_final, fp_final) =
+    ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+  ChunkedMajorGC.chunked_major_gc_bounded_equation mh cap fuel;
+  SweepDefs.chunked_fused_sweep_coalesce_step marked;
+  ChunkedLiveRange.chunked_fused_sweep_coalesce_live_subgraph_preserved
+    marked 0UL live live_idx live_hdr
+#pop-options
 
 let bounded_mark_no_gray_for_fused
     (h_init: heap)
