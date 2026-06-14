@@ -62,6 +62,7 @@ module ChunkedMarkBoundedPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkBoundedReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkBoundedCount = GC.Spec.ChunkedMarkBounded.Count
 module ChunkedMarkBoundedCountStep = GC.Spec.ChunkedMarkBounded.CountStep
+module ChunkedMarkBoundedStackStep = GC.Spec.ChunkedMarkBounded.StackStep
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -114,6 +115,31 @@ let spot_chunked_sweep_read_header_step
        MH.read_word_in_major mh (hd_address obj))
   =
   ChunkedSweepDefs.chunked_read_header_step mh obj
+
+let spot_chunked_color_of_object_elim
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Obj.color)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_color_of_object mh obj == Some color)
+      (ensures
+        (match ChunkedSweepDefs.chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == color
+         | None -> False))
+  =
+  ChunkedSweepDefs.chunked_color_of_object_elim mh obj color
+
+let spot_chunked_is_white_read_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_is_white mh obj)
+      (ensures
+        (match ChunkedSweepDefs.chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == Header.White
+         | None -> False))
+  =
+  ChunkedSweepDefs.chunked_is_white_read_header mh obj
 
 let spot_major_write_word_or_same_read_same
   (mh: MH.major_heap)
@@ -3638,6 +3664,50 @@ let spot_chunked_make_black_preserves_other_black_status
   =
   ChunkedMarkPres.chunked_make_black_preserves_other_black_status mh obj target
 
+let spot_chunked_set_object_color_preserves_other_gray
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_color_of_object mh target == Some Header.Gray)
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) target ==
+        Some Header.Gray)
+  =
+  ChunkedMarkPres.chunked_set_object_color_preserves_other_gray
+    mh obj target color
+
+let spot_chunked_make_gray_preserves_other_gray
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_color_of_object mh target == Some Header.Gray)
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedMarkDefs.chunked_make_gray mh obj) target ==
+        Some Header.Gray)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_other_gray mh obj target
+
+let spot_chunked_make_black_preserves_other_gray
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        obj <> target /\
+        ChunkedSweepDefs.chunked_color_of_object mh target == Some Header.Gray)
+      (ensures
+        ChunkedSweepDefs.chunked_color_of_object
+          (ChunkedMarkDefs.chunked_make_black mh obj) target ==
+        Some Header.Gray)
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_other_gray mh obj target
+
 let spot_chunked_set_object_color_member_preserves_well_formed
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -4405,6 +4475,62 @@ let spot_chunked_push_children_bounded_preserves_black
   ChunkedMarkBoundedPres.chunked_push_children_bounded_preserves_black
     mh st obj target i ws cap
 
+let spot_chunked_push_children_bounded_ready_child
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         ChunkedMarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+            ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child = ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+          ChunkedSweepDefs.chunked_is_white mh child)))
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         let child_raw =
+           ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         let child = ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+         Seq.mem child (MH.major_objects mh)))
+  =
+  ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready_child
+    mh obj i ws
+
+let spot_chunked_push_children_bounded_ready_next
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        U64.v i < U64.v ws /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws)
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         let mh' =
+           if ChunkedMarkDefs.chunked_is_pointer_field mh v then
+             let child_raw =
+               ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+             let child = ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+             if ChunkedSweepDefs.chunked_is_white mh child then
+               ChunkedMarkDefs.chunked_make_gray mh child
+             else
+               mh
+           else
+             mh in
+         ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+           mh' obj (U64.add i 1UL) ws))
+  =
+  ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready_next
+    mh obj i ws
+
 let spot_chunked_push_children_bounded_preserves_black_status
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -4497,6 +4623,26 @@ let spot_chunked_mark_step_bounded_preserves_black
   ChunkedMarkBoundedPres.chunked_mark_step_bounded_preserves_black
     mh st cap target
 
+let spot_chunked_mark_step_bounded_ready_scan
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st)))
+      (ensures
+        (let obj = Seq.head st in
+         let mh' = ChunkedMarkDefs.chunked_make_black mh obj in
+         let ws = ChunkedSweepDefs.chunked_wosize_of_object mh obj in
+         ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+           mh' obj 1UL ws))
+  =
+  ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready_scan
+    mh st cap
+
 let spot_chunked_mark_step_bounded_preserves_other_black_status
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -4537,6 +4683,55 @@ let spot_chunked_mark_step_bounded_decreases_count
          ChunkedMarkBounded.chunked_count_non_black mh))
   =
   ChunkedMarkBoundedCountStep.chunked_mark_step_bounded_decreases_count
+    mh st cap
+
+let spot_chunked_is_white_not_gray
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_is_white mh obj)
+      (ensures ~(ChunkedMarkBounded.chunked_is_gray mh obj))
+  =
+  ChunkedMarkBoundedStackStep.chunked_is_white_not_gray mh obj
+
+let spot_chunked_push_children_bounded_preserves_stack_props
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st)
+      (ensures
+        (let (mh', st') =
+          ChunkedMarkBounded.chunked_push_children_bounded mh st obj i ws cap in
+         ChunkedMarkBoundedReady.chunked_bounded_stack_props mh' st'))
+  =
+  ChunkedMarkBoundedStackStep.chunked_push_children_bounded_preserves_bounded_stack_props
+    mh st obj i ws cap
+
+let spot_chunked_mark_step_bounded_preserves_stack_props
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st)
+      (ensures
+        (let (mh', st') =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedMarkBoundedReady.chunked_bounded_stack_props mh' st'))
+  =
+  ChunkedMarkBoundedStackStep.chunked_mark_step_bounded_preserves_bounded_stack_props
     mh st cap
 
 let spot_chunked_mark_inner_loop_preserves_major_objects
@@ -4944,6 +5139,57 @@ let spot_chunked_stack_points_to_gray_elim
   =
   ChunkedMarkBoundedReady.chunked_stack_points_to_gray_elim
     mh st target
+
+let spot_chunked_stack_points_to_gray_intro
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        (forall (target: obj_addr).
+          Seq.mem target st ==>
+          ChunkedMarkBounded.chunked_is_gray mh target))
+      (ensures ChunkedMarkBoundedReady.chunked_stack_points_to_gray mh st)
+  =
+  ChunkedMarkBoundedReady.chunked_stack_points_to_gray_intro mh st
+
+let spot_chunked_bounded_stack_props_intro
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        ChunkedMarkPres.stack_objects_in_major mh st /\
+        ChunkedMarkBoundedReady.chunked_stack_points_to_gray mh st /\
+        Mark.stack_no_dups st)
+      (ensures ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st)
+  =
+  ChunkedMarkBoundedReady.chunked_bounded_stack_props_intro mh st
+
+let spot_chunked_bounded_stack_props_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st)
+      (ensures ChunkedMarkPres.stack_objects_in_major mh st)
+  =
+  ChunkedMarkBoundedReady.chunked_bounded_stack_props_objects mh st
+
+let spot_chunked_bounded_stack_props_gray
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st)
+      (ensures ChunkedMarkBoundedReady.chunked_stack_points_to_gray mh st)
+  =
+  ChunkedMarkBoundedReady.chunked_bounded_stack_props_gray mh st
+
+let spot_chunked_bounded_stack_props_no_dups
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st)
+      (ensures Mark.stack_no_dups st)
+  =
+  ChunkedMarkBoundedReady.chunked_bounded_stack_props_no_dups mh st
 
 let spot_chunked_rescan_heap_stack_gray
   (mh: MH.major_heap)

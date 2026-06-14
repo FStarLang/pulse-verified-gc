@@ -55,6 +55,18 @@ let chunked_color_of_object_some
       (ensures chunked_color_of_object mh obj == Some (Obj.getColor hdr))
   = ()
 
+let chunked_color_of_object_elim
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (color: Obj.color)
+  : Lemma
+      (requires chunked_color_of_object mh obj == Some color)
+      (ensures
+        (match chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == color
+         | None -> False))
+  = ()
+
 let chunked_wosize_of_object (mh: MH.major_heap) (obj: obj_addr)
   : GTot Obj.wosize
   = match chunked_read_header mh obj with
@@ -115,6 +127,17 @@ let chunked_is_black_read_header
       (ensures
         (match chunked_read_header mh obj with
          | Some hdr -> Obj.getColor hdr == Header.Black
+         | None -> False))
+  = ()
+
+let chunked_is_white_read_header
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+  : Lemma
+      (requires chunked_is_white mh obj)
+      (ensures
+        (match chunked_read_header mh obj with
+         | Some hdr -> Obj.getColor hdr == Header.White
          | None -> False))
   = ()
 

@@ -161,6 +161,16 @@ let chunked_stack_points_to_gray_elim
       (ensures BDefs.chunked_is_gray mh target)
   = ()
 
+let chunked_stack_points_to_gray_intro
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        (forall (target: obj_addr).
+          Seq.mem target st ==> BDefs.chunked_is_gray mh target))
+      (ensures chunked_stack_points_to_gray mh st)
+  = ()
+
 let chunked_stack_points_to_gray_empty
     (mh: MH.major_heap)
   : Lemma
@@ -209,6 +219,41 @@ let chunked_bounded_stack_props
   MarkPres.stack_objects_in_major mh st /\
   chunked_stack_points_to_gray mh st /\
   SpecMark.stack_no_dups st
+
+let chunked_bounded_stack_props_intro
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MarkPres.stack_objects_in_major mh st /\
+        chunked_stack_points_to_gray mh st /\
+        SpecMark.stack_no_dups st)
+      (ensures chunked_bounded_stack_props mh st)
+  = ()
+
+let chunked_bounded_stack_props_objects
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires chunked_bounded_stack_props mh st)
+      (ensures MarkPres.stack_objects_in_major mh st)
+  = ()
+
+let chunked_bounded_stack_props_gray
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires chunked_bounded_stack_props mh st)
+      (ensures chunked_stack_points_to_gray mh st)
+  = ()
+
+let chunked_bounded_stack_props_no_dups
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+  : Lemma
+      (requires chunked_bounded_stack_props mh st)
+      (ensures SpecMark.stack_no_dups st)
+  = ()
 
 let chunked_bounded_stack_head
     (mh: MH.major_heap)

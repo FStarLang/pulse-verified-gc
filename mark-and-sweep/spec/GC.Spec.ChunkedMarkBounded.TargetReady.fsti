@@ -87,6 +87,15 @@ val chunked_stack_points_to_gray_elim
         Seq.mem target st)
       (ensures BDefs.chunked_is_gray mh target)
 
+val chunked_stack_points_to_gray_intro
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        (forall (target: obj_addr).
+          Seq.mem target st ==> BDefs.chunked_is_gray mh target))
+      (ensures chunked_stack_points_to_gray mh st)
+
 val chunked_stack_points_to_gray_empty
   (mh: MH.major_heap)
   : Lemma
@@ -107,6 +116,37 @@ val chunked_bounded_stack_props
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
   : GTot prop
+
+val chunked_bounded_stack_props_intro
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        GC.Spec.ChunkedMark.Preservation.stack_objects_in_major mh st /\
+        chunked_stack_points_to_gray mh st /\
+        GC.Spec.Mark.stack_no_dups st)
+      (ensures chunked_bounded_stack_props mh st)
+
+val chunked_bounded_stack_props_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires chunked_bounded_stack_props mh st)
+      (ensures GC.Spec.ChunkedMark.Preservation.stack_objects_in_major mh st)
+
+val chunked_bounded_stack_props_gray
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires chunked_bounded_stack_props mh st)
+      (ensures chunked_stack_points_to_gray mh st)
+
+val chunked_bounded_stack_props_no_dups
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires chunked_bounded_stack_props mh st)
+      (ensures GC.Spec.Mark.stack_no_dups st)
 
 val chunked_bounded_stack_head
   (mh: MH.major_heap)

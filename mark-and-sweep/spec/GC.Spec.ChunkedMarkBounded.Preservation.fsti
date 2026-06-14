@@ -14,6 +14,57 @@ val chunked_push_children_bounded_preservation_ready
   (ws: U64.t)
   : GTot prop
 
+val chunked_push_children_bounded_preservation_ready_child
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        (let v = GC.Spec.ChunkedMark.Defs.chunked_get_field mh obj i in
+         GC.Spec.ChunkedMark.Defs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+            GC.Spec.ChunkedMark.Defs.chunked_pointer_field_as_obj_addr mh v in
+          let child =
+            GC.Spec.ChunkedMark.Defs.chunked_resolve_object mh child_raw in
+          GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white mh child)))
+      (ensures
+        (let v = GC.Spec.ChunkedMark.Defs.chunked_get_field mh obj i in
+         let child_raw =
+           GC.Spec.ChunkedMark.Defs.chunked_pointer_field_as_obj_addr mh v in
+         let child =
+           GC.Spec.ChunkedMark.Defs.chunked_resolve_object mh child_raw in
+         Seq.mem child (MH.major_objects mh)))
+
+val chunked_push_children_bounded_preservation_ready_next
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        U64.v i < U64.v ws /\
+        chunked_push_children_bounded_preservation_ready mh obj i ws)
+      (ensures
+        (let v = GC.Spec.ChunkedMark.Defs.chunked_get_field mh obj i in
+         let mh' =
+           if GC.Spec.ChunkedMark.Defs.chunked_is_pointer_field mh v then
+             let child_raw =
+               GC.Spec.ChunkedMark.Defs.chunked_pointer_field_as_obj_addr mh v in
+             let child =
+               GC.Spec.ChunkedMark.Defs.chunked_resolve_object mh child_raw in
+             if GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_white mh child then
+               GC.Spec.ChunkedMark.Defs.chunked_make_gray mh child
+             else
+               mh
+           else
+             mh in
+         chunked_push_children_bounded_preservation_ready
+           mh' obj (U64.add i 1UL) ws))
+
 val chunked_push_children_bounded_preserves_major_objects
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -88,6 +139,22 @@ val chunked_mark_step_bounded_preservation_ready
   (st: Seq.seq obj_addr)
   (cap: nat)
   : GTot prop
+
+val chunked_mark_step_bounded_preservation_ready_scan
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        chunked_mark_step_bounded_preservation_ready mh st cap /\
+        ~(GC.Spec.ChunkedMark.Defs.chunked_is_no_scan mh (Seq.head st)))
+      (ensures
+        (let obj = Seq.head st in
+         let mh' = GC.Spec.ChunkedMark.Defs.chunked_make_black mh obj in
+         let ws =
+           GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object mh obj in
+         chunked_push_children_bounded_preservation_ready mh' obj 1UL ws))
 
 val chunked_mark_step_bounded_marks_head_black
   (mh: MH.major_heap)

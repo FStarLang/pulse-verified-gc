@@ -53,6 +53,56 @@ let rec chunked_push_children_bounded_preservation_ready
      else
       True)
 
+let chunked_push_children_bounded_preservation_ready_child
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        chunked_push_children_bounded_preservation_ready mh obj i ws /\
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         MarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+            MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child = MarkDefs.chunked_resolve_object mh child_raw in
+          SweepDefs.chunked_is_white mh child)))
+      (ensures
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         let child_raw =
+           MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         let child = MarkDefs.chunked_resolve_object mh child_raw in
+         Seq.mem child (MH.major_objects mh)))
+  = ()
+
+let chunked_push_children_bounded_preservation_ready_next
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+  : Lemma
+      (requires
+        U64.v i <= U64.v ws /\
+        U64.v i < U64.v ws /\
+        chunked_push_children_bounded_preservation_ready mh obj i ws)
+      (ensures
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         let mh' =
+           if MarkDefs.chunked_is_pointer_field mh v then
+             let child_raw =
+               MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+             let child = MarkDefs.chunked_resolve_object mh child_raw in
+             if SweepDefs.chunked_is_white mh child then
+               MarkDefs.chunked_make_gray mh child
+             else
+               mh
+           else
+             mh in
+         chunked_push_children_bounded_preservation_ready
+           mh' obj (U64.add i 1UL) ws))
+  = ()
+
 let rec chunked_push_children_bounded_preserves_major_objects
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)
@@ -258,6 +308,22 @@ let chunked_mark_step_bounded_preservation_ready
       let mh' = MarkDefs.chunked_make_black mh obj in
       let ws = SweepDefs.chunked_wosize_of_object mh obj in
       chunked_push_children_bounded_preservation_ready mh' obj 1UL ws)
+
+let chunked_mark_step_bounded_preservation_ready_scan
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : Lemma
+      (requires
+       Seq.length st > 0 /\
+       chunked_mark_step_bounded_preservation_ready mh st cap /\
+       ~(MarkDefs.chunked_is_no_scan mh (Seq.head st)))
+      (ensures
+       (let obj = Seq.head st in
+        let mh' = MarkDefs.chunked_make_black mh obj in
+        let ws = SweepDefs.chunked_wosize_of_object mh obj in
+        chunked_push_children_bounded_preservation_ready mh' obj 1UL ws))
+  = ()
 
 let chunked_mark_step_bounded_marks_head_black
     (mh: MH.major_heap)
