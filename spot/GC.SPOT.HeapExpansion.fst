@@ -64,6 +64,7 @@ module ChunkedMarkBoundedCount = GC.Spec.ChunkedMarkBounded.Count
 module ChunkedMarkBoundedCountStep = GC.Spec.ChunkedMarkBounded.CountStep
 module ChunkedMarkBoundedStackStep = GC.Spec.ChunkedMarkBounded.StackStep
 module ChunkedMarkBoundedStackReady = GC.Spec.ChunkedMarkBounded.StackReady
+module ChunkedMarkBoundedMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -4950,6 +4951,51 @@ let spot_chunked_mark_bounded_marks_rescan_gray_or_black_member_ready
   =
   ChunkedMarkBoundedStackReady.chunked_mark_bounded_marks_rescan_gray_or_black_member_ready
     mh cap fuel target
+
+let spot_chunked_push_children_bounded_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_push_children_bounded
+            mh st obj i ws cap in
+         ChunkedSweepDefs.chunked_wosize_of_object mh' target ==
+         ChunkedSweepDefs.chunked_wosize_of_object mh target))
+  =
+  ChunkedMarkBoundedMetadata.chunked_push_children_bounded_preserves_wosize_of_object
+    mh st obj i ws cap target
+
+let spot_chunked_mark_step_bounded_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedSweepDefs.chunked_wosize_of_object mh' target ==
+         ChunkedSweepDefs.chunked_wosize_of_object mh target))
+  =
+  ChunkedMarkBoundedMetadata.chunked_mark_step_bounded_preserves_wosize_of_object
+    mh st cap target
 
 let spot_chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)

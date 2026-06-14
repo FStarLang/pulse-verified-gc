@@ -282,6 +282,8 @@ Follow-up checkpoint: reduced the bounded-mark live-readiness side condition fro
 
 Follow-up checkpoint: started exposing mark-phase graph-stability support facts. `GC.Spec.ChunkedMark.Preservation` now proves that `chunked_set_object_color`, `chunked_make_gray`, and `chunked_make_black` preserve `chunked_wosize_of_object` for every active major object, using the small major-heap read-framing helper around the header write. These are the first public metadata-framing facts needed to lift live-subgraph preservation from the marked heap back through the chunked bounded mark phase. `GC.SPOT.HeapExpansion` audits the wrappers, and refreshed split-query profiling keeps the mark-preservation module around one second.
 
+Follow-up checkpoint: split the first bounded-mark metadata lift into `GC.Spec.ChunkedMarkBounded.Metadata`. The new helper proves bounded child-pushing preserves a selected active object's wosize and lifts that through one `chunked_mark_step_bounded` under the existing step-readiness plus bounded-stack-shape premises. This keeps loop-level metadata preservation out of the large bounded preservation module while providing the next building block for pre-mark-to-post-sweep graph stability. `GC.SPOT.HeapExpansion` audits the new split module, and refreshed split-query profiling keeps it around one second.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
