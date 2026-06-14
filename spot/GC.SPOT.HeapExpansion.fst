@@ -71,6 +71,7 @@ module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
 module ChunkedMajorGCGraph = GC.Spec.ChunkedMajorGC.Graph
+module ChunkedMajorGCReach = GC.Spec.ChunkedMajorGC.Reachability
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -6782,6 +6783,54 @@ let spot_chunked_major_gc_bounded_live_subgraph_preserved_from_selected_live
   =
   ChunkedMajorGCCorr.chunked_major_gc_bounded_live_subgraph_preserved_from_selected_live
     mh cap fuel live
+
+let spot_chunked_major_reachable_refl
+  (mh: MH.major_heap)
+  (x: obj_addr)
+  : Lemma
+      (requires ChunkedMajorGCGraph.chunked_major_vertex mh x)
+      (ensures ChunkedMajorGCReach.chunked_major_reachable mh x x)
+  =
+  ChunkedMajorGCReach.chunked_major_reachable_refl mh x
+
+let spot_chunked_major_edge_reachable
+  (mh: MH.major_heap)
+  (x y: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_vertex mh x /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh y /\
+        ChunkedMajorGCGraph.chunked_major_edge mh x y)
+      (ensures ChunkedMajorGCReach.chunked_major_reachable mh x y)
+  =
+  ChunkedMajorGCReach.chunked_major_edge_reachable mh x y
+
+let spot_chunked_major_root_reachable
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (x: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_vertex mh x /\
+        Seq.mem x roots)
+      (ensures
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots mh roots x)
+  =
+  ChunkedMajorGCReach.chunked_major_root_reachable mh roots x
+
+let spot_chunked_gray_black_reachable_init
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        (forall (x: obj_addr).
+          ChunkedMajorGCGraph.chunked_major_vertex mh x /\
+          (ChunkedMarkBounded.chunked_is_gray mh x \/
+           ChunkedSweepDefs.chunked_is_black mh x) ==>
+          Seq.mem x roots))
+      (ensures ChunkedMajorGCReach.chunked_gray_black_reachable mh roots)
+  =
+  ChunkedMajorGCReach.chunked_gray_black_reachable_init mh roots
 
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)
