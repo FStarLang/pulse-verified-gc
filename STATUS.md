@@ -250,6 +250,8 @@ Follow-up checkpoint: started discharging target-readiness from concrete bounded
 
 Follow-up checkpoint: added the first stack-membership and rescan-membership facts needed to remove that head restriction. `GC.Spec.ChunkedMarkBounded.TargetReady` now proves bounded child pushing preserves existing stack members, a bounded mark step preserves any selected object already in the stack tail, rescans preserve existing stack members, and a gray selected object is added by `chunked_rescan_heap` when the capacity bound can hold the whole object list. SPOT audits these helper contracts, refreshed profiling for the split target-ready module remains about one second, and broad mark-and-sweep spec plus SPOT verification pass. The next proof step is to combine these membership facts with a count-decrease/eventual-pop argument for the bounded inner loop.
 
+Follow-up checkpoint: exposed the next target-ready constructors without unfolding the abstract predicates in downstream modules. `GC.Spec.ChunkedMarkBounded.Preservation` now has public lemmas that fold the inner-loop readiness predicate for a target that is not the current head but is ready after the next bounded step, and fold the outer bounded-readiness predicate for a target that becomes ready in a later rescan after the current inner loop does not pop it. These small constructors are SPOT-audited, the refreshed preservation profile remains about one second, and broad mark-and-sweep spec plus SPOT verification pass. This gives the upcoming eventual-pop proof explicit induction steps instead of forcing clients to depend on the private predicate definitions.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

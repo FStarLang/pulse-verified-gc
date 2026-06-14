@@ -4498,6 +4498,30 @@ let spot_chunked_mark_inner_loop_marks_head_ready
   ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_head_ready
     mh st cap fuel target
 
+let spot_chunked_mark_inner_loop_marks_tail_ready_from_step
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length st > 0 /\
+        target <> Seq.head st /\
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel /\
+        (let (mh', st') =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_ready
+           mh' st' cap (fuel - 1) target))
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_ready
+          mh st cap fuel target)
+  =
+  ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_tail_ready_from_step
+    mh st cap fuel target
+
 let spot_chunked_mark_bounded_preserves_major_objects
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -4588,6 +4612,36 @@ let spot_chunked_mark_bounded_rescan_head_ready
           mh cap fuel target)
   =
   ChunkedMarkBoundedReady.chunked_mark_bounded_marks_rescan_head_ready
+    mh cap fuel target
+
+let spot_chunked_mark_bounded_ready_from_later_rescan
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        ~ (ChunkedSweepDefs.chunked_is_black mh target) /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        (let st =
+          ChunkedMarkBounded.chunked_rescan_heap mh Seq.empty cap in
+         Seq.length st > 0 /\
+         (let inner_fuel =
+           ChunkedMarkBounded.chunked_count_non_black mh in
+          let (mh', _) =
+            ChunkedMarkBounded.chunked_mark_inner_loop
+              mh st cap inner_fuel in
+          ~ (ChunkedMarkBoundedPres.chunked_mark_inner_loop_marks_target_ready
+              mh st cap inner_fuel target) /\
+          ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+            mh' cap (fuel - 1) target)))
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready
+          mh cap fuel target)
+  =
+  ChunkedMarkBoundedPres.chunked_mark_bounded_marks_target_ready_from_later_rescan
     mh cap fuel target
 
 let spot_chunked_push_children_bounded_preserves_stack_member
