@@ -52,6 +52,7 @@ module SpecSweep = GC.Spec.Sweep
 module SpecGCPost = GC.Spec.Correctness
 module DenseFused = GC.Spec.SweepCoalesce.Defs
 module ChunkedMarkDefs = GC.Spec.ChunkedMark.Defs
+module ChunkedMarkPres = GC.Spec.ChunkedMark.Preservation
 module ChunkedMarkCompat = GC.Spec.ChunkedMark.Compat
 module ChunkedMarkNoPointer = GC.Spec.ChunkedMark.NoPointerCompat
 module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
@@ -3393,6 +3394,279 @@ let spot_chunked_make_black_step
        ChunkedSweepDefs.chunked_set_object_color mh obj Header.Black)
   =
   ChunkedMarkDefs.chunked_make_black_step mh obj
+
+let spot_chunked_set_object_color_member_preserves_major_objects
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        MH.major_objects
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color) ==
+        MH.major_objects mh)
+  =
+  ChunkedMarkPres.chunked_set_object_color_member_preserves_major_objects
+    mh obj color
+
+let spot_chunked_make_gray_preserves_major_objects
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        MH.major_objects (ChunkedMarkDefs.chunked_make_gray mh obj) ==
+        MH.major_objects mh)
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_major_objects mh obj
+
+let spot_chunked_make_black_preserves_major_objects
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        MH.major_objects (ChunkedMarkDefs.chunked_make_black mh obj) ==
+        MH.major_objects mh)
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_major_objects mh obj
+
+let spot_chunked_set_object_color_member_preserves_well_formed
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (color: Header.color_sem)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedSweepDefs.chunked_set_object_color mh obj color))
+  =
+  ChunkedMarkPres.chunked_set_object_color_member_preserves_well_formed
+    mh obj color
+
+let spot_chunked_make_gray_preserves_well_formed
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        MH.well_formed_major_heap (ChunkedMarkDefs.chunked_make_gray mh obj))
+  =
+  ChunkedMarkPres.chunked_make_gray_preserves_well_formed mh obj
+
+let spot_chunked_make_black_preserves_well_formed
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        MH.well_formed_major_heap (ChunkedMarkDefs.chunked_make_black mh obj))
+  =
+  ChunkedMarkPres.chunked_make_black_preserves_well_formed mh obj
+
+let spot_chunked_push_children_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_push_children_preservation_ready mh obj i ws)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkDefs.chunked_push_children mh st obj i ws in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkPres.chunked_push_children_preserves_major_objects
+    mh st obj i ws
+
+let spot_chunked_push_children_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_push_children_preservation_ready mh obj i ws)
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkDefs.chunked_push_children mh st obj i ws in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkPres.chunked_push_children_preserves_well_formed
+    mh st obj i ws
+
+let spot_chunked_stack_objects_in_major_elim
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMarkPres.stack_objects_in_major mh st /\
+        Seq.mem obj st)
+      (ensures Seq.mem obj (MH.major_objects mh))
+  =
+  ChunkedMarkPres.stack_objects_in_major_elim mh st obj
+
+let spot_chunked_stack_objects_in_major_tail
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        ChunkedMarkPres.stack_objects_in_major mh st)
+      (ensures ChunkedMarkPres.stack_objects_in_major mh (Seq.tail st))
+  =
+  ChunkedMarkPres.stack_objects_in_major_tail mh st
+
+let spot_chunked_mark_step_empty_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length st = 0)
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkPres.chunked_mark_step_empty_preserves_major_objects mh st
+
+let spot_chunked_mark_step_empty_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st = 0 /\
+        MH.well_formed_major_heap mh)
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkPres.chunked_mark_step_empty_preserves_well_formed mh st
+
+let spot_chunked_mark_step_no_scan_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        Seq.mem (Seq.head st) (MH.major_objects mh) /\
+        ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st))
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkPres.chunked_mark_step_no_scan_preserves_major_objects mh st
+
+let spot_chunked_mark_step_no_scan_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        Seq.mem (Seq.head st) (MH.major_objects mh) /\
+        ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st))
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkPres.chunked_mark_step_no_scan_preserves_well_formed mh st
+
+let spot_chunked_mark_step_no_scan_preserves_stack_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.stack_objects_in_major mh st /\
+        ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st))
+      (ensures
+        (let (mh', st') = ChunkedMarkDefs.chunked_mark_step mh st in
+         ChunkedMarkPres.stack_objects_in_major mh' st'))
+  =
+  ChunkedMarkPres.chunked_mark_step_no_scan_preserves_stack_objects mh st
+
+let spot_chunked_mark_step_scan_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        Seq.mem (Seq.head st) (MH.major_objects mh) /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st)) /\
+        (let obj = Seq.head st in
+         let mh' = ChunkedMarkDefs.chunked_make_black mh obj in
+         let ws = ChunkedSweepDefs.chunked_wosize_of_object mh obj in
+         ChunkedMarkPres.chunked_push_children_preservation_ready mh' obj 1UL ws))
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkPres.chunked_mark_step_scan_preserves_major_objects mh st
+
+let spot_chunked_mark_step_scan_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        MH.well_formed_major_heap mh /\
+        Seq.mem (Seq.head st) (MH.major_objects mh) /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh (Seq.head st)) /\
+        (let obj = Seq.head st in
+         let mh' = ChunkedMarkDefs.chunked_make_black mh obj in
+         let ws = ChunkedSweepDefs.chunked_wosize_of_object mh obj in
+         ChunkedMarkPres.chunked_push_children_preservation_ready mh' obj 1UL ws))
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkPres.chunked_mark_step_scan_preserves_well_formed mh st
+
+let spot_chunked_mark_step_preserves_major_objects
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_step_preservation_ready mh st)
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.major_objects mh' == MH.major_objects mh))
+  =
+  ChunkedMarkPres.chunked_mark_step_preserves_major_objects mh st
+
+let spot_chunked_mark_step_preserves_well_formed
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_step_preservation_ready mh st)
+      (ensures
+        (let (mh', _) = ChunkedMarkDefs.chunked_mark_step mh st in
+         MH.well_formed_major_heap mh'))
+  =
+  ChunkedMarkPres.chunked_mark_step_preserves_well_formed mh st
 
 let spot_chunked_mark_step_empty
   (mh: MH.major_heap)

@@ -230,6 +230,8 @@ Follow-up checkpoint: the fused theorem is now connected to the chunked major-GC
 
 Follow-up checkpoint: added a membership-only marked-black live-subgraph surface. `chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership` derives the all-object wosize consistency facts, selected target chunk index, and chunk-local membership internally from `MH.well_formed_major_heap`, `MH.major_objects` membership, and marked-heap header/blackness witnesses. Clients now supply only the marked-heap live membership/header/black facts. The wrapper is SPOT-audited, refreshed `ChunkedMajorGC.Correctness` profiling remains about 1.23 seconds, and broad mark-and-sweep spec plus full SPOT verification pass.
 
+Follow-up checkpoint: started the true chunked mark-side preservation layer in a new split module, `GC.Spec.ChunkedMark.Preservation`, rather than adding weight to the compatibility modules. The module now proves that chunked mark color writes, `chunked_push_children`, and all `chunked_mark_step` branches preserve `MH.major_objects` and `MH.well_formed_major_heap` under an exact scanner-readiness predicate that mirrors the mark traversal. It also introduces a small stack-membership predicate for later loop preservation. The refreshed split-query profile remains about one second, and `GC.SPOT.HeapExpansion` audits the public contracts. Remaining mark-side work is to lift these facts through `chunked_mark_aux`, then through `ChunkedMarkBounded` rescan/inner/outer loops, and finally prove the marked-heap membership/header/black facts needed by the membership-only major-GC live-subgraph shell.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
