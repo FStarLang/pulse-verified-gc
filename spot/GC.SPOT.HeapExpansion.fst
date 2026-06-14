@@ -67,6 +67,7 @@ module ChunkedMarkBoundedStackReady = GC.Spec.ChunkedMarkBounded.StackReady
 module ChunkedMarkBoundedComplete = GC.Spec.ChunkedMarkBounded.Completion
 module ChunkedMarkBoundedMetadata = GC.Spec.ChunkedMarkBounded.Metadata
 module ChunkedMarkBoundedColor = GC.Spec.ChunkedMarkBounded.ColorInvariant
+module ChunkedMarkBoundedTag = GC.Spec.ChunkedMarkBounded.TagInvariant
 module ChunkedMarkBoundedCompat = GC.Spec.ChunkedMarkBounded.Compat
 module ChunkedMarkBoundedLoop = GC.Spec.ChunkedMarkBounded.LoopCompat
 module ChunkedMarkBoundedOuter = GC.Spec.ChunkedMarkBounded.OuterCompat
@@ -7501,6 +7502,88 @@ let spot_chunked_mark_bounded_field_preserved
           mh (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target)
   =
   ChunkedMarkBoundedColor.chunked_mark_bounded_field_preserved
+    mh cap fuel target
+
+let spot_chunked_push_children_bounded_preserves_infix_status
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_push_children_bounded mh st obj i ws cap in
+         ChunkedSweepDefs.chunked_is_infix mh' target ==
+         ChunkedSweepDefs.chunked_is_infix mh target))
+  =
+  ChunkedMarkBoundedTag.chunked_push_children_bounded_preserves_infix_status
+    mh st obj i ws cap target
+
+let spot_chunked_mark_step_bounded_preserves_infix_status
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMarkBoundedReady.chunked_bounded_stack_props mh st /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        (let (mh', _) =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedSweepDefs.chunked_is_infix mh' target ==
+         ChunkedSweepDefs.chunked_is_infix mh target))
+  =
+  ChunkedMarkBoundedTag.chunked_mark_step_bounded_preserves_infix_status
+    mh st cap target
+
+let spot_chunked_mark_bounded_preserves_tag_of_object
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_tag_of_object
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target ==
+        ChunkedSweepDefs.chunked_tag_of_object mh target)
+  =
+  ChunkedMarkBoundedTag.chunked_mark_bounded_preserves_tag_of_object
+    mh cap fuel target
+
+let spot_chunked_mark_bounded_preserves_infix_status
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_is_infix
+          (ChunkedMarkBounded.chunked_mark_bounded mh cap fuel) target ==
+        ChunkedSweepDefs.chunked_is_infix mh target)
+  =
+  ChunkedMarkBoundedTag.chunked_mark_bounded_preserves_infix_status
     mh cap fuel target
 
 let spot_chunked_mark_bounded_preserves_no_pointer_to_blue
