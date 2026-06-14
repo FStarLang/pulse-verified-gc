@@ -62,6 +62,17 @@ val chunked_stack_reachable_from_roots_cons
       (ensures
         chunked_stack_reachable_from_roots mh roots (Seq.cons obj st))
 
+val chunked_stack_reachable_from_roots_tail
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        chunked_stack_reachable_from_roots mh roots (Seq.tail st))
+
 val chunked_stack_reachable_from_gray_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -226,6 +237,33 @@ val chunked_make_gray_preserves_stack_reachable_from_roots
         chunked_stack_reachable_from_roots
           (MarkDefs.chunked_make_gray mh obj) roots st)
 
+val chunked_make_black_preserves_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Reach.chunked_major_reachable_from_roots mh roots target)
+      (ensures
+        Reach.chunked_major_reachable_from_roots
+          (MarkDefs.chunked_make_black mh obj) roots target)
+
+val chunked_make_black_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        chunked_stack_reachable_from_roots
+          (MarkDefs.chunked_make_black mh obj) roots st)
+
 val chunked_push_children_bounded_preserves_stack_reachable_from_roots
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -245,4 +283,26 @@ val chunked_push_children_bounded_preserves_stack_reachable_from_roots
       (ensures
         (let (mh', st') =
           BDefs.chunked_push_children_bounded mh st obj i ws cap in
+         chunked_stack_reachable_from_roots mh' roots st'))
+
+val chunked_mark_step_bounded_reachability_ready
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : GTot prop
+
+val chunked_mark_step_bounded_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        chunked_mark_step_bounded_reachability_ready mh st cap /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        (let (mh', st') =
+          BDefs.chunked_mark_step_bounded mh st cap in
          chunked_stack_reachable_from_roots mh' roots st'))

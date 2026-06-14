@@ -6999,6 +6999,22 @@ let spot_chunked_stack_reachable_from_roots_cons
   ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots_cons
     mh roots obj st
 
+let spot_chunked_stack_reachable_from_roots_tail
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots st)
+      (ensures
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots (Seq.tail st))
+  =
+  ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots_tail
+    mh roots st
+
 let spot_chunked_stack_reachable_from_gray_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -7200,6 +7216,41 @@ let spot_chunked_make_gray_preserves_stack_reachable_from_roots
   ChunkedMajorGCMarkReach.chunked_make_gray_preserves_stack_reachable_from_roots
     mh roots obj st
 
+let spot_chunked_make_black_preserves_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots target)
+      (ensures
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          (ChunkedMarkDefs.chunked_make_black mh obj) roots target)
+  =
+  ChunkedMajorGCMarkReach.chunked_make_black_preserves_reachable_from_roots
+    mh roots obj target
+
+let spot_chunked_make_black_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots st)
+      (ensures
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          (ChunkedMarkDefs.chunked_make_black mh obj) roots st)
+  =
+  ChunkedMajorGCMarkReach.chunked_make_black_preserves_stack_reachable_from_roots
+    mh roots obj st
+
 let spot_chunked_push_children_bounded_preserves_stack_reachable_from_roots
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -7228,6 +7279,29 @@ let spot_chunked_push_children_bounded_preserves_stack_reachable_from_roots
   =
   ChunkedMajorGCMarkReach.chunked_push_children_bounded_preserves_stack_reachable_from_roots
     mh roots st obj i ws cap
+
+let spot_chunked_mark_step_bounded_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap /\
+        ChunkedMajorGCMarkReach.chunked_mark_step_bounded_reachability_ready
+          mh st cap /\
+        ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+          mh roots st)
+      (ensures
+        (let (mh', st') =
+          ChunkedMarkBounded.chunked_mark_step_bounded mh st cap in
+         ChunkedMajorGCMarkReach.chunked_stack_reachable_from_roots
+           mh' roots st'))
+  =
+  ChunkedMajorGCMarkReach.chunked_mark_step_bounded_preserves_stack_reachable_from_roots
+    mh roots st cap
 
 let spot_chunked_major_vertex_single_chunk_compat
   (g: heap)

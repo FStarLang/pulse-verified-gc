@@ -91,7 +91,38 @@ let chunked_stack_reachable_from_roots_cons
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
-#push-options "--z3rlimit 5 --fuel 2 --ifuel 1 --split_queries always"
+let seq_tail_mem (#a:eqtype) (s: Seq.seq a) (x: a)
+  : Lemma
+      (requires Seq.length s > 0 /\ Seq.mem x (Seq.tail s))
+      (ensures Seq.mem x s)
+  =
+  let hd = Seq.head s in
+  let tl = Seq.tail s in
+  assert (s == Seq.cons hd tl);
+  GC.Spec.Fields.mem_cons_lemma x hd tl
+
+let chunked_stack_reachable_from_roots_tail
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length st > 0 /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        chunked_stack_reachable_from_roots mh roots (Seq.tail st))
+  =
+  let one (target: obj_addr)
+    : Lemma
+        (requires Seq.mem target (Seq.tail st))
+        (ensures Reach.chunked_major_reachable_from_roots mh roots target)
+    =
+    seq_tail_mem st target;
+    chunked_stack_reachable_from_roots_elim mh roots st target
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+
+#push-options "--z3rlimit 1 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_gray_or_black_from_gray
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -413,6 +444,89 @@ let chunked_make_gray_preserves_stack_reachable_from_roots
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires one)
 
+let chunked_make_black_preserves_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Reach.chunked_major_reachable_from_roots mh roots target)
+      (ensures
+        Reach.chunked_major_reachable_from_roots
+          (MarkDefs.chunked_make_black mh obj) roots target)
+  =
+  let mh' = MarkDefs.chunked_make_black mh obj in
+  MarkPres.chunked_make_black_preserves_major_objects mh obj;
+  MarkPres.chunked_make_black_preserves_well_formed mh obj;
+  MarkPres.chunked_make_black_preserves_ranges mh obj;
+  let live (x: obj_addr) : prop = ChunkedMajorGraph.chunked_major_vertex mh x in
+  let fields (x: obj_addr)
+    : Lemma
+        (requires live x)
+        (ensures ChunkedMajorGraph.chunked_major_field_preserved mh mh' x)
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh x;
+    assert (Seq.mem x (MH.major_objects mh'));
+    ChunkedMajorGraph.chunked_major_vertex_intro mh' x;
+    MarkPres.chunked_make_black_preserves_wosize_of_object mh obj x;
+    let same_field (i: U64.t{U64.v i >= 1})
+      : Lemma
+          (requires
+            U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh x))
+          (ensures
+            MarkDefs.chunked_get_field mh x i ==
+            MarkDefs.chunked_get_field mh' x i)
+      =
+      MarkPres.chunked_make_black_preserves_get_field mh obj x i
+    in
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires same_field);
+    ChunkedMajorGraph.chunked_major_field_preserved_intro mh mh' x
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires fields);
+  let pc (v: U64.t)
+    : Lemma
+        (MarkDefs.chunked_is_pointer_field mh v ==
+         MarkDefs.chunked_is_pointer_field mh' v)
+    =
+    MarkDefs.chunked_is_pointer_field_step mh v;
+    MarkDefs.chunked_is_pointer_field_step mh' v;
+    RangePres.same_chunk_ranges_preserves_is_major_pointer mh mh' v
+  in
+  FStar.Classical.forall_intro pc;
+  ChunkedMajorGraph.chunked_major_pointer_classification_preserved_intro mh mh';
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_from_fields
+    mh mh' live;
+  Reach.chunked_major_reachable_from_roots_preserved_by_live_subgraph
+    mh mh' live roots target
+
+let chunked_make_black_preserves_stack_reachable_from_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (obj: obj_addr)
+  (st: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        chunked_stack_reachable_from_roots
+          (MarkDefs.chunked_make_black mh obj) roots st)
+  =
+  let mh' = MarkDefs.chunked_make_black mh obj in
+  let one (target: obj_addr)
+    : Lemma
+        (requires Seq.mem target st)
+        (ensures Reach.chunked_major_reachable_from_roots mh' roots target)
+    =
+    chunked_stack_reachable_from_roots_elim mh roots st target;
+    chunked_make_black_preserves_reachable_from_roots mh roots obj target
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires one)
+
 let rec chunked_push_children_bounded_preserves_stack_reachable_from_roots
     (mh: MH.major_heap)
     (roots: Seq.seq obj_addr)
@@ -494,5 +608,73 @@ let rec chunked_push_children_bounded_preserves_stack_reachable_from_roots
         mh obj i ws;
       chunked_push_children_bounded_preserves_stack_reachable_from_roots
         mh roots st obj (U64.add i 1UL) ws cap
+    end
+  end
+
+let chunked_mark_step_bounded_reachability_ready
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : GTot prop
+  =
+  if Seq.length st = 0 then True
+  else
+    let obj = Seq.head st in
+    if MarkDefs.chunked_is_no_scan mh obj then
+      True
+    else
+      let mh' = MarkDefs.chunked_make_black mh obj in
+      let ws = SweepDefs.chunked_wosize_of_object mh obj in
+      chunked_push_children_bounded_reachability_ready mh' obj 1UL ws
+
+let chunked_mark_step_bounded_preserves_stack_reachable_from_roots
+    (mh: MH.major_heap)
+    (roots: Seq.seq obj_addr)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        BPres.chunked_mark_step_bounded_preservation_ready mh st cap /\
+        chunked_mark_step_bounded_reachability_ready mh st cap /\
+        chunked_stack_reachable_from_roots mh roots st)
+      (ensures
+        (let (mh', st') =
+          BDefs.chunked_mark_step_bounded mh st cap in
+         chunked_stack_reachable_from_roots mh' roots st'))
+  =
+  if Seq.length st = 0 then
+    BDefs.chunked_mark_step_bounded_empty mh st cap
+  else begin
+    let obj = Seq.head st in
+    let st_tail = Seq.tail st in
+    assert (Seq.length st > 0);
+    assert (st == Seq.cons obj st_tail);
+    GC.Spec.Fields.mem_cons_lemma obj obj st_tail;
+    assert (Seq.mem obj st);
+    chunked_stack_reachable_from_roots_elim mh roots st obj;
+    Reach.chunked_major_reachable_from_roots_vertex mh roots obj;
+    ChunkedMajorGraph.chunked_major_vertex_elim mh obj;
+    assert (Seq.mem obj (MH.major_objects mh));
+    chunked_stack_reachable_from_roots_tail mh roots st;
+    if MarkDefs.chunked_is_no_scan mh obj then begin
+      BDefs.chunked_mark_step_bounded_no_scan mh st cap;
+      chunked_make_black_preserves_stack_reachable_from_roots
+        mh roots obj st_tail
+    end else begin
+      let mh_black = MarkDefs.chunked_make_black mh obj in
+      let ws = SweepDefs.chunked_wosize_of_object mh obj in
+      BDefs.chunked_mark_step_bounded_scan mh st cap;
+      BPres.chunked_mark_step_bounded_preservation_ready_scan
+        mh st cap;
+      MarkPres.chunked_make_black_preserves_well_formed mh obj;
+      MarkPres.chunked_make_black_preserves_wosize_of_object mh obj obj;
+      chunked_make_black_preserves_reachable_from_roots
+        mh roots obj obj;
+      chunked_make_black_preserves_stack_reachable_from_roots
+        mh roots obj st_tail;
+      assert (ws == SweepDefs.chunked_wosize_of_object mh_black obj);
+      chunked_push_children_bounded_preserves_stack_reachable_from_roots
+        mh_black roots st_tail obj 1UL ws cap
     end
   end
