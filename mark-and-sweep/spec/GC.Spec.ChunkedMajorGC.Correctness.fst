@@ -340,6 +340,57 @@ let chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membershi
     mh cap fuel live live_hdr
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_live_subgraph_preserved_from_target_ready
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  (live_hdr: obj_addr -> U64.t)
+  : Lemma
+      (requires
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         MH.well_formed_major_heap mh /\
+         ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+         (forall (target: obj_addr).
+           live target ==>
+           Seq.mem target (MH.major_objects mh) /\
+           SweepDefs.chunked_read_header marked target ==
+             Some (live_hdr target) /\
+           ChunkedMarkPres.chunked_mark_bounded_marks_target_ready
+             mh cap fuel target)))
+      (ensures
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         let (mh_final, fp_final) =
+           ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+           marked mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  chunked_major_gc_bounded_mark_phase_preserves_shape mh cap fuel;
+  let marked_live_facts (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          Seq.mem target (MH.major_objects marked) /\
+          SweepDefs.chunked_read_header marked target ==
+            Some (live_hdr target) /\
+          SweepDefs.chunked_is_black marked target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    assert (MH.major_objects marked == MH.major_objects mh);
+    assert (Seq.mem target (MH.major_objects marked));
+    chunked_major_gc_bounded_mark_phase_marks_target_black
+      mh cap fuel target;
+    assert (SweepDefs.chunked_read_header marked target ==
+            Some (live_hdr target))
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires marked_live_facts);
+  chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership
+    mh cap fuel live live_hdr
+#pop-options
+
 let bounded_mark_no_gray_for_fused
     (h_init: heap)
     (cap: nat{cap > 0})
