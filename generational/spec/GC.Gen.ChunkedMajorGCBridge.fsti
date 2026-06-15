@@ -21,6 +21,7 @@ module ChunkedMarkEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
+module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
@@ -339,6 +340,40 @@ val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_coll
       (ensures
         (let (mh_final, fp_final) =
           ChunkedMajorGC.chunked_major_gc_bounded mh cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+
+val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_grayed_collection_shape_policy
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_collection_heap_shape minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          fp shape_fuel /\
+        chunked_major_edge_gen_field_witness
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+        chunked_major_field_targets_non_infix
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel > 0 /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            cap mark_fuel in
         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
           mh mh_final
           (ChunkedMajorGCCorr.chunked_major_initial_reachable_live

@@ -7623,6 +7623,43 @@ let spot_chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from
   GenMajorGCBridge.chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape_policy
     minor mh fp shape_fuel roots cap mark_fuel
 
+let spot_chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_grayed_collection_shape_policy
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_collection_heap_shape minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          fp shape_fuel /\
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+        GenMajorGCBridge.chunked_major_field_targets_non_infix
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel > 0 /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            cap mark_fuel in
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+  =
+  GenMajorGCBridge.chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_grayed_collection_shape_policy
+    minor mh fp shape_fuel roots cap mark_fuel
+
 let spot_chunked_major_reachable_refl
   (mh: MH.major_heap)
   (x: obj_addr)
@@ -9830,6 +9867,22 @@ let spot_chunked_major_live_subgraph_preserved_trans
   =
   ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved_trans
     mh0 mh1 mh2 live
+
+let spot_chunked_major_live_subgraph_preserved_subset
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (live_big live_small: obj_addr -> prop)
+  : Lemma
+      (requires
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh_init mh_final live_big /\
+        (forall (x: obj_addr). live_small x ==> live_big x))
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh_init mh_final live_small)
+  =
+  ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved_subset
+    mh_init mh_final live_big live_small
 
 let spot_chunked_mark_aux_empty_single_chunk_compat
   (g: heap)

@@ -297,6 +297,17 @@ val chunked_major_live_subgraph_preserved_trans
       (ensures
         chunked_major_live_subgraph_preserved mh0 mh2 live)
 
+val chunked_major_live_subgraph_preserved_subset
+  (mh_init: MH.major_heap)
+  (mh_final: MH.major_heap)
+  (live_big live_small: obj_addr -> prop)
+  : Lemma
+      (requires
+        chunked_major_live_subgraph_preserved mh_init mh_final live_big /\
+        (forall (x: obj_addr). live_small x ==> live_big x))
+      (ensures
+        chunked_major_live_subgraph_preserved mh_init mh_final live_small)
+
 val chunked_major_vertex_single_chunk_compat
   (g: heap)
   (x: obj_addr)

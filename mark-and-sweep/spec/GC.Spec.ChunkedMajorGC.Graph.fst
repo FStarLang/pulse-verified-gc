@@ -422,6 +422,46 @@ let chunked_major_live_subgraph_preserved_trans
   chunked_major_live_subgraph_preserved_intro mh0 mh2 live
 #pop-options
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_live_subgraph_preserved_subset
+    (mh_init: MH.major_heap)
+    (mh_final: MH.major_heap)
+    (live_big live_small: obj_addr -> prop)
+  : Lemma
+      (requires
+        chunked_major_live_subgraph_preserved mh_init mh_final live_big /\
+        (forall (x: obj_addr). live_small x ==> live_big x))
+      (ensures
+        chunked_major_live_subgraph_preserved mh_init mh_final live_small)
+  =
+  chunked_major_live_subgraph_vertices_elim mh_init mh_final live_big;
+  chunked_major_live_subgraph_edges_elim mh_init mh_final live_big;
+  let vertices (x: obj_addr)
+    : Lemma
+        (requires live_small x)
+        (ensures chunked_major_vertex mh_init x /\ chunked_major_vertex mh_final x)
+    =
+    assert (live_big x);
+    assert (chunked_major_vertex mh_init x /\ chunked_major_vertex mh_final x)
+  in
+  let edges (x: obj_addr)
+    : Lemma
+        (requires live_small x)
+        (ensures
+          forall (y: obj_addr).
+            (chunked_major_edge mh_init x y <==>
+             chunked_major_edge mh_final x y))
+    =
+    assert (live_big x);
+    assert (forall (y: obj_addr).
+      (chunked_major_edge mh_init x y <==>
+       chunked_major_edge mh_final x y))
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires vertices);
+  FStar.Classical.forall_intro (FStar.Classical.move_requires edges);
+  chunked_major_live_subgraph_preserved_intro mh_init mh_final live_small
+#pop-options
+
 let chunked_major_vertex_single_chunk_compat (g: heap) (x: obj_addr)
   : Lemma
       (ensures

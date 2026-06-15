@@ -23,6 +23,7 @@ module ChunkedMarkEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
+module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
@@ -798,3 +799,106 @@ let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_coll
     mh roots cap mark_fuel;
   chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape_field_policies
     minor mh fp shape_fuel roots cap mark_fuel
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_grayed_collection_shape_policy
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_collection_heap_shape minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          fp shape_fuel /\
+        chunked_major_edge_gen_field_witness
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+        chunked_major_field_targets_non_infix
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel > 0 /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  let (mh_final, fp_final) =
+    ChunkedMajorGC.chunked_major_gc_bounded grayed cap mark_fuel in
+  let live0 =
+    ChunkedMajorGCCorr.chunked_major_initial_reachable_live mh roots in
+  let live1 =
+    ChunkedMajorGCCorr.chunked_major_initial_reachable_live grayed roots in
+  let all_vertices (v: obj_addr) =
+    ChunkedMajorGraph.chunked_major_vertex mh v in
+  let all_vertices_mem (v: obj_addr)
+    : Lemma
+        (requires all_vertices v)
+        (ensures Seq.mem v (MH.major_objects mh))
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh v
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires all_vertices_mem);
+  ChunkedMajorGCRoots.chunked_gray_roots_live_subgraph_preserved
+    mh roots all_vertices;
+  let all_vertices_cover (v: obj_addr)
+    : Lemma
+        (requires ChunkedMajorGraph.chunked_major_vertex mh v)
+        (ensures all_vertices v)
+    =
+    ()
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires all_vertices_cover);
+  let live0_mem (target: obj_addr)
+    : Lemma
+        (requires live0 target)
+        (ensures Seq.mem target (MH.major_objects mh))
+    =
+    ChunkedMajorGCCorr.chunked_major_initial_reachable_live_elim
+      mh roots target;
+    ChunkedMajorReach.chunked_major_reachable_from_roots_vertex
+      mh roots target;
+    ChunkedMajorGraph.chunked_major_vertex_elim mh target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires live0_mem);
+  ChunkedMajorGCRoots.chunked_gray_roots_live_subgraph_preserved
+    mh roots live0;
+  let live0_to_live1 (target: obj_addr)
+    : Lemma
+        (requires live0 target)
+        (ensures live1 target)
+    =
+    ChunkedMajorGCCorr.chunked_major_initial_reachable_live_elim
+      mh roots target;
+    ChunkedMajorReach.chunked_major_reachable_from_roots_preserved_by_live_subgraph
+      mh grayed all_vertices roots target;
+    ChunkedMajorGCCorr.chunked_major_initial_reachable_live_intro
+      grayed roots target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires live0_to_live1);
+  chunked_major_gc_bounded_liveness_policy_after_gray_roots
+    mh roots cap mark_fuel;
+  chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape_policy
+    minor grayed fp shape_fuel roots cap mark_fuel;
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_subset
+    grayed mh_final live1 live0;
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_trans
+    mh grayed mh_final live0
+#pop-options
