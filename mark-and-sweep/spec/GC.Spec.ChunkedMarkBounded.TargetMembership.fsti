@@ -8,6 +8,7 @@ open GC.Spec.Base
 module MH = GC.Spec.MajorHeap
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module Readiness = GC.Spec.ChunkedMarkBounded.Readiness
+module Roots = GC.Spec.ChunkedMajorGC.Roots
 
 val chunked_scanned_white_targets_in_major
   (mh: MH.major_heap)
@@ -22,6 +23,17 @@ val chunked_scanned_white_targets_in_major_from_raw_targets
   : Lemma
       (requires chunked_scanned_raw_targets_in_major mh)
       (ensures chunked_scanned_white_targets_in_major mh)
+
+val chunked_scanned_raw_targets_in_major_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_scanned_raw_targets_in_major mh)
+      (ensures
+        chunked_scanned_raw_targets_in_major
+          (Roots.chunked_gray_roots mh roots))
 
 val chunked_scanned_white_targets_in_major_elim
   (mh: MH.major_heap)

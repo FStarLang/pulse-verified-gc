@@ -352,6 +352,22 @@ val chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_intro
         chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
           mh roots cap mark_fuel)
 
+val chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_from_pre_gray
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major mh /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+          mh roots cap mark_fuel)
+
 val chunked_major_gc_bounded_after_gray_roots_raw_target_policy_from_static
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

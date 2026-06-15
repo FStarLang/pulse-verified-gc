@@ -38,6 +38,45 @@ let rec chunked_gray_roots
         mh in
     chunked_gray_roots mh1 rest
 
+#push-options "--z3rlimit 1 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_gray_roots_empty
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length roots = 0)
+      (ensures chunked_gray_roots mh roots == mh)
+  =
+  ()
+
+let chunked_gray_roots_cons_mem
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length roots > 0 /\
+        Seq.mem (Seq.head roots) (MH.major_objects mh))
+      (ensures
+        chunked_gray_roots mh roots ==
+        chunked_gray_roots
+          (MarkDefs.chunked_make_gray mh (Seq.head roots))
+          (Seq.tail roots))
+  =
+  ()
+
+let chunked_gray_roots_cons_miss
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length roots > 0 /\
+        ~(Seq.mem (Seq.head roots) (MH.major_objects mh)))
+      (ensures
+        chunked_gray_roots mh roots ==
+        chunked_gray_roots mh (Seq.tail roots))
+  =
+  ()
+#pop-options
+
 let rec chunked_gray_roots_preserves_major_objects
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

@@ -15,6 +15,7 @@ module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module Readiness = GC.Spec.ChunkedMarkBounded.Readiness
 module BReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module BStackStep = GC.Spec.ChunkedMarkBounded.StackStep
+module Roots = GC.Spec.ChunkedMajorGC.Roots
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
 
@@ -212,6 +213,62 @@ let chunked_scanned_raw_targets_in_major_preserved_by_make_black
   in
   FStar.Classical.forall_intro_2
     (FStar.Classical.move_requires_2 one)
+#pop-options
+
+#push-options "--z3rlimit 1 --fuel 1 --ifuel 0 --split_queries always"
+let rec chunked_scanned_raw_targets_in_major_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_scanned_raw_targets_in_major mh)
+      (ensures
+        chunked_scanned_raw_targets_in_major
+          (Roots.chunked_gray_roots mh roots))
+      (decreases Seq.length roots)
+  =
+  let len = Seq.length roots in
+  if len = 0 then
+    begin
+      Roots.chunked_gray_roots_empty mh roots;
+      assert (chunked_scanned_raw_targets_in_major
+        (Roots.chunked_gray_roots mh roots))
+    end
+  else begin
+    assert (len <> 0);
+    nat_nonzero_pos len;
+    assert (Seq.length roots == len);
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      Roots.chunked_gray_roots_cons_mem mh roots;
+      chunked_scanned_raw_targets_in_major_preserved_by_make_gray mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      chunked_scanned_raw_targets_in_major_preserved_by_gray_roots
+        mh1 rest;
+      assert (chunked_scanned_raw_targets_in_major
+        (Roots.chunked_gray_roots mh1 rest));
+      assert (Roots.chunked_gray_roots mh roots ==
+              Roots.chunked_gray_roots mh1 rest);
+      assert (chunked_scanned_raw_targets_in_major
+        (Roots.chunked_gray_roots mh roots))
+    end else begin
+      Roots.chunked_gray_roots_cons_miss mh roots;
+      chunked_scanned_raw_targets_in_major_preserved_by_gray_roots
+        mh rest;
+      assert (chunked_scanned_raw_targets_in_major
+        (Roots.chunked_gray_roots mh rest));
+      assert (Roots.chunked_gray_roots mh roots ==
+              Roots.chunked_gray_roots mh rest);
+      assert (chunked_scanned_raw_targets_in_major
+        (Roots.chunked_gray_roots mh roots))
+    end
+  end
 #pop-options
 
 let chunked_scanned_white_targets_in_major_elim

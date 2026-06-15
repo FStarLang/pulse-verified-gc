@@ -17,6 +17,37 @@ val chunked_gray_roots
   (roots: Seq.seq obj_addr)
   : GTot MH.major_heap
 
+val chunked_gray_roots_empty
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires Seq.length roots = 0)
+      (ensures chunked_gray_roots mh roots == mh)
+
+val chunked_gray_roots_cons_mem
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length roots > 0 /\
+        Seq.mem (Seq.head roots) (MH.major_objects mh))
+      (ensures
+        chunked_gray_roots mh roots ==
+        chunked_gray_roots
+          (MarkDefs.chunked_make_gray mh (Seq.head roots))
+          (Seq.tail roots))
+
+val chunked_gray_roots_cons_miss
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        Seq.length roots > 0 /\
+        ~(Seq.mem (Seq.head roots) (MH.major_objects mh)))
+      (ensures
+        chunked_gray_roots mh roots ==
+        chunked_gray_roots mh (Seq.tail roots))
+
 val chunked_gray_roots_preserves_major_objects
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
