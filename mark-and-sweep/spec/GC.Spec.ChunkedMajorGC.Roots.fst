@@ -1,6 +1,7 @@
 module GC.Spec.ChunkedMajorGC.Roots
 
 module Seq = FStar.Seq
+module U64 = FStar.UInt64
 
 open GC.Spec.Base
 
@@ -10,6 +11,7 @@ module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module MarkPres = GC.Spec.ChunkedMark.Preservation
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module MarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
 
@@ -140,6 +142,63 @@ let rec chunked_gray_roots_preserves_gray_or_black
     end else
       chunked_gray_roots_preserves_gray_or_black mh rest target
   end
+
+let rec chunked_gray_roots_preserves_ranges
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges
+          mh (chunked_gray_roots mh roots))
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    RangePres.same_chunk_ranges_refl mh
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    let mh1 =
+      if Seq.mem root (MH.major_objects mh) then
+        MarkDefs.chunked_make_gray mh root
+      else
+        mh in
+    if Seq.mem root (MH.major_objects mh) then
+      MarkPres.chunked_make_gray_preserves_ranges mh root
+    else
+      RangePres.same_chunk_ranges_refl mh;
+    assert (RangePres.same_chunk_ranges mh mh1);
+    chunked_gray_roots_preserves_ranges mh1 rest;
+    RangePres.same_chunk_ranges_trans
+      mh mh1 (chunked_gray_roots mh1 rest);
+    assert (chunked_gray_roots mh roots == chunked_gray_roots mh1 rest)
+  end
+
+let chunked_gray_roots_pointer_classification_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        ChunkedMajorGraph.chunked_major_pointer_classification_preserved
+          mh (chunked_gray_roots mh roots))
+  =
+  let final = chunked_gray_roots mh roots in
+  let classify (v: U64.t)
+    : Lemma
+        (ensures
+          MarkDefs.chunked_is_pointer_field mh v ==
+          MarkDefs.chunked_is_pointer_field final v)
+    =
+    chunked_gray_roots_preserves_ranges mh roots;
+    RangePres.same_chunk_ranges_preserves_is_major_pointer mh final v;
+    MarkDefs.chunked_is_pointer_field_step mh v;
+    MarkDefs.chunked_is_pointer_field_step final v
+  in
+  FStar.Classical.forall_intro classify;
+  ChunkedMajorGraph.chunked_major_pointer_classification_preserved_intro
+    mh final
 
 let rec chunked_gray_roots_roots_gray_or_black
   (mh: MH.major_heap)

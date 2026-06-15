@@ -7,6 +7,8 @@ open GC.Spec.Base
 module MH = GC.Spec.MajorHeap
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module MarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
+module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 
 val chunked_gray_roots
   (mh: MH.major_heap)
@@ -44,6 +46,22 @@ val chunked_gray_roots_preserves_gray_or_black
           (chunked_gray_roots mh roots) target \/
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black
           (chunked_gray_roots mh roots) target)
+
+val chunked_gray_roots_preserves_ranges
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges
+          mh (chunked_gray_roots mh roots))
+
+val chunked_gray_roots_pointer_classification_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        ChunkedMajorGraph.chunked_major_pointer_classification_preserved
+          mh (chunked_gray_roots mh roots))
 
 val chunked_gray_roots_roots_gray_or_black
   (mh: MH.major_heap)

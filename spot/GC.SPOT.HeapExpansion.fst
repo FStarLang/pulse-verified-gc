@@ -7779,6 +7779,28 @@ let spot_chunked_gray_roots_preserves_gray_or_black
   ChunkedMajorGCRoots.chunked_gray_roots_preserves_gray_or_black
     mh roots target
 
+let spot_chunked_gray_roots_preserves_ranges
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges
+          mh (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_ranges
+    mh roots
+
+let spot_chunked_gray_roots_pointer_classification_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_pointer_classification_preserved
+          mh (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_pointer_classification_preserved
+    mh roots
+
 let spot_chunked_gray_roots_roots_gray_or_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
