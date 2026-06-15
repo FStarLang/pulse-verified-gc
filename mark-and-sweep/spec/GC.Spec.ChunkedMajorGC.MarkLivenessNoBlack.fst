@@ -74,6 +74,62 @@ let chunked_major_reachable_from_roots_black_from_vertex_target_invariants
 #pop-options
 
 #push-options "--z3rlimit 10"
+let chunked_major_reachable_from_roots_black_from_all_vertex_target_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MarkLive.chunked_roots_black mh roots /\
+        MarkLive.chunked_no_gray_objects mh /\
+        MarkLive.chunked_no_pointer_to_blue_vertex_targets mh /\
+        BNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh target /\
+        Reach.chunked_major_reachable_from_roots mh roots target)
+      (ensures SweepDefs.chunked_is_black mh target)
+  =
+  let p (x: obj_addr) : prop = SweepDefs.chunked_is_black mh x in
+  let root_case (r: obj_addr)
+    : Lemma
+        (requires
+          ChunkedMajorGraph.chunked_major_vertex mh r /\
+          Seq.mem r roots)
+        (ensures p r)
+    =
+    MarkLive.chunked_roots_black_elim mh roots r
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires root_case);
+  let edge_case (y: obj_addr) (z: obj_addr)
+    : Lemma
+        (requires
+          Reach.chunked_major_reachable_from_roots mh roots y /\
+          p y /\
+          ChunkedMajorGraph.chunked_major_vertex mh z /\
+          ChunkedMajorGraph.chunked_major_edge mh y z)
+        (ensures p z)
+    =
+    MarkLive.chunked_is_black_not_blue mh y;
+    MarkLive.chunked_no_pointer_to_blue_vertex_targets_elim mh y z;
+    BNoBlack.chunked_no_black_to_white_vertex_targets_elim mh y z;
+    MarkLive.chunked_no_gray_objects_elim mh z;
+    MarkLive.chunked_not_white_gray_blue_implies_black mh z
+  in
+  let edge_case_forall (y: obj_addr) (z: obj_addr)
+    : Lemma
+        (Reach.chunked_major_reachable_from_roots mh roots y /\
+         p y /\
+         ChunkedMajorGraph.chunked_major_vertex mh z /\
+         ChunkedMajorGraph.chunked_major_edge mh y z ==> p z)
+    =
+    FStar.Classical.move_requires (edge_case y) z
+  in
+  FStar.Classical.forall_intro_2 edge_case_forall;
+  Reach.chunked_major_reachable_from_roots_induct mh roots p target
+#pop-options
+
+#push-options "--z3rlimit 10"
 let chunked_mark_bounded_reachable_black_from_vertex_no_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

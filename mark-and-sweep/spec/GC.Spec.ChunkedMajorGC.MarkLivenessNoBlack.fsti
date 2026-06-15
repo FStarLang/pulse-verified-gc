@@ -29,6 +29,21 @@ val chunked_major_reachable_from_roots_black_from_vertex_target_invariants
         Reach.chunked_major_reachable_from_roots mh roots target)
       (ensures SweepDefs.chunked_is_black mh target)
 
+val chunked_major_reachable_from_roots_black_from_all_vertex_target_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        MarkLive.chunked_roots_black mh roots /\
+        MarkLive.chunked_no_gray_objects mh /\
+        MarkLive.chunked_no_pointer_to_blue_vertex_targets mh /\
+        BNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh target /\
+        Reach.chunked_major_reachable_from_roots mh roots target)
+      (ensures SweepDefs.chunked_is_black mh target)
+
 val chunked_mark_bounded_reachable_black_from_vertex_no_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

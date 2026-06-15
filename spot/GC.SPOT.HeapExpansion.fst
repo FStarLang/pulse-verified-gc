@@ -8196,6 +8196,25 @@ let spot_chunked_major_reachable_from_roots_black_from_vertex_target_invariants
   ChunkedMajorGCMarkLiveNoBlack.chunked_major_reachable_from_roots_black_from_vertex_target_invariants
     mh roots target
 
+let spot_chunked_major_reachable_from_roots_black_from_all_vertex_target_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCMarkLive.chunked_roots_black mh roots /\
+        ChunkedMajorGCMarkLive.chunked_no_gray_objects mh /\
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets mh /\
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh target /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots target)
+      (ensures ChunkedSweepDefs.chunked_is_black mh target)
+  =
+  ChunkedMajorGCMarkLiveNoBlack.chunked_major_reachable_from_roots_black_from_all_vertex_target_invariants
+    mh roots target
+
 let spot_chunked_mark_bounded_reachable_black_from_vertex_no_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
