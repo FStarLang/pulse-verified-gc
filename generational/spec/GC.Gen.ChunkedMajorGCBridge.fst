@@ -19,6 +19,7 @@ module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkTargetReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
 module ChunkedMajorGCRoots = GC.Spec.ChunkedMajorGC.Roots
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMarkEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
@@ -26,6 +27,7 @@ module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
 module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module GenInv = GC.Gen.HeapInvariant
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 module Promote = GC.Gen.Promote
 module CG = GC.Gen.CombinedGraph
 
@@ -1243,6 +1245,316 @@ let chunked_major_minor_fields_no_infix_targets_preserved_by_gray_roots
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_gray_roots_preserves_free_link_read
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (fp: obj_addr)
+  (next: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem fp (MH.major_objects mh) /\
+        (match MH.read_word_in_major mh (hd_address fp) with
+         | Some hdr -> U64.v (getWosize hdr) >= 1
+         | None -> False) /\
+        MH.read_word_in_major mh fp == Some next)
+      (ensures
+        MH.read_word_in_major
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) fp == Some next)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  let hdr = Some?.v (MH.read_word_in_major mh (hd_address fp)) in
+  assert (MH.read_word_in_major mh (hd_address fp) == Some hdr);
+  SweepDefs.chunked_read_header_step mh fp;
+  assert (SweepDefs.chunked_read_header mh fp == Some hdr);
+  SweepDefs.chunked_wosize_of_object_some mh fp hdr;
+  assert (U64.v (SweepDefs.chunked_wosize_of_object mh fp) >= 1);
+  let field_i: (i: U64.t{U64.v i >= 1}) = 1UL in
+  assert (U64.v field_i == 1);
+  assert (U64.v field_i <=
+          U64.v (SweepDefs.chunked_wosize_of_object mh fp));
+  hd_address_spec fp;
+  assert_norm (U64.v mword == 8);
+  assert (U64.v (U64.mul mword field_i) ==
+          U64.v mword * U64.v field_i);
+  assert (U64.v (hd_address fp) + U64.v mword == U64.v fp);
+  assert (U64.v fp ==
+          U64.v (hd_address fp) + U64.v mword * U64.v field_i);
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_field_read
+    mh roots fp field_i fp next
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_gray_roots_preserves_free_header_wosize_ge_one
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (fp: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem fp (MH.major_objects mh) /\
+        (match MH.read_word_in_major mh (hd_address fp) with
+         | Some hdr -> U64.v (getWosize hdr) >= 1
+         | None -> False))
+      (ensures
+        (match
+          MH.read_word_in_major
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            (hd_address fp)
+         with
+         | Some hdr -> U64.v (getWosize hdr) >= 1
+         | None -> False))
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  let hdr = Some?.v (MH.read_word_in_major mh (hd_address fp)) in
+  assert (MH.read_word_in_major mh (hd_address fp) == Some hdr);
+  SweepDefs.chunked_read_header_step mh fp;
+  assert (SweepDefs.chunked_read_header mh fp == Some hdr);
+  SweepDefs.chunked_wosize_of_object_some mh fp hdr;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_wosize_of_object
+    mh roots fp;
+  assert (Seq.mem fp (MH.major_objects grayed));
+  MH.major_objects_member_header_read_some grayed fp;
+  let hdr' = Some?.v (MH.read_word_in_major grayed (hd_address fp)) in
+  assert (MH.read_word_in_major grayed (hd_address fp) == Some hdr');
+  SweepDefs.chunked_read_header_step grayed fp;
+  assert (SweepDefs.chunked_read_header grayed fp == Some hdr');
+  SweepDefs.chunked_wosize_of_object_some grayed fp hdr';
+  assert (U64.v (getWosize hdr') == U64.v (getWosize hdr));
+  assert (U64.v (getWosize hdr') >= 1)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_gray_roots_preserves_free_block_fit_current
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (fp: obj_addr)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        fuel > 0 /\
+        U64.v fp >= U64.v mword /\
+        U64.v fp < heap_size /\
+        U64.v fp % U64.v mword == 0 /\
+        Seq.mem fp (MH.major_objects mh) /\
+        SpecMajorAlloc.major_fl_blocks_fit mh fp fuel)
+      (ensures
+        (let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+         let base = hd_address fp in
+         let idx = MH.lookup_chunk_index_value grayed base in
+         MH.lookup_chunk_index grayed base == Some idx /\
+         idx < Seq.length grayed /\
+         MH.word_in_chunk (Seq.index grayed idx) base /\
+         (match MH.read_word_in_major grayed base with
+          | Some hdr ->
+            U64.v base +
+              (1 + U64.v (getWosize hdr)) * U64.v mword <=
+              MH.chunk_end (Seq.index grayed idx)
+          | None -> False)))
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  let base = hd_address fp in
+  SpecMajorAlloc.major_fl_blocks_fit_current mh fp fuel;
+  let idx = MH.lookup_chunk_index_value mh base in
+  assert (MH.lookup_chunk_index mh base == Some idx);
+  assert (idx < Seq.length mh);
+  assert (MH.word_in_chunk (Seq.index mh idx) base);
+  let hdr = Some?.v (MH.read_word_in_major mh base) in
+  assert (MH.read_word_in_major mh base == Some hdr);
+  assert (U64.v base + (1 + U64.v (getWosize hdr)) * U64.v mword <=
+          MH.chunk_end (Seq.index mh idx));
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_ranges mh roots;
+  RangePres.same_chunk_ranges_word_in_chunk mh grayed idx base;
+  MH.lookup_chunk_index_word_in_chunk grayed base idx;
+  assert (MH.lookup_chunk_index grayed base == Some idx);
+  assert (MH.lookup_chunk_index_value grayed base == idx);
+  assert (Seq.mem fp (MH.major_objects mh));
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_wosize_of_object
+    mh roots fp;
+  SweepDefs.chunked_read_header_step mh fp;
+  assert (SweepDefs.chunked_read_header mh fp == Some hdr);
+  SweepDefs.chunked_wosize_of_object_some mh fp hdr;
+  assert (Seq.mem fp (MH.major_objects grayed));
+  MH.major_objects_member_header_read_some grayed fp;
+  let hdr' = Some?.v (MH.read_word_in_major grayed base) in
+  assert (MH.read_word_in_major grayed base == Some hdr');
+  SweepDefs.chunked_read_header_step grayed fp;
+  assert (SweepDefs.chunked_read_header grayed fp == Some hdr');
+  SweepDefs.chunked_wosize_of_object_some grayed fp hdr';
+  assert (U64.v (getWosize hdr') == U64.v (getWosize hdr));
+  RangePres.same_chunk_ranges_index mh grayed idx;
+  assert (MH.chunk_end (Seq.index grayed idx) ==
+          MH.chunk_end (Seq.index mh idx));
+  assert (U64.v base + (1 + U64.v (getWosize hdr')) * U64.v mword <=
+          MH.chunk_end (Seq.index grayed idx))
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+private let major_fl_blocks_fit_fuel_0_any
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  : Lemma (ensures SpecMajorAlloc.major_fl_blocks_fit mh fp 0)
+  = ()
+
+private let major_fl_valid_current_pointer_mem
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        fp <> 0UL /\
+        U64.v fp >= U64.v mword /\
+        U64.v fp < heap_size /\
+        U64.v fp % U64.v mword == 0 /\
+        SpecMajorAlloc.major_fl_valid mh fp fuel)
+      (ensures
+        (let obj: obj_addr = fp in
+        MH.is_major_pointer mh fp /\
+        Seq.mem obj (MH.major_objects mh)))
+  =
+    assert (fuel <> 0)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let rec chunked_free_list_shape_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        SpecMajorAlloc.major_fl_valid mh fp fuel /\
+        SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+        SpecMajorAlloc.major_fl_blocks_fit mh fp fuel)
+      (ensures
+        (let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+        SpecMajorAlloc.major_fl_valid grayed fp fuel /\
+        SpecMajorAlloc.major_fl_above_zero grayed fp fuel /\
+        SpecMajorAlloc.major_fl_blocks_fit grayed fp fuel))
+      (decreases fuel)
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  if fuel = 0 then begin
+    SpecMajorAlloc.major_fl_valid_zero grayed fp;
+    SpecMajorAlloc.major_fl_above_zero_fuel_0 grayed fp;
+    major_fl_blocks_fit_fuel_0_any grayed fp
+  end
+  else if fp = 0UL then begin
+    SpecMajorAlloc.major_fl_valid_null grayed fuel;
+    SpecMajorAlloc.major_fl_above_zero_null grayed fuel;
+    SpecMajorAlloc.major_fl_blocks_fit_null grayed fuel
+  end
+  else begin
+    SpecMajorAlloc.major_fl_above_zero_current mh fp fuel;
+    assert (U64.v fp >= U64.v zero_addr + U64.v mword);
+    assert (U64.v fp >= U64.v mword);
+    assert (U64.v fp < heap_size);
+    assert (U64.v fp % U64.v mword == 0);
+    let obj: obj_addr = fp in
+    major_fl_valid_current_pointer_mem mh fp fuel;
+    assert (MH.is_major_pointer mh fp);
+    assert (Seq.mem obj (MH.major_objects mh));
+    SpecMajorAlloc.major_fl_valid_gives_wosize mh fp fuel;
+    assert (obj == fp);
+    assert (hd_address obj == hd_address (fp <: obj_addr));
+    assert (match MH.read_word_in_major mh (hd_address obj) with
+            | Some hdr -> U64.v (getWosize hdr) >= 1
+            | None -> False);
+    chunked_gray_roots_preserves_free_header_wosize_ge_one
+      mh roots obj;
+    SpecMajorAlloc.major_fl_valid_next mh fp fuel;
+    assert (Seq.mem obj (MH.major_objects mh));
+    SpecMajorAlloc.major_fl_blocks_fit_current mh obj fuel;
+    match MH.read_word_in_major mh obj with
+    | None -> assert False
+    | Some next ->
+      assert (MH.read_word_in_major mh obj == Some next);
+      assert (next <> fp);
+      SpecMajorAlloc.major_fl_above_zero_next mh obj fuel next;
+      SpecMajorAlloc.major_fl_blocks_fit_next mh obj fuel next;
+      chunked_free_list_shape_preserved_by_gray_roots
+        mh roots next (fuel - 1);
+      chunked_gray_roots_preserves_free_link_read mh roots obj next;
+      assert (MH.read_word_in_major grayed obj == Some next);
+      ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+      ChunkedMajorGCRoots.chunked_gray_roots_preserves_ranges mh roots;
+      assert (MH.is_major_pointer mh fp);
+      RangePres.same_chunk_ranges_preserves_is_major_pointer mh grayed fp;
+      assert (MH.is_major_pointer mh fp == MH.is_major_pointer grayed fp);
+      assert (MH.is_major_pointer grayed fp);
+      assert (Seq.mem obj (MH.major_objects grayed));
+      match MH.read_word_in_major grayed (hd_address obj) with
+      | None -> assert False
+      | Some hdr' ->
+        assert (MH.read_word_in_major grayed (hd_address obj) == Some hdr');
+        assert (U64.v (getWosize hdr') >= 1);
+        SpecMajorAlloc.major_fl_valid_step grayed fp fuel;
+        SpecMajorAlloc.major_fl_above_zero_step grayed obj fuel next;
+        chunked_gray_roots_preserves_free_block_fit_current
+          mh roots obj fuel;
+        SpecMajorAlloc.major_fl_blocks_fit_step grayed obj fuel hdr' next
+  end
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_alloc_shape_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires GenInv.chunked_major_alloc_shape mh fp fuel)
+      (ensures
+        GenInv.chunked_major_alloc_shape
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          fp fuel)
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  GenInv.chunked_major_alloc_shape_elim mh fp fuel;
+  chunked_free_list_shape_preserved_by_gray_roots mh roots fp fuel;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  GenInv.chunked_major_alloc_shape_intro grayed fp fuel
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_collection_heap_shape_preserved_by_gray_roots
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor mh fp fuel /\
+        chunked_major_roots_nonblue mh roots)
+      (ensures
+        GenInv.chunked_collection_heap_shape minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          fp fuel)
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  GenInv.chunked_collection_heap_shape_elim minor mh fp fuel;
+  GenInv.chunked_major_alloc_shape_elim mh fp fuel;
+  assert (MH.well_formed_major_heap mh);
+  chunked_major_alloc_shape_preserved_by_gray_roots mh roots fp fuel;
+  chunked_no_black_objects_preserved_by_gray_roots mh roots;
+  chunked_no_scan_invariant_preserved_by_gray_roots mh roots;
+  chunked_no_pointer_to_blue_preserved_by_gray_roots mh roots;
+  chunked_minor_major_fields_no_blue_preserved_by_gray_roots minor mh roots;
+  chunked_major_minor_fields_no_infix_targets_preserved_by_gray_roots
+    minor mh roots;
+  GenInv.chunked_collection_heap_shape_intro minor grayed fp fuel
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_sweep_not_blue_vertex_implies_gen_not_blue
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -1658,5 +1970,44 @@ let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gra
   chunked_major_edge_gen_field_witness_preserved_by_gray_roots mh roots;
   chunked_major_field_targets_non_infix_preserved_by_gray_roots mh roots;
   chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_grayed_collection_shape_policy
+    minor mh fp shape_fuel roots cap mark_fuel
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_shape
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor mh fp shape_fuel /\
+        chunked_major_roots_nonblue mh roots /\
+        chunked_major_edge_gen_field_witness mh /\
+        chunked_major_field_targets_non_infix mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel > 0 /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+  =
+  chunked_collection_heap_shape_preserved_by_gray_roots
+    minor mh roots fp shape_fuel;
+  GenInv.chunked_collection_heap_shape_elim minor mh fp shape_fuel;
+  GenInv.chunked_major_alloc_shape_elim mh fp shape_fuel;
+  chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_field_policies
     minor mh fp shape_fuel roots cap mark_fuel
 #pop-options
