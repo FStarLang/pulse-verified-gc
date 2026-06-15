@@ -293,12 +293,33 @@ val chunked_cheney_promote_fwd_field_source_case_intro
         chunked_cheney_promote_fwd_field_source_case
           minor major fp roots alloc_fuel src j field_addr raw)
 
+val chunked_cheney_promote_field_source_cases_from_nonblue_origin
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        GC.Spec.MajorAllocator.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPres.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        CheneyPres.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        chunked_cheney_promote_field_source_cases
+          minor major fp roots alloc_fuel)
+
 val chunked_cheney_promote_major_minor_fields_no_infix_targets
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
     Lemma
       (requires
         minor_wf minor /\
+        minor_infix_wf minor /\
         GenInv.minor_fields_no_infix_targets minor /\
         GenInv.chunked_major_minor_fields_no_infix_targets minor major /\
         alloc_fuel > 1 /\
@@ -309,9 +330,7 @@ val chunked_cheney_promote_major_minor_fields_no_infix_targets
         CheneyPres.chunked_cheney_promote_split_ready
           minor major fp roots alloc_fuel /\
         CheneyPres.chunked_cheney_promote_budget_ready
-          minor major fp roots alloc_fuel remaining /\
-        chunked_cheney_promote_field_source_cases
-          minor major fp roots alloc_fuel)
+          minor major fp roots alloc_fuel remaining)
       (ensures
         (let res =
           ChunkedCheney.chunked_cheney_promote
