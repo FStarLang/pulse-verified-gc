@@ -18,6 +18,7 @@ module DenseCheney = GC.Gen.Cheney
 module ChunkedCheney = GC.Gen.ChunkedCheney
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module CP = GC.Gen.CheneyPreservation
+module CG = GC.Gen.CombinedGraph
 
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0"
 private let nat_nonzero_gt_zero (n: nat)
@@ -1136,4 +1137,87 @@ let chunked_cheney_promote_fwd_normal_targets_not_blue
   =
   chunked_cheney_promote_fwd_normal_inj_inv
     minor major fp roots alloc_fuel remaining
+
+let chunked_cheney_promote_fwd_target_minor_field_no_infix
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel remaining: nat)
+  (x: U64.t) (j: nat) (field_addr: hp_addr) (raw: U64.t)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        GenInv.minor_fields_no_infix_targets minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         res.fwd_map x <> 0UL /\
+         Seq.mem x (minor_objects minor) /\
+         ~(is_infix_in_minor minor x) /\
+         j < minor_wosize minor x /\
+         U64.v field_addr == U64.v (res.fwd_map x) + j * U64.v mword /\
+         MH.read_word_in_major res.major_final field_addr == Some raw /\
+         is_minor_pointer (to_minor_offset raw)))
+      (ensures ~(is_infix_in_minor minor (to_minor_offset raw)))
+  =
+  CP.chunked_cheney_promote_fwd_target_fields_match
+    minor major fp roots alloc_fuel remaining x j field_addr;
+  let res =
+    ChunkedCheney.chunked_cheney_promote minor major fp roots alloc_fuel in
+  assert (MH.read_word_in_major res.major_final field_addr ==
+          Some (minor_read_field minor x j));
+  assert (raw == minor_read_field minor x j);
+  assert (to_minor_offset raw ==
+          to_minor_offset (minor_read_field minor x j));
+  GenInv.minor_fields_no_infix_targets_elim minor x j
+
+let chunked_cheney_promote_old_nonblue_field_no_infix
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+  (old raw: U64.t)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor major /\
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        getColor hdr <> Blue /\
+        U64.v (getTag hdr) < U64.v no_scan_tag /\
+        j < U64.v (getWosize hdr) /\
+        CG.chunked_major_field_slot src j == Some field_addr /\
+        MH.read_word_in_major major field_addr == Some old /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         MH.read_word_in_major res.major_final field_addr == Some raw /\
+         is_minor_pointer (to_minor_offset raw)))
+      (ensures ~(is_infix_in_minor minor (to_minor_offset raw)))
+  =
+  CG.chunked_major_field_slot_elim src j field_addr;
+  CP.chunked_cheney_promote_head_split_preserves_old_non_blue_field
+    minor major fp roots alloc_fuel src hdr j field_addr old;
+  let res =
+    ChunkedCheney.chunked_cheney_promote minor major fp roots alloc_fuel in
+  assert (MH.read_word_in_major res.major_final field_addr == Some old);
+  assert (raw == old);
+  GenInv.chunked_is_blue_header major src hdr;
+  assert (~(GenInv.chunked_is_blue major src));
+  CG.chunked_is_no_scan_header major src hdr;
+  assert (~(CG.chunked_is_no_scan major src));
+  CG.chunked_wosize_nat_header major src hdr;
+  assert (j < CG.chunked_wosize_nat_of_object major src);
+  GenInv.chunked_major_minor_fields_no_infix_targets_elim
+    minor major src j field_addr old
 #pop-options
