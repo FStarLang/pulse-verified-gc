@@ -817,6 +817,79 @@ let chunked_major_gc_bounded_liveness_policy_after_gray_roots
     grayed roots cap mark_fuel
 #pop-options
 
+let chunked_major_gc_bounded_after_gray_roots_policy
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : prop
+  =
+  MH.well_formed_major_heap mh /\
+  mark_fuel > 0 /\
+  ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+    (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+  Seq.length (MH.major_objects mh) <= cap /\
+  mark_fuel >= Seq.length (MH.major_objects mh)
+
+let chunked_major_gc_bounded_after_gray_roots_policy_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+  =
+  ()
+
+let chunked_major_gc_bounded_after_gray_roots_policy_elim
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+      (ensures
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+  =
+  ()
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_liveness_policy_after_gray_roots_from_policy
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+      (ensures
+        chunked_major_gc_bounded_liveness_policy
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          roots cap mark_fuel)
+  =
+  chunked_major_gc_bounded_after_gray_roots_policy_elim
+    mh roots cap mark_fuel;
+  chunked_major_gc_bounded_liveness_policy_after_gray_roots
+    mh roots cap mark_fuel
+#pop-options
+
 private let chunked_gen_black_implies_sweep_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -2009,5 +2082,38 @@ let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gra
   GenInv.chunked_collection_heap_shape_elim minor mh fp shape_fuel;
   GenInv.chunked_major_alloc_shape_elim mh fp shape_fuel;
   chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_field_policies
+    minor mh fp shape_fuel roots cap mark_fuel
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_shape_policy
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor mh fp shape_fuel /\
+        chunked_major_roots_nonblue mh roots /\
+        chunked_major_edge_gen_field_witness mh /\
+        chunked_major_field_targets_non_infix mh /\
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+  =
+  chunked_major_gc_bounded_after_gray_roots_policy_elim
+    mh roots cap mark_fuel;
+  chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_shape
     minor mh fp shape_fuel roots cap mark_fuel
 #pop-options

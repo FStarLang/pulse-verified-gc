@@ -224,6 +224,61 @@ val chunked_major_gc_bounded_liveness_policy_after_gray_roots
           (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
           roots cap mark_fuel)
 
+val chunked_major_gc_bounded_after_gray_roots_policy
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : prop
+
+val chunked_major_gc_bounded_after_gray_roots_policy_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+
+val chunked_major_gc_bounded_after_gray_roots_policy_elim
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+      (ensures
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+
+val chunked_major_gc_bounded_liveness_policy_after_gray_roots_from_policy
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+      (ensures
+        chunked_major_gc_bounded_liveness_policy
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          roots cap mark_fuel)
+
 val chunked_no_black_objects_preserved_by_gray_roots
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -558,6 +613,32 @@ val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gra
         Seq.length (MH.major_objects mh) <= cap /\
         mark_fuel > 0 /\
         mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+
+val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_shape_policy
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor mh fp shape_fuel /\
+        chunked_major_roots_nonblue mh roots /\
+        chunked_major_edge_gen_field_witness mh /\
+        chunked_major_field_targets_non_infix mh /\
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
       (ensures
         (let (mh_final, fp_final) =
           ChunkedMajorGC.chunked_major_gc_bounded
