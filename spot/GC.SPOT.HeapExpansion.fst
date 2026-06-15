@@ -60,6 +60,7 @@ module ChunkedMarkPush = GC.Spec.ChunkedMark.PushCompat
 module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkBoundedPres = GC.Spec.ChunkedMarkBounded.Preservation
+module ChunkedMarkBoundedReadiness = GC.Spec.ChunkedMarkBounded.Readiness
 module ChunkedMarkBoundedReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkBoundedCount = GC.Spec.ChunkedMarkBounded.Count
 module ChunkedMarkBoundedCountStep = GC.Spec.ChunkedMarkBounded.CountStep
@@ -4928,6 +4929,22 @@ let spot_chunked_push_children_bounded_ready_next
   ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready_next
     mh obj i ws
 
+let spot_chunked_push_children_bounded_ready_from_target_membership
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedReadiness.chunked_push_children_target_membership_policy
+          mh obj i ws)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_push_children_bounded_preservation_ready
+          mh obj i ws)
+  =
+  ChunkedMarkBoundedReadiness.chunked_push_children_bounded_preservation_ready_from_target_membership
+    mh obj i ws
+
 let spot_chunked_push_children_bounded_preserves_black_status
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -5038,6 +5055,21 @@ let spot_chunked_mark_step_bounded_ready_scan
            mh' obj 1UL ws))
   =
   ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready_scan
+    mh st cap
+
+let spot_chunked_mark_step_bounded_ready_from_target_membership
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedReadiness.chunked_mark_step_target_membership_policy
+          mh st cap)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_step_bounded_preservation_ready
+          mh st cap)
+  =
+  ChunkedMarkBoundedReadiness.chunked_mark_step_bounded_preservation_ready_from_target_membership
     mh st cap
 
 let spot_chunked_mark_step_bounded_preserves_other_black_status
