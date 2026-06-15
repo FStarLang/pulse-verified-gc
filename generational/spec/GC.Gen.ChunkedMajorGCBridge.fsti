@@ -14,7 +14,9 @@ module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
+module ChunkedMarkTargetReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
+module ChunkedMajorGCRoots = GC.Spec.ChunkedMajorGC.Roots
 module ChunkedMarkEdge = GC.Spec.ChunkedMarkBounded.EdgeInvariant
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
@@ -177,6 +179,24 @@ val chunked_major_gc_bounded_liveness_policy_elim
         Seq.length (MH.major_objects mh) <= cap /\
         mark_fuel >= ChunkedMark.chunked_count_non_black mh /\
         ChunkedMarkLive.chunked_roots_gray_or_black mh roots)
+
+val chunked_major_gc_bounded_liveness_policy_after_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_liveness_policy
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          roots cap mark_fuel)
 
 val chunked_sweep_not_blue_vertex_implies_gen_not_blue
   (mh: MH.major_heap)

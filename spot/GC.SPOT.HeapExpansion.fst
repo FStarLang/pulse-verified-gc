@@ -7430,6 +7430,27 @@ let spot_chunked_major_gc_bounded_liveness_policy_elim
   GenMajorGCBridge.chunked_major_gc_bounded_liveness_policy_elim
     mh roots cap mark_fuel
 
+let spot_chunked_major_gc_bounded_liveness_policy_after_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        GenMajorGCBridge.chunked_major_gc_bounded_liveness_policy
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          roots cap mark_fuel)
+  =
+  GenMajorGCBridge.chunked_major_gc_bounded_liveness_policy_after_gray_roots
+    mh roots cap mark_fuel
+
 let spot_chunked_sweep_not_blue_vertex_implies_gen_not_blue
   (mh: MH.major_heap)
   (obj: obj_addr)
