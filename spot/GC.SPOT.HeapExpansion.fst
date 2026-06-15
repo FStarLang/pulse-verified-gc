@@ -7224,6 +7224,101 @@ let spot_chunked_collection_heap_shape_implies_no_black_to_white_vertex_targets
   GenMajorGCBridge.chunked_collection_heap_shape_implies_no_black_to_white_vertex_targets
     minor mh fp fuel
 
+let spot_chunked_major_edge_gen_field_witness_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh dst ==>
+          exists (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+            Seq.mem src (MH.major_objects mh) /\
+            idx < CG.chunked_wosize_nat_of_object mh src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major mh field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects mh) /\
+            Fields.is_pointer_to raw dst)
+      (ensures
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness mh)
+  =
+  GenMajorGCBridge.chunked_major_edge_gen_field_witness_intro mh
+
+let spot_chunked_major_edge_gen_field_witness_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness mh /\
+        ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh dst)
+      (ensures
+        exists (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects mh) /\
+          Fields.is_pointer_to raw dst)
+  =
+  GenMajorGCBridge.chunked_major_edge_gen_field_witness_elim
+    mh src dst
+
+let spot_chunked_sweep_not_blue_vertex_implies_gen_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh obj /\
+        ~(ChunkedSweepDefs.chunked_is_blue mh obj))
+      (ensures ~(GenInv.chunked_is_blue mh obj))
+  =
+  GenMajorGCBridge.chunked_sweep_not_blue_vertex_implies_gen_not_blue
+    mh obj
+
+let spot_chunked_gen_not_blue_vertex_implies_sweep_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh obj /\
+        ~(GenInv.chunked_is_blue mh obj))
+      (ensures ~(ChunkedSweepDefs.chunked_is_blue mh obj))
+  =
+  GenMajorGCBridge.chunked_gen_not_blue_vertex_implies_sweep_not_blue
+    mh obj
+
+let spot_chunked_no_pointer_to_blue_implies_mark_vertex_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_no_pointer_to_blue mh /\
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness mh)
+      (ensures
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets
+          mh)
+  =
+  GenMajorGCBridge.chunked_no_pointer_to_blue_implies_mark_vertex_targets
+    mh
+
+let spot_chunked_collection_heap_shape_implies_mark_vertex_targets_no_pointer_to_blue
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor mh fp fuel /\
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness mh)
+      (ensures
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets
+          mh)
+  =
+  GenMajorGCBridge.chunked_collection_heap_shape_implies_mark_vertex_targets_no_pointer_to_blue
+    minor mh fp fuel
+
 let spot_chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape
   (minor: minor_state)
   (mh: MH.major_heap)

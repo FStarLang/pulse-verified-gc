@@ -6,6 +6,7 @@ module U64 = FStar.UInt64
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
+open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 
@@ -20,6 +21,7 @@ module ChunkedMajorGC = GC.Spec.ChunkedMajorGC.Defs
 module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
 module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module GenInv = GC.Gen.HeapInvariant
+module CG = GC.Gen.CombinedGraph
 
 val chunked_sweep_black_implies_gen_black
   (mh: MH.major_heap)
@@ -44,6 +46,85 @@ val chunked_collection_heap_shape_implies_no_black_to_white_vertex_targets
       (requires GenInv.chunked_collection_heap_shape minor mh fp fuel)
       (ensures
         ChunkedMarkNoBlack.chunked_no_black_to_white_vertex_targets mh)
+
+val chunked_major_edge_gen_field_witness
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_major_edge_gen_field_witness_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGraph.chunked_major_vertex mh dst ==>
+          exists (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+            Seq.mem src (MH.major_objects mh) /\
+            idx < CG.chunked_wosize_nat_of_object mh src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major mh field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects mh) /\
+            is_pointer_to raw dst)
+      (ensures chunked_major_edge_gen_field_witness mh)
+
+val chunked_major_edge_gen_field_witness_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        chunked_major_edge_gen_field_witness mh /\
+        ChunkedMajorGraph.chunked_major_edge mh src dst /\
+        ChunkedMajorGraph.chunked_major_vertex mh dst)
+      (ensures
+        exists (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects mh) /\
+          is_pointer_to raw dst)
+
+val chunked_sweep_not_blue_vertex_implies_gen_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh obj /\
+        ~(SweepDefs.chunked_is_blue mh obj))
+      (ensures ~(GenInv.chunked_is_blue mh obj))
+
+val chunked_gen_not_blue_vertex_implies_sweep_not_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh obj /\
+        ~(GenInv.chunked_is_blue mh obj))
+      (ensures ~(SweepDefs.chunked_is_blue mh obj))
+
+val chunked_no_pointer_to_blue_implies_mark_vertex_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_no_pointer_to_blue mh /\
+        chunked_major_edge_gen_field_witness mh)
+      (ensures
+        ChunkedMarkLive.chunked_no_pointer_to_blue_vertex_targets mh)
+
+val chunked_collection_heap_shape_implies_mark_vertex_targets_no_pointer_to_blue
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires
+        GenInv.chunked_collection_heap_shape minor mh fp fuel /\
+        chunked_major_edge_gen_field_witness mh)
+      (ensures
+        ChunkedMarkLive.chunked_no_pointer_to_blue_vertex_targets mh)
 
 val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape
   (minor: minor_state)
