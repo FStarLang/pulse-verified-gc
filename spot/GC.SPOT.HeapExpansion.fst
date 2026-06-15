@@ -12104,6 +12104,24 @@ let spot_chunked_cheney_forward_one_normal_head_split_header_effect
   ChunkedCheney.chunked_cheney_forward_one_normal_head_split_header_effect
     minor cs addr fuel
 
+let spot_chunked_cheney_forward_one_infix_fwd
+  (minor: minor_state) (cs: ChunkedCheney.chunked_cheney_state)
+  (addr y: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        cs.ccs_fwd addr = 0UL /\
+        is_infix_in_minor minor addr /\
+        y <> addr)
+      (ensures
+        (let parent = infix_parent minor addr in
+         let cs' =
+           ChunkedCheney.chunked_cheney_forward_normal minor cs parent fuel in
+         (ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel).ccs_fwd y ==
+         cs'.ccs_fwd y))
+  =
+  ChunkedCheney.chunked_cheney_forward_one_infix_fwd
+    minor cs addr y fuel
+
 let spot_major_write_word_or_same_read_frame
   (mh: MH.major_heap) (write_addr target: hp_addr)
   (value old: U64.t)
@@ -16980,6 +16998,66 @@ let spot_chunked_cheney_forward_normal_success_preserves_nonblue_origin_inv
             minor cs addr fuel))
   =
   ChunkedCheneyOrigin.chunked_cheney_forward_normal_success_preserves_nonblue_origin_inv
+    minor major0 cs addr fuel
+
+let spot_chunked_cheney_forward_normal_preserves_nonblue_origin_inv
+  (minor: minor_state) (major0: MH.major_heap)
+  (cs: ChunkedCheney.chunked_cheney_state) (addr: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        ChunkedCheneyOrigin.chunked_nonblue_origin_inv minor major0 cs /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         minor_wosize minor addr > 0 ==>
+           ~(is_infix_in_minor minor addr) /\
+           cs.ccs_fp <> 0UL /\
+           SpecMajorAlloc.major_fl_head_wosize
+             cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2))
+      (ensures
+        ChunkedCheneyOrigin.chunked_nonblue_origin_inv minor major0
+          (ChunkedCheney.chunked_cheney_forward_normal
+            minor cs addr fuel))
+  =
+  ChunkedCheneyOrigin.chunked_cheney_forward_normal_preserves_nonblue_origin_inv
+    minor major0 cs addr fuel
+
+let spot_chunked_cheney_forward_one_preserves_nonblue_origin_inv
+  (minor: minor_state) (major0: MH.major_heap)
+  (cs: ChunkedCheney.chunked_cheney_state) (addr: U64.t) (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 1 /\
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        ChunkedCheneyOrigin.chunked_nonblue_origin_inv minor major0 cs /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         ~(is_infix_in_minor minor addr) /\
+         minor_wosize minor addr > 0 ==>
+           cs.ccs_fp <> 0UL /\
+           SpecMajorAlloc.major_fl_head_wosize
+             cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2) /\
+        (cs.ccs_fwd addr = 0UL /\
+         is_infix_in_minor minor addr ==>
+           (let parent = infix_parent minor addr in
+            Seq.mem parent (minor_objects minor) /\
+            cs.ccs_fwd parent = 0UL /\
+            minor_wosize minor parent > 0 ==>
+              cs.ccs_fp <> 0UL /\
+              SpecMajorAlloc.major_fl_head_wosize
+                cs.ccs_major cs.ccs_fp >= minor_wosize minor parent + 2)))
+      (ensures
+        ChunkedCheneyOrigin.chunked_nonblue_origin_inv minor major0
+          (ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel))
+  =
+  ChunkedCheneyOrigin.chunked_cheney_forward_one_preserves_nonblue_origin_inv
     minor major0 cs addr fuel
 
 let spot_chunked_cheney_promote_fwd_target_minor_major_field_raw_target

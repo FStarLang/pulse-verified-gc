@@ -112,3 +112,57 @@ val chunked_cheney_forward_normal_success_preserves_nonblue_origin_inv
         chunked_nonblue_origin_inv minor major0
           (ChunkedCheney.chunked_cheney_forward_normal
             minor cs addr fuel))
+
+val chunked_cheney_forward_normal_preserves_nonblue_origin_inv
+  : minor:minor_state -> major0:MH.major_heap ->
+    cs:ChunkedCheney.chunked_cheney_state -> addr:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        chunked_nonblue_origin_inv minor major0 cs /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         minor_wosize minor addr > 0 ==>
+           ~(is_infix_in_minor minor addr) /\
+           cs.ccs_fp <> 0UL /\
+           SpecMajorAlloc.major_fl_head_wosize
+             cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2))
+      (ensures
+        chunked_nonblue_origin_inv minor major0
+          (ChunkedCheney.chunked_cheney_forward_normal
+            minor cs addr fuel))
+
+val chunked_cheney_forward_one_preserves_nonblue_origin_inv
+  : minor:minor_state -> major0:MH.major_heap ->
+    cs:ChunkedCheney.chunked_cheney_state -> addr:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        chunked_nonblue_origin_inv minor major0 cs /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        (Seq.mem addr (minor_objects minor) /\
+         cs.ccs_fwd addr = 0UL /\
+         ~(is_infix_in_minor minor addr) /\
+         minor_wosize minor addr > 0 ==>
+           cs.ccs_fp <> 0UL /\
+           SpecMajorAlloc.major_fl_head_wosize
+             cs.ccs_major cs.ccs_fp >= minor_wosize minor addr + 2) /\
+        (cs.ccs_fwd addr = 0UL /\
+         is_infix_in_minor minor addr ==>
+           (let parent = infix_parent minor addr in
+            Seq.mem parent (minor_objects minor) /\
+            cs.ccs_fwd parent = 0UL /\
+            minor_wosize minor parent > 0 ==>
+              cs.ccs_fp <> 0UL /\
+              SpecMajorAlloc.major_fl_head_wosize
+                cs.ccs_major cs.ccs_fp >= minor_wosize minor parent + 2)))
+      (ensures
+        chunked_nonblue_origin_inv minor major0
+          (ChunkedCheney.chunked_cheney_forward_one minor cs addr fuel))

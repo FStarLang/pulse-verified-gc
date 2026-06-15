@@ -286,6 +286,19 @@ val chunked_cheney_forward_one_infix
              r.ccs_fp == cs'.ccs_fp /\
              r.ccs_queue == cs'.ccs_queue))
 
+/// For any y <> addr, the infix case preserves ccs_fwd y from parent forwarding.
+val chunked_cheney_forward_one_infix_fwd
+  : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
+    y:U64.t -> fuel:nat ->
+    Lemma (requires cs.ccs_fwd addr = 0UL /\
+                    is_infix_in_minor minor addr /\
+                    y <> addr)
+          (ensures
+            (let parent = infix_parent minor addr in
+             let cs' = chunked_cheney_forward_normal minor cs parent fuel in
+             (chunked_cheney_forward_one minor cs addr fuel).ccs_fwd y ==
+             cs'.ccs_fwd y))
+
 val chunked_cheney_forward_one_infix_guard_pass
   : minor:minor_state -> cs:chunked_cheney_state -> addr:U64.t ->
     fuel:nat ->
