@@ -16865,6 +16865,35 @@ let spot_chunked_cheney_promote_old_nonblue_field_raw_target
   ChunkedCheneyInjectivity.chunked_cheney_promote_old_nonblue_field_raw_target
     minor major fp roots alloc_fuel src hdr j field_addr old raw
 
+let spot_chunked_cheney_promote_major_minor_fields_no_infix_targets
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        GenInv.minor_fields_no_infix_targets minor /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        ChunkedCheneyInjectivity.chunked_cheney_promote_field_source_cases
+          minor major fp roots alloc_fuel)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         GenInv.chunked_major_minor_fields_no_infix_targets
+           minor res.major_final))
+  =
+  ChunkedCheneyInjectivity.chunked_cheney_promote_major_minor_fields_no_infix_targets
+    minor major fp roots alloc_fuel remaining
+
 let spot_chunked_cheney_gc_correct_after_preflight_old_major_field_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
