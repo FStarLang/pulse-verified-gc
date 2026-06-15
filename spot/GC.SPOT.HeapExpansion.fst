@@ -7889,6 +7889,38 @@ let spot_chunked_gray_roots_preserves_no_scan_status
   ChunkedMajorGCRoots.chunked_gray_roots_preserves_no_scan_status
     mh roots target
 
+let spot_chunked_gray_roots_preserves_tag_of_object
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_tag_of_object
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        ChunkedSweepDefs.chunked_tag_of_object mh target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_tag_of_object
+    mh roots target
+
+let spot_chunked_gray_roots_preserves_infix_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_is_infix
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        ChunkedSweepDefs.chunked_is_infix mh target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_infix_status
+    mh roots target
+
 let spot_chunked_gray_roots_field_preserved
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

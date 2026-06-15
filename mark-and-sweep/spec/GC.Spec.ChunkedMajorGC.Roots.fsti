@@ -106,6 +106,32 @@ val chunked_gray_roots_preserves_no_scan_status
           (chunked_gray_roots mh roots) target ==
         MarkDefs.chunked_is_no_scan mh target)
 
+val chunked_gray_roots_preserves_tag_of_object
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_tag_of_object
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_tag_of_object mh target)
+
+val chunked_gray_roots_preserves_infix_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_is_infix
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_is_infix mh target)
+
 val chunked_gray_roots_field_preserved
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

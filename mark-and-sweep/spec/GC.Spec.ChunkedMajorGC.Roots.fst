@@ -307,6 +307,72 @@ let rec chunked_gray_roots_preserves_no_scan_status
       chunked_gray_roots_preserves_no_scan_status mh rest target
   end
 
+let rec chunked_gray_roots_preserves_tag_of_object
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_tag_of_object
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_tag_of_object mh target)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      MarkPres.chunked_make_gray_preserves_tag_of_object mh root target;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_tag_of_object mh1 rest target
+    end else
+      chunked_gray_roots_preserves_tag_of_object mh rest target
+  end
+
+let rec chunked_gray_roots_preserves_infix_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_is_infix
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_is_infix mh target)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      MarkPres.chunked_make_gray_preserves_infix_status mh root target;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_infix_status mh1 rest target
+    end else
+      chunked_gray_roots_preserves_infix_status mh rest target
+  end
+
 let chunked_gray_roots_field_preserved
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
