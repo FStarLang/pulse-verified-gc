@@ -8076,6 +8076,34 @@ let spot_chunked_no_pointer_to_blue_elim
   =
   ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_elim mh src dst
 
+let spot_chunked_no_pointer_to_blue_vertex_targets_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGCGraph.chunked_major_vertex mh dst /\
+          ~(ChunkedSweepDefs.chunked_is_blue mh src) ==>
+          ~(ChunkedSweepDefs.chunked_is_blue mh dst))
+      (ensures
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets mh)
+  =
+  ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets_intro mh
+
+let spot_chunked_no_pointer_to_blue_vertex_targets_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets mh /\
+        ChunkedMajorGCGraph.chunked_major_edge mh src dst /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh dst /\
+        ~(ChunkedSweepDefs.chunked_is_blue mh src))
+      (ensures ~(ChunkedSweepDefs.chunked_is_blue mh dst))
+  =
+  ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets_elim
+    mh src dst
+
 let spot_chunked_no_black_to_white_elim
   (mh: MH.major_heap)
   (src dst: obj_addr)
@@ -8128,6 +8156,25 @@ let spot_chunked_major_reachable_from_roots_black_from_invariants
       (ensures ChunkedSweepDefs.chunked_is_black mh target)
   =
   ChunkedMajorGCMarkLive.chunked_major_reachable_from_roots_black_from_invariants
+    mh roots target
+
+let spot_chunked_major_reachable_from_roots_black_from_vertex_target_no_pointer_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMajorGCMarkLive.chunked_roots_black mh roots /\
+        ChunkedMajorGCMarkLive.chunked_no_gray_objects mh /\
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue_vertex_targets mh /\
+        ChunkedMajorGCMarkLive.chunked_no_black_to_white mh /\
+        ChunkedMajorGCGraph.chunked_major_vertex mh target /\
+        ChunkedMajorGCReach.chunked_major_reachable_from_roots
+          mh roots target)
+      (ensures ChunkedSweepDefs.chunked_is_black mh target)
+  =
+  ChunkedMajorGCMarkLive.chunked_major_reachable_from_roots_black_from_vertex_target_invariants
     mh roots target
 
 let spot_chunked_major_reachable_from_roots_black_from_vertex_target_invariants

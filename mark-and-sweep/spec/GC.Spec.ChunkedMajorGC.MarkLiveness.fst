@@ -175,6 +175,55 @@ let chunked_no_pointer_to_blue_elim
   ()
 #pop-options
 
+let chunked_no_pointer_to_blue_vertex_targets
+  (mh: MH.major_heap)
+  : prop
+  =
+  forall (src dst: obj_addr).
+    ChunkedMajorGraph.chunked_major_edge mh src dst ==>
+    ChunkedMajorGraph.chunked_major_vertex mh dst ==>
+    ~(SweepDefs.chunked_is_blue mh src) ==>
+    ~(SweepDefs.chunked_is_blue mh dst)
+
+#push-options "--z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_no_pointer_to_blue_vertex_targets_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGraph.chunked_major_vertex mh dst /\
+          ~(SweepDefs.chunked_is_blue mh src) ==>
+          ~(SweepDefs.chunked_is_blue mh dst))
+      (ensures chunked_no_pointer_to_blue_vertex_targets mh)
+  =
+  let aux (src dst: obj_addr)
+    : Lemma
+        (requires
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGraph.chunked_major_vertex mh dst /\
+          ~(SweepDefs.chunked_is_blue mh src))
+        (ensures ~(SweepDefs.chunked_is_blue mh dst))
+    =
+    ()
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 aux)
+
+let chunked_no_pointer_to_blue_vertex_targets_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        chunked_no_pointer_to_blue_vertex_targets mh /\
+        ChunkedMajorGraph.chunked_major_edge mh src dst /\
+        ChunkedMajorGraph.chunked_major_vertex mh dst /\
+        ~(SweepDefs.chunked_is_blue mh src))
+      (ensures ~(SweepDefs.chunked_is_blue mh dst))
+  =
+  ()
+#pop-options
+
 let chunked_no_black_to_white
   (mh: MH.major_heap)
   : prop
@@ -312,6 +361,62 @@ let chunked_major_reachable_from_roots_black_from_invariants
     =
     chunked_is_black_not_blue mh y;
     chunked_no_pointer_to_blue_elim mh y z;
+    chunked_no_black_to_white_elim mh y z;
+    chunked_no_gray_objects_elim mh z;
+    chunked_not_white_gray_blue_implies_black mh z
+  in
+  let edge_case_forall (y: obj_addr) (z: obj_addr)
+    : Lemma
+        (Reach.chunked_major_reachable_from_roots mh roots y /\
+         p y /\
+         ChunkedMajorGraph.chunked_major_vertex mh z /\
+         ChunkedMajorGraph.chunked_major_edge mh y z ==> p z)
+    =
+    FStar.Classical.move_requires (edge_case y) z
+  in
+  FStar.Classical.forall_intro_2 edge_case_forall;
+  Reach.chunked_major_reachable_from_roots_induct mh roots p target
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_reachable_from_roots_black_from_vertex_target_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_roots_black mh roots /\
+        chunked_no_gray_objects mh /\
+        chunked_no_pointer_to_blue_vertex_targets mh /\
+        chunked_no_black_to_white mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh target /\
+        Reach.chunked_major_reachable_from_roots mh roots target)
+      (ensures SweepDefs.chunked_is_black mh target)
+  =
+  let p (x: obj_addr) : prop = SweepDefs.chunked_is_black mh x in
+  let root_case (r: obj_addr)
+    : Lemma
+        (requires
+          ChunkedMajorGraph.chunked_major_vertex mh r /\
+          Seq.mem r roots)
+        (ensures p r)
+    =
+    chunked_roots_black_elim mh roots r
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires root_case);
+  let edge_case (y: obj_addr) (z: obj_addr)
+    : Lemma
+        (requires
+          Reach.chunked_major_reachable_from_roots mh roots y /\
+          p y /\
+          ChunkedMajorGraph.chunked_major_vertex mh z /\
+          ChunkedMajorGraph.chunked_major_edge mh y z)
+        (ensures p z)
+    =
+    chunked_is_black_not_blue mh y;
+    chunked_no_pointer_to_blue_vertex_targets_elim mh y z;
     chunked_no_black_to_white_elim mh y z;
     chunked_no_gray_objects_elim mh z;
     chunked_not_white_gray_blue_implies_black mh z

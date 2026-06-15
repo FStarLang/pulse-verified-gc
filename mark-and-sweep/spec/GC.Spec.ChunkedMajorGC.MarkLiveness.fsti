@@ -108,6 +108,32 @@ val chunked_no_pointer_to_blue_elim
         ~(SweepDefs.chunked_is_blue mh src))
       (ensures ~(SweepDefs.chunked_is_blue mh dst))
 
+val chunked_no_pointer_to_blue_vertex_targets
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_no_pointer_to_blue_vertex_targets_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr).
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGraph.chunked_major_vertex mh dst /\
+          ~(SweepDefs.chunked_is_blue mh src) ==>
+          ~(SweepDefs.chunked_is_blue mh dst))
+      (ensures chunked_no_pointer_to_blue_vertex_targets mh)
+
+val chunked_no_pointer_to_blue_vertex_targets_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  : Lemma
+      (requires
+        chunked_no_pointer_to_blue_vertex_targets mh /\
+        ChunkedMajorGraph.chunked_major_edge mh src dst /\
+        ChunkedMajorGraph.chunked_major_vertex mh dst /\
+        ~(SweepDefs.chunked_is_blue mh src))
+      (ensures ~(SweepDefs.chunked_is_blue mh dst))
+
 val chunked_no_black_to_white
   (mh: MH.major_heap)
   : prop
@@ -161,6 +187,22 @@ val chunked_major_reachable_from_roots_black_from_invariants
         chunked_roots_black mh roots /\
         chunked_no_gray_objects mh /\
         chunked_no_pointer_to_blue mh /\
+        chunked_no_black_to_white mh /\
+        ChunkedMajorGraph.chunked_major_vertex mh target /\
+        GC.Spec.ChunkedMajorGC.Reachability.chunked_major_reachable_from_roots
+          mh roots target)
+      (ensures SweepDefs.chunked_is_black mh target)
+
+val chunked_major_reachable_from_roots_black_from_vertex_target_invariants
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_roots_black mh roots /\
+        chunked_no_gray_objects mh /\
+        chunked_no_pointer_to_blue_vertex_targets mh /\
         chunked_no_black_to_white mh /\
         ChunkedMajorGraph.chunked_major_vertex mh target /\
         GC.Spec.ChunkedMajorGC.Reachability.chunked_major_reachable_from_roots
