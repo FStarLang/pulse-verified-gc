@@ -20,6 +20,7 @@ module Mark = GC.Spec.Mark
 module BMark = GC.Spec.MarkBounded
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module SpecMajorAllocSplitOrigin = GC.Spec.MajorAllocator.SplitOrigin
 module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
@@ -11155,6 +11156,33 @@ let spot_major_alloc_head_split_link_not_self
          r.major_fp_out <> 0UL /\
          SpecMajorAlloc.major_alloc_result_fp_link_not_self r))
   = SpecMajorAlloc.major_alloc_head_split_link_not_self
+      mh fp requested_wz fuel
+
+let spot_major_alloc_head_split_remainder_header_blue
+  (mh: MH.major_heap) (fp: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (requires fuel > 1 /\
+                fp <> 0UL /\
+                requested_wz > 0 /\
+                MH.well_formed_major_heap mh /\
+                SpecMajorAlloc.major_fl_valid mh fp fuel /\
+                SpecMajorAlloc.major_fl_above_zero mh fp fuel /\
+                SpecMajorAlloc.major_fl_blocks_fit mh fp fuel /\
+                SpecMajorAlloc.major_fl_head_wosize mh fp >= requested_wz + 2)
+      (ensures
+        (let r =
+           SpecMajorAlloc.major_alloc_spec_with_fuel
+             mh fp requested_wz fuel in
+         r.major_obj_out == fp /\
+         r.major_fp_out <> 0UL /\
+         exists (rem_obj: obj_addr).
+           r.major_fp_out == rem_obj /\
+           (match MH.read_word_in_major
+                    r.major_alloc_out (hd_address rem_obj) with
+            | Some hdr -> Obj.getColor hdr == Header.Blue
+            | None -> False)))
+  = SpecMajorAllocSplitOrigin.major_alloc_head_split_remainder_header_blue
       mh fp requested_wz fuel
 
 let spot_chunked_major_alloc_shape_active_head_split
