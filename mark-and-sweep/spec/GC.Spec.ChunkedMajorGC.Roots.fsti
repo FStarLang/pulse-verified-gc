@@ -6,6 +6,7 @@ open GC.Spec.Base
 
 module MH = GC.Spec.MajorHeap
 module MarkDefs = GC.Spec.ChunkedMark.Defs
+module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
 module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module ChunkedMajorGraph = GC.Spec.ChunkedMajorGC.Graph
@@ -62,6 +63,73 @@ val chunked_gray_roots_pointer_classification_preserved
       (ensures
         ChunkedMajorGraph.chunked_major_pointer_classification_preserved
           mh (chunked_gray_roots mh roots))
+
+val chunked_gray_roots_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_wosize_of_object
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_wosize_of_object mh target)
+
+val chunked_gray_roots_preserves_get_field
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  (i: FStar.UInt64.t{FStar.UInt64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        FStar.UInt64.v i <=
+          FStar.UInt64.v (SweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        MarkDefs.chunked_get_field
+          (chunked_gray_roots mh roots) target i ==
+        MarkDefs.chunked_get_field mh target i)
+
+val chunked_gray_roots_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        MarkDefs.chunked_is_no_scan
+          (chunked_gray_roots mh roots) target ==
+        MarkDefs.chunked_is_no_scan mh target)
+
+val chunked_gray_roots_field_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedMajorGraph.chunked_major_field_preserved
+          mh (chunked_gray_roots mh roots) target)
+
+val chunked_gray_roots_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        (forall (target: obj_addr).
+          live target ==> Seq.mem target (MH.major_objects mh)))
+      (ensures
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh (chunked_gray_roots mh roots) live)
 
 val chunked_gray_roots_roots_gray_or_black
   (mh: MH.major_heap)

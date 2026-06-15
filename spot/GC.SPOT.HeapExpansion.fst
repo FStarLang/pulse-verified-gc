@@ -7801,6 +7801,88 @@ let spot_chunked_gray_roots_pointer_classification_preserved
   ChunkedMajorGCRoots.chunked_gray_roots_pointer_classification_preserved
     mh roots
 
+let spot_chunked_gray_roots_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedSweepDefs.chunked_wosize_of_object
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        ChunkedSweepDefs.chunked_wosize_of_object mh target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_wosize_of_object
+    mh roots target
+
+let spot_chunked_gray_roots_preserves_get_field
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        ChunkedMarkDefs.chunked_get_field
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target i ==
+        ChunkedMarkDefs.chunked_get_field mh target i)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_get_field
+    mh roots target i
+
+let spot_chunked_gray_roots_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedMarkDefs.chunked_is_no_scan
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        ChunkedMarkDefs.chunked_is_no_scan mh target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_no_scan_status
+    mh roots target
+
+let spot_chunked_gray_roots_field_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_field_preserved
+          mh (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_field_preserved
+    mh roots target
+
+let spot_chunked_gray_roots_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        (forall (target: obj_addr).
+          live target ==> Seq.mem target (MH.major_objects mh)))
+      (ensures
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh (ChunkedMajorGCRoots.chunked_gray_roots mh roots) live)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_live_subgraph_preserved
+    mh roots live
+
 let spot_chunked_gray_roots_roots_gray_or_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

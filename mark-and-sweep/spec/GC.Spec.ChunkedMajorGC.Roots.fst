@@ -200,6 +200,196 @@ let chunked_gray_roots_pointer_classification_preserved
   ChunkedMajorGraph.chunked_major_pointer_classification_preserved_intro
     mh final
 
+let rec chunked_gray_roots_preserves_wosize_of_object
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        SweepDefs.chunked_wosize_of_object
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_wosize_of_object mh target)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      MarkPres.chunked_make_gray_preserves_wosize_of_object mh root target;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_wosize_of_object mh1 rest target
+    end else
+      chunked_gray_roots_preserves_wosize_of_object mh rest target
+  end
+
+let rec chunked_gray_roots_preserves_get_field
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v (SweepDefs.chunked_wosize_of_object mh target))
+      (ensures
+        MarkDefs.chunked_get_field
+          (chunked_gray_roots mh roots) target i ==
+        MarkDefs.chunked_get_field mh target i)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      MarkPres.chunked_make_gray_preserves_wosize_of_object mh root target;
+      MarkPres.chunked_make_gray_preserves_get_field mh root target i;
+      assert (Seq.mem target (MH.major_objects mh1));
+      assert (SweepDefs.chunked_wosize_of_object mh1 target ==
+              SweepDefs.chunked_wosize_of_object mh target);
+      assert (U64.v i <=
+              U64.v (SweepDefs.chunked_wosize_of_object mh1 target));
+      chunked_gray_roots_preserves_get_field mh1 rest target i
+    end else
+      chunked_gray_roots_preserves_get_field mh rest target i
+  end
+
+let rec chunked_gray_roots_preserves_no_scan_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        MarkDefs.chunked_is_no_scan
+          (chunked_gray_roots mh roots) target ==
+        MarkDefs.chunked_is_no_scan mh target)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      MarkPres.chunked_make_gray_preserves_no_scan_status mh root target;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_no_scan_status mh1 rest target
+    end else
+      chunked_gray_roots_preserves_no_scan_status mh rest target
+  end
+
+let chunked_gray_roots_field_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh))
+      (ensures
+        ChunkedMajorGraph.chunked_major_field_preserved
+          mh (chunked_gray_roots mh roots) target)
+  =
+  let final = chunked_gray_roots mh roots in
+  chunked_gray_roots_preserves_major_objects mh roots;
+  ChunkedMajorGraph.chunked_major_vertex_intro mh target;
+  assert (Seq.mem target (MH.major_objects final));
+  ChunkedMajorGraph.chunked_major_vertex_intro final target;
+  chunked_gray_roots_preserves_wosize_of_object mh roots target;
+  let fields (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target))
+        (ensures
+          MarkDefs.chunked_get_field mh target i ==
+          MarkDefs.chunked_get_field final target i)
+    =
+    chunked_gray_roots_preserves_get_field mh roots target i;
+    assert (MarkDefs.chunked_get_field final target i ==
+            MarkDefs.chunked_get_field mh target i);
+    assert (MarkDefs.chunked_get_field mh target i ==
+            MarkDefs.chunked_get_field final target i)
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires fields);
+  ChunkedMajorGraph.chunked_major_field_preserved_intro
+    mh final target
+
+let chunked_gray_roots_live_subgraph_preserved
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        (forall (target: obj_addr).
+          live target ==> Seq.mem target (MH.major_objects mh)))
+      (ensures
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh (chunked_gray_roots mh roots) live)
+  =
+  let final = chunked_gray_roots mh roots in
+  let preserve_field (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          ChunkedMajorGraph.chunked_major_field_preserved
+            mh final target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    chunked_gray_roots_field_preserved mh roots target
+  in
+  let preserve_no_scan (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          MarkDefs.chunked_is_no_scan mh target ==
+          MarkDefs.chunked_is_no_scan final target)
+    =
+    assert (Seq.mem target (MH.major_objects mh));
+    chunked_gray_roots_preserves_no_scan_status mh roots target;
+    assert (MarkDefs.chunked_is_no_scan final target ==
+            MarkDefs.chunked_is_no_scan mh target);
+    assert (MarkDefs.chunked_is_no_scan mh target ==
+            MarkDefs.chunked_is_no_scan final target)
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires preserve_field);
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires preserve_no_scan);
+  chunked_gray_roots_pointer_classification_preserved mh roots;
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_from_fields
+    mh final live
+
 let rec chunked_gray_roots_roots_gray_or_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
