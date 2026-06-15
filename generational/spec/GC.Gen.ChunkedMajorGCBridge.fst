@@ -733,6 +733,171 @@ let chunked_major_field_targets_non_infix_implies_vertex_edge_targets_non_infix
   ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix_intro mh
 #pop-options
 
+let chunked_major_raw_field_targets_in_major
+  (mh: MH.major_heap)
+  : prop
+  =
+  forall (src: obj_addr) (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+    Seq.mem src (MH.major_objects mh) /\
+    idx < CG.chunked_wosize_nat_of_object mh src /\
+    CG.chunked_major_field_slot src idx == Some field_addr /\
+    MH.read_word_in_major mh field_addr == Some raw /\
+    MarkDefs.chunked_is_pointer_field mh raw ==>
+    Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr mh raw)
+      (MH.major_objects mh)
+
+let chunked_major_raw_field_targets_in_major_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src: obj_addr) (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw /\
+          MarkDefs.chunked_is_pointer_field mh raw ==>
+          Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr mh raw)
+            (MH.major_objects mh))
+      (ensures chunked_major_raw_field_targets_in_major mh)
+  =
+  ()
+
+let chunked_major_raw_field_targets_in_major_elim
+  (mh: MH.major_heap)
+  (src: obj_addr)
+  (idx: nat)
+  (field_addr: hp_addr)
+  (raw: U64.t)
+  : Lemma
+      (requires
+        chunked_major_raw_field_targets_in_major mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some raw /\
+        MarkDefs.chunked_is_pointer_field mh raw)
+      (ensures
+        Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr mh raw)
+          (MH.major_objects mh))
+  =
+  ()
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_get_field_from_major_field_slot
+  (mh: MH.major_heap)
+  (src: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (idx: nat)
+  (field_addr: hp_addr)
+  (raw: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        idx + 1 == U64.v i /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some raw)
+      (ensures MarkDefs.chunked_get_field mh src i == raw)
+  =
+  chunked_field_slot_mark_index_facts mh src idx field_addr;
+  CG.chunked_major_field_slot_elim src idx field_addr;
+  assert (U64.v field_addr ==
+          U64.v (hd_address src) + U64.v mword * U64.v i);
+  assert (U64.v field_addr + U64.v mword <= heap_size);
+  let get_field_addr = U64.add (hd_address src) (U64.mul mword i) in
+  assert (U64.v (U64.mul mword i) == U64.v mword * U64.v i);
+  assert (U64.v get_field_addr ==
+          U64.v (hd_address src) + U64.v mword * U64.v i);
+  U64.v_inj get_field_addr field_addr;
+  assert (get_field_addr == field_addr);
+  MarkDefs.chunked_get_field_read_some mh src i raw
+
+let chunked_scanned_raw_targets_in_major_from_major_raw_field_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_raw_field_targets_in_major mh /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects mh) ==> is_pointer_field target) /\
+        chunked_major_field_targets_non_infix mh)
+      (ensures
+        ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major mh)
+  =
+  let one (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          Seq.mem obj (MH.major_objects mh) /\
+          ~(MarkDefs.chunked_is_no_scan mh obj) /\
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj))
+        (ensures
+          (let v = MarkDefs.chunked_get_field mh obj i in
+           if MarkDefs.chunked_is_pointer_field mh v then
+             let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+             Seq.mem child_raw (MH.major_objects mh) /\
+             ~(SweepDefs.chunked_is_infix mh child_raw)
+           else
+             True))
+    =
+    let v = MarkDefs.chunked_get_field mh obj i in
+    if MarkDefs.chunked_is_pointer_field mh v then begin
+      MH.major_objects_member_header_read_some mh obj;
+      let hdr = Some?.v (MH.read_word_in_major mh (hd_address obj)) in
+      assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+      CG.chunked_wosize_nat_header mh obj hdr;
+      SweepDefs.chunked_read_header_step mh obj;
+      assert (SweepDefs.chunked_read_header mh obj == Some hdr);
+      SweepDefs.chunked_wosize_of_object_some mh obj hdr;
+      assert (CG.chunked_wosize_nat_of_object mh obj ==
+              U64.v (SweepDefs.chunked_wosize_of_object mh obj));
+      let idx = U64.v i - 1 in
+      assert (idx + 1 == U64.v i);
+      assert (idx < CG.chunked_wosize_nat_of_object mh obj);
+      CG.chunked_major_field_slot_of_object_header mh obj hdr idx;
+      match CG.chunked_major_field_slot obj idx with
+      | None -> assert False
+      | Some field_addr ->
+        CG.chunked_major_field_slot_elim obj idx field_addr;
+        chunked_field_slot_mark_index_facts mh obj idx field_addr;
+        MH.read_word_in_major_lookup_index mh (hd_address obj) hdr;
+        let hidx = MH.lookup_chunk_index_value mh (hd_address obj) in
+        assert (MH.lookup_chunk_index mh (hd_address obj) == Some hidx);
+        assert (hidx < Seq.length mh);
+        MH.major_objects_member_in_lookup_chunk mh hidx obj;
+        MH.objects_in_chunk_member_header_fits (Seq.index mh hidx) obj;
+        assert (MH.object_wosize_in_chunk (Seq.index mh hidx) obj ==
+                U64.v (getWosize hdr));
+        assert (U64.v obj <= U64.v field_addr);
+        assert (U64.v field_addr + U64.v mword <=
+                U64.v obj + U64.v (getWosize hdr) * U64.v mword);
+        MH.major_object_payload_word_in_lookup_chunk mh hidx obj field_addr;
+        let raw_v = MH.read_word_in_chunk (Seq.index mh hidx) field_addr in
+        MH.read_word_in_major_at_lookup_index mh field_addr hidx;
+        assert (MH.read_word_in_major mh field_addr == Some raw_v);
+        chunked_get_field_from_major_field_slot
+          mh obj i idx field_addr raw_v;
+        assert (v == raw_v);
+        assert (MarkDefs.chunked_is_pointer_field mh raw_v);
+        chunked_major_raw_field_targets_in_major_elim
+          mh obj idx field_addr raw_v;
+        MarkDefs.chunked_pointer_field_as_obj_addr_step mh raw_v;
+        let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+        assert (child_raw ==
+                MarkDefs.chunked_pointer_field_as_obj_addr mh raw_v);
+        assert (Seq.mem child_raw (MH.major_objects mh));
+        assert (is_pointer_field child_raw);
+        assert (raw_v == child_raw);
+        assert (is_pointer_to raw_v child_raw);
+        chunked_major_field_targets_non_infix_elim
+          mh obj child_raw idx field_addr raw_v
+    end
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 one);
+  ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major_intro mh
+#pop-options
+
 let chunked_major_gc_bounded_liveness_policy
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -1011,6 +1176,29 @@ let chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_from_pre_
   ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major_preserved_by_gray_roots
     mh roots;
   chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_intro
+    mh roots cap mark_fuel
+
+let chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_from_raw_field_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        chunked_major_raw_field_targets_in_major mh /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects mh) ==> is_pointer_field target) /\
+        chunked_major_field_targets_non_infix mh /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+          mh roots cap mark_fuel)
+  =
+  chunked_scanned_raw_targets_in_major_from_major_raw_field_targets mh;
+  chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_from_pre_gray
     mh roots cap mark_fuel
 
 let chunked_major_gc_bounded_after_gray_roots_raw_target_policy_from_static

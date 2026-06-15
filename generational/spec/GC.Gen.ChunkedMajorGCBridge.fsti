@@ -12,6 +12,7 @@ open GC.Gen.MinorHeap
 
 module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
+module MarkDefs = GC.Spec.ChunkedMark.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkReadiness = GC.Spec.ChunkedMarkBounded.Readiness
@@ -166,6 +167,54 @@ val chunked_major_field_targets_non_infix_implies_vertex_edge_targets_non_infix
         chunked_major_edge_gen_field_witness mh /\
         chunked_major_field_targets_non_infix mh)
       (ensures ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh)
+
+val chunked_major_raw_field_targets_in_major
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_major_raw_field_targets_in_major_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src: obj_addr) (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw /\
+          MarkDefs.chunked_is_pointer_field mh raw ==>
+          Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr mh raw)
+            (MH.major_objects mh))
+      (ensures chunked_major_raw_field_targets_in_major mh)
+
+val chunked_major_raw_field_targets_in_major_elim
+  (mh: MH.major_heap)
+  (src: obj_addr)
+  (idx: nat)
+  (field_addr: hp_addr)
+  (raw: U64.t)
+  : Lemma
+      (requires
+        chunked_major_raw_field_targets_in_major mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some raw /\
+        MarkDefs.chunked_is_pointer_field mh raw)
+      (ensures
+        Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr mh raw)
+          (MH.major_objects mh))
+
+val chunked_scanned_raw_targets_in_major_from_major_raw_field_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_raw_field_targets_in_major mh /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects mh) ==> is_pointer_field target) /\
+        chunked_major_field_targets_non_infix mh)
+      (ensures
+        ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major mh)
 
 val chunked_major_gc_bounded_liveness_policy
   (mh: MH.major_heap)
@@ -362,6 +411,25 @@ val chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_from_pre_
         MH.well_formed_major_heap mh /\
         mark_fuel > 0 /\
         ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major mh /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+          mh roots cap mark_fuel)
+
+val chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_from_raw_field_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        chunked_major_raw_field_targets_in_major mh /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects mh) ==> is_pointer_field target) /\
+        chunked_major_field_targets_non_infix mh /\
         Seq.length (MH.major_objects mh) <= cap /\
         mark_fuel >= Seq.length (MH.major_objects mh))
       (ensures
