@@ -19,6 +19,7 @@ module SpecMajorAlloc = GC.Spec.MajorAllocator
 module GenInv = GC.Gen.HeapInvariant
 module DenseCheney = GC.Gen.Cheney
 module ChunkedCheney = GC.Gen.ChunkedCheney
+module ChunkedCheneyOrigin = GC.Gen.ChunkedCheneyOrigin
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module CP = GC.Gen.CheneyPreservation
 module CG = GC.Gen.CombinedGraph
