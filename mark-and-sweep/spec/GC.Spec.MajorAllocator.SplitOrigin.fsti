@@ -1,6 +1,7 @@
 module GC.Spec.MajorAllocator.SplitOrigin
 
 module U64 = FStar.UInt64
+module Seq = FStar.Seq
 module MH = GC.Spec.MajorHeap
 module MA = GC.Spec.MajorAllocator
 module Obj = GC.Spec.Object
@@ -34,3 +35,30 @@ val major_alloc_head_split_remainder_header_blue:
                   r.major_alloc_out (hd_address rem_obj) with
           | Some hdr -> Obj.getColor hdr == Header.Blue
           | None -> False)))
+
+val major_alloc_head_split_nonblue_origin:
+  mh:MH.major_heap ->
+  fp:U64.t ->
+  requested_wz:nat ->
+  fuel:nat ->
+  Lemma
+    (requires
+      fuel > 1 /\
+      fp <> 0UL /\
+      requested_wz > 0 /\
+      MH.well_formed_major_heap mh /\
+      MA.major_fl_valid mh fp fuel /\
+      MA.major_fl_above_zero mh fp fuel /\
+      MA.major_fl_blocks_fit mh fp fuel /\
+      MA.major_fl_head_wosize mh fp >= requested_wz + 2)
+    (ensures
+      (let r = MA.major_alloc_spec_with_fuel mh fp requested_wz fuel in
+       forall (src:obj_addr). forall (hdr:U64.t).
+         Seq.mem src (MH.major_objects r.major_alloc_out) /\
+         MH.read_word_in_major r.major_alloc_out (hd_address src) == Some hdr /\
+         Obj.getColor hdr <> Header.Blue ==>
+         src == fp \/
+         (Seq.mem src (MH.major_objects mh) /\
+          (exists (old_hdr:U64.t).
+             MH.read_word_in_major mh (hd_address src) == Some old_hdr /\
+             Obj.getColor old_hdr <> Header.Blue))))
