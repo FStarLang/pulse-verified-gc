@@ -1097,6 +1097,79 @@ let chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable
     mh marked mh_final live
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable_vertex_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  (live: obj_addr -> prop)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMark.chunked_count_non_black mh /\
+        ChunkedMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMarkLive.chunked_no_pointer_to_blue_vertex_targets mh /\
+        ChunkedMarkNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh /\
+        (let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+         forall (target: obj_addr).
+           live target ==>
+           ChunkedMajorReach.chunked_major_reachable_from_roots
+             marked roots target))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final live))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let (mh_final, fp_final) =
+    ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+  chunked_major_gc_bounded_mark_phase_preserves_shape mh cap fuel;
+  let live_mem (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures Seq.mem target (MH.major_objects mh))
+    =
+    assert (ChunkedMajorReach.chunked_major_reachable_from_roots
+      marked roots target);
+    ChunkedMajorReach.chunked_major_reachable_from_roots_vertex
+      marked roots target;
+    ChunkedMajorGraph.chunked_major_vertex_elim marked target;
+    assert (Seq.mem target (MH.major_objects marked));
+    assert (MH.major_objects marked == MH.major_objects mh)
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires live_mem);
+  chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
+    mh cap fuel live;
+  let marked_live_facts (target: obj_addr)
+    : Lemma
+        (requires live target)
+        (ensures
+          Seq.mem target (MH.major_objects marked) /\
+          SweepDefs.chunked_is_black marked target)
+    =
+    assert (ChunkedMajorReach.chunked_major_reachable_from_roots
+      marked roots target);
+    ChunkedMajorReach.chunked_major_reachable_from_roots_vertex
+      marked roots target;
+    ChunkedMajorGraph.chunked_major_vertex_elim marked target;
+    assert (Seq.mem target (MH.major_objects marked));
+    ChunkedMarkLiveNoBlack.chunked_mark_bounded_reachable_black_from_all_vertex_target_invariants
+      mh roots cap fuel target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires marked_live_facts);
+  chunked_major_gc_bounded_marked_black_live_subgraph_preserved_from_membership_no_header
+    mh cap fuel live;
+  ChunkedMajorGraph.chunked_major_live_subgraph_preserved_trans
+    mh marked mh_final live
+#pop-options
+
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_major_gc_bounded_marked_reachable_live_subgraph_preserved
   (mh: MH.major_heap)
@@ -1199,6 +1272,70 @@ let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved
   FStar.Classical.forall_intro
     (FStar.Classical.move_requires live_reachable_in_marked);
   chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable
+    mh roots cap fuel (chunked_major_initial_reachable_live mh roots)
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_vertex_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready mh cap fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        fuel >= ChunkedMark.chunked_count_non_black mh /\
+        ChunkedMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMarkLive.chunked_no_pointer_to_blue_vertex_targets mh /\
+        ChunkedMarkNoBlack.chunked_no_black_to_white_vertex_targets mh /\
+        ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap fuel in
+         ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (chunked_major_initial_reachable_live mh roots)))
+  =
+  let marked = ChunkedMark.chunked_mark_bounded mh cap fuel in
+  let all_vertices (v: obj_addr) =
+    ChunkedMajorGraph.chunked_major_vertex mh v in
+  let all_vertices_mem (v: obj_addr)
+    : Lemma
+        (requires all_vertices v)
+        (ensures Seq.mem v (MH.major_objects mh))
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh v
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires all_vertices_mem);
+  chunked_major_gc_bounded_mark_phase_live_subgraph_preserved
+    mh cap fuel all_vertices;
+  let all_vertices_live (v: obj_addr)
+    : Lemma
+        (requires ChunkedMajorGraph.chunked_major_vertex mh v)
+        (ensures all_vertices v)
+    =
+    ()
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires all_vertices_live);
+  let live_reachable_in_marked (target: obj_addr)
+    : Lemma
+        (requires chunked_major_initial_reachable_live mh roots target)
+        (ensures
+          ChunkedMajorReach.chunked_major_reachable_from_roots
+            marked roots target)
+    =
+    chunked_major_initial_reachable_live_elim mh roots target;
+    ChunkedMajorReach.chunked_major_reachable_from_roots_preserved_by_live_subgraph
+      mh marked all_vertices roots target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires live_reachable_in_marked);
+  chunked_major_gc_bounded_live_subgraph_preserved_from_marked_reachable_vertex_targets
     mh roots cap fuel (chunked_major_initial_reachable_live mh roots)
 #pop-options
 

@@ -152,3 +152,30 @@ val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_coll
           mh mh_final
           (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
             mh roots)))
+
+val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape_vertex_targets
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        mark_fuel > 0 /\
+        GenInv.chunked_collection_heap_shape minor mh fp shape_fuel /\
+        chunked_major_edge_gen_field_witness mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          mh cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= ChunkedMark.chunked_count_non_black mh /\
+        ChunkedMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
