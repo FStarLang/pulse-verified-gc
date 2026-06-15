@@ -7526,6 +7526,52 @@ let spot_chunked_minor_major_fields_no_blue_preserved_by_gray_roots
   GenMajorGCBridge.chunked_minor_major_fields_no_blue_preserved_by_gray_roots
     minor mh roots
 
+let spot_chunked_no_scan_invariant_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenMajorGCBridge.chunked_major_roots_nonblue mh roots /\
+        GenInv.chunked_no_scan_invariant mh)
+      (ensures
+        GenInv.chunked_no_scan_invariant
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  GenMajorGCBridge.chunked_no_scan_invariant_preserved_by_gray_roots
+    mh roots
+
+let spot_chunked_no_pointer_to_blue_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenMajorGCBridge.chunked_major_roots_nonblue mh roots /\
+        GenInv.chunked_no_pointer_to_blue mh)
+      (ensures
+        GenInv.chunked_no_pointer_to_blue
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  GenMajorGCBridge.chunked_no_pointer_to_blue_preserved_by_gray_roots
+    mh roots
+
+let spot_chunked_major_minor_fields_no_infix_targets_preserved_by_gray_roots
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenMajorGCBridge.chunked_major_roots_nonblue mh roots /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh)
+      (ensures
+        GenInv.chunked_major_minor_fields_no_infix_targets minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  GenMajorGCBridge.chunked_major_minor_fields_no_infix_targets_preserved_by_gray_roots
+    minor mh roots
+
 let spot_chunked_sweep_not_blue_vertex_implies_gen_not_blue
   (mh: MH.major_heap)
   (obj: obj_addr)

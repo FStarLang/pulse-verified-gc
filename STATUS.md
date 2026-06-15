@@ -376,6 +376,8 @@ Follow-up checkpoint: root graying now preserves the raw field-policy evidence n
 
 Follow-up checkpoint: root graying now has the first collection-shape preservation support facts. `GC.Spec.ChunkedMajorGC.Roots` exposes blue/black color-status framing for roots known not to start in that color, and `GC.Gen.ChunkedMajorGCBridge` names the major-root non-blue policy, proves generational blue status is stable across root graying under that policy, preserves `chunked_no_black_objects`, and preserves `chunked_minor_major_fields_no_blue`. This reduces the grayed collection-shape gap without assuming roots can safely gray blue free-list nodes. SPOT audits the new root and bridge wrappers.
 
+Follow-up checkpoint: root graying now preserves the remaining non-allocator collection-shape facts needed by the grayed major-GC bridge. `GC.Gen.ChunkedMajorGCBridge` proves `chunked_no_scan_invariant`, `chunked_no_pointer_to_blue`, and `chunked_major_minor_fields_no_infix_targets` survive `chunked_gray_roots` under the same explicit `chunked_major_roots_nonblue` policy, using raw payload-read back-framing and no-scan/tag stability through color-only header writes. `GC.SPOT.HeapExpansion` audits all three wrappers. Focused bridge verification, full SPOT verification, touched-file hygiene scans, and a refreshed bridge split-query profile (~1.5s total) passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
