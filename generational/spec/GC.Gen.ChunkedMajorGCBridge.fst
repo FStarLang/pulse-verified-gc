@@ -16,6 +16,7 @@ module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
+module ChunkedMarkReadiness = GC.Spec.ChunkedMarkBounded.Readiness
 module ChunkedMarkTargetReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
 module ChunkedMajorGCRoots = GC.Spec.ChunkedMajorGC.Roots
@@ -868,6 +869,60 @@ let chunked_major_gc_bounded_after_gray_roots_policy_elim
         mark_fuel >= Seq.length (MH.major_objects mh))
   =
   ()
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_after_gray_roots_target_membership_policy
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : prop
+  =
+  MH.well_formed_major_heap mh /\
+  mark_fuel > 0 /\
+  ChunkedMarkReadiness.chunked_mark_bounded_target_membership_policy
+    (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+  Seq.length (MH.major_objects mh) <= cap /\
+  mark_fuel >= Seq.length (MH.major_objects mh)
+
+let chunked_major_gc_bounded_after_gray_roots_target_membership_policy_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkReadiness.chunked_mark_bounded_target_membership_policy
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_target_membership_policy
+          mh roots cap mark_fuel)
+  =
+  ()
+
+let chunked_major_gc_bounded_after_gray_roots_policy_from_target_membership
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_target_membership_policy
+          mh roots cap mark_fuel)
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  ChunkedMarkReadiness.chunked_mark_bounded_preservation_ready_from_target_membership
+    grayed cap mark_fuel;
+  chunked_major_gc_bounded_after_gray_roots_policy_intro
+    mh roots cap mark_fuel
+#pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_major_gc_bounded_liveness_policy_after_gray_roots_from_policy
