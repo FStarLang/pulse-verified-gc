@@ -43,6 +43,7 @@ ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
 ROOT_SRC = \
   impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst \
+  spec/GC.Gen.ChunkedMajorGCBridge.fsti spec/GC.Gen.ChunkedMajorGCBridge.fst \
   spec/GC.Gen.CheneyGraphReadiness.fsti spec/GC.Gen.CheneyGraphReadiness.fst
 ROOT_CHECKED = $(addsuffix .checked,$(ROOT_SRC))
 VERIFY_CHECKED ?= $(ROOT_CHECKED)

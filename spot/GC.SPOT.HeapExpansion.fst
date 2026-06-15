@@ -28,6 +28,7 @@ module CheneyGraphReadiness = GC.Gen.CheneyGraphReadiness
 module SingleChunkInvariant = GC.Gen.SingleChunkInvariant
 module RBridge = GC.Gen.ReachabilityBridge
 module CReach = GC.Gen.ChunkedReachabilityBridge
+module GenMajorGCBridge = GC.Gen.ChunkedMajorGCBridge
 module CRem = GC.Gen.ChunkedRemembered
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module ChunkedCheney = GC.Gen.ChunkedCheney
@@ -7188,6 +7189,40 @@ let spot_chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved
   =
   ChunkedMajorGCCorr.chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved
     mh roots cap fuel
+
+let spot_chunked_sweep_black_implies_gen_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_is_black mh obj)
+      (ensures GenInv.chunked_is_black mh obj)
+  =
+  GenMajorGCBridge.chunked_sweep_black_implies_gen_black mh obj
+
+let spot_chunked_no_black_objects_implies_no_black_to_white_vertex_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires GenInv.chunked_no_black_objects mh)
+      (ensures
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets
+          mh)
+  =
+  GenMajorGCBridge.chunked_no_black_objects_implies_no_black_to_white_vertex_targets
+    mh
+
+let spot_chunked_collection_heap_shape_implies_no_black_to_white_vertex_targets
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (fuel: nat)
+  : Lemma
+      (requires GenInv.chunked_collection_heap_shape minor mh fp fuel)
+      (ensures
+        ChunkedMarkBoundedNoBlack.chunked_no_black_to_white_vertex_targets
+          mh)
+  =
+  GenMajorGCBridge.chunked_collection_heap_shape_implies_no_black_to_white_vertex_targets
+    minor mh fp fuel
 
 let spot_chunked_major_reachable_refl
   (mh: MH.major_heap)
