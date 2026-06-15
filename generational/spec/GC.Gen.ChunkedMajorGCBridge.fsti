@@ -84,6 +84,15 @@ val chunked_major_edge_gen_field_witness_elim
           Seq.mem dst (MH.major_objects mh) /\
           is_pointer_to raw dst)
 
+val chunked_major_edge_gen_field_witness_from_pointer_fields
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        (forall (obj: obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==> is_pointer_field obj))
+      (ensures chunked_major_edge_gen_field_witness mh)
+
 val chunked_major_field_targets_non_infix
   (mh: MH.major_heap)
   : prop

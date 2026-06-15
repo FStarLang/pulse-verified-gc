@@ -358,6 +358,8 @@ Follow-up checkpoint: the last scattered major-GC liveness obligations are now p
 
 The remaining Stage 6 gap is now to discharge that named liveness policy from an actual major-GC/root-scanning precondition, then thread the chunked major-GC result into the generational full-GC surface. Runtime C expansion remains intentionally unwired until this chunk-aware major-GC correctness layer is stable.
 
+Follow-up checkpoint: the raw graph-edge field-witness policy is now derivable from existing chunk-base/readiness facts instead of being purely caller-supplied. `GC.Gen.ChunkedMajorGCBridge.chunked_major_edge_gen_field_witness_from_pointer_fields` recovers the concrete 0-based generational field slot, raw major read, and legacy `Fields.is_pointer_to` witness from a 1-based chunked major graph edge when active major objects are valid legacy pointer fields. `GC.Gen.CheneyGraphReadiness` wraps this through `chunked_major_objects_are_pointer_fields` and the stronger `chunked_major_chunks_above_zero_addr` chunk-base policy, so higher-level clients can discharge the witness policy from the existing runtime-facing chunk-base obligation. SPOT audits both the low-level bridge and readiness-level reductions. Focused bridge/readiness checks passed; refreshed split-query profiles were about 1.4s for `GC.Gen.ChunkedMajorGCBridge` and about 2.0s for `GC.Gen.CheneyGraphReadiness`; full SPOT verification and touched-file hygiene scans passed. A broad top-level `make generational` run was stopped after more than ten minutes in dependency generation before useful proof output, matching the existing broad-closure slowness noted above.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

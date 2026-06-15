@@ -7325,6 +7325,20 @@ let spot_chunked_major_edge_gen_field_witness_elim
   GenMajorGCBridge.chunked_major_edge_gen_field_witness_elim
     mh src dst
 
+let spot_chunked_major_edge_gen_field_witness_from_pointer_fields
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        (forall (obj: obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==>
+          Fields.is_pointer_field obj))
+      (ensures
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness mh)
+  =
+  GenMajorGCBridge.chunked_major_edge_gen_field_witness_from_pointer_fields
+    mh
+
 let spot_chunked_major_field_targets_non_infix_intro
   (mh: MH.major_heap)
   : Lemma
@@ -15725,6 +15739,30 @@ let spot_chunked_major_objects_are_pointer_fields_ensure_head_capacity
   =
   CheneyGraphReadiness.chunked_major_objects_are_pointer_fields_ensure_head_capacity
     major fp fuel needed fresh
+
+let spot_chunked_major_edge_gen_field_witness_from_readiness_pointer_fields
+  (major: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap major /\
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major)
+      (ensures
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness major)
+  =
+  CheneyGraphReadiness.chunked_major_edge_gen_field_witness_from_pointer_fields
+    major
+
+let spot_chunked_major_edge_gen_field_witness_from_chunk_bases
+  (major: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap major /\
+        CheneyGraphReadiness.chunked_major_chunks_above_zero_addr major)
+      (ensures
+        GenMajorGCBridge.chunked_major_edge_gen_field_witness major)
+  =
+  CheneyGraphReadiness.chunked_major_edge_gen_field_witness_from_chunk_bases
+    major
 
 let spot_chunked_cheney_gc_correct_after_preflight_graph_edge_edge_targets_maps_to_major_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)

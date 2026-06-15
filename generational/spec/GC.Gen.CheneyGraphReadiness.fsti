@@ -27,6 +27,7 @@ module RBridge = GC.Gen.ReachabilityBridge
 module CReach = GC.Gen.ChunkedReachabilityBridge
 module CRem = GC.Gen.ChunkedRemembered
 module SCInv = GC.Gen.SingleChunkInvariant
+module GenMajorGCBridge = GC.Gen.ChunkedMajorGCBridge
 
 /// Heap-level separation fact needed to discharge major-target update stability
 /// from graph-edge membership: every active major object address lies outside
@@ -96,6 +97,24 @@ val chunked_major_chunks_above_zero_addr_objects_are_pointer_fields
   : Lemma
     (requires chunked_major_chunks_above_zero_addr major)
     (ensures chunked_major_objects_are_pointer_fields major)
+
+val chunked_major_edge_gen_field_witness_from_pointer_fields
+  (major: MH.major_heap)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap major /\
+      chunked_major_objects_are_pointer_fields major)
+    (ensures
+      GenMajorGCBridge.chunked_major_edge_gen_field_witness major)
+
+val chunked_major_edge_gen_field_witness_from_chunk_bases
+  (major: MH.major_heap)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap major /\
+      chunked_major_chunks_above_zero_addr major)
+    (ensures
+      GenMajorGCBridge.chunked_major_edge_gen_field_witness major)
 
 val chunked_major_chunks_above_zero_addr_single_chunk
   (g: heap)

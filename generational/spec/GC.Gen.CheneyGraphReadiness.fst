@@ -32,6 +32,7 @@ module CReach = GC.Gen.ChunkedReachabilityBridge
 module CInj = GC.Gen.ChunkedCheneyInjectivity
 module CDisj = GC.Gen.ChunkedCheneyDisjointness
 module SCInv = GC.Gen.SingleChunkInvariant
+module GenMajorGCBridge = GC.Gen.ChunkedMajorGCBridge
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
 private let aligned_gt_ge_plus_mword (x z: nat)
@@ -244,6 +245,30 @@ let chunked_major_chunks_above_zero_addr_objects_are_pointer_fields
     major_object_pointer_field_from_chunks major obj
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires prove)
+
+let chunked_major_edge_gen_field_witness_from_pointer_fields
+  (major: MH.major_heap)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap major /\
+      chunked_major_objects_are_pointer_fields major)
+    (ensures
+      GenMajorGCBridge.chunked_major_edge_gen_field_witness major)
+  =
+  GenMajorGCBridge.chunked_major_edge_gen_field_witness_from_pointer_fields
+    major
+
+let chunked_major_edge_gen_field_witness_from_chunk_bases
+  (major: MH.major_heap)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap major /\
+      chunked_major_chunks_above_zero_addr major)
+    (ensures
+      GenMajorGCBridge.chunked_major_edge_gen_field_witness major)
+  =
+  chunked_major_chunks_above_zero_addr_objects_are_pointer_fields major;
+  chunked_major_edge_gen_field_witness_from_pointer_fields major
 
 let chunked_major_chunks_above_zero_addr_single_chunk
   (g: heap)

@@ -13,6 +13,7 @@ open GC.Gen.MinorHeap
 module MH = GC.Spec.MajorHeap
 module Header = GC.Lib.Header
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
+module MarkDefs = GC.Spec.ChunkedMark.Defs
 module ChunkedMark = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
@@ -162,6 +163,145 @@ let chunked_major_edge_gen_field_witness_elim
           is_pointer_to raw dst)
   =
   ()
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_major_edge_gen_field_witness_from_pointer_fields
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        (forall (obj: obj_addr).
+          Seq.mem obj (MH.major_objects mh) ==> is_pointer_field obj))
+      (ensures chunked_major_edge_gen_field_witness mh)
+  =
+  let witness (src dst: obj_addr)
+    : Lemma
+        (requires
+          ChunkedMajorGraph.chunked_major_edge mh src dst /\
+          ChunkedMajorGraph.chunked_major_vertex mh dst)
+        (ensures
+          exists (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+            Seq.mem src (MH.major_objects mh) /\
+            idx < CG.chunked_wosize_nat_of_object mh src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major mh field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects mh) /\
+            is_pointer_to raw dst)
+    =
+    ChunkedMajorGraph.chunked_major_edge_elim mh src dst;
+    assert (exists (i: U64.t{U64.v i >= 1}).
+      ChunkedMajorGraph.chunked_major_field_points_to mh src i dst);
+    assert (exists (i: U64.t).
+      U64.v i >= 1 /\
+      ChunkedMajorGraph.chunked_major_field_points_to mh src i dst);
+    let i =
+      FStar.IndefiniteDescription.indefinite_description_ghost
+        U64.t
+        (fun (i: U64.t) ->
+          U64.v i >= 1 /\
+          ChunkedMajorGraph.chunked_major_field_points_to mh src i dst) in
+    assert (U64.v i >= 1);
+    assert (ChunkedMajorGraph.chunked_major_field_points_to mh src i dst);
+    ChunkedMajorGraph.chunked_major_field_points_to_elim mh src i dst;
+    ChunkedMajorGraph.chunked_major_vertex_elim mh src;
+    ChunkedMajorGraph.chunked_major_vertex_elim mh dst;
+    assert (Seq.mem src (MH.major_objects mh));
+    assert (Seq.mem dst (MH.major_objects mh));
+    MH.major_objects_member_header_read_some mh src;
+    let hdr = Some?.v (MH.read_word_in_major mh (hd_address src)) in
+    assert (MH.read_word_in_major mh (hd_address src) == Some hdr);
+    SweepDefs.chunked_read_header_step mh src;
+    assert (SweepDefs.chunked_read_header mh src == Some hdr);
+    SweepDefs.chunked_wosize_of_object_some mh src hdr;
+    CG.chunked_wosize_nat_header mh src hdr;
+    assert (U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh src));
+    assert (U64.v i <= U64.v (getWosize hdr));
+    let idx = U64.v i - 1 in
+    assert (idx < U64.v (getWosize hdr));
+    assert (idx < CG.chunked_wosize_nat_of_object mh src);
+    CG.chunked_major_field_slot_of_object_header mh src hdr idx;
+    match CG.chunked_major_field_slot src idx with
+    | None -> assert False
+    | Some field_addr ->
+      CG.chunked_major_field_slot_elim src idx field_addr;
+      assert (CG.chunked_major_field_slot src idx == Some field_addr);
+      MH.read_word_in_major_lookup_index mh (hd_address src) hdr;
+      let hidx = MH.lookup_chunk_index_value mh (hd_address src) in
+      assert (MH.lookup_chunk_index mh (hd_address src) == Some hidx);
+      assert (hidx < Seq.length mh);
+      assert (MH.word_in_chunk (Seq.index mh hidx) (hd_address src));
+      MH.major_objects_member_in_lookup_chunk mh hidx src;
+      MH.objects_in_chunk_member_header_fits (Seq.index mh hidx) src;
+      assert (MH.object_wosize_in_chunk (Seq.index mh hidx) src ==
+              U64.v (getWosize hdr));
+      assert (U64.v field_addr == U64.v src + idx * U64.v mword);
+      assert (idx + 1 == U64.v i);
+      assert_norm (U64.v mword == 8);
+      FStar.Math.Lemmas.distributivity_add_left
+        idx 1 (U64.v mword);
+      assert (idx * U64.v mword + U64.v mword ==
+              (idx + 1) * U64.v mword);
+      assert (U64.v src <= U64.v field_addr);
+      assert (U64.v field_addr + U64.v mword <=
+              U64.v src + U64.v (getWosize hdr) * U64.v mword);
+      hd_address_spec src;
+      assert (U64.v (hd_address src) + U64.v mword == U64.v src);
+      assert (U64.v field_addr ==
+              U64.v (hd_address src) + U64.v mword +
+                idx * U64.v mword);
+      assert (U64.v mword + idx * U64.v mword ==
+              idx * U64.v mword + U64.v mword);
+      FStar.Math.Lemmas.paren_add_right
+        (U64.v (hd_address src)) (U64.v mword)
+        (idx * U64.v mword);
+      assert (U64.v field_addr ==
+              U64.v (hd_address src) +
+                (idx * U64.v mword + U64.v mword));
+      assert ((idx + 1) * U64.v mword ==
+              U64.v i * U64.v mword);
+      assert (U64.v i * U64.v mword ==
+              U64.v mword * U64.v i);
+      assert (U64.v field_addr ==
+              U64.v (hd_address src) + U64.v mword * U64.v i);
+      assert (U64.v field_addr < heap_size);
+      assert (U64.v (hd_address src) + U64.v mword * U64.v i < heap_size);
+      assert (U64.v (hd_address src) + U64.v mword * U64.v i < pow2 64);
+      assert (U64.v mword * U64.v i <=
+              U64.v (hd_address src) + U64.v mword * U64.v i);
+      assert (U64.v mword * U64.v i < pow2 64);
+      MH.major_object_payload_word_in_lookup_chunk mh hidx src field_addr;
+      let raw = MH.read_word_in_chunk (Seq.index mh hidx) field_addr in
+      MH.read_word_in_major_at_lookup_index mh field_addr hidx;
+      assert (MH.read_word_in_major mh field_addr == Some raw);
+      let get_field_addr = U64.add (hd_address src) (U64.mul mword i) in
+      assert (U64.v (U64.mul mword i) == U64.v mword * U64.v i);
+      assert (U64.v get_field_addr ==
+              U64.v (hd_address src) + U64.v mword * U64.v i);
+      U64.v_inj get_field_addr field_addr;
+      assert (get_field_addr == field_addr);
+      MarkDefs.chunked_get_field_read_some mh src i raw;
+      assert (MarkDefs.chunked_get_field mh src i == raw);
+      assert (MarkDefs.chunked_is_pointer_field mh raw);
+      MarkDefs.chunked_pointer_field_as_obj_addr_step mh raw;
+      assert (raw == dst);
+      assert (is_pointer_field dst);
+      assert (is_pointer_field raw);
+      assert (is_pointer_to raw dst);
+      FStar.Classical.exists_intro
+        (fun (idx: nat) ->
+          exists (field_addr: hp_addr) (raw: U64.t).
+            Seq.mem src (MH.major_objects mh) /\
+            idx < CG.chunked_wosize_nat_of_object mh src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major mh field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects mh) /\
+            is_pointer_to raw dst)
+        idx
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 witness);
+  chunked_major_edge_gen_field_witness_intro mh
+#pop-options
 
 let chunked_major_field_targets_non_infix
   (mh: MH.major_heap)
