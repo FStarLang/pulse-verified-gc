@@ -84,6 +84,50 @@ val chunked_major_edge_gen_field_witness_elim
           Seq.mem dst (MH.major_objects mh) /\
           is_pointer_to raw dst)
 
+val chunked_major_field_targets_non_infix
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_major_field_targets_non_infix_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (src dst: obj_addr) (idx: nat)
+               (field_addr: hp_addr) (raw: U64.t).
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects mh) /\
+          is_pointer_to raw dst ==>
+          ~(SweepDefs.chunked_is_infix mh dst))
+      (ensures chunked_major_field_targets_non_infix mh)
+
+val chunked_major_field_targets_non_infix_elim
+  (mh: MH.major_heap)
+  (src dst: obj_addr)
+  (idx: nat)
+  (field_addr: hp_addr)
+  (raw: U64.t)
+  : Lemma
+      (requires
+        chunked_major_field_targets_non_infix mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some raw /\
+        Seq.mem dst (MH.major_objects mh) /\
+        is_pointer_to raw dst)
+      (ensures ~(SweepDefs.chunked_is_infix mh dst))
+
+val chunked_major_field_targets_non_infix_implies_vertex_edge_targets_non_infix
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        chunked_major_edge_gen_field_witness mh /\
+        chunked_major_field_targets_non_infix mh)
+      (ensures ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh)
+
 val chunked_sweep_not_blue_vertex_implies_gen_not_blue
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -172,6 +216,33 @@ val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_coll
         mark_fuel >= ChunkedMark.chunked_count_non_black mh /\
         ChunkedMarkLive.chunked_roots_gray_or_black mh roots /\
         ChunkedMarkEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+
+val chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape_field_policies
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        mark_fuel > 0 /\
+        GenInv.chunked_collection_heap_shape minor mh fp shape_fuel /\
+        chunked_major_edge_gen_field_witness mh /\
+        chunked_major_field_targets_non_infix mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          mh cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= ChunkedMark.chunked_count_non_black mh /\
+        ChunkedMarkLive.chunked_roots_gray_or_black mh roots)
       (ensures
         (let (mh_final, fp_final) =
           ChunkedMajorGC.chunked_major_gc_bounded mh cap mark_fuel in
