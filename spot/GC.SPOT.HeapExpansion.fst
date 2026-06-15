@@ -7912,6 +7912,19 @@ let spot_chunked_major_raw_field_targets_in_major_elim
   GenMajorGCBridge.chunked_major_raw_field_targets_in_major_elim
     mh src idx field_addr raw
 
+let spot_chunked_major_raw_field_targets_in_major_single_chunk_from_dense_parts
+  (g: heap)
+  : Lemma
+      (requires
+        Fields.well_formed_heap_part1 g /\
+        Fields.well_formed_heap_part2 g)
+      (ensures
+        GenMajorGCBridge.chunked_major_raw_field_targets_in_major
+          (MH.single_chunk_major_heap g))
+  =
+  GenMajorGCBridge.chunked_major_raw_field_targets_in_major_single_chunk_from_dense_parts
+    g
+
 let spot_chunked_scanned_raw_targets_in_major_from_major_raw_field_targets
   (mh: MH.major_heap)
   : Lemma

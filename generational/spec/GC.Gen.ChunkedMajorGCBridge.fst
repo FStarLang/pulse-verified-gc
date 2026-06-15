@@ -2,6 +2,7 @@ module GC.Gen.ChunkedMajorGCBridge
 
 module Seq = FStar.Seq
 module U64 = FStar.UInt64
+module ML = FStar.Math.Lemmas
 
 open GC.Spec.Base
 open GC.Spec.Heap
@@ -781,6 +782,122 @@ let chunked_major_raw_field_targets_in_major_elim
           (MH.major_objects mh))
   =
   ()
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+private let aligned_gt_ge_plus_mword
+  (x z: nat)
+  : Lemma
+      (requires
+        x > z /\
+        x % U64.v mword == 0 /\
+        z % U64.v mword == 0)
+      (ensures x >= z + U64.v mword)
+  =
+  if x < z + U64.v mword then begin
+    assert (x - z > 0);
+    assert (x - z < U64.v mword);
+    ML.lemma_mod_sub_distr x z (U64.v mword);
+    assert ((x - z) % U64.v mword == 0);
+    ML.small_mod (x - z) (U64.v mword);
+    assert False
+  end
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let chunked_major_raw_field_targets_in_major_single_chunk_from_dense_parts
+  (g: heap)
+  : Lemma
+      (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g)
+      (ensures
+        chunked_major_raw_field_targets_in_major
+          (MH.single_chunk_major_heap g))
+  =
+  let mh = MH.single_chunk_major_heap g in
+  let one
+    (src: obj_addr)
+    (idx: nat)
+    (field_addr: hp_addr)
+    (raw: U64.t)
+    : Lemma
+        (requires
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw)
+        (ensures
+          MarkDefs.chunked_is_pointer_field mh raw ==>
+          Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr mh raw)
+            (MH.major_objects mh))
+    =
+    if MarkDefs.chunked_is_pointer_field mh raw then begin
+      MH.single_chunk_major_objects_compat g;
+      assert (Seq.mem src (objects zero_addr g));
+      objects_addresses_gt_start zero_addr g src;
+      aligned_gt_ge_plus_mword (U64.v src) (U64.v zero_addr);
+      assert (U64.v src >= U64.v zero_addr + U64.v mword);
+      hd_address_spec src;
+      hd_address_bounds src;
+      assert (U64.v (hd_address src) >= U64.v zero_addr);
+      MH.single_chunk_read_word_compat g (hd_address src);
+      let hdr = read_word g (hd_address src) in
+      assert (MH.read_word_in_major mh (hd_address src) == Some hdr);
+      CG.chunked_wosize_nat_header mh src hdr;
+      assert (CG.chunked_wosize_nat_of_object mh src == U64.v (getWosize hdr));
+      wosize_of_object_spec src g;
+      assert (wosize_of_object src g == getWosize hdr);
+      assert (idx < U64.v (wosize_of_object src g));
+      CG.chunked_major_field_slot_elim src idx field_addr;
+      assert (U64.v field_addr == U64.v src + idx * U64.v mword);
+      assert (U64.v field_addr + U64.v mword <= heap_size);
+      assert (U64.v field_addr >= U64.v zero_addr);
+      MH.single_chunk_read_word_compat g field_addr;
+      assert (read_word g field_addr == raw);
+      MarkDefs.chunked_is_pointer_field_step mh raw;
+      MH.single_chunk_major_pointer_compat g raw;
+      assert (is_pointer_field raw);
+      MarkDefs.chunked_pointer_field_as_obj_addr_step mh raw;
+      let child = MarkDefs.chunked_pointer_field_as_obj_addr mh raw in
+      assert (child == raw);
+      assert (is_pointer_to raw child);
+      wfh_part1_obj_bound g src;
+      hd_address_spec src;
+      assert (well_formed_object g src);
+      ML.pow2_lt_compat 64 54;
+      ML.pow2_lt_compat 61 54;
+      assert (idx < pow2 64);
+      let k = U64.uint_to_t idx in
+      assert (U64.v k == idx);
+      assert (U64.v k < U64.v (wosize_of_object src g));
+      assert (U64.v k < pow2 61);
+      let far = U64.add_mod src (U64.mul_mod k mword) in
+      ML.pow2_plus 54 3;
+      assert (idx * U64.v mword < pow2 57);
+      ML.pow2_lt_compat 64 57;
+      assert (idx * U64.v mword < pow2 64);
+      ML.modulo_lemma (idx * U64.v mword) (pow2 64);
+      assert (U64.v (U64.mul_mod k mword) == idx * U64.v mword);
+      assert (U64.v src + idx * U64.v mword < heap_size);
+      assert (U64.v src + idx * U64.v mword < pow2 64);
+      ML.modulo_lemma (U64.v src + idx * U64.v mword) (pow2 64);
+      assert (U64.v far == U64.v src + idx * U64.v mword);
+      U64.v_inj far field_addr;
+      assert (far == field_addr);
+      assert (U64.v far < heap_size);
+      assert (U64.v far % 8 == 0);
+      assert (read_word g (far <: hp_addr) == raw);
+      field_read_implies_exists_pointing
+        g src (wosize_of_object src g) k child;
+      assert
+        (exists_field_pointing_to_unchecked
+          g src (wosize_of_object src g) child);
+      assert (Seq.mem child (objects zero_addr g));
+      assert (Seq.mem child (MH.major_objects mh))
+    end
+  in
+  FStar.Classical.forall_intro_4
+    (FStar.Classical.move_requires_4 one);
+  chunked_major_raw_field_targets_in_major_intro mh
+#pop-options
+#pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 private let chunked_get_field_from_major_field_slot

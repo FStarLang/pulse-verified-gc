@@ -204,6 +204,14 @@ val chunked_major_raw_field_targets_in_major_elim
         Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr mh raw)
           (MH.major_objects mh))
 
+val chunked_major_raw_field_targets_in_major_single_chunk_from_dense_parts
+  (g: heap)
+  : Lemma
+      (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g)
+      (ensures
+        chunked_major_raw_field_targets_in_major
+          (MH.single_chunk_major_heap g))
+
 val chunked_scanned_raw_targets_in_major_from_major_raw_field_targets
   (mh: MH.major_heap)
   : Lemma
