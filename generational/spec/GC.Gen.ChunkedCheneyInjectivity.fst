@@ -6,6 +6,7 @@ module U64 = FStar.UInt64
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Spec.Object
+open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
 open GC.Gen.Promote
@@ -19,6 +20,8 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module ChunkedPromote = GC.Gen.ChunkedPromote
 module CP = GC.Gen.CheneyPreservation
 module CG = GC.Gen.CombinedGraph
+module MarkDefs = GC.Spec.ChunkedMark.Defs
+module GenMajorGCBridge = GC.Gen.ChunkedMajorGCBridge
 
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0"
 private let nat_nonzero_gt_zero (n: nat)
@@ -1220,4 +1223,117 @@ let chunked_cheney_promote_old_nonblue_field_no_infix
   assert (j < CG.chunked_wosize_nat_of_object major src);
   GenInv.chunked_major_minor_fields_no_infix_targets_elim
     minor major src j field_addr old
+
+let chunked_cheney_promote_fwd_target_minor_major_field_raw_target
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel remaining: nat)
+  (x: U64.t) (j: nat) (field_addr: hp_addr) (raw: U64.t)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        GenInv.chunked_minor_major_fields_no_blue minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         res.fwd_map x <> 0UL /\
+         Seq.mem x (minor_objects minor) /\
+         ~(is_infix_in_minor minor x) /\
+         j < minor_wosize minor x /\
+         U64.v field_addr == U64.v (res.fwd_map x) + j * U64.v mword /\
+         MH.read_word_in_major res.major_final field_addr == Some raw /\
+         is_pointer_field raw /\
+         MarkDefs.chunked_is_pointer_field res.major_final raw))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr
+                    res.major_final raw)
+           (MH.major_objects res.major_final)))
+  =
+  CP.chunked_cheney_promote_fwd_target_fields_match
+    minor major fp roots alloc_fuel remaining x j field_addr;
+  let res =
+    ChunkedCheney.chunked_cheney_promote minor major fp roots alloc_fuel in
+  assert (MH.read_word_in_major res.major_final field_addr ==
+          Some (minor_read_field minor x j));
+  assert (raw == minor_read_field minor x j);
+  assert (is_pointer_field (minor_read_field minor x j));
+  GenInv.chunked_minor_major_fields_no_blue_elim minor major x j;
+  assert (Seq.mem ((raw) <: obj_addr) (MH.major_objects major));
+  CP.chunked_cheney_promote_head_split_preserves_old_major_objects
+    minor major fp roots alloc_fuel;
+  assert (Seq.mem ((raw) <: obj_addr) (MH.major_objects res.major_final));
+  MarkDefs.chunked_pointer_field_as_obj_addr_step res.major_final raw;
+  assert (MarkDefs.chunked_pointer_field_as_obj_addr res.major_final raw ==
+          ((raw) <: obj_addr))
+
+let chunked_cheney_promote_old_nonblue_field_raw_target
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+  (old raw: U64.t)
+  : Lemma
+      (requires
+        GenMajorGCBridge.chunked_major_raw_field_targets_in_major major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        j < U64.v (getWosize hdr) /\
+        CG.chunked_major_field_slot src j == Some field_addr /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        MH.read_word_in_major major field_addr == Some old /\
+        MarkDefs.chunked_is_pointer_field major old /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         MH.read_word_in_major res.major_final field_addr == Some raw /\
+         MarkDefs.chunked_is_pointer_field res.major_final raw))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr
+                    res.major_final raw)
+           (MH.major_objects res.major_final)))
+  =
+  CP.chunked_cheney_promote_head_split_preserves_old_non_blue_field
+    minor major fp roots alloc_fuel src hdr j field_addr old;
+  let res =
+    ChunkedCheney.chunked_cheney_promote minor major fp roots alloc_fuel in
+  assert (MH.read_word_in_major res.major_final field_addr == Some old);
+  assert (raw == old);
+  CG.chunked_wosize_nat_header major src hdr;
+  assert (j < CG.chunked_wosize_nat_of_object major src);
+  GenMajorGCBridge.chunked_major_raw_field_targets_in_major_elim
+    major src j field_addr old;
+  assert (Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr major old)
+            (MH.major_objects major));
+  CP.chunked_cheney_promote_head_split_preserves_old_major_objects
+    minor major fp roots alloc_fuel;
+  assert (Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr major old)
+            (MH.major_objects res.major_final));
+  MarkDefs.chunked_pointer_field_as_obj_addr_step major old;
+  MarkDefs.chunked_pointer_field_as_obj_addr_step res.major_final raw;
+  assert (MarkDefs.chunked_pointer_field_as_obj_addr major old ==
+          ((old) <: obj_addr));
+  assert (MarkDefs.chunked_pointer_field_as_obj_addr res.major_final raw ==
+          ((raw) <: obj_addr));
+  assert (((old) <: obj_addr) == ((raw) <: obj_addr))
 #pop-options
