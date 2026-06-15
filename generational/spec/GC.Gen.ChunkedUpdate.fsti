@@ -20,6 +20,8 @@ open GC.Gen.Base
 open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
+module CG = GC.Gen.CombinedGraph
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
 val obj_in_single_chunk_range
   : obj:obj_addr -> Tot prop
@@ -36,6 +38,12 @@ val chunked_update_field_slot_zero
     Lemma
       (requires U64.v obj + U64.v mword <= heap_size)
       (ensures chunked_update_field_slot obj 0 == Some obj)
+
+val chunked_update_field_slot_from_major_field_slot
+  : src:obj_addr -> i:nat -> field_addr:hp_addr ->
+    Lemma
+      (requires CG.chunked_major_field_slot src i == Some field_addr)
+      (ensures chunked_update_field_slot src i == Some field_addr)
 
 /// Object metadata readers over an active chunked major heap.
 val chunked_header_of_object
@@ -79,6 +87,13 @@ val chunked_words_disjoint
 val chunked_update_field
   : mh:MH.major_heap -> field_addr:hp_addr -> fwd:forwarding_map ->
     GTot MH.major_heap
+
+val chunked_update_field_preserves_ranges
+  : mh:MH.major_heap -> field_addr:hp_addr -> fwd:forwarding_map ->
+    Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (chunked_update_field mh field_addr fwd))
 
 /// Pure value-level effect of the update guard.
 val chunked_update_expected_value
@@ -295,6 +310,15 @@ val chunked_update_all_objects_aux_preserves_wf_and_major_objects
 /// Update all pointers in active chunked major objects.
 val chunked_update_major_pointers
   : mh:MH.major_heap -> fwd:forwarding_map -> GTot MH.major_heap
+
+/// Top-level update preserves active chunk ranges, so major-pointer
+/// classification is stable across the update.
+val chunked_update_major_pointers_preserves_ranges
+  : mh:MH.major_heap -> fwd:forwarding_map ->
+    Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (chunked_update_major_pointers mh fwd))
 
 /// Top-level update preserves major heap well-formedness and active object
 /// enumeration.

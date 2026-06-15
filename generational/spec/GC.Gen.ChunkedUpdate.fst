@@ -17,6 +17,8 @@ open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
 module SpecMajorAlloc = GC.Spec.MajorAllocator
+module CG = GC.Gen.CombinedGraph
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
 let obj_in_single_chunk_range (obj: obj_addr) : Tot prop =
   U64.v obj >= U64.v zero_addr + U64.v mword
@@ -50,6 +52,25 @@ let chunked_update_field_slot_zero (obj: obj_addr)
   assert (~((U64.v obj + 0 * 8) % 8 <> 0));
   assert (U64.v (U64.uint_to_t (U64.v obj)) == U64.v obj);
   assert (U64.uint_to_t (U64.v obj) == obj)
+
+let chunked_update_field_slot_from_major_field_slot
+  (src: obj_addr) (i: nat) (field_addr: hp_addr)
+  : Lemma
+      (requires CG.chunked_major_field_slot src i == Some field_addr)
+      (ensures chunked_update_field_slot src i == Some field_addr)
+  =
+  CG.chunked_major_field_slot_elim src i field_addr;
+  assert (U64.v field_addr == U64.v src + i * U64.v mword);
+  assert (U64.v mword == 8);
+  assert (U64.v field_addr == U64.v src + i * 8);
+  assert (U64.v field_addr + U64.v mword <= heap_size);
+  assert (U64.v field_addr + 8 <= heap_size);
+  assert (~(U64.v src + i * 8 + 8 > heap_size));
+  assert (U64.v field_addr % U64.v mword == 0);
+  assert (U64.v field_addr % 8 == 0);
+  assert (~((U64.v src + i * 8) % 8 <> 0));
+  assert (U64.v (U64.uint_to_t (U64.v field_addr)) == U64.v field_addr);
+  assert (U64.uint_to_t (U64.v field_addr) == field_addr)
 
 let chunked_header_of_object (mh: MH.major_heap) (obj: obj_addr)
   : GTot (option U64.t)
@@ -119,6 +140,27 @@ let chunked_update_field (mh: MH.major_heap) (field_addr: hp_addr)
           mh
       else
         mh
+
+let chunked_update_field_preserves_ranges
+  (mh: MH.major_heap) (field_addr: hp_addr) (fwd: forwarding_map)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (chunked_update_field mh field_addr fwd))
+  =
+  match MH.read_word_in_major mh field_addr with
+  | None -> RangePres.same_chunk_ranges_refl mh
+  | Some raw ->
+    let field_val = to_minor_offset raw in
+    if is_minor_pointer field_val then begin
+      let new_val = fwd field_val in
+      if new_val <> 0UL then
+        RangePres.major_write_word_or_same_preserves_ranges
+          mh field_addr new_val
+      else
+        RangePres.same_chunk_ranges_refl mh
+    end else
+      RangePres.same_chunk_ranges_refl mh
 
 let chunked_update_expected_value (fwd: forwarding_map) (old: U64.t)
   : GTot U64.t
@@ -826,6 +868,32 @@ let chunked_update_object_pointers_invalid_slot
       (ensures chunked_update_object_pointers mh obj wosize fwd i == mh)
   = ()
 
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_update_object_pointers_preserves_ranges
+  (mh: MH.major_heap) (obj: obj_addr) (wosize: nat)
+  (fwd: forwarding_map) (i: nat)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (chunked_update_object_pointers mh obj wosize fwd i))
+      (decreases (wosize - i))
+  =
+  if i >= wosize then
+    RangePres.same_chunk_ranges_refl mh
+  else begin
+    match chunked_update_field_slot obj i with
+    | None -> RangePres.same_chunk_ranges_refl mh
+    | Some field_addr ->
+      chunked_update_field_preserves_ranges mh field_addr fwd;
+      let mh1 = chunked_update_field mh field_addr fwd in
+      chunked_update_object_pointers_preserves_ranges
+        mh1 obj wosize fwd (i + 1);
+      RangePres.same_chunk_ranges_trans
+        mh mh1
+        (chunked_update_object_pointers mh1 obj wosize fwd (i + 1))
+  end
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
 let rec chunked_update_object_pointers_preserves_wf_and_major_objects
   (mh: MH.major_heap) (obj: obj_addr) (wosize: nat)
@@ -1237,6 +1305,46 @@ let rec chunked_update_all_objects_aux_preserves_wf_and_major_objects
 let chunked_update_major_pointers (mh: MH.major_heap) (fwd: forwarding_map)
   : GTot MH.major_heap
   = chunked_update_all_objects_aux mh (MH.major_objects mh) fwd 0
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always"
+let rec chunked_update_all_objects_aux_preserves_ranges
+  (mh: MH.major_heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (chunked_update_all_objects_aux mh objs fwd idx))
+      (decreases (Seq.length objs - idx))
+  =
+  if idx >= Seq.length objs then
+    RangePres.same_chunk_ranges_refl mh
+  else begin
+    let obj = Seq.index objs idx in
+    if chunked_is_blue mh obj then
+      chunked_update_all_objects_aux_preserves_ranges
+        mh objs fwd (idx + 1)
+    else if chunked_is_no_scan mh obj then
+      chunked_update_all_objects_aux_preserves_ranges
+        mh objs fwd (idx + 1)
+    else begin
+      let wz = chunked_wosize_nat_of_object mh obj in
+      chunked_update_object_pointers_preserves_ranges mh obj wz fwd 0;
+      let mh1 = chunked_update_object_pointers mh obj wz fwd 0 in
+      chunked_update_all_objects_aux_preserves_ranges mh1 objs fwd (idx + 1);
+      RangePres.same_chunk_ranges_trans
+        mh mh1 (chunked_update_all_objects_aux mh1 objs fwd (idx + 1))
+    end
+  end
+
+let chunked_update_major_pointers_preserves_ranges
+  (mh: MH.major_heap) (fwd: forwarding_map)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges mh
+          (chunked_update_major_pointers mh fwd))
+  =
+  chunked_update_all_objects_aux_preserves_ranges
+    mh (MH.major_objects mh) fwd 0
+#pop-options
 
 let rec chunked_major_objects_members_from (mh: MH.major_heap) (idx: nat)
   : Lemma

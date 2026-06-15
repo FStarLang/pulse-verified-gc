@@ -10,6 +10,7 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
 module Header = GC.Lib.Header
@@ -33,6 +34,8 @@ module GenInv = GC.Gen.HeapInvariant
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module Promote = GC.Gen.Promote
 module CG = GC.Gen.CombinedGraph
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
+module CheneyPres = GC.Gen.CheneyPreservation
 
 #set-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always --warn_error -321"
 
@@ -897,6 +900,202 @@ let chunked_major_raw_field_targets_in_major_single_chunk_from_dense_parts
     (FStar.Classical.move_requires_4 one);
   chunked_major_raw_field_targets_in_major_intro mh
 #pop-options
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_major_field_read_some_from_slot
+  (mh: MH.major_heap)
+  (src: obj_addr)
+  (hdr: U64.t)
+  (idx: nat)
+  (field_addr: hp_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        idx < U64.v (getWosize hdr) /\
+        CG.chunked_major_field_slot src idx == Some field_addr)
+      (ensures
+        (match MH.read_word_in_major mh field_addr with
+         | Some _ -> True
+         | None -> False))
+  =
+  ChunkedUpdate.chunked_wosize_nat_header mh src hdr;
+  assert (idx < ChunkedUpdate.chunked_wosize_nat_of_object mh src);
+  ChunkedUpdate.chunked_update_field_slot_from_major_field_slot
+    src idx field_addr;
+  ChunkedUpdate.chunked_update_field_slot_in_object_chunk
+    mh src idx field_addr;
+  let cidx = MH.lookup_chunk_index_value mh (hd_address src) in
+  assert (MH.lookup_chunk_index mh field_addr == Some cidx);
+  assert (cidx < Seq.length mh);
+  assert (MH.word_in_chunk (Seq.index mh cidx) field_addr);
+  MH.read_word_in_major_at_lookup_index mh field_addr cidx
+
+private let chunked_old_raw_target_transferred_to_updated
+  (mh post: MH.major_heap)
+  (src: obj_addr)
+  (idx: nat)
+  (field_addr: hp_addr)
+  (old raw: U64.t)
+  : Lemma
+      (requires
+        RangePres.same_chunk_ranges mh post /\
+        MH.major_objects post == MH.major_objects mh /\
+        chunked_major_raw_field_targets_in_major mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some old /\
+        raw == old /\
+        MarkDefs.chunked_is_pointer_field post raw)
+      (ensures
+        Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr post raw)
+          (MH.major_objects post))
+  =
+  MarkDefs.chunked_is_pointer_field_step post raw;
+  assert (MH.is_major_pointer post raw);
+  RangePres.same_chunk_ranges_preserves_is_major_pointer mh post old;
+  assert (MH.is_major_pointer mh old);
+  MarkDefs.chunked_is_pointer_field_step mh old;
+  assert (MarkDefs.chunked_is_pointer_field mh old);
+  chunked_major_raw_field_targets_in_major_elim
+    mh src idx field_addr old;
+  MarkDefs.chunked_pointer_field_as_obj_addr_step mh old;
+  MarkDefs.chunked_pointer_field_as_obj_addr_step post raw;
+  assert (MarkDefs.chunked_pointer_field_as_obj_addr mh old == old);
+  assert (MarkDefs.chunked_pointer_field_as_obj_addr post raw == raw);
+  assert (MarkDefs.chunked_pointer_field_as_obj_addr mh old ==
+          MarkDefs.chunked_pointer_field_as_obj_addr post raw);
+  assert (Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr post raw)
+            (MH.major_objects mh));
+  assert (Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr post raw)
+            (MH.major_objects post))
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+let chunked_major_raw_field_targets_in_major_preserved_by_update
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_raw_field_targets_in_major mh /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh /\
+        CheneyPres.chunked_fwd_targets_above_minor fwd /\
+        CheneyPres.chunked_fwd_noninfix_targets_in_major
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+      (ensures
+        chunked_major_raw_field_targets_in_major
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+  =
+  let post = ChunkedUpdate.chunked_update_major_pointers mh fwd in
+  ChunkedUpdate.chunked_update_major_pointers_preserves_ranges mh fwd;
+  ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
+    mh fwd;
+  let one
+    (src: obj_addr)
+    (idx: nat)
+    (field_addr: hp_addr)
+    (raw: U64.t)
+    : Lemma
+        (requires
+          Seq.mem src (MH.major_objects post) /\
+          idx < CG.chunked_wosize_nat_of_object post src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major post field_addr == Some raw)
+        (ensures
+          MarkDefs.chunked_is_pointer_field post raw ==>
+          Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr post raw)
+            (MH.major_objects post))
+    =
+    if MarkDefs.chunked_is_pointer_field post raw then begin
+      assert (Seq.mem src (MH.major_objects mh));
+      MH.major_objects_member_header_read_some mh src;
+      match MH.read_word_in_major mh (hd_address src) with
+      | None -> assert False
+      | Some hdr ->
+        ChunkedUpdate.chunked_update_major_pointers_preserves_header
+          mh fwd src hdr;
+        assert (MH.read_word_in_major post (hd_address src) == Some hdr);
+        CG.chunked_wosize_nat_header mh src hdr;
+        CG.chunked_wosize_nat_header post src hdr;
+        assert (idx < U64.v (getWosize hdr));
+        CG.chunked_major_field_slot_elim src idx field_addr;
+        ChunkedUpdate.chunked_update_field_slot_from_major_field_slot
+          src idx field_addr;
+        chunked_major_field_read_some_from_slot mh src hdr idx field_addr;
+        match MH.read_word_in_major mh field_addr with
+        | None -> assert False
+        | Some old ->
+          if getColor hdr = Header.Blue then begin
+            ChunkedUpdate.chunked_wosize_nat_header mh src hdr;
+            ChunkedUpdate.chunked_is_blue_header mh src hdr;
+            ChunkedUpdate.chunked_update_major_pointers_preserves_blue_field
+              mh fwd src idx field_addr old;
+            assert (MH.read_word_in_major post field_addr == Some old);
+            assert (raw == old);
+            chunked_old_raw_target_transferred_to_updated
+              mh post src idx field_addr old raw
+          end else if U64.v (getTag hdr) >= U64.v no_scan_tag then begin
+            ChunkedUpdate.chunked_update_major_pointers_preserves_no_scan_field
+              mh fwd src hdr idx field_addr old;
+            assert (MH.read_word_in_major post field_addr == Some old);
+            assert (raw == old);
+            chunked_old_raw_target_transferred_to_updated
+              mh post src idx field_addr old raw
+          end else begin
+            assert (getColor hdr <> Header.Blue);
+            assert (U64.v (getTag hdr) < U64.v no_scan_tag);
+            CheneyPres.chunked_fwd_targets_above_minor_expected_stable fwd old;
+            ChunkedUpdate.chunked_update_major_pointers_field_effect_stable
+              mh fwd src hdr idx field_addr old;
+            let expected = ChunkedUpdate.chunked_update_expected_value fwd old in
+            assert (MH.read_word_in_major post field_addr == Some expected);
+            assert (raw == expected);
+            ChunkedUpdate.chunked_update_expected_value_effect fwd old;
+            let old_val = to_minor_offset old in
+            if is_minor_pointer old_val then begin
+              let new_val = fwd old_val in
+              if new_val <> 0UL then begin
+                GenInv.chunked_is_blue_header mh src hdr;
+                assert (~(GenInv.chunked_is_blue mh src));
+                CG.chunked_is_no_scan_header mh src hdr;
+                assert (~(CG.chunked_is_no_scan mh src));
+                GenInv.chunked_major_minor_fields_no_infix_targets_elim
+                  minor mh src idx field_addr old;
+                CheneyPres.chunked_fwd_noninfix_targets_in_major_elim
+                  minor fwd post old_val;
+                MarkDefs.chunked_pointer_field_as_obj_addr_step post raw;
+                assert (raw == new_val);
+                assert (MarkDefs.chunked_pointer_field_as_obj_addr post raw ==
+                        raw);
+                assert (is_val_addr new_val);
+                assert (Seq.mem ((new_val) <: obj_addr)
+                          (MH.major_objects post));
+                assert (MarkDefs.chunked_pointer_field_as_obj_addr post raw ==
+                        ((new_val) <: obj_addr))
+              end else begin
+                assert (expected == old);
+                assert (raw == old);
+                chunked_old_raw_target_transferred_to_updated
+                  mh post src idx field_addr old raw
+              end
+            end else begin
+              assert (expected == old);
+              assert (raw == old);
+              chunked_old_raw_target_transferred_to_updated
+                mh post src idx field_addr old raw
+            end
+          end
+    end
+  in
+  FStar.Classical.forall_intro_4
+    (FStar.Classical.move_requires_4 one);
+  chunked_major_raw_field_targets_in_major_intro post
+#pop-options
+
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"

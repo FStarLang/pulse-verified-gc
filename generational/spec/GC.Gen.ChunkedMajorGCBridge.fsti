@@ -9,6 +9,7 @@ open GC.Spec.Object
 open GC.Spec.Fields
 open GC.Gen.Base
 open GC.Gen.MinorHeap
+open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
@@ -28,6 +29,8 @@ module ChunkedMajorReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
+module ChunkedUpdate = GC.Gen.ChunkedUpdate
+module CheneyPres = GC.Gen.CheneyPreservation
 
 val chunked_major_roots_nonblue
   : mh:MH.major_heap -> roots:Seq.seq obj_addr -> Tot prop
@@ -211,6 +214,22 @@ val chunked_major_raw_field_targets_in_major_single_chunk_from_dense_parts
       (ensures
         chunked_major_raw_field_targets_in_major
           (MH.single_chunk_major_heap g))
+
+val chunked_major_raw_field_targets_in_major_preserved_by_update
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_raw_field_targets_in_major mh /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh /\
+        CheneyPres.chunked_fwd_targets_above_minor fwd /\
+        CheneyPres.chunked_fwd_noninfix_targets_in_major
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+      (ensures
+        chunked_major_raw_field_targets_in_major
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd))
 
 val chunked_scanned_raw_targets_in_major_from_major_raw_field_targets
   (mh: MH.major_heap)
