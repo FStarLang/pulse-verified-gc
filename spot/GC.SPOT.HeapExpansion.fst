@@ -5057,6 +5057,37 @@ let spot_chunked_mark_bounded_target_membership_policy_from_scanned_targets
   ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_target_membership_policy_from_scanned_targets
     mh cap fuel
 
+let spot_chunked_mark_bounded_scanned_targets_policy_from_raw_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_raw_targets_policy
+          mh cap fuel)
+      (ensures
+        ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_scanned_targets_policy
+          mh cap fuel)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_scanned_targets_policy_from_raw_targets
+    mh cap fuel
+
+let spot_chunked_mark_bounded_target_membership_policy_from_raw_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_raw_targets_policy
+          mh cap fuel)
+      (ensures
+        ChunkedMarkBoundedReadiness.chunked_mark_bounded_target_membership_policy
+          mh cap fuel)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_target_membership_policy_from_raw_targets
+    mh cap fuel
+
 let spot_chunked_mark_bounded_preservation_ready_from_scanned_targets
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -5071,6 +5102,22 @@ let spot_chunked_mark_bounded_preservation_ready_from_scanned_targets
           mh cap fuel)
   =
   ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_preservation_ready_from_scanned_targets
+    mh cap fuel
+
+let spot_chunked_mark_bounded_preservation_ready_from_raw_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_raw_targets_policy
+          mh cap fuel)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_preservation_ready_from_raw_targets
     mh cap fuel
 
 let spot_chunked_push_children_bounded_preserves_black_status
@@ -7744,6 +7791,58 @@ let spot_chunked_major_gc_bounded_after_gray_roots_policy_from_target_membership
           mh roots cap mark_fuel)
   =
   GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_policy_from_target_membership
+    mh roots cap mark_fuel
+
+let spot_chunked_major_gc_bounded_after_gray_roots_raw_target_policy_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_raw_targets_policy
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_raw_target_policy
+          mh roots cap mark_fuel)
+  =
+  GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_raw_target_policy_intro
+    mh roots cap mark_fuel
+
+let spot_chunked_major_gc_bounded_after_gray_roots_target_membership_policy_from_raw_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_raw_target_policy
+          mh roots cap mark_fuel)
+      (ensures
+        GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_target_membership_policy
+          mh roots cap mark_fuel)
+  =
+  GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_target_membership_policy_from_raw_targets
+    mh roots cap mark_fuel
+
+let spot_chunked_major_gc_bounded_after_gray_roots_policy_from_raw_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_raw_target_policy
+          mh roots cap mark_fuel)
+      (ensures
+        GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+  =
+  GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_policy_from_raw_targets
     mh roots cap mark_fuel
 
 let spot_chunked_major_gc_bounded_liveness_policy_after_gray_roots_from_policy
@@ -12999,6 +13098,66 @@ let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_target_membersh
              collect.cmc_major major_roots)))
   =
   CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_target_membership_policy
+    minor major fp roots alloc_fuel fresh major_roots cap mark_fuel
+
+let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_raw_target_policy
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (major_roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyGraphReadiness.chunked_minor_preflight_value_policy
+          minor major fp roots fresh /\
+        (let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp alloc_fuel
+            (PromotionDemand.minor_promotion_demand minor + 1)
+            fresh in
+         let collect =
+          ChunkedCheney.chunked_cheney_collect_spec
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out in
+         GenInv.chunked_collection_heap_shape
+           collect.cmc_minor collect.cmc_major collect.cmc_fp
+           r.capacity_fuel_out /\
+         GenMajorGCBridge.chunked_major_roots_nonblue
+           collect.cmc_major major_roots /\
+         GenMajorGCBridge.chunked_major_edge_gen_field_witness
+           collect.cmc_major /\
+         GenMajorGCBridge.chunked_major_field_targets_non_infix
+           collect.cmc_major /\
+         GenMajorGCBridge.chunked_major_gc_bounded_after_gray_roots_raw_target_policy
+           collect.cmc_major major_roots cap mark_fuel))
+      (ensures
+        CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_post
+          minor major fp roots alloc_fuel fresh /\
+        (let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp alloc_fuel
+            (PromotionDemand.minor_promotion_demand minor + 1)
+            fresh in
+         let collect =
+          ChunkedCheney.chunked_cheney_collect_spec
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out in
+         let (major_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots
+              collect.cmc_major major_roots)
+            cap mark_fuel in
+         ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+           collect.cmc_major major_final
+           (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+             collect.cmc_major major_roots)))
+  =
+  CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_raw_target_policy
     minor major fp roots alloc_fuel fresh major_roots cap mark_fuel
 
 let spot_chunked_alloc_head_split_alloc_header_wosize

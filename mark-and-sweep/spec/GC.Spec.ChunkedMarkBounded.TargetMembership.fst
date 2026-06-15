@@ -11,6 +11,7 @@ module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module Pres = GC.Spec.ChunkedMarkBounded.Preservation
 module MarkPres = GC.Spec.ChunkedMark.Preservation
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module Readiness = GC.Spec.ChunkedMarkBounded.Readiness
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
@@ -89,6 +90,128 @@ let chunked_scanned_white_targets_in_major_from_raw_targets
     (FStar.Classical.move_requires_2 one)
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_scanned_raw_targets_in_major_preserved_by_make_gray
+    (mh: MH.major_heap)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        chunked_scanned_raw_targets_in_major mh)
+      (ensures
+        chunked_scanned_raw_targets_in_major
+          (MarkDefs.chunked_make_gray mh target))
+  =
+  let mh' = MarkDefs.chunked_make_gray mh target in
+  MarkPres.chunked_make_gray_preserves_major_objects mh target;
+  MarkPres.chunked_make_gray_preserves_well_formed mh target;
+  MarkPres.chunked_make_gray_preserves_ranges mh target;
+  let one (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          Seq.mem obj (MH.major_objects mh') /\
+          ~(MarkDefs.chunked_is_no_scan mh' obj) /\
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh' obj))
+        (ensures
+          (let v = MarkDefs.chunked_get_field mh' obj i in
+           if MarkDefs.chunked_is_pointer_field mh' v then
+            let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh' v in
+            Seq.mem child_raw (MH.major_objects mh') /\
+            ~(SweepDefs.chunked_is_infix mh' child_raw)
+           else
+            True))
+    =
+    assert (Seq.mem obj (MH.major_objects mh));
+    MarkPres.chunked_make_gray_preserves_no_scan_status mh target obj;
+    MarkPres.chunked_make_gray_preserves_wosize_of_object mh target obj;
+    assert (~(MarkDefs.chunked_is_no_scan mh obj));
+    assert (U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj));
+    MarkPres.chunked_make_gray_preserves_get_field mh target obj i;
+    let v = MarkDefs.chunked_get_field mh' obj i in
+    assert (v == MarkDefs.chunked_get_field mh obj i);
+    RangePres.same_chunk_ranges_preserves_is_major_pointer mh mh' v;
+    MarkDefs.chunked_is_pointer_field_step mh v;
+    MarkDefs.chunked_is_pointer_field_step mh' v;
+    if MarkDefs.chunked_is_pointer_field mh' v then begin
+      assert (MarkDefs.chunked_is_pointer_field mh v);
+      MarkDefs.chunked_pointer_field_as_obj_addr_step mh v;
+      MarkDefs.chunked_pointer_field_as_obj_addr_step mh' v;
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child_raw' = MarkDefs.chunked_pointer_field_as_obj_addr mh' v in
+      assert (child_raw == child_raw');
+      assert (Seq.mem child_raw (MH.major_objects mh));
+      assert (~(SweepDefs.chunked_is_infix mh child_raw));
+      assert (Seq.mem child_raw' (MH.major_objects mh'));
+      MarkPres.chunked_make_gray_preserves_infix_status mh target child_raw;
+      assert (SweepDefs.chunked_is_infix mh' child_raw' ==
+              SweepDefs.chunked_is_infix mh child_raw)
+    end
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 one)
+
+let chunked_scanned_raw_targets_in_major_preserved_by_make_black
+    (mh: MH.major_heap)
+    (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        chunked_scanned_raw_targets_in_major mh)
+      (ensures
+        chunked_scanned_raw_targets_in_major
+          (MarkDefs.chunked_make_black mh target))
+  =
+  let mh' = MarkDefs.chunked_make_black mh target in
+  MarkPres.chunked_make_black_preserves_major_objects mh target;
+  MarkPres.chunked_make_black_preserves_well_formed mh target;
+  MarkPres.chunked_make_black_preserves_ranges mh target;
+  let one (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          Seq.mem obj (MH.major_objects mh') /\
+          ~(MarkDefs.chunked_is_no_scan mh' obj) /\
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh' obj))
+        (ensures
+          (let v = MarkDefs.chunked_get_field mh' obj i in
+           if MarkDefs.chunked_is_pointer_field mh' v then
+            let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh' v in
+            Seq.mem child_raw (MH.major_objects mh') /\
+            ~(SweepDefs.chunked_is_infix mh' child_raw)
+           else
+            True))
+    =
+    assert (Seq.mem obj (MH.major_objects mh));
+    MarkPres.chunked_make_black_preserves_no_scan_status mh target obj;
+    MarkPres.chunked_make_black_preserves_wosize_of_object mh target obj;
+    assert (~(MarkDefs.chunked_is_no_scan mh obj));
+    assert (U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj));
+    MarkPres.chunked_make_black_preserves_get_field mh target obj i;
+    let v = MarkDefs.chunked_get_field mh' obj i in
+    assert (v == MarkDefs.chunked_get_field mh obj i);
+    RangePres.same_chunk_ranges_preserves_is_major_pointer mh mh' v;
+    MarkDefs.chunked_is_pointer_field_step mh v;
+    MarkDefs.chunked_is_pointer_field_step mh' v;
+    if MarkDefs.chunked_is_pointer_field mh' v then begin
+      assert (MarkDefs.chunked_is_pointer_field mh v);
+      MarkDefs.chunked_pointer_field_as_obj_addr_step mh v;
+      MarkDefs.chunked_pointer_field_as_obj_addr_step mh' v;
+      let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+      let child_raw' = MarkDefs.chunked_pointer_field_as_obj_addr mh' v in
+      assert (child_raw == child_raw');
+      assert (Seq.mem child_raw (MH.major_objects mh));
+      assert (~(SweepDefs.chunked_is_infix mh child_raw));
+      assert (Seq.mem child_raw' (MH.major_objects mh'));
+      MarkPres.chunked_make_black_preserves_infix_status mh target child_raw;
+      assert (SweepDefs.chunked_is_infix mh' child_raw' ==
+              SweepDefs.chunked_is_infix mh child_raw)
+    end
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 one)
+#pop-options
+
 let chunked_scanned_white_targets_in_major_elim
     (mh: MH.major_heap)
     (obj: obj_addr)
@@ -139,6 +262,64 @@ let rec chunked_push_children_scanned_targets_policy
         mh' obj (U64.add i 1UL) ws
      else
       True)
+
+let rec chunked_push_children_raw_targets_policy
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+  : Tot prop
+    (decreases (U64.v ws - U64.v i))
+  =
+  if U64.v i > U64.v ws then True
+  else
+    let v = MarkDefs.chunked_get_field mh obj i in
+    let mh' =
+      if MarkDefs.chunked_is_pointer_field mh v then
+       let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+       let child = MarkDefs.chunked_resolve_object mh child_raw in
+       if SweepDefs.chunked_is_white mh child then
+         MarkDefs.chunked_make_gray mh child
+       else
+         mh
+      else
+       mh in
+    chunked_scanned_raw_targets_in_major mh /\
+    (if U64.v i < U64.v ws then
+      chunked_push_children_raw_targets_policy
+       mh' obj (U64.add i 1UL) ws
+     else
+      True)
+
+let rec chunked_push_children_scanned_targets_policy_from_raw_targets
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (ws: U64.t)
+  : Lemma
+      (requires chunked_push_children_raw_targets_policy mh obj i ws)
+      (ensures chunked_push_children_scanned_targets_policy mh obj i ws)
+      (decreases (U64.v ws - U64.v i))
+  =
+  if U64.v i > U64.v ws then
+    ()
+  else begin
+    chunked_scanned_white_targets_in_major_from_raw_targets mh;
+    let v = MarkDefs.chunked_get_field mh obj i in
+    let mh' =
+      if MarkDefs.chunked_is_pointer_field mh v then
+       let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+       let child = MarkDefs.chunked_resolve_object mh child_raw in
+       if SweepDefs.chunked_is_white mh child then
+         MarkDefs.chunked_make_gray mh child
+       else
+         mh
+      else
+       mh in
+    if U64.v i < U64.v ws then
+      chunked_push_children_scanned_targets_policy_from_raw_targets
+       mh' obj (U64.add i 1UL) ws
+  end
 
 let rec chunked_push_children_target_membership_policy_from_scanned_targets
     (mh: MH.major_heap)
@@ -225,6 +406,45 @@ let chunked_mark_step_scanned_targets_policy
       let ws = SweepDefs.chunked_wosize_of_object mh obj in
       chunked_push_children_scanned_targets_policy mh' obj 1UL ws)
 
+let chunked_mark_step_raw_targets_policy
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : GTot prop
+  =
+  if Seq.length st = 0 then True
+  else
+    let obj = Seq.head st in
+    Seq.mem obj (MH.major_objects mh) /\
+    (if MarkDefs.chunked_is_no_scan mh obj then
+      True
+     else
+      let mh' = MarkDefs.chunked_make_black mh obj in
+      let ws = SweepDefs.chunked_wosize_of_object mh obj in
+      chunked_push_children_raw_targets_policy mh' obj 1UL ws)
+
+let chunked_mark_step_scanned_targets_policy_from_raw_targets
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+  : Lemma
+      (requires chunked_mark_step_raw_targets_policy mh st cap)
+      (ensures chunked_mark_step_scanned_targets_policy mh st cap)
+  =
+  if Seq.length st = 0 then
+    ()
+  else begin
+    let obj = Seq.head st in
+    if MarkDefs.chunked_is_no_scan mh obj then
+      ()
+    else begin
+      let mh' = MarkDefs.chunked_make_black mh obj in
+      let ws = SweepDefs.chunked_wosize_of_object mh obj in
+      chunked_push_children_scanned_targets_policy_from_raw_targets
+       mh' obj 1UL ws
+    end
+  end
+
 let chunked_mark_step_target_membership_policy_from_scanned_targets
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)
@@ -275,6 +495,44 @@ let rec chunked_mark_inner_loop_scanned_targets_policy
     (let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
      chunked_mark_inner_loop_scanned_targets_policy
        mh' st' cap fuel_pred)
+
+let rec chunked_mark_inner_loop_raw_targets_policy
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Tot prop
+    (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then True
+  else
+    let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+    chunked_mark_step_raw_targets_policy mh st cap /\
+    (let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+     chunked_mark_inner_loop_raw_targets_policy
+       mh' st' cap fuel_pred)
+
+let rec chunked_mark_inner_loop_scanned_targets_policy_from_raw_targets
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Lemma
+      (requires chunked_mark_inner_loop_raw_targets_policy mh st cap fuel)
+      (ensures chunked_mark_inner_loop_scanned_targets_policy mh st cap fuel)
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then
+    ()
+  else begin
+    assert (fuel <> 0);
+    nat_nonzero_pos fuel;
+    let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+    chunked_mark_step_scanned_targets_policy_from_raw_targets mh st cap;
+    let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+    chunked_mark_inner_loop_scanned_targets_policy_from_raw_targets
+      mh' st' cap fuel_pred
+  end
 
 let rec chunked_mark_inner_loop_target_membership_policy_from_scanned_targets
     (mh: MH.major_heap)
@@ -330,6 +588,52 @@ let rec chunked_mark_bounded_scanned_targets_policy
       (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
        chunked_mark_bounded_scanned_targets_policy mh' cap fuel_pred)
 
+let rec chunked_mark_bounded_raw_targets_policy
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Tot prop
+    (decreases fuel)
+  =
+  if fuel = 0 then True
+  else
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then True
+    else
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+      chunked_mark_inner_loop_raw_targets_policy mh st cap inner_fuel /\
+      (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+       chunked_mark_bounded_raw_targets_policy mh' cap fuel_pred)
+
+let rec chunked_mark_bounded_scanned_targets_policy_from_raw_targets
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires chunked_mark_bounded_raw_targets_policy mh cap fuel)
+      (ensures chunked_mark_bounded_scanned_targets_policy mh cap fuel)
+      (decreases fuel)
+  =
+  if fuel = 0 then
+    ()
+  else begin
+    assert (fuel <> 0);
+    nat_nonzero_pos fuel;
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then
+      ()
+    else begin
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+      chunked_mark_inner_loop_scanned_targets_policy_from_raw_targets
+        mh st cap inner_fuel;
+      let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+      chunked_mark_bounded_scanned_targets_policy_from_raw_targets
+        mh' cap fuel_pred
+    end
+  end
+
 let rec chunked_mark_bounded_target_membership_policy_from_scanned_targets
     (mh: MH.major_heap)
     (cap: nat{cap > 0})
@@ -373,6 +677,22 @@ let rec chunked_mark_bounded_target_membership_policy_from_scanned_targets
     end
   end
 
+let chunked_mark_bounded_target_membership_policy_from_raw_targets
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_bounded_raw_targets_policy mh cap fuel)
+      (ensures
+        Readiness.chunked_mark_bounded_target_membership_policy mh cap fuel)
+  =
+  chunked_mark_bounded_scanned_targets_policy_from_raw_targets
+    mh cap fuel;
+  chunked_mark_bounded_target_membership_policy_from_scanned_targets
+    mh cap fuel
+
 let chunked_mark_bounded_preservation_ready_from_scanned_targets
     (mh: MH.major_heap)
     (cap: nat{cap > 0})
@@ -385,6 +705,22 @@ let chunked_mark_bounded_preservation_ready_from_scanned_targets
         Pres.chunked_mark_bounded_preservation_ready mh cap fuel)
   =
   chunked_mark_bounded_target_membership_policy_from_scanned_targets
+    mh cap fuel;
+  Readiness.chunked_mark_bounded_preservation_ready_from_target_membership
+    mh cap fuel
+
+let chunked_mark_bounded_preservation_ready_from_raw_targets
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_bounded_raw_targets_policy mh cap fuel)
+      (ensures
+        Pres.chunked_mark_bounded_preservation_ready mh cap fuel)
+  =
+  chunked_mark_bounded_target_membership_policy_from_raw_targets
     mh cap fuel;
   Readiness.chunked_mark_bounded_preservation_ready_from_target_membership
     mh cap fuel

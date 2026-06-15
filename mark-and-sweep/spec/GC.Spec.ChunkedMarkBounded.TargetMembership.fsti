@@ -120,6 +120,20 @@ val chunked_mark_bounded_scanned_targets_policy
   (fuel: nat)
   : GTot prop
 
+val chunked_mark_bounded_raw_targets_policy
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : GTot prop
+
+val chunked_mark_bounded_scanned_targets_policy_from_raw_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires chunked_mark_bounded_raw_targets_policy mh cap fuel)
+      (ensures chunked_mark_bounded_scanned_targets_policy mh cap fuel)
+
 val chunked_mark_bounded_target_membership_policy_from_scanned_targets
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -131,6 +145,17 @@ val chunked_mark_bounded_target_membership_policy_from_scanned_targets
       (ensures
         Readiness.chunked_mark_bounded_target_membership_policy mh cap fuel)
 
+val chunked_mark_bounded_target_membership_policy_from_raw_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_bounded_raw_targets_policy mh cap fuel)
+      (ensures
+        Readiness.chunked_mark_bounded_target_membership_policy mh cap fuel)
+
 val chunked_mark_bounded_preservation_ready_from_scanned_targets
   (mh: MH.major_heap)
   (cap: nat{cap > 0})
@@ -139,6 +164,18 @@ val chunked_mark_bounded_preservation_ready_from_scanned_targets
       (requires
         MH.well_formed_major_heap mh /\
         chunked_mark_bounded_scanned_targets_policy mh cap fuel)
+      (ensures
+        GC.Spec.ChunkedMarkBounded.Preservation.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+
+val chunked_mark_bounded_preservation_ready_from_raw_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_mark_bounded_raw_targets_policy mh cap fuel)
       (ensures
         GC.Spec.ChunkedMarkBounded.Preservation.chunked_mark_bounded_preservation_ready
           mh cap fuel)
