@@ -7224,6 +7224,36 @@ let spot_chunked_collection_heap_shape_implies_no_black_to_white_vertex_targets
   GenMajorGCBridge.chunked_collection_heap_shape_implies_no_black_to_white_vertex_targets
     minor mh fp fuel
 
+let spot_chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        mark_fuel > 0 /\
+        GenInv.chunked_collection_heap_shape minor mh fp shape_fuel /\
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= ChunkedMarkBounded.chunked_count_non_black mh /\
+        ChunkedMajorGCMarkLive.chunked_roots_gray_or_black mh roots /\
+        ChunkedMajorGCMarkLive.chunked_no_pointer_to_blue mh /\
+        ChunkedMarkBoundedEdge.chunked_vertex_edge_targets_non_infix mh)
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded mh cap mark_fuel in
+        ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+  =
+  GenMajorGCBridge.chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_from_collection_shape
+    minor mh fp shape_fuel roots cap mark_fuel
+
 let spot_chunked_major_reachable_refl
   (mh: MH.major_heap)
   (x: obj_addr)
