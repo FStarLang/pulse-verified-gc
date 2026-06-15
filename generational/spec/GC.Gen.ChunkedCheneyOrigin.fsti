@@ -9,6 +9,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 
 module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 module GenInv = GC.Gen.HeapInvariant
 module ChunkedCheney = GC.Gen.ChunkedCheney
 
@@ -84,6 +85,29 @@ val chunked_cheney_forward_normal_noop_oom_preserves_nonblue_origin_inv
         (GC.Gen.ChunkedPromote.chunked_promote_object_with_fuel
           minor cs.ccs_major addr cs.ccs_fp
           (minor_wosize minor addr) fuel).new_addr = 0UL)
+      (ensures
+        chunked_nonblue_origin_inv minor major0
+          (ChunkedCheney.chunked_cheney_forward_normal
+            minor cs addr fuel))
+
+val chunked_cheney_forward_normal_success_preserves_nonblue_origin_inv
+  : minor:minor_state -> major0:MH.major_heap ->
+    cs:ChunkedCheney.chunked_cheney_state -> addr:U64.t -> fuel:nat ->
+    Lemma
+      (requires
+        fuel > 1 /\
+        chunked_nonblue_origin_inv minor major0 cs /\
+        GenInv.chunked_major_alloc_shape cs.ccs_major cs.ccs_fp fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          cs.ccs_major cs.ccs_fp fuel = true /\
+        Seq.mem addr (minor_objects minor) /\
+        ~(is_infix_in_minor minor addr) /\
+        cs.ccs_fwd addr = 0UL /\
+        minor_wosize minor addr > 0 /\
+        cs.ccs_fp <> 0UL /\
+        SpecMajorAlloc.major_fl_head_wosize
+          cs.ccs_major cs.ccs_fp >=
+          minor_wosize minor addr + 2)
       (ensures
         chunked_nonblue_origin_inv minor major0
           (ChunkedCheney.chunked_cheney_forward_normal
