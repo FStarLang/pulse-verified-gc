@@ -274,6 +274,25 @@ val chunked_cheney_promote_old_field_source_case_intro
         chunked_cheney_promote_old_field_source_case
           minor major fp roots alloc_fuel src j field_addr raw)
 
+val chunked_cheney_promote_fwd_field_source_case_intro
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    x:U64.t -> src:obj_addr -> j:nat -> field_addr:hp_addr ->
+    raw:U64.t ->
+    Lemma
+      (requires
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         res.fwd_map x == src /\
+         Seq.mem x (minor_objects minor) /\
+         ~(is_infix_in_minor minor x) /\
+         j < minor_wosize minor x /\
+         U64.v field_addr == U64.v (res.fwd_map x) + j * U64.v mword))
+      (ensures
+        chunked_cheney_promote_fwd_field_source_case
+          minor major fp roots alloc_fuel src j field_addr raw)
+
 val chunked_cheney_promote_major_minor_fields_no_infix_targets
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
