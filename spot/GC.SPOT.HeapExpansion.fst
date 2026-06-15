@@ -7479,6 +7479,53 @@ let spot_chunked_major_gc_bounded_liveness_policy_after_gray_roots
   GenMajorGCBridge.chunked_major_gc_bounded_liveness_policy_after_gray_roots
     mh roots cap mark_fuel
 
+let spot_chunked_no_black_objects_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_no_black_objects mh)
+      (ensures
+        GenInv.chunked_no_black_objects
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  GenMajorGCBridge.chunked_no_black_objects_preserved_by_gray_roots
+    mh roots
+
+let spot_chunked_blue_status_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        GenMajorGCBridge.chunked_major_roots_nonblue mh roots)
+      (ensures
+        GenInv.chunked_is_blue
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        GenInv.chunked_is_blue mh target)
+  =
+  GenMajorGCBridge.chunked_blue_status_preserved_by_gray_roots
+    mh roots target
+
+let spot_chunked_minor_major_fields_no_blue_preserved_by_gray_roots
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenMajorGCBridge.chunked_major_roots_nonblue mh roots /\
+        GenInv.chunked_minor_major_fields_no_blue minor mh)
+      (ensures
+        GenInv.chunked_minor_major_fields_no_blue minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  GenMajorGCBridge.chunked_minor_major_fields_no_blue_preserved_by_gray_roots
+    minor mh roots
+
 let spot_chunked_sweep_not_blue_vertex_implies_gen_not_blue
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -7877,6 +7924,46 @@ let spot_chunked_gray_roots_preserves_gray_or_black
           (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target)
   =
   ChunkedMajorGCRoots.chunked_gray_roots_preserves_gray_or_black
+    mh roots target
+
+let spot_chunked_gray_roots_preserves_blue_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        (forall (root: obj_addr).
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh) ==>
+          ~(ChunkedSweepDefs.chunked_is_blue mh root)))
+      (ensures
+        ChunkedSweepDefs.chunked_is_blue
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        ChunkedSweepDefs.chunked_is_blue mh target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_blue_status
+    mh roots target
+
+let spot_chunked_gray_roots_preserves_black_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        (forall (root: obj_addr).
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh) ==>
+          ~(ChunkedSweepDefs.chunked_is_black mh root)))
+      (ensures
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        ChunkedSweepDefs.chunked_is_black mh target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_black_status
     mh roots target
 
 let spot_chunked_gray_roots_preserves_ranges

@@ -30,6 +30,15 @@ module CG = GC.Gen.CombinedGraph
 
 #set-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always --warn_error -321"
 
+let chunked_major_roots_nonblue
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : prop =
+  forall (root: obj_addr).
+    Seq.mem root roots /\
+    Seq.mem root (MH.major_objects mh) ==>
+    ~(GenInv.chunked_is_blue mh root)
+
 let chunked_sweep_black_implies_gen_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -803,6 +812,202 @@ let chunked_major_gc_bounded_liveness_policy_after_gray_roots
   ChunkedMajorGCRoots.chunked_gray_roots_roots_gray_or_black mh roots;
   chunked_major_gc_bounded_liveness_policy_intro
     grayed roots cap mark_fuel
+#pop-options
+
+private let chunked_gen_black_implies_sweep_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        GenInv.chunked_is_black mh obj)
+      (ensures SweepDefs.chunked_is_black mh obj)
+  =
+  MH.major_objects_member_header_read_some mh obj;
+  let hdr = Some?.v (MH.read_word_in_major mh (hd_address obj)) in
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  GenInv.chunked_is_black_header mh obj hdr;
+  assert (getColor hdr == Header.Black);
+  SweepDefs.chunked_read_header_step mh obj;
+  assert (SweepDefs.chunked_read_header mh obj == Some hdr);
+  SweepDefs.chunked_color_of_object_some mh obj hdr;
+  SweepDefs.chunked_is_black_from_color mh obj
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_no_black_objects_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_no_black_objects mh)
+      (ensures
+        GenInv.chunked_no_black_objects
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  let roots_nonblack (root: obj_addr)
+    : Lemma
+        (requires
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh))
+        (ensures ~(SweepDefs.chunked_is_black mh root))
+    =
+    if SweepDefs.chunked_is_black mh root then begin
+      chunked_sweep_black_implies_gen_black mh root;
+      GenInv.chunked_no_black_objects_elim mh root;
+      assert False
+    end
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires roots_nonblack);
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  let grayed_no_black (obj: obj_addr)
+    : Lemma
+        (requires Seq.mem obj (MH.major_objects grayed))
+        (ensures ~(GenInv.chunked_is_black grayed obj))
+    =
+    assert (Seq.mem obj (MH.major_objects mh));
+    if GenInv.chunked_is_black grayed obj then begin
+      chunked_gen_black_implies_sweep_black grayed obj;
+      ChunkedMajorGCRoots.chunked_gray_roots_preserves_black_status
+        mh roots obj;
+      assert (SweepDefs.chunked_is_black mh obj);
+      chunked_sweep_black_implies_gen_black mh obj;
+      GenInv.chunked_no_black_objects_elim mh obj;
+      assert False
+    end
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires grayed_no_black);
+  GenInv.chunked_no_black_objects_intro grayed
+#pop-options
+
+private let chunked_sweep_blue_implies_gen_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires SweepDefs.chunked_is_blue mh obj)
+      (ensures GenInv.chunked_is_blue mh obj)
+  =
+  SweepDefs.chunked_is_blue_read_header mh obj;
+  SweepDefs.chunked_read_header_step mh obj;
+  let hdr = Some?.v (SweepDefs.chunked_read_header mh obj) in
+  assert (SweepDefs.chunked_read_header mh obj == Some hdr);
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  assert (getColor hdr == Header.Blue);
+  GenInv.chunked_is_blue_header mh obj hdr
+
+private let chunked_gen_blue_implies_sweep_blue
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        GenInv.chunked_is_blue mh obj)
+      (ensures SweepDefs.chunked_is_blue mh obj)
+  =
+  MH.major_objects_member_header_read_some mh obj;
+  let hdr = Some?.v (MH.read_word_in_major mh (hd_address obj)) in
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  GenInv.chunked_is_blue_header mh obj hdr;
+  assert (getColor hdr == Header.Blue);
+  SweepDefs.chunked_read_header_step mh obj;
+  assert (SweepDefs.chunked_read_header mh obj == Some hdr);
+  SweepDefs.chunked_color_of_object_some mh obj hdr;
+  SweepDefs.chunked_is_blue_from_color mh obj
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_blue_status_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        chunked_major_roots_nonblue mh roots)
+      (ensures
+        GenInv.chunked_is_blue
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        GenInv.chunked_is_blue mh target)
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  let roots_nonblue_sweep (root: obj_addr)
+    : Lemma
+        (requires
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh))
+        (ensures ~(SweepDefs.chunked_is_blue mh root))
+    =
+    if SweepDefs.chunked_is_blue mh root then begin
+      chunked_sweep_blue_implies_gen_blue mh root;
+      assert False
+    end
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires roots_nonblue_sweep);
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_blue_status
+    mh roots target;
+  assert (Seq.mem target (MH.major_objects grayed));
+  if GenInv.chunked_is_blue grayed target then begin
+    chunked_gen_blue_implies_sweep_blue grayed target;
+    assert (SweepDefs.chunked_is_blue mh target);
+    chunked_sweep_blue_implies_gen_blue mh target
+  end;
+  if GenInv.chunked_is_blue mh target then begin
+    chunked_gen_blue_implies_sweep_blue mh target;
+    assert (SweepDefs.chunked_is_blue grayed target);
+    chunked_sweep_blue_implies_gen_blue grayed target
+  end
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_minor_major_fields_no_blue_preserved_by_gray_roots
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_roots_nonblue mh roots /\
+        GenInv.chunked_minor_major_fields_no_blue minor mh)
+      (ensures
+        GenInv.chunked_minor_major_fields_no_blue minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  let preserved (obj: U64.t) (j: nat)
+    : Lemma
+        (ensures
+          Seq.mem obj (minor_objects minor) /\
+          j < minor_wosize minor obj /\
+          is_pointer_field (minor_read_field minor obj j) ==>
+          Seq.mem ((minor_read_field minor obj j) <: obj_addr)
+                  (MH.major_objects grayed) /\
+          ~(GenInv.chunked_is_blue grayed
+              ((minor_read_field minor obj j) <: obj_addr)))
+    =
+    if Seq.mem obj (minor_objects minor) &&
+       j < minor_wosize minor obj &&
+       is_pointer_field (minor_read_field minor obj j)
+    then begin
+      let target = ((minor_read_field minor obj j) <: obj_addr) in
+      GenInv.chunked_minor_major_fields_no_blue_elim minor mh obj j;
+      assert (Seq.mem target (MH.major_objects mh));
+      chunked_blue_status_preserved_by_gray_roots mh roots target;
+      assert (Seq.mem target (MH.major_objects grayed));
+      assert (~(GenInv.chunked_is_blue grayed target))
+    end
+  in
+  FStar.Classical.forall_intro_2 preserved;
+  GenInv.chunked_minor_major_fields_no_blue_intro minor grayed
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"

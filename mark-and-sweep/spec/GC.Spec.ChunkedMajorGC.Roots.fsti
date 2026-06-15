@@ -49,6 +49,40 @@ val chunked_gray_roots_preserves_gray_or_black
         GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black
           (chunked_gray_roots mh roots) target)
 
+val chunked_gray_roots_preserves_blue_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        (forall (root: obj_addr).
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh) ==>
+          ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue mh root)))
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue
+          (chunked_gray_roots mh roots) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue mh target)
+
+val chunked_gray_roots_preserves_black_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        (forall (root: obj_addr).
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh) ==>
+          ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black mh root)))
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black
+          (chunked_gray_roots mh roots) target ==
+        GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_black mh target)
+
 val chunked_gray_roots_preserves_ranges
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

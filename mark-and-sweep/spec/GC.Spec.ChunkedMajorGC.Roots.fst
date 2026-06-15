@@ -6,6 +6,7 @@ module U64 = FStar.UInt64
 open GC.Spec.Base
 
 module Header = GC.Lib.Header
+module Obj = GC.Spec.Object
 module MH = GC.Spec.MajorHeap
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
 module MarkDefs = GC.Spec.ChunkedMark.Defs
@@ -100,6 +101,29 @@ private let gray_status_to_color
   | Some Header.Gray -> ()
   | _ -> assert False
 
+private let chunked_make_gray_not_black
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+    (requires
+      MH.well_formed_major_heap mh /\
+      Seq.mem obj (MH.major_objects mh))
+    (ensures
+      ~(SweepDefs.chunked_is_black (MarkDefs.chunked_make_gray mh obj) obj))
+  =
+  let mh1 = MarkDefs.chunked_make_gray mh obj in
+  MarkPres.chunked_make_gray_makes_gray mh obj;
+  if SweepDefs.chunked_is_black mh1 obj then begin
+  SweepDefs.chunked_color_of_object_elim mh1 obj Header.Gray;
+  SweepDefs.chunked_is_black_read_header mh1 obj;
+  match SweepDefs.chunked_read_header mh1 obj with
+  | Some hdr ->
+    assert (Obj.getColor hdr == Header.Gray);
+    assert (Obj.getColor hdr == Header.Black);
+    assert False
+  | None -> assert False
+  end
+
 let rec chunked_gray_roots_preserves_gray_or_black
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -141,6 +165,146 @@ let rec chunked_gray_roots_preserves_gray_or_black
       chunked_gray_roots_preserves_gray_or_black mh1 rest target
     end else
       chunked_gray_roots_preserves_gray_or_black mh rest target
+  end
+
+let rec chunked_gray_roots_preserves_blue_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        (forall (root: obj_addr).
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh) ==>
+          ~(SweepDefs.chunked_is_blue mh root)))
+      (ensures
+        SweepDefs.chunked_is_blue
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_is_blue mh target)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      let rest_nonblue (r: obj_addr)
+        : Lemma
+            (requires
+              Seq.mem r rest /\
+              Seq.mem r (MH.major_objects mh1))
+            (ensures ~(SweepDefs.chunked_is_blue mh1 r))
+        =
+        assert (Seq.mem r roots);
+        assert (Seq.mem r (MH.major_objects mh));
+        if r == root then
+          MarkPres.chunked_make_gray_not_blue mh root
+        else begin
+          MarkPres.chunked_make_gray_preserves_other_blue_status mh root r;
+          assert (~(SweepDefs.chunked_is_blue mh r))
+        end
+      in
+      FStar.Classical.forall_intro
+        (FStar.Classical.move_requires rest_nonblue);
+      if target == root then
+        MarkPres.chunked_make_gray_not_blue mh root
+      else
+        MarkPres.chunked_make_gray_preserves_other_blue_status mh root target;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_blue_status mh1 rest target
+    end else begin
+      let rest_nonblue (r: obj_addr)
+        : Lemma
+            (requires
+              Seq.mem r rest /\
+              Seq.mem r (MH.major_objects mh))
+            (ensures ~(SweepDefs.chunked_is_blue mh r))
+        =
+        assert (Seq.mem r roots)
+      in
+      FStar.Classical.forall_intro
+        (FStar.Classical.move_requires rest_nonblue);
+      chunked_gray_roots_preserves_blue_status mh rest target
+    end
+  end
+
+let rec chunked_gray_roots_preserves_black_status
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        (forall (root: obj_addr).
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh) ==>
+          ~(SweepDefs.chunked_is_black mh root)))
+      (ensures
+        SweepDefs.chunked_is_black
+          (chunked_gray_roots mh roots) target ==
+        SweepDefs.chunked_is_black mh target)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      let rest_nonblack (r: obj_addr)
+        : Lemma
+            (requires
+              Seq.mem r rest /\
+              Seq.mem r (MH.major_objects mh1))
+            (ensures ~(SweepDefs.chunked_is_black mh1 r))
+        =
+        assert (Seq.mem r roots);
+        assert (Seq.mem r (MH.major_objects mh));
+        if r == root then
+          chunked_make_gray_not_black mh root
+        else begin
+          MarkPres.chunked_make_gray_preserves_other_black_status mh root r;
+          assert (~(SweepDefs.chunked_is_black mh r))
+        end
+      in
+      FStar.Classical.forall_intro
+        (FStar.Classical.move_requires rest_nonblack);
+      if target == root then
+        chunked_make_gray_not_black mh root
+      else
+        MarkPres.chunked_make_gray_preserves_other_black_status mh root target;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_black_status mh1 rest target
+    end else begin
+      let rest_nonblack (r: obj_addr)
+        : Lemma
+            (requires
+              Seq.mem r rest /\
+              Seq.mem r (MH.major_objects mh))
+            (ensures ~(SweepDefs.chunked_is_black mh r))
+        =
+        assert (Seq.mem r roots)
+      in
+      FStar.Classical.forall_intro
+        (FStar.Classical.move_requires rest_nonblack);
+      chunked_gray_roots_preserves_black_status mh rest target
+    end
   end
 
 let rec chunked_gray_roots_preserves_ranges

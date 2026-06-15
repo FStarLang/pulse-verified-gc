@@ -26,6 +26,9 @@ module ChunkedMarkNoBlack = GC.Spec.ChunkedMarkBounded.NoBlackToWhite
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 
+val chunked_major_roots_nonblue
+  : mh:MH.major_heap -> roots:Seq.seq obj_addr -> Tot prop
+
 val chunked_sweep_black_implies_gen_black
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -220,6 +223,44 @@ val chunked_major_gc_bounded_liveness_policy_after_gray_roots
         chunked_major_gc_bounded_liveness_policy
           (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
           roots cap mark_fuel)
+
+val chunked_no_black_objects_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_no_black_objects mh)
+      (ensures
+        GenInv.chunked_no_black_objects
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+
+val chunked_blue_status_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        chunked_major_roots_nonblue mh roots)
+      (ensures
+        GenInv.chunked_is_blue
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target ==
+        GenInv.chunked_is_blue mh target)
+
+val chunked_minor_major_fields_no_blue_preserved_by_gray_roots
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_roots_nonblue mh roots /\
+        GenInv.chunked_minor_major_fields_no_blue minor mh)
+      (ensures
+        GenInv.chunked_minor_major_fields_no_blue minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
 
 val chunked_sweep_not_blue_vertex_implies_gen_not_blue
   (mh: MH.major_heap)
