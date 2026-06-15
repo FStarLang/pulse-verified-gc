@@ -24,6 +24,7 @@ module SpecMajorAllocMultiAlloc = GC.Spec.MajorAllocator.MultiAlloc
 module PromotionDemand = GC.Gen.PromotionDemand
 module CheneyPreservation = GC.Gen.CheneyPreservation
 module CheneyCorrectness = GC.Gen.CheneyCorrectness
+module ChunkedCheneyInjectivity = GC.Gen.ChunkedCheneyInjectivity
 module CheneyGraphReadiness = GC.Gen.CheneyGraphReadiness
 module SingleChunkInvariant = GC.Gen.SingleChunkInvariant
 module RBridge = GC.Gen.ReachabilityBridge
@@ -16701,6 +16702,28 @@ let spot_chunked_forward_one_normal_then_fields_minor_successor_edge
   =
   CheneyCorrectness.chunked_forward_one_normal_then_fields_minor_successor_edge
     minor cs addr fuel j promoted field_addr
+
+let spot_chunked_cheney_promote_fwd_normal_targets_not_blue
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         ChunkedCheneyInjectivity.chunked_fwd_normal_targets_not_blue
+           minor res.fwd_map res.major_final))
+  =
+  ChunkedCheneyInjectivity.chunked_cheney_promote_fwd_normal_targets_not_blue
+    minor major fp roots alloc_fuel remaining
 
 let spot_chunked_cheney_gc_correct_after_preflight_old_major_field_edge
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)

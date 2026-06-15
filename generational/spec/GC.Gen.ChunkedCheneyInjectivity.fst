@@ -197,7 +197,7 @@ private let chunked_fwd_normal_injective_extend_fresh
 
 #push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
 [@"opaque_to_smt"]
-private let chunked_fwd_normal_targets_not_blue
+let chunked_fwd_normal_targets_not_blue
   (minor: minor_state) (fwd: forwarding_map) (mh: MH.major_heap) : prop =
   forall (x: U64.t).
     fwd x <> 0UL /\
@@ -211,7 +211,7 @@ private let chunked_fwd_normal_targets_not_blue
       | Some hdr -> getColor hdr <> Blue /\ U64.v (getWosize hdr) >= 1
       | None -> False))
 
-private let chunked_fwd_normal_targets_not_blue_elim
+let chunked_fwd_normal_targets_not_blue_elim
   (minor: minor_state) (fwd: forwarding_map) (mh: MH.major_heap)
   (x: U64.t)
   : Lemma
@@ -1036,7 +1036,7 @@ private let rec chunked_cheney_scan_preserves_inj_inv
     ChunkedCheney.chunked_cheney_scan_base
       minor cs scan scan_fuel alloc_fuel
 
-let chunked_cheney_promote_fwd_normal_injective
+private let chunked_cheney_promote_fwd_normal_inj_inv
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel remaining: nat)
   : Lemma
@@ -1051,7 +1051,11 @@ let chunked_cheney_promote_fwd_normal_injective
       (ensures
         chunked_fwd_normal_injective minor
           (ChunkedCheney.chunked_cheney_promote
-            minor major fp roots alloc_fuel).fwd_map)
+            minor major fp roots alloc_fuel).fwd_map /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         chunked_fwd_normal_targets_not_blue minor res.fwd_map res.major_final))
   =
   let cs0 : ChunkedCheney.chunked_cheney_state =
     { ccs_major = major; ccs_fp = fp;
@@ -1088,5 +1092,48 @@ let chunked_cheney_promote_fwd_normal_injective
       minor major fp roots alloc_fuel in
   ChunkedCheney.chunked_cheney_promote_equation
     minor major fp roots alloc_fuel;
-  assert (res.fwd_map == cs2.ccs_fwd)
+  assert (res.fwd_map == cs2.ccs_fwd);
+  assert (res.major_final == cs2.ccs_major);
+  assert (chunked_fwd_normal_targets_not_blue minor res.fwd_map res.major_final)
+
+let chunked_cheney_promote_fwd_normal_injective
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel remaining: nat)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        chunked_fwd_normal_injective minor
+          (ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel).fwd_map)
+  =
+  chunked_cheney_promote_fwd_normal_inj_inv
+    minor major fp roots alloc_fuel remaining
+
+let chunked_cheney_promote_fwd_normal_targets_not_blue
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel remaining: nat)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         chunked_fwd_normal_targets_not_blue minor res.fwd_map res.major_final))
+  =
+  chunked_cheney_promote_fwd_normal_inj_inv
+    minor major fp roots alloc_fuel remaining
 #pop-options
