@@ -179,3 +179,13 @@ val chunked_mark_bounded_preservation_ready_from_raw_targets
       (ensures
         GC.Spec.ChunkedMarkBounded.Preservation.chunked_mark_bounded_preservation_ready
           mh cap fuel)
+
+val chunked_mark_bounded_raw_targets_policy_from_static
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_scanned_raw_targets_in_major mh)
+      (ensures chunked_mark_bounded_raw_targets_policy mh cap fuel)

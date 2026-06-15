@@ -959,6 +959,62 @@ let chunked_major_gc_bounded_after_gray_roots_raw_target_policy_intro
   =
   ()
 
+let chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : prop
+  =
+  MH.well_formed_major_heap mh /\
+  mark_fuel > 0 /\
+  ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major
+    (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+  Seq.length (MH.major_objects mh) <= cap /\
+  mark_fuel >= Seq.length (MH.major_objects mh)
+
+let chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        mark_fuel > 0 /\
+        ChunkedMarkTargetMembership.chunked_scanned_raw_targets_in_major
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+          mh roots cap mark_fuel)
+  =
+  ()
+
+let chunked_major_gc_bounded_after_gray_roots_raw_target_policy_from_static
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+          mh roots cap mark_fuel)
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_raw_target_policy
+          mh roots cap mark_fuel)
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  assert (Seq.length (MH.major_objects grayed) ==
+          Seq.length (MH.major_objects mh));
+  ChunkedMarkTargetMembership.chunked_mark_bounded_raw_targets_policy_from_static
+    grayed cap mark_fuel;
+  chunked_major_gc_bounded_after_gray_roots_raw_target_policy_intro
+    mh roots cap mark_fuel
+
 let chunked_major_gc_bounded_after_gray_roots_target_membership_policy_from_raw_targets
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
@@ -998,6 +1054,42 @@ let chunked_major_gc_bounded_after_gray_roots_policy_from_raw_targets
   chunked_major_gc_bounded_after_gray_roots_target_membership_policy_from_raw_targets
     mh roots cap mark_fuel;
   chunked_major_gc_bounded_after_gray_roots_policy_from_target_membership
+    mh roots cap mark_fuel
+
+let chunked_major_gc_bounded_after_gray_roots_target_membership_policy_from_static_raw_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+          mh roots cap mark_fuel)
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_target_membership_policy
+          mh roots cap mark_fuel)
+  =
+  chunked_major_gc_bounded_after_gray_roots_raw_target_policy_from_static
+    mh roots cap mark_fuel;
+  chunked_major_gc_bounded_after_gray_roots_target_membership_policy_from_raw_targets
+    mh roots cap mark_fuel
+
+let chunked_major_gc_bounded_after_gray_roots_policy_from_static_raw_targets
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        chunked_major_gc_bounded_after_gray_roots_static_raw_target_policy
+          mh roots cap mark_fuel)
+      (ensures
+        chunked_major_gc_bounded_after_gray_roots_policy
+          mh roots cap mark_fuel)
+  =
+  chunked_major_gc_bounded_after_gray_roots_raw_target_policy_from_static
+    mh roots cap mark_fuel;
+  chunked_major_gc_bounded_after_gray_roots_policy_from_raw_targets
     mh roots cap mark_fuel
 #pop-options
 
