@@ -27,6 +27,20 @@ let chunked_roots_gray_or_black
     SweepDefs.chunked_is_black mh root
 
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_roots_gray_or_black_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        forall (root: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh root /\
+          Seq.mem root roots ==>
+          BDefs.chunked_is_gray mh root \/
+          SweepDefs.chunked_is_black mh root)
+      (ensures chunked_roots_gray_or_black mh roots)
+  =
+  ()
+
 let chunked_roots_gray_or_black_elim
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

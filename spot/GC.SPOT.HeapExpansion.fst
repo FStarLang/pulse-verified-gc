@@ -81,6 +81,7 @@ module ChunkedMajorGCReach = GC.Spec.ChunkedMajorGC.Reachability
 module ChunkedMajorGCMarkReach = GC.Spec.ChunkedMajorGC.MarkReachability
 module ChunkedMajorGCMarkLive = GC.Spec.ChunkedMajorGC.MarkLiveness
 module ChunkedMajorGCMarkLiveNoBlack = GC.Spec.ChunkedMajorGC.MarkLivenessNoBlack
+module ChunkedMajorGCRoots = GC.Spec.ChunkedMajorGC.Roots
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
@@ -7713,6 +7714,61 @@ let spot_chunked_major_reachable_from_roots_induct
   =
   ChunkedMajorGCReach.chunked_major_reachable_from_roots_induct
     mh roots p x
+
+let spot_chunked_gray_roots_preserves_major_objects
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires MH.well_formed_major_heap mh)
+      (ensures
+        MH.major_objects (ChunkedMajorGCRoots.chunked_gray_roots mh roots) ==
+        MH.major_objects mh)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects
+    mh roots
+
+let spot_chunked_gray_roots_preserves_well_formed
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires MH.well_formed_major_heap mh)
+      (ensures
+        MH.well_formed_major_heap
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed
+    mh roots
+
+let spot_chunked_gray_roots_preserves_gray_or_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        (ChunkedMarkBounded.chunked_is_gray mh target \/
+         ChunkedSweepDefs.chunked_is_black mh target))
+      (ensures
+        ChunkedMarkBounded.chunked_is_gray
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target \/
+        ChunkedSweepDefs.chunked_is_black
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) target)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_gray_or_black
+    mh roots target
+
+let spot_chunked_gray_roots_roots_gray_or_black
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires MH.well_formed_major_heap mh)
+      (ensures
+        ChunkedMajorGCMarkLive.chunked_roots_gray_or_black
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots) roots)
+  =
+  ChunkedMajorGCRoots.chunked_gray_roots_roots_gray_or_black
+    mh roots
 
 let spot_chunked_roots_gray_or_black_elim
   (mh: MH.major_heap)

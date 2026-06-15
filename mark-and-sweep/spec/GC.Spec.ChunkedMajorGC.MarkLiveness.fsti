@@ -17,6 +17,18 @@ val chunked_roots_gray_or_black
   (roots: Seq.seq obj_addr)
   : prop
 
+val chunked_roots_gray_or_black_intro
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        forall (root: obj_addr).
+          ChunkedMajorGraph.chunked_major_vertex mh root /\
+          Seq.mem root roots ==>
+          BDefs.chunked_is_gray mh root \/
+          SweepDefs.chunked_is_black mh root)
+      (ensures chunked_roots_gray_or_black mh roots)
+
 val chunked_roots_gray_or_black_elim
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)
