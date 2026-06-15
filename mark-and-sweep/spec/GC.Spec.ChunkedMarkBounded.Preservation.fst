@@ -607,6 +607,35 @@ let chunked_mark_inner_loop_preservation_ready_step
   assert (chunked_mark_step_bounded_preservation_ready mh st cap);
   assert (chunked_mark_inner_loop_preservation_ready mh' st' cap fuel_pred)
 
+let chunked_mark_inner_loop_preservation_ready_base_intro
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Lemma
+      (requires fuel = 0 \/ Seq.length st = 0)
+      (ensures chunked_mark_inner_loop_preservation_ready mh st cap fuel)
+  = ()
+
+let chunked_mark_inner_loop_preservation_ready_step_intro
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length st > 0 /\
+        chunked_mark_step_bounded_preservation_ready mh st cap /\
+        (let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+         chunked_mark_inner_loop_preservation_ready mh' st' cap (fuel - 1)))
+      (ensures chunked_mark_inner_loop_preservation_ready mh st cap fuel)
+  =
+  let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+  let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+  assert (chunked_mark_step_bounded_preservation_ready mh st cap);
+  assert (chunked_mark_inner_loop_preservation_ready mh' st' cap fuel_pred)
+
 let rec chunked_mark_inner_loop_preserves_major_objects
     (mh: MH.major_heap)
     (st: Seq.seq obj_addr)
@@ -853,6 +882,51 @@ let rec chunked_mark_bounded_preservation_ready
       chunked_mark_inner_loop_preservation_ready mh st cap inner_fuel /\
       (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
        chunked_mark_bounded_preservation_ready mh' cap fuel_pred)
+
+let chunked_mark_bounded_preservation_ready_base_intro
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+  : Lemma
+      (ensures chunked_mark_bounded_preservation_ready mh cap 0)
+  = ()
+
+let chunked_mark_bounded_preservation_ready_empty_intro
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length (BDefs.chunked_rescan_heap mh Seq.empty cap) = 0)
+      (ensures chunked_mark_bounded_preservation_ready mh cap fuel)
+  =
+  let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+  assert (fuel <> 0);
+  assert (Seq.length st = 0)
+
+let chunked_mark_bounded_preservation_ready_step_intro
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        (let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+         Seq.length st > 0 /\
+         (let inner_fuel = BDefs.chunked_count_non_black mh in
+          chunked_mark_inner_loop_preservation_ready mh st cap inner_fuel /\
+          (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+           chunked_mark_bounded_preservation_ready mh' cap (fuel - 1)))))
+      (ensures chunked_mark_bounded_preservation_ready mh cap fuel)
+  =
+  let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+  let inner_fuel = BDefs.chunked_count_non_black mh in
+  let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+  let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+  assert (fuel <> 0);
+  assert (Seq.length st <> 0);
+  assert (chunked_mark_inner_loop_preservation_ready mh st cap inner_fuel);
+  assert (chunked_mark_bounded_preservation_ready mh' cap fuel_pred)
 
 let rec chunked_mark_bounded_preserves_major_objects
     (mh: MH.major_heap)

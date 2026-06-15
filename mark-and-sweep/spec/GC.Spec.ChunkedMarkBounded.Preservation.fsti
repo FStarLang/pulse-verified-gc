@@ -312,6 +312,31 @@ val chunked_mark_inner_loop_preservation_ready_step
             mh st cap in
          chunked_mark_inner_loop_preservation_ready mh' st' cap (fuel - 1)))
 
+val chunked_mark_inner_loop_preservation_ready_base_intro
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires fuel = 0 \/ Seq.length st = 0)
+      (ensures chunked_mark_inner_loop_preservation_ready mh st cap fuel)
+
+val chunked_mark_inner_loop_preservation_ready_step_intro
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length st > 0 /\
+        chunked_mark_step_bounded_preservation_ready mh st cap /\
+        (let (mh', st') =
+          GC.Spec.ChunkedMarkBounded.Defs.chunked_mark_step_bounded
+            mh st cap in
+         chunked_mark_inner_loop_preservation_ready mh' st' cap (fuel - 1)))
+      (ensures chunked_mark_inner_loop_preservation_ready mh st cap fuel)
+
 val chunked_mark_inner_loop_preserves_major_objects
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -435,6 +460,44 @@ val chunked_mark_bounded_preservation_ready
   (cap: nat{cap > 0})
   (fuel: nat)
   : GTot prop
+
+val chunked_mark_bounded_preservation_ready_base_intro
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  : Lemma
+      (ensures chunked_mark_bounded_preservation_ready mh cap 0)
+
+val chunked_mark_bounded_preservation_ready_empty_intro
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        Seq.length
+          (GC.Spec.ChunkedMarkBounded.Defs.chunked_rescan_heap
+            mh Seq.empty cap) = 0)
+      (ensures chunked_mark_bounded_preservation_ready mh cap fuel)
+
+val chunked_mark_bounded_preservation_ready_step_intro
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        fuel > 0 /\
+        (let st =
+          GC.Spec.ChunkedMarkBounded.Defs.chunked_rescan_heap
+            mh Seq.empty cap in
+         Seq.length st > 0 /\
+         (let inner_fuel =
+           GC.Spec.ChunkedMarkBounded.Defs.chunked_count_non_black mh in
+          chunked_mark_inner_loop_preservation_ready mh st cap inner_fuel /\
+          (let (mh', _) =
+            GC.Spec.ChunkedMarkBounded.Defs.chunked_mark_inner_loop
+              mh st cap inner_fuel in
+           chunked_mark_bounded_preservation_ready mh' cap (fuel - 1)))))
+      (ensures chunked_mark_bounded_preservation_ready mh cap fuel)
 
 val chunked_mark_bounded_preserves_major_objects
   (mh: MH.major_heap)

@@ -8,6 +8,7 @@ open GC.Spec.Base
 module MH = GC.Spec.MajorHeap
 module MarkDefs = GC.Spec.ChunkedMark.Defs
 module SweepDefs = GC.Spec.ChunkedSweepCoalesce.Defs
+module BDefs = GC.Spec.ChunkedMarkBounded.Defs
 module Pres = GC.Spec.ChunkedMarkBounded.Preservation
 
 #set-options "--z3rlimit 5 --fuel 1 --ifuel 1 --split_queries always --warn_error -321"
@@ -115,5 +116,92 @@ let chunked_mark_step_bounded_preservation_ready_from_target_membership
       chunked_push_children_bounded_preservation_ready_from_target_membership
         mh' obj 1UL ws;
       Pres.chunked_mark_step_bounded_preservation_ready_intro mh st cap
+    end
+  end
+
+let rec chunked_mark_inner_loop_target_membership_policy
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Tot prop
+    (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then True
+  else
+    let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+    chunked_mark_step_target_membership_policy mh st cap /\
+    (let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+     chunked_mark_inner_loop_target_membership_policy
+       mh' st' cap fuel_pred)
+
+let rec chunked_mark_inner_loop_preservation_ready_from_target_membership
+    (mh: MH.major_heap)
+    (st: Seq.seq obj_addr)
+    (cap: nat)
+    (fuel: nat)
+  : Lemma
+      (requires chunked_mark_inner_loop_target_membership_policy mh st cap fuel)
+      (ensures Pres.chunked_mark_inner_loop_preservation_ready mh st cap fuel)
+      (decreases fuel)
+  =
+  if fuel = 0 || Seq.length st = 0 then
+    Pres.chunked_mark_inner_loop_preservation_ready_base_intro mh st cap fuel
+  else begin
+    let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+    chunked_mark_step_bounded_preservation_ready_from_target_membership
+      mh st cap;
+    let (mh', st') = BDefs.chunked_mark_step_bounded mh st cap in
+    assert (chunked_mark_inner_loop_target_membership_policy
+      mh' st' cap fuel_pred);
+    chunked_mark_inner_loop_preservation_ready_from_target_membership
+      mh' st' cap fuel_pred;
+    Pres.chunked_mark_inner_loop_preservation_ready_step_intro mh st cap fuel
+  end
+
+let rec chunked_mark_bounded_target_membership_policy
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Tot prop
+    (decreases fuel)
+  =
+  if fuel = 0 then True
+  else
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then True
+    else
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+      chunked_mark_inner_loop_target_membership_policy mh st cap inner_fuel /\
+      (let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+       chunked_mark_bounded_target_membership_policy mh' cap fuel_pred)
+
+let rec chunked_mark_bounded_preservation_ready_from_target_membership
+    (mh: MH.major_heap)
+    (cap: nat{cap > 0})
+    (fuel: nat)
+  : Lemma
+      (requires chunked_mark_bounded_target_membership_policy mh cap fuel)
+      (ensures Pres.chunked_mark_bounded_preservation_ready mh cap fuel)
+      (decreases fuel)
+  =
+  if fuel = 0 then
+    Pres.chunked_mark_bounded_preservation_ready_base_intro mh cap
+  else begin
+    let st = BDefs.chunked_rescan_heap mh Seq.empty cap in
+    if Seq.length st = 0 then
+      Pres.chunked_mark_bounded_preservation_ready_empty_intro mh cap fuel
+    else begin
+      let inner_fuel = BDefs.chunked_count_non_black mh in
+      let fuel_pred : n:nat{n < fuel} = fuel - 1 in
+      chunked_mark_inner_loop_preservation_ready_from_target_membership
+        mh st cap inner_fuel;
+      let (mh', _) = BDefs.chunked_mark_inner_loop mh st cap inner_fuel in
+      assert (chunked_mark_bounded_target_membership_policy
+        mh' cap fuel_pred);
+      chunked_mark_bounded_preservation_ready_from_target_membership
+        mh' cap fuel_pred;
+      Pres.chunked_mark_bounded_preservation_ready_step_intro mh cap fuel
     end
   end

@@ -5185,6 +5185,22 @@ let spot_chunked_mark_inner_loop_preservation_ready_step
   ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready_step
     mh st cap fuel
 
+let spot_chunked_mark_inner_loop_ready_from_target_membership
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedReadiness.chunked_mark_inner_loop_target_membership_policy
+          mh st cap fuel)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_inner_loop_preservation_ready
+          mh st cap fuel)
+  =
+  ChunkedMarkBoundedReadiness.chunked_mark_inner_loop_preservation_ready_from_target_membership
+    mh st cap fuel
+
 let spot_chunked_mark_inner_loop_marks_stack_member_ready
   (mh: MH.major_heap)
   (st: Seq.seq obj_addr)
@@ -5231,6 +5247,21 @@ let spot_chunked_mark_bounded_preservation_ready_step
             mh' cap (fuel - 1))))
   =
   ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready_step
+    mh cap fuel
+
+let spot_chunked_mark_bounded_ready_from_target_membership
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedReadiness.chunked_mark_bounded_target_membership_policy
+          mh cap fuel)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+  =
+  ChunkedMarkBoundedReadiness.chunked_mark_bounded_preservation_ready_from_target_membership
     mh cap fuel
 
 let spot_chunked_mark_bounded_marks_rescan_ready_from_inner
