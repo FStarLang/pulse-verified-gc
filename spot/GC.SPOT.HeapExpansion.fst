@@ -61,6 +61,7 @@ module ChunkedMarkLoop = GC.Spec.ChunkedMark.MarkCompat
 module ChunkedMarkBounded = GC.Spec.ChunkedMarkBounded.Defs
 module ChunkedMarkBoundedPres = GC.Spec.ChunkedMarkBounded.Preservation
 module ChunkedMarkBoundedReadiness = GC.Spec.ChunkedMarkBounded.Readiness
+module ChunkedMarkBoundedTargetMembership = GC.Spec.ChunkedMarkBounded.TargetMembership
 module ChunkedMarkBoundedReady = GC.Spec.ChunkedMarkBounded.TargetReady
 module ChunkedMarkBoundedCount = GC.Spec.ChunkedMarkBounded.Count
 module ChunkedMarkBoundedCountStep = GC.Spec.ChunkedMarkBounded.CountStep
@@ -4944,6 +4945,118 @@ let spot_chunked_push_children_bounded_ready_from_target_membership
   =
   ChunkedMarkBoundedReadiness.chunked_push_children_bounded_preservation_ready_from_target_membership
     mh obj i ws
+
+let spot_chunked_scanned_white_targets_in_major_elim
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        ChunkedMarkBoundedTargetMembership.chunked_scanned_white_targets_in_major
+          mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         ChunkedMarkDefs.chunked_is_pointer_field mh v /\
+         (let child_raw =
+           ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          let child = ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+          ChunkedSweepDefs.chunked_is_white mh child)))
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         let child_raw =
+           ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+         let child = ChunkedMarkDefs.chunked_resolve_object mh child_raw in
+         Seq.mem child (MH.major_objects mh)))
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_scanned_white_targets_in_major_elim
+    mh obj i
+
+let spot_chunked_push_children_target_membership_policy_from_scanned_targets
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (ws: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        U64.v ws <=
+          U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
+        ChunkedMarkBoundedTargetMembership.chunked_push_children_scanned_targets_policy
+          mh obj i ws)
+      (ensures
+        ChunkedMarkBoundedReadiness.chunked_push_children_target_membership_policy
+          mh obj i ws)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_push_children_target_membership_policy_from_scanned_targets
+    mh obj i ws
+
+let spot_chunked_mark_step_target_membership_policy_from_scanned_targets
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedTargetMembership.chunked_mark_step_scanned_targets_policy
+          mh st cap)
+      (ensures
+        ChunkedMarkBoundedReadiness.chunked_mark_step_target_membership_policy
+          mh st cap)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_mark_step_target_membership_policy_from_scanned_targets
+    mh st cap
+
+let spot_chunked_mark_inner_loop_target_membership_policy_from_scanned_targets
+  (mh: MH.major_heap)
+  (st: Seq.seq obj_addr)
+  (cap: nat)
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedTargetMembership.chunked_mark_inner_loop_scanned_targets_policy
+          mh st cap fuel)
+      (ensures
+        ChunkedMarkBoundedReadiness.chunked_mark_inner_loop_target_membership_policy
+          mh st cap fuel)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_mark_inner_loop_target_membership_policy_from_scanned_targets
+    mh st cap fuel
+
+let spot_chunked_mark_bounded_target_membership_policy_from_scanned_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_scanned_targets_policy
+          mh cap fuel)
+      (ensures
+        ChunkedMarkBoundedReadiness.chunked_mark_bounded_target_membership_policy
+          mh cap fuel)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_target_membership_policy_from_scanned_targets
+    mh cap fuel
+
+let spot_chunked_mark_bounded_preservation_ready_from_scanned_targets
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_scanned_targets_policy
+          mh cap fuel)
+      (ensures
+        ChunkedMarkBoundedPres.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_mark_bounded_preservation_ready_from_scanned_targets
+    mh cap fuel
 
 let spot_chunked_push_children_bounded_preserves_black_status
   (mh: MH.major_heap)
