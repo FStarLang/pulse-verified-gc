@@ -306,6 +306,210 @@ let chunked_major_edge_gen_field_witness_from_pointer_fields
   chunked_major_edge_gen_field_witness_intro mh
 #pop-options
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_wosize_nat_agrees_with_sweep
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh))
+      (ensures
+        CG.chunked_wosize_nat_of_object mh obj ==
+        U64.v (SweepDefs.chunked_wosize_of_object mh obj))
+  =
+  MH.major_objects_member_header_read_some mh obj;
+  let hdr = Some?.v (MH.read_word_in_major mh (hd_address obj)) in
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  CG.chunked_wosize_nat_header mh obj hdr;
+  SweepDefs.chunked_read_header_step mh obj;
+  assert (SweepDefs.chunked_read_header mh obj == Some hdr);
+  SweepDefs.chunked_wosize_of_object_some mh obj hdr
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_field_slot_mark_index_facts
+  (mh: MH.major_heap)
+  (src: obj_addr)
+  (idx: nat)
+  (field_addr: hp_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr)
+      (ensures
+        idx + 1 < pow2 64 /\
+        U64.v field_addr ==
+          U64.v (hd_address src) + U64.v mword * (idx + 1) /\
+        idx + 1 <= U64.v (SweepDefs.chunked_wosize_of_object mh src))
+  =
+  chunked_wosize_nat_agrees_with_sweep mh src;
+  CG.chunked_major_field_slot_elim src idx field_addr;
+  assert (U64.v field_addr == U64.v src + idx * U64.v mword);
+  assert (idx + 1 <= U64.v (SweepDefs.chunked_wosize_of_object mh src));
+  assert (U64.v (SweepDefs.chunked_wosize_of_object mh src) < pow2 64);
+  assert (idx + 1 < pow2 64);
+  hd_address_spec src;
+  assert_norm (U64.v mword == 8);
+  FStar.Math.Lemmas.distributivity_add_left idx 1 (U64.v mword);
+  assert (idx * U64.v mword + U64.v mword ==
+          (idx + 1) * U64.v mword);
+  assert (U64.v (hd_address src) + U64.v mword == U64.v src);
+  assert (U64.v field_addr ==
+          U64.v (hd_address src) + U64.v mword + idx * U64.v mword);
+  assert (U64.v mword + idx * U64.v mword ==
+          idx * U64.v mword + U64.v mword);
+  FStar.Math.Lemmas.paren_add_right
+    (U64.v (hd_address src)) (U64.v mword)
+    (idx * U64.v mword);
+  assert (U64.v field_addr ==
+          U64.v (hd_address src) +
+          (idx * U64.v mword + U64.v mword));
+  assert ((idx + 1) * U64.v mword ==
+          U64.v mword * (idx + 1));
+  assert (U64.v field_addr ==
+          U64.v (hd_address src) + U64.v mword * (idx + 1))
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_edge_gen_field_witness_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_edge_gen_field_witness mh)
+      (ensures
+        chunked_major_edge_gen_field_witness
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  let all_vertices (v: obj_addr) =
+    ChunkedMajorGraph.chunked_major_vertex mh v in
+  let all_vertices_mem (v: obj_addr)
+    : Lemma
+        (requires all_vertices v)
+        (ensures Seq.mem v (MH.major_objects mh))
+    =
+    ChunkedMajorGraph.chunked_major_vertex_elim mh v
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires all_vertices_mem);
+  ChunkedMajorGCRoots.chunked_gray_roots_live_subgraph_preserved
+    mh roots all_vertices;
+  ChunkedMajorGraph.chunked_major_live_subgraph_edges_elim
+    mh grayed all_vertices;
+  let witness (src dst: obj_addr)
+    : Lemma
+        (requires
+          ChunkedMajorGraph.chunked_major_edge grayed src dst /\
+          ChunkedMajorGraph.chunked_major_vertex grayed dst)
+        (ensures
+          exists (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+            Seq.mem src (MH.major_objects grayed) /\
+            idx < CG.chunked_wosize_nat_of_object grayed src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major grayed field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects grayed) /\
+            is_pointer_to raw dst)
+    =
+    ChunkedMajorGraph.chunked_major_edge_source_vertex grayed src dst;
+    ChunkedMajorGraph.chunked_major_vertex_elim grayed src;
+    ChunkedMajorGraph.chunked_major_vertex_elim grayed dst;
+    assert (Seq.mem src (MH.major_objects mh));
+    assert (Seq.mem dst (MH.major_objects mh));
+    ChunkedMajorGraph.chunked_major_vertex_intro mh src;
+    ChunkedMajorGraph.chunked_major_vertex_intro mh dst;
+    assert (all_vertices src);
+    assert (forall (y: obj_addr).
+      ChunkedMajorGraph.chunked_major_edge mh src y <==>
+      ChunkedMajorGraph.chunked_major_edge grayed src y);
+    assert (ChunkedMajorGraph.chunked_major_edge mh src dst);
+    chunked_major_edge_gen_field_witness_elim mh src dst;
+    assert (
+      exists (idx: nat) (field_addr: hp_addr) (raw: U64.t).
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some raw /\
+        Seq.mem dst (MH.major_objects mh) /\
+        is_pointer_to raw dst);
+    let idx = FStar.IndefiniteDescription.indefinite_description_ghost nat
+      (fun (idx: nat) ->
+        exists (field_addr: hp_addr) (raw: U64.t).
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects mh) /\
+          is_pointer_to raw dst) in
+    assert (
+      exists (field_addr: hp_addr) (raw: U64.t).
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some raw /\
+        Seq.mem dst (MH.major_objects mh) /\
+        is_pointer_to raw dst);
+    let field_addr = FStar.IndefiniteDescription.indefinite_description_ghost hp_addr
+      (fun (field_addr: hp_addr) ->
+        exists (raw: U64.t).
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects mh) /\
+          is_pointer_to raw dst) in
+    let raw = FStar.IndefiniteDescription.indefinite_description_ghost U64.t
+      (fun (raw: U64.t) ->
+        Seq.mem src (MH.major_objects mh) /\
+        idx < CG.chunked_wosize_nat_of_object mh src /\
+        CG.chunked_major_field_slot src idx == Some field_addr /\
+        MH.read_word_in_major mh field_addr == Some raw /\
+        Seq.mem dst (MH.major_objects mh) /\
+        is_pointer_to raw dst) in
+    assert (Seq.mem src (MH.major_objects mh));
+    assert (idx < CG.chunked_wosize_nat_of_object mh src);
+    assert (CG.chunked_major_field_slot src idx == Some field_addr);
+    assert (MH.read_word_in_major mh field_addr == Some raw);
+    assert (Seq.mem dst (MH.major_objects mh));
+    assert (is_pointer_to raw dst);
+    chunked_field_slot_mark_index_facts mh src idx field_addr;
+    let field_i: (i: U64.t{U64.v i >= 1}) =
+      U64.uint_to_t (idx + 1) in
+    U64.vu_inv (idx + 1);
+    assert (U64.v field_i == idx + 1);
+    assert (U64.v field_i <=
+            U64.v (SweepDefs.chunked_wosize_of_object mh src));
+    assert (U64.v field_addr ==
+            U64.v (hd_address src) + U64.v mword * U64.v field_i);
+    ChunkedMajorGCRoots.chunked_gray_roots_preserves_field_read
+      mh roots src field_i field_addr raw;
+    ChunkedMajorGCRoots.chunked_gray_roots_preserves_wosize_of_object
+      mh roots src;
+    chunked_wosize_nat_agrees_with_sweep mh src;
+    chunked_wosize_nat_agrees_with_sweep grayed src;
+    assert (idx < CG.chunked_wosize_nat_of_object grayed src);
+    FStar.Classical.exists_intro
+      (fun (idx: nat) ->
+        exists (field_addr: hp_addr) (raw: U64.t).
+          Seq.mem src (MH.major_objects grayed) /\
+          idx < CG.chunked_wosize_nat_of_object grayed src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major grayed field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects grayed) /\
+          is_pointer_to raw dst)
+      idx
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 witness);
+  chunked_major_edge_gen_field_witness_intro grayed
+#pop-options
+
 let chunked_major_field_targets_non_infix
   (mh: MH.major_heap)
   : prop
@@ -355,6 +559,84 @@ let chunked_major_field_targets_non_infix_elim
       (ensures ~(SweepDefs.chunked_is_infix mh dst))
   =
   ()
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_field_targets_non_infix_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_field_targets_non_infix mh)
+      (ensures
+        chunked_major_field_targets_non_infix
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots))
+  =
+  let grayed = ChunkedMajorGCRoots.chunked_gray_roots mh roots in
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_major_objects mh roots;
+  ChunkedMajorGCRoots.chunked_gray_roots_preserves_well_formed mh roots;
+  let non_infix
+    (src dst: obj_addr)
+    (idx: nat)
+    (field_addr: hp_addr)
+    (raw: U64.t)
+    : Lemma
+        (requires
+          Seq.mem src (MH.major_objects grayed) /\
+          idx < CG.chunked_wosize_nat_of_object grayed src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major grayed field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects grayed) /\
+          is_pointer_to raw dst)
+        (ensures ~(SweepDefs.chunked_is_infix grayed dst))
+    =
+    assert (Seq.mem src (MH.major_objects mh));
+    assert (Seq.mem dst (MH.major_objects mh));
+    ChunkedMajorGCRoots.chunked_gray_roots_preserves_wosize_of_object
+      mh roots src;
+    chunked_wosize_nat_agrees_with_sweep mh src;
+    chunked_wosize_nat_agrees_with_sweep grayed src;
+    assert (idx < CG.chunked_wosize_nat_of_object mh src);
+    chunked_field_slot_mark_index_facts mh src idx field_addr;
+    let field_i: (i: U64.t{U64.v i >= 1}) =
+      U64.uint_to_t (idx + 1) in
+    U64.vu_inv (idx + 1);
+    assert (U64.v field_i == idx + 1);
+    assert (U64.v field_i <=
+            U64.v (SweepDefs.chunked_wosize_of_object mh src));
+    assert (U64.v field_addr ==
+            U64.v (hd_address src) + U64.v mword * U64.v field_i);
+    ChunkedMajorGCRoots.chunked_gray_roots_preserves_field_read_back
+      mh roots src field_i field_addr raw;
+    chunked_major_field_targets_non_infix_elim
+      mh src dst idx field_addr raw;
+    ChunkedMajorGCRoots.chunked_gray_roots_preserves_infix_status
+      mh roots dst;
+    assert (SweepDefs.chunked_is_infix grayed dst ==
+            SweepDefs.chunked_is_infix mh dst)
+  in
+  let non_infix_for_quantifiers
+    (src dst: obj_addr)
+    (idx: nat)
+    (field_addr: hp_addr)
+    : Lemma
+        (ensures
+          forall (raw: U64.t).
+            Seq.mem src (MH.major_objects grayed) /\
+            idx < CG.chunked_wosize_nat_of_object grayed src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major grayed field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects grayed) /\
+            is_pointer_to raw dst ==>
+            ~(SweepDefs.chunked_is_infix grayed dst))
+    =
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires
+        (non_infix src dst idx field_addr))
+  in
+  FStar.Classical.forall_intro_4 non_infix_for_quantifiers;
+  chunked_major_field_targets_non_infix_intro grayed
+#pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_major_field_targets_non_infix_implies_vertex_edge_targets_non_infix
@@ -901,4 +1183,43 @@ let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gra
     grayed mh_final live1 live0;
   ChunkedMajorGraph.chunked_major_live_subgraph_preserved_trans
     mh grayed mh_final live0
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_field_policies
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (shape_fuel: nat)
+  (roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenInv.chunked_collection_heap_shape minor
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          fp shape_fuel /\
+        chunked_major_edge_gen_field_witness mh /\
+        chunked_major_field_targets_non_infix mh /\
+        ChunkedMarkPres.chunked_mark_bounded_preservation_ready
+          (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+          cap mark_fuel /\
+        Seq.length (MH.major_objects mh) <= cap /\
+        mark_fuel > 0 /\
+        mark_fuel >= Seq.length (MH.major_objects mh))
+      (ensures
+        (let (mh_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots mh roots)
+            cap mark_fuel in
+        ChunkedMajorGraph.chunked_major_live_subgraph_preserved
+          mh mh_final
+          (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+            mh roots)))
+  =
+  chunked_major_edge_gen_field_witness_preserved_by_gray_roots mh roots;
+  chunked_major_field_targets_non_infix_preserved_by_gray_roots mh roots;
+  chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_grayed_collection_shape_policy
+    minor mh fp shape_fuel roots cap mark_fuel
 #pop-options

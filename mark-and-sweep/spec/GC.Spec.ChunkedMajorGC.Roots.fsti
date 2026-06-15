@@ -3,6 +3,7 @@ module GC.Spec.ChunkedMajorGC.Roots
 module Seq = FStar.Seq
 
 open GC.Spec.Base
+open GC.Spec.Heap
 
 module MH = GC.Spec.MajorHeap
 module MarkDefs = GC.Spec.ChunkedMark.Defs
@@ -92,6 +93,47 @@ val chunked_gray_roots_preserves_get_field
         MarkDefs.chunked_get_field
           (chunked_gray_roots mh roots) target i ==
         MarkDefs.chunked_get_field mh target i)
+
+val chunked_gray_roots_preserves_field_read
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  (i: FStar.UInt64.t{FStar.UInt64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: FStar.UInt64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        FStar.UInt64.v i <=
+          FStar.UInt64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        FStar.UInt64.v field_addr ==
+          FStar.UInt64.v (hd_address target) +
+          FStar.UInt64.v mword * FStar.UInt64.v i /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        MH.read_word_in_major
+          (chunked_gray_roots mh roots) field_addr == Some old)
+
+val chunked_gray_roots_preserves_field_read_back
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  (i: FStar.UInt64.t{FStar.UInt64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: FStar.UInt64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        FStar.UInt64.v i <=
+          FStar.UInt64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        FStar.UInt64.v field_addr ==
+          FStar.UInt64.v (hd_address target) +
+          FStar.UInt64.v mword * FStar.UInt64.v i /\
+        MH.read_word_in_major
+          (chunked_gray_roots mh roots) field_addr == Some old)
+      (ensures MH.read_word_in_major mh field_addr == Some old)
 
 val chunked_gray_roots_preserves_no_scan_status
   (mh: MH.major_heap)

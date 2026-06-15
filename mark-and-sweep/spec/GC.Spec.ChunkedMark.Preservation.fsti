@@ -148,6 +148,55 @@ val chunked_set_object_color_preserves_get_field
           target i ==
         GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
 
+val chunked_set_object_color_preserves_field_read
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+              mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        MH.read_word_in_major
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
+            mh obj color)
+          field_addr == Some old)
+
+val chunked_set_object_color_preserves_field_read_back
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (color: Header.color_sem)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+              mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major
+          (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_set_object_color
+            mh obj color)
+          field_addr == Some old)
+      (ensures MH.read_word_in_major mh field_addr == Some old)
+
 val chunked_set_object_color_preserves_ranges
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -216,6 +265,51 @@ val chunked_make_gray_preserves_get_field
           (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj)
           target i ==
         GC.Spec.ChunkedMark.Defs.chunked_get_field mh target i)
+
+val chunked_make_gray_preserves_field_read
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+              mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        MH.read_word_in_major
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj)
+          field_addr == Some old)
+
+val chunked_make_gray_preserves_field_read_back
+  (mh: MH.major_heap)
+  (obj target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <=
+          U64.v
+            (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+              mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major
+          (GC.Spec.ChunkedMark.Defs.chunked_make_gray mh obj)
+          field_addr == Some old)
+      (ensures MH.read_word_in_major mh field_addr == Some old)
 
 val chunked_make_gray_preserves_ranges
   (mh: MH.major_heap)

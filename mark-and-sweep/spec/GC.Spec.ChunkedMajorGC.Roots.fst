@@ -274,6 +274,89 @@ let rec chunked_gray_roots_preserves_get_field
       chunked_gray_roots_preserves_get_field mh rest target i
   end
 
+let rec chunked_gray_roots_preserves_field_read
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        MH.read_word_in_major
+          (chunked_gray_roots mh roots) field_addr == Some old)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      MarkPres.chunked_make_gray_preserves_wosize_of_object mh root target;
+      MarkPres.chunked_make_gray_preserves_field_read
+        mh root target i field_addr old;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_field_read mh1 rest target i field_addr old
+    end else
+      chunked_gray_roots_preserves_field_read mh rest target i field_addr old
+  end
+
+let rec chunked_gray_roots_preserves_field_read_back
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  (target: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  (field_addr: hp_addr)
+  (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major
+          (chunked_gray_roots mh roots) field_addr == Some old)
+      (ensures MH.read_word_in_major mh field_addr == Some old)
+      (decreases Seq.length roots)
+  =
+  if Seq.length roots = 0 then
+    ()
+  else begin
+    assert (Seq.length roots > 0);
+    let root = Seq.head roots in
+    let rest = Seq.tail roots in
+    assert (Seq.length rest == Seq.length roots - 1);
+    assert (Seq.length rest < Seq.length roots);
+    if Seq.mem root (MH.major_objects mh) then begin
+      let mh1 = MarkDefs.chunked_make_gray mh root in
+      MarkPres.chunked_make_gray_preserves_major_objects mh root;
+      MarkPres.chunked_make_gray_preserves_well_formed mh root;
+      MarkPres.chunked_make_gray_preserves_wosize_of_object mh root target;
+      assert (Seq.mem target (MH.major_objects mh1));
+      chunked_gray_roots_preserves_field_read_back
+        mh1 rest target i field_addr old;
+      MarkPres.chunked_make_gray_preserves_field_read_back
+        mh root target i field_addr old
+    end else
+      chunked_gray_roots_preserves_field_read_back
+        mh rest target i field_addr old
+  end
+
 let rec chunked_gray_roots_preserves_no_scan_status
   (mh: MH.major_heap)
   (roots: Seq.seq obj_addr)

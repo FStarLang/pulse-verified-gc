@@ -372,6 +372,8 @@ Follow-up checkpoint: the root-grayed major-GC result now composes back to the o
 
 Follow-up checkpoint: root graying now also preserves object tag and infix status for active major objects. `GC.Spec.ChunkedMajorGC.Roots` exposes `chunked_gray_roots_preserves_tag_of_object` and `chunked_gray_roots_preserves_infix_status`, which are the remaining metadata facts needed to reuse grayed-heap field-target/non-infix policies when sound. `GC.SPOT.HeapExpansion` audits both wrappers, and focused root/SPOT verification passed.
 
+Follow-up checkpoint: root graying now preserves the raw field-policy evidence needed by the generational major-GC bridge. `GC.Spec.ChunkedMark.Preservation` frames successful payload `MH.read_word_in_major` reads forward and backward through color-only header writes, `GC.Spec.ChunkedMajorGC.Roots` lifts that framing through `chunked_gray_roots`, and `GC.Gen.ChunkedMajorGCBridge` now preserves both `chunked_major_edge_gen_field_witness` and `chunked_major_field_targets_non_infix` across root graying. The new `chunked_major_gc_bounded_initial_reachable_live_subgraph_preserved_after_gray_roots_from_original_field_policies` wrapper lets callers state the field-witness/non-infix policies over the original heap, derives the grayed-heap policies internally, and then composes the grayed major-GC result back to the original live-subgraph view. `GC.SPOT.HeapExpansion` audits all three public wrappers. Focused mark/root/bridge checks passed, SPOT verification passed with fresh checked files, `cd generational && make check-orphans` passed, and a refreshed bridge `--z3refresh --query_stats --split_queries always` run completed in about 6.6 seconds.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

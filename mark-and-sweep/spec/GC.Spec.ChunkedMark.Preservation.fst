@@ -505,6 +505,113 @@ let chunked_set_object_color_preserves_get_field
         MarkDefs.chunked_get_field_read_some mh' target i old
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_object_color_preserves_field_read
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+    (color: Header.color_sem)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        MH.read_word_in_major
+          (SweepDefs.chunked_set_object_color mh obj color)
+          field_addr == Some old)
+  =
+  color_member_read_witness mh obj;
+  color_member_read_witness mh target;
+  SweepDefs.chunked_read_header_step mh target;
+  match SweepDefs.chunked_read_header mh target with
+  | None -> assert False
+  | Some target_hdr ->
+    SweepDefs.chunked_wosize_of_object_some mh target target_hdr;
+    assert (U64.v i <= U64.v (Obj.getWosize target_hdr));
+    assert (U64.v field_addr ==
+            U64.v (hd_address target) + U64.v mword * U64.v i);
+    SweepDefs.chunked_read_header_step mh obj;
+    match SweepDefs.chunked_read_header mh obj with
+    | None -> assert False
+    | Some obj_hdr ->
+      let obj_hd = hd_address obj in
+      let new_hdr = Obj.colorHeader obj_hdr color in
+      SweepDefs.chunked_set_object_color_some mh obj color obj_hdr;
+      assert (MH.read_word_in_major mh obj_hd == Some obj_hdr);
+      MHReadFrame.write_word_in_major_preserves_same_read
+        mh obj_hd obj_hdr new_hdr;
+      chunked_object_header_disjoint_from_field_addr
+        mh obj target target_hdr i field_addr;
+      MHReadFrame.write_word_in_major_preserves_other_read
+        mh obj_hd new_hdr field_addr old;
+      match MH.write_word_in_major mh obj_hd new_hdr with
+      | None -> assert False
+      | Some mh' ->
+        SpecMajorAlloc.major_write_word_or_same_some mh mh' obj_hd new_hdr;
+        assert (SweepDefs.chunked_set_object_color mh obj color == mh');
+        assert (MH.read_word_in_major mh' field_addr == Some old)
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_object_color_preserves_field_read_back
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+    (color: Header.color_sem)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major
+          (SweepDefs.chunked_set_object_color mh obj color)
+          field_addr == Some old)
+      (ensures MH.read_word_in_major mh field_addr == Some old)
+  =
+  color_member_read_witness mh obj;
+  color_member_read_witness mh target;
+  SweepDefs.chunked_read_header_step mh target;
+  match SweepDefs.chunked_read_header mh target with
+  | None -> assert False
+  | Some target_hdr ->
+    SweepDefs.chunked_wosize_of_object_some mh target target_hdr;
+    assert (U64.v i <= U64.v (Obj.getWosize target_hdr));
+    assert (U64.v field_addr ==
+            U64.v (hd_address target) + U64.v mword * U64.v i);
+    SweepDefs.chunked_read_header_step mh obj;
+    match SweepDefs.chunked_read_header mh obj with
+    | None -> assert False
+    | Some obj_hdr ->
+      let obj_hd = hd_address obj in
+      let new_hdr = Obj.colorHeader obj_hdr color in
+      SweepDefs.chunked_set_object_color_some mh obj color obj_hdr;
+      assert (MH.read_word_in_major mh obj_hd == Some obj_hdr);
+      MHReadFrame.write_word_in_major_preserves_same_read
+        mh obj_hd obj_hdr new_hdr;
+      chunked_object_header_disjoint_from_field_addr
+        mh obj target target_hdr i field_addr;
+      match MH.write_word_in_major mh obj_hd new_hdr with
+      | None -> assert False
+      | Some mh' ->
+        SpecMajorAlloc.major_write_word_or_same_some mh mh' obj_hd new_hdr;
+        assert (SweepDefs.chunked_set_object_color mh obj color == mh');
+        MHReadFrame.write_word_in_major_preserves_other_read_back
+          mh obj_hd new_hdr field_addr old;
+        assert (MH.read_word_in_major mh field_addr == Some old)
+#pop-options
+
 let chunked_set_object_color_preserves_ranges
     (mh: MH.major_heap)
     (obj: obj_addr)
@@ -597,6 +704,53 @@ let chunked_make_gray_preserves_get_field
   MarkDefs.chunked_make_gray_step mh obj;
   chunked_set_object_color_preserves_get_field
     mh obj target Header.Gray i
+
+let chunked_make_gray_preserves_field_read
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major mh field_addr == Some old)
+      (ensures
+        MH.read_word_in_major
+          (MarkDefs.chunked_make_gray mh obj)
+          field_addr == Some old)
+  =
+  MarkDefs.chunked_make_gray_step mh obj;
+  chunked_set_object_color_preserves_field_read
+    mh obj target Header.Gray i field_addr old
+
+let chunked_make_gray_preserves_field_read_back
+    (mh: MH.major_heap)
+    (obj target: obj_addr)
+    (i: U64.t{U64.v i >= 1})
+    (field_addr: hp_addr)
+    (old: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        Seq.mem target (MH.major_objects mh) /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh target) /\
+        U64.v field_addr ==
+          U64.v (hd_address target) + U64.v mword * U64.v i /\
+        MH.read_word_in_major
+          (MarkDefs.chunked_make_gray mh obj)
+          field_addr == Some old)
+      (ensures MH.read_word_in_major mh field_addr == Some old)
+  =
+  MarkDefs.chunked_make_gray_step mh obj;
+  chunked_set_object_color_preserves_field_read_back
+    mh obj target Header.Gray i field_addr old
 
 let chunked_make_gray_preserves_ranges
     (mh: MH.major_heap)
