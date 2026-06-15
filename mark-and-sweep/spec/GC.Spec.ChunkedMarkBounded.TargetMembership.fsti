@@ -13,6 +13,16 @@ val chunked_scanned_white_targets_in_major
   (mh: MH.major_heap)
   : GTot prop
 
+val chunked_scanned_raw_targets_in_major
+  (mh: MH.major_heap)
+  : GTot prop
+
+val chunked_scanned_white_targets_in_major_from_raw_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires chunked_scanned_raw_targets_in_major mh)
+      (ensures chunked_scanned_white_targets_in_major mh)
+
 val chunked_scanned_white_targets_in_major_elim
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -21,6 +31,7 @@ val chunked_scanned_white_targets_in_major_elim
       (requires
         chunked_scanned_white_targets_in_major mh /\
         Seq.mem obj (MH.major_objects mh) /\
+        ~(GC.Spec.ChunkedMark.Defs.chunked_is_no_scan mh obj) /\
         U64.v i <=
           U64.v
             (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
@@ -56,6 +67,7 @@ val chunked_push_children_target_membership_policy_from_scanned_targets
       (requires
         MH.well_formed_major_heap mh /\
         Seq.mem obj (MH.major_objects mh) /\
+        ~(GC.Spec.ChunkedMark.Defs.chunked_is_no_scan mh obj) /\
         U64.v ws <=
           U64.v
             (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object

@@ -4955,6 +4955,7 @@ let spot_chunked_scanned_white_targets_in_major_elim
         ChunkedMarkBoundedTargetMembership.chunked_scanned_white_targets_in_major
           mh /\
         Seq.mem obj (MH.major_objects mh) /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
         U64.v i <=
           U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
         (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
@@ -4973,6 +4974,19 @@ let spot_chunked_scanned_white_targets_in_major_elim
   ChunkedMarkBoundedTargetMembership.chunked_scanned_white_targets_in_major_elim
     mh obj i
 
+let spot_chunked_scanned_white_targets_in_major_from_raw_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        ChunkedMarkBoundedTargetMembership.chunked_scanned_raw_targets_in_major
+          mh)
+      (ensures
+        ChunkedMarkBoundedTargetMembership.chunked_scanned_white_targets_in_major
+          mh)
+  =
+  ChunkedMarkBoundedTargetMembership.chunked_scanned_white_targets_in_major_from_raw_targets
+    mh
+
 let spot_chunked_push_children_target_membership_policy_from_scanned_targets
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -4982,6 +4996,7 @@ let spot_chunked_push_children_target_membership_policy_from_scanned_targets
       (requires
         MH.well_formed_major_heap mh /\
         Seq.mem obj (MH.major_objects mh) /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
         U64.v ws <=
           U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj) /\
         ChunkedMarkBoundedTargetMembership.chunked_push_children_scanned_targets_policy
