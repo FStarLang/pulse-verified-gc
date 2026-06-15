@@ -14,6 +14,7 @@ open GC.Gen.Promote
 open GC.Lib.Header
 
 module MH = GC.Spec.MajorHeap
+module MHFieldRead = GC.Spec.MajorHeap.FieldRead
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module GenInv = GC.Gen.HeapInvariant
 module DenseCheney = GC.Gen.Cheney
@@ -1386,6 +1387,99 @@ let chunked_cheney_promote_field_source_cases
        minor major fp roots alloc_fuel src j field_addr raw \/
      chunked_cheney_promote_fwd_field_source_case
        minor major fp roots alloc_fuel src j field_addr raw)
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+private let old_source_field_read_exists
+  (major: MH.major_heap) (fp: U64.t) (alloc_fuel: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+  : Lemma
+     (requires
+       GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+       Seq.mem src (MH.major_objects major) /\
+       MH.read_word_in_major major (hd_address src) == Some hdr /\
+       j < U64.v (getWosize hdr) /\
+       CG.chunked_major_field_slot src j == Some field_addr)
+     (ensures
+       exists (old: U64.t).
+         MH.read_word_in_major major field_addr == Some old)
+  =
+  GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
+  CG.chunked_major_field_slot_elim src j field_addr;
+  assert (U64.v field_addr == U64.v src + j * U64.v mword);
+  assert (U64.v src <= U64.v field_addr);
+  assert (j + 1 <= U64.v (getWosize hdr));
+  assert (U64.v field_addr + U64.v mword ==
+         U64.v src + (j + 1) * U64.v mword);
+  FStar.Math.Lemmas.lemma_mult_le_right
+    (U64.v mword) (j + 1) (U64.v (getWosize hdr));
+  assert (U64.v field_addr + U64.v mword <=
+         U64.v src + U64.v (getWosize hdr) * U64.v mword);
+  MHFieldRead.major_objects_member_payload_read_some
+    major src hdr field_addr;
+  match MH.read_word_in_major major field_addr with
+  | None -> assert False
+  | Some old ->
+    FStar.Classical.exists_intro
+     (fun old' -> MH.read_word_in_major major field_addr == Some old')
+     old
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+let chunked_cheney_promote_old_field_source_case_intro
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+  (raw: U64.t)
+  : Lemma
+     (requires
+       GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+       Seq.mem src (MH.major_objects major) /\
+       MH.read_word_in_major major (hd_address src) == Some hdr /\
+       getColor hdr <> GC.Lib.Header.Blue /\
+       U64.v (getTag hdr) < U64.v no_scan_tag /\
+       j < U64.v (getWosize hdr) /\
+       CG.chunked_major_field_slot src j == Some field_addr /\
+       (let res =
+         ChunkedCheney.chunked_cheney_promote
+           minor major fp roots alloc_fuel in
+        MH.read_word_in_major res.major_final field_addr == Some raw))
+     (ensures
+       chunked_cheney_promote_old_field_source_case
+         minor major fp roots alloc_fuel src j field_addr raw)
+  =
+  old_source_field_read_exists major fp alloc_fuel src hdr j field_addr;
+  match MH.read_word_in_major major field_addr with
+  | None -> assert False
+  | Some old ->
+    FStar.Classical.exists_intro
+     (fun hdr' -> exists (old': U64.t).
+       Seq.mem src (MH.major_objects major) /\
+       MH.read_word_in_major major (hd_address src) == Some hdr' /\
+       getColor hdr' <> GC.Lib.Header.Blue /\
+       U64.v (getTag hdr') < U64.v no_scan_tag /\
+       j < U64.v (getWosize hdr') /\
+       CG.chunked_major_field_slot src j == Some field_addr /\
+       MH.read_word_in_major major field_addr == Some old' /\
+       (let res =
+         ChunkedCheney.chunked_cheney_promote
+           minor major fp roots alloc_fuel in
+        MH.read_word_in_major res.major_final field_addr == Some raw))
+     hdr;
+    FStar.Classical.exists_intro
+     (fun old' ->
+       Seq.mem src (MH.major_objects major) /\
+       MH.read_word_in_major major (hd_address src) == Some hdr /\
+       getColor hdr <> GC.Lib.Header.Blue /\
+       U64.v (getTag hdr) < U64.v no_scan_tag /\
+       j < U64.v (getWosize hdr) /\
+       CG.chunked_major_field_slot src j == Some field_addr /\
+       MH.read_word_in_major major field_addr == Some old' /\
+       (let res =
+         ChunkedCheney.chunked_cheney_promote
+           minor major fp roots alloc_fuel in
+        MH.read_word_in_major res.major_final field_addr == Some raw))
+     old
+#pop-options
 
 private let old_field_source_case_no_infix
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)

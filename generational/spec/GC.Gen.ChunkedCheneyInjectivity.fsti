@@ -252,6 +252,28 @@ val chunked_cheney_promote_field_source_cases
     roots:seq U64.t -> alloc_fuel:nat ->
     Tot prop
 
+val chunked_cheney_promote_old_field_source_case_intro
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    src:obj_addr -> hdr:U64.t -> j:nat -> field_addr:hp_addr ->
+    raw:U64.t ->
+    Lemma
+      (requires
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        getColor hdr <> GC.Lib.Header.Blue /\
+        U64.v (getTag hdr) < U64.v no_scan_tag /\
+        j < U64.v (getWosize hdr) /\
+        CG.chunked_major_field_slot src j == Some field_addr /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         MH.read_word_in_major res.major_final field_addr == Some raw))
+      (ensures
+        chunked_cheney_promote_old_field_source_case
+          minor major fp roots alloc_fuel src j field_addr raw)
+
 val chunked_cheney_promote_major_minor_fields_no_infix_targets
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
