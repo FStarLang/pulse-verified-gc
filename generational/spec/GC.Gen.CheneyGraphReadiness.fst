@@ -4024,6 +4024,7 @@ let chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
       GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
       chunked_minor_preflight_value_policy minor major fp roots fresh /\
       CInj.chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+      CInj.chunked_nonblue_scanned_raw_targets_in_major major /\
       (SpecMajorAlloc.major_fl_head_wosize major fp <
        PromotionDemand.minor_promotion_demand minor + 1 ==>
        CInj.chunked_minor_fields_miss_chunk minor fresh) /\
@@ -4045,10 +4046,6 @@ let chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
         collect.cmc_major /\
        GenMajorGCBridge.chunked_major_field_targets_non_infix
         collect.cmc_major /\
-       GenMajorGCBridge.chunked_major_raw_field_targets_in_major
-        r.capacity_major_out /\
-       GenMajorGCBridge.chunked_major_field_targets_non_infix
-        r.capacity_major_out /\
        CheneyPres.chunked_cheney_promote_split_ready
         minor r.capacity_major_out r.capacity_fp_out roots
         r.capacity_fuel_out /\
@@ -4131,6 +4128,15 @@ let chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
     minor major fp alloc_fuel needed fresh;
   assert (CInj.chunked_minor_major_fields_nonblue_non_infix_targets
             minor r.capacity_major_out);
+  GenInv.chunked_collection_heap_shape_elim minor major fp alloc_fuel;
+  assert (GenInv.chunked_major_alloc_shape major fp alloc_fuel);
+  GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
+  chunked_minor_preflight_value_policy_all_object_expansion_safe
+    minor major fp roots alloc_fuel fresh;
+  CInj.chunked_nonblue_scanned_raw_targets_in_major_ensure_head_capacity
+    major fp alloc_fuel needed fresh;
+  assert (CInj.chunked_nonblue_scanned_raw_targets_in_major
+            r.capacity_major_out);
   assert (SpecMajorAlloc.major_fl_chain_terminates
             r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out = true);
   assert (GenInv.chunked_chain_objects_blue

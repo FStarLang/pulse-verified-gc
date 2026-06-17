@@ -32,6 +32,19 @@ module GenMajorGCBridge = GC.Gen.ChunkedMajorGCBridge
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
+private let rec seq_mem_to_index (#a:eqtype) (x:a) (s:seq a)
+  : Ghost nat
+    (requires Seq.mem x s)
+    (ensures fun i -> i < Seq.length s /\ Seq.index s i == x)
+    (decreases Seq.length s)
+  =
+  if Seq.index s 0 == x then 0
+  else begin
+    let tl = Seq.slice s 1 (Seq.length s) in
+    Seq.lemma_count_slice s 1;
+    1 + seq_mem_to_index x tl
+  end
+
 #push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
 private let sweep_chunked_is_infix_preserved_by_expansion
   (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
@@ -1763,6 +1776,7 @@ let chunked_cheney_promote_old_nonblue_field_no_infix
          is_minor_pointer (to_minor_offset raw)))
       (ensures ~(is_infix_in_minor minor (to_minor_offset raw)))
   =
+  GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
   CG.chunked_major_field_slot_elim src j field_addr;
   assert (U64.v field_addr == U64.v src + j * U64.v mword);
   CP.chunked_cheney_promote_head_split_preserves_old_non_blue_field
@@ -3540,6 +3554,257 @@ private let chunked_get_field_from_major_field_slot
   MarkDefs.chunked_get_field_read_some mh src i raw
 #pop-options
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+private let chunked_major_field_read_some_from_slot
+  (mh: MH.major_heap)
+  (src: obj_addr)
+  (hdr: U64.t)
+  (idx: nat)
+  (field_addr: hp_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        Seq.mem src (MH.major_objects mh) /\
+        MH.read_word_in_major mh (hd_address src) == Some hdr /\
+        idx < U64.v (getWosize hdr) /\
+        CG.chunked_major_field_slot src idx == Some field_addr)
+      (ensures
+        (match MH.read_word_in_major mh field_addr with
+         | Some _ -> True
+         | None -> False))
+  =
+  ChunkedUpdate.chunked_wosize_nat_header mh src hdr;
+  assert (idx < ChunkedUpdate.chunked_wosize_nat_of_object mh src);
+  ChunkedUpdate.chunked_update_field_slot_from_major_field_slot
+    src idx field_addr;
+  ChunkedUpdate.chunked_update_field_slot_in_object_chunk
+    mh src idx field_addr;
+  let cidx = MH.lookup_chunk_index_value mh (hd_address src) in
+  assert (MH.lookup_chunk_index mh field_addr == Some cidx);
+  assert (cidx < Seq.length mh);
+  assert (MH.word_in_chunk (Seq.index mh cidx) field_addr);
+  MH.read_word_in_major_at_lookup_index mh field_addr cidx
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+private let expand_major_heap_fresh_object_is_blue
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (ensures
+        GenInv.chunked_is_blue
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out
+          (SpecMajorAlloc.fresh_chunk_object fresh))
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  let fresh_obj = SpecMajorAlloc.fresh_chunk_object fresh in
+  SpecMajorAlloc.expand_major_heap_header mh fresh fp;
+  hd_f_roundtrip fresh.base;
+  assert (hd_address fresh_obj == fresh.base);
+  let hdr = Some?.v (MH.read_word_in_major expanded (hd_address fresh_obj)) in
+  assert (MH.read_word_in_major expanded (hd_address fresh_obj) == Some hdr);
+  assert (MH.read_word_in_major expanded fresh.base == Some hdr);
+  SpecMajorAlloc.expand_major_heap_header_fields mh fresh fp;
+  assert (getColor hdr == GC.Lib.Header.Blue);
+  GenInv.chunked_is_blue_header expanded fresh_obj hdr
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+private let chunked_nonblue_scanned_raw_target_preserved_by_expansion_old_case
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        CG.chunked_all_major_object_expansion_safe
+          mh fresh (MH.major_objects mh) 0 /\
+        Seq.mem obj (MH.major_objects mh) /\
+        (let expanded =
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+         ~(GenInv.chunked_is_blue expanded obj) /\
+         ~(MarkDefs.chunked_is_no_scan expanded obj) /\
+         U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object
+                             expanded obj) /\
+         MarkDefs.chunked_is_pointer_field
+           expanded (MarkDefs.chunked_get_field expanded obj i)))
+      (ensures
+        (let expanded =
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+         let v = MarkDefs.chunked_get_field expanded obj i in
+         let child_raw =
+           MarkDefs.chunked_pointer_field_as_obj_addr expanded v in
+         Seq.mem child_raw (MH.major_objects expanded) /\
+         ~(SweepDefs.chunked_is_infix expanded child_raw)))
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  SpecMajorAlloc.expand_major_heap_wf mh fresh fp;
+  let k = seq_mem_to_index obj (MH.major_objects mh) in
+  CG.chunked_all_major_object_expansion_safe_at
+    mh fresh (MH.major_objects mh) 0 k;
+  CG.chunked_major_object_expansion_safe_header mh fresh obj;
+  CG.chunked_major_object_expansion_safe_fields mh fresh obj;
+  SpecMajorAlloc.expand_major_heap_old_object mh fresh fp obj;
+  CG.chunked_wosize_nat_of_object_preserved_by_expansion
+    mh fresh fp obj;
+  CG.chunked_is_no_scan_preserved_by_expansion mh fresh fp obj;
+  MH.major_objects_member_header_read_some mh obj;
+  let hdr = Some?.v (MH.read_word_in_major mh (hd_address obj)) in
+  assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+  SweepDefs.chunked_read_header_step mh obj;
+  assert (SweepDefs.chunked_read_header mh obj == Some hdr);
+  CG.chunked_wosize_nat_header mh obj hdr;
+  SweepDefs.chunked_wosize_of_object_some mh obj hdr;
+  chunked_wosize_nat_agrees_with_sweep expanded obj;
+  assert (CG.chunked_wosize_nat_of_object mh obj ==
+          U64.v (SweepDefs.chunked_wosize_of_object mh obj));
+  assert (CG.chunked_wosize_nat_of_object expanded obj ==
+          U64.v (SweepDefs.chunked_wosize_of_object expanded obj));
+  assert (U64.v i <=
+          U64.v (SweepDefs.chunked_wosize_of_object mh obj));
+  let idx = U64.v i - 1 in
+  assert (idx + 1 == U64.v i);
+  assert (idx < CG.chunked_wosize_nat_of_object mh obj);
+  CG.chunked_major_field_slot_of_object_header mh obj hdr idx;
+  match CG.chunked_major_field_slot obj idx with
+  | None -> assert False
+  | Some field_addr ->
+    CG.chunked_major_field_slot_elim obj idx field_addr;
+    CG.chunked_major_field_expansion_safe_at
+      mh fresh obj (CG.chunked_wosize_nat_of_object mh obj)
+      0 idx field_addr 0UL;
+    SpecMajorAlloc.expand_major_heap_old_read mh fresh fp field_addr;
+    chunked_major_field_read_some_from_slot
+      mh obj hdr idx field_addr;
+    let old = Some?.v (MH.read_word_in_major mh field_addr) in
+    assert (MH.read_word_in_major mh field_addr == Some old);
+    CG.chunked_major_field_expansion_safe_at
+      mh fresh obj (CG.chunked_wosize_nat_of_object mh obj)
+      0 idx field_addr old;
+    assert (~(MH.pointer_in_chunk fresh old));
+    assert (MH.read_word_in_major expanded field_addr == Some old);
+    chunked_get_field_from_major_field_slot
+      expanded obj i idx field_addr old;
+    let v = MarkDefs.chunked_get_field expanded obj i in
+    assert (v == old);
+    expand_major_heap_pointer_field_miss mh fresh fp old;
+    assert (MarkDefs.chunked_is_pointer_field mh old);
+    chunked_get_field_from_major_field_slot
+      mh obj i idx field_addr old;
+    assert (MarkDefs.chunked_get_field mh obj i == old);
+    GenInv.chunked_is_blue_preserved_by_expansion
+      mh fresh fp obj;
+    assert (~(GenInv.chunked_is_blue mh obj));
+    SweepDefs.chunked_read_header_step mh obj;
+    assert (SweepDefs.chunked_read_header mh obj == Some hdr);
+    SpecMajorAlloc.expand_major_heap_old_read mh fresh fp (hd_address obj);
+    assert (MH.read_word_in_major expanded (hd_address obj) == Some hdr);
+    SweepDefs.chunked_read_header_step expanded obj;
+    assert (SweepDefs.chunked_read_header expanded obj == Some hdr);
+    SweepDefs.chunked_tag_of_object_some mh obj hdr;
+    SweepDefs.chunked_tag_of_object_some expanded obj hdr;
+    MarkDefs.chunked_is_no_scan_step expanded obj;
+    MarkDefs.chunked_is_no_scan_step mh obj;
+    assert (MarkDefs.chunked_is_no_scan expanded obj ==
+            MarkDefs.chunked_is_no_scan mh obj);
+    assert (~(MarkDefs.chunked_is_no_scan mh obj));
+    chunked_nonblue_scanned_raw_targets_in_major_elim mh obj i;
+    let target0 = MarkDefs.chunked_pointer_field_as_obj_addr mh old in
+    assert (Seq.mem target0 (MH.major_objects mh));
+    MarkDefs.chunked_pointer_field_as_obj_addr_step mh old;
+    MarkDefs.chunked_pointer_field_as_obj_addr_step expanded v;
+    assert (target0 == MarkDefs.chunked_pointer_field_as_obj_addr expanded v);
+    SpecMajorAlloc.expand_major_heap_old_object mh fresh fp target0;
+    MH.major_object_header_disjoint_from_chunk mh fresh target0;
+    sweep_chunked_is_infix_preserved_by_expansion mh fresh fp target0;
+    assert (Seq.mem
+              (MarkDefs.chunked_pointer_field_as_obj_addr expanded v)
+              (MH.major_objects expanded));
+    assert (~(SweepDefs.chunked_is_infix expanded
+              (MarkDefs.chunked_pointer_field_as_obj_addr expanded v)))
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 10 --fuel 1 --ifuel 0"
+let chunked_nonblue_scanned_raw_targets_in_major_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        CG.chunked_all_major_object_expansion_safe
+          mh fresh (MH.major_objects mh) 0)
+      (ensures
+        chunked_nonblue_scanned_raw_targets_in_major
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  SpecMajorAlloc.expand_major_heap_wf mh fresh fp;
+  SpecMajorAlloc.expand_major_heap_objects mh fresh fp;
+  let fresh_obj = SpecMajorAlloc.fresh_chunk_object fresh in
+  let one (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          Seq.mem obj (MH.major_objects expanded) /\
+          ~(GenInv.chunked_is_blue expanded obj) /\
+          ~(MarkDefs.chunked_is_no_scan expanded obj) /\
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object
+                              expanded obj))
+        (ensures
+          (let v = MarkDefs.chunked_get_field expanded obj i in
+           if MarkDefs.chunked_is_pointer_field expanded v then
+            let child_raw =
+              MarkDefs.chunked_pointer_field_as_obj_addr expanded v in
+            Seq.mem child_raw (MH.major_objects expanded) /\
+            ~(SweepDefs.chunked_is_infix expanded child_raw)
+           else
+            True))
+    =
+    let v = MarkDefs.chunked_get_field expanded obj i in
+    if MarkDefs.chunked_is_pointer_field expanded v then begin
+      if obj = fresh_obj then begin
+        expand_major_heap_fresh_object_is_blue mh fresh fp;
+        assert (GenInv.chunked_is_blue expanded obj);
+        assert False
+      end else begin
+        if ~(Seq.mem obj (MH.major_objects mh)) then begin
+          GC.Spec.SeqMemLemmas.seq_mem_cons_not_mem_implies_eq
+            fresh_obj obj (MH.major_objects mh);
+          assert False
+        end;
+        assert (Seq.mem obj (MH.major_objects mh));
+        chunked_nonblue_scanned_raw_target_preserved_by_expansion_old_case
+          mh fresh fp obj i
+      end
+    end
+  in
+  FStar.Classical.forall_intro_2
+    (FStar.Classical.move_requires_2 one);
+  chunked_nonblue_scanned_raw_targets_in_major_intro expanded
+
+let chunked_nonblue_scanned_raw_targets_in_major_ensure_head_capacity
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh /\
+        (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+          MH.chunk_disjoint_from_all fresh mh /\
+          CG.chunked_all_major_object_expansion_safe
+            mh fresh (MH.major_objects mh) 0))
+      (ensures
+        chunked_nonblue_scanned_raw_targets_in_major
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+  =
+  if SpecMajorAlloc.major_fl_head_wosize mh fp < needed then
+    chunked_nonblue_scanned_raw_targets_in_major_preserved_by_expansion
+      mh fresh fp
+  else
+    ()
+#pop-options
+
 #push-options "--split_queries always --z3rlimit 5 --fuel 1 --ifuel 0"
 private let chunked_cheney_promote_preserves_old_nonblue_non_infix
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
@@ -3598,8 +3863,7 @@ private let old_field_source_case_scanned_raw_target
   : Lemma
       (requires
         GenInv.chunked_no_pointer_to_blue major /\
-        GenMajorGCBridge.chunked_major_raw_field_targets_in_major major /\
-        GenMajorGCBridge.chunked_major_field_targets_non_infix major /\
+        chunked_nonblue_scanned_raw_targets_in_major major /\
         (forall (target: obj_addr).
           Seq.mem target (MH.major_objects major) ==> is_pointer_field target) /\
         alloc_fuel > 1 /\
@@ -3657,6 +3921,8 @@ private let old_field_source_case_scanned_raw_target
         MH.read_word_in_major res.major_final field_addr == Some raw)
       (ensures goal)
     =
+      GenInv.chunked_major_alloc_shape_elim major fp alloc_fuel;
+      assert (MH.well_formed_major_heap major);
       CG.chunked_major_field_slot_elim src j field_addr;
       assert (U64.v field_addr == U64.v src + j * U64.v mword);
       CP.chunked_cheney_promote_head_split_preserves_old_non_blue_field
@@ -3674,19 +3940,35 @@ private let old_field_source_case_scanned_raw_target
       assert (MarkDefs.chunked_is_pointer_field major old);
       CG.chunked_wosize_nat_header major src hdr;
       assert (j < CG.chunked_wosize_nat_of_object major src);
-      GenMajorGCBridge.chunked_major_raw_field_targets_in_major_elim
-        major src j field_addr old;
-      let target0 = MarkDefs.chunked_pointer_field_as_obj_addr major old in
-      assert (Seq.mem target0 (MH.major_objects major));
+      let field_i: (i: U64.t{U64.v i >= 1}) =
+        U64.uint_to_t (j + 1) in
+      U64.vu_inv (j + 1);
+      assert (U64.v field_i == j + 1);
+      assert (j + 1 <= U64.v (getWosize hdr));
+      chunked_get_field_from_major_field_slot
+        major src field_i j field_addr old;
+      assert (MarkDefs.chunked_get_field major src field_i == old);
+      SweepDefs.chunked_read_header_step major src;
+      assert (SweepDefs.chunked_read_header major src == Some hdr);
+      SweepDefs.chunked_wosize_of_object_some major src hdr;
+      SweepDefs.chunked_tag_of_object_some major src hdr;
+      MarkDefs.chunked_is_no_scan_step major src;
+      assert (~(MarkDefs.chunked_is_no_scan major src));
       GenInv.chunked_is_blue_header major src hdr;
       assert (~(GenInv.chunked_is_blue major src));
+      assert (U64.v (SweepDefs.chunked_wosize_of_object major src) ==
+              U64.v (getWosize hdr));
+      assert (U64.v field_i <=
+              U64.v (SweepDefs.chunked_wosize_of_object major src));
+      chunked_nonblue_scanned_raw_targets_in_major_elim
+        major src field_i;
+      let target0 = MarkDefs.chunked_pointer_field_as_obj_addr major old in
+      assert (Seq.mem target0 (MH.major_objects major));
       MarkDefs.chunked_pointer_field_as_obj_addr_step major old;
       assert (target0 == old);
       assert (is_pointer_field target0);
       assert (is_pointer_to old target0);
       GenInv.chunked_no_pointer_to_blue_elim
-        major src target0 j field_addr old;
-      GenMajorGCBridge.chunked_major_field_targets_non_infix_elim
         major src target0 j field_addr old;
       assert (~(GenInv.chunked_is_blue major target0));
       assert (~(SweepDefs.chunked_is_infix major target0));
@@ -3827,8 +4109,7 @@ let chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
         minor_wf minor /\
         minor_infix_wf minor /\
         GenInv.chunked_no_pointer_to_blue major /\
-        GenMajorGCBridge.chunked_major_raw_field_targets_in_major major /\
-        GenMajorGCBridge.chunked_major_field_targets_non_infix major /\
+        chunked_nonblue_scanned_raw_targets_in_major major /\
         (forall (target: obj_addr).
           Seq.mem target (MH.major_objects major) ==> is_pointer_field target) /\
         chunked_minor_major_fields_nonblue_non_infix_targets minor major /\

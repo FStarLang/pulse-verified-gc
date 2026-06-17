@@ -14136,6 +14136,8 @@ let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_non
           minor major fp roots fresh /\
         ChunkedCheneyInjectivity
           .chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+        ChunkedCheneyInjectivity
+          .chunked_nonblue_scanned_raw_targets_in_major major /\
         (SpecMajorAlloc.major_fl_head_wosize major fp <
           PromotionDemand.minor_promotion_demand minor + 1 ==>
           ChunkedCheneyInjectivity.chunked_minor_fields_miss_chunk
@@ -14158,10 +14160,6 @@ let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_non
            collect.cmc_major /\
          GenMajorGCBridge.chunked_major_field_targets_non_infix
            collect.cmc_major /\
-         GenMajorGCBridge.chunked_major_raw_field_targets_in_major
-           r.capacity_major_out /\
-         GenMajorGCBridge.chunked_major_field_targets_non_infix
-           r.capacity_major_out /\
          CheneyPreservation.chunked_cheney_promote_split_ready
            minor r.capacity_major_out r.capacity_fp_out roots
            r.capacity_fuel_out /\
@@ -18035,6 +18033,47 @@ let spot_chunked_nonblue_scanned_raw_targets_in_major_elim
   ChunkedCheneyInjectivity.chunked_nonblue_scanned_raw_targets_in_major_elim
     mh obj i
 
+let spot_chunked_nonblue_scanned_raw_targets_in_major_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedCheneyInjectivity
+          .chunked_nonblue_scanned_raw_targets_in_major mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        CG.chunked_all_major_object_expansion_safe
+          mh fresh (MH.major_objects mh) 0)
+      (ensures
+        ChunkedCheneyInjectivity
+          .chunked_nonblue_scanned_raw_targets_in_major
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  =
+  ChunkedCheneyInjectivity
+    .chunked_nonblue_scanned_raw_targets_in_major_preserved_by_expansion
+    mh fresh fp
+
+let spot_chunked_nonblue_scanned_raw_targets_in_major_ensure_head_capacity
+  (mh: MH.major_heap) (fp: U64.t) (fuel: nat)
+  (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedCheneyInjectivity
+          .chunked_nonblue_scanned_raw_targets_in_major mh /\
+        (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+          MH.chunk_disjoint_from_all fresh mh /\
+          CG.chunked_all_major_object_expansion_safe
+            mh fresh (MH.major_objects mh) 0))
+      (ensures
+        ChunkedCheneyInjectivity
+          .chunked_nonblue_scanned_raw_targets_in_major
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+  =
+  ChunkedCheneyInjectivity
+    .chunked_nonblue_scanned_raw_targets_in_major_ensure_head_capacity
+    mh fp fuel needed fresh
+
 let spot_chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (remaining: nat)
@@ -18043,8 +18082,8 @@ let spot_chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
         minor_wf minor /\
         minor_infix_wf minor /\
         GenInv.chunked_no_pointer_to_blue major /\
-        GenMajorGCBridge.chunked_major_raw_field_targets_in_major major /\
-        GenMajorGCBridge.chunked_major_field_targets_non_infix major /\
+        ChunkedCheneyInjectivity
+          .chunked_nonblue_scanned_raw_targets_in_major major /\
         (forall (target: obj_addr).
           Seq.mem target (MH.major_objects major) ==>
           Fields.is_pointer_field target) /\

@@ -2569,6 +2569,7 @@ val chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
       GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
       chunked_minor_preflight_value_policy minor major fp roots fresh /\
       CInj.chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+      CInj.chunked_nonblue_scanned_raw_targets_in_major major /\
       (SpecMajorAlloc.major_fl_head_wosize major fp <
        PromotionDemand.minor_promotion_demand minor + 1 ==>
        CInj.chunked_minor_fields_miss_chunk minor fresh) /\
@@ -2590,10 +2591,6 @@ val chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
        collect.cmc_major /\
        GenMajorGCBridge.chunked_major_field_targets_non_infix
        collect.cmc_major /\
-       GenMajorGCBridge.chunked_major_raw_field_targets_in_major
-       r.capacity_major_out /\
-       GenMajorGCBridge.chunked_major_field_targets_non_infix
-       r.capacity_major_out /\
        CheneyPres.chunked_cheney_promote_split_ready
        minor r.capacity_major_out r.capacity_fp_out roots
        r.capacity_fuel_out /\

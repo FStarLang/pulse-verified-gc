@@ -504,6 +504,35 @@ val chunked_nonblue_scanned_raw_targets_in_major_elim
          else
           True))
 
+val chunked_nonblue_scanned_raw_targets_in_major_preserved_by_expansion
+  : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh /\
+        MH.chunk_disjoint_from_all fresh mh /\
+        CG.chunked_all_major_object_expansion_safe
+         mh fresh (MH.major_objects mh) 0)
+      (ensures
+        chunked_nonblue_scanned_raw_targets_in_major
+         (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+
+val chunked_nonblue_scanned_raw_targets_in_major_ensure_head_capacity
+  : mh:MH.major_heap -> fp:U64.t -> fuel:nat ->
+    needed:nat{needed > 0} -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh /\
+        (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+         MH.chunk_disjoint_from_all fresh mh /\
+         CG.chunked_all_major_object_expansion_safe
+           mh fresh (MH.major_objects mh) 0))
+      (ensures
+        chunked_nonblue_scanned_raw_targets_in_major
+         (SpecMajorAlloc.ensure_major_head_capacity_spec
+           mh fp fuel needed fresh).capacity_major_out)
+
 val chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
     roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
@@ -512,8 +541,7 @@ val chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
         minor_wf minor /\
         minor_infix_wf minor /\
         GenInv.chunked_no_pointer_to_blue major /\
-        GenMajorGCBridge.chunked_major_raw_field_targets_in_major major /\
-        GenMajorGCBridge.chunked_major_field_targets_non_infix major /\
+        chunked_nonblue_scanned_raw_targets_in_major major /\
         (forall (target: obj_addr).
           Seq.mem target (MH.major_objects major) ==>
           Fields.is_pointer_field target) /\
