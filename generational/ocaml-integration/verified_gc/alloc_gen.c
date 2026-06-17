@@ -151,6 +151,9 @@ static uint64_t minor_promotion_demand_words(void) {
     uint64_t bump = *gc_gen_heap.minor.bump_ref;
     uint64_t demand = 0;
 
+    if (bump > minor_heap_size_u64 || bump % sizeof(value) != 0)
+        caml_fatal_error("verified gen GC: invalid minor allocation frontier");
+
     while (off < bump) {
         uint64_t header = *(uint64_t *)(minor_base + off);
         uint64_t wosize = header_wosize(header);
@@ -183,6 +186,8 @@ static uint64_t major_free_head_wosize(void) {
 
     if (fp == 0)
         return 0;
+    if (zero_addr > UINT64_MAX - sizeof(value))
+        caml_fatal_error("verified gen GC: invalid major base address");
     if (fp < zero_addr + sizeof(value) || fp >= heap_size_u64)
         caml_fatal_error("verified gen GC: invalid major free-list head");
     if (fp % sizeof(value) != 0)
@@ -190,6 +195,18 @@ static uint64_t major_free_head_wosize(void) {
 
     header_addr = (uintptr_t)(fp - sizeof(value));
     return header_wosize(*(uint64_t *)header_addr);
+}
+
+static uint64_t required_head_wosize_for_promotion(uint64_t demand_words) {
+    if (demand_words > UINT64_MAX - 1)
+        caml_fatal_error("verified gen GC: promotion demand too large");
+    return demand_words + 1;
+}
+
+static uint64_t required_chunk_words_for_head(uint64_t head_wosize) {
+    if (head_wosize > UINT64_MAX - 1)
+        caml_fatal_error("verified gen GC: promotion head demand too large");
+    return head_wosize + 1;
 }
 
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
@@ -411,15 +428,20 @@ static void fatal_promotion_failed(void) {
     uint64_t major_size = current_major_bytes();
     uint64_t demand_words = minor_promotion_demand_words();
     uint64_t head_words = major_free_head_wosize();
+    uint64_t required_head_words = required_head_wosize_for_promotion(demand_words);
+    uint64_t required_chunk_words = required_chunk_words_for_head(required_head_words);
     fprintf(stderr,
         "verified gen GC: promotion failed — major heap full (%lu MB, %lu chunk(s))\n"
         "  Minor promotion demand: %llu words; major free-list head: %llu words.\n"
+        "  Verified preflight requires head >= %llu words; fresh chunk >= %llu words.\n"
         "  Some objects could not be promoted (live set exceeds heap capacity).\n"
         "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n",
         (unsigned long)(major_size / 1048576),
         (unsigned long)major_chunk_count,
         (unsigned long long)demand_words,
         (unsigned long long)head_words,
+        (unsigned long long)required_head_words,
+        (unsigned long long)required_chunk_words,
         (unsigned long)(major_size / 4));
     caml_fatal_error("verified gen GC: out of memory (major heap too small)");
 }
