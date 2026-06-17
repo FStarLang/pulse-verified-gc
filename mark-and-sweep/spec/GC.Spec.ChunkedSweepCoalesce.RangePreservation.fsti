@@ -71,6 +71,37 @@ val major_write_word_or_same_preserves_ranges
           mh
           (GC.Spec.MajorAllocator.major_write_word_or_same mh addr value))
 
+val major_alloc_from_block_preserves_ranges
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (requested_wz: nat)
+  (next_fp: U64.t)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (fst (GC.Spec.MajorAllocator.major_alloc_from_block
+            mh obj requested_wz next_fp)))
+
+val major_alloc_search_preserves_ranges
+  (mh: MH.major_heap)
+  (head_fp prev_fp cur_fp: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (GC.Spec.MajorAllocator.major_alloc_search
+            mh head_fp prev_fp cur_fp requested_wz fuel).major_alloc_out)
+
+val major_alloc_spec_with_fuel_preserves_ranges
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (GC.Spec.MajorAllocator.major_alloc_spec_with_fuel
+            mh fp requested_wz fuel).major_alloc_out)
+
 val chunked_flush_blue_preserves_ranges
   (mh: MH.major_heap)
   (first_blue: U64.t)

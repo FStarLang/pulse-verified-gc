@@ -1397,6 +1397,57 @@ let spot_same_chunk_ranges_word_in_chunk
   =
   ChunkedSweepRange.same_chunk_ranges_word_in_chunk before after idx addr
 
+let spot_major_write_word_or_same_preserves_ranges
+  (mh: MH.major_heap)
+  (addr: hp_addr)
+  (value: U64.t)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (SpecMajorAlloc.major_write_word_or_same mh addr value))
+  =
+  ChunkedSweepRange.major_write_word_or_same_preserves_ranges mh addr value
+
+let spot_major_alloc_from_block_preserves_ranges
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (requested_wz: nat)
+  (next_fp: U64.t)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (fst (SpecMajorAlloc.major_alloc_from_block
+            mh obj requested_wz next_fp)))
+  =
+  ChunkedSweepRange.major_alloc_from_block_preserves_ranges
+    mh obj requested_wz next_fp
+
+let spot_major_alloc_search_preserves_ranges
+  (mh: MH.major_heap)
+  (head_fp prev_fp cur_fp: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (SpecMajorAlloc.major_alloc_search
+            mh head_fp prev_fp cur_fp requested_wz fuel).major_alloc_out)
+  =
+  ChunkedSweepRange.major_alloc_search_preserves_ranges
+    mh head_fp prev_fp cur_fp requested_wz fuel
+
+let spot_major_alloc_spec_with_fuel_preserves_ranges
+  (mh: MH.major_heap)
+  (fp: U64.t)
+  (requested_wz fuel: nat)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (SpecMajorAlloc.major_alloc_spec_with_fuel
+            mh fp requested_wz fuel).major_alloc_out)
+  =
+  ChunkedSweepRange.major_alloc_spec_with_fuel_preserves_ranges
+    mh fp requested_wz fuel
+
 let spot_chunked_fused_aux_preserves_ranges
   (source work: MH.major_heap)
   (objs: Seq.seq obj_addr)
@@ -11858,6 +11909,50 @@ let spot_chunked_copy_fields_preserves_major_objects
   ChunkedPromote.chunked_copy_fields_preserves_major_objects
     minor mh src_obj dst_obj i n idx hdr
 
+let spot_chunked_copy_fields_preserves_ranges
+  (minor: minor_state) (mh: MH.major_heap)
+  (src_obj dst_obj: U64.t) (i n: nat)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (ChunkedPromote.chunked_copy_fields
+            minor mh src_obj dst_obj i n))
+  =
+  ChunkedPromote.chunked_copy_fields_preserves_ranges
+    minor mh src_obj dst_obj i n
+
+let spot_chunked_set_promoted_tag_preserves_ranges
+  (mh: MH.major_heap) (obj: U64.t) (tag: nat)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (ChunkedPromote.chunked_set_promoted_tag mh obj tag))
+  =
+  ChunkedPromote.chunked_set_promoted_tag_preserves_ranges mh obj tag
+
+let spot_chunked_zero_promote_padding_preserves_ranges
+  (mh: MH.major_heap) (dst: U64.t) (copied_wz: nat)
+  : Lemma
+      (ensures
+        ChunkedSweepRange.same_chunk_ranges mh
+          (ChunkedPromote.chunked_zero_promote_padding mh dst copied_wz))
+  =
+  ChunkedPromote.chunked_zero_promote_padding_preserves_ranges
+    mh dst copied_wz
+
+let spot_chunked_promote_object_with_fuel_preserves_ranges
+  (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
+  : Lemma
+      (ensures
+        (let res =
+          ChunkedPromote.chunked_promote_object_with_fuel
+            minor mh obj fp wosize fuel in
+         ChunkedSweepRange.same_chunk_ranges mh res.major_out))
+  =
+  ChunkedPromote.chunked_promote_object_with_fuel_preserves_ranges
+    minor mh obj fp wosize fuel
+
 #push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
 let spot_chunked_copy_fields_field_effect
   (minor: minor_state) (mh: MH.major_heap)
@@ -17313,6 +17408,85 @@ let spot_chunked_cheney_promote_major_minor_fields_no_infix_targets
            minor res.major_final))
   =
   ChunkedCheneyInjectivity.chunked_cheney_promote_major_minor_fields_no_infix_targets
+    minor major fp roots alloc_fuel remaining
+
+let spot_chunked_minor_major_fields_nonblue_non_infix_targets_elim
+  (minor: minor_state) (mh: MH.major_heap) (obj: U64.t) (j: nat)
+  : Lemma
+      (requires
+        ChunkedCheneyInjectivity
+          .chunked_minor_major_fields_nonblue_non_infix_targets minor mh /\
+        Seq.mem obj (minor_objects minor) /\
+        j < minor_wosize minor obj /\
+        ChunkedMarkDefs.chunked_is_pointer_field mh
+          (minor_read_field minor obj j))
+      (ensures
+        (let raw = minor_read_field minor obj j in
+         let target = ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh raw in
+         Seq.mem target (MH.major_objects mh) /\
+         ~(GenInv.chunked_is_blue mh target) /\
+         ~(ChunkedSweepDefs.chunked_is_infix mh target)))
+  =
+  ChunkedCheneyInjectivity
+    .chunked_minor_major_fields_nonblue_non_infix_targets_elim
+    minor mh obj j
+
+let spot_chunked_nonblue_scanned_raw_targets_in_major_elim
+  (mh: MH.major_heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        ChunkedCheneyInjectivity
+          .chunked_nonblue_scanned_raw_targets_in_major mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ~(GenInv.chunked_is_blue mh obj) /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
+        U64.v i <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj))
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         if ChunkedMarkDefs.chunked_is_pointer_field mh v then
+          let child_raw =
+            ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+          Seq.mem child_raw (MH.major_objects mh) /\
+          ~(ChunkedSweepDefs.chunked_is_infix mh child_raw)
+         else
+          True))
+  =
+  ChunkedCheneyInjectivity.chunked_nonblue_scanned_raw_targets_in_major_elim
+    mh obj i
+
+let spot_chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        GenInv.chunked_no_pointer_to_blue major /\
+        GenMajorGCBridge.chunked_major_raw_field_targets_in_major major /\
+        GenMajorGCBridge.chunked_major_field_targets_non_infix major /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects major) ==>
+          Fields.is_pointer_field target) /\
+        ChunkedCheneyInjectivity
+          .chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         ChunkedCheneyInjectivity
+           .chunked_nonblue_scanned_raw_targets_in_major res.major_final))
+  =
+  ChunkedCheneyInjectivity
+    .chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
     minor major fp roots alloc_fuel remaining
 
 let spot_chunked_cheney_gc_correct_after_preflight_old_major_field_edge

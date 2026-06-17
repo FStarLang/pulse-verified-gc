@@ -163,8 +163,23 @@ val chunked_copy_fields_preserves_major_objects
          MH.read_word_in_major mh' (hd_address (dst_obj <: obj_addr)) ==
            Some hdr))
 
+val chunked_copy_fields_preserves_ranges
+  : minor:minor_state -> mh:MH.major_heap ->
+    src_obj:U64.t -> dst_obj:U64.t -> i:nat -> n:nat ->
+    Lemma
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.RangePreservation.same_chunk_ranges
+          mh (chunked_copy_fields minor mh src_obj dst_obj i n))
+
 val chunked_set_promoted_tag
   : mh:MH.major_heap -> obj:U64.t -> tag:nat -> GTot MH.major_heap
+
+val chunked_set_promoted_tag_preserves_ranges
+  : mh:MH.major_heap -> obj:U64.t -> tag:nat ->
+    Lemma
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.RangePreservation.same_chunk_ranges
+          mh (chunked_set_promoted_tag mh obj tag))
 
 val chunked_set_promoted_tag_read_frame
   : mh:MH.major_heap -> obj:U64.t -> tag:nat ->
@@ -228,6 +243,13 @@ val chunked_set_promoted_tag_header_effect
 val chunked_zero_promote_padding
   : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat -> GTot MH.major_heap
 
+val chunked_zero_promote_padding_preserves_ranges
+  : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat ->
+    Lemma
+      (ensures
+        GC.Spec.ChunkedSweepCoalesce.RangePreservation.same_chunk_ranges
+          mh (chunked_zero_promote_padding mh dst copied_wz))
+
 val chunked_zero_promote_padding_noop
   : mh:MH.major_heap -> dst:U64.t -> copied_wz:nat -> hdr:U64.t ->
     Lemma
@@ -283,6 +305,15 @@ val chunked_promote_object_success
                             padded alloc_res.major_obj_out tag /\
          res.fp_out == alloc_res.major_fp_out /\
          res.new_addr == alloc_res.major_obj_out))
+
+val chunked_promote_object_with_fuel_preserves_ranges
+  : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->
+    fp:U64.t -> wosize:nat{wosize > 0} -> fuel:nat ->
+    Lemma
+      (ensures
+        (let res = chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+         GC.Spec.ChunkedSweepCoalesce.RangePreservation.same_chunk_ranges
+          mh res.major_out))
 
 val chunked_promote_object_success_field_effect
   : minor:minor_state -> mh:MH.major_heap -> obj:U64.t ->

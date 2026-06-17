@@ -5,6 +5,7 @@ module Seq = FStar.Seq
 
 open GC.Spec.Base
 open GC.Spec.Heap
+open GC.Spec.Object
 
 module MH = GC.Spec.MajorHeap
 module Defs = GC.Spec.ChunkedSweepCoalesce.Defs
@@ -222,6 +223,159 @@ let major_write_word_or_same_preserves_ranges
   match MH.write_word_in_major mh addr value with
   | None -> same_chunk_ranges_refl mh
   | Some _ -> ()
+
+let major_alloc_from_block_preserves_ranges
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (requested_wz: nat)
+    (next_fp: U64.t)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (fst (SpecMajorAlloc.major_alloc_from_block
+            mh obj requested_wz next_fp)))
+  =
+  let hd = hd_address obj in
+  match MH.read_word_in_major mh hd with
+  | None -> same_chunk_ranges_refl mh
+  | Some hdr ->
+    let block_wz = U64.v (getWosize hdr) in
+    let leftover = block_wz - requested_wz in
+    if block_wz < requested_wz then
+      same_chunk_ranges_refl mh
+    else if leftover >= 2 then begin
+      let alloc_hdr =
+        GC.Spec.Allocator.make_header
+          (U64.uint_to_t requested_wz) GC.Spec.Allocator.white_bits 0UL in
+      let mh1 = SpecMajorAlloc.major_write_word_or_same mh hd alloc_hdr in
+      major_write_word_or_same_preserves_ranges mh hd alloc_hdr;
+      let rem_hd_nat = U64.v hd + (1 + requested_wz) * 8 in
+      if rem_hd_nat >= heap_size || rem_hd_nat >= pow2 64 ||
+         rem_hd_nat % 8 <> 0 then
+        ()
+      else begin
+        let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+        let rem_wz = leftover - 1 in
+        let rem_hdr =
+          GC.Spec.Allocator.make_header
+            (U64.uint_to_t rem_wz) GC.Spec.Allocator.blue_bits 0UL in
+        let mh2 = SpecMajorAlloc.major_write_word_or_same mh1 rem_hd rem_hdr in
+        major_write_word_or_same_preserves_ranges mh1 rem_hd rem_hdr;
+        same_chunk_ranges_trans mh mh1 mh2;
+        let rem_obj_nat = rem_hd_nat + 8 in
+        if rem_obj_nat >= heap_size || rem_obj_nat >= pow2 64 ||
+           rem_obj_nat % 8 <> 0 then
+          ()
+        else begin
+          let rem_field : hp_addr = U64.uint_to_t rem_obj_nat in
+          let mh3 =
+            SpecMajorAlloc.major_write_word_or_same mh2 rem_field next_fp in
+          major_write_word_or_same_preserves_ranges mh2 rem_field next_fp;
+          same_chunk_ranges_trans mh mh2 mh3
+        end
+      end
+    end else begin
+      let alloc_hdr =
+        GC.Spec.Allocator.make_header
+          (U64.uint_to_t block_wz) GC.Spec.Allocator.white_bits 0UL in
+      major_write_word_or_same_preserves_ranges mh hd alloc_hdr
+    end
+
+let rec major_alloc_search_preserves_ranges
+    (mh: MH.major_heap)
+    (head_fp prev_fp cur_fp: U64.t)
+    (requested_wz fuel: nat)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (SpecMajorAlloc.major_alloc_search
+            mh head_fp prev_fp cur_fp requested_wz fuel).major_alloc_out)
+      (decreases fuel)
+  =
+  if fuel = 0 then begin
+    SpecMajorAlloc.major_alloc_search_fuel_0
+      mh head_fp prev_fp cur_fp requested_wz;
+    same_chunk_ranges_refl mh
+  end
+  else begin
+    let fuel' = fuel - 1 in
+    if U64.v cur_fp < U64.v zero_addr + U64.v mword ||
+       U64.v cur_fp >= heap_size ||
+       U64.v cur_fp % U64.v mword <> 0 then begin
+      assert (fuel > 0);
+      SpecMajorAlloc.major_alloc_search_invalid
+        mh head_fp prev_fp cur_fp requested_wz fuel;
+      same_chunk_ranges_refl mh
+    end
+    else begin
+      assert (fuel > 0);
+      assert (U64.v cur_fp >= U64.v zero_addr + U64.v mword);
+      assert (U64.v cur_fp < heap_size);
+      assert (U64.v cur_fp % U64.v mword = 0);
+      let obj : obj_addr = cur_fp in
+      let hd = hd_address obj in
+      match MH.read_word_in_major mh hd with
+      | None ->
+        SpecMajorAlloc.major_alloc_search_missing_header
+          mh head_fp prev_fp cur_fp requested_wz fuel;
+        same_chunk_ranges_refl mh
+      | Some hdr ->
+        let block_wz = U64.v (getWosize hdr) in
+        let next_fp = SpecMajorAlloc.major_spec_next_fp mh obj in
+        if block_wz >= requested_wz then begin
+          let (mh', new_remainder_fp) =
+            SpecMajorAlloc.major_alloc_from_block
+              mh obj requested_wz next_fp in
+          major_alloc_from_block_preserves_ranges
+            mh obj requested_wz next_fp;
+          if prev_fp = 0UL then begin
+            SpecMajorAlloc.major_alloc_search_found_head
+              mh head_fp prev_fp cur_fp requested_wz fuel hdr;
+            assert ((SpecMajorAlloc.major_alloc_search
+              mh head_fp prev_fp cur_fp requested_wz fuel).major_alloc_out == mh')
+          end
+          else if U64.v prev_fp >= U64.v mword &&
+                  U64.v prev_fp < heap_size &&
+                  U64.v prev_fp % U64.v mword = 0 then begin
+            let mh2 =
+              SpecMajorAlloc.major_write_word_or_same
+                mh' (prev_fp <: hp_addr) new_remainder_fp in
+            SpecMajorAlloc.major_alloc_search_found_prev
+              mh head_fp prev_fp cur_fp requested_wz fuel hdr;
+            major_write_word_or_same_preserves_ranges
+              mh' (prev_fp <: hp_addr) new_remainder_fp;
+            same_chunk_ranges_trans mh mh' mh2
+          end else begin
+            SpecMajorAlloc.major_alloc_search_found_prev_invalid
+              mh head_fp prev_fp cur_fp requested_wz fuel hdr;
+            assert ((SpecMajorAlloc.major_alloc_search
+              mh head_fp prev_fp cur_fp requested_wz fuel).major_alloc_out == mh')
+          end
+        end else begin
+          SpecMajorAlloc.major_alloc_search_advance
+            mh head_fp prev_fp cur_fp requested_wz fuel hdr;
+          major_alloc_search_preserves_ranges
+            mh head_fp cur_fp next_fp requested_wz fuel';
+          assert (SpecMajorAlloc.major_alloc_search
+            mh head_fp prev_fp cur_fp requested_wz fuel ==
+            SpecMajorAlloc.major_alloc_search
+              mh head_fp cur_fp next_fp requested_wz fuel')
+        end
+    end
+  end
+
+let major_alloc_spec_with_fuel_preserves_ranges
+    (mh: MH.major_heap)
+    (fp: U64.t)
+    (requested_wz fuel: nat)
+  : Lemma
+      (ensures
+        same_chunk_ranges mh
+          (SpecMajorAlloc.major_alloc_spec_with_fuel
+            mh fp requested_wz fuel).major_alloc_out)
+  =
+  let wz = GC.Spec.Allocator.normalized_wosize requested_wz in
+  major_alloc_search_preserves_ranges mh fp 0UL fp wz fuel
 
 #push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
 let rec chunked_zero_fields_preserves_ranges

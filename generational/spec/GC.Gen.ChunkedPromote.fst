@@ -17,6 +17,7 @@ module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module Promote = GC.Gen.Promote
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 module WriteBody = GC.Gen.WriteBodyLemmas
 
 let rec chunked_copy_fields
@@ -537,6 +538,40 @@ let rec chunked_copy_fields_preserves_major_objects
   end
 #pop-options
 
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+let rec chunked_copy_fields_preserves_ranges
+  (minor: minor_state) (mh: MH.major_heap)
+  (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
+  : Lemma
+      (ensures
+        RangePres.same_chunk_ranges
+          mh (chunked_copy_fields minor mh src_obj dst_obj i n))
+      (decreases n - i)
+  =
+  if i >= n then begin
+    chunked_copy_fields_base minor mh src_obj dst_obj i n;
+    RangePres.same_chunk_ranges_refl mh
+  end else begin
+    let dst_offset = U64.v dst_obj + i * U64.v mword in
+    if dst_offset + U64.v mword > heap_size ||
+       dst_offset % U64.v mword <> 0 then
+      RangePres.same_chunk_ranges_refl mh
+    else begin
+      let write_addr : hp_addr = U64.uint_to_t dst_offset in
+      let field_val = minor_read_field minor src_obj i in
+      let mh' =
+        SpecMajorAlloc.major_write_word_or_same mh write_addr field_val in
+      RangePres.major_write_word_or_same_preserves_ranges
+        mh write_addr field_val;
+      chunked_copy_fields_step minor mh src_obj dst_obj i n;
+      chunked_copy_fields_preserves_ranges
+        minor mh' src_obj dst_obj (i + 1) n;
+      RangePres.same_chunk_ranges_trans
+        mh mh' (chunked_copy_fields minor mh' src_obj dst_obj (i + 1) n)
+    end
+  end
+#pop-options
+
 let chunked_set_promoted_tag (mh: MH.major_heap) (obj: U64.t) (tag: nat)
   : GTot MH.major_heap =
   if tag >= 256 then mh
@@ -551,6 +586,30 @@ let chunked_set_promoted_tag (mh: MH.major_heap) (obj: U64.t) (tag: nat)
       let new_hdr = makeHeader (getWosize hdr) White (U64.uint_to_t tag) in
       SpecMajorAlloc.major_write_word_or_same mh hd new_hdr
   else mh
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_set_promoted_tag_preserves_ranges
+  (mh: MH.major_heap) (obj: U64.t) (tag: nat)
+  : Lemma
+    (ensures
+      RangePres.same_chunk_ranges
+        mh (chunked_set_promoted_tag mh obj tag))
+  =
+  if tag >= 256 then
+  RangePres.same_chunk_ranges_refl mh
+  else if U64.v obj >= U64.v mword &&
+        U64.v obj < heap_size &&
+        U64.v obj % U64.v mword = 0 then begin
+  let dst : obj_addr = obj in
+  let hd = hd_address dst in
+  match MH.read_word_in_major mh hd with
+  | None -> RangePres.same_chunk_ranges_refl mh
+  | Some hdr ->
+    let new_hdr = makeHeader (getWosize hdr) White (U64.uint_to_t tag) in
+    RangePres.major_write_word_or_same_preserves_ranges mh hd new_hdr
+  end else
+  RangePres.same_chunk_ranges_refl mh
+#pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 let chunked_set_promoted_tag_read_frame
@@ -720,6 +779,37 @@ let chunked_zero_promote_padding
       else mh
   else mh
 
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_zero_promote_padding_preserves_ranges
+  (mh: MH.major_heap) (dst: U64.t) (copied_wz: nat)
+  : Lemma
+      (ensures
+       RangePres.same_chunk_ranges
+         mh (chunked_zero_promote_padding mh dst copied_wz))
+  =
+  if U64.v dst >= U64.v mword &&
+     U64.v dst < heap_size &&
+     U64.v dst % U64.v mword = 0 then begin
+    let obj : obj_addr = dst in
+    let hd = hd_address obj in
+    match MH.read_word_in_major mh hd with
+    | None -> RangePres.same_chunk_ranges_refl mh
+    | Some hdr ->
+      let actual_wz = U64.v (getWosize hdr) in
+      if actual_wz > copied_wz then begin
+       let pad_nat = U64.v dst + copied_wz * U64.v mword in
+       if pad_nat < heap_size && pad_nat % U64.v mword = 0 then begin
+         SpecMajorAlloc.aligned_lt_heap_has_word_room pad_nat;
+         let pad_addr : hp_addr = U64.uint_to_t pad_nat in
+         RangePres.major_write_word_or_same_preserves_ranges mh pad_addr 0UL
+       end else
+         RangePres.same_chunk_ranges_refl mh
+      end else
+       RangePres.same_chunk_ranges_refl mh
+  end else
+    RangePres.same_chunk_ranges_refl mh
+#pop-options
+
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
 let chunked_zero_promote_padding_noop
   (mh: MH.major_heap) (dst: U64.t) (copied_wz: nat) (hdr: U64.t)
@@ -799,6 +889,42 @@ let chunked_promote_object_success
          res.fp_out == alloc_res.major_fp_out /\
          res.new_addr == alloc_res.major_obj_out))
   = ()
+
+#push-options "--z3rlimit 5 --fuel 1 --ifuel 0 --split_queries always"
+let chunked_promote_object_with_fuel_preserves_ranges
+  (minor: minor_state) (mh: MH.major_heap) (obj: U64.t)
+  (fp: U64.t) (wosize: nat{wosize > 0}) (fuel: nat)
+  : Lemma
+      (ensures
+        (let res = chunked_promote_object_with_fuel minor mh obj fp wosize fuel in
+         RangePres.same_chunk_ranges mh res.major_out))
+  =
+  let alloc_res =
+    SpecMajorAlloc.major_alloc_spec_with_fuel mh fp wosize fuel in
+  RangePres.major_alloc_spec_with_fuel_preserves_ranges mh fp wosize fuel;
+  if alloc_res.major_obj_out = 0UL then begin
+    chunked_promote_object_oom minor mh obj fp wosize fuel;
+    RangePres.same_chunk_ranges_refl mh
+  end else begin
+    chunked_promote_object_success minor mh obj fp wosize fuel;
+    let copied =
+      chunked_copy_fields
+        minor alloc_res.major_alloc_out obj alloc_res.major_obj_out 0 wosize in
+    chunked_copy_fields_preserves_ranges
+      minor alloc_res.major_alloc_out obj alloc_res.major_obj_out 0 wosize;
+    let padded =
+      chunked_zero_promote_padding copied alloc_res.major_obj_out wosize in
+    chunked_zero_promote_padding_preserves_ranges
+      copied alloc_res.major_obj_out wosize;
+    let tag = minor_tag minor obj in
+    chunked_set_promoted_tag_preserves_ranges
+      padded alloc_res.major_obj_out tag;
+    let final_major = chunked_set_promoted_tag padded alloc_res.major_obj_out tag in
+    RangePres.same_chunk_ranges_trans mh alloc_res.major_alloc_out copied;
+    RangePres.same_chunk_ranges_trans mh copied padded;
+    RangePres.same_chunk_ranges_trans mh padded final_major
+  end
+#pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0 --split_queries always"
 let chunked_promote_object_success_field_effect
