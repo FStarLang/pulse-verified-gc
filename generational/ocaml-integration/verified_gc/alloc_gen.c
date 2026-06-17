@@ -250,7 +250,7 @@ static uint64_t major_free_head_wosize(void) {
     if (!major_word_aligned(fp))
         caml_fatal_error("verified gen GC: unaligned major free-list head");
 
-    header_addr = (uintptr_t)(fp - sizeof(value));
+    header_addr = (uintptr_t)major_free_head_header_addr(fp);
     return header_wosize(*(uint64_t *)header_addr);
 }
 

@@ -202,6 +202,15 @@ fn major_free_head_in_range
   U64.gte fp (U64.add zero mword) && U64.lt fp heap_end
 }
 
+fn major_free_head_header_addr
+  (fp: U64.t{U64.v fp >= U64.v mword})
+  requires emp
+  returns header: U64.t
+  ensures emp ** pure (header == U64.sub fp mword)
+{
+  U64.sub fp mword
+}
+
 let major_preflight_suggested_major_words_doubled
   (current_words: U64.t) : U64.t =
   let half = 9223372036854775807UL in

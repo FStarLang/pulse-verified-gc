@@ -158,6 +158,13 @@ fn major_free_head_in_range
   ensures emp ** pure (
     ok <==> (U64.v fp >= U64.v zero + U64.v mword /\ U64.v fp < U64.v heap_end))
 
+/// Compute the header address for a nonzero free-list object pointer.
+fn major_free_head_header_addr
+  (fp: U64.t{U64.v fp >= U64.v mword})
+  requires emp
+  returns header: U64.t
+  ensures emp ** pure (header == U64.sub fp mword)
+
 /// Diagnostic retry suggestion: saturating-double current words, then meet the
 /// verified minimum fresh chunk size.
 fn major_preflight_suggested_major_words

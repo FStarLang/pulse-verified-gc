@@ -490,6 +490,8 @@ Follow-up checkpoint: major chunk word-to-byte sizing now routes through the ext
 
 Follow-up checkpoint: runtime validation for the current major free-list head now routes its dense major-range predicate through the extracted `GC.Impl.major_free_head_in_range` helper. The C bridge still handles `fp == 0`, the `zero_addr + word` overflow guard, alignment, and fatal diagnostics, while the nonzero `zero_addr + 8 <= fp < heap_size_u64` acceptance check is verified and concrete. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: runtime free-list head header-address calculation now routes through the extracted `GC.Impl.major_free_head_header_addr` helper. After the verified nonzero-head range/alignment checks, `alloc_gen.c` delegates the `fp - word` calculation to the ghost-free ABI helper before reading the free-list header wosize. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
