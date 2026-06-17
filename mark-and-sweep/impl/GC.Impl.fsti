@@ -149,6 +149,15 @@ fn major_word_aligned
   returns aligned: bool
   ensures emp ** pure (aligned <==> (U64.v value % U64.v mword == 0))
 
+/// Check whether a nonzero free-list pointer lies in the current major range.
+fn major_free_head_in_range
+  (zero: U64.t{U64.v zero + U64.v mword < pow2 64})
+  (heap_end fp: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==> (U64.v fp >= U64.v zero + U64.v mword /\ U64.v fp < U64.v heap_end))
+
 /// Diagnostic retry suggestion: saturating-double current words, then meet the
 /// verified minimum fresh chunk size.
 fn major_preflight_suggested_major_words

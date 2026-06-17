@@ -191,6 +191,17 @@ fn major_word_aligned
   U64.eq (U64.rem value mword) 0UL
 }
 
+fn major_free_head_in_range
+  (zero: U64.t{U64.v zero + U64.v mword < pow2 64})
+  (heap_end fp: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==> (U64.v fp >= U64.v zero + U64.v mword /\ U64.v fp < U64.v heap_end))
+{
+  U64.gte fp (U64.add zero mword) && U64.lt fp heap_end
+}
+
 let major_preflight_suggested_major_words_doubled
   (current_words: U64.t) : U64.t =
   let half = 9223372036854775807UL in

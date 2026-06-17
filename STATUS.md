@@ -488,6 +488,8 @@ Follow-up checkpoint: runtime major chunk word-count validation now routes throu
 
 Follow-up checkpoint: major chunk word-to-byte sizing now routes through the extracted `GC.Impl.major_chunk_words_to_bytes` helper after the existing C-side `SIZE_MAX / sizeof(value)` overflow check. This keeps memory-allocation sizing on the same concrete verified ABI path as the header-range and wosize helpers while leaving allocation failure and platform-size checks in the runtime bridge. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: runtime validation for the current major free-list head now routes its dense major-range predicate through the extracted `GC.Impl.major_free_head_in_range` helper. The C bridge still handles `fp == 0`, the `zero_addr + word` overflow guard, alignment, and fatal diagnostics, while the nonzero `zero_addr + 8 <= fp < heap_size_u64` acceptance check is verified and concrete. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

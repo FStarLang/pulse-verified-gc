@@ -207,6 +207,8 @@ major_ranges_overlap(
 
 bool major_word_aligned(uint64_t value);
 
+bool major_free_head_in_range(uint64_t zero, uint64_t heap_end, uint64_t fp);
+
 uint64_t
 major_preflight_suggested_major_words(uint64_t current_words, uint64_t required_chunk_words);
 

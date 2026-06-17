@@ -1927,6 +1927,11 @@ bool major_word_aligned(uint64_t value)
   return value % 8ULL == 0ULL;
 }
 
+bool major_free_head_in_range(uint64_t zero, uint64_t heap_end, uint64_t fp)
+{
+  return fp >= zero + 8ULL && fp < heap_end;
+}
+
 static uint64_t major_preflight_suggested_major_words_doubled(uint64_t current_words)
 {
   uint64_t half = 9223372036854775807ULL;

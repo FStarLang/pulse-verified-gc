@@ -245,7 +245,7 @@ static uint64_t major_free_head_wosize(void) {
         return 0;
     if (zero_addr > UINT64_MAX - sizeof(value))
         caml_fatal_error("verified gen GC: invalid major base address");
-    if (fp < zero_addr + sizeof(value) || fp >= heap_size_u64)
+    if (!major_free_head_in_range(zero_addr, heap_size_u64, fp))
         caml_fatal_error("verified gen GC: invalid major free-list head");
     if (!major_word_aligned(fp))
         caml_fatal_error("verified gen GC: unaligned major free-list head");
