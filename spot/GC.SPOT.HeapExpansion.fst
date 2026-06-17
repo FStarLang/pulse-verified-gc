@@ -14119,6 +14119,79 @@ let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_update_nonb
   CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_update_nonblue_static_raw_target_policy
     minor major fp roots alloc_fuel fresh major_roots cap mark_fuel
 
+let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_static_raw_target_policy
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (major_roots: Seq.seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyGraphReadiness.chunked_minor_preflight_value_policy
+          minor major fp roots fresh /\
+        (let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp alloc_fuel
+            (PromotionDemand.minor_promotion_demand minor + 1)
+            fresh in
+         let collect =
+          ChunkedCheney.chunked_cheney_collect_spec
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out in
+         GenInv.chunked_collection_heap_shape
+           collect.cmc_minor collect.cmc_major collect.cmc_fp
+           r.capacity_fuel_out /\
+         GenMajorGCBridge.chunked_major_roots_nonblue
+           collect.cmc_major major_roots /\
+         GenMajorGCBridge.chunked_major_edge_gen_field_witness
+           collect.cmc_major /\
+         GenMajorGCBridge.chunked_major_field_targets_non_infix
+           collect.cmc_major /\
+         GenMajorGCBridge.chunked_major_raw_field_targets_in_major
+           r.capacity_major_out /\
+         GenMajorGCBridge.chunked_major_field_targets_non_infix
+           r.capacity_major_out /\
+         (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects r.capacity_major_out) ==>
+          Fields.is_pointer_field target) /\
+         ChunkedCheneyInjectivity.chunked_minor_major_fields_nonblue_non_infix_targets
+           minor r.capacity_major_out /\
+         CheneyPreservation.chunked_cheney_promote_split_ready
+           minor r.capacity_major_out r.capacity_fp_out roots
+           r.capacity_fuel_out /\
+         Seq.length (MH.major_objects collect.cmc_major) <= cap /\
+         mark_fuel > 0 /\
+         mark_fuel >= Seq.length (MH.major_objects collect.cmc_major)))
+      (ensures
+        CheneyGraphReadiness.chunked_cheney_collect_after_minor_promotion_head_preflight_post
+          minor major fp roots alloc_fuel fresh /\
+        (let r =
+          SpecMajorAlloc.ensure_major_head_capacity_spec
+            major fp alloc_fuel
+            (PromotionDemand.minor_promotion_demand minor + 1)
+            fresh in
+         let collect =
+          ChunkedCheney.chunked_cheney_collect_spec
+            minor r.capacity_major_out r.capacity_fp_out roots
+            r.capacity_fuel_out in
+         let (major_final, fp_final) =
+          ChunkedMajorGC.chunked_major_gc_bounded
+            (ChunkedMajorGCRoots.chunked_gray_roots
+              collect.cmc_major major_roots)
+            cap mark_fuel in
+         ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+           collect.cmc_major major_final
+           (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+             collect.cmc_major major_roots)))
+  =
+  CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_static_raw_target_policy
+    minor major fp roots alloc_fuel fresh major_roots cap mark_fuel
+
 let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_raw_field_target_policy
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
