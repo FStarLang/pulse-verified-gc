@@ -144,6 +144,28 @@ let chunked_nonblue_scanned_raw_targets_in_major_intro
   =
   ()
 
+let chunked_nonblue_scanned_raw_targets_in_major_elim
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        chunked_nonblue_scanned_raw_targets_in_major mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ~(SweepDefs.chunked_is_blue mh obj) /\
+        ~(MarkDefs.chunked_is_no_scan mh obj) /\
+        U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj))
+      (ensures
+        (let v = MarkDefs.chunked_get_field mh obj i in
+         if MarkDefs.chunked_is_pointer_field mh v then
+           let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+           Seq.mem child_raw (MH.major_objects mh) /\
+           ~(SweepDefs.chunked_is_infix mh child_raw)
+         else
+           True))
+  =
+  ()
+
 let chunked_scanned_white_targets_in_major_from_raw_targets
    (mh: MH.major_heap)
   : Lemma

@@ -231,6 +231,58 @@ val chunked_major_raw_field_targets_in_major_preserved_by_update
         chunked_major_raw_field_targets_in_major
           (ChunkedUpdate.chunked_update_major_pointers mh fwd))
 
+val chunked_fwd_noninfix_targets_not_infix
+  (minor: minor_state)
+  (fwd: forwarding_map)
+  (mh: MH.major_heap)
+  : prop
+
+val chunked_fwd_noninfix_targets_not_infix_intro
+  (minor: minor_state)
+  (fwd: forwarding_map)
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (x: U64.t) (target: obj_addr).
+          fwd x == target /\
+          fwd x <> 0UL /\
+          ~(is_infix_in_minor minor x) ==>
+          ~(SweepDefs.chunked_is_infix mh target))
+      (ensures chunked_fwd_noninfix_targets_not_infix minor fwd mh)
+
+val chunked_fwd_noninfix_targets_not_infix_elim
+  (minor: minor_state)
+  (fwd: forwarding_map)
+  (mh: MH.major_heap)
+  (x: U64.t)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        chunked_fwd_noninfix_targets_not_infix minor fwd mh /\
+        fwd x == target /\
+        fwd x <> 0UL /\
+        ~(is_infix_in_minor minor x))
+      (ensures ~(SweepDefs.chunked_is_infix mh target))
+
+val chunked_nonblue_scanned_raw_targets_in_major_preserved_by_update
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkTargetMembership.chunked_nonblue_scanned_raw_targets_in_major
+          mh /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh /\
+        CheneyPres.chunked_fwd_targets_above_minor fwd /\
+        CheneyPres.chunked_fwd_noninfix_targets_in_major
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd) /\
+        chunked_fwd_noninfix_targets_not_infix
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+      (ensures
+        ChunkedMarkTargetMembership.chunked_nonblue_scanned_raw_targets_in_major
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+
 val chunked_scanned_raw_targets_in_major_from_major_raw_field_targets
   (mh: MH.major_heap)
   : Lemma

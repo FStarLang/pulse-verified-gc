@@ -171,6 +171,18 @@ let spot_chunked_is_blue_read_header
   =
   ChunkedSweepDefs.chunked_is_blue_read_header mh obj
 
+let spot_chunked_is_blue_header
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (hdr: U64.t)
+  : Lemma
+      (requires ChunkedSweepDefs.chunked_read_header mh obj == Some hdr)
+      (ensures
+        ChunkedSweepDefs.chunked_is_blue mh obj ==
+        (Obj.getColor hdr = Header.Blue))
+  =
+  ChunkedSweepDefs.chunked_is_blue_header mh obj hdr
+
 let spot_chunked_is_infix_step
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -5088,6 +5100,31 @@ let spot_chunked_nonblue_scanned_raw_targets_in_major_intro
   ChunkedMarkBoundedTargetMembership.chunked_nonblue_scanned_raw_targets_in_major_intro
     mh
 
+let spot_chunked_nonblue_scanned_raw_targets_in_major_elim_mark
+  (mh: MH.major_heap)
+  (obj: obj_addr)
+  (i: U64.t{U64.v i >= 1})
+  : Lemma
+      (requires
+        ChunkedMarkBoundedTargetMembership.chunked_nonblue_scanned_raw_targets_in_major
+          mh /\
+        Seq.mem obj (MH.major_objects mh) /\
+        ~(ChunkedSweepDefs.chunked_is_blue mh obj) /\
+        ~(ChunkedMarkDefs.chunked_is_no_scan mh obj) /\
+        U64.v i <= U64.v (ChunkedSweepDefs.chunked_wosize_of_object mh obj))
+      (ensures
+        (let v = ChunkedMarkDefs.chunked_get_field mh obj i in
+         if ChunkedMarkDefs.chunked_is_pointer_field mh v then
+           let child_raw =
+             ChunkedMarkDefs.chunked_pointer_field_as_obj_addr mh v in
+           Seq.mem child_raw (MH.major_objects mh) /\
+           ~(ChunkedSweepDefs.chunked_is_infix mh child_raw)
+         else
+           True))
+  =
+  ChunkedMarkBoundedTargetMembership
+    .chunked_nonblue_scanned_raw_targets_in_major_elim mh obj i
+
 let spot_chunked_push_children_target_membership_policy_from_scanned_targets
   (mh: MH.major_heap)
   (obj: obj_addr)
@@ -8052,6 +8089,64 @@ let spot_chunked_major_raw_field_targets_in_major_preserved_by_update
           (ChunkedUpdate.chunked_update_major_pointers mh fwd))
   =
   GenMajorGCBridge.chunked_major_raw_field_targets_in_major_preserved_by_update
+    minor mh fwd
+
+let spot_chunked_fwd_noninfix_targets_not_infix_intro
+  (minor: minor_state)
+  (fwd: forwarding_map)
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (x: U64.t) (target: obj_addr).
+          fwd x == target /\
+          fwd x <> 0UL /\
+          ~(is_infix_in_minor minor x) ==>
+          ~(ChunkedSweepDefs.chunked_is_infix mh target))
+      (ensures
+        GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix
+          minor fwd mh)
+  =
+  GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix_intro
+    minor fwd mh
+
+let spot_chunked_fwd_noninfix_targets_not_infix_elim
+  (minor: minor_state)
+  (fwd: forwarding_map)
+  (mh: MH.major_heap)
+  (x: U64.t)
+  (target: obj_addr)
+  : Lemma
+      (requires
+        GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix
+          minor fwd mh /\
+        fwd x == target /\
+        fwd x <> 0UL /\
+        ~(is_infix_in_minor minor x))
+      (ensures ~(ChunkedSweepDefs.chunked_is_infix mh target))
+  =
+  GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix_elim
+    minor fwd mh x target
+
+let spot_chunked_nonblue_scanned_raw_targets_in_major_preserved_by_update
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        ChunkedMarkBoundedTargetMembership.chunked_nonblue_scanned_raw_targets_in_major
+          mh /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh /\
+        CheneyPreservation.chunked_fwd_targets_above_minor fwd /\
+        CheneyPreservation.chunked_fwd_noninfix_targets_in_major
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd) /\
+        GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+      (ensures
+        ChunkedMarkBoundedTargetMembership.chunked_nonblue_scanned_raw_targets_in_major
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+  =
+  GenMajorGCBridge.chunked_nonblue_scanned_raw_targets_in_major_preserved_by_update
     minor mh fwd
 
 let spot_chunked_scanned_raw_targets_in_major_from_major_raw_field_targets

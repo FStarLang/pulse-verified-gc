@@ -149,6 +149,16 @@ let chunked_is_blue_from_color
       (ensures chunked_is_blue mh obj)
   = ()
 
+let chunked_is_blue_header
+    (mh: MH.major_heap)
+    (obj: obj_addr)
+    (hdr: U64.t)
+  : Lemma
+      (requires chunked_read_header mh obj == Some hdr)
+      (ensures chunked_is_blue mh obj == (Obj.getColor hdr = Header.Blue))
+  =
+  chunked_color_of_object_some mh obj hdr
+
 let chunked_is_black_read_header
     (mh: MH.major_heap)
     (obj: obj_addr)
