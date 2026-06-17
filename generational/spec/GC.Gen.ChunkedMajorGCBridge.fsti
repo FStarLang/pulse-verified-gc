@@ -264,6 +264,24 @@ val chunked_fwd_noninfix_targets_not_infix_elim
         ~(is_infix_in_minor minor x))
       (ensures ~(SweepDefs.chunked_is_infix mh target))
 
+val chunked_major_field_targets_non_infix_preserved_by_update
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_field_targets_non_infix mh /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh /\
+        CheneyPres.chunked_fwd_targets_above_minor fwd /\
+        CheneyPres.chunked_fwd_noninfix_targets_in_major
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd) /\
+        chunked_fwd_noninfix_targets_not_infix
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+      (ensures
+        chunked_major_field_targets_non_infix
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+
 val chunked_nonblue_scanned_raw_targets_in_major_preserved_by_update
   (minor: minor_state)
   (mh: MH.major_heap)

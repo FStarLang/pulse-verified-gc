@@ -1029,6 +1029,8 @@ let chunked_major_raw_field_targets_in_major_preserved_by_update
         match MH.read_word_in_major mh field_addr with
         | None -> assert False
         | Some old ->
+          CG.chunked_major_field_slot_elim src idx field_addr;
+          assert (U64.v field_addr == U64.v src + idx * U64.v mword);
           if getColor hdr = Header.Blue then begin
             ChunkedUpdate.chunked_wosize_nat_header mh src hdr;
             ChunkedUpdate.chunked_is_blue_header mh src hdr;
@@ -1205,6 +1207,178 @@ private let chunked_update_preserves_not_infix_of_member
     SweepDefs.chunked_is_infix_step post target;
     assert (~(SweepDefs.chunked_is_infix post target))
 
+#pop-options
+
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+let chunked_major_field_targets_non_infix_preserved_by_update
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_major_field_targets_non_infix mh /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh /\
+        CheneyPres.chunked_fwd_targets_above_minor fwd /\
+        CheneyPres.chunked_fwd_noninfix_targets_in_major
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd) /\
+        chunked_fwd_noninfix_targets_not_infix
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+      (ensures
+        chunked_major_field_targets_non_infix
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+  =
+  let post = ChunkedUpdate.chunked_update_major_pointers mh fwd in
+  ChunkedUpdate.chunked_update_major_pointers_preserves_wf_and_major_objects
+    mh fwd;
+  ChunkedUpdate.chunked_update_major_pointers_preserves_ranges mh fwd;
+  let old_target_transferred
+    (src dst: obj_addr)
+    (idx: nat)
+    (field_addr: hp_addr)
+    (old: U64.t)
+    : Lemma
+        (requires
+          Seq.mem src (MH.major_objects mh) /\
+          idx < CG.chunked_wosize_nat_of_object mh src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major mh field_addr == Some old /\
+          Seq.mem dst (MH.major_objects post) /\
+          is_pointer_to old dst)
+        (ensures ~(SweepDefs.chunked_is_infix post dst))
+    =
+    assert (Seq.mem dst (MH.major_objects mh));
+    chunked_major_field_targets_non_infix_elim
+      mh src dst idx field_addr old;
+    chunked_update_preserves_not_infix_of_member mh fwd dst
+  in
+  let one_raw
+    (src dst: obj_addr)
+    (idx: nat)
+    (field_addr: hp_addr)
+    (raw: U64.t)
+    : Lemma
+        (requires
+          Seq.mem src (MH.major_objects post) /\
+          idx < CG.chunked_wosize_nat_of_object post src /\
+          CG.chunked_major_field_slot src idx == Some field_addr /\
+          MH.read_word_in_major post field_addr == Some raw /\
+          Seq.mem dst (MH.major_objects post) /\
+          is_pointer_to raw dst)
+        (ensures ~(SweepDefs.chunked_is_infix post dst))
+    =
+    assert (Seq.mem src (MH.major_objects mh));
+    assert (Seq.mem dst (MH.major_objects mh));
+    MH.major_objects_member_header_read_some mh src;
+    match MH.read_word_in_major mh (hd_address src) with
+    | None -> assert False
+    | Some hdr ->
+      ChunkedUpdate.chunked_update_major_pointers_preserves_header
+        mh fwd src hdr;
+      assert (MH.read_word_in_major post (hd_address src) == Some hdr);
+      CG.chunked_wosize_nat_header mh src hdr;
+      CG.chunked_wosize_nat_header post src hdr;
+      ChunkedUpdate.chunked_wosize_nat_header mh src hdr;
+      assert (idx < U64.v (getWosize hdr));
+      assert (idx < ChunkedUpdate.chunked_wosize_nat_of_object mh src);
+      ChunkedUpdate.chunked_update_field_slot_from_major_field_slot
+        src idx field_addr;
+      chunked_major_field_read_some_from_slot mh src hdr idx field_addr;
+      match MH.read_word_in_major mh field_addr with
+      | None -> assert False
+      | Some old ->
+        CG.chunked_major_field_slot_elim src idx field_addr;
+        assert (U64.v field_addr == U64.v src + idx * U64.v mword);
+        if getColor hdr = Header.Blue then begin
+          ChunkedUpdate.chunked_is_blue_header mh src hdr;
+          assert (ChunkedUpdate.chunked_is_blue mh src);
+          ChunkedUpdate.chunked_update_major_pointers_preserves_blue_field
+            mh fwd src idx field_addr old;
+          assert (MH.read_word_in_major post field_addr == Some old);
+          assert (raw == old);
+          old_target_transferred src dst idx field_addr old
+        end else if U64.v (getTag hdr) >= U64.v no_scan_tag then begin
+          ChunkedUpdate.chunked_update_major_pointers_preserves_no_scan_field
+            mh fwd src hdr idx field_addr old;
+          assert (MH.read_word_in_major post field_addr == Some old);
+          assert (raw == old);
+          old_target_transferred src dst idx field_addr old
+        end else begin
+          CheneyPres.chunked_fwd_targets_above_minor_expected_stable fwd old;
+          ChunkedUpdate.chunked_update_major_pointers_field_effect_stable
+            mh fwd src hdr idx field_addr old;
+          let expected = ChunkedUpdate.chunked_update_expected_value fwd old in
+          assert (MH.read_word_in_major post field_addr == Some expected);
+          assert (raw == expected);
+          ChunkedUpdate.chunked_update_expected_value_effect fwd old;
+          let old_val = to_minor_offset old in
+          if is_minor_pointer old_val then begin
+            let new_val = fwd old_val in
+            if new_val <> 0UL then begin
+              assert (expected == new_val);
+              assert (raw == new_val);
+              assert (is_pointer_field raw);
+              assert (hd_address raw == hd_address dst);
+              GenInv.chunked_is_blue_header mh src hdr;
+              assert (~(GenInv.chunked_is_blue mh src));
+              CG.chunked_is_no_scan_header mh src hdr;
+              assert (~(CG.chunked_is_no_scan mh src));
+              GenInv.chunked_major_minor_fields_no_infix_targets_elim
+                minor mh src idx field_addr old;
+              CheneyPres.chunked_fwd_noninfix_targets_in_major_elim
+                minor fwd post old_val;
+              assert (is_val_addr new_val);
+              let child : obj_addr = new_val in
+              if child <> dst then hd_address_injective child dst;
+              assert (child == dst);
+              assert (fwd old_val == child);
+              chunked_fwd_noninfix_targets_not_infix_elim
+                minor fwd post old_val child
+            end else begin
+              assert (expected == old);
+              assert (raw == old);
+              old_target_transferred src dst idx field_addr old
+            end
+          end else begin
+            assert (expected == old);
+            assert (raw == old);
+            old_target_transferred src dst idx field_addr old
+          end
+        end
+  in
+  let one_prefix
+    (src dst: obj_addr)
+    (idx: nat)
+    (field_addr: hp_addr)
+    : Lemma
+        (ensures
+          forall (raw: U64.t).
+            Seq.mem src (MH.major_objects post) /\
+            idx < CG.chunked_wosize_nat_of_object post src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major post field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects post) /\
+            is_pointer_to raw dst ==>
+            ~(SweepDefs.chunked_is_infix post dst))
+    =
+    let raw_case (raw: U64.t)
+      : Lemma
+          (requires
+            Seq.mem src (MH.major_objects post) /\
+            idx < CG.chunked_wosize_nat_of_object post src /\
+            CG.chunked_major_field_slot src idx == Some field_addr /\
+            MH.read_word_in_major post field_addr == Some raw /\
+            Seq.mem dst (MH.major_objects post) /\
+            is_pointer_to raw dst)
+          (ensures ~(SweepDefs.chunked_is_infix post dst))
+      =
+      one_raw src dst idx field_addr raw
+    in
+    FStar.Classical.forall_intro
+      (FStar.Classical.move_requires raw_case)
+  in
+  FStar.Classical.forall_intro_4 one_prefix;
+  chunked_major_field_targets_non_infix_intro post
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"

@@ -8127,6 +8127,28 @@ let spot_chunked_fwd_noninfix_targets_not_infix_elim
   GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix_elim
     minor fwd mh x target
 
+let spot_chunked_major_field_targets_non_infix_preserved_by_update
+  (minor: minor_state)
+  (mh: MH.major_heap)
+  (fwd: forwarding_map)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenMajorGCBridge.chunked_major_field_targets_non_infix mh /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor mh /\
+        CheneyPreservation.chunked_fwd_targets_above_minor fwd /\
+        CheneyPreservation.chunked_fwd_noninfix_targets_in_major
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd) /\
+        GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix
+          minor fwd (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+      (ensures
+        GenMajorGCBridge.chunked_major_field_targets_non_infix
+          (ChunkedUpdate.chunked_update_major_pointers mh fwd))
+  =
+  GenMajorGCBridge
+    .chunked_major_field_targets_non_infix_preserved_by_update
+    minor mh fwd
+
 let spot_chunked_nonblue_scanned_raw_targets_in_major_preserved_by_update
   (minor: minor_state)
   (mh: MH.major_heap)
