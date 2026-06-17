@@ -450,6 +450,8 @@ Follow-up checkpoint: the OCaml integration bridge now has behavior-preserving m
 
 Follow-up checkpoint: the extraction boundary for the verified chunked allocator is now stable without exposing MajorHeap internals in the C API. `GC.Impl.MajorHeap.fsti` provides a focused implementation interface for the range-owned major heap, and `GC.Impl.Allocator` keeps the runtime-shaped `allocate_major_with_fuel_runtime` verified but internal to extraction bundles. Public dense allocator/init names are re-exported from `GC.Impl`; `-fnoshort-names` keeps private allocator helpers prefixed so KaRaMeL avoids the prior `remove_unused_parameters` / `Failure("nth")` crash while preserving public `init_heap`, `allocate`, and `allocate_part1`. Mark-and-sweep and generational extraction plus snapshots were regenerated; SPOT verification, generational orphan checking, and the OCaml integration smoke test passed.
 
+Follow-up checkpoint: the OCaml bridge now measures the two runtime quantities needed by the verified minor-promotion preflight policy. `generational/ocaml-integration/verified_gc/alloc_gen.c` computes a header-inclusive conservative `minor_promotion_demand` by walking the allocated minor objects, reads the current major free-list head wosize, and reports both values on promotion failure along with the registered chunk count. This is behavior-preserving instrumentation rather than expansion wiring: the dense extracted allocator remains the only public allocation API, but the runtime boundary can now report the same demand/head-capacity mismatch that the future verified chunked preflight API will consume. The OCaml integration smoke tests passed after the change.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

@@ -123,6 +123,58 @@ static uint64_t current_major_bytes(void) {
     return major_bytes_total;
 }
 
+static inline uint64_t header_wosize(uint64_t header) {
+    return header >> 10;
+}
+
+/* Runtime mirror of the verified minor_promotion_demand shape: sum the
+ * header-inclusive size of every currently allocated minor object. */
+static uint64_t minor_promotion_demand_words(void) {
+    uint64_t off = 0;
+    uint64_t bump = *gc_gen_heap.minor.bump_ref;
+    uint64_t demand = 0;
+
+    while (off < bump) {
+        uint64_t header = *(uint64_t *)(minor_base + off);
+        uint64_t wosize = header_wosize(header);
+        uint64_t object_words;
+        uint64_t object_bytes;
+
+        if (wosize > UINT64_MAX - 1)
+            caml_fatal_error("verified gen GC: minor object size overflow");
+        object_words = wosize + 1;
+        if (object_words > UINT64_MAX / sizeof(value))
+            caml_fatal_error("verified gen GC: minor object byte overflow");
+        object_bytes = object_words * sizeof(value);
+        if (object_bytes == 0 || object_bytes > bump - off)
+            caml_fatal_error("verified gen GC: malformed minor object layout");
+        if (demand > UINT64_MAX - object_words)
+            caml_fatal_error("verified gen GC: promotion demand overflow");
+
+        demand += object_words;
+        off += object_bytes;
+    }
+
+    if (off != bump)
+        caml_fatal_error("verified gen GC: malformed minor allocation frontier");
+    return demand;
+}
+
+static uint64_t major_free_head_wosize(void) {
+    uint64_t fp = *gc_gen_heap.fp_ref;
+    uintptr_t header_addr;
+
+    if (fp == 0)
+        return 0;
+    if (fp < zero_addr + sizeof(value) || fp >= heap_size_u64)
+        caml_fatal_error("verified gen GC: invalid major free-list head");
+    if (fp % sizeof(value) != 0)
+        caml_fatal_error("verified gen GC: unaligned major free-list head");
+
+    header_addr = (uintptr_t)(fp - sizeof(value));
+    return header_wosize(*(uint64_t *)header_addr);
+}
+
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
  * The fast path reserves bytes by updating the same verified bump counter;
  * collections and heap initialization still go through verified_allocate_minor(). */
@@ -347,11 +399,17 @@ static void collect_minor_roots_and_refs(void) {
 
 static void fatal_promotion_failed(void) {
     uint64_t major_size = current_major_bytes();
+    uint64_t demand_words = minor_promotion_demand_words();
+    uint64_t head_words = major_free_head_wosize();
     fprintf(stderr,
-        "verified gen GC: promotion failed — major heap full (%lu MB)\n"
+        "verified gen GC: promotion failed — major heap full (%lu MB, %lu chunk(s))\n"
+        "  Minor promotion demand: %llu words; major free-list head: %llu words.\n"
         "  Some objects could not be promoted (live set exceeds heap capacity).\n"
         "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n",
         (unsigned long)(major_size / 1048576),
+        (unsigned long)major_chunk_count,
+        (unsigned long long)demand_words,
+        (unsigned long long)head_words,
         (unsigned long)(major_size / 4));
     caml_fatal_error("verified gen GC: out of memory (major heap too small)");
 }
