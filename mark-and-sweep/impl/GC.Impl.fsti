@@ -111,6 +111,13 @@ fn major_chunk_words_to_wosize
   returns wz: wosize
   ensures emp ** pure (wz == U64.sub chunk_words 1UL)
 
+/// Check the concrete runtime chunk-word range needed for OCaml headers.
+fn major_chunk_words_in_header_range
+  (chunk_words: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> (U64.v chunk_words >= 2 /\ U64.v chunk_words <= pow2 54))
+
 /// Select the configured expansion size unless the verified minimum is larger.
 fn major_preflight_planned_chunk_words
   (configured_words required_chunk_words: U64.t)

@@ -71,7 +71,6 @@ static int          heap_initialized = 0;
 #define MAX_MAJOR_CHUNKS 1024
 #define DEFAULT_MAJOR_WORDS ((size_t)32 * 1024 * 1024)
 #define DEFAULT_MINOR_WORDS ((size_t)256 * 1024)
-#define MAX_MAJOR_CHUNK_WORDS (1ULL << 54)
 typedef struct {
     uint8_t *base;
     size_t bytes;
@@ -111,10 +110,11 @@ static size_t configured_words_or_default(const char *name, size_t default_words
 
 static size_t configured_major_chunk_words(const char *name, size_t default_words) {
     size_t words = configured_words_or_default(name, default_words);
-    if (words < 2)
-        caml_fatal_error("verified gen GC: %s must be at least 2 words", name);
-    if ((unsigned long long)words > MAX_MAJOR_CHUNK_WORDS)
+    if (!major_chunk_words_in_header_range((uint64_t)words)) {
+        if (words < 2)
+            caml_fatal_error("verified gen GC: %s must be at least 2 words", name);
         caml_fatal_error("verified gen GC: %s must be at most 2^54 words", name);
+    }
     return words;
 }
 

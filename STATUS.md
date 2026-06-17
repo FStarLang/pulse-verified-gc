@@ -484,6 +484,8 @@ Follow-up checkpoint: the diagnostic retry heap-size suggestion now routes throu
 
 Follow-up checkpoint: runtime word-alignment checks for major chunk sizes, major chunk bases, and major free-list heads now use the extracted `GC.Impl.major_word_aligned` helper. C still handles null/zero/overflow and fatal-error reporting, while the `% 8 == 0` alignment predicate is another verified concrete ABI boundary. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: runtime major chunk word-count validation now routes through the extracted `GC.Impl.major_chunk_words_in_header_range` helper. The helper exposes the concrete `2 <= words <= 2^54` OCaml-header range as a `uint64_t -> bool` ABI, and `alloc_gen.c` delegates `MIN_EXPANSION_WORDSIZE` / `VERGC_MAJOR_EXPANSION_WORDSIZE` range acceptance to it while preserving the existing fail-fast diagnostics. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

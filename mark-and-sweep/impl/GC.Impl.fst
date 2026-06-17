@@ -137,6 +137,16 @@ fn major_chunk_words_to_wosize
   U64.sub chunk_words 1UL
 }
 
+fn major_chunk_words_in_header_range
+  (chunk_words: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> (U64.v chunk_words >= 2 /\ U64.v chunk_words <= pow2 54))
+{
+  assert_norm (pow2 54 == 18014398509481984);
+  U64.gte chunk_words 2UL && U64.lte chunk_words 18014398509481984UL
+}
+
 fn major_preflight_planned_chunk_words
   (configured_words required_chunk_words: U64.t)
   requires emp
