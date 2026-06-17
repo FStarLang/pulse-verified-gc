@@ -1910,6 +1910,11 @@ uint64_t major_chunk_words_to_bytes(uint64_t chunk_words)
   return chunk_words * 8ULL;
 }
 
+uint64_t major_bytes_to_words(uint64_t bytes)
+{
+  return bytes / 8ULL;
+}
+
 uint64_t major_chunk_initial_fp(uint64_t base)
 {
   return base + 8ULL;

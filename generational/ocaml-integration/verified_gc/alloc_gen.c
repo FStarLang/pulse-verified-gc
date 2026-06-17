@@ -197,6 +197,10 @@ static uint64_t current_major_bytes(void) {
     return major_bytes_total;
 }
 
+static uint64_t current_major_words(void) {
+    return major_bytes_to_words(current_major_bytes());
+}
+
 static inline uint64_t header_wosize(uint64_t header) {
     return major_header_wosize(header);
 }
@@ -267,7 +271,7 @@ static uint64_t required_chunk_words_for_head(uint64_t head_wosize) {
 }
 
 static uint64_t suggested_major_words_for_retry(uint64_t required_chunk_words) {
-    uint64_t current_words = current_major_bytes() / sizeof(value);
+    uint64_t current_words = current_major_words();
     return major_preflight_suggested_major_words(
         current_words, required_chunk_words);
 }
@@ -311,7 +315,7 @@ uintnat vergc_minor_words_current(void) {
 
 uintnat vergc_major_words_current(void) {
     if (!heap_initialized) return 0;
-    return (uintnat)(current_major_bytes() / sizeof(value));
+    return (uintnat)current_major_words();
 }
 
 uintnat vergc_major_top_words_current(void) {

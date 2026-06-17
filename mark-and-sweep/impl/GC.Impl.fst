@@ -166,6 +166,15 @@ fn major_chunk_words_to_bytes
   U64.mul chunk_words mword
 }
 
+fn major_bytes_to_words
+  (bytes: U64.t)
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (words == U64.div bytes mword)
+{
+  U64.div bytes mword
+}
+
 fn major_chunk_initial_fp
   (base: U64.t{U64.v base + U64.v mword < pow2 64})
   requires emp

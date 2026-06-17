@@ -496,6 +496,8 @@ Follow-up checkpoint: initial major chunk free-list pointer construction now rou
 
 Follow-up checkpoint: runtime OCaml header wosize extraction now routes through the extracted `GC.Impl.major_header_wosize` helper. `alloc_gen.c` delegates the `header >> 10` operation used for minor-promotion demand and free-list-head sizing to the same verified `getWosize` logic used by the F*/Pulse object model. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: runtime conversion from tracked major bytes back to words now routes through the extracted `GC.Impl.major_bytes_to_words` helper. `alloc_gen.c` centralizes `current_major_words()` through the verified divide-by-word conversion and uses it for retry heap-size diagnostics plus `Gc.stat`/`Gc.quick_stat` major word counters. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

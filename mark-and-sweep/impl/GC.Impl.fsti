@@ -132,6 +132,13 @@ fn major_chunk_words_to_bytes
   returns bytes: U64.t
   ensures emp ** pure (bytes == U64.mul chunk_words mword)
 
+/// Convert a tracked major byte count back to words.
+fn major_bytes_to_words
+  (bytes: U64.t)
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (words == U64.div bytes mword)
+
 /// Compute the first free-list object pointer for a freshly formatted chunk.
 fn major_chunk_initial_fp
   (base: U64.t{U64.v base + U64.v mword < pow2 64})
