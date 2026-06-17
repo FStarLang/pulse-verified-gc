@@ -73,6 +73,14 @@ typedef struct {
     size_t bytes;
 } major_chunk_rec;
 
+typedef struct {
+    uint64_t demand_words;
+    uint64_t head_wosize;
+    uint64_t required_head_wosize;
+    uint64_t required_chunk_words;
+    uint64_t suggested_major_words;
+} major_preflight_snapshot;
+
 static major_chunk_rec major_chunks[MAX_MAJOR_CHUNKS];
 static size_t major_chunk_count = 0;
 static uint64_t major_bytes_total = 0;
@@ -207,6 +215,32 @@ static uint64_t required_chunk_words_for_head(uint64_t head_wosize) {
     if (head_wosize > UINT64_MAX - 1)
         caml_fatal_error("verified gen GC: promotion head demand too large");
     return head_wosize + 1;
+}
+
+static uint64_t suggested_major_words_for_retry(uint64_t required_chunk_words) {
+    uint64_t current_words = current_major_bytes() / sizeof(value);
+    uint64_t doubled_words =
+        current_words > UINT64_MAX / 2 ? UINT64_MAX : current_words * 2;
+    return doubled_words >= required_chunk_words
+        ? doubled_words
+        : required_chunk_words;
+}
+
+static major_preflight_snapshot current_major_preflight_snapshot(void) {
+    major_preflight_snapshot snapshot;
+    snapshot.demand_words = minor_promotion_demand_words();
+    snapshot.head_wosize = major_free_head_wosize();
+    snapshot.required_head_wosize =
+        required_head_wosize_for_promotion(snapshot.demand_words);
+    snapshot.required_chunk_words =
+        required_chunk_words_for_head(snapshot.required_head_wosize);
+    snapshot.suggested_major_words =
+        suggested_major_words_for_retry(snapshot.required_chunk_words);
+    return snapshot;
+}
+
+static int major_preflight_head_ready(const major_preflight_snapshot *snapshot) {
+    return snapshot->head_wosize >= snapshot->required_head_wosize;
 }
 
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
@@ -426,23 +460,22 @@ static void collect_minor_roots_and_refs(void) {
 
 static void fatal_promotion_failed(void) {
     uint64_t major_size = current_major_bytes();
-    uint64_t demand_words = minor_promotion_demand_words();
-    uint64_t head_words = major_free_head_wosize();
-    uint64_t required_head_words = required_head_wosize_for_promotion(demand_words);
-    uint64_t required_chunk_words = required_chunk_words_for_head(required_head_words);
+    major_preflight_snapshot snapshot = current_major_preflight_snapshot();
     fprintf(stderr,
         "verified gen GC: promotion failed — major heap full (%lu MB, %lu chunk(s))\n"
         "  Minor promotion demand: %llu words; major free-list head: %llu words.\n"
         "  Verified preflight requires head >= %llu words; fresh chunk >= %llu words.\n"
+        "  Current head satisfies preflight: %s.\n"
         "  Some objects could not be promoted (live set exceeds heap capacity).\n"
-        "  Set MIN_EXPANSION_WORDSIZE=%lu (or larger) to increase heap.\n",
+        "  Set MIN_EXPANSION_WORDSIZE=%llu (or larger) to increase heap.\n",
         (unsigned long)(major_size / 1048576),
         (unsigned long)major_chunk_count,
-        (unsigned long long)demand_words,
-        (unsigned long long)head_words,
-        (unsigned long long)required_head_words,
-        (unsigned long long)required_chunk_words,
-        (unsigned long)(major_size / 4));
+        (unsigned long long)snapshot.demand_words,
+        (unsigned long long)snapshot.head_wosize,
+        (unsigned long long)snapshot.required_head_wosize,
+        (unsigned long long)snapshot.required_chunk_words,
+        major_preflight_head_ready(&snapshot) ? "yes" : "no",
+        (unsigned long long)snapshot.suggested_major_words);
     caml_fatal_error("verified gen GC: out of memory (major heap too small)");
 }
 

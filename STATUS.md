@@ -454,6 +454,8 @@ Follow-up checkpoint: the OCaml bridge now measures the two runtime quantities n
 
 Follow-up checkpoint: the initial major chunk allocation path is now factored into named runtime helpers. `configured_initial_major_words` owns the current `MIN_EXPANSION_WORDSIZE` compatibility policy, while `allocate_major_chunk_memory` centralizes zeroed major-chunk acquisition before registration. This is a small behavior-preserving refactor, but it makes the future expansion path able to share the same C-side allocation/fact-checking boundary as the initial dense chunk. The OCaml integration smoke tests passed after the refactor.
 
+Follow-up checkpoint: the runtime preflight measurements are now packaged as a reusable C-side snapshot. `major_preflight_snapshot` records minor promotion demand, current head wosize, required head wosize, required fresh chunk words, and a suggested retry heap size; `current_major_preflight_snapshot` is the single helper that computes those facts from the current bridge state. Promotion-failure diagnostics now print from this snapshot and explicitly state whether the current head satisfies the verified preflight bound. This still does not wire expansion, but it gives the future verified chunked runtime entrypoint one clear trusted boundary to replace. The OCaml integration smoke tests passed after the refactor.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
