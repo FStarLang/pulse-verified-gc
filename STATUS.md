@@ -466,6 +466,8 @@ Follow-up checkpoint: major chunk registration now checks disjointness from the 
 
 Follow-up checkpoint: runtime heap-size configuration parsing is now explicit and fail-fast. `alloc_gen.c` parses `MIN_EXPANSION_WORDSIZE`, `VERGC_MAJOR_EXPANSION_WORDSIZE`, and `MINOR_HEAP_WORDS` as positive decimal word counts with `strtoull`, rejects empty/malformed/zero/overflowing values instead of silently falling back or wrapping through `atoll`, and reuses the parser for both major and minor heap policy. The integration README documents the positive-decimal requirement. The OCaml integration smoke/stat tests passed after the parser hardening.
 
+Follow-up checkpoint: the heap-expansion SPOT now audits the fresh-chunk initialization contract exposed by `GC.Spec.MajorAllocator`. `spot_init_fresh_chunk_header_fields`, `spot_init_fresh_chunk_link`, and `spot_init_fresh_chunk_single_object` verify that a newly initialized chunk has the expected blue header fields, links its free-list cell to the previous head, and enumerates as exactly one chunk-local object. This keeps the future runtime expansion boundary honest about the facts the C bridge must establish before adding a chunk. Focused `GC.SPOT.HeapExpansion` verification and full `cd spot && make verify` passed after refreshing stale upstream checked files.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

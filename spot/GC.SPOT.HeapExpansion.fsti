@@ -19,6 +19,7 @@ module ChunkedCheney = GC.Gen.ChunkedCheney
 module WriteBody = GC.Gen.WriteBodyLemmas
 module CG = GC.Gen.CombinedGraph
 module GenInv = GC.Gen.HeapInvariant
+module Header = GC.Lib.Header
 
 val spot_expand_on_oom_pre
   : mh:MH.major_heap -> fp:U64.t -> requested_wz:nat -> fuel:nat ->
@@ -72,6 +73,31 @@ val spot_expand_major_heap_head_wosize
         (let r = SpecMajorAlloc.expand_major_heap mh fresh fp in
          SpecMajorAlloc.major_fl_head_wosize r.major_out r.fp_out ==
          SpecMajorAlloc.fresh_chunk_wosize fresh))
+
+val spot_init_fresh_chunk_header_fields
+  : fresh:MH.heap_chunk -> next_fp:U64.t ->
+    Lemma
+      (ensures
+        (let r = SpecMajorAlloc.init_fresh_chunk fresh next_fp in
+         let hdr = MH.read_word_in_chunk r.chunk_out fresh.base in
+         getWosize hdr == SpecMajorAlloc.fresh_chunk_wosize_u64 fresh /\
+         getColor hdr == Header.Blue /\
+         U64.v (getTag hdr) == 0))
+
+val spot_init_fresh_chunk_link
+  : fresh:MH.heap_chunk -> next_fp:U64.t ->
+    Lemma
+      (ensures
+        (let r = SpecMajorAlloc.init_fresh_chunk fresh next_fp in
+         r.fp_out == SpecMajorAlloc.fresh_chunk_object fresh /\
+         MH.read_word_in_chunk r.chunk_out r.fp_out == next_fp))
+
+val spot_init_fresh_chunk_single_object
+  : fresh:MH.heap_chunk -> next_fp:U64.t ->
+    Lemma
+      (ensures
+        (let r = SpecMajorAlloc.init_fresh_chunk fresh next_fp in
+         MH.objects_in_chunk r.chunk_out == Seq.cons r.fp_out Seq.empty))
 
 val spot_head_preflight_alloc_no_oom
   : mh:MH.major_heap -> fp:U64.t -> requested_wz:nat -> fuel:nat ->
