@@ -3554,6 +3554,90 @@ private let chunked_get_field_from_major_field_slot
   MarkDefs.chunked_get_field_read_some mh src i raw
 #pop-options
 
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_nonblue_scanned_raw_targets_in_major_from_major_raw_field_targets
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenMajorGCBridge.chunked_major_raw_field_targets_in_major mh /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects mh) ==> is_pointer_field target) /\
+        GenMajorGCBridge.chunked_major_field_targets_non_infix mh)
+      (ensures chunked_nonblue_scanned_raw_targets_in_major mh)
+  =
+  let one (obj: obj_addr) (i: U64.t{U64.v i >= 1})
+    : Lemma
+        (requires
+          Seq.mem obj (MH.major_objects mh) /\
+          ~(GenInv.chunked_is_blue mh obj) /\
+          ~(MarkDefs.chunked_is_no_scan mh obj) /\
+          U64.v i <= U64.v (SweepDefs.chunked_wosize_of_object mh obj))
+        (ensures
+          (let v = MarkDefs.chunked_get_field mh obj i in
+           if MarkDefs.chunked_is_pointer_field mh v then
+            let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+            Seq.mem child_raw (MH.major_objects mh) /\
+            ~(SweepDefs.chunked_is_infix mh child_raw)
+           else
+            True))
+    =
+    let v = MarkDefs.chunked_get_field mh obj i in
+    if MarkDefs.chunked_is_pointer_field mh v then begin
+      MH.major_objects_member_header_read_some mh obj;
+      let hdr = Some?.v (MH.read_word_in_major mh (hd_address obj)) in
+      assert (MH.read_word_in_major mh (hd_address obj) == Some hdr);
+      CG.chunked_wosize_nat_header mh obj hdr;
+      chunked_wosize_nat_agrees_with_sweep mh obj;
+      let idx = U64.v i - 1 in
+      assert (idx + 1 == U64.v i);
+      assert (idx < CG.chunked_wosize_nat_of_object mh obj);
+      assert (CG.chunked_wosize_nat_of_object mh obj ==
+              U64.v (getWosize hdr));
+      assert (idx < U64.v (getWosize hdr));
+      CG.chunked_major_field_slot_of_object_header mh obj hdr idx;
+      match CG.chunked_major_field_slot obj idx with
+      | None -> assert False
+      | Some field_addr ->
+        CG.chunked_major_field_slot_elim obj idx field_addr;
+        chunked_field_slot_mark_index_facts mh obj idx field_addr;
+        MH.read_word_in_major_lookup_index mh (hd_address obj) hdr;
+        let hidx = MH.lookup_chunk_index_value mh (hd_address obj) in
+        assert (MH.lookup_chunk_index mh (hd_address obj) == Some hidx);
+        assert (hidx < Seq.length mh);
+        MH.major_objects_member_in_lookup_chunk mh hidx obj;
+        MH.objects_in_chunk_member_header_fits (Seq.index mh hidx) obj;
+        assert (MH.object_wosize_in_chunk (Seq.index mh hidx) obj ==
+                U64.v (getWosize hdr));
+        assert (U64.v obj <= U64.v field_addr);
+        assert (idx < U64.v (getWosize hdr));
+        assert (U64.v field_addr + U64.v mword <=
+                U64.v obj + U64.v (getWosize hdr) * U64.v mword);
+        MH.major_object_payload_word_in_lookup_chunk mh hidx obj field_addr;
+        let raw_v = MH.read_word_in_chunk (Seq.index mh hidx) field_addr in
+        MH.read_word_in_major_at_lookup_index mh field_addr hidx;
+        assert (MH.read_word_in_major mh field_addr == Some raw_v);
+        chunked_get_field_from_major_field_slot mh obj i idx field_addr raw_v;
+        assert (v == raw_v);
+        assert (MarkDefs.chunked_is_pointer_field mh raw_v);
+        GenMajorGCBridge.chunked_major_raw_field_targets_in_major_elim
+          mh obj idx field_addr raw_v;
+        MarkDefs.chunked_pointer_field_as_obj_addr_step mh raw_v;
+        let child_raw = MarkDefs.chunked_pointer_field_as_obj_addr mh v in
+        assert (child_raw ==
+                MarkDefs.chunked_pointer_field_as_obj_addr mh raw_v);
+        assert (Seq.mem child_raw (MH.major_objects mh));
+        assert (is_pointer_field child_raw);
+        assert (raw_v == child_raw);
+        assert (is_pointer_to raw_v child_raw);
+        GenMajorGCBridge.chunked_major_field_targets_non_infix_elim
+          mh obj child_raw idx field_addr raw_v
+    end
+  in
+  Classical.forall_intro_2 (Classical.move_requires_2 one);
+  chunked_nonblue_scanned_raw_targets_in_major_intro mh
+#pop-options
+
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
 private let chunked_major_field_read_some_from_slot
   (mh: MH.major_heap)

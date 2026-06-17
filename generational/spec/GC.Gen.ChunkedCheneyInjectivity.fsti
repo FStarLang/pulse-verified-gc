@@ -504,6 +504,17 @@ val chunked_nonblue_scanned_raw_targets_in_major_elim
          else
           True))
 
+val chunked_nonblue_scanned_raw_targets_in_major_from_major_raw_field_targets
+  : mh:MH.major_heap ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        GenMajorGCBridge.chunked_major_raw_field_targets_in_major mh /\
+        (forall (target: obj_addr).
+         Seq.mem target (MH.major_objects mh) ==> Fields.is_pointer_field target) /\
+        GenMajorGCBridge.chunked_major_field_targets_non_infix mh)
+      (ensures chunked_nonblue_scanned_raw_targets_in_major mh)
+
 val chunked_nonblue_scanned_raw_targets_in_major_preserved_by_expansion
   : mh:MH.major_heap -> fresh:MH.heap_chunk -> fp:U64.t ->
     Lemma
