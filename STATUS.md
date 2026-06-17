@@ -460,6 +460,8 @@ Follow-up checkpoint: runtime heap statistics now report the verified bridge's m
 
 Follow-up checkpoint: the runtime bridge now has an explicit future expansion-size policy hook without changing collector behavior. `alloc_gen.c` factors configured word-size parsing, keeps `MIN_EXPANSION_WORDSIZE` as the initial dense heap compatibility knob, recognizes `VERGC_MAJOR_EXPANSION_WORDSIZE` as the future per-expansion chunk-size policy, and records the planned expansion chunk words in the preflight snapshot/diagnostic alongside the verified minimum fresh-chunk requirement. The integration README documents that the new increment variable is diagnostic-only until verified multi-chunk expansion is wired. The OCaml integration smoke tests passed after the change.
 
+Follow-up checkpoint: the OCaml integration tests now include a focused stats-smoke assertion for the verified runtime bridge. `generational/ocaml-integration/tests/Makefile` builds the existing stats harness, runs `count_change` under the verified generational runtime with the calibrated `MIN_EXPANSION_WORDSIZE`, and checks that `Gc.quick_stat` reports both `heap_words` and `top_heap_words` as the configured bridge major heap size. This locks in the new `Gc.stat`/`Gc.quick_stat` major-heap counter path without running the full benchmark-stat suite. The full `cd generational/ocaml-integration && make test` target passed with the new assertion.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

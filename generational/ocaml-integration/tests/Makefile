@@ -40,7 +40,7 @@ all: $(BYTE_FILES)
 
 # ---- Smoke tests (one run each, verified gen GC) ----
 
-test: $(BYTE_FILES)
+test: $(BYTE_FILES) stats-smoke
 	@echo "=== Smoke tests (verified generational GC) ==="
 	@echo "--- binarytrees ---"
 	MIN_EXPANSION_WORDSIZE=$(BINARYTREES_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) binarytrees.byte 10
@@ -59,6 +59,22 @@ test: $(BYTE_FILES)
 	@echo "--- mandelbrot ---"
 	MIN_EXPANSION_WORDSIZE=$(MANDELBROT_MAJOR_WORDS) $(VERIFIED_GEN_OCAMLRUN) mandelbrot.byte 100
 	@echo "=== All smoke tests passed ==="
+
+stats-smoke: count_change.stats.byte
+	@tmp=$${TMPDIR:-/tmp}/vergc-stats-smoke.$$$$.csv; \
+	trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	MIN_EXPANSION_WORDSIZE=$(COUNT_CHANGE_MAJOR_WORDS) \
+	./bench_stats.sh "$$tmp" count_change verified-gen $(VERIFIED_GEN_OCAMLRUN) $< 50; \
+	heap_words=$$(awk -F, 'NR == 2 { print $$10 }' "$$tmp"); \
+	top_heap_words=$$(awk -F, 'NR == 2 { print $$11 }' "$$tmp"); \
+	if [ "$$heap_words" != "$(COUNT_CHANGE_MAJOR_WORDS)" ]; then \
+	  echo "stats-smoke: heap_words=$$heap_words, expected $(COUNT_CHANGE_MAJOR_WORDS)" >&2; \
+	  exit 1; \
+	fi; \
+	if [ "$$top_heap_words" != "$(COUNT_CHANGE_MAJOR_WORDS)" ]; then \
+	  echo "stats-smoke: top_heap_words=$$top_heap_words, expected $(COUNT_CHANGE_MAJOR_WORDS)" >&2; \
+	  exit 1; \
+	fi
 
 # ---- Benchmarks with hyperfine (3-way comparison) ----
 
@@ -214,7 +230,7 @@ bench-min-heaps: $(MINHEAP_TARGETS)
 	head -n 1 results/binarytrees.minheap.csv > results/min_heaps.csv
 	tail -n +2 -q $(MINHEAP_CSVS) >> results/min_heaps.csv
 
-.PHONY: all test benchmark bench-all bench-stats bench-min-heaps clean
+.PHONY: all test stats-smoke benchmark bench-all bench-stats bench-min-heaps clean
 
 clean:
 	rm -f *.byte *.cmi *.cmo *.o
