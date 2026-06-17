@@ -1,10 +1,11 @@
 (*
    Pulse GC - Allocator Module Interface
 
-   Public dense-heap allocation entry points plus single-chunk compatibility
-   wrappers used during the chunked-major migration.  General chunked-major
-   allocation/expansion helpers are intentionally implementation-private until
-   mark, sweep, and the generational collector own chunked major heaps end to end.
+   Dense-heap allocation entry points plus single-chunk compatibility wrappers
+   used during the chunked-major migration.  The chunked-major allocation loop
+   has a runtime-shaped verified wrapper, but extraction bundles currently keep
+   this module internal so KaRaMeL does not expose ghost/dependent MajorHeap
+   plumbing in the public C API.
 *)
 
 module GC.Impl.Allocator
@@ -105,6 +106,38 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
           MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
           fst res == spec_res.major_fp_out /\
           snd res == spec_res.major_obj_out)
+
+/// Runtime-shaped chunked-major allocation over an already-active indexed major
+/// heap.  The runtime argument is the public dense heap handle converted
+/// internally to the chunked-major view; extraction keeps this wrapper internal
+/// until the C bridge can pass a full verified chunk table without exposing
+/// ghost/dependent MajorHeap plumbing.
+fn allocate_major_with_fuel_runtime (heap: heap_t)
+                                    (fp: U64.t)
+                                    (requested_wz: wosize)
+                                    (fuel: U64.t)
+  requires
+    MajorHeap.is_indexed_major_heap (MajorHeap.heap_as_major heap) 'mh **
+    pure (U64.v requested_wz > 0 /\
+          SpecMajorAlloc.major_fl_valid 'mh fp (U64.v fuel) /\
+          SpecMajorAlloc.major_fl_above_zero 'mh fp (U64.v fuel) /\
+          SpecMajorAlloc.major_fl_blocks_fit 'mh fp (U64.v fuel))
+  returns res: (U64.t & U64.t)
+  ensures
+    MajorHeap.is_indexed_major_heap (MajorHeap.heap_as_major heap)
+      (let r =
+         SpecMajorAlloc.major_alloc_spec_with_fuel
+           'mh fp (U64.v requested_wz) (U64.v fuel) in
+       r.major_alloc_out) **
+    pure (U64.v requested_wz > 0 /\
+          SpecMajorAlloc.major_fl_valid 'mh fp (U64.v fuel) /\
+          SpecMajorAlloc.major_fl_above_zero 'mh fp (U64.v fuel) /\
+          SpecMajorAlloc.major_fl_blocks_fit 'mh fp (U64.v fuel) /\
+          (let r =
+             SpecMajorAlloc.major_alloc_spec_with_fuel
+               'mh fp (U64.v requested_wz) (U64.v fuel) in
+           fst res == r.major_fp_out /\
+           snd res == r.major_obj_out))
 
 /// Initialize the heap as one large free block.
 ///

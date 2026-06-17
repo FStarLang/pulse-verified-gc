@@ -33,13 +33,56 @@ module SpecSweep = GC.Spec.Sweep
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
+module SpecAlloc = GC.Spec.Allocator
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SI = GC.Spec.SweepInv
 module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
 module Defs = GC.Spec.SweepCoalesce.Defs
 module SpecSweepCoalesce = GC.Spec.SweepCoalesce
+module Allocator = GC.Impl.Allocator
 
+/// ---------------------------------------------------------------------------
+/// Public allocation wrappers
+/// ---------------------------------------------------------------------------
+
+fn init_heap (heap: heap_t)
+  requires is_heap heap 's
+  returns fp: U64.t
+  ensures exists* s2. is_heap heap s2 **
+    pure ((s2, fp) == SpecAlloc.init_heap_spec 's)
+{
+  Allocator.init_heap heap
+}
+
+fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap 's)
+  returns res: (U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 **
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+          s2 == spec_res.heap_out /\
+          fst res == spec_res.fp_out /\
+          snd res == spec_res.obj_out)
+{
+  Allocator.allocate heap fp wosize
+}
+
+fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap_part1 's /\
+                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
+  returns res: (U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 **
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+          s2 == spec_res.heap_out /\
+          fst res == spec_res.fp_out /\
+          snd res == spec_res.obj_out)
+{
+  Allocator.allocate_part1 heap fp wosize
+}
 
 /// ---------------------------------------------------------------------------
 /// Full GC

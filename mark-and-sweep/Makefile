@@ -151,17 +151,20 @@ EXTRACT_MODULES = \
 ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_MODULES))) \
            $(OUTPUT_DIR)/FStar_Pervasives_Native.krml
 
+# -fnoshort-names keeps private allocator helpers prefixed while public GC.Impl
+# wrappers keep the stable runtime names (`init_heap`, `allocate`, ...).
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Impl+GC.Impl.Allocator=GC.Impl.*[rename=GC_Impl]' \
+  -bundle 'GC.Impl=GC.Impl.*[rename=GC_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
   $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
     GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
     GC.Impl.MajorHeap \
-    GC.Impl.ArrayWord GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce GC.Spec.ZeroAddr) \
+    GC.Impl.ArrayWord GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce GC.Spec.ZeroAddr) \
+  -fnoshort-names \
   -warn-error -2-9-15
 
 $(EXTRACT_DIR):

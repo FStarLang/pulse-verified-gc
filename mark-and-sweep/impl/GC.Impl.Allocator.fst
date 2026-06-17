@@ -3235,6 +3235,43 @@ fn allocate_major_with_fuel (heap: MajorHeap.major_heap_t)
   allocate_major_with_fuel_loop heap fp requested_wz fuel #mh
 }
 
+fn allocate_major_with_fuel_runtime (heap: heap_t)
+                                    (fp: U64.t)
+                                    (requested_wz: wosize)
+                                    (fuel: U64.t)
+  requires
+    MajorHeap.is_indexed_major_heap (MajorHeap.heap_as_major heap) 'mh **
+    pure (U64.v requested_wz > 0 /\
+          SMA.major_fl_valid 'mh fp (U64.v fuel) /\
+          SMA.major_fl_above_zero 'mh fp (U64.v fuel) /\
+          SMA.major_fl_blocks_fit 'mh fp (U64.v fuel))
+  returns res: (U64.t & U64.t)
+  ensures
+    MajorHeap.is_indexed_major_heap (MajorHeap.heap_as_major heap)
+      (let r =
+         SMA.major_alloc_spec_with_fuel
+           'mh fp (U64.v requested_wz) (U64.v fuel) in
+       r.major_alloc_out) **
+    pure (U64.v requested_wz > 0 /\
+          SMA.major_fl_valid 'mh fp (U64.v fuel) /\
+          SMA.major_fl_above_zero 'mh fp (U64.v fuel) /\
+          SMA.major_fl_blocks_fit 'mh fp (U64.v fuel) /\
+          (let r =
+             SMA.major_alloc_spec_with_fuel
+               'mh fp (U64.v requested_wz) (U64.v fuel) in
+           fst res == r.major_fp_out /\
+           snd res == r.major_obj_out))
+{
+  let res =
+    allocate_major_with_fuel (MajorHeap.heap_as_major heap) fp requested_wz fuel #'mh;
+  assert (pure (let r =
+                  SMA.major_alloc_spec_with_fuel
+                    'mh fp (U64.v requested_wz) (U64.v fuel) in
+                fst res == r.major_fp_out /\
+                snd res == r.major_obj_out));
+  res
+}
+
 fn allocate_major_with_fuel_preserve_oom (heap: MajorHeap.major_heap_t)
                                         (fp: U64.t)
                                         (requested_wz: wosize)

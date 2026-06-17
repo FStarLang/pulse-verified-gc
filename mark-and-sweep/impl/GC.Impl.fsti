@@ -22,10 +22,48 @@ module SpecSweep = GC.Spec.Sweep
 module SpecCoalesce = GC.Spec.Coalesce
 module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
+module SpecAlloc = GC.Spec.Allocator
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 module SI = GC.Spec.SweepInv
 module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
+
+/// Initialize the heap as one large free block.
+///
+/// Returns the initial free-list pointer (= mword = 8).
+fn init_heap (heap: heap_t)
+  requires is_heap heap 's
+  returns fp: U64.t
+  ensures exists* s2. is_heap heap s2 **
+    pure ((s2, fp) == SpecAlloc.init_heap_spec 's)
+
+/// Allocate an object of wosize words from the dense free list.
+///
+/// Returns `(new_fp, obj_addr)`, with `obj_addr = 0UL` on out-of-memory.
+fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap 's)
+  returns res: (U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 **
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+          s2 == spec_res.heap_out /\
+          fst res == spec_res.fp_out /\
+          snd res == spec_res.obj_out)
+
+/// Allocate with the weaker allocator-specific heap precondition used during
+/// promotion, where pointer closure may be temporarily violated.
+fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
+  requires is_heap heap 's **
+           pure (SpecFields.well_formed_heap_part1 's /\
+                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
+  returns res: (U64.t & U64.t)
+  ensures exists* s2. is_heap heap s2 **
+    pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
+          s2 == spec_res.heap_out /\
+          fst res == spec_res.fp_out /\
+          snd res == spec_res.obj_out)
 
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the

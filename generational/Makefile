@@ -168,18 +168,21 @@ $(OUTPUT_DIR)/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
 #   GC_Gen_Impl.{c,h}  — all gen + M&S impl code (one translation unit)
 #   Spec/constants      — heap_size_u64, minor_heap_size_u64, color enum (internal)
 #
-# API (public in header): GC.Gen.Impl, GC.Gen.Impl.MinorHeap, GC.Impl, GC.Impl.Allocator
+# API (public in header): GC.Gen.Impl, GC.Gen.Impl.MinorHeap, GC.Impl
 # Internal (static):      Cheney, Promote, UpdatePtrs, Mark, Sweep, Fields, MajorHeap, ...
 # Hidden (no C output):   Spec modules, Prims, FStar, Pulse
+# -fnoshort-names keeps private allocator helpers prefixed while public GC.Impl
+# wrappers keep the stable runtime names (`init_heap`, `allocate`, ...).
 
 KRML_FLAGS = \
   -tmpdir $(EXTRACT_DIR) \
   -skip-compilation -skip-linking \
-  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Impl.Cheney+GC.Gen.Impl.UpdatePtrs+GC.Impl+GC.Impl.Allocator+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*[rename=GC_Gen_Impl]' \
+  -bundle 'GC.Gen.Impl+GC.Gen.Impl.MinorHeap+GC.Gen.Impl.Cheney+GC.Gen.Impl.UpdatePtrs+GC.Impl+GC.Impl.MarkBounded=GC.Gen.Impl.*,GC.Impl.*[rename=GC_Gen_Impl]' \
   -bundle 'FStar.Pervasives.Native' \
   -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
   -bundle 'GC.Gen.Base,GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
-  $(foreach m,$(ALL_KRML_MODS),-no-prefix $(m)) \
+  $(foreach m,$(filter-out GC.Impl.Allocator,$(ALL_KRML_MODS)),-no-prefix $(m)) \
+  -fnoshort-names \
   -warn-error -2-9-15
 
 $(EXTRACT_DIR):
