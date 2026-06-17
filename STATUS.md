@@ -458,6 +458,8 @@ Follow-up checkpoint: the runtime preflight measurements are now packaged as a r
 
 Follow-up checkpoint: runtime heap statistics now report the verified bridge's major-chunk bookkeeping instead of the stock OCaml runtime's fixed-heap counters when the bridge is active. `alloc_gen.c` exports current major words, top major words, and registered major chunk count from the C-side chunk table; `runtime_gen.patch` feeds those values into `Gc.stat` and `Gc.quick_stat`, while keeping the existing minor-word bridge accounting. This is still boundary scaffolding rather than expansion wiring, but future chunk acquisition will now have an observable stats path once new chunks are registered. The strict runtime patch check and OCaml integration smoke tests passed after the change.
 
+Follow-up checkpoint: the runtime bridge now has an explicit future expansion-size policy hook without changing collector behavior. `alloc_gen.c` factors configured word-size parsing, keeps `MIN_EXPANSION_WORDSIZE` as the initial dense heap compatibility knob, recognizes `VERGC_MAJOR_EXPANSION_WORDSIZE` as the future per-expansion chunk-size policy, and records the planned expansion chunk words in the preflight snapshot/diagnostic alongside the verified minimum fresh-chunk requirement. The integration README documents that the new increment variable is diagnostic-only until verified multi-chunk expansion is wired. The OCaml integration smoke tests passed after the change.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

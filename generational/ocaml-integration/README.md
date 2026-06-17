@@ -64,8 +64,11 @@ Everything else is KaRaMeL-extracted from verified F*/Pulse code with zero admit
 
 ## Configuration
 
-Set `MIN_EXPANSION_WORDSIZE` environment variable to control major heap size
-(in words).  Default: 32M words (256MB).
+Set `MIN_EXPANSION_WORDSIZE` environment variable to control the initial major
+heap size (in words).  Default: 32M words (256MB).  The bridge also recognizes
+`VERGC_MAJOR_EXPANSION_WORDSIZE` as the future per-expansion chunk-size policy;
+it is currently reported in preflight diagnostics only because verified
+multi-chunk expansion is not wired into the runtime yet.
 
 Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
 256K words (2MB), matching OCaml's default, with a floor large enough for

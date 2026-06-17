@@ -68,6 +68,7 @@ static int          heap_initialized = 0;
  * are still dense/single-chunk today; this table makes the trusted runtime
  * boundary explicit before wiring discontiguous extracted APIs. */
 #define MAX_MAJOR_CHUNKS 1024
+#define DEFAULT_MAJOR_WORDS ((size_t)32 * 1024 * 1024)
 typedef struct {
     uint8_t *base;
     size_t bytes;
@@ -78,6 +79,7 @@ typedef struct {
     uint64_t head_wosize;
     uint64_t required_head_wosize;
     uint64_t required_chunk_words;
+    uint64_t planned_expansion_words;
     uint64_t suggested_major_words;
 } major_preflight_snapshot;
 
@@ -85,14 +87,24 @@ static major_chunk_rec major_chunks[MAX_MAJOR_CHUNKS];
 static size_t major_chunk_count = 0;
 static uint64_t major_bytes_total = 0;
 
-static size_t configured_initial_major_words(void) {
-    size_t words = 32 * 1024 * 1024;  /* 256 MB / 8 = 32M words */
-    const char *env = getenv("MIN_EXPANSION_WORDSIZE");
+static size_t configured_words_or_default(const char *name, size_t default_words) {
+    size_t words = default_words;
+    const char *env = getenv(name);
     if (env) {
         size_t w = (size_t)atoll(env);
         if (w > 0) words = w;
     }
     return words;
+}
+
+static size_t configured_initial_major_words(void) {
+    return configured_words_or_default("MIN_EXPANSION_WORDSIZE", DEFAULT_MAJOR_WORDS);
+}
+
+static size_t configured_expansion_chunk_words(void) {
+    return configured_words_or_default(
+        "VERGC_MAJOR_EXPANSION_WORDSIZE",
+        configured_initial_major_words());
 }
 
 static size_t words_to_bytes_or_fatal(size_t words, const char *what) {
@@ -226,6 +238,13 @@ static uint64_t suggested_major_words_for_retry(uint64_t required_chunk_words) {
         : required_chunk_words;
 }
 
+static uint64_t planned_expansion_chunk_words(uint64_t required_chunk_words) {
+    uint64_t configured_words = (uint64_t)configured_expansion_chunk_words();
+    return configured_words >= required_chunk_words
+        ? configured_words
+        : required_chunk_words;
+}
+
 static major_preflight_snapshot current_major_preflight_snapshot(void) {
     major_preflight_snapshot snapshot;
     snapshot.demand_words = minor_promotion_demand_words();
@@ -234,6 +253,8 @@ static major_preflight_snapshot current_major_preflight_snapshot(void) {
         required_head_wosize_for_promotion(snapshot.demand_words);
     snapshot.required_chunk_words =
         required_chunk_words_for_head(snapshot.required_head_wosize);
+    snapshot.planned_expansion_words =
+        planned_expansion_chunk_words(snapshot.required_chunk_words);
     snapshot.suggested_major_words =
         suggested_major_words_for_retry(snapshot.required_chunk_words);
     return snapshot;
@@ -479,6 +500,7 @@ static void fatal_promotion_failed(void) {
         "verified gen GC: promotion failed — major heap full (%lu MB, %lu chunk(s))\n"
         "  Minor promotion demand: %llu words; major free-list head: %llu words.\n"
         "  Verified preflight requires head >= %llu words; fresh chunk >= %llu words.\n"
+        "  Future expansion chunk policy would request >= %llu words.\n"
         "  Current head satisfies preflight: %s.\n"
         "  Some objects could not be promoted (live set exceeds heap capacity).\n"
         "  Set MIN_EXPANSION_WORDSIZE=%llu (or larger) to increase heap.\n",
@@ -488,6 +510,7 @@ static void fatal_promotion_failed(void) {
         (unsigned long long)snapshot.head_wosize,
         (unsigned long long)snapshot.required_head_wosize,
         (unsigned long long)snapshot.required_chunk_words,
+        (unsigned long long)snapshot.planned_expansion_words,
         major_preflight_head_ready(&snapshot) ? "yes" : "no",
         (unsigned long long)snapshot.suggested_major_words);
     caml_fatal_error("verified gen GC: out of memory (major heap too small)");
