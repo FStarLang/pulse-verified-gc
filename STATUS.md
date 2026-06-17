@@ -464,6 +464,8 @@ Follow-up checkpoint: the OCaml integration tests now include a focused stats-sm
 
 Follow-up checkpoint: major chunk registration now checks disjointness from the active minor heap range, not just from previously registered major chunks. `alloc_gen.c` factors range-overlap testing, verifies the minor range does not overflow, rejects any future major chunk that overlaps the minor buffer, and reuses the same helper for chunk-vs-chunk disjointness. This adds another C-side fact required by the future verified expansion API while preserving the current single dense major heap behavior. The OCaml integration smoke/stat tests passed after the change.
 
+Follow-up checkpoint: runtime heap-size configuration parsing is now explicit and fail-fast. `alloc_gen.c` parses `MIN_EXPANSION_WORDSIZE`, `VERGC_MAJOR_EXPANSION_WORDSIZE`, and `MINOR_HEAP_WORDS` as positive decimal word counts with `strtoull`, rejects empty/malformed/zero/overflowing values instead of silently falling back or wrapping through `atoll`, and reuses the parser for both major and minor heap policy. The integration README documents the positive-decimal requirement. The OCaml integration smoke/stat tests passed after the parser hardening.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

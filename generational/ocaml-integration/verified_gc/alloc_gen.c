@@ -55,6 +55,7 @@
 /* --- Patched externs from GC_Gen_Impl.c --- */
 #include "GC_Spec_ZeroAddr.h"  /* zero_addr, heap_size_u64 */
 #include "profiling_counters.h"
+#include <errno.h>
 extern size_t queue_size_sz;
 
 /* --- Globals --- */
@@ -69,6 +70,7 @@ static int          heap_initialized = 0;
  * boundary explicit before wiring discontiguous extracted APIs. */
 #define MAX_MAJOR_CHUNKS 1024
 #define DEFAULT_MAJOR_WORDS ((size_t)32 * 1024 * 1024)
+#define DEFAULT_MINOR_WORDS ((size_t)256 * 1024)
 typedef struct {
     uint8_t *base;
     size_t bytes;
@@ -88,13 +90,22 @@ static size_t major_chunk_count = 0;
 static uint64_t major_bytes_total = 0;
 
 static size_t configured_words_or_default(const char *name, size_t default_words) {
-    size_t words = default_words;
     const char *env = getenv(name);
-    if (env) {
-        size_t w = (size_t)atoll(env);
-        if (w > 0) words = w;
-    }
-    return words;
+    char *end = NULL;
+    unsigned long long parsed;
+
+    if (env == NULL || *env == '\0')
+        return default_words;
+    if (*env < '0' || *env > '9')
+        caml_fatal_error("verified gen GC: invalid %s", name);
+
+    errno = 0;
+    parsed = strtoull(env, &end, 10);
+    if (errno != 0 || end == env || *end != '\0' || parsed == 0 ||
+        parsed > (unsigned long long)SIZE_MAX)
+        caml_fatal_error("verified gen GC: invalid %s", name);
+
+    return (size_t)parsed;
 }
 
 static size_t configured_initial_major_words(void) {
@@ -366,12 +377,8 @@ static void ensure_heap(void) {
      * OCaml default is 256K words = 2MB.  We match that default, overridable
      * via environment variable. */
     max_young_wosize_u64 = 256ULL;  /* match OCaml's Max_young_wosize */
-    size_t minor_words = 256 * 1024;  /* 2 MB / 8 = 256K words (matches OCaml default) */
-    const char *minor_env = getenv("MINOR_HEAP_WORDS");
-    if (minor_env) {
-        size_t w = (size_t)atoll(minor_env);
-        if (w > 0) minor_words = w;
-    }
+    size_t minor_words =
+        configured_words_or_default("MINOR_HEAP_WORDS", DEFAULT_MINOR_WORDS);
     if (minor_words < (size_t)max_young_wosize_u64 + 1)
         minor_words = (size_t)max_young_wosize_u64 + 1;
     size_t minor_sz = minor_words * 8;
