@@ -22,6 +22,7 @@ module MH = GC.Spec.MajorHeap
 module SpecAlloc = GC.Spec.Allocator
 module SpecMajorAlloc = GC.Spec.MajorAllocator
 module SpecFields = GC.Spec.Fields
+module SpecHeap = GC.Spec.Heap
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module MajorHeap = GC.Impl.MajorHeap
 
@@ -106,6 +107,23 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
           MH.single_chunk_major_heap s2 == spec_res.major_alloc_out /\
           fst res == spec_res.major_fp_out /\
           snd res == spec_res.major_obj_out)
+
+/// Initialize an absolute-addressed chunk-like range as one blue free-list
+/// block.  This is a ghost-free extraction boundary helper: callers provide the
+/// concrete header address and object/free-list address.
+fn init_major_chunk_raw (heap: heap_t)
+                       (base: hp_addr)
+                       (fp_out: obj_addr)
+                       (wz: wosize)
+                       (next_fp: U64.t)
+  requires is_heap heap 's **
+          pure (U64.v fp_out == U64.v base + U64.v mword)
+  returns new_fp: U64.t
+  ensures exists* s2. is_heap heap s2 **
+    pure (let hdr = makeHeader wz blue 0UL in
+          s2 == SpecHeap.write_word (SpecHeap.write_word 's base hdr)
+                 fp_out next_fp /\
+          new_fp == fp_out)
 
 /// Runtime-shaped chunked-major allocation over an already-active indexed major
 /// heap.  The runtime argument is the public dense heap handle converted

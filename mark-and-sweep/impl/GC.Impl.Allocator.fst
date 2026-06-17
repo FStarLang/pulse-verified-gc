@@ -683,6 +683,25 @@ fn allocate_part1_single_indexed_major (heap: heap_t) (fp: U64.t) (wosize: U64.t
   res
 }
 
+fn init_major_chunk_raw (heap: heap_t)
+                        (base: hp_addr)
+                        (fp_out: obj_addr)
+                        (wz: wosize)
+                        (next_fp: U64.t)
+  requires is_heap heap 's **
+           pure (U64.v fp_out == U64.v base + U64.v mword)
+  returns new_fp: U64.t
+  ensures exists* s2. is_heap heap s2 **
+    pure (let hdr = makeHeader wz blue 0UL in
+          s2 == SH.write_word (SH.write_word 's base hdr) fp_out next_fp /\
+          new_fp == fp_out)
+{
+  let hdr = makeHeader wz blue 0UL;
+  write_word heap base hdr;
+  write_word heap fp_out next_fp;
+  fp_out
+}
+
 fn write_word_in_indexed_major_at_erased_chunk_index
   (h: MajorHeap.major_heap_t)
   (addr: hp_addr)

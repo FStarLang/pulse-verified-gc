@@ -70,7 +70,9 @@ heap size (in words).  Default: 32M words (256MB).  The bridge also recognizes
 it is currently reported in preflight diagnostics only because verified
 multi-chunk expansion is not wired into the runtime yet.  Heap-size environment
 variables must be positive decimal word counts; invalid values are reported as
-runtime configuration errors.
+runtime configuration errors.  Major chunk sizes must be between 2 and 2^54
+words so the verified initializer can write both the block header and free-list
+link and the OCaml header `wosize` field remains in range.
 
 Minor heap size is set at runtime with `MINOR_HEAP_WORDS`.  The default is
 256K words (2MB), matching OCaml's default, with a floor large enough for

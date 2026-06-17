@@ -173,6 +173,15 @@ K___uint64_t_uint64_t allocate(heap_t heap, uint64_t fp, uint64_t wosize);
 
 K___uint64_t_uint64_t allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize);
 
+uint64_t
+init_major_chunk_raw(
+  heap_t heap,
+  uint64_t base,
+  uint64_t fp_out,
+  uint64_t wz,
+  uint64_t next_fp
+);
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);

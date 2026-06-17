@@ -84,6 +84,23 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   Allocator.allocate_part1 heap fp wosize
 }
 
+fn init_major_chunk_raw (heap: heap_t)
+                        (base: hp_addr)
+                        (fp_out: obj_addr)
+                        (wz: wosize)
+                        (next_fp: U64.t)
+  requires is_heap heap 's **
+           pure (U64.v fp_out == U64.v base + U64.v mword)
+  returns new_fp: U64.t
+  ensures exists* s2. is_heap heap s2 **
+    pure (let hdr = makeHeader wz blue 0UL in
+          s2 == GC.Spec.Heap.write_word
+                  (GC.Spec.Heap.write_word 's base hdr) fp_out next_fp /\
+          new_fp == fp_out)
+{
+  Allocator.init_major_chunk_raw heap base fp_out wz next_fp
+}
+
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------

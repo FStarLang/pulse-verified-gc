@@ -71,6 +71,7 @@ static int          heap_initialized = 0;
 #define MAX_MAJOR_CHUNKS 1024
 #define DEFAULT_MAJOR_WORDS ((size_t)32 * 1024 * 1024)
 #define DEFAULT_MINOR_WORDS ((size_t)256 * 1024)
+#define MAX_MAJOR_CHUNK_WORDS (1ULL << 54)
 typedef struct {
     uint8_t *base;
     size_t bytes;
@@ -108,12 +109,21 @@ static size_t configured_words_or_default(const char *name, size_t default_words
     return (size_t)parsed;
 }
 
+static size_t configured_major_chunk_words(const char *name, size_t default_words) {
+    size_t words = configured_words_or_default(name, default_words);
+    if (words < 2)
+        caml_fatal_error("verified gen GC: %s must be at least 2 words", name);
+    if ((unsigned long long)words > MAX_MAJOR_CHUNK_WORDS)
+        caml_fatal_error("verified gen GC: %s must be at most 2^54 words", name);
+    return words;
+}
+
 static size_t configured_initial_major_words(void) {
-    return configured_words_or_default("MIN_EXPANSION_WORDSIZE", DEFAULT_MAJOR_WORDS);
+    return configured_major_chunk_words("MIN_EXPANSION_WORDSIZE", DEFAULT_MAJOR_WORDS);
 }
 
 static size_t configured_expansion_chunk_words(void) {
-    return configured_words_or_default(
+    return configured_major_chunk_words(
         "VERGC_MAJOR_EXPANSION_WORDSIZE",
         configured_initial_major_words());
 }
@@ -357,14 +367,11 @@ static void ensure_heap(void) {
     gc_gen_heap.major.data = NULL;
     gc_gen_heap.major.size = major_bytes;
 
-    /* Initialize major free list: one big blue block */
+    /* Initialize major free list through the verified raw chunk formatter. */
     uint64_t total_words_u64 = (uint64_t)major_words;
     uint64_t wosize = total_words_u64 - 1;
-    uint64_t blue_hdr = (wosize << 10) | (2ULL << 8) | 0ULL;  /* blue, tag 0 */
-    *(uint64_t *)major_base = blue_hdr;
-    *(uint64_t *)(major_base + 8) = 0;  /* free list terminator */
-
-    uint64_t initial_fp = zero_addr + 8;
+    uint64_t initial_fp =
+        init_major_chunk_raw(gc_gen_heap.major, zero_addr, zero_addr + 8, wosize, 0);
 
     /* fp_ref */
     uint64_t *fp_ref = (uint64_t *)malloc(sizeof(uint64_t));

@@ -414,6 +414,21 @@ GC_Impl_Allocator_allocate_part1_single_indexed_major(
   return GC_Impl_Allocator_allocate_part1(heap, fp, wosize);
 }
 
+static uint64_t
+GC_Impl_Allocator_init_major_chunk_raw(
+  heap_t heap,
+  uint64_t base,
+  uint64_t fp_out,
+  uint64_t wz,
+  uint64_t next_fp
+)
+{
+  uint64_t hdr = makeHeader(wz, blue, 0ULL);
+  write_word(heap, base, hdr);
+  write_word(heap, fp_out, next_fp);
+  return fp_out;
+}
+
 static void
 copy_fields_loop(
   minor_heap_t minor,
@@ -1838,6 +1853,18 @@ K___uint64_t_uint64_t allocate_part1(heap_t heap, uint64_t fp, uint64_t wosize)
   return GC_Impl_Allocator_allocate_part1(heap, fp, wosize);
 }
 
+uint64_t
+init_major_chunk_raw(
+  heap_t heap,
+  uint64_t base,
+  uint64_t fp_out,
+  uint64_t wz,
+  uint64_t next_fp
+)
+{
+  return GC_Impl_Allocator_init_major_chunk_raw(heap, base, fp_out, wz, next_fp);
+}
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);
@@ -2024,4 +2051,3 @@ void mark_loop_bounded(heap_t heap, gray_stack_rec st)
       mark_inner_loop_impl(heap, st);
   }
 }
-

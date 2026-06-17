@@ -65,6 +65,24 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
 
+/// Initialize an absolute-addressed major chunk as one blue free-list block.
+/// This public helper has a ghost-free C ABI and is used by the OCaml bridge for
+/// the current initial dense chunk while the authoritative chunked model remains
+/// internal to verification.
+fn init_major_chunk_raw (heap: heap_t)
+                       (base: hp_addr)
+                       (fp_out: obj_addr)
+                       (wz: wosize)
+                       (next_fp: U64.t)
+  requires is_heap heap 's **
+          pure (U64.v fp_out == U64.v base + U64.v mword)
+  returns new_fp: U64.t
+  ensures exists* s2. is_heap heap s2 **
+    pure (let hdr = GC.Impl.Object.makeHeader wz GC.Impl.Object.blue 0UL in
+          s2 == GC.Spec.Heap.write_word
+                 (GC.Spec.Heap.write_word 's base hdr) fp_out next_fp /\
+          new_fp == fp_out)
+
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the
 /// ghost root set used for correctness.

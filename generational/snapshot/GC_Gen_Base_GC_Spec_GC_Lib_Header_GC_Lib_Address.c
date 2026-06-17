@@ -38,4 +38,3 @@ uint64_t minor_heap_size_u64 = 2048ULL;
 uint64_t max_young_wosize_u64 = 128ULL;
 
 uint64_t minor_base_addr = 0ULL;
-
