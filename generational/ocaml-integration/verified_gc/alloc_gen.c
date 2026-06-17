@@ -64,6 +64,42 @@ static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-al
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
 
+/* Major chunks registered with the OCaml page table.  The verified entrypoints
+ * are still dense/single-chunk today; this table makes the trusted runtime
+ * boundary explicit before wiring discontiguous extracted APIs. */
+#define MAX_MAJOR_CHUNKS 1024
+typedef struct {
+    uint8_t *base;
+    size_t bytes;
+} major_chunk_rec;
+
+static major_chunk_rec major_chunks[MAX_MAJOR_CHUNKS];
+static size_t major_chunk_count = 0;
+static uint64_t major_bytes_total = 0;
+
+static size_t words_to_bytes_or_fatal(size_t words, const char *what) {
+    if (words > SIZE_MAX / sizeof(value))
+        caml_fatal_error("%s", what);
+    return words * sizeof(value);
+}
+
+static void register_major_chunk(uint8_t *base, size_t bytes) {
+    if (major_chunk_count >= MAX_MAJOR_CHUNKS)
+        caml_fatal_error("verified gen GC: too many major chunks");
+    if (bytes > UINT64_MAX - major_bytes_total)
+        caml_fatal_error("verified gen GC: major heap size overflow");
+    if (caml_page_table_add(In_heap, base, base + bytes) != 0)
+        caml_fatal_error("verified gen GC: page table registration failed");
+    major_chunks[major_chunk_count].base = base;
+    major_chunks[major_chunk_count].bytes = bytes;
+    major_chunk_count++;
+    major_bytes_total += (uint64_t)bytes;
+}
+
+static uint64_t current_major_bytes(void) {
+    return major_bytes_total;
+}
+
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
  * The fast path reserves bytes by updating the same verified bump counter;
  * collections and heap initialization still go through verified_allocate_minor(). */
@@ -110,7 +146,8 @@ static void ensure_heap(void) {
         size_t w = (size_t)atoll(env);
         if (w > 0) major_words = w;
     }
-    size_t major_bytes = major_words * 8;
+    size_t major_bytes = words_to_bytes_or_fatal(
+        major_words, "verified gen GC: major heap word size overflow");
 
     uint8_t *major_base = (uint8_t *)calloc(1, major_bytes);
     if (!major_base)
@@ -198,16 +235,16 @@ static void ensure_heap(void) {
     Caml_state->_young_alloc_start = Caml_state->_young_start;
     Caml_state->_young_alloc_end   = Caml_state->_young_end;
 
-    /* Register our major heap in OCaml's page table so that Is_in_heap()
+    /* Register our major heap chunk in OCaml's page table so that Is_in_heap()
      * returns true for addresses inside it.  Without this, the write
      * barrier in caml_modify / caml_initialize skips the ref_table update
      * for stores into major-heap objects, leaving inter-generational
      * pointers untracked and causing stale minor addresses after GC. */
-    if (caml_page_table_add(In_heap, major_base, major_base + major_bytes) != 0)
-        caml_fatal_error("verified gen GC: page table registration failed");
+    register_major_chunk(major_base, major_bytes);
 
-    caml_gc_message(0x20, "Verified gen GC: major=%luMB minor=%luKB\n",
+    caml_gc_message(0x20, "Verified gen GC: major=%luMB in %lu chunk(s) minor=%luKB\n",
                     (unsigned long)(major_bytes / (1024*1024)),
+                    (unsigned long)major_chunk_count,
                     (unsigned long)(minor_sz / 1024));
 }
 
@@ -286,7 +323,7 @@ static void collect_minor_roots_and_refs(void) {
 }
 
 static void fatal_promotion_failed(void) {
-    uint64_t major_size = heap_size_u64 - zero_addr;
+    uint64_t major_size = current_major_bytes();
     fprintf(stderr,
         "verified gen GC: promotion failed — major heap full (%lu MB)\n"
         "  Some objects could not be promoted (live set exceeds heap capacity).\n"
@@ -421,7 +458,7 @@ static void do_minor_gc(void) {
      * Using bump_before as a conservative upper bound on promoted bytes. */
     if (!in_full_gc) {
         uint64_t bump = *gc_gen_heap.minor.bump_ref;
-        uint64_t major_size = heap_size_u64 - zero_addr;
+        uint64_t major_size = current_major_bytes();
         /* Use 50% threshold — balances sweep cost vs fragmentation */
         uint64_t threshold = major_size / 2;
         if (bytes_promoted_since_major + bump > threshold) {

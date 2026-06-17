@@ -446,6 +446,8 @@ Follow-up checkpoint: the post-minor/following-major-GC wrapper no longer needs 
 
 Follow-up checkpoint: the older pre-promote raw-field-target wrapper also has a chunk-base-derived edge-witness variant. `GC.Gen.CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_preflight_chunk_base_pre_promote_raw_field_target_policy` keeps the original-heap raw/non-infix/minor-field policies and the real split-ready premise, but no longer asks callers to provide `chunked_major_edge_gen_field_witness collect.cmc_major`; it derives that post-update graph-field witness from preflight chunk bases plus promotion/update range preservation. `GC.SPOT.HeapExpansion` audits the wrapper. Focused readiness/SPOT checks, refreshed readiness profiling (~2.1s), full SPOT verification, generational orphan checking, and touched-file hygiene scans passed.
 
+Follow-up checkpoint: the OCaml integration bridge now has behavior-preserving major-chunk bookkeeping. `generational/ocaml-integration/verified_gc/alloc_gen.c` records each page-table-registered major chunk in a bounded runtime table, tracks total registered major bytes, and routes initial dense-heap page-table registration through the same helper that future expansion will use. The verified extracted entrypoints still use the dense single-chunk heap model, so this is deliberately scaffolding rather than expansion wiring; `zero_addr`, `heap_size_u64`, and `gc_gen_heap.major` remain the original single dense chunk until a verified chunked runtime API is exposed. The patched OCaml runtime rebuilt warning-clean, the existing verified-runtime smoke tests passed, and broad `make generational` still passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
