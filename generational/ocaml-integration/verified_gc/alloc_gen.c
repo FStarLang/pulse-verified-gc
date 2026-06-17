@@ -66,9 +66,9 @@ static uint64_t    *gc_queue;         /* BFS queue for Cheney promotion (heap-al
 static uint8_t     *minor_base;      /* absolute address of minor heap buffer */
 static int          heap_initialized = 0;
 
-/* Major chunks registered with the OCaml page table.  The verified entrypoints
- * are still dense/single-chunk today; this table makes the trusted runtime
- * boundary explicit before wiring discontiguous extracted APIs. */
+/* Major chunks registered with the OCaml page table.  The runtime grows by
+ * appending chunks inside one contiguous arena so the dense verified
+ * allocator/collector can keep scanning zero_addr..heap_size_u64. */
 #define MAX_MAJOR_CHUNKS 1024
 #define DEFAULT_MAJOR_WORDS ((size_t)32 * 1024 * 1024)
 #define DEFAULT_MINOR_WORDS ((size_t)256 * 1024)
@@ -683,10 +683,10 @@ static void fatal_promotion_failed(void) {
         "verified gen GC: promotion failed — major heap full (%lu MB, %lu chunk(s))\n"
         "  Minor promotion demand: %llu words; major free-list head: %llu words.\n"
         "  Verified preflight requires head >= %llu words; fresh chunk >= %llu words.\n"
-        "  Future expansion chunk policy would request >= %llu words.\n"
+        "  Expansion chunk policy requested >= %llu words.\n"
         "  Current head satisfies preflight: %s.\n"
         "  Some objects could not be promoted (live set exceeds heap capacity).\n"
-        "  Set MIN_EXPANSION_WORDSIZE=%llu (or larger) to increase heap.\n",
+        "  Increase VERGC_MAJOR_MAX_WORDSIZE beyond %llu words to allow more growth.\n",
         (unsigned long)(major_size / 1048576),
         (unsigned long)major_chunk_count,
         (unsigned long long)snapshot.demand_words,

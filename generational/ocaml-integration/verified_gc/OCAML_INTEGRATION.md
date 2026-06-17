@@ -254,16 +254,16 @@ virtual address X.
 ```
 ┌─ Virtual Memory ─────────────────────────────────────────┐
 │ ...                                                      │
-│ 0x7f0000000000  ← calloc'd major heap buffer             │
+│ 0x7f0000000000  ← mmap'd major heap arena                │
 │ ┌──────────────────────────────────────────────────────┐ │
 │ │  header₀ | field₀ | field₁ | header₁ | ...         │ │
 │ └──────────────────────────────────────────────────────┘ │
-│ 0x7f0000000000 + major_bytes                             │
+│ 0x7f0000000000 + active_major_bytes                      │
 │ ...                                                      │
 └──────────────────────────────────────────────────────────┘
 
 zero_addr      = 0x7f0000000000   (base)
-heap_size_u64  = 0x7f0000000000 + major_bytes  (end)
+heap_size_u64  = 0x7f0000000000 + active_major_bytes  (end)
 major.data     = NULL
 
 Verified code:  read_u64_le(major.data, offset)
@@ -276,9 +276,9 @@ Verified code:  read_u64_le(major.data, offset)
 
 ```c
 // alloc_gen.c — ensure_heap():
-uint8_t *major_base = calloc(1, major_bytes);
+uint8_t *major_base = mmap(... reserve_bytes ...);
 zero_addr     = (uint64_t)(uintptr_t)major_base;
-heap_size_u64 = (uint64_t)(uintptr_t)(major_base + major_bytes);
+heap_size_u64 = (uint64_t)(uintptr_t)(major_base + initial_major_bytes);
 gc_gen_heap.major.data = NULL;   // ← the trick
 ```
 
@@ -983,16 +983,25 @@ practice, even binarytrees-14 uses only ~6K roots.
 
 ---
 
-## OOM Handling
+## OOM Handling and Grow-Only Expansion
 
-The verified GC has a **fixed-size** major heap (no growth).  OOM is
-surfaced by the extracted verified functions:
+The bridge reserves one contiguous major arena and exposes only the active
+prefix to the dense verified collector by setting `heap_size_u64` to the active
+end.  When more major space is needed, it appends a new active chunk inside that
+arena, refreshes the KaRaMeL-derived heap-size globals with `krmlinit_globals`,
+formats the chunk as a blue free-list head using extracted verified code, and
+registers the chunk with OCaml's page table.  This is grow-only and preserves
+existing object addresses; discontiguous verified chunk ownership remains a
+separate proof/ABI track.
 
 ### 1. Promotion Failure
 
-`minor_collect_full` and `gen_gc` return a boolean success flag.  If
-Cheney promotion cannot allocate a major copy for a reachable minor object,
-the flag is false and the bridge calls:
+Before minor collection, the bridge computes a conservative promotion demand
+from the allocated minor objects.  If the current major free-list head is too
+small, it expands the active major prefix before calling `minor_collect_full` or
+`gen_gc`.  Those verified functions still return a boolean success flag; if
+promotion cannot allocate a major copy for a reachable minor object even after
+preflight growth, the flag is false and the bridge calls:
 
 ```c
 fatal_promotion_failed();
@@ -1003,11 +1012,11 @@ OOM detection is part of the verified collector result.
 
 ### 2. Allocation Failure
 
-If a minor allocation still cannot fit after minor collection, or a major
-allocation still cannot fit after full GC:
+If a minor allocation still cannot fit after minor collection, or a direct major
+allocation still cannot fit after full GC and one expansion retry:
 
 ```
-if (result == 0) → caml_fatal_error("out of memory after collection")
+if (result == 0) → caml_fatal_error("out of memory after collection/expansion")
 ```
 
 ### Proactive Prevention
