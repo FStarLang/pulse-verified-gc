@@ -122,15 +122,18 @@ diff --git a/runtime/gc_ctrl.c b/runtime/gc_ctrl.c
 index 9c47b91..2601ad1 100644
 --- a/runtime/gc_ctrl.c
 +++ b/runtime/gc_ctrl.c
-@@ -49,6 +49,7 @@ extern uintnat caml_allocation_policy;    /*        see freelist.c */
+@@ -49,6 +49,10 @@
  extern uintnat caml_custom_major_ratio;   /* see custom.c */
  extern uintnat caml_custom_minor_ratio;   /* see custom.c */
  extern uintnat caml_custom_minor_max_bsz; /* see custom.c */
 +extern uintnat vergc_minor_words_current(void);
++extern uintnat vergc_major_words_current(void);
++extern uintnat vergc_major_top_words_current(void);
++extern uintnat vergc_major_chunks_current(void);
  
  #define Next(hp) ((header_t *)(hp) + Whsize_hp (hp))
  
-@@ -226,7 +227,8 @@ static value heap_stats (int returnstats)
+@@ -226,7 +230,8 @@
      /* get a copy of these before allocating anything... */
      double minwords =
        Caml_state->stat_minor_words
@@ -140,7 +143,20 @@ index 9c47b91..2601ad1 100644
      double prowords = Caml_state->stat_promoted_words;
      double majwords =
        Caml_state->stat_major_words + (double) caml_allocated_words;
-@@ -286,7 +288,8 @@ CAMLprim value caml_gc_quick_stat(value v)
+@@ -236,6 +241,12 @@
+     intnat cpct = Caml_state->stat_compactions;
+     intnat forcmajcoll = Caml_state->stat_forced_major_collections;
+     intnat top_heap_words = Caml_state->stat_top_heap_wsz;
++    uintnat vergc_heap_words = vergc_major_words_current();
++    if (vergc_heap_words != 0) {
++      heap_words = (intnat)vergc_heap_words;
++      heap_chunks = (intnat)vergc_major_chunks_current();
++      top_heap_words = (intnat)vergc_major_top_words_current();
++    }
+ 
+     res = caml_alloc_tuple (17);
+     Store_field (res, 0, caml_copy_double (minwords));
+@@ -286,7 +297,8 @@
    /* get a copy of these before allocating anything... */
    double minwords =
      Caml_state->stat_minor_words
@@ -150,7 +166,20 @@ index 9c47b91..2601ad1 100644
    double prowords = Caml_state->stat_promoted_words;
    double majwords =
      Caml_state->stat_major_words + (double) caml_allocated_words;
-@@ -322,7 +325,8 @@ CAMLprim value caml_gc_quick_stat(value v)
+@@ -297,6 +309,12 @@
+   intnat cpct = Caml_state->stat_compactions;
+   intnat forcmajcoll = Caml_state->stat_forced_major_collections;
+   intnat heap_chunks = Caml_state->stat_heap_chunks;
++  uintnat vergc_heap_words = vergc_major_words_current();
++  if (vergc_heap_words != 0) {
++    heap_words = (intnat)vergc_heap_words;
++    heap_chunks = (intnat)vergc_major_chunks_current();
++    top_heap_words = (intnat)vergc_major_top_words_current();
++  }
+ 
+   res = caml_alloc_tuple (17);
+   Store_field (res, 0, caml_copy_double (minwords));
+@@ -322,7 +340,8 @@
  double caml_gc_minor_words_unboxed(void)
  {
    return (Caml_state->stat_minor_words
@@ -160,7 +189,7 @@ index 9c47b91..2601ad1 100644
  }
  
  CAMLprim value caml_gc_minor_words(value v)
-@@ -339,7 +343,8 @@ CAMLprim value caml_gc_counters(value v)
+@@ -339,7 +358,8 @@
    /* get a copy of these before allocating anything... */
    double minwords =
      Caml_state->stat_minor_words

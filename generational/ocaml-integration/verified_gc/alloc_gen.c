@@ -255,6 +255,20 @@ uintnat vergc_minor_words_current(void) {
     return (uintnat)(*gc_gen_heap.minor.bump_ref / sizeof(value));
 }
 
+uintnat vergc_major_words_current(void) {
+    if (!heap_initialized) return 0;
+    return (uintnat)(current_major_bytes() / sizeof(value));
+}
+
+uintnat vergc_major_top_words_current(void) {
+    return vergc_major_words_current();
+}
+
+uintnat vergc_major_chunks_current(void) {
+    if (!heap_initialized) return 0;
+    return (uintnat)major_chunk_count;
+}
+
 /* Root scanning: parallel arrays for roots and writeback locations */
 #define MAX_ROOTS  (1 << 18)  /* 256K root slots */
 static uint64_t   root_values[MAX_ROOTS];
