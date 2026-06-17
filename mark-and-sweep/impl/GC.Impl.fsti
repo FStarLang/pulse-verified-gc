@@ -125,6 +125,13 @@ fn major_chunk_words_to_bytes
   returns bytes: U64.t
   ensures emp ** pure (bytes == U64.mul chunk_words mword)
 
+/// Compute the first free-list object pointer for a freshly formatted chunk.
+fn major_chunk_initial_fp
+  (base: U64.t{U64.v base + U64.v mword < pow2 64})
+  requires emp
+  returns fp: U64.t
+  ensures emp ** pure (fp == U64.add base mword)
+
 /// Select the configured expansion size unless the verified minimum is larger.
 fn major_preflight_planned_chunk_words
   (configured_words required_chunk_words: U64.t)

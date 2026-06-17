@@ -157,6 +157,15 @@ fn major_chunk_words_to_bytes
   U64.mul chunk_words mword
 }
 
+fn major_chunk_initial_fp
+  (base: U64.t{U64.v base + U64.v mword < pow2 64})
+  requires emp
+  returns fp: U64.t
+  ensures emp ** pure (fp == U64.add base mword)
+{
+  U64.add base mword
+}
+
 fn major_preflight_planned_chunk_words
   (configured_words required_chunk_words: U64.t)
   requires emp

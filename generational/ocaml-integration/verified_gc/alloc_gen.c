@@ -367,8 +367,11 @@ static void ensure_heap(void) {
     /* Initialize major free list through the verified raw chunk formatter. */
     uint64_t total_words_u64 = (uint64_t)major_words;
     uint64_t wosize = major_chunk_words_to_wosize(total_words_u64);
+    if (zero_addr > UINT64_MAX - sizeof(value))
+        caml_fatal_error("verified gen GC: invalid major base address");
+    uint64_t initial_obj = major_chunk_initial_fp(zero_addr);
     uint64_t initial_fp =
-        init_major_chunk_raw(gc_gen_heap.major, zero_addr, zero_addr + 8, wosize, 0);
+        init_major_chunk_raw(gc_gen_heap.major, zero_addr, initial_obj, wosize, 0);
 
     /* fp_ref */
     uint64_t *fp_ref = (uint64_t *)malloc(sizeof(uint64_t));
