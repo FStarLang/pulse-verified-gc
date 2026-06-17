@@ -472,6 +472,8 @@ Follow-up checkpoint: the extraction-safe runtime formatting boundary now uses v
 
 Follow-up checkpoint: preflight arithmetic now crosses the same ghost-free extraction boundary. `GC.Impl.Allocator.major_preflight_required_head_wosize` and `major_preflight_required_chunk_words`, re-exported from top-level `GC.Impl`, verify the two runtime `+1` calculations used by the minor-promotion head-capacity preflight (`demand -> required head wosize`, then `head wosize -> fresh chunk words`) under explicit no-overflow refinements. The generated snapshot exports these as plain `uint64_t` helpers, and `alloc_gen.c` now calls them instead of open-coding the arithmetic while retaining the C-side overflow checks as trusted boundary facts. Focused mark-and-sweep implementation verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: the preflight readiness comparison is now a verified top-level C helper too. `GC.Impl.major_preflight_head_ready` exposes the ghost-free `head_wosize >= required_head_wosize` check as a `uint64_t,uint64_t -> bool` ABI without touching the heavy allocator implementation module; `alloc_gen.c` renames its snapshot wrapper and delegates the readiness decision to the extracted helper. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

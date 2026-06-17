@@ -296,8 +296,9 @@ static major_preflight_snapshot current_major_preflight_snapshot(void) {
     return snapshot;
 }
 
-static int major_preflight_head_ready(const major_preflight_snapshot *snapshot) {
-    return snapshot->head_wosize >= snapshot->required_head_wosize;
+static int snapshot_head_ready(const major_preflight_snapshot *snapshot) {
+    return major_preflight_head_ready(
+        snapshot->head_wosize, snapshot->required_head_wosize);
 }
 
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
@@ -540,7 +541,7 @@ static void fatal_promotion_failed(void) {
         (unsigned long long)snapshot.required_head_wosize,
         (unsigned long long)snapshot.required_chunk_words,
         (unsigned long long)snapshot.planned_expansion_words,
-        major_preflight_head_ready(&snapshot) ? "yes" : "no",
+        snapshot_head_ready(&snapshot) ? "yes" : "no",
         (unsigned long long)snapshot.suggested_major_words);
     caml_fatal_error("verified gen GC: out of memory (major heap too small)");
 }

@@ -119,6 +119,15 @@ fn major_preflight_required_chunk_words
   Allocator.major_preflight_required_chunk_words head_wosize
 }
 
+fn major_preflight_head_ready
+  (head_wosize required_head_wosize: U64.t)
+  requires emp
+  returns ready: bool
+  ensures emp ** pure (ready <==> U64.v head_wosize >= U64.v required_head_wosize)
+{
+  U64.gte head_wosize required_head_wosize
+}
+
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------

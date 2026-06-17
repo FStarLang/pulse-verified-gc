@@ -97,6 +97,13 @@ fn major_preflight_required_chunk_words
   returns words: U64.t
   ensures emp ** pure (words == U64.add head_wosize 1UL)
 
+/// Check whether the current free-list head has the required contiguous space.
+fn major_preflight_head_ready
+  (head_wosize required_head_wosize: U64.t)
+  requires emp
+  returns ready: bool
+  ensures emp ** pure (ready <==> U64.v head_wosize >= U64.v required_head_wosize)
+
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the
 /// ghost root set used for correctness.
