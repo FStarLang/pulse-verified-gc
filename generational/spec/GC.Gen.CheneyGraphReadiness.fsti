@@ -2559,6 +2559,10 @@ val chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
       SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
       GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
       chunked_minor_preflight_value_policy minor major fp roots fresh /\
+      CInj.chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+      (SpecMajorAlloc.major_fl_head_wosize major fp <
+       PromotionDemand.minor_promotion_demand minor + 1 ==>
+       CInj.chunked_minor_fields_miss_chunk minor fresh) /\
       (let r =
        SpecMajorAlloc.ensure_major_head_capacity_spec
        major fp alloc_fuel
@@ -2584,8 +2588,6 @@ val chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
        (forall (target: obj_addr).
        Seq.mem target (MH.major_objects r.capacity_major_out) ==>
        Fields.is_pointer_field target) /\
-       CInj.chunked_minor_major_fields_nonblue_non_infix_targets
-       minor r.capacity_major_out /\
        CheneyPres.chunked_cheney_promote_split_ready
        minor r.capacity_major_out r.capacity_fp_out roots
        r.capacity_fuel_out /\

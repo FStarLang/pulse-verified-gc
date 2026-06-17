@@ -14134,6 +14134,12 @@ let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_non
         GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
         CheneyGraphReadiness.chunked_minor_preflight_value_policy
           minor major fp roots fresh /\
+        ChunkedCheneyInjectivity
+          .chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+        (SpecMajorAlloc.major_fl_head_wosize major fp <
+          PromotionDemand.minor_promotion_demand minor + 1 ==>
+          ChunkedCheneyInjectivity.chunked_minor_fields_miss_chunk
+            minor fresh) /\
         (let r =
           SpecMajorAlloc.ensure_major_head_capacity_spec
             major fp alloc_fuel
@@ -14159,8 +14165,6 @@ let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_non
          (forall (target: obj_addr).
           Seq.mem target (MH.major_objects r.capacity_major_out) ==>
           Fields.is_pointer_field target) /\
-         ChunkedCheneyInjectivity.chunked_minor_major_fields_nonblue_non_infix_targets
-           minor r.capacity_major_out /\
          CheneyPreservation.chunked_cheney_promote_split_ready
            minor r.capacity_major_out r.capacity_fp_out roots
            r.capacity_fuel_out /\
@@ -17959,6 +17963,57 @@ let spot_chunked_minor_major_fields_nonblue_non_infix_targets_elim
   ChunkedCheneyInjectivity
     .chunked_minor_major_fields_nonblue_non_infix_targets_elim
     minor mh obj j
+
+let spot_chunked_minor_fields_miss_chunk_elim
+  (minor: minor_state) (fresh: MH.heap_chunk) (obj: U64.t) (j: nat)
+  : Lemma
+      (requires
+        ChunkedCheneyInjectivity.chunked_minor_fields_miss_chunk minor fresh /\
+        Seq.mem obj (minor_objects minor) /\
+        j < minor_wosize minor obj)
+      (ensures ~(MH.pointer_in_chunk fresh (minor_read_field minor obj j)))
+  =
+  ChunkedCheneyInjectivity.chunked_minor_fields_miss_chunk_elim
+    minor fresh obj j
+
+let spot_chunked_minor_major_fields_nonblue_non_infix_targets_preserved_by_expansion
+  (minor: minor_state) (mh: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        ChunkedCheneyInjectivity
+          .chunked_minor_major_fields_nonblue_non_infix_targets minor mh /\
+        ChunkedCheneyInjectivity.chunked_minor_fields_miss_chunk minor fresh /\
+        MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        ChunkedCheneyInjectivity
+          .chunked_minor_major_fields_nonblue_non_infix_targets
+          minor (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  =
+  ChunkedCheneyInjectivity
+    .chunked_minor_major_fields_nonblue_non_infix_targets_preserved_by_expansion
+    minor mh fresh fp
+
+let spot_chunked_minor_major_fields_nonblue_non_infix_targets_ensure_head_capacity
+  (minor: minor_state) (mh: MH.major_heap) (fp: U64.t)
+  (fuel: nat) (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        ChunkedCheneyInjectivity
+          .chunked_minor_major_fields_nonblue_non_infix_targets minor mh /\
+        (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+         ChunkedCheneyInjectivity.chunked_minor_fields_miss_chunk minor fresh /\
+         MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        ChunkedCheneyInjectivity
+          .chunked_minor_major_fields_nonblue_non_infix_targets
+          minor
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+  =
+  ChunkedCheneyInjectivity
+    .chunked_minor_major_fields_nonblue_non_infix_targets_ensure_head_capacity
+    minor mh fp fuel needed fresh
 
 let spot_chunked_nonblue_scanned_raw_targets_in_major_elim
   (mh: MH.major_heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1})

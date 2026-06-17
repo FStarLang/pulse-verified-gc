@@ -12,6 +12,7 @@ open GC.Gen.Promote
 open GC.Lib.Header
 
 module MH = GC.Spec.MajorHeap
+module SpecMajorAlloc = GC.Spec.MajorAllocator
 module GenInv = GC.Gen.HeapInvariant
 module CG = GC.Gen.CombinedGraph
 module Fields = GC.Spec.Fields
@@ -437,6 +438,49 @@ val chunked_minor_major_fields_nonblue_non_infix_targets_elim
          Seq.mem target (MH.major_objects mh) /\
          ~(GenInv.chunked_is_blue mh target) /\
          ~(SweepDefs.chunked_is_infix mh target)))
+
+/// No allocated minor payload word names an object inside the candidate fresh
+/// major chunk.  This keeps active-major pointer classification stable when
+/// head preflight prepends that chunk.
+[@"opaque_to_smt"]
+val chunked_minor_fields_miss_chunk
+  : minor:minor_state -> fresh:MH.heap_chunk -> Tot prop
+
+val chunked_minor_fields_miss_chunk_elim
+  : minor:minor_state -> fresh:MH.heap_chunk -> obj:U64.t -> j:nat ->
+    Lemma
+      (requires
+        chunked_minor_fields_miss_chunk minor fresh /\
+        Seq.mem obj (minor_objects minor) /\
+        j < minor_wosize minor obj)
+      (ensures ~(MH.pointer_in_chunk fresh (minor_read_field minor obj j)))
+
+val chunked_minor_major_fields_nonblue_non_infix_targets_preserved_by_expansion
+  : minor:minor_state -> mh:MH.major_heap -> fresh:MH.heap_chunk ->
+    fp:U64.t ->
+    Lemma
+      (requires
+        chunked_minor_major_fields_nonblue_non_infix_targets minor mh /\
+        chunked_minor_fields_miss_chunk minor fresh /\
+        MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        chunked_minor_major_fields_nonblue_non_infix_targets
+         minor (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+
+val chunked_minor_major_fields_nonblue_non_infix_targets_ensure_head_capacity
+  : minor:minor_state -> mh:MH.major_heap -> fp:U64.t ->
+    fuel:nat -> needed:nat{needed > 0} -> fresh:MH.heap_chunk ->
+    Lemma
+      (requires
+        chunked_minor_major_fields_nonblue_non_infix_targets minor mh /\
+        (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+         chunked_minor_fields_miss_chunk minor fresh /\
+         MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        chunked_minor_major_fields_nonblue_non_infix_targets
+         minor
+         (SpecMajorAlloc.ensure_major_head_capacity_spec
+           mh fp fuel needed fresh).capacity_major_out)
 
 [@"opaque_to_smt"]
 val chunked_nonblue_scanned_raw_targets_in_major

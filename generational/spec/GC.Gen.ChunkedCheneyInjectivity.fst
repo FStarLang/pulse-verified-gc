@@ -32,6 +32,32 @@ module GenMajorGCBridge = GC.Gen.ChunkedMajorGCBridge
 module ChunkedUpdate = GC.Gen.ChunkedUpdate
 module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+private let sweep_chunked_is_infix_preserved_by_expansion
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)
+  (obj: obj_addr)
+  : Lemma
+      (requires ~(MH.chunk_contains_addr fresh (hd_address obj)))
+      (ensures
+        SweepDefs.chunked_is_infix
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out obj ==
+        SweepDefs.chunked_is_infix mh obj)
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  SpecMajorAlloc.expand_major_heap_old_read mh fresh fp (hd_address obj);
+  SweepDefs.chunked_read_header_step mh obj;
+  SweepDefs.chunked_read_header_step expanded obj;
+  SweepDefs.chunked_is_infix_step mh obj;
+  SweepDefs.chunked_is_infix_step expanded obj;
+  match MH.read_word_in_major mh (hd_address obj) with
+  | Some hdr ->
+    SweepDefs.chunked_tag_of_object_some mh obj hdr;
+    SweepDefs.chunked_tag_of_object_some expanded obj hdr
+  | None ->
+    SweepDefs.chunked_tag_of_object_none mh obj;
+    SweepDefs.chunked_tag_of_object_none expanded obj
+#pop-options
+
 #push-options "--z3rlimit 1 --fuel 0 --ifuel 0"
 private let nat_nonzero_gt_zero (n: nat)
   : Lemma (requires n <> 0) (ensures n > 0)
@@ -3210,6 +3236,149 @@ let chunked_minor_major_fields_nonblue_non_infix_targets_elim
   reveal_opaque
     (`%chunked_minor_major_fields_nonblue_non_infix_targets)
     (chunked_minor_major_fields_nonblue_non_infix_targets minor mh)
+
+[@"opaque_to_smt"]
+let chunked_minor_fields_miss_chunk
+  (minor: minor_state) (fresh: MH.heap_chunk) : prop =
+  forall (obj: U64.t) (j: nat).
+    Seq.mem obj (minor_objects minor) /\
+    j < minor_wosize minor obj ==>
+    ~(MH.pointer_in_chunk fresh (minor_read_field minor obj j))
+
+let chunked_minor_fields_miss_chunk_elim
+  (minor: minor_state) (fresh: MH.heap_chunk) (obj: U64.t) (j: nat)
+  : Lemma
+      (requires
+        chunked_minor_fields_miss_chunk minor fresh /\
+        Seq.mem obj (minor_objects minor) /\
+        j < minor_wosize minor obj)
+      (ensures ~(MH.pointer_in_chunk fresh (minor_read_field minor obj j)))
+  =
+  reveal_opaque
+    (`%chunked_minor_fields_miss_chunk)
+    (chunked_minor_fields_miss_chunk minor fresh)
+
+private let init_fresh_chunk_pointer_in_chunk
+  (fresh: MH.heap_chunk) (fp: U64.t) (v: U64.t)
+  : Lemma
+      (ensures
+        MH.pointer_in_chunk
+          (SpecMajorAlloc.init_fresh_chunk fresh fp).chunk_out v ==
+        MH.pointer_in_chunk fresh v)
+  =
+  SpecMajorAlloc.init_fresh_chunk_preserves_range fresh fp
+
+private let expand_major_heap_pointer_field_miss
+  (mh: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t) (v: U64.t)
+  : Lemma
+      (requires ~(MH.pointer_in_chunk fresh v))
+      (ensures
+        MarkDefs.chunked_is_pointer_field
+          (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out v ==
+        MarkDefs.chunked_is_pointer_field mh v)
+  =
+  let init = SpecMajorAlloc.init_fresh_chunk fresh fp in
+  let expanded = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  init_fresh_chunk_pointer_in_chunk fresh fp v;
+  assert (~(MH.pointer_in_chunk init.chunk_out v));
+  MarkDefs.chunked_is_pointer_field_step expanded v;
+  MarkDefs.chunked_is_pointer_field_step mh v;
+  MH.major_pointer_add_chunk_miss mh init.chunk_out v
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+let chunked_minor_major_fields_nonblue_non_infix_targets_preserved_by_expansion
+  (minor: minor_state) (mh: MH.major_heap)
+  (fresh: MH.heap_chunk) (fp: U64.t)
+  : Lemma
+      (requires
+        chunked_minor_major_fields_nonblue_non_infix_targets minor mh /\
+        chunked_minor_fields_miss_chunk minor fresh /\
+        MH.chunk_disjoint_from_all fresh mh)
+      (ensures
+        chunked_minor_major_fields_nonblue_non_infix_targets
+          minor (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out)
+  =
+  let expanded = (SpecMajorAlloc.expand_major_heap mh fresh fp).major_out in
+  let aux_obj (obj: U64.t)
+    : Lemma
+        (ensures
+          forall (j:nat).
+            Seq.mem obj (minor_objects minor) /\
+            j < minor_wosize minor obj /\
+            MarkDefs.chunked_is_pointer_field
+              expanded (minor_read_field minor obj j) ==>
+            (let raw = minor_read_field minor obj j in
+             let target =
+               MarkDefs.chunked_pointer_field_as_obj_addr expanded raw in
+             Seq.mem target (MH.major_objects expanded) /\
+             ~(GenInv.chunked_is_blue expanded target) /\
+             ~(SweepDefs.chunked_is_infix expanded target)))
+    =
+    let aux_j (j: nat)
+      : Lemma
+          (ensures
+            Seq.mem obj (minor_objects minor) /\
+            j < minor_wosize minor obj /\
+            MarkDefs.chunked_is_pointer_field
+              expanded (minor_read_field minor obj j) ==>
+            (let raw = minor_read_field minor obj j in
+             let target =
+               MarkDefs.chunked_pointer_field_as_obj_addr expanded raw in
+             Seq.mem target (MH.major_objects expanded) /\
+             ~(GenInv.chunked_is_blue expanded target) /\
+             ~(SweepDefs.chunked_is_infix expanded target)))
+      =
+      if Seq.mem obj (minor_objects minor) &&
+         j < minor_wosize minor obj &&
+         MarkDefs.chunked_is_pointer_field
+           expanded (minor_read_field minor obj j)
+      then begin
+        let raw = minor_read_field minor obj j in
+        chunked_minor_fields_miss_chunk_elim minor fresh obj j;
+        expand_major_heap_pointer_field_miss mh fresh fp raw;
+        assert (MarkDefs.chunked_is_pointer_field mh raw);
+        chunked_minor_major_fields_nonblue_non_infix_targets_elim
+          minor mh obj j;
+        MarkDefs.chunked_pointer_field_as_obj_addr_step mh raw;
+        MarkDefs.chunked_pointer_field_as_obj_addr_step expanded raw;
+        let target = MarkDefs.chunked_pointer_field_as_obj_addr expanded raw in
+        assert (target == (raw <: obj_addr));
+        assert (Seq.mem target (MH.major_objects mh));
+        SpecMajorAlloc.expand_major_heap_old_object mh fresh fp target;
+        GenInv.chunked_is_blue_preserved_by_expansion mh fresh fp target;
+        MH.major_object_header_disjoint_from_chunk mh fresh target;
+        sweep_chunked_is_infix_preserved_by_expansion mh fresh fp target;
+        assert (~(SweepDefs.chunked_is_infix expanded target))
+      end
+    in
+    FStar.Classical.forall_intro aux_j
+  in
+  FStar.Classical.forall_intro aux_obj;
+  reveal_opaque
+    (`%chunked_minor_major_fields_nonblue_non_infix_targets)
+    (chunked_minor_major_fields_nonblue_non_infix_targets minor expanded)
+
+let chunked_minor_major_fields_nonblue_non_infix_targets_ensure_head_capacity
+  (minor: minor_state) (mh: MH.major_heap) (fp: U64.t)
+  (fuel: nat) (needed: nat{needed > 0}) (fresh: MH.heap_chunk)
+  : Lemma
+      (requires
+        chunked_minor_major_fields_nonblue_non_infix_targets minor mh /\
+        (SpecMajorAlloc.major_fl_head_wosize mh fp < needed ==>
+         chunked_minor_fields_miss_chunk minor fresh /\
+         MH.chunk_disjoint_from_all fresh mh))
+      (ensures
+        chunked_minor_major_fields_nonblue_non_infix_targets
+          minor
+          (SpecMajorAlloc.ensure_major_head_capacity_spec
+            mh fp fuel needed fresh).capacity_major_out)
+  =
+  if SpecMajorAlloc.major_fl_head_wosize mh fp < needed then
+    chunked_minor_major_fields_nonblue_non_infix_targets_preserved_by_expansion
+      minor mh fresh fp
+  else
+    ()
+#pop-options
 
 [@"opaque_to_smt"]
 let chunked_nonblue_scanned_raw_targets_in_major
