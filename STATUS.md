@@ -474,6 +474,8 @@ Follow-up checkpoint: preflight arithmetic now crosses the same ghost-free extra
 
 Follow-up checkpoint: the preflight readiness comparison is now a verified top-level C helper too. `GC.Impl.major_preflight_head_ready` exposes the ghost-free `head_wosize >= required_head_wosize` check as a `uint64_t,uint64_t -> bool` ABI without touching the heavy allocator implementation module; `alloc_gen.c` renames its snapshot wrapper and delegates the readiness decision to the extracted helper. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: initial chunk header sizing now also uses a verified top-level conversion helper. `GC.Impl.major_chunk_words_to_wosize` converts a runtime chunk word count satisfying `0 < words <= 2^54` into the OCaml header `wosize = words - 1`; `alloc_gen.c` calls it before `init_major_chunk_raw`, relying on the existing C configuration checks (`2 <= words <= 2^54`) to establish the helper's concrete ABI precondition. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

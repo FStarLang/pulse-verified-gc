@@ -128,6 +128,15 @@ fn major_preflight_head_ready
   U64.gte head_wosize required_head_wosize
 }
 
+fn major_chunk_words_to_wosize
+  (chunk_words: U64.t{U64.v chunk_words > 0 /\ U64.v chunk_words <= pow2 54})
+  requires emp
+  returns wz: wosize
+  ensures emp ** pure (wz == U64.sub chunk_words 1UL)
+{
+  U64.sub chunk_words 1UL
+}
+
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------

@@ -1890,6 +1890,11 @@ bool major_preflight_head_ready(uint64_t head_wosize, uint64_t required_head_wos
   return head_wosize >= required_head_wosize;
 }
 
+uint64_t major_chunk_words_to_wosize(uint64_t chunk_words)
+{
+  return chunk_words - 1ULL;
+}
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);

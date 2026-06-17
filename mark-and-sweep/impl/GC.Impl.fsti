@@ -104,6 +104,13 @@ fn major_preflight_head_ready
   returns ready: bool
   ensures emp ** pure (ready <==> U64.v head_wosize >= U64.v required_head_wosize)
 
+/// Convert a chunk word count into the free-block header wosize it creates.
+fn major_chunk_words_to_wosize
+  (chunk_words: U64.t{U64.v chunk_words > 0 /\ U64.v chunk_words <= pow2 54})
+  requires emp
+  returns wz: wosize
+  ensures emp ** pure (wz == U64.sub chunk_words 1UL)
+
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the
 /// ghost root set used for correctness.

@@ -370,7 +370,7 @@ static void ensure_heap(void) {
 
     /* Initialize major free list through the verified raw chunk formatter. */
     uint64_t total_words_u64 = (uint64_t)major_words;
-    uint64_t wosize = total_words_u64 - 1;
+    uint64_t wosize = major_chunk_words_to_wosize(total_words_u64);
     uint64_t initial_fp =
         init_major_chunk_raw(gc_gen_heap.major, zero_addr, zero_addr + 8, wosize, 0);
 
