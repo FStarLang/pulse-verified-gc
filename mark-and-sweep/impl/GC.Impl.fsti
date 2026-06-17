@@ -111,6 +111,15 @@ fn major_chunk_words_to_wosize
   returns wz: wosize
   ensures emp ** pure (wz == U64.sub chunk_words 1UL)
 
+/// Select the configured expansion size unless the verified minimum is larger.
+fn major_preflight_planned_chunk_words
+  (configured_words required_chunk_words: U64.t)
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (
+    (U64.v configured_words >= U64.v required_chunk_words ==> words == configured_words) /\
+    (U64.v configured_words < U64.v required_chunk_words ==> words == required_chunk_words))
+
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the
 /// ghost root set used for correctness.

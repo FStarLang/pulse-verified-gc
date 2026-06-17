@@ -276,9 +276,7 @@ static uint64_t suggested_major_words_for_retry(uint64_t required_chunk_words) {
 
 static uint64_t planned_expansion_chunk_words(uint64_t required_chunk_words) {
     uint64_t configured_words = (uint64_t)configured_expansion_chunk_words();
-    return configured_words >= required_chunk_words
-        ? configured_words
-        : required_chunk_words;
+    return major_preflight_planned_chunk_words(configured_words, required_chunk_words);
 }
 
 static major_preflight_snapshot current_major_preflight_snapshot(void) {

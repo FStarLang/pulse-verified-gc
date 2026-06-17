@@ -190,6 +190,9 @@ bool major_preflight_head_ready(uint64_t head_wosize, uint64_t required_head_wos
 
 uint64_t major_chunk_words_to_wosize(uint64_t chunk_words);
 
+uint64_t
+major_preflight_planned_chunk_words(uint64_t configured_words, uint64_t required_chunk_words);
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);

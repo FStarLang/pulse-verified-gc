@@ -476,6 +476,8 @@ Follow-up checkpoint: the preflight readiness comparison is now a verified top-l
 
 Follow-up checkpoint: initial chunk header sizing now also uses a verified top-level conversion helper. `GC.Impl.major_chunk_words_to_wosize` converts a runtime chunk word count satisfying `0 < words <= 2^54` into the OCaml header `wosize = words - 1`; `alloc_gen.c` calls it before `init_major_chunk_raw`, relying on the existing C configuration checks (`2 <= words <= 2^54`) to establish the helper's concrete ABI precondition. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: the diagnostic future-expansion size policy now uses a verified top-level max helper. `GC.Impl.major_preflight_planned_chunk_words` returns the configured expansion chunk size when it covers the verified minimum required chunk words and otherwise returns the verified minimum; `alloc_gen.c` calls it from the preflight snapshot instead of open-coding the comparison. This keeps the future expansion policy boundary concrete while still avoiding any public ghost/dependent MajorHeap API. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

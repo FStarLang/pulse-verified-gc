@@ -137,6 +137,21 @@ fn major_chunk_words_to_wosize
   U64.sub chunk_words 1UL
 }
 
+fn major_preflight_planned_chunk_words
+  (configured_words required_chunk_words: U64.t)
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (
+    (U64.v configured_words >= U64.v required_chunk_words ==> words == configured_words) /\
+    (U64.v configured_words < U64.v required_chunk_words ==> words == required_chunk_words))
+{
+  if U64.gte configured_words required_chunk_words {
+    configured_words
+  } else {
+    required_chunk_words
+  }
+}
+
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------

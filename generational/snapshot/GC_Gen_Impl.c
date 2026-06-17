@@ -1895,6 +1895,12 @@ uint64_t major_chunk_words_to_wosize(uint64_t chunk_words)
   return chunk_words - 1ULL;
 }
 
+uint64_t
+major_preflight_planned_chunk_words(uint64_t configured_words, uint64_t required_chunk_words)
+{
+  return configured_words >= required_chunk_words ? configured_words : required_chunk_words;
+}
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);
