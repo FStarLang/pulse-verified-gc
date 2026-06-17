@@ -111,6 +111,13 @@ fn major_chunk_words_to_wosize
   returns wz: wosize
   ensures emp ** pure (wz == U64.sub chunk_words 1UL)
 
+/// Extract an OCaml header's wosize field.
+fn major_header_wosize
+  (header: U64.t)
+  requires emp
+  returns wz: wosize
+  ensures emp ** pure (wz == getWosize header)
+
 /// Check the concrete runtime chunk-word range needed for OCaml headers.
 fn major_chunk_words_in_header_range
   (chunk_words: U64.t)

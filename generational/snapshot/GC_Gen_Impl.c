@@ -1895,6 +1895,11 @@ uint64_t major_chunk_words_to_wosize(uint64_t chunk_words)
   return chunk_words - 1ULL;
 }
 
+uint64_t major_header_wosize(uint64_t header)
+{
+  return getWosize0(header);
+}
+
 bool major_chunk_words_in_header_range(uint64_t chunk_words)
 {
   return chunk_words >= 2ULL && chunk_words <= 18014398509481984ULL;

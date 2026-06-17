@@ -190,6 +190,8 @@ bool major_preflight_head_ready(uint64_t head_wosize, uint64_t required_head_wos
 
 uint64_t major_chunk_words_to_wosize(uint64_t chunk_words);
 
+uint64_t major_header_wosize(uint64_t header);
+
 bool major_chunk_words_in_header_range(uint64_t chunk_words);
 
 uint64_t major_chunk_words_to_bytes(uint64_t chunk_words);

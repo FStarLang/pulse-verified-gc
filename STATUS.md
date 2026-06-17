@@ -494,6 +494,8 @@ Follow-up checkpoint: runtime free-list head header-address calculation now rout
 
 Follow-up checkpoint: initial major chunk free-list pointer construction now routes through the extracted `GC.Impl.major_chunk_initial_fp` helper. The C bridge retains the `zero_addr + word` overflow guard, then delegates the `base + 8` object-pointer calculation used by `init_major_chunk_raw` to the verified concrete ABI. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: runtime OCaml header wosize extraction now routes through the extracted `GC.Impl.major_header_wosize` helper. `alloc_gen.c` delegates the `header >> 10` operation used for minor-promotion demand and free-list-head sizing to the same verified `getWosize` logic used by the F*/Pulse object model. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

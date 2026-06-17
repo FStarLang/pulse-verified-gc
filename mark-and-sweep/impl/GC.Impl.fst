@@ -137,6 +137,15 @@ fn major_chunk_words_to_wosize
   U64.sub chunk_words 1UL
 }
 
+fn major_header_wosize
+  (header: U64.t)
+  requires emp
+  returns wz: wosize
+  ensures emp ** pure (wz == getWosize header)
+{
+  getWosize header
+}
+
 fn major_chunk_words_in_header_range
   (chunk_words: U64.t)
   requires emp

@@ -198,7 +198,7 @@ static uint64_t current_major_bytes(void) {
 }
 
 static inline uint64_t header_wosize(uint64_t header) {
-    return header >> 10;
+    return major_header_wosize(header);
 }
 
 /* Runtime mirror of the verified minor_promotion_demand shape: sum the
