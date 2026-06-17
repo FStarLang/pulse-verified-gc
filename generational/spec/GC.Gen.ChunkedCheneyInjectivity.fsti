@@ -46,6 +46,34 @@ val chunked_fwd_normal_injective_elim
         fwd x == fwd y)
       (ensures x == y)
 
+/// Every nonzero forwarding entry for a non-infix source names an ordinary
+/// positive-size minor object.  This source-shape fact is heap-independent; it
+/// follows from the chunked Cheney forwarding equations alone.
+[@"opaque_to_smt"]
+val chunked_fwd_noninfix_sources_valid
+  : minor:minor_state -> fwd:forwarding_map -> Tot prop
+
+val chunked_fwd_noninfix_sources_valid_elim
+  : minor:minor_state -> fwd:forwarding_map -> x:U64.t ->
+    Lemma
+      (requires
+        chunked_fwd_noninfix_sources_valid minor fwd /\
+        fwd x <> 0UL /\
+        ~(is_infix_in_minor minor x))
+      (ensures
+        Seq.mem x (minor_objects minor) /\
+        minor_wosize minor x > 0)
+
+val chunked_cheney_promote_fwd_noninfix_sources_valid
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         chunked_fwd_noninfix_sources_valid minor res.fwd_map))
+
 /// Ordinary forwarded minor object starts map to active non-blue major objects
 /// in the current chunked major heap.  This is the reusable target-shape half of
 /// the chunked Cheney injectivity invariant.
@@ -109,6 +137,53 @@ val chunked_cheney_promote_fwd_normal_targets_not_blue
           GC.Gen.ChunkedCheney.chunked_cheney_promote
             minor major fp roots alloc_fuel in
          chunked_fwd_normal_targets_not_blue minor res.fwd_map res.major_final))
+
+val chunked_cheney_promote_fwd_noninfix_targets_not_infix
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        GC.Spec.MajorAllocator.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPres.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix
+           minor res.fwd_map res.major_final))
+
+val chunked_cheney_promote_updated_fwd_noninfix_targets_not_infix
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        GC.Spec.MajorAllocator.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPres.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         GenInv.chunked_major_alloc_shape
+           res.major_final res.fp_final alloc_fuel))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         GenMajorGCBridge.chunked_fwd_noninfix_targets_not_infix
+           minor res.fwd_map
+           (GC.Gen.ChunkedUpdate.chunked_update_major_pointers
+             res.major_final res.fwd_map)))
 
 val chunked_cheney_promote_fwd_target_minor_field_no_infix
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
@@ -413,3 +488,13 @@ val chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
           ChunkedCheney.chunked_cheney_promote
             minor major fp roots alloc_fuel in
          chunked_nonblue_scanned_raw_targets_in_major res.major_final))
+
+val chunked_nonblue_scanned_raw_targets_in_major_to_bounded
+  : mh:MH.major_heap ->
+    Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh)
+      (ensures
+        ChunkedMarkTargetMembership.chunked_nonblue_scanned_raw_targets_in_major
+          mh)
