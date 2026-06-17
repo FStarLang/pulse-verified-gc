@@ -41,6 +41,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/mman.h>
 
 #ifndef CAML_INTERNALS
 #define CAML_INTERNALS
@@ -71,6 +72,8 @@ static int          heap_initialized = 0;
 #define MAX_MAJOR_CHUNKS 1024
 #define DEFAULT_MAJOR_WORDS ((size_t)32 * 1024 * 1024)
 #define DEFAULT_MINOR_WORDS ((size_t)256 * 1024)
+#define DEFAULT_MAJOR_RESERVE_CHUNKS ((size_t)4)
+#define MAJOR_HEAP_END_LIMIT (1ULL << 57)
 typedef struct {
     uint8_t *base;
     size_t bytes;
@@ -88,6 +91,11 @@ typedef struct {
 static major_chunk_rec major_chunks[MAX_MAJOR_CHUNKS];
 static size_t major_chunk_count = 0;
 static uint64_t major_bytes_total = 0;
+static uint8_t *major_arena_base = NULL;
+static uint64_t major_arena_reserved_bytes = 0;
+static uint64_t major_arena_active_bytes = 0;
+
+static void fatal_promotion_failed(void);
 
 static size_t configured_words_or_default(const char *name, size_t default_words) {
     const char *env = getenv(name);
@@ -128,16 +136,53 @@ static size_t configured_expansion_chunk_words(void) {
         configured_initial_major_words());
 }
 
+static size_t add_words_or_fatal(size_t a, size_t b, const char *what) {
+    if (a > SIZE_MAX - b)
+        caml_fatal_error("%s", what);
+    return a + b;
+}
+
+static size_t configured_major_reserve_words(size_t initial_words,
+                                             size_t expansion_words) {
+    const char *env = getenv("VERGC_MAJOR_MAX_WORDSIZE");
+    size_t reserve_words;
+    size_t i;
+
+    if (env != NULL && *env != '\0') {
+        reserve_words = configured_major_chunk_words(
+            "VERGC_MAJOR_MAX_WORDSIZE", initial_words);
+    } else {
+        reserve_words = initial_words;
+        for (i = 1; i < DEFAULT_MAJOR_RESERVE_CHUNKS; i++) {
+            reserve_words = add_words_or_fatal(
+                reserve_words, expansion_words,
+                "verified gen GC: default major arena size overflow");
+        }
+    }
+
+    if (reserve_words < initial_words)
+        caml_fatal_error(
+            "verified gen GC: VERGC_MAJOR_MAX_WORDSIZE smaller than initial heap");
+    return reserve_words;
+}
+
 static size_t words_to_bytes_or_fatal(size_t words, const char *what) {
     if (words > SIZE_MAX / sizeof(value))
         caml_fatal_error("%s", what);
     return (size_t)major_chunk_words_to_bytes((uint64_t)words);
 }
 
-static uint8_t *allocate_major_chunk_memory(size_t bytes) {
-    uint8_t *base = (uint8_t *)calloc(1, bytes);
-    if (!base)
-        caml_fatal_error("verified gen GC: cannot allocate major heap");
+static uint8_t *allocate_major_arena_memory(size_t bytes) {
+    int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+    void *base;
+
+#ifdef MAP_NORESERVE
+    flags |= MAP_NORESERVE;
+#endif
+
+    base = mmap(NULL, bytes, PROT_READ | PROT_WRITE, flags, -1, 0);
+    if (base == MAP_FAILED)
+        caml_fatal_error("verified gen GC: cannot reserve major heap arena");
     return base;
 }
 
@@ -199,6 +244,12 @@ static uint64_t current_major_bytes(void) {
 
 static uint64_t current_major_words(void) {
     return major_bytes_to_words(current_major_bytes());
+}
+
+static void refresh_verified_major_bounds(uint64_t active_end) {
+    heap_size_u64 = active_end;
+    gc_gen_heap.major.size = (size_t)major_arena_active_bytes;
+    krmlinit_globals();
 }
 
 static inline uint64_t header_wosize(uint64_t header) {
@@ -301,6 +352,94 @@ static int snapshot_head_ready(const major_preflight_snapshot *snapshot) {
         snapshot->head_wosize, snapshot->required_head_wosize);
 }
 
+static uint64_t format_major_chunk(uint8_t *base, size_t words, uint64_t next_fp) {
+    uint64_t base_addr = (uint64_t)(uintptr_t)base;
+    uint64_t total_words_u64 = (uint64_t)words;
+    uint64_t wosize = major_chunk_words_to_wosize(total_words_u64);
+    uint64_t fp_out;
+
+    if (base_addr > UINT64_MAX - sizeof(value))
+        caml_fatal_error("verified gen GC: invalid major chunk base address");
+    fp_out = major_chunk_initial_fp(base_addr);
+    return init_major_chunk_raw(gc_gen_heap.major, base_addr, fp_out, wosize, next_fp);
+}
+
+static void expand_major_heap_words(uint64_t requested_words, const char *reason) {
+    size_t words;
+    size_t bytes;
+    uint8_t *base;
+    uintptr_t start;
+    uintptr_t end;
+    uint64_t old_fp;
+    uint64_t new_fp;
+
+    if (requested_words > (uint64_t)SIZE_MAX)
+        caml_fatal_error("verified gen GC: expansion chunk too large");
+    words = (size_t)requested_words;
+    if (!major_chunk_words_in_header_range((uint64_t)words))
+        caml_fatal_error("verified gen GC: expansion chunk outside verified range");
+    bytes = words_to_bytes_or_fatal(
+        words, "verified gen GC: expansion chunk byte size overflow");
+
+    if (major_arena_base == NULL || major_arena_active_bytes > major_arena_reserved_bytes ||
+        (uint64_t)bytes > major_arena_reserved_bytes - major_arena_active_bytes) {
+        fprintf(stderr,
+            "verified gen GC: cannot expand major heap for %s; "
+            "active=%llu words reserve=%llu words requested=%llu words\n",
+            reason,
+            (unsigned long long)major_bytes_to_words(major_arena_active_bytes),
+            (unsigned long long)major_bytes_to_words(major_arena_reserved_bytes),
+            (unsigned long long)requested_words);
+        caml_fatal_error(
+            "verified gen GC: major heap arena exhausted; increase VERGC_MAJOR_MAX_WORDSIZE");
+    }
+
+    base = major_arena_base + major_arena_active_bytes;
+    start = (uintptr_t)base;
+    end = start + bytes;
+    if (end < start || (uint64_t)end >= MAJOR_HEAP_END_LIMIT)
+        caml_fatal_error("verified gen GC: major heap expansion address overflow");
+
+    old_fp = *gc_gen_heap.fp_ref;
+    major_arena_active_bytes += (uint64_t)bytes;
+    refresh_verified_major_bounds((uint64_t)end);
+    new_fp = format_major_chunk(base, words, old_fp);
+    register_major_chunk(base, bytes);
+    *gc_gen_heap.fp_ref = new_fp;
+
+    caml_gc_message(0x20,
+        "Verified gen GC: expanded major heap by %luMB for %s (%lu chunk(s), %llu words total)\n",
+        (unsigned long)(bytes / (1024 * 1024)),
+        reason,
+        (unsigned long)major_chunk_count,
+        (unsigned long long)current_major_words());
+}
+
+static void ensure_major_head_for_minor_promotion(void) {
+    major_preflight_snapshot snapshot = current_major_preflight_snapshot();
+    if (snapshot_head_ready(&snapshot))
+        return;
+
+    expand_major_heap_words(
+        snapshot.planned_expansion_words, "minor promotion preflight");
+
+    snapshot = current_major_preflight_snapshot();
+    if (!snapshot_head_ready(&snapshot))
+        fatal_promotion_failed();
+}
+
+static void expand_major_heap_for_allocation(uint64_t requested_wosize) {
+    uint64_t normalized_wosize = requested_wosize == 0 ? 1 : requested_wosize;
+    uint64_t required_words;
+    uint64_t planned_words;
+
+    if (normalized_wosize > UINT64_MAX - 1)
+        caml_fatal_error("verified gen GC: major allocation request too large");
+    required_words = major_preflight_required_chunk_words(normalized_wosize);
+    planned_words = planned_expansion_chunk_words(required_words);
+    expand_major_heap_words(planned_words, "major allocation retry");
+}
+
 /* Inline minor-allocation fast-path state for Alloc_small_aux (memory.h).
  * The fast path reserves bytes by updating the same verified bump counter;
  * collections and heap initialization still go through verified_allocate_minor(). */
@@ -356,26 +495,35 @@ static void ensure_heap(void) {
 
     /* --- Major heap --- */
     size_t major_words = configured_initial_major_words();
+    size_t expansion_words = configured_expansion_chunk_words();
+    size_t reserve_words =
+        configured_major_reserve_words(major_words, expansion_words);
     size_t major_bytes = words_to_bytes_or_fatal(
         major_words, "verified gen GC: major heap word size overflow");
+    size_t reserve_bytes = words_to_bytes_or_fatal(
+        reserve_words, "verified gen GC: major heap reserve size overflow");
 
-    uint8_t *major_base = allocate_major_chunk_memory(major_bytes);
+    uint8_t *major_base = allocate_major_arena_memory(reserve_bytes);
+    uintptr_t major_start = (uintptr_t)major_base;
+    uintptr_t initial_end = major_start + major_bytes;
+    uintptr_t reserve_end = major_start + reserve_bytes;
+    if (initial_end < major_start || reserve_end < major_start ||
+        (uint64_t)reserve_end >= MAJOR_HEAP_END_LIMIT)
+        caml_fatal_error("verified gen GC: major heap arena address overflow");
+
+    major_arena_base = major_base;
+    major_arena_reserved_bytes = (uint64_t)reserve_bytes;
+    major_arena_active_bytes = (uint64_t)major_bytes;
 
     /* NULL-base trick: GC offsets become absolute addresses */
-    zero_addr = (uint64_t)(uintptr_t)major_base;
-    heap_size_u64 = (uint64_t)(uintptr_t)(major_base + major_bytes);
+    zero_addr = (uint64_t)major_start;
+    heap_size_u64 = (uint64_t)initial_end;
 
     gc_gen_heap.major.data = NULL;
     gc_gen_heap.major.size = major_bytes;
 
     /* Initialize major free list through the verified raw chunk formatter. */
-    uint64_t total_words_u64 = (uint64_t)major_words;
-    uint64_t wosize = major_chunk_words_to_wosize(total_words_u64);
-    if (zero_addr > UINT64_MAX - sizeof(value))
-        caml_fatal_error("verified gen GC: invalid major base address");
-    uint64_t initial_obj = major_chunk_initial_fp(zero_addr);
-    uint64_t initial_fp =
-        init_major_chunk_raw(gc_gen_heap.major, zero_addr, initial_obj, wosize, 0);
+    uint64_t initial_fp = format_major_chunk(major_base, major_words, 0);
 
     /* fp_ref */
     uint64_t *fp_ref = (uint64_t *)malloc(sizeof(uint64_t));
@@ -446,8 +594,10 @@ static void ensure_heap(void) {
      * pointers untracked and causing stale minor addresses after GC. */
     register_major_chunk(major_base, major_bytes);
 
-    caml_gc_message(0x20, "Verified gen GC: major=%luMB in %lu chunk(s) minor=%luKB\n",
+    caml_gc_message(0x20,
+                    "Verified gen GC: major=%luMB reserve=%luMB in %lu chunk(s) minor=%luKB\n",
                     (unsigned long)(major_bytes / (1024*1024)),
+                    (unsigned long)(reserve_bytes / (1024*1024)),
                     (unsigned long)major_chunk_count,
                     (unsigned long)(minor_sz / 1024));
 }
@@ -665,6 +815,7 @@ static void do_minor_gc_core(void) {
 static void do_minor_gc(void) {
     ensure_heap();
     if (*gc_gen_heap.minor.bump_ref == 0) return;  /* nothing to collect */
+    ensure_major_head_for_minor_promotion();
 
     /* Proactive major GC: run a full GC periodically to prevent the major
      * heap from filling up.  Without this, the heap fills with dead objects
@@ -701,6 +852,8 @@ static int full_gc_count = 0;
 static void do_full_gc(void) {
     ensure_heap();
     in_full_gc = 1;
+    if (*gc_gen_heap.minor.bump_ref != 0)
+        ensure_major_head_for_minor_promotion();
 
     PROF_INC(major_gc_count);
     PROF_START(major_gc);
@@ -836,6 +989,16 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
 
     if (result == 0) {
         do_full_gc();
+        PROF_START(major_alloc);
+        fp = *gc_gen_heap.fp_ref;
+        res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
+        *gc_gen_heap.fp_ref = res.fst;
+        result = res.snd;
+        PROF_END(major_alloc);
+    }
+
+    if (result == 0) {
+        expand_major_heap_for_allocation((uint64_t)wosize);
         PROF_START(major_alloc);
         fp = *gc_gen_heap.fp_ref;
         res = allocate(gc_gen_heap.major, fp, (uint64_t)wosize);
