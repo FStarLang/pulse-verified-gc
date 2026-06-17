@@ -101,6 +101,24 @@ fn init_major_chunk_raw (heap: heap_t)
   Allocator.init_major_chunk_raw heap base fp_out wz next_fp
 }
 
+fn major_preflight_required_head_wosize
+  (demand_words: U64.t{U64.v demand_words < pow2 64 - 1})
+  requires emp
+  returns needed: U64.t
+  ensures emp ** pure (needed == U64.add demand_words 1UL)
+{
+  Allocator.major_preflight_required_head_wosize demand_words
+}
+
+fn major_preflight_required_chunk_words
+  (head_wosize: U64.t{U64.v head_wosize < pow2 64 - 1})
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (words == U64.add head_wosize 1UL)
+{
+  Allocator.major_preflight_required_chunk_words head_wosize
+}
+
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------

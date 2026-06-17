@@ -429,6 +429,16 @@ GC_Impl_Allocator_init_major_chunk_raw(
   return fp_out;
 }
 
+static uint64_t GC_Impl_Allocator_major_preflight_required_head_wosize(uint64_t demand_words)
+{
+  return demand_words + 1ULL;
+}
+
+static uint64_t GC_Impl_Allocator_major_preflight_required_chunk_words(uint64_t head_wosize)
+{
+  return head_wosize + 1ULL;
+}
+
 static void
 copy_fields_loop(
   minor_heap_t minor,
@@ -1863,6 +1873,16 @@ init_major_chunk_raw(
 )
 {
   return GC_Impl_Allocator_init_major_chunk_raw(heap, base, fp_out, wz, next_fp);
+}
+
+uint64_t major_preflight_required_head_wosize(uint64_t demand_words)
+{
+  return GC_Impl_Allocator_major_preflight_required_head_wosize(demand_words);
+}
+
+uint64_t major_preflight_required_chunk_words(uint64_t head_wosize)
+{
+  return GC_Impl_Allocator_major_preflight_required_chunk_words(head_wosize);
 }
 
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)

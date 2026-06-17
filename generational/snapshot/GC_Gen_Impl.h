@@ -182,6 +182,10 @@ init_major_chunk_raw(
   uint64_t next_fp
 );
 
+uint64_t major_preflight_required_head_wosize(uint64_t demand_words);
+
+uint64_t major_preflight_required_chunk_words(uint64_t head_wosize);
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);

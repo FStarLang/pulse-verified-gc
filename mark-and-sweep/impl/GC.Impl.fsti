@@ -83,6 +83,20 @@ fn init_major_chunk_raw (heap: heap_t)
                  (GC.Spec.Heap.write_word 's base hdr) fp_out next_fp /\
           new_fp == fp_out)
 
+/// Verified arithmetic for the contiguous head block required before promotion.
+fn major_preflight_required_head_wosize
+  (demand_words: U64.t{U64.v demand_words < pow2 64 - 1})
+  requires emp
+  returns needed: U64.t
+  ensures emp ** pure (needed == U64.add demand_words 1UL)
+
+/// Convert an ensured head wosize to the fresh chunk word count that creates it.
+fn major_preflight_required_chunk_words
+  (head_wosize: U64.t{U64.v head_wosize < pow2 64 - 1})
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (words == U64.add head_wosize 1UL)
+
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the
 /// ghost root set used for correctness.

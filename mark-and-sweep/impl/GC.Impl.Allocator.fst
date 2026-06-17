@@ -702,6 +702,24 @@ fn init_major_chunk_raw (heap: heap_t)
   fp_out
 }
 
+fn major_preflight_required_head_wosize
+  (demand_words: U64.t{U64.v demand_words < pow2 64 - 1})
+  requires emp
+  returns needed: U64.t
+  ensures emp ** pure (needed == U64.add demand_words 1UL)
+{
+  U64.add demand_words 1UL
+}
+
+fn major_preflight_required_chunk_words
+  (head_wosize: U64.t{U64.v head_wosize < pow2 64 - 1})
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (words == U64.add head_wosize 1UL)
+{
+  U64.add head_wosize 1UL
+}
+
 fn write_word_in_indexed_major_at_erased_chunk_index
   (h: MajorHeap.major_heap_t)
   (addr: hp_addr)

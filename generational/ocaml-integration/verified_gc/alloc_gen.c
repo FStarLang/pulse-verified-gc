@@ -256,13 +256,13 @@ static uint64_t major_free_head_wosize(void) {
 static uint64_t required_head_wosize_for_promotion(uint64_t demand_words) {
     if (demand_words > UINT64_MAX - 1)
         caml_fatal_error("verified gen GC: promotion demand too large");
-    return demand_words + 1;
+    return major_preflight_required_head_wosize(demand_words);
 }
 
 static uint64_t required_chunk_words_for_head(uint64_t head_wosize) {
     if (head_wosize > UINT64_MAX - 1)
         caml_fatal_error("verified gen GC: promotion head demand too large");
-    return head_wosize + 1;
+    return major_preflight_required_chunk_words(head_wosize);
 }
 
 static uint64_t suggested_major_words_for_retry(uint64_t required_chunk_words) {
