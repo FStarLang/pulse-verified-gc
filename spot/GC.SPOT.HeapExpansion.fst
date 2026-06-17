@@ -14162,9 +14162,6 @@ let spot_chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_non
            r.capacity_major_out /\
          GenMajorGCBridge.chunked_major_field_targets_non_infix
            r.capacity_major_out /\
-         (forall (target: obj_addr).
-          Seq.mem target (MH.major_objects r.capacity_major_out) ==>
-          Fields.is_pointer_field target) /\
          CheneyPreservation.chunked_cheney_promote_split_ready
            minor r.capacity_major_out r.capacity_fp_out roots
            r.capacity_fuel_out /\
@@ -18830,6 +18827,16 @@ let spot_chunked_major_objects_are_pointer_fields_single_chunk
           (MH.single_chunk_major_heap g))
   =
   CheneyGraphReadiness.chunked_major_objects_are_pointer_fields_single_chunk g
+
+let spot_chunked_major_objects_are_pointer_fields_elim
+  (major: MH.major_heap) (obj: obj_addr)
+  : Lemma
+      (requires
+        CheneyGraphReadiness.chunked_major_objects_are_pointer_fields major /\
+        Seq.mem obj (MH.major_objects major))
+      (ensures Fields.is_pointer_field obj)
+  =
+  CheneyGraphReadiness.chunked_major_objects_are_pointer_fields_elim major obj
 
 let spot_chunked_major_objects_are_pointer_fields_expand_major_heap
   (major: MH.major_heap) (fresh: MH.heap_chunk) (fp: U64.t)

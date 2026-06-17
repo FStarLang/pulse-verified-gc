@@ -430,6 +430,8 @@ Follow-up checkpoint: the non-blue raw-target bridge has moved one step earlier,
 
 Follow-up checkpoint: the minor-field non-blue/non-infix target predicate is now preserved through optional head preflight. `GC.Gen.ChunkedCheneyInjectivity` defines `chunked_minor_fields_miss_chunk`, proves it keeps active-major pointer classification stable when a fresh chunk is prepended, and exposes preservation through both raw `expand_major_heap` and `ensure_major_head_capacity_spec`. `GC.Gen.CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_static_raw_target_policy` now lets callers state `chunked_minor_major_fields_nonblue_non_infix_targets` on the original preflight heap, plus only the expansion-branch minor-field-misses-fresh obligation, and derives the ensured-heap predicate internally. The split modules still profile quickly under refreshed split queries (`GC.Gen.ChunkedCheneyInjectivity` ~1.8s, `GC.Gen.CheneyGraphReadiness` ~2.1s), and `GC.SPOT.HeapExpansion` audits the new preservation and readiness surfaces.
 
+Follow-up checkpoint: the same pre-promote wrapper no longer asks callers for the ensured-heap active-object pointer-field classification. `GC.Gen.CheneyGraphReadiness` now exposes a tiny eliminator for `chunked_major_objects_are_pointer_fields`, derives the ensured-heap predicate from `chunked_minor_preflight_value_policy` via chunk-base preservation, and materializes the exact forall only at the `GC.Gen.ChunkedCheneyInjectivity` call. SPOT audits the eliminator and the reduced wrapper; refreshed readiness profiling remains about 2.1 seconds.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

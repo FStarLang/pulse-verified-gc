@@ -49,6 +49,15 @@ let chunked_major_objects_are_pointer_fields (major: MH.major_heap) : prop =
     Seq.mem obj (MH.major_objects major) ==>
     GC.Spec.Fields.is_pointer_field obj
 
+let chunked_major_objects_are_pointer_fields_elim
+  (major: MH.major_heap) (obj: obj_addr)
+  : Lemma
+    (requires
+      chunked_major_objects_are_pointer_fields major /\
+      Seq.mem obj (MH.major_objects major))
+    (ensures GC.Spec.Fields.is_pointer_field obj)
+  = ()
+
 let chunked_major_chunks_above_minor (major: MH.major_heap) : prop =
   forall (i: nat).
     i < Seq.length major ==> U64.v (Seq.index major i).base >= minor_heap_size
@@ -2585,9 +2594,6 @@ val chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
        r.capacity_major_out /\
        GenMajorGCBridge.chunked_major_field_targets_non_infix
        r.capacity_major_out /\
-       (forall (target: obj_addr).
-       Seq.mem target (MH.major_objects r.capacity_major_out) ==>
-       Fields.is_pointer_field target) /\
        CheneyPres.chunked_cheney_promote_split_ready
        minor r.capacity_major_out r.capacity_fp_out roots
        r.capacity_fuel_out /\

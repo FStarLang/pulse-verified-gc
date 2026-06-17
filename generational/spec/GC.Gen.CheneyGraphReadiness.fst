@@ -4049,9 +4049,6 @@ let chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
         r.capacity_major_out /\
        GenMajorGCBridge.chunked_major_field_targets_non_infix
         r.capacity_major_out /\
-       (forall (target: obj_addr).
-        Seq.mem target (MH.major_objects r.capacity_major_out) ==>
-        Fields.is_pointer_field target) /\
        CheneyPres.chunked_cheney_promote_split_ready
         minor r.capacity_major_out r.capacity_fp_out roots
         r.capacity_fuel_out /\
@@ -4112,6 +4109,22 @@ let chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_
             minor r.capacity_major_out);
   assert (GenInv.chunked_major_alloc_shape
             r.capacity_major_out r.capacity_fp_out r.capacity_fuel_out);
+  chunked_major_chunks_above_zero_addr_ensure_head_capacity
+    major fp alloc_fuel needed fresh;
+  chunked_major_chunks_above_zero_addr_objects_are_pointer_fields
+    r.capacity_major_out;
+  assert (chunked_major_objects_are_pointer_fields r.capacity_major_out);
+  let prove_pointer_field (target: obj_addr)
+    : Lemma
+        (requires Seq.mem target (MH.major_objects r.capacity_major_out))
+        (ensures Fields.is_pointer_field target)
+    =
+    assert (Seq.mem target (MH.major_objects r.capacity_major_out));
+    chunked_major_objects_are_pointer_fields_elim
+      r.capacity_major_out target
+  in
+  FStar.Classical.forall_intro
+    (FStar.Classical.move_requires prove_pointer_field);
   assert (SpecMajorAlloc.major_fl_head_wosize major fp < needed ==>
           MH.chunk_disjoint_from_all fresh major);
   CInj.chunked_minor_major_fields_nonblue_non_infix_targets_ensure_head_capacity
