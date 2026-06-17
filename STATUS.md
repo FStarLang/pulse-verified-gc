@@ -500,6 +500,8 @@ Follow-up checkpoint: runtime conversion from tracked major bytes back to words 
 
 Follow-up checkpoint: the OCaml bridge now performs grow-only major-heap expansion in the runtime while preserving the dense verified collector path. `alloc_gen.c` reserves a contiguous major arena, initializes the first active chunk through `init_major_chunk_raw`, appends later chunks contiguously, refreshes the extracted `heap_size_u64`/`krmlinit_globals` bounds, formats each new chunk as a blue free-list head linked to the old head, registers it with the OCaml page table, and retries allocation or promotion after preflight growth. `VERGC_MAJOR_EXPANSION_WORDSIZE` is now the real preferred expansion chunk size, `VERGC_MAJOR_MAX_WORDSIZE` bounds the reserved arena, and `Gc.quick_stat` observes the active grown heap size. The integration test suite now includes an `expansion-smoke` run that starts with 32768 major words and verifies growth beyond that initial chunk; full `cd generational/ocaml-integration && make test` passed, and a focused stats run reported `heap_words=65536` from the 32768-word initial heap.
 
+Follow-up checkpoint: expansion smoke coverage now also exercises the direct major-allocation retry path. `generational/ocaml-integration/tests/major_expand.ml` allocates a large major object under a deliberately too-small initial major chunk, and `expansion-smoke` verifies the active heap grows beyond 32768 words after full-GC retry and expansion. A focused stats run reported `heap_words=98304` for this direct-major case, and the full OCaml integration test target passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

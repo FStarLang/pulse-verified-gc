@@ -76,7 +76,7 @@ stats-smoke: count_change.stats.byte
 	  exit 1; \
 	fi
 
-expansion-smoke: count_change.stats.byte
+expansion-smoke: count_change.stats.byte major_expand.stats.byte
 	@tmp=$${TMPDIR:-/tmp}/vergc-expansion-smoke.$$$$.csv; \
 	trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
 	MIN_EXPANSION_WORDSIZE=32768 \
@@ -92,6 +92,21 @@ expansion-smoke: count_change.stats.byte
 	fi; \
 	if [ "$$top_heap_words" -lt "$$heap_words" ]; then \
 	  echo "expansion-smoke: top_heap_words=$$top_heap_words below heap_words=$$heap_words" >&2; \
+	  exit 1; \
+	fi; \
+	rm -f "$$tmp"; \
+	MIN_EXPANSION_WORDSIZE=32768 \
+	VERGC_MAJOR_EXPANSION_WORDSIZE=65536 \
+	VERGC_MAJOR_MAX_WORDSIZE=262144 \
+	./bench_stats.sh "$$tmp" major_expand verified-gen $(VERIFIED_GEN_OCAMLRUN) major_expand.stats.byte 300000; \
+	heap_words=$$(awk -F, 'NR == 2 { print $$10 }' "$$tmp"); \
+	top_heap_words=$$(awk -F, 'NR == 2 { print $$11 }' "$$tmp"); \
+	if [ "$$heap_words" -le 32768 ]; then \
+	  echo "expansion-smoke: direct major heap_words=$$heap_words, expected growth beyond 32768" >&2; \
+	  exit 1; \
+	fi; \
+	if [ "$$top_heap_words" -lt "$$heap_words" ]; then \
+	  echo "expansion-smoke: direct major top_heap_words=$$top_heap_words below heap_words=$$heap_words" >&2; \
 	  exit 1; \
 	fi
 
