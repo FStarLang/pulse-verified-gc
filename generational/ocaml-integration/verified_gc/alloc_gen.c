@@ -83,7 +83,30 @@ static size_t words_to_bytes_or_fatal(size_t words, const char *what) {
     return words * sizeof(value);
 }
 
+static void check_major_chunk_facts(uint8_t *base, size_t bytes) {
+    uintptr_t start = (uintptr_t)base;
+    uintptr_t end = start + bytes;
+    size_t i;
+
+    if (base == NULL)
+        caml_fatal_error("verified gen GC: null major chunk");
+    if (bytes == 0 || bytes % sizeof(value) != 0)
+        caml_fatal_error("verified gen GC: invalid major chunk size");
+    if (start % sizeof(value) != 0)
+        caml_fatal_error("verified gen GC: unaligned major chunk base");
+    if (end < start)
+        caml_fatal_error("verified gen GC: major chunk address overflow");
+
+    for (i = 0; i < major_chunk_count; i++) {
+        uintptr_t old_start = (uintptr_t)major_chunks[i].base;
+        uintptr_t old_end = old_start + major_chunks[i].bytes;
+        if (start < old_end && old_start < end)
+            caml_fatal_error("verified gen GC: overlapping major chunks");
+    }
+}
+
 static void register_major_chunk(uint8_t *base, size_t bytes) {
+    check_major_chunk_facts(base, bytes);
     if (major_chunk_count >= MAX_MAJOR_CHUNKS)
         caml_fatal_error("verified gen GC: too many major chunks");
     if (bytes > UINT64_MAX - major_bytes_total)
