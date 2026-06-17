@@ -201,6 +201,9 @@ major_ranges_overlap(
   uint64_t other_end
 );
 
+uint64_t
+major_preflight_suggested_major_words(uint64_t current_words, uint64_t required_chunk_words);
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);

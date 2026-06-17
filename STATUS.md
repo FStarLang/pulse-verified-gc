@@ -480,6 +480,8 @@ Follow-up checkpoint: the diagnostic future-expansion size policy now uses a ver
 
 Follow-up checkpoint: C-side chunk/minor and chunk/chunk disjointness checks now route their half-open range-overlap predicate through `GC.Impl.major_ranges_overlap`, another ghost-free top-level verified helper with a concrete `uint64_t`/`bool` ABI. The runtime still performs the necessary overflow checks before calling the helper, while the overlap decision itself is no longer open-coded in C. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: the diagnostic retry heap-size suggestion now routes through `GC.Impl.major_preflight_suggested_major_words`, a concrete ABI helper that saturating-doubles the current registered major words and then selects at least the verified required fresh chunk size. `alloc_gen.c` now delegates the fatal-error suggestion calculation to the extracted helper instead of open-coding the saturating double/max in C. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

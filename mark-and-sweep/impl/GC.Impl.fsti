@@ -128,6 +128,23 @@ fn major_ranges_overlap
   ensures emp ** pure (
     overlap <==> (U64.v start < U64.v other_end /\ U64.v other_start < U64.v range_end))
 
+/// Diagnostic retry suggestion: saturating-double current words, then meet the
+/// verified minimum fresh chunk size.
+fn major_preflight_suggested_major_words
+  (current_words required_chunk_words: U64.t)
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (
+    let half = 9223372036854775807UL in
+    let max_u64 = 18446744073709551615UL in
+    let doubled: U64.t =
+      if U64.gt current_words half then
+        max_u64
+      else
+        U64.mul_underspec current_words 2UL in
+    (U64.v doubled >= U64.v required_chunk_words ==> words == doubled) /\
+    (U64.v doubled < U64.v required_chunk_words ==> words == required_chunk_words))
+
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the
 /// ghost root set used for correctness.

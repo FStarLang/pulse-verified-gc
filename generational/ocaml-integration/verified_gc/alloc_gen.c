@@ -268,11 +268,8 @@ static uint64_t required_chunk_words_for_head(uint64_t head_wosize) {
 
 static uint64_t suggested_major_words_for_retry(uint64_t required_chunk_words) {
     uint64_t current_words = current_major_bytes() / sizeof(value);
-    uint64_t doubled_words =
-        current_words > UINT64_MAX / 2 ? UINT64_MAX : current_words * 2;
-    return doubled_words >= required_chunk_words
-        ? doubled_words
-        : required_chunk_words;
+    return major_preflight_suggested_major_words(
+        current_words, required_chunk_words);
 }
 
 static uint64_t planned_expansion_chunk_words(uint64_t required_chunk_words) {

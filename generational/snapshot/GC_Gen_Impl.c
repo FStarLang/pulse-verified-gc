@@ -1912,6 +1912,20 @@ major_ranges_overlap(
   return start < other_end && other_start < range_end;
 }
 
+static uint64_t major_preflight_suggested_major_words_doubled(uint64_t current_words)
+{
+  uint64_t half = 9223372036854775807ULL;
+  uint64_t max_u64 = 18446744073709551615ULL;
+  return current_words > half ? max_u64 : current_words * 2ULL;
+}
+
+uint64_t
+major_preflight_suggested_major_words(uint64_t current_words, uint64_t required_chunk_words)
+{
+  uint64_t doubled = major_preflight_suggested_major_words_doubled(current_words);
+  return doubled >= required_chunk_words ? doubled : required_chunk_words;
+}
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);

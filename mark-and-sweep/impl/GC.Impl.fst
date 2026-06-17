@@ -162,6 +162,38 @@ fn major_ranges_overlap
   U64.lt start other_end && U64.lt other_start range_end
 }
 
+let major_preflight_suggested_major_words_doubled
+  (current_words: U64.t) : U64.t =
+  let half = 9223372036854775807UL in
+  let max_u64 = 18446744073709551615UL in
+  if U64.gt current_words half then
+    max_u64
+  else
+    U64.mul_underspec current_words 2UL
+
+fn major_preflight_suggested_major_words
+  (current_words required_chunk_words: U64.t)
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (
+    let half = 9223372036854775807UL in
+    let max_u64 = 18446744073709551615UL in
+    let doubled: U64.t =
+      if U64.gt current_words half then
+        max_u64
+      else
+        U64.mul_underspec current_words 2UL in
+    (U64.v doubled >= U64.v required_chunk_words ==> words == doubled) /\
+    (U64.v doubled < U64.v required_chunk_words ==> words == required_chunk_words))
+{
+  let doubled = major_preflight_suggested_major_words_doubled current_words;
+  if U64.gte doubled required_chunk_words {
+    doubled
+  } else {
+    required_chunk_words
+  }
+}
+
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------
