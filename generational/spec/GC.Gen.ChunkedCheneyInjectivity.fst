@@ -1943,7 +1943,7 @@ private let rec chunked_cheney_scan_preserves_ranges
         minor cs' (scan + 1) next_fuel alloc_fuel).ccs_major
   end
 
-private let chunked_cheney_promote_preserves_ranges
+let chunked_cheney_promote_preserves_ranges
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat)
   : Lemma

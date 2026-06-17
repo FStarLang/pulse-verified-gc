@@ -23,6 +23,7 @@ module ChunkedMarkTargetMembership =
 module ChunkedCheney = GC.Gen.ChunkedCheney
 module CheneyPres = GC.Gen.CheneyPreservation
 module GenMajorGCBridge = GC.Gen.ChunkedMajorGCBridge
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
 /// Chunked Cheney forwarding is injective on ordinary minor object starts.
 /// Infix sources are excluded because they map to interior pointers inside
@@ -241,6 +242,16 @@ val chunked_cheney_promote_old_nonblue_field_no_infix
          MH.read_word_in_major res.major_final field_addr == Some raw /\
          is_minor_pointer (to_minor_offset raw)))
       (ensures ~(is_infix_in_minor minor (to_minor_offset raw)))
+
+val chunked_cheney_promote_preserves_ranges
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat ->
+    Lemma
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         RangePres.same_chunk_ranges major res.major_final))
 
 val chunked_cheney_promote_fwd_target_minor_major_field_raw_target
   : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->

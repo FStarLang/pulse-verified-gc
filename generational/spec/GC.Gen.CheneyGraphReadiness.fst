@@ -38,6 +38,7 @@ module ChunkedMajorGCRoots = GC.Spec.ChunkedMajorGC.Roots
 module ChunkedMajorGCCorr = GC.Spec.ChunkedMajorGC.Correctness
 module ChunkedMajorGCGraph = GC.Spec.ChunkedMajorGC.Graph
 module ChunkedMarkTargetMembership = GC.Spec.ChunkedMarkBounded.TargetMembership
+module RangePres = GC.Spec.ChunkedSweepCoalesce.RangePreservation
 
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
 private let aligned_gt_ge_plus_mword (x z: nat)
@@ -345,6 +346,30 @@ let chunked_major_chunks_above_zero_addr_ensure_head_capacity
     ()
   else
     chunked_major_chunks_above_zero_addr_expand_major_heap major fresh fp
+
+#push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
+let chunked_major_chunks_above_zero_addr_preserved_by_same_ranges
+  (before after: MH.major_heap)
+  : Lemma
+    (requires
+      chunked_major_chunks_above_zero_addr before /\
+      RangePres.same_chunk_ranges before after)
+    (ensures chunked_major_chunks_above_zero_addr after)
+  =
+  let prove (i: nat{i < Seq.length after})
+    : Lemma
+      (ensures U64.v (Seq.index after i).base >= U64.v zero_addr)
+    =
+    RangePres.same_chunk_ranges_length before after;
+    assert (i < Seq.length before);
+    RangePres.same_chunk_ranges_index before after i;
+    assert (MH.chunk_start (Seq.index after i) ==
+            MH.chunk_start (Seq.index before i));
+    assert (U64.v (Seq.index after i).base ==
+            U64.v (Seq.index before i).base)
+  in
+  FStar.Classical.forall_intro prove
+#pop-options
 
 let chunked_major_chunks_above_zero_addr_chunks_above_minor
   (major: MH.major_heap)
@@ -4640,6 +4665,101 @@ let chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_update_chunk_bas
     (FStar.Classical.move_requires prove_pointer_field);
   chunked_major_edge_gen_field_witness_from_chunk_bases collect.cmc_major;
   chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_update_raw_field_and_non_infix_policy
+    minor major fp roots alloc_fuel fresh major_roots cap mark_fuel
+#pop-options
+
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"
+let chunked_cheney_collect_then_major_gc_live_subgraph_from_preflight_chunk_base_pre_update_raw_field_and_non_infix_policy
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)
+  (major_roots: seq obj_addr)
+  (cap: nat{cap > 0})
+  (mark_fuel: nat)
+  : Lemma
+    (requires
+      minor_wf minor /\
+      alloc_fuel > 1 /\
+      GenInv.chunked_collection_heap_shape minor major fp alloc_fuel /\
+      SpecMajorAlloc.major_fl_chain_terminates major fp alloc_fuel = true /\
+      GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+      chunked_minor_preflight_value_policy minor major fp roots fresh /\
+      (let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+       major fp alloc_fuel
+       (PromotionDemand.minor_promotion_demand minor + 1)
+       fresh in
+       let prom =
+       ChunkedCheney.chunked_cheney_promote
+       minor r.capacity_major_out r.capacity_fp_out roots
+       r.capacity_fuel_out in
+       let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+       minor r.capacity_major_out r.capacity_fp_out roots
+       r.capacity_fuel_out in
+       GenInv.chunked_collection_heap_shape
+       collect.cmc_minor collect.cmc_major collect.cmc_fp
+       r.capacity_fuel_out /\
+       GenMajorGCBridge.chunked_major_roots_nonblue
+       collect.cmc_major major_roots /\
+       GenMajorGCBridge.chunked_major_raw_field_targets_in_major
+       prom.major_final /\
+       GenMajorGCBridge.chunked_major_field_targets_non_infix
+       prom.major_final /\
+       GenInv.chunked_major_minor_fields_no_infix_targets
+       minor prom.major_final /\
+       Seq.length (MH.major_objects collect.cmc_major) <= cap /\
+       mark_fuel > 0 /\
+       mark_fuel >= Seq.length (MH.major_objects collect.cmc_major)))
+    (ensures
+      chunked_cheney_collect_after_minor_promotion_head_preflight_post
+       minor major fp roots alloc_fuel fresh /\
+      (let r =
+       SpecMajorAlloc.ensure_major_head_capacity_spec
+       major fp alloc_fuel
+       (PromotionDemand.minor_promotion_demand minor + 1)
+       fresh in
+       let collect =
+       ChunkedCheney.chunked_cheney_collect_spec
+       minor r.capacity_major_out r.capacity_fp_out roots
+       r.capacity_fuel_out in
+       let (major_final, fp_final) =
+       ChunkedMajorGC.chunked_major_gc_bounded
+       (ChunkedMajorGCRoots.chunked_gray_roots
+         collect.cmc_major major_roots)
+       cap mark_fuel in
+       ChunkedMajorGCGraph.chunked_major_live_subgraph_preserved
+       collect.cmc_major major_final
+       (ChunkedMajorGCCorr.chunked_major_initial_reachable_live
+        collect.cmc_major major_roots)))
+  =
+  let needed = PromotionDemand.minor_promotion_demand minor + 1 in
+  let r =
+    SpecMajorAlloc.ensure_major_head_capacity_spec
+      major fp alloc_fuel needed fresh in
+  let prom =
+    ChunkedCheney.chunked_cheney_promote
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  let collect =
+    ChunkedCheney.chunked_cheney_collect_spec
+      minor r.capacity_major_out r.capacity_fp_out roots
+      r.capacity_fuel_out in
+  chunked_major_chunks_above_zero_addr_ensure_head_capacity
+    major fp alloc_fuel needed fresh;
+  CInj.chunked_cheney_promote_preserves_ranges
+    minor r.capacity_major_out r.capacity_fp_out roots r.capacity_fuel_out;
+  chunked_major_chunks_above_zero_addr_preserved_by_same_ranges
+    r.capacity_major_out prom.major_final;
+  ChunkedCheney.chunked_cheney_collect_spec_equation
+    minor r.capacity_major_out r.capacity_fp_out roots r.capacity_fuel_out;
+  assert (collect.cmc_major ==
+          ChunkedUpdate.chunked_update_major_pointers
+            prom.major_final prom.fwd_map);
+  ChunkedUpdate.chunked_update_major_pointers_preserves_ranges
+    prom.major_final prom.fwd_map;
+  chunked_major_chunks_above_zero_addr_preserved_by_same_ranges
+    prom.major_final collect.cmc_major;
+  chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_update_chunk_base_raw_field_and_non_infix_policy
     minor major fp roots alloc_fuel fresh major_roots cap mark_fuel
 #pop-options
 
