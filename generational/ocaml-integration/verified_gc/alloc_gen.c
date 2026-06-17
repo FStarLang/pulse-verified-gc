@@ -143,7 +143,8 @@ static uint8_t *allocate_major_chunk_memory(size_t bytes) {
 
 static int ranges_overlap(uintptr_t start, uintptr_t end,
                           uintptr_t other_start, uintptr_t other_end) {
-    return start < other_end && other_start < end;
+    return major_ranges_overlap((uint64_t)start, (uint64_t)end,
+                                (uint64_t)other_start, (uint64_t)other_end);
 }
 
 static void check_major_chunk_facts(uint8_t *base, size_t bytes) {

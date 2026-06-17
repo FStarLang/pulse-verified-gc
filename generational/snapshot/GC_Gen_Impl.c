@@ -1901,6 +1901,17 @@ major_preflight_planned_chunk_words(uint64_t configured_words, uint64_t required
   return configured_words >= required_chunk_words ? configured_words : required_chunk_words;
 }
 
+bool
+major_ranges_overlap(
+  uint64_t start,
+  uint64_t range_end,
+  uint64_t other_start,
+  uint64_t other_end
+)
+{
+  return start < other_end && other_start < range_end;
+}
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp)
 {
   KRML_MAYBE_UNUSED_VAR(fp);

@@ -152,6 +152,16 @@ fn major_preflight_planned_chunk_words
   }
 }
 
+fn major_ranges_overlap
+  (start range_end other_start other_end: U64.t)
+  requires emp
+  returns overlap: bool
+  ensures emp ** pure (
+    overlap <==> (U64.v start < U64.v other_end /\ U64.v other_start < U64.v range_end))
+{
+  U64.lt start other_end && U64.lt other_start range_end
+}
+
 /// ---------------------------------------------------------------------------
 /// Full GC
 /// ---------------------------------------------------------------------------

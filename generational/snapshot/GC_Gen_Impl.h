@@ -193,6 +193,14 @@ uint64_t major_chunk_words_to_wosize(uint64_t chunk_words);
 uint64_t
 major_preflight_planned_chunk_words(uint64_t configured_words, uint64_t required_chunk_words);
 
+bool
+major_ranges_overlap(
+  uint64_t start,
+  uint64_t range_end,
+  uint64_t other_start,
+  uint64_t other_end
+);
+
 uint64_t collect_with_roots(heap_t heap, gray_stack_rec st, uint64_t fp);
 
 uint64_t collect(heap_t heap, gray_stack_rec st, uint64_t fp);

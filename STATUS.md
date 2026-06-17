@@ -478,6 +478,8 @@ Follow-up checkpoint: initial chunk header sizing now also uses a verified top-l
 
 Follow-up checkpoint: the diagnostic future-expansion size policy now uses a verified top-level max helper. `GC.Impl.major_preflight_planned_chunk_words` returns the configured expansion chunk size when it covers the verified minimum required chunk words and otherwise returns the verified minimum; `alloc_gen.c` calls it from the preflight snapshot instead of open-coding the comparison. This keeps the future expansion policy boundary concrete while still avoiding any public ghost/dependent MajorHeap API. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: C-side chunk/minor and chunk/chunk disjointness checks now route their half-open range-overlap predicate through `GC.Impl.major_ranges_overlap`, another ghost-free top-level verified helper with a concrete `uint64_t`/`bool` ABI. The runtime still performs the necessary overflow checks before calling the helper, while the overlap decision itself is no longer open-coded in C. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

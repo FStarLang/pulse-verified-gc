@@ -120,6 +120,14 @@ fn major_preflight_planned_chunk_words
     (U64.v configured_words >= U64.v required_chunk_words ==> words == configured_words) /\
     (U64.v configured_words < U64.v required_chunk_words ==> words == required_chunk_words))
 
+/// Check whether two half-open runtime address ranges overlap.
+fn major_ranges_overlap
+  (start range_end other_start other_end: U64.t)
+  requires emp
+  returns overlap: bool
+  ensures emp ** pure (
+    overlap <==> (U64.v start < U64.v other_end /\ U64.v other_start < U64.v range_end))
+
 /// Precondition bundle for full GC correctness (bounded mark variant).
 /// The concrete gray stack may be a bounded worklist approximation of the
 /// ghost root set used for correctness.
