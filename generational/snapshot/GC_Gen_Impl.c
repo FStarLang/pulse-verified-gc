@@ -1912,6 +1912,11 @@ major_ranges_overlap(
   return start < other_end && other_start < range_end;
 }
 
+bool major_word_aligned(uint64_t value)
+{
+  return value % 8ULL == 0ULL;
+}
+
 static uint64_t major_preflight_suggested_major_words_doubled(uint64_t current_words)
 {
   uint64_t half = 9223372036854775807ULL;

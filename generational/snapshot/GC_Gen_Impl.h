@@ -201,6 +201,8 @@ major_ranges_overlap(
   uint64_t other_end
 );
 
+bool major_word_aligned(uint64_t value);
+
 uint64_t
 major_preflight_suggested_major_words(uint64_t current_words, uint64_t required_chunk_words);
 

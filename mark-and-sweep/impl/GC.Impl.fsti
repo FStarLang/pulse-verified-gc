@@ -128,6 +128,13 @@ fn major_ranges_overlap
   ensures emp ** pure (
     overlap <==> (U64.v start < U64.v other_end /\ U64.v other_start < U64.v range_end))
 
+/// Check whether a runtime byte address or size is word-aligned.
+fn major_word_aligned
+  (value: U64.t)
+  requires emp
+  returns aligned: bool
+  ensures emp ** pure (aligned <==> (U64.v value % U64.v mword == 0))
+
 /// Diagnostic retry suggestion: saturating-double current words, then meet the
 /// verified minimum fresh chunk size.
 fn major_preflight_suggested_major_words

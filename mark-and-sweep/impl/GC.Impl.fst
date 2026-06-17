@@ -162,6 +162,15 @@ fn major_ranges_overlap
   U64.lt start other_end && U64.lt other_start range_end
 }
 
+fn major_word_aligned
+  (value: U64.t)
+  requires emp
+  returns aligned: bool
+  ensures emp ** pure (aligned <==> (U64.v value % U64.v mword == 0))
+{
+  U64.eq (U64.rem value mword) 0UL
+}
+
 let major_preflight_suggested_major_words_doubled
   (current_words: U64.t) : U64.t =
   let half = 9223372036854775807UL in

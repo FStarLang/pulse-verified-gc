@@ -154,9 +154,9 @@ static void check_major_chunk_facts(uint8_t *base, size_t bytes) {
 
     if (base == NULL)
         caml_fatal_error("verified gen GC: null major chunk");
-    if (bytes == 0 || bytes % sizeof(value) != 0)
+    if (bytes == 0 || !major_word_aligned((uint64_t)bytes))
         caml_fatal_error("verified gen GC: invalid major chunk size");
-    if (start % sizeof(value) != 0)
+    if (!major_word_aligned((uint64_t)start))
         caml_fatal_error("verified gen GC: unaligned major chunk base");
     if (end < start)
         caml_fatal_error("verified gen GC: major chunk address overflow");
@@ -247,7 +247,7 @@ static uint64_t major_free_head_wosize(void) {
         caml_fatal_error("verified gen GC: invalid major base address");
     if (fp < zero_addr + sizeof(value) || fp >= heap_size_u64)
         caml_fatal_error("verified gen GC: invalid major free-list head");
-    if (fp % sizeof(value) != 0)
+    if (!major_word_aligned(fp))
         caml_fatal_error("verified gen GC: unaligned major free-list head");
 
     header_addr = (uintptr_t)(fp - sizeof(value));
