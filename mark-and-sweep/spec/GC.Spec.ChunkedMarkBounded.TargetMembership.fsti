@@ -18,6 +18,10 @@ val chunked_scanned_raw_targets_in_major
   (mh: MH.major_heap)
   : GTot prop
 
+val chunked_nonblue_scanned_raw_targets_in_major
+  (mh: MH.major_heap)
+  : GTot prop
+
 val chunked_scanned_raw_targets_in_major_intro
   (mh: MH.major_heap)
   : Lemma
@@ -39,6 +43,28 @@ val chunked_scanned_raw_targets_in_major_intro
              True))
       (ensures chunked_scanned_raw_targets_in_major mh)
 
+val chunked_nonblue_scanned_raw_targets_in_major_intro
+  (mh: MH.major_heap)
+  : Lemma
+      (requires
+        forall (obj: obj_addr) (i: U64.t{U64.v i >= 1}).
+          Seq.mem obj (MH.major_objects mh) /\
+          ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue mh obj) /\
+          ~(GC.Spec.ChunkedMark.Defs.chunked_is_no_scan mh obj) /\
+          U64.v i <=
+            U64.v
+              (GC.Spec.ChunkedSweepCoalesce.Defs.chunked_wosize_of_object
+                mh obj) ==>
+          (let v = GC.Spec.ChunkedMark.Defs.chunked_get_field mh obj i in
+           if GC.Spec.ChunkedMark.Defs.chunked_is_pointer_field mh v then
+             let child_raw =
+               GC.Spec.ChunkedMark.Defs.chunked_pointer_field_as_obj_addr mh v in
+             Seq.mem child_raw (MH.major_objects mh) /\
+             ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_infix mh child_raw)
+           else
+             True))
+      (ensures chunked_nonblue_scanned_raw_targets_in_major mh)
+
 val chunked_scanned_white_targets_in_major_from_raw_targets
   (mh: MH.major_heap)
   : Lemma
@@ -54,6 +80,21 @@ val chunked_scanned_raw_targets_in_major_preserved_by_gray_roots
         chunked_scanned_raw_targets_in_major mh)
       (ensures
         chunked_scanned_raw_targets_in_major
+          (Roots.chunked_gray_roots mh roots))
+
+val chunked_nonblue_scanned_raw_targets_in_major_preserved_by_gray_roots
+  (mh: MH.major_heap)
+  (roots: Seq.seq obj_addr)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        (forall (root: obj_addr).
+          Seq.mem root roots /\
+          Seq.mem root (MH.major_objects mh) ==>
+          ~(GC.Spec.ChunkedSweepCoalesce.Defs.chunked_is_blue mh root)) /\
+        chunked_nonblue_scanned_raw_targets_in_major mh)
+      (ensures
+        chunked_nonblue_scanned_raw_targets_in_major
           (Roots.chunked_gray_roots mh roots))
 
 val chunked_scanned_white_targets_in_major_elim
@@ -222,3 +263,26 @@ val chunked_mark_bounded_raw_targets_policy_from_static
         MH.well_formed_major_heap mh /\
         chunked_scanned_raw_targets_in_major mh)
       (ensures chunked_mark_bounded_raw_targets_policy mh cap fuel)
+
+val chunked_mark_bounded_target_membership_policy_from_nonblue_static
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh)
+      (ensures
+        Readiness.chunked_mark_bounded_target_membership_policy mh cap fuel)
+
+val chunked_mark_bounded_preservation_ready_from_nonblue_static
+  (mh: MH.major_heap)
+  (cap: nat{cap > 0})
+  (fuel: nat)
+  : Lemma
+      (requires
+        MH.well_formed_major_heap mh /\
+        chunked_nonblue_scanned_raw_targets_in_major mh)
+      (ensures
+        GC.Spec.ChunkedMarkBounded.Preservation.chunked_mark_bounded_preservation_ready
+          mh cap fuel)
