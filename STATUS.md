@@ -462,6 +462,8 @@ Follow-up checkpoint: the runtime bridge now has an explicit future expansion-si
 
 Follow-up checkpoint: the OCaml integration tests now include a focused stats-smoke assertion for the verified runtime bridge. `generational/ocaml-integration/tests/Makefile` builds the existing stats harness, runs `count_change` under the verified generational runtime with the calibrated `MIN_EXPANSION_WORDSIZE`, and checks that `Gc.quick_stat` reports both `heap_words` and `top_heap_words` as the configured bridge major heap size. This locks in the new `Gc.stat`/`Gc.quick_stat` major-heap counter path without running the full benchmark-stat suite. The full `cd generational/ocaml-integration && make test` target passed with the new assertion.
 
+Follow-up checkpoint: major chunk registration now checks disjointness from the active minor heap range, not just from previously registered major chunks. `alloc_gen.c` factors range-overlap testing, verifies the minor range does not overflow, rejects any future major chunk that overlaps the minor buffer, and reuses the same helper for chunk-vs-chunk disjointness. This adds another C-side fact required by the future verified expansion API while preserving the current single dense major heap behavior. The OCaml integration smoke/stat tests passed after the change.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
