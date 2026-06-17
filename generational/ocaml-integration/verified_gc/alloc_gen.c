@@ -77,10 +77,27 @@ static major_chunk_rec major_chunks[MAX_MAJOR_CHUNKS];
 static size_t major_chunk_count = 0;
 static uint64_t major_bytes_total = 0;
 
+static size_t configured_initial_major_words(void) {
+    size_t words = 32 * 1024 * 1024;  /* 256 MB / 8 = 32M words */
+    const char *env = getenv("MIN_EXPANSION_WORDSIZE");
+    if (env) {
+        size_t w = (size_t)atoll(env);
+        if (w > 0) words = w;
+    }
+    return words;
+}
+
 static size_t words_to_bytes_or_fatal(size_t words, const char *what) {
     if (words > SIZE_MAX / sizeof(value))
         caml_fatal_error("%s", what);
     return words * sizeof(value);
+}
+
+static uint8_t *allocate_major_chunk_memory(size_t bytes) {
+    uint8_t *base = (uint8_t *)calloc(1, bytes);
+    if (!base)
+        caml_fatal_error("verified gen GC: cannot allocate major heap");
+    return base;
 }
 
 static void check_major_chunk_facts(uint8_t *base, size_t bytes) {
@@ -215,18 +232,11 @@ static void ensure_heap(void) {
     atexit(gc_print_profile);
 
     /* --- Major heap --- */
-    size_t major_words = 32 * 1024 * 1024;  /* 256 MB / 8 = 32M words */
-    const char *env = getenv("MIN_EXPANSION_WORDSIZE");
-    if (env) {
-        size_t w = (size_t)atoll(env);
-        if (w > 0) major_words = w;
-    }
+    size_t major_words = configured_initial_major_words();
     size_t major_bytes = words_to_bytes_or_fatal(
         major_words, "verified gen GC: major heap word size overflow");
 
-    uint8_t *major_base = (uint8_t *)calloc(1, major_bytes);
-    if (!major_base)
-        caml_fatal_error("verified gen GC: cannot allocate major heap");
+    uint8_t *major_base = allocate_major_chunk_memory(major_bytes);
 
     /* NULL-base trick: GC offsets become absolute addresses */
     zero_addr = (uint64_t)(uintptr_t)major_base;

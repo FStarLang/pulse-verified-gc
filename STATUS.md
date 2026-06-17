@@ -452,6 +452,8 @@ Follow-up checkpoint: the extraction boundary for the verified chunked allocator
 
 Follow-up checkpoint: the OCaml bridge now measures the two runtime quantities needed by the verified minor-promotion preflight policy. `generational/ocaml-integration/verified_gc/alloc_gen.c` computes a header-inclusive conservative `minor_promotion_demand` by walking the allocated minor objects, reads the current major free-list head wosize, and reports both values on promotion failure along with the registered chunk count. This is behavior-preserving instrumentation rather than expansion wiring: the dense extracted allocator remains the only public allocation API, but the runtime boundary can now report the same demand/head-capacity mismatch that the future verified chunked preflight API will consume. The OCaml integration smoke tests passed after the change.
 
+Follow-up checkpoint: the initial major chunk allocation path is now factored into named runtime helpers. `configured_initial_major_words` owns the current `MIN_EXPANSION_WORDSIZE` compatibility policy, while `allocate_major_chunk_memory` centralizes zeroed major-chunk acquisition before registration. This is a small behavior-preserving refactor, but it makes the future expansion path able to share the same C-side allocation/fact-checking boundary as the initial dense chunk. The OCaml integration smoke tests passed after the refactor.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
