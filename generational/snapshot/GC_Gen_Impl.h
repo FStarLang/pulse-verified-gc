@@ -192,6 +192,8 @@ uint64_t major_chunk_words_to_wosize(uint64_t chunk_words);
 
 bool major_chunk_words_in_header_range(uint64_t chunk_words);
 
+uint64_t major_chunk_words_to_bytes(uint64_t chunk_words);
+
 uint64_t
 major_preflight_planned_chunk_words(uint64_t configured_words, uint64_t required_chunk_words);
 

@@ -118,6 +118,13 @@ fn major_chunk_words_in_header_range
   returns ok: bool
   ensures emp ** pure (ok <==> (U64.v chunk_words >= 2 /\ U64.v chunk_words <= pow2 54))
 
+/// Convert a major chunk word count to bytes after the runtime overflow check.
+fn major_chunk_words_to_bytes
+  (chunk_words: U64.t{U64.v chunk_words <= 2305843009213693951})
+  requires emp
+  returns bytes: U64.t
+  ensures emp ** pure (bytes == U64.mul chunk_words mword)
+
 /// Select the configured expansion size unless the verified minimum is larger.
 fn major_preflight_planned_chunk_words
   (configured_words required_chunk_words: U64.t)

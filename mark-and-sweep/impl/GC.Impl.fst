@@ -147,6 +147,16 @@ fn major_chunk_words_in_header_range
   U64.gte chunk_words 2UL && U64.lte chunk_words 18014398509481984UL
 }
 
+fn major_chunk_words_to_bytes
+  (chunk_words: U64.t{U64.v chunk_words <= 2305843009213693951})
+  requires emp
+  returns bytes: U64.t
+  ensures emp ** pure (bytes == U64.mul chunk_words mword)
+{
+  assert_norm (U64.v mword == 8);
+  U64.mul chunk_words mword
+}
+
 fn major_preflight_planned_chunk_words
   (configured_words required_chunk_words: U64.t)
   requires emp

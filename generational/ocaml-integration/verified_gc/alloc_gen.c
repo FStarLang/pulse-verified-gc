@@ -131,7 +131,7 @@ static size_t configured_expansion_chunk_words(void) {
 static size_t words_to_bytes_or_fatal(size_t words, const char *what) {
     if (words > SIZE_MAX / sizeof(value))
         caml_fatal_error("%s", what);
-    return words * sizeof(value);
+    return (size_t)major_chunk_words_to_bytes((uint64_t)words);
 }
 
 static uint8_t *allocate_major_chunk_memory(size_t bytes) {

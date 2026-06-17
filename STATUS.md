@@ -486,6 +486,8 @@ Follow-up checkpoint: runtime word-alignment checks for major chunk sizes, major
 
 Follow-up checkpoint: runtime major chunk word-count validation now routes through the extracted `GC.Impl.major_chunk_words_in_header_range` helper. The helper exposes the concrete `2 <= words <= 2^54` OCaml-header range as a `uint64_t -> bool` ABI, and `alloc_gen.c` delegates `MIN_EXPANSION_WORDSIZE` / `VERGC_MAJOR_EXPANSION_WORDSIZE` range acceptance to it while preserving the existing fail-fast diagnostics. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
 
+Follow-up checkpoint: major chunk word-to-byte sizing now routes through the extracted `GC.Impl.major_chunk_words_to_bytes` helper after the existing C-side `SIZE_MAX / sizeof(value)` overflow check. This keeps memory-allocation sizing on the same concrete verified ABI path as the header-range and wosize helpers while leaving allocation failure and platform-size checks in the runtime bridge. Focused top-level verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, and OCaml integration smoke/stat tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
