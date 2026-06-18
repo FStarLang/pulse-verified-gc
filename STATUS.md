@@ -536,6 +536,8 @@ Runtime bridge cleanup checkpoint: the remaining runtime guards for adding one h
 
 Runtime bridge cleanup checkpoint: slow minor allocation capacity checks now use the extracted `major_arena_has_available_bytes` helper instead of open-coding `minor_heap_size_u64 - needed`. This avoids relying on C subtraction after the bump pointer check and keeps the retry-after-minor-GC branch aligned with the same guarded subtraction shape used for major arena expansion. Full OCaml integration tests and hygiene checks passed.
 
+Runtime bridge cleanup checkpoint: the minor-promotion demand scanner now also uses `major_arena_has_available_bytes(off, bump, object_bytes)` when validating that the next minor object fits inside the allocated minor prefix. This removes the last open-coded `bump - off` subtraction in the scan loop while preserving the malformed-layout checks. Full OCaml integration tests and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
