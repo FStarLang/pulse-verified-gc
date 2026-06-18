@@ -267,6 +267,17 @@ fn major_heap_end_below_verified_limit
   U64.lt heap_end 144115188075855872UL
 }
 
+fn major_address_has_word_room
+  (addr: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> U64.v addr + U64.v mword < pow2 64)
+{
+  assert_norm (U64.v mword == 8);
+  assert_norm (pow2 64 == 18446744073709551616);
+  U64.lt addr 18446744073709551608UL
+}
+
 fn major_free_head_in_range
   (zero: U64.t{U64.v zero + U64.v mword < pow2 64})
   (heap_end fp: U64.t)

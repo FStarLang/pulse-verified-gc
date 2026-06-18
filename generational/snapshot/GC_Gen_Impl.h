@@ -226,6 +226,8 @@ bool major_word_aligned(uint64_t value);
 
 bool major_heap_end_below_verified_limit(uint64_t heap_end);
 
+bool major_address_has_word_room(uint64_t addr);
+
 bool major_free_head_in_range(uint64_t zero, uint64_t heap_end, uint64_t fp);
 
 uint64_t major_free_head_header_addr(uint64_t fp);

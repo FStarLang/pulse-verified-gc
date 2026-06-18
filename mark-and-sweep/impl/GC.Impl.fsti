@@ -202,6 +202,13 @@ fn major_heap_end_below_verified_limit
   returns ok: bool
   ensures emp ** pure (ok <==> U64.v heap_end < pow2 57)
 
+/// Check whether adding one machine word to an address stays below `2^64`.
+fn major_address_has_word_room
+  (addr: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> U64.v addr + U64.v mword < pow2 64)
+
 /// Check whether a nonzero free-list pointer lies in the current major range.
 fn major_free_head_in_range
   (zero: U64.t{U64.v zero + U64.v mword < pow2 64})

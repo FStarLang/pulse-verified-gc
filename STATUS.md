@@ -510,6 +510,8 @@ Follow-up checkpoint: header-inclusive object size arithmetic is now exposed thr
 
 Follow-up checkpoint: expansion reserve-capacity arithmetic now routes through `major_arena_has_available_bytes`. The helper performs the active/reserved/requested byte check with branch-safe subtraction in verified code, and `alloc_gen.c` uses it before appending a new active chunk inside the reserved contiguous arena.
 
+Follow-up checkpoint: runtime address-room checks for adding one machine word now route through `major_address_has_word_room`. This aligns the C bridge checks before `major_free_head_in_range` and `major_chunk_initial_fp` with the extracted helpers' `addr + mword < 2^64` precondition instead of open-coding `UINT64_MAX - sizeof(value)`.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

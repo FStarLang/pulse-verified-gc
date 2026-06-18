@@ -297,7 +297,7 @@ static uint64_t major_free_head_wosize(void) {
 
     if (fp == 0)
         return 0;
-    if (zero_addr > UINT64_MAX - sizeof(value))
+    if (!major_address_has_word_room(zero_addr))
         caml_fatal_error("verified gen GC: invalid major base address");
     if (!major_free_head_in_range(zero_addr, heap_size_u64, fp))
         caml_fatal_error("verified gen GC: invalid major free-list head");
@@ -357,7 +357,7 @@ static uint64_t format_major_chunk(uint8_t *base, size_t words, uint64_t next_fp
     uint64_t wosize = major_chunk_words_to_wosize(total_words_u64);
     uint64_t fp_out;
 
-    if (base_addr > UINT64_MAX - sizeof(value))
+    if (!major_address_has_word_room(base_addr))
         caml_fatal_error("verified gen GC: invalid major chunk base address");
     fp_out = major_chunk_initial_fp(base_addr);
     return init_major_chunk_raw(gc_gen_heap.major, base_addr, fp_out, wosize, next_fp);

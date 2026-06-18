@@ -1967,6 +1967,11 @@ bool major_heap_end_below_verified_limit(uint64_t heap_end)
   return heap_end < 144115188075855872ULL;
 }
 
+bool major_address_has_word_room(uint64_t addr)
+{
+  return addr < 18446744073709551608ULL;
+}
+
 bool major_free_head_in_range(uint64_t zero, uint64_t heap_end, uint64_t fp)
 {
   return fp >= zero + 8ULL && fp < heap_end;
