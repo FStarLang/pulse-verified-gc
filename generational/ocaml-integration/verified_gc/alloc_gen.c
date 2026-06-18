@@ -73,7 +73,6 @@ static int          heap_initialized = 0;
 #define DEFAULT_MAJOR_WORDS ((size_t)32 * 1024 * 1024)
 #define DEFAULT_MINOR_WORDS ((size_t)256 * 1024)
 #define DEFAULT_MAJOR_RESERVE_CHUNKS ((size_t)4)
-#define MAJOR_HEAP_END_LIMIT (1ULL << 57)
 typedef struct {
     uint8_t *base;
     size_t bytes;
@@ -397,7 +396,7 @@ static void expand_major_heap_words(uint64_t requested_words, const char *reason
     base = major_arena_base + major_arena_active_bytes;
     start = (uintptr_t)base;
     end = start + bytes;
-    if (end < start || (uint64_t)end >= MAJOR_HEAP_END_LIMIT)
+    if (end < start || !major_heap_end_below_verified_limit((uint64_t)end))
         caml_fatal_error("verified gen GC: major heap expansion address overflow");
 
     old_fp = *gc_gen_heap.fp_ref;
@@ -508,7 +507,7 @@ static void ensure_heap(void) {
     uintptr_t initial_end = major_start + major_bytes;
     uintptr_t reserve_end = major_start + reserve_bytes;
     if (initial_end < major_start || reserve_end < major_start ||
-        (uint64_t)reserve_end >= MAJOR_HEAP_END_LIMIT)
+        !major_heap_end_below_verified_limit((uint64_t)reserve_end))
         caml_fatal_error("verified gen GC: major heap arena address overflow");
 
     major_arena_base = major_base;

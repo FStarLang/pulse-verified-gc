@@ -170,6 +170,13 @@ fn major_word_aligned
   returns aligned: bool
   ensures emp ** pure (aligned <==> (U64.v value % U64.v mword == 0))
 
+/// Check the verified virtual major-heap end bound (`heap_size < 2^57`).
+fn major_heap_end_below_verified_limit
+  (heap_end: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> U64.v heap_end < pow2 57)
+
 /// Check whether a nonzero free-list pointer lies in the current major range.
 fn major_free_head_in_range
   (zero: U64.t{U64.v zero + U64.v mword < pow2 64})

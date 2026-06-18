@@ -1942,6 +1942,11 @@ bool major_word_aligned(uint64_t value)
   return value % 8ULL == 0ULL;
 }
 
+bool major_heap_end_below_verified_limit(uint64_t heap_end)
+{
+  return heap_end < 144115188075855872ULL;
+}
+
 bool major_free_head_in_range(uint64_t zero, uint64_t heap_end, uint64_t fp)
 {
   return fp >= zero + 8ULL && fp < heap_end;

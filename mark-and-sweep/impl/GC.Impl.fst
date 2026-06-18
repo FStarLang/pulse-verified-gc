@@ -218,6 +218,16 @@ fn major_word_aligned
   U64.eq (U64.rem value mword) 0UL
 }
 
+fn major_heap_end_below_verified_limit
+  (heap_end: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> U64.v heap_end < pow2 57)
+{
+  assert_norm (pow2 57 == 144115188075855872);
+  U64.lt heap_end 144115188075855872UL
+}
+
 fn major_free_head_in_range
   (zero: U64.t{U64.v zero + U64.v mword < pow2 64})
   (heap_end fp: U64.t)

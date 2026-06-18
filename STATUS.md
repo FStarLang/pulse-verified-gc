@@ -502,6 +502,8 @@ Follow-up checkpoint: the OCaml bridge now performs grow-only major-heap expansi
 
 Follow-up checkpoint: expansion smoke coverage now also exercises the direct major-allocation retry path. `generational/ocaml-integration/tests/major_expand.ml` allocates a large major object under a deliberately too-small initial major chunk, and `expansion-smoke` verifies the active heap grows beyond 32768 words after full-GC retry and expansion. A focused stats run reported `heap_words=98304` for this direct-major case, and the full OCaml integration test target passed.
 
+Follow-up checkpoint: one more runtime-boundary arithmetic check is now routed through a ghost-free verified helper. `major_heap_end_below_verified_limit` exposes the spec's `< 2^57` major-heap end bound through the public `GC.Impl` ABI, the generational extraction snapshot exports it, and `alloc_gen.c` uses it for both initial arena reservation and appended expansion chunks instead of duplicating the bound in C.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
