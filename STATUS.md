@@ -516,6 +516,8 @@ Follow-up checkpoint: remaining minor-side word/byte arithmetic in the OCaml bri
 
 Follow-up checkpoint: registered major-byte accounting now uses `major_bytes_can_add`. The runtime chunk-registration path checks the `major_bytes_total + bytes` fit condition through the extracted helper before updating the counter.
 
+Follow-up checkpoint: runtime word-to-byte overflow checks now route through `major_chunk_words_fit_bytes`, a ghost-free verified helper that exposes the concrete `words * sizeof(value)` fit bound used before `major_chunk_words_to_bytes`. The OCaml bridge uses it for major/minor chunk sizing, minor-promotion demand object byte sizing, and slow minor allocation sizing instead of open-coding `UINT64_MAX / sizeof(value)` or `SIZE_MAX / sizeof(value)`. Focused `GC.Impl` verification, generational snapshot regeneration, and full OCaml integration tests passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

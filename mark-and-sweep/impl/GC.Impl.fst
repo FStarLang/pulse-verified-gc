@@ -165,6 +165,15 @@ fn major_chunk_words_in_header_range
   U64.gte chunk_words 2UL && U64.lte chunk_words 18014398509481984UL
 }
 
+fn major_chunk_words_fit_bytes
+  (chunk_words: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> U64.v chunk_words <= 2305843009213693951)
+{
+  U64.lte chunk_words 2305843009213693951UL
+}
+
 fn major_chunk_words_to_bytes
   (chunk_words: U64.t{U64.v chunk_words <= 2305843009213693951})
   requires emp

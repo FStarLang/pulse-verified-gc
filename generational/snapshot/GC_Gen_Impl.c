@@ -1910,6 +1910,11 @@ bool major_chunk_words_in_header_range(uint64_t chunk_words)
   return chunk_words >= 2ULL && chunk_words <= 18014398509481984ULL;
 }
 
+bool major_chunk_words_fit_bytes(uint64_t chunk_words)
+{
+  return chunk_words <= 2305843009213693951ULL;
+}
+
 uint64_t major_chunk_words_to_bytes(uint64_t chunk_words)
 {
   return chunk_words * 8ULL;

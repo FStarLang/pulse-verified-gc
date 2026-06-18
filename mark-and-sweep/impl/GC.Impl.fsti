@@ -132,6 +132,13 @@ fn major_chunk_words_in_header_range
   returns ok: bool
   ensures emp ** pure (ok <==> (U64.v chunk_words >= 2 /\ U64.v chunk_words <= pow2 54))
 
+/// Check whether multiplying a word count by the machine word size fits in U64.
+fn major_chunk_words_fit_bytes
+  (chunk_words: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (ok <==> U64.v chunk_words <= 2305843009213693951)
+
 /// Convert a major chunk word count to bytes after the runtime overflow check.
 fn major_chunk_words_to_bytes
   (chunk_words: U64.t{U64.v chunk_words <= 2305843009213693951})
