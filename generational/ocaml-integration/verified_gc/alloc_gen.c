@@ -262,7 +262,7 @@ static uint64_t minor_promotion_demand_words(void) {
     uint64_t bump = *gc_gen_heap.minor.bump_ref;
     uint64_t demand = 0;
 
-    if (bump > minor_heap_size_u64 || bump % sizeof(value) != 0)
+    if (bump > minor_heap_size_u64 || !major_word_aligned(bump))
         caml_fatal_error("verified gen GC: invalid minor allocation frontier");
 
     while (off < bump) {
@@ -276,7 +276,7 @@ static uint64_t minor_promotion_demand_words(void) {
         object_words = object_words_for_wosize(wosize);
         if (object_words > UINT64_MAX / sizeof(value))
             caml_fatal_error("verified gen GC: minor object byte overflow");
-        object_bytes = object_words * sizeof(value);
+        object_bytes = major_chunk_words_to_bytes(object_words);
         if (object_bytes == 0 || object_bytes > bump - off)
             caml_fatal_error("verified gen GC: malformed minor object layout");
         if (demand > UINT64_MAX - object_words)
@@ -451,7 +451,7 @@ uint64_t  vergc_minor_size;
 
 uintnat vergc_minor_words_current(void) {
     if (!heap_initialized || gc_gen_heap.minor.bump_ref == NULL) return 0;
-    return (uintnat)(*gc_gen_heap.minor.bump_ref / sizeof(value));
+    return (uintnat)major_bytes_to_words(*gc_gen_heap.minor.bump_ref);
 }
 
 uintnat vergc_major_words_current(void) {
@@ -540,9 +540,11 @@ static void ensure_heap(void) {
     max_young_wosize_u64 = 256ULL;  /* match OCaml's Max_young_wosize */
     size_t minor_words =
         configured_words_or_default("MINOR_HEAP_WORDS", DEFAULT_MINOR_WORDS);
-    if (minor_words < (size_t)max_young_wosize_u64 + 1)
-        minor_words = (size_t)max_young_wosize_u64 + 1;
-    size_t minor_sz = minor_words * 8;
+    uint64_t min_minor_words = object_words_for_wosize(max_young_wosize_u64);
+    if (minor_words < (size_t)min_minor_words)
+        minor_words = (size_t)min_minor_words;
+    size_t minor_sz = words_to_bytes_or_fatal(
+        minor_words, "verified gen GC: minor heap word size overflow");
     minor_heap_size_u64 = (uint64_t)minor_sz;
 
     /* Re-derive constants that depend on minor_heap_size */
@@ -839,7 +841,7 @@ static void do_minor_gc(void) {
     uint64_t fp_before = *gc_gen_heap.fp_ref;
     uint64_t bump_before = *gc_gen_heap.minor.bump_ref;
     Caml_state->_stat_minor_collections++;
-    Caml_state->_stat_minor_words += (double)(bump_before / sizeof(value));
+    Caml_state->_stat_minor_words += (double)major_bytes_to_words(bump_before);
 
     do_minor_gc_core();
 
@@ -866,7 +868,7 @@ static void do_full_gc(void) {
         PROF_INC(minor_gc_count);
         Caml_state->_stat_minor_collections++;
         Caml_state->_stat_minor_words +=
-            (double)(*gc_gen_heap.minor.bump_ref / sizeof(value));
+            (double)major_bytes_to_words(*gc_gen_heap.minor.bump_ref);
     }
 
     /* Build the minor-collection root set: OCaml roots plus remembered slots. */

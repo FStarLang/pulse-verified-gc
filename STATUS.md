@@ -512,6 +512,8 @@ Follow-up checkpoint: expansion reserve-capacity arithmetic now routes through `
 
 Follow-up checkpoint: runtime address-room checks for adding one machine word now route through `major_address_has_word_room`. This aligns the C bridge checks before `major_free_head_in_range` and `major_chunk_initial_fp` with the extracted helpers' `addr + mword < 2^64` precondition instead of open-coding `UINT64_MAX - sizeof(value)`.
 
+Follow-up checkpoint: remaining minor-side word/byte arithmetic in the OCaml bridge now reuses existing extracted helpers where possible. Minor promotion demand uses `major_word_aligned`, `object_words_for_wosize`, and `major_chunk_words_to_bytes`; minor heap initialization uses `object_words_for_wosize` and the shared `words_to_bytes_or_fatal` path; and minor word stats use `major_bytes_to_words`.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
