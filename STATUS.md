@@ -522,6 +522,8 @@ Follow-up checkpoint: runtime word-to-byte overflow checks now route through `ma
 
 Follow-up checkpoint: the post-minor plus following-major-GC pre-promote graph-readiness surface now has a budget-ready entry point. `GC.Gen.CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_preflight_chunk_base_pre_promote_raw_field_target_policy_from_budget_ready` accepts the already-dischargeable `chunked_cheney_promote_budget_ready ... 1` premise, derives the older abstract split-readiness internally through `GC.Gen.CheneyPreservation.chunked_cheney_promote_budget_ready_implies_split_ready`, and then reuses the existing chunk-base/raw-field-target wrapper. `GC.SPOT.HeapExpansion` audits the reduced public surface; focused readiness verification, refreshed split-query profiling (~2.1s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
 
+Follow-up checkpoint: the lower pre-promote graph-readiness surfaces now have the same budget-ready route. `GC.Gen.CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_static_raw_target_policy_from_budget_ready` and `_pre_promote_raw_field_target_policy_from_budget_ready` let clients provide the budget-readiness predicate at the nonblue-static and raw-field-target abstraction levels, deriving split-readiness internally before reusing the older compatibility wrappers. `GC.SPOT.HeapExpansion` audits both public wrappers; focused readiness/SPOT verification, refreshed split-query profiling (~2.1s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
