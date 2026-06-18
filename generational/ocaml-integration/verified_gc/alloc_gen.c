@@ -191,9 +191,15 @@ static int ranges_overlap(uintptr_t start, uintptr_t end,
                                 (uint64_t)other_start, (uint64_t)other_end);
 }
 
+static uintptr_t range_end_or_fatal(uintptr_t start, size_t bytes, const char *what) {
+    if (!major_bytes_can_add((uint64_t)start, (uint64_t)bytes))
+        caml_fatal_error("%s", what);
+    return start + bytes;
+}
+
 static void check_major_chunk_facts(uint8_t *base, size_t bytes) {
     uintptr_t start = (uintptr_t)base;
-    uintptr_t end = start + bytes;
+    uintptr_t end;
     size_t i;
 
     if (base == NULL)
@@ -202,34 +208,41 @@ static void check_major_chunk_facts(uint8_t *base, size_t bytes) {
         caml_fatal_error("verified gen GC: invalid major chunk size");
     if (!major_word_aligned((uint64_t)start))
         caml_fatal_error("verified gen GC: unaligned major chunk base");
-    if (end < start)
-        caml_fatal_error("verified gen GC: major chunk address overflow");
+    end = range_end_or_fatal(
+        start, bytes, "verified gen GC: major chunk address overflow");
 
     if (minor_base != NULL && minor_heap_size_u64 != 0) {
         uintptr_t minor_start = (uintptr_t)minor_base;
-        uintptr_t minor_size = (uintptr_t)minor_heap_size_u64;
-        uintptr_t minor_end = minor_start + minor_size;
-        if ((uint64_t)minor_size != minor_heap_size_u64 || minor_end < minor_start)
+        size_t minor_size = (size_t)minor_heap_size_u64;
+        uintptr_t minor_end;
+        if ((uint64_t)minor_size != minor_heap_size_u64)
             caml_fatal_error("verified gen GC: minor heap address overflow");
+        minor_end = range_end_or_fatal(
+            minor_start, minor_size, "verified gen GC: minor heap address overflow");
         if (ranges_overlap(start, end, minor_start, minor_end))
             caml_fatal_error("verified gen GC: major chunk overlaps minor heap");
     }
 
     for (i = 0; i < major_chunk_count; i++) {
         uintptr_t old_start = (uintptr_t)major_chunks[i].base;
-        uintptr_t old_end = old_start + major_chunks[i].bytes;
+        uintptr_t old_end = range_end_or_fatal(
+            old_start, major_chunks[i].bytes,
+            "verified gen GC: registered major chunk address overflow");
         if (ranges_overlap(start, end, old_start, old_end))
             caml_fatal_error("verified gen GC: overlapping major chunks");
     }
 }
 
 static void register_major_chunk(uint8_t *base, size_t bytes) {
+    uint8_t *end;
     check_major_chunk_facts(base, bytes);
     if (major_chunk_count >= MAX_MAJOR_CHUNKS)
         caml_fatal_error("verified gen GC: too many major chunks");
     if (!major_bytes_can_add(major_bytes_total, (uint64_t)bytes))
         caml_fatal_error("verified gen GC: major heap size overflow");
-    if (caml_page_table_add(In_heap, base, base + bytes) != 0)
+    end = (uint8_t *)(uintptr_t)range_end_or_fatal(
+        (uintptr_t)base, bytes, "verified gen GC: major chunk address overflow");
+    if (caml_page_table_add(In_heap, base, end) != 0)
         caml_fatal_error("verified gen GC: page table registration failed");
     major_chunks[major_chunk_count].base = base;
     major_chunks[major_chunk_count].bytes = bytes;

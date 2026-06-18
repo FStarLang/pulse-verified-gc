@@ -542,6 +542,8 @@ Runtime bridge cleanup checkpoint: minor-pointer classification now uses the ext
 
 Runtime bridge cleanup checkpoint: absolute-to-minor-offset translation now uses the extracted `major_address_offset` helper after the minor-range check, replacing open-coded C subtraction in `abs_to_minor_offset` and remembered-root scanning. Focused `GC.Impl` verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, OCaml integration tests, full SPOT verification, broad `make generational`, and hygiene checks passed.
 
+Runtime bridge cleanup checkpoint: major-chunk range-end arithmetic now goes through a shared `range_end_or_fatal` guard backed by the extracted `major_bytes_can_add` helper before computing chunk, minor-overlap, registered-chunk, and page-table end addresses. This removes the remaining `end = start + bytes; if (end < start)` pattern from chunk registration. Full OCaml integration tests and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
