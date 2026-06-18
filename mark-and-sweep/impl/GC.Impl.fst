@@ -199,6 +199,21 @@ fn major_preflight_planned_chunk_words
   }
 }
 
+fn major_allocation_demand_wosize
+  (requested_wosize: U64.t)
+  requires emp
+  returns wz: U64.t
+  ensures emp ** pure (
+    U64.v wz > 0 /\
+    U64.v wz == SpecAlloc.normalized_wosize (U64.v requested_wosize))
+{
+  if U64.eq requested_wosize 0UL {
+    1UL
+  } else {
+    requested_wosize
+  }
+}
+
 fn major_ranges_overlap
   (start range_end other_start other_end: U64.t)
   requires emp

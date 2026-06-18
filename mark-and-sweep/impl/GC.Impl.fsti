@@ -155,6 +155,15 @@ fn major_preflight_planned_chunk_words
     (U64.v configured_words >= U64.v required_chunk_words ==> words == configured_words) /\
     (U64.v configured_words < U64.v required_chunk_words ==> words == required_chunk_words))
 
+/// Normalize a direct major-allocation request to the allocator demand wosize.
+fn major_allocation_demand_wosize
+  (requested_wosize: U64.t)
+  requires emp
+  returns wz: U64.t
+  ensures emp ** pure (
+    U64.v wz > 0 /\
+    U64.v wz == SpecAlloc.normalized_wosize (U64.v requested_wosize))
+
 /// Check whether two half-open runtime address ranges overlap.
 fn major_ranges_overlap
   (start range_end other_start other_end: U64.t)

@@ -1926,6 +1926,11 @@ major_preflight_planned_chunk_words(uint64_t configured_words, uint64_t required
   return configured_words >= required_chunk_words ? configured_words : required_chunk_words;
 }
 
+uint64_t major_allocation_demand_wosize(uint64_t requested_wosize)
+{
+  return requested_wosize == 0ULL ? 1ULL : requested_wosize;
+}
+
 bool
 major_ranges_overlap(
   uint64_t start,

@@ -203,6 +203,8 @@ uint64_t major_chunk_initial_fp(uint64_t base);
 uint64_t
 major_preflight_planned_chunk_words(uint64_t configured_words, uint64_t required_chunk_words);
 
+uint64_t major_allocation_demand_wosize(uint64_t requested_wosize);
+
 bool
 major_ranges_overlap(
   uint64_t start,

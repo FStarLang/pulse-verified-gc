@@ -504,6 +504,8 @@ Follow-up checkpoint: expansion smoke coverage now also exercises the direct maj
 
 Follow-up checkpoint: one more runtime-boundary arithmetic check is now routed through a ghost-free verified helper. `major_heap_end_below_verified_limit` exposes the spec's `< 2^57` major-heap end bound through the public `GC.Impl` ABI, the generational extraction snapshot exports it, and `alloc_gen.c` uses it for both initial arena reservation and appended expansion chunks instead of duplicating the bound in C.
 
+Follow-up checkpoint: direct major-allocation expansion now uses the verified allocator's request-normalization shape at the C boundary. `major_allocation_demand_wosize` exposes `SpecAlloc.normalized_wosize` as a ghost-free public helper, and `alloc_gen.c` uses it before computing the retry expansion chunk size for a direct major allocation.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

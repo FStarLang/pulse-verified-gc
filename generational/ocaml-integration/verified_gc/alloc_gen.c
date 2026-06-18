@@ -428,7 +428,8 @@ static void ensure_major_head_for_minor_promotion(void) {
 }
 
 static void expand_major_heap_for_allocation(uint64_t requested_wosize) {
-    uint64_t normalized_wosize = requested_wosize == 0 ? 1 : requested_wosize;
+    uint64_t normalized_wosize =
+        major_allocation_demand_wosize(requested_wosize);
     uint64_t required_words;
     uint64_t planned_words;
 
