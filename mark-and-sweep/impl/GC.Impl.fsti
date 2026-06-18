@@ -211,6 +211,17 @@ fn major_ranges_overlap
   ensures emp ** pure (
     overlap <==> (U64.v start < U64.v other_end /\ U64.v other_start < U64.v range_end))
 
+/// Check whether an address lies in a half-open range after guarding end overflow.
+fn major_address_in_range
+  (start size addr: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==>
+      (U64.v size <= (pow2 64 - 1) - U64.v start /\
+       U64.v addr >= U64.v start /\
+       U64.v addr < U64.v start + U64.v size))
+
 /// Check whether a runtime byte address or size is word-aligned.
 fn major_word_aligned
   (value: U64.t)

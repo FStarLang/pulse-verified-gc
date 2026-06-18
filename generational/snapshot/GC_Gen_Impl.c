@@ -1972,6 +1972,17 @@ major_ranges_overlap(
   return start < other_end && other_start < range_end;
 }
 
+bool major_address_in_range(uint64_t start, uint64_t size, uint64_t addr)
+{
+  if (size <= 18446744073709551615ULL - start)
+  {
+    uint64_t range_end = start + size;
+    return addr >= start && addr < range_end;
+  }
+  else
+    return false;
+}
+
 bool major_word_aligned(uint64_t value)
 {
   return value % 8ULL == 0ULL;

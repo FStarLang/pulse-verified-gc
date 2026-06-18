@@ -279,6 +279,25 @@ fn major_ranges_overlap
   U64.lt start other_end && U64.lt other_start range_end
 }
 
+fn major_address_in_range
+  (start size addr: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==>
+      (U64.v size <= (pow2 64 - 1) - U64.v start /\
+       U64.v addr >= U64.v start /\
+       U64.v addr < U64.v start + U64.v size))
+{
+  assert_norm (pow2 64 - 1 == 18446744073709551615);
+  if U64.lte size (U64.sub 18446744073709551615UL start) {
+    let range_end = U64.add start size;
+    U64.gte addr start && U64.lt addr range_end
+  } else {
+    false
+  }
+}
+
 fn major_word_aligned
   (value: U64.t)
   requires emp

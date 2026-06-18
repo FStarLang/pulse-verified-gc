@@ -610,8 +610,10 @@ static void ensure_heap(void) {
 /* --- Address translation helpers --- */
 
 static inline int is_minor_absolute(value v) {
-    return (uint64_t)(uintptr_t)v >= (uint64_t)(uintptr_t)minor_base &&
-           (uint64_t)(uintptr_t)v < (uint64_t)(uintptr_t)minor_base + minor_heap_size_u64;
+    return major_address_in_range(
+        (uint64_t)(uintptr_t)minor_base,
+        minor_heap_size_u64,
+        (uint64_t)(uintptr_t)v);
 }
 
 static inline uint64_t abs_to_minor_offset(value v) {

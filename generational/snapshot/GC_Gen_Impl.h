@@ -228,6 +228,8 @@ major_ranges_overlap(
   uint64_t other_end
 );
 
+bool major_address_in_range(uint64_t start, uint64_t size, uint64_t addr);
+
 bool major_word_aligned(uint64_t value);
 
 bool major_heap_end_below_verified_limit(uint64_t heap_end);

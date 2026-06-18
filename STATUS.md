@@ -538,6 +538,8 @@ Runtime bridge cleanup checkpoint: slow minor allocation capacity checks now use
 
 Runtime bridge cleanup checkpoint: the minor-promotion demand scanner now also uses `major_arena_has_available_bytes(off, bump, object_bytes)` when validating that the next minor object fits inside the allocated minor prefix. This removes the last open-coded `bump - off` subtraction in the scan loop while preserving the malformed-layout checks. Full OCaml integration tests and hygiene checks passed.
 
+Runtime bridge cleanup checkpoint: minor-pointer classification now uses the extracted `major_address_in_range` helper for the half-open minor range test in `is_minor_absolute`, replacing the open-coded `base <= addr < base + size` check and its implicit addition. Focused `GC.Impl` verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, OCaml integration tests, full SPOT verification, broad `make generational`, and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
