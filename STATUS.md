@@ -524,6 +524,8 @@ Follow-up checkpoint: the post-minor plus following-major-GC pre-promote graph-r
 
 Follow-up checkpoint: the lower pre-promote graph-readiness surfaces now have the same budget-ready route. `GC.Gen.CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_pre_promote_nonblue_static_raw_target_policy_from_budget_ready` and `_pre_promote_raw_field_target_policy_from_budget_ready` let clients provide the budget-readiness predicate at the nonblue-static and raw-field-target abstraction levels, deriving split-readiness internally before reusing the older compatibility wrappers. `GC.SPOT.HeapExpansion` audits both public wrappers; focused readiness/SPOT verification, refreshed split-query profiling (~2.1s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
 
+Follow-up checkpoint: `GC.Gen.ChunkedCheneyInjectivity` now has budget-ready variants for the promotion-wide policy preservation theorems used by the graph-readiness bridge. `chunked_cheney_promote_major_minor_fields_no_infix_targets_from_budget_ready` and `chunked_cheney_promote_nonblue_scanned_raw_targets_in_major_from_budget_ready` derive split-readiness internally from `chunked_cheney_promote_budget_ready`, preserving the old split-ready APIs while giving downstream clients a smaller surface. SPOT audits both wrappers; focused injectivity/SPOT verification, refreshed split-query profiling (~1.8s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

@@ -3217,6 +3217,36 @@ let chunked_cheney_promote_major_minor_fields_no_infix_targets
     minor res.major_final
 #pop-options
 
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+let chunked_cheney_promote_major_minor_fields_no_infix_targets_from_budget_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        GenInv.minor_fields_no_infix_targets minor /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         GenInv.chunked_major_minor_fields_no_infix_targets
+           minor res.major_final))
+  =
+  CP.chunked_cheney_promote_budget_ready_implies_split_ready
+    minor major fp roots alloc_fuel remaining;
+  chunked_cheney_promote_major_minor_fields_no_infix_targets
+    minor major fp roots alloc_fuel remaining
+#pop-options
+
 #push-options "--split_queries always --z3rlimit 1 --fuel 0 --ifuel 0"
 [@"opaque_to_smt"]
 let chunked_minor_major_fields_nonblue_non_infix_targets
@@ -4362,6 +4392,38 @@ let chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
   Classical.forall_intro_2 one_imp;
   chunked_nonblue_scanned_raw_targets_in_major_intro
     res.major_final
+#pop-options
+
+#push-options "--split_queries always --z3rlimit 5 --fuel 0 --ifuel 0"
+let chunked_cheney_promote_nonblue_scanned_raw_targets_in_major_from_budget_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        GenInv.chunked_no_pointer_to_blue major /\
+        chunked_nonblue_scanned_raw_targets_in_major major /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects major) ==> is_pointer_field target) /\
+        chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         chunked_nonblue_scanned_raw_targets_in_major res.major_final))
+  =
+  CP.chunked_cheney_promote_budget_ready_implies_split_ready
+    minor major fp roots alloc_fuel remaining;
+  chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
+    minor major fp roots alloc_fuel remaining
 #pop-options
 
 #push-options "--z3rlimit 5 --fuel 0 --ifuel 0 --split_queries always"

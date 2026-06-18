@@ -427,6 +427,29 @@ val chunked_cheney_promote_major_minor_fields_no_infix_targets
          GenInv.chunked_major_minor_fields_no_infix_targets
            minor res.major_final))
 
+val chunked_cheney_promote_major_minor_fields_no_infix_targets_from_budget_ready
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        GenInv.minor_fields_no_infix_targets minor /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        GC.Spec.MajorAllocator.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPres.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         GenInv.chunked_major_minor_fields_no_infix_targets
+           minor res.major_final))
+
 /// Minor fields that already point into the chunked major heap must target
 /// active non-blue, non-infix major objects.  This is the copied-field analogue
 /// of `chunked_major_field_targets_non_infix`.
@@ -575,6 +598,32 @@ val chunked_cheney_promote_nonblue_scanned_raw_targets_in_major
         GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
         CheneyPres.chunked_cheney_promote_split_ready
           minor major fp roots alloc_fuel /\
+        CheneyPres.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         chunked_nonblue_scanned_raw_targets_in_major res.major_final))
+
+val chunked_cheney_promote_nonblue_scanned_raw_targets_in_major_from_budget_ready
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        GenInv.chunked_no_pointer_to_blue major /\
+        chunked_nonblue_scanned_raw_targets_in_major major /\
+        (forall (target: obj_addr).
+          Seq.mem target (MH.major_objects major) ==>
+          Fields.is_pointer_field target) /\
+        chunked_minor_major_fields_nonblue_non_infix_targets minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        GC.Spec.MajorAllocator.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
         CheneyPres.chunked_cheney_promote_budget_ready
           minor major fp roots alloc_fuel remaining)
       (ensures
