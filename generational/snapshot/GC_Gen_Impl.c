@@ -1930,6 +1930,11 @@ major_arena_has_available_bytes(
   return active_bytes <= reserved_bytes && requested_bytes <= reserved_bytes - active_bytes;
 }
 
+bool major_bytes_can_add(uint64_t total_bytes, uint64_t increment_bytes)
+{
+  return increment_bytes <= 18446744073709551615ULL - total_bytes;
+}
+
 uint64_t major_chunk_initial_fp(uint64_t base)
 {
   return base + 8ULL;

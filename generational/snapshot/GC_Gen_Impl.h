@@ -207,6 +207,8 @@ major_arena_has_available_bytes(
   uint64_t requested_bytes
 );
 
+bool major_bytes_can_add(uint64_t total_bytes, uint64_t increment_bytes);
+
 uint64_t major_chunk_initial_fp(uint64_t base);
 
 uint64_t

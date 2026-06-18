@@ -514,6 +514,8 @@ Follow-up checkpoint: runtime address-room checks for adding one machine word no
 
 Follow-up checkpoint: remaining minor-side word/byte arithmetic in the OCaml bridge now reuses existing extracted helpers where possible. Minor promotion demand uses `major_word_aligned`, `object_words_for_wosize`, and `major_chunk_words_to_bytes`; minor heap initialization uses `object_words_for_wosize` and the shared `words_to_bytes_or_fatal` path; and minor word stats use `major_bytes_to_words`.
 
+Follow-up checkpoint: registered major-byte accounting now uses `major_bytes_can_add`. The runtime chunk-registration path checks the `major_bytes_total + bytes` fit condition through the extracted helper before updating the counter.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

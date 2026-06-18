@@ -227,7 +227,7 @@ static void register_major_chunk(uint8_t *base, size_t bytes) {
     check_major_chunk_facts(base, bytes);
     if (major_chunk_count >= MAX_MAJOR_CHUNKS)
         caml_fatal_error("verified gen GC: too many major chunks");
-    if (bytes > UINT64_MAX - major_bytes_total)
+    if (!major_bytes_can_add(major_bytes_total, (uint64_t)bytes))
         caml_fatal_error("verified gen GC: major heap size overflow");
     if (caml_page_table_add(In_heap, base, base + bytes) != 0)
         caml_fatal_error("verified gen GC: page table registration failed");

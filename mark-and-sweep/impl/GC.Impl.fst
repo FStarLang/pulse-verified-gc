@@ -199,6 +199,17 @@ fn major_arena_has_available_bytes
   }
 }
 
+fn major_bytes_can_add
+  (total_bytes increment_bytes: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==> U64.v increment_bytes <= (pow2 64 - 1) - U64.v total_bytes)
+{
+  assert_norm (pow2 64 - 1 == 18446744073709551615);
+  U64.lte increment_bytes (U64.sub 18446744073709551615UL total_bytes)
+}
+
 fn major_chunk_initial_fp
   (base: U64.t{U64.v base + U64.v mword < pow2 64})
   requires emp
