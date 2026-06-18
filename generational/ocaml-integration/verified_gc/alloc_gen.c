@@ -271,7 +271,7 @@ static uint64_t minor_promotion_demand_words(void) {
         uint64_t object_words;
         uint64_t object_bytes;
 
-        if (wosize > UINT64_MAX - 1)
+        if (!major_words_can_add(wosize, 1ULL))
             caml_fatal_error("verified gen GC: minor object size overflow");
         object_words = object_words_for_wosize(wosize);
         if (!major_chunk_words_fit_bytes(object_words))
@@ -309,13 +309,13 @@ static uint64_t major_free_head_wosize(void) {
 }
 
 static uint64_t required_head_wosize_for_promotion(uint64_t demand_words) {
-    if (demand_words > UINT64_MAX - 1)
+    if (!major_words_can_add(demand_words, 1ULL))
         caml_fatal_error("verified gen GC: promotion demand too large");
     return major_preflight_required_head_wosize(demand_words);
 }
 
 static uint64_t required_chunk_words_for_head(uint64_t head_wosize) {
-    if (head_wosize > UINT64_MAX - 1)
+    if (!major_words_can_add(head_wosize, 1ULL))
         caml_fatal_error("verified gen GC: promotion head demand too large");
     return major_preflight_required_chunk_words(head_wosize);
 }
@@ -435,7 +435,7 @@ static void expand_major_heap_for_allocation(uint64_t requested_wosize) {
     uint64_t required_words;
     uint64_t planned_words;
 
-    if (normalized_wosize > UINT64_MAX - 1)
+    if (!major_words_can_add(normalized_wosize, 1ULL))
         caml_fatal_error("verified gen GC: major allocation request too large");
     required_words = major_preflight_required_chunk_words(normalized_wosize);
     planned_words = planned_expansion_chunk_words(required_words);

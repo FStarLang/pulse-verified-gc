@@ -532,6 +532,8 @@ Follow-up checkpoint: the old non-blue field helper surfaces in `GC.Gen.ChunkedC
 
 Runtime ABI checkpoint: promotion-demand accumulation now routes its unsigned word-addition overflow check through `major_words_can_add`, a ghost-free verified helper exported at the stable `GC.Impl` C boundary. `alloc_gen.c` uses it when summing header-inclusive minor object word demand, matching the existing verified byte-counter overflow helper. Focused `GC.Impl` verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, OCaml integration tests, full SPOT verification, broad `make generational`, and hygiene checks passed.
 
+Runtime bridge cleanup checkpoint: the remaining runtime guards for adding one header word now reuse `major_words_can_add(..., 1ULL)` before calling extracted helpers whose verified preconditions require `x + 1 < 2^64`. This covers minor object demand sizing, promotion head-capacity arithmetic, fresh-chunk word requirements, and direct major-allocation retry sizing. Full OCaml integration tests and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
