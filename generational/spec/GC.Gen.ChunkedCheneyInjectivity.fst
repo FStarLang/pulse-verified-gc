@@ -2024,6 +2024,45 @@ let chunked_cheney_promote_fwd_target_minor_major_field_raw_target
   assert (MarkDefs.chunked_pointer_field_as_obj_addr res.major_final raw ==
           ((raw) <: obj_addr))
 
+let chunked_cheney_promote_fwd_target_minor_major_field_raw_target_from_budget_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  (x: U64.t) (j: nat) (field_addr: hp_addr) (raw: U64.t)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        GenInv.chunked_minor_major_fields_no_blue minor major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         res.fwd_map x <> 0UL /\
+         Seq.mem x (minor_objects minor) /\
+         ~(is_infix_in_minor minor x) /\
+         j < minor_wosize minor x /\
+         U64.v field_addr == U64.v (res.fwd_map x) + j * U64.v mword /\
+         MH.read_word_in_major res.major_final field_addr == Some raw /\
+         is_pointer_field raw /\
+         MarkDefs.chunked_is_pointer_field res.major_final raw))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         Seq.mem (MarkDefs.chunked_pointer_field_as_obj_addr
+                    res.major_final raw)
+           (MH.major_objects res.major_final)))
+  =
+  CP.chunked_cheney_promote_budget_ready_implies_split_ready
+    minor major fp roots alloc_fuel remaining;
+  chunked_cheney_promote_fwd_target_minor_major_field_raw_target
+    minor major fp roots alloc_fuel remaining x j field_addr raw
+
 let chunked_cheney_promote_old_nonblue_field_raw_target
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat)
@@ -2993,6 +3032,29 @@ let chunked_cheney_promote_field_source_cases_from_nonblue_origin
   in
   Classical.forall_intro_4 aux_imp
 #pop-options
+
+let chunked_cheney_promote_field_source_cases_from_nonblue_origin_from_budget_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        minor_wf minor /\
+        minor_infix_wf minor /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CP.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        chunked_cheney_promote_field_source_cases
+          minor major fp roots alloc_fuel)
+  =
+  CP.chunked_cheney_promote_budget_ready_implies_split_ready
+    minor major fp roots alloc_fuel remaining;
+  chunked_cheney_promote_field_source_cases_from_nonblue_origin
+    minor major fp roots alloc_fuel remaining
 
 private let old_field_source_case_no_infix
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
