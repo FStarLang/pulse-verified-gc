@@ -18114,6 +18114,38 @@ let spot_chunked_cheney_promote_old_nonblue_field_no_infix
   ChunkedCheneyInjectivity.chunked_cheney_promote_old_nonblue_field_no_infix
     minor major fp roots alloc_fuel src hdr j field_addr old raw
 
+let spot_chunked_cheney_promote_old_nonblue_field_no_infix_from_budget_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+  (old: U64.t) (raw: U64.t)
+  : Lemma
+      (requires
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        GenInv.chunked_major_minor_fields_no_infix_targets minor major /\
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        Obj.getColor hdr <> Header.Blue /\
+        U64.v (Obj.getTag hdr) < U64.v Obj.no_scan_tag /\
+        j < U64.v (Obj.getWosize hdr) /\
+        CG.chunked_major_field_slot src j == Some field_addr /\
+        MH.read_word_in_major major field_addr == Some old /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         MH.read_word_in_major res.major_final field_addr == Some raw /\
+         is_minor_pointer (to_minor_offset raw)))
+      (ensures ~(is_infix_in_minor minor (to_minor_offset raw)))
+  =
+  ChunkedCheneyInjectivity.chunked_cheney_promote_old_nonblue_field_no_infix_from_budget_ready
+    minor major fp roots alloc_fuel remaining src hdr j field_addr old raw
+
 let spot_chunked_cheney_promote_old_field_source_case_intro
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat)
@@ -18551,6 +18583,45 @@ let spot_chunked_cheney_promote_old_nonblue_field_raw_target
   =
   ChunkedCheneyInjectivity.chunked_cheney_promote_old_nonblue_field_raw_target
     minor major fp roots alloc_fuel src hdr j field_addr old raw
+
+let spot_chunked_cheney_promote_old_nonblue_field_raw_target_from_budget_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  (src: obj_addr) (hdr: U64.t) (j: nat) (field_addr: hp_addr)
+  (old: U64.t) (raw: U64.t)
+  : Lemma
+      (requires
+        GenMajorGCBridge.chunked_major_raw_field_targets_in_major major /\
+        alloc_fuel > 1 /\
+        GenInv.chunked_major_alloc_shape major fp alloc_fuel /\
+        SpecMajorAlloc.major_fl_chain_terminates
+          major fp alloc_fuel = true /\
+        GenInv.chunked_chain_objects_blue major fp alloc_fuel /\
+        CheneyPreservation.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining /\
+        Seq.mem src (MH.major_objects major) /\
+        MH.read_word_in_major major (hd_address src) == Some hdr /\
+        Obj.getColor hdr <> Header.Blue /\
+        j < U64.v (Obj.getWosize hdr) /\
+        CG.chunked_major_field_slot src j == Some field_addr /\
+        U64.v field_addr == U64.v src + j * U64.v mword /\
+        MH.read_word_in_major major field_addr == Some old /\
+        ChunkedMarkDefs.chunked_is_pointer_field major old /\
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         MH.read_word_in_major res.major_final field_addr == Some raw /\
+         ChunkedMarkDefs.chunked_is_pointer_field res.major_final raw))
+      (ensures
+        (let res =
+          ChunkedCheney.chunked_cheney_promote
+            minor major fp roots alloc_fuel in
+         Seq.mem (ChunkedMarkDefs.chunked_pointer_field_as_obj_addr
+                    res.major_final raw)
+           (MH.major_objects res.major_final)))
+  =
+  ChunkedCheneyInjectivity.chunked_cheney_promote_old_nonblue_field_raw_target_from_budget_ready
+    minor major fp roots alloc_fuel remaining src hdr j field_addr old raw
 
 let spot_chunked_cheney_promote_field_source_cases_from_nonblue_origin
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)

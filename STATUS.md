@@ -528,6 +528,8 @@ Follow-up checkpoint: `GC.Gen.ChunkedCheneyInjectivity` now has budget-ready var
 
 Follow-up checkpoint: two lower `GC.Gen.ChunkedCheneyInjectivity` helper surfaces now also have budget-ready variants. `chunked_cheney_promote_fwd_target_minor_major_field_raw_target_from_budget_ready` and `chunked_cheney_promote_field_source_cases_from_nonblue_origin_from_budget_ready` cover the forwarded-target raw-field target bridge and field-source case splitter without exposing the older split-readiness premise to clients. SPOT audits both wrappers; focused injectivity/SPOT verification, refreshed split-query profiling (~1.8s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
 
+Follow-up checkpoint: the old non-blue field helper surfaces in `GC.Gen.ChunkedCheneyInjectivity` now have budget-ready variants too. `chunked_cheney_promote_old_nonblue_field_no_infix_from_budget_ready` and `chunked_cheney_promote_old_nonblue_field_raw_target_from_budget_ready` derive split-readiness internally from Cheney budget-readiness before reusing the existing split-ready proofs. SPOT audits both wrappers; focused injectivity/SPOT verification, refreshed split-query profiling (~1.8s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
