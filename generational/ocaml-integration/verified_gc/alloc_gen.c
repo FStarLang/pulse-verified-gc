@@ -955,11 +955,13 @@ void *verified_allocate_minor(mlsize_t wosize, uint8_t tag) {
     if (needed > minor_heap_size_u64)
         caml_fatal_error("verified gen GC: minor heap smaller than Max_young_wosize");
 
-    if (*gc_gen_heap.minor.bump_ref > minor_heap_size_u64 - needed) {
+    if (!major_arena_has_available_bytes(
+            *gc_gen_heap.minor.bump_ref, minor_heap_size_u64, needed)) {
         do_minor_gc();
     }
 
-    if (*gc_gen_heap.minor.bump_ref > minor_heap_size_u64 - needed) {
+    if (!major_arena_has_available_bytes(
+            *gc_gen_heap.minor.bump_ref, minor_heap_size_u64, needed)) {
         caml_fatal_error("verified gen GC: minor allocation failed after collection");
         return NULL;
     }

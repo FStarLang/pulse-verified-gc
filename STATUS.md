@@ -534,6 +534,8 @@ Runtime ABI checkpoint: promotion-demand accumulation now routes its unsigned wo
 
 Runtime bridge cleanup checkpoint: the remaining runtime guards for adding one header word now reuse `major_words_can_add(..., 1ULL)` before calling extracted helpers whose verified preconditions require `x + 1 < 2^64`. This covers minor object demand sizing, promotion head-capacity arithmetic, fresh-chunk word requirements, and direct major-allocation retry sizing. Full OCaml integration tests and hygiene checks passed.
 
+Runtime bridge cleanup checkpoint: slow minor allocation capacity checks now use the extracted `major_arena_has_available_bytes` helper instead of open-coding `minor_heap_size_u64 - needed`. This avoids relying on C subtraction after the bump pointer check and keeps the retry-after-minor-GC branch aligned with the same guarded subtraction shape used for major arena expansion. Full OCaml integration tests and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
