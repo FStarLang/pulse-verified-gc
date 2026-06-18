@@ -170,6 +170,14 @@ fn major_bytes_can_add
   ensures emp ** pure (
     ok <==> U64.v increment_bytes <= (pow2 64 - 1) - U64.v total_bytes)
 
+/// Check whether adding a word increment to an unsigned 64-bit counter fits.
+fn major_words_can_add
+  (total_words increment_words: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==> U64.v increment_words <= (pow2 64 - 1) - U64.v total_words)
+
 /// Compute the first free-list object pointer for a freshly formatted chunk.
 fn major_chunk_initial_fp
   (base: U64.t{U64.v base + U64.v mword < pow2 64})

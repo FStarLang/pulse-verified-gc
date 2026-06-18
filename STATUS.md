@@ -530,6 +530,8 @@ Follow-up checkpoint: two lower `GC.Gen.ChunkedCheneyInjectivity` helper surface
 
 Follow-up checkpoint: the old non-blue field helper surfaces in `GC.Gen.ChunkedCheneyInjectivity` now have budget-ready variants too. `chunked_cheney_promote_old_nonblue_field_no_infix_from_budget_ready` and `chunked_cheney_promote_old_nonblue_field_raw_target_from_budget_ready` derive split-readiness internally from Cheney budget-readiness before reusing the existing split-ready proofs. SPOT audits both wrappers; focused injectivity/SPOT verification, refreshed split-query profiling (~1.8s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
 
+Runtime ABI checkpoint: promotion-demand accumulation now routes its unsigned word-addition overflow check through `major_words_can_add`, a ghost-free verified helper exported at the stable `GC.Impl` C boundary. `alloc_gen.c` uses it when summing header-inclusive minor object word demand, matching the existing verified byte-counter overflow helper. Focused `GC.Impl` verification, mark-and-sweep extraction, generational extraction/snapshot regeneration, OCaml integration tests, full SPOT verification, broad `make generational`, and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

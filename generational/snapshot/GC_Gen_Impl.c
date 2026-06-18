@@ -1940,6 +1940,11 @@ bool major_bytes_can_add(uint64_t total_bytes, uint64_t increment_bytes)
   return increment_bytes <= 18446744073709551615ULL - total_bytes;
 }
 
+bool major_words_can_add(uint64_t total_words, uint64_t increment_words)
+{
+  return increment_words <= 18446744073709551615ULL - total_words;
+}
+
 uint64_t major_chunk_initial_fp(uint64_t base)
 {
   return base + 8ULL;

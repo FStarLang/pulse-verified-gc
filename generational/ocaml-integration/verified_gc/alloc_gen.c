@@ -279,7 +279,7 @@ static uint64_t minor_promotion_demand_words(void) {
         object_bytes = major_chunk_words_to_bytes(object_words);
         if (object_bytes == 0 || object_bytes > bump - off)
             caml_fatal_error("verified gen GC: malformed minor object layout");
-        if (demand > UINT64_MAX - object_words)
+        if (!major_words_can_add(demand, object_words))
             caml_fatal_error("verified gen GC: promotion demand overflow");
 
         demand += object_words;
