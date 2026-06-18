@@ -222,6 +222,13 @@ fn major_address_in_range
        U64.v addr >= U64.v start /\
        U64.v addr < U64.v start + U64.v size))
 
+/// Convert an address known to be in/after a base range into a base-relative offset.
+fn major_address_offset
+  (base addr: U64.t{U64.v addr >= U64.v base})
+  requires emp
+  returns offset: U64.t
+  ensures emp ** pure (offset == U64.sub addr base)
+
 /// Check whether a runtime byte address or size is word-aligned.
 fn major_word_aligned
   (value: U64.t)

@@ -1983,6 +1983,11 @@ bool major_address_in_range(uint64_t start, uint64_t size, uint64_t addr)
     return false;
 }
 
+uint64_t major_address_offset(uint64_t base, uint64_t addr)
+{
+  return addr - base;
+}
+
 bool major_word_aligned(uint64_t value)
 {
   return value % 8ULL == 0ULL;

@@ -298,6 +298,15 @@ fn major_address_in_range
   }
 }
 
+fn major_address_offset
+  (base addr: U64.t{U64.v addr >= U64.v base})
+  requires emp
+  returns offset: U64.t
+  ensures emp ** pure (offset == U64.sub addr base)
+{
+  U64.sub addr base
+}
+
 fn major_word_aligned
   (value: U64.t)
   requires emp

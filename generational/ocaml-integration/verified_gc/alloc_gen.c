@@ -617,7 +617,9 @@ static inline int is_minor_absolute(value v) {
 }
 
 static inline uint64_t abs_to_minor_offset(value v) {
-    return (uint64_t)((uintptr_t)v - (uintptr_t)minor_base);
+    return major_address_offset(
+        (uint64_t)(uintptr_t)minor_base,
+        (uint64_t)(uintptr_t)v);
 }
 
 static inline value minor_offset_to_abs(uint64_t off) {
@@ -672,7 +674,9 @@ static void collect_minor_roots_and_refs(void) {
             value v = (value)(uintptr_t)(**r);
             uint64_t v64 = (uint64_t)(uintptr_t)v;
             if (is_minor_absolute((value)v64)) {
-                uint64_t off = v64 - (uint64_t)(uintptr_t)minor_base;
+                uint64_t off = major_address_offset(
+                    (uint64_t)(uintptr_t)minor_base,
+                    v64);
                 if (root_count >= MAX_ROOTS)
                     caml_fatal_error("verified gen GC: root overflow (ref_table)");
                 root_values[root_count] = off;
