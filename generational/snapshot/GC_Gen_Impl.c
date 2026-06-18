@@ -1920,6 +1920,16 @@ uint64_t major_bytes_to_words(uint64_t bytes)
   return bytes / 8ULL;
 }
 
+bool
+major_arena_has_available_bytes(
+  uint64_t active_bytes,
+  uint64_t reserved_bytes,
+  uint64_t requested_bytes
+)
+{
+  return active_bytes <= reserved_bytes && requested_bytes <= reserved_bytes - active_bytes;
+}
+
 uint64_t major_chunk_initial_fp(uint64_t base)
 {
   return base + 8ULL;

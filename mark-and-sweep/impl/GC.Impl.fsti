@@ -146,6 +146,15 @@ fn major_bytes_to_words
   returns words: U64.t
   ensures emp ** pure (words == U64.div bytes mword)
 
+/// Check whether a reserved arena has enough inactive bytes for an expansion.
+fn major_arena_has_available_bytes
+  (active_bytes reserved_bytes requested_bytes: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==> (U64.v active_bytes <= U64.v reserved_bytes /\
+             U64.v requested_bytes <= U64.v reserved_bytes - U64.v active_bytes))
+
 /// Compute the first free-list object pointer for a freshly formatted chunk.
 fn major_chunk_initial_fp
   (base: U64.t{U64.v base + U64.v mword < pow2 64})

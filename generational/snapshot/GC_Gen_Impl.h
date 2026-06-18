@@ -200,6 +200,13 @@ uint64_t major_chunk_words_to_bytes(uint64_t chunk_words);
 
 uint64_t major_bytes_to_words(uint64_t bytes);
 
+bool
+major_arena_has_available_bytes(
+  uint64_t active_bytes,
+  uint64_t reserved_bytes,
+  uint64_t requested_bytes
+);
+
 uint64_t major_chunk_initial_fp(uint64_t base);
 
 uint64_t

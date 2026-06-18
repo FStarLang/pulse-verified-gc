@@ -508,6 +508,8 @@ Follow-up checkpoint: direct major-allocation expansion now uses the verified al
 
 Follow-up checkpoint: header-inclusive object size arithmetic is now exposed through `object_words_for_wosize`. The OCaml bridge uses it while scanning minor objects for conservative promotion demand and while checking slow minor-allocation byte needs, reducing another duplicated `wosize + 1` pattern at the runtime boundary.
 
+Follow-up checkpoint: expansion reserve-capacity arithmetic now routes through `major_arena_has_available_bytes`. The helper performs the active/reserved/requested byte check with branch-safe subtraction in verified code, and `alloc_gen.c` uses it before appending a new active chunk inside the reserved contiguous arena.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

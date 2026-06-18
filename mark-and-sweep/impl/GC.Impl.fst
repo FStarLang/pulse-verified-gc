@@ -184,6 +184,21 @@ fn major_bytes_to_words
   U64.div bytes mword
 }
 
+fn major_arena_has_available_bytes
+  (active_bytes reserved_bytes requested_bytes: U64.t)
+  requires emp
+  returns ok: bool
+  ensures emp ** pure (
+    ok <==> (U64.v active_bytes <= U64.v reserved_bytes /\
+             U64.v requested_bytes <= U64.v reserved_bytes - U64.v active_bytes))
+{
+  if U64.lte active_bytes reserved_bytes {
+    U64.lte requested_bytes (U64.sub reserved_bytes active_bytes)
+  } else {
+    false
+  }
+}
+
 fn major_chunk_initial_fp
   (base: U64.t{U64.v base + U64.v mword < pow2 64})
   requires emp

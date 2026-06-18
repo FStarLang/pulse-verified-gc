@@ -380,8 +380,10 @@ static void expand_major_heap_words(uint64_t requested_words, const char *reason
     bytes = words_to_bytes_or_fatal(
         words, "verified gen GC: expansion chunk byte size overflow");
 
-    if (major_arena_base == NULL || major_arena_active_bytes > major_arena_reserved_bytes ||
-        (uint64_t)bytes > major_arena_reserved_bytes - major_arena_active_bytes) {
+    if (major_arena_base == NULL ||
+        !major_arena_has_available_bytes(major_arena_active_bytes,
+                                         major_arena_reserved_bytes,
+                                         (uint64_t)bytes)) {
         fprintf(stderr,
             "verified gen GC: cannot expand major heap for %s; "
             "active=%llu words reserve=%llu words requested=%llu words\n",
