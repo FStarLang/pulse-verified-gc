@@ -506,6 +506,8 @@ Follow-up checkpoint: one more runtime-boundary arithmetic check is now routed t
 
 Follow-up checkpoint: direct major-allocation expansion now uses the verified allocator's request-normalization shape at the C boundary. `major_allocation_demand_wosize` exposes `SpecAlloc.normalized_wosize` as a ghost-free public helper, and `alloc_gen.c` uses it before computing the retry expansion chunk size for a direct major allocation.
 
+Follow-up checkpoint: header-inclusive object size arithmetic is now exposed through `object_words_for_wosize`. The OCaml bridge uses it while scanning minor objects for conservative promotion demand and while checking slow minor-allocation byte needs, reducing another duplicated `wosize + 1` pattern at the runtime boundary.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

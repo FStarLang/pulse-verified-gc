@@ -111,6 +111,13 @@ fn major_chunk_words_to_wosize
   returns wz: wosize
   ensures emp ** pure (wz == U64.sub chunk_words 1UL)
 
+/// Convert an object payload wosize to its header-inclusive word count.
+fn object_words_for_wosize
+  (wosize: U64.t{U64.v wosize < pow2 64 - 1})
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (words == U64.add wosize 1UL)
+
 /// Extract an OCaml header's wosize field.
 fn major_header_wosize
   (header: U64.t)

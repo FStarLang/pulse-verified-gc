@@ -273,7 +273,7 @@ static uint64_t minor_promotion_demand_words(void) {
 
         if (wosize > UINT64_MAX - 1)
             caml_fatal_error("verified gen GC: minor object size overflow");
-        object_words = wosize + 1;
+        object_words = object_words_for_wosize(wosize);
         if (object_words > UINT64_MAX / sizeof(value))
             caml_fatal_error("verified gen GC: minor object byte overflow");
         object_bytes = object_words * sizeof(value);
@@ -944,7 +944,8 @@ void *verified_allocate_minor(mlsize_t wosize, uint8_t tag) {
     if ((uint64_t)wosize == 0 || (uint64_t)wosize > max_young_wosize_u64)
         caml_fatal_error("verified gen GC: non-minor allocation on minor path");
 
-    uint64_t needed = ((uint64_t)wosize + 1) * 8;
+    uint64_t object_words = object_words_for_wosize((uint64_t)wosize);
+    uint64_t needed = major_chunk_words_to_bytes(object_words);
     if (needed > minor_heap_size_u64)
         caml_fatal_error("verified gen GC: minor heap smaller than Max_young_wosize");
 

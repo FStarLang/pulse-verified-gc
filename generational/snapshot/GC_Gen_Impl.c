@@ -1895,6 +1895,11 @@ uint64_t major_chunk_words_to_wosize(uint64_t chunk_words)
   return chunk_words - 1ULL;
 }
 
+uint64_t object_words_for_wosize(uint64_t wosize)
+{
+  return wosize + 1ULL;
+}
+
 uint64_t major_header_wosize(uint64_t header)
 {
   return getWosize0(header);

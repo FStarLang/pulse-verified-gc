@@ -137,6 +137,15 @@ fn major_chunk_words_to_wosize
   U64.sub chunk_words 1UL
 }
 
+fn object_words_for_wosize
+  (wosize: U64.t{U64.v wosize < pow2 64 - 1})
+  requires emp
+  returns words: U64.t
+  ensures emp ** pure (words == U64.add wosize 1UL)
+{
+  U64.add wosize 1UL
+}
+
 fn major_header_wosize
   (header: U64.t)
   requires emp
