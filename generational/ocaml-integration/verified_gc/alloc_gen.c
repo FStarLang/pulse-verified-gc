@@ -411,8 +411,9 @@ static void expand_major_heap_words(uint64_t requested_words, const char *reason
 
     base = major_arena_base + major_arena_active_bytes;
     start = (uintptr_t)base;
-    end = start + bytes;
-    if (end < start || !major_heap_end_below_verified_limit((uint64_t)end))
+    end = range_end_or_fatal(
+        start, bytes, "verified gen GC: major heap expansion address overflow");
+    if (!major_heap_end_below_verified_limit((uint64_t)end))
         caml_fatal_error("verified gen GC: major heap expansion address overflow");
 
     old_fp = *gc_gen_heap.fp_ref;
@@ -521,10 +522,11 @@ static void ensure_heap(void) {
 
     uint8_t *major_base = allocate_major_arena_memory(reserve_bytes);
     uintptr_t major_start = (uintptr_t)major_base;
-    uintptr_t initial_end = major_start + major_bytes;
-    uintptr_t reserve_end = major_start + reserve_bytes;
-    if (initial_end < major_start || reserve_end < major_start ||
-        !major_heap_end_below_verified_limit((uint64_t)reserve_end))
+    uintptr_t initial_end = range_end_or_fatal(
+        major_start, major_bytes, "verified gen GC: major heap arena address overflow");
+    uintptr_t reserve_end = range_end_or_fatal(
+        major_start, reserve_bytes, "verified gen GC: major heap arena address overflow");
+    if (!major_heap_end_below_verified_limit((uint64_t)reserve_end))
         caml_fatal_error("verified gen GC: major heap arena address overflow");
 
     major_arena_base = major_base;
