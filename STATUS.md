@@ -546,6 +546,8 @@ Runtime bridge cleanup checkpoint: major-chunk range-end arithmetic now goes thr
 
 Runtime bridge cleanup checkpoint: initial major-arena end/reserve-end computation and appended expansion-chunk end computation now also use `range_end_or_fatal` before checking the verified `< 2^57` heap-end bound. This keeps all major arena range-end arithmetic on the same extracted `major_bytes_can_add` guard path. Full OCaml integration tests and hygiene checks passed.
 
+Runtime bridge cleanup checkpoint: minor-base plus offset address construction now goes through a shared `minor_addr_at_offset_or_fatal` helper, which first checks that the offset is representable as `size_t` and then reuses the guarded `range_end_or_fatal` path. The minor promotion-demand scan, offset-to-absolute translation helper, and slow minor-allocation return path no longer open-code `minor_base + off`. Full OCaml integration tests and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:

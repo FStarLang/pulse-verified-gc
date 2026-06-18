@@ -258,6 +258,13 @@ static uint64_t current_major_words(void) {
     return major_bytes_to_words(current_major_bytes());
 }
 
+static uintptr_t minor_addr_at_offset_or_fatal(uint64_t off, const char *what) {
+    size_t off_sz = (size_t)off;
+    if ((uint64_t)off_sz != off)
+        caml_fatal_error("%s", what);
+    return range_end_or_fatal((uintptr_t)minor_base, off_sz, what);
+}
+
 static void refresh_verified_major_bounds(uint64_t active_end) {
     heap_size_u64 = active_end;
     gc_gen_heap.major.size = (size_t)major_arena_active_bytes;
@@ -279,7 +286,9 @@ static uint64_t minor_promotion_demand_words(void) {
         caml_fatal_error("verified gen GC: invalid minor allocation frontier");
 
     while (off < bump) {
-        uint64_t header = *(uint64_t *)(minor_base + off);
+        uint64_t header =
+            *(uint64_t *)minor_addr_at_offset_or_fatal(
+                off, "verified gen GC: minor object address overflow");
         uint64_t wosize = header_wosize(header);
         uint64_t object_words;
         uint64_t object_bytes;
@@ -638,7 +647,8 @@ static inline uint64_t abs_to_minor_offset(value v) {
 }
 
 static inline value minor_offset_to_abs(uint64_t off) {
-    return (value)((uintptr_t)minor_base + (uintptr_t)off);
+    return (value)minor_addr_at_offset_or_fatal(
+        off, "verified gen GC: minor offset address overflow");
 }
 
 /* --- Root scanning callback for minor collection --- */
@@ -1004,7 +1014,8 @@ void *verified_allocate_minor(mlsize_t wosize, uint8_t tag) {
      * allocations can reuse the verified header when profiling bits are absent;
      * fast/raw allocations get a final runtime header. */
     uint64_t hdr_addr = result - 8;  /* header offset/address */
-    return (void *)((uintptr_t)minor_base + (uintptr_t)hdr_addr);
+    return (void *)minor_addr_at_offset_or_fatal(
+        hdr_addr, "verified gen GC: minor allocation address overflow");
 }
 
 void *verified_allocate(mlsize_t wosize, uint8_t tag) {
