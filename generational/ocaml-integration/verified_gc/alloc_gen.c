@@ -265,6 +265,13 @@ static uintptr_t minor_addr_at_offset_or_fatal(uint64_t off, const char *what) {
     return range_end_or_fatal((uintptr_t)minor_base, off_sz, what);
 }
 
+static uint64_t object_header_addr_or_fatal(uint64_t object_addr, const char *what) {
+    uint64_t word_bytes = (uint64_t)sizeof(value);
+    if (object_addr < word_bytes)
+        caml_fatal_error("%s", what);
+    return major_address_offset(word_bytes, object_addr);
+}
+
 static void refresh_verified_major_bounds(uint64_t active_end) {
     heap_size_u64 = active_end;
     gc_gen_heap.major.size = (size_t)major_arena_active_bytes;
@@ -1013,7 +1020,8 @@ void *verified_allocate_minor(mlsize_t wosize, uint8_t tag) {
      * OCaml's allocation paths expect an HP (header pointer).  Slow minor
      * allocations can reuse the verified header when profiling bits are absent;
      * fast/raw allocations get a final runtime header. */
-    uint64_t hdr_addr = result - 8;  /* header offset/address */
+    uint64_t hdr_addr = object_header_addr_or_fatal(
+        result, "verified gen GC: minor allocation header address underflow");
     return (void *)minor_addr_at_offset_or_fatal(
         hdr_addr, "verified gen GC: minor allocation address overflow");
 }
@@ -1059,7 +1067,8 @@ void *verified_allocate(mlsize_t wosize, uint8_t tag) {
     /* allocate returns an absolute object address (first field = header + 8)
      * via the major heap's NULL-base trick.  The OCaml runtime finalizes the
      * header after this returns, installing the requested tag/profinfo bits. */
-    return (void *)(uintptr_t)(result - 8);
+    return (void *)(uintptr_t)object_header_addr_or_fatal(
+        result, "verified gen GC: major allocation header address underflow");
 }
 
 /* --- OCaml primitive --- */

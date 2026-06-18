@@ -548,6 +548,8 @@ Runtime bridge cleanup checkpoint: initial major-arena end/reserve-end computati
 
 Runtime bridge cleanup checkpoint: minor-base plus offset address construction now goes through a shared `minor_addr_at_offset_or_fatal` helper, which first checks that the offset is representable as `size_t` and then reuses the guarded `range_end_or_fatal` path. The minor promotion-demand scan, offset-to-absolute translation helper, and slow minor-allocation return path no longer open-code `minor_base + off`. Full OCaml integration tests and hygiene checks passed.
 
+Runtime bridge cleanup checkpoint: object-address to header-address conversion now goes through `object_header_addr_or_fatal`, which checks the word-sized underflow guard and then delegates to the extracted `major_address_offset` helper. The slow minor and direct major allocation return paths no longer open-code `result - 8`. Full OCaml integration tests and hygiene checks passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
