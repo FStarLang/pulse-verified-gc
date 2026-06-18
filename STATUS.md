@@ -520,6 +520,8 @@ Follow-up checkpoint: registered major-byte accounting now uses `major_bytes_can
 
 Follow-up checkpoint: runtime word-to-byte overflow checks now route through `major_chunk_words_fit_bytes`, a ghost-free verified helper that exposes the concrete `words * sizeof(value)` fit bound used before `major_chunk_words_to_bytes`. The OCaml bridge uses it for major/minor chunk sizing, minor-promotion demand object byte sizing, and slow minor allocation sizing instead of open-coding `UINT64_MAX / sizeof(value)` or `SIZE_MAX / sizeof(value)`. Focused `GC.Impl` verification, generational snapshot regeneration, and full OCaml integration tests passed.
 
+Follow-up checkpoint: the post-minor plus following-major-GC pre-promote graph-readiness surface now has a budget-ready entry point. `GC.Gen.CheneyGraphReadiness.chunked_cheney_collect_then_major_gc_live_subgraph_from_preflight_chunk_base_pre_promote_raw_field_target_policy_from_budget_ready` accepts the already-dischargeable `chunked_cheney_promote_budget_ready ... 1` premise, derives the older abstract split-readiness internally through `GC.Gen.CheneyPreservation.chunked_cheney_promote_budget_ready_implies_split_ready`, and then reuses the existing chunk-base/raw-field-target wrapper. `GC.SPOT.HeapExpansion` audits the reduced public surface; focused readiness verification, refreshed split-query profiling (~2.1s), full SPOT verification, generational orphan checking, broad `make generational`, and hygiene scans passed.
+
 ## Audit checklist
 
 Audit these parts to confirm the development is still on track:
