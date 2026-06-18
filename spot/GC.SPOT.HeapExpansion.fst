@@ -13601,6 +13601,20 @@ let spot_chunked_cheney_promote_budget_ready_from_minor_demand
   CheneyPreservation.chunked_cheney_promote_budget_ready_from_minor_demand
     minor major fp roots alloc_fuel
 
+let spot_chunked_cheney_promote_budget_ready_implies_split_ready
+  (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
+  (roots: Seq.seq U64.t) (alloc_fuel: nat) (remaining: nat)
+  : Lemma
+      (requires
+        CheneyPreservation.chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        CheneyPreservation.chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel)
+  =
+  CheneyPreservation.chunked_cheney_promote_budget_ready_implies_split_ready
+    minor major fp roots alloc_fuel remaining
+
 let spot_chunked_cheney_promote_after_minor_promotion_head_preflight
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: Seq.seq U64.t) (alloc_fuel: nat) (fresh: MH.heap_chunk)

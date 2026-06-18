@@ -1464,6 +1464,17 @@ val chunked_cheney_promote_fwd_target_fields_match
               Some (minor_read_field minor x j)
            | None -> False))))
 
+val chunked_cheney_promote_budget_ready_implies_split_ready
+  : minor:minor_state -> major:MH.major_heap -> fp:U64.t ->
+    roots:seq U64.t -> alloc_fuel:nat -> remaining:nat ->
+    Lemma
+      (requires
+        chunked_cheney_promote_budget_ready
+          minor major fp roots alloc_fuel remaining)
+      (ensures
+        chunked_cheney_promote_split_ready
+          minor major fp roots alloc_fuel)
+
 val chunked_cheney_forward_one_fwd_monotone
   : minor:minor_state -> cs:ChunkedCheney.chunked_cheney_state ->
     addr:U64.t -> x:U64.t -> alloc_fuel:nat ->

@@ -8399,7 +8399,7 @@ let chunked_cheney_promote_fwd_target_fields_match
   assert (chunked_fwd_target_field_pre minor cs2 x j field_addr);
   chunked_fwd_target_fields_match_state_elim minor cs2 x j field_addr
 
-private let chunked_cheney_promote_budget_ready_implies_split_ready
+let chunked_cheney_promote_budget_ready_implies_split_ready
   (minor: minor_state) (major: MH.major_heap) (fp: U64.t)
   (roots: seq U64.t) (alloc_fuel: nat) (remaining: nat)
   : Lemma
