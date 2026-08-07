@@ -12,6 +12,33 @@ For the detailed design, proof architecture, public contracts, OCaml bridge
 layout, benchmark table, and current verification boundary, see
 [`DESIGN_AND_IMPL.md`](DESIGN_AND_IMPL.md).
 
+## Quick local setup
+
+The exact sequence CI runs in [`.github/workflows/verify.yml`](.github/workflows/verify.yml),
+guaranteed to work end-to-end. Steps must run in this order
+
+```bash
+./setup.sh # setups up F*
+
+fstar/bin/fstar.exe --version # check fstar version
+# verify GC
+make -j$(nproc) 
+
+# verify SPOT
+make -C spot -j$(nproc) 
+
+# extract to C using Karamel
+make extract
+
+# generate a snapshot for integrating into OCaml runtime
+make -C generational snapshot
+# setup ocaml integration (stock ocaml and modified ocaml runtime with verified gc)
+make -C generational/ocaml-integration setup
+
+make -C generational/ocaml-integration/tests test # run smoke tests
+make -C generational/ocaml-integration/tests benchmark # run benchmarks
+```
+
 ## Current status
 
 The active development is organized around dependency-scanned builds. The
