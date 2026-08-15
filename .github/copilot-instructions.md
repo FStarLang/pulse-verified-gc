@@ -397,14 +397,30 @@ not be conflated:
   counter *is* tested at runtime (`if (vfuel == 0ULL)` appears in `GC_Impl.c`) and
   running out returns OOM.  This is faithful to the spec, because `alloc_spec` is itself
   defined as `alloc_search g fp 0UL fp wz heap_words` — the budget is part of the
-  specification.  **Known gap:** nothing proves the budget is sufficient, so a spurious
-  OOM is permitted behaviour.  The allocator is *sound* (it never hands out a bad block)
-  but *incomplete*.  The fact that would close this is
-  `AllocLemmas.fl_chain_terminates g fp heap_words` — already carried as an invariant in
-  the generational collector — but there is currently no fuel-saturation lemma
-  (`alloc_search g … wz heap_words == alloc_search g … wz (heap_words + k)`) connecting
-  it to `alloc_search`.  Closing the gap also means threading a new precondition through
-  `GC.Impl.Allocator`'s interface and all of its callers.
+  specification.
+
+  **The budget is in fact sufficient; a spurious OOM is unreachable.**  Fuel is consumed
+  only by a node that is valid *and* too small (the other OOM exits are the legitimate
+  end-of-list, and the "found" branch always returns `obj_out = cur_fp <> 0`, so a
+  fitting block is never skipped).  Reaching `fuel = 0` therefore requires examining
+  `heap_words` successive valid, too-small nodes.  But the valid `cur_fp` values are the
+  8-aligned addresses in `[zero_addr + 8, heap_size)`, and there are only
+  `heap_words - zero_addr/8 - 1 <= heap_words - 257` of them (`zero_addr : hp_addr` is
+  8-aligned and `zero_addr_above_2048` gives `zero_addr >= 2048`).  By pigeonhole the
+  walk must revisit an address, so the chain is eventually periodic and every *reachable*
+  free-list node has already been examined without a fit — the OOM is correct.  This
+  argument needs no well-formedness hypothesis: `next_fp` is an arbitrary heap word, but
+  the guards confine the walk to that same finite address set.
+
+  **The gap is formal, not behavioural:** that argument is not written down, so the
+  correctness theorem does not currently rule out a spurious OOM even though the code
+  cannot produce one.  Closing it means proving
+  `obj_out = 0 ==> no reachable free-list node fits` — a pigeonhole/no-repeat argument
+  over the walk.  It requires **no** new precondition and no change to
+  `GC.Impl.Allocator`'s interface or its callers; the cost is the finite-walk enumeration
+  lemma itself.  (`AllocLemmas.fl_chain_terminates g fp heap_words`, carried as an
+  invariant in the generational collector, is a related but stronger and unnecessary
+  hypothesis for this.)
 
 Do **not** "simplify" the allocator's fuel away, and do not assume a counter named
 `fuel` is proof-only without checking whether the loop guard reads it.
