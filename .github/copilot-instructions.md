@@ -374,6 +374,41 @@ invariant of the form
 `(m < count_non_black 's \/ (st_cur == 'st /\ s == 's))` ("either we made progress or
 nothing happened yet").
 
+### Proof-only fuel vs. load-bearing fuel
+
+Several loops carry a counter called *fuel*. These are two different things and should
+not be conflated:
+
+* **Proof-only fuel** — `GC.Impl.Mark.mark_loop`. The loop guard is `!go` (the gray
+  stack is empty); the fuel is never consulted at runtime. It exists only to index the
+  fuel-recursive spec `GC.Spec.Mark.mark_aux` and to serve as the `decreases` measure.
+  Exhaustion is *proved impossible*: `mark_aux_fuel_pos` derives `fv > 0` whenever the
+  stack is non-empty, from an invariant seeded by `mark_no_grey_remains` (a real theorem,
+  no admits/assumes, proved by the counting argument
+  `total_non_black g <= |objects zero_addr g| <= heap_size / 8 == heap_words`).  The
+  postcondition demands `Seq.length st2 == 0`, so exiting via the spec's
+  `else if fuel = 0 then g` branch would be unprovable.  `mark_loop` is not reachable
+  from the extracted entry points, so KaRaMeL drops it entirely.
+* **Ghost measure** — `GC.Impl.MarkBounded.mark_inner_loop_impl` / `.mark_loop_bounded`,
+  described above.  Preferred for new code: same guarantee, and it leaves *no* runtime
+  residue.  The extracted C is just
+  `while (go) { if (is_empty(st)) go = false; else mark_step_bounded_impl(heap, st); }`.
+* **Load-bearing fuel** — `GC.Impl.Allocator.allocate` / `.allocate_part1`.  Here the
+  counter *is* tested at runtime (`if (vfuel == 0ULL)` appears in `GC_Impl.c`) and
+  running out returns OOM.  This is faithful to the spec, because `alloc_spec` is itself
+  defined as `alloc_search g fp 0UL fp wz heap_words` — the budget is part of the
+  specification.  **Known gap:** nothing proves the budget is sufficient, so a spurious
+  OOM is permitted behaviour.  The allocator is *sound* (it never hands out a bad block)
+  but *incomplete*.  The fact that would close this is
+  `AllocLemmas.fl_chain_terminates g fp heap_words` — already carried as an invariant in
+  the generational collector — but there is currently no fuel-saturation lemma
+  (`alloc_search g … wz heap_words == alloc_search g … wz (heap_words + k)`) connecting
+  it to `alloc_search`.  Closing the gap also means threading a new precondition through
+  `GC.Impl.Allocator`'s interface and all of its callers.
+
+Do **not** "simplify" the allocator's fuel away, and do not assume a counter named
+`fuel` is proof-only without checking whether the loop guard reads it.
+
 ## Troubleshooting
 
 ### "Subtyping check failed"
