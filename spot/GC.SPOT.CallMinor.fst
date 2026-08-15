@@ -25,7 +25,6 @@ module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 
-divergent
 fn call_minor_collect_full_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)

@@ -319,8 +319,10 @@ Every `while` loop in a plain `fn` needs a `decreases` clause; only a `divergent
 (which elaborates to `stt_div` rather than `stt`) may omit one.  `divergent` is
 contagious — a plain `fn` cannot call a `divergent fn` (Error 228) — so annotations must
 be removed bottom-up through the call graph, and the `.fsti` declaration and the `.fst`
-definition must be de-annotated together.  **No function outside `spot/` is `divergent`;
-keep it that way.**
+definition must be de-annotated together.  **No function in the repository is
+`divergent`; keep it that way.**  A corollary of contagion is that once the callees are
+total, a caller that has no loop of its own needs nothing but the annotation deleted —
+that is how the last `spot/` wrappers were discharged.
 
 The clause goes *after* the `invariant`, immediately before the body:
 

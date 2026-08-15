@@ -48,7 +48,6 @@ let spot_minor_collect_full_success_post_from_call_post
   ConcreteScenarios.spot_concrete_c_field_rewritten_from_no_oom r;
   ConcreteScenarios.spot_concrete_b_not_promoted r
 
-divergent
 fn call_concrete_minor_collect_full_spot_borrowed
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
@@ -142,7 +141,6 @@ fn call_concrete_minor_collect_full_spot_borrowed
 }
 
 #push-options "--warn_error -288"
-divergent
 fn call_concrete_minor_collect_full_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
