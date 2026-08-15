@@ -324,3 +324,23 @@ val walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
                    read_word g2 (a <: obj_addr) == read_word g (a <: obj_addr))))
     (ensures walk_chain_valid g2 fp d /\ walk_chain g2 fp d = walk_chain g fp d)
+
+/// The free-list search never bottoms out on its fuel budget: if the chain from
+/// `cur_fp` reaches a terminal within `fuel` steps, then handing `alloc_search`
+/// any larger budget yields exactly the same result.  Hence `alloc_search` never
+/// takes its `fuel = 0` branch, and an OOM answer is always the genuine
+/// "nothing on the free list fits" answer rather than an artefact of the bound.
+val alloc_search_fuel_irrelevant
+      (g: heap) (head_fp prev_fp cur_fp: U64.t) (requested_wz: nat) (fuel fuel': nat)
+  : Lemma
+    (requires fl_chain_terminates g cur_fp fuel /\ fuel' >= fuel)
+    (ensures alloc_search g head_fp prev_fp cur_fp requested_wz fuel' ==
+             alloc_search g head_fp prev_fp cur_fp requested_wz fuel)
+
+/// Corollary: the `heap_words` budget baked into `alloc_spec` never binds.
+val alloc_spec_fuel_irrelevant (g: heap) (fp: U64.t) (requested_wz: nat) (extra: nat)
+  : Lemma
+    (requires fl_chain_terminates g fp heap_words)
+    (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
+              alloc_spec g fp requested_wz ==
+              alloc_search g fp 0UL fp wz (heap_words + extra)))

@@ -399,28 +399,36 @@ not be conflated:
   defined as `alloc_search g fp 0UL fp wz heap_words` — the budget is part of the
   specification.
 
-  **The budget is in fact sufficient; a spurious OOM is unreachable.**  Fuel is consumed
-  only by a node that is valid *and* too small (the other OOM exits are the legitimate
-  end-of-list, and the "found" branch always returns `obj_out = cur_fp <> 0`, so a
-  fitting block is never skipped).  Reaching `fuel = 0` therefore requires examining
-  `heap_words` successive valid, too-small nodes.  But the valid `cur_fp` values are the
-  8-aligned addresses in `[zero_addr + 8, heap_size)`, and there are only
-  `heap_words - zero_addr/8 - 1 <= heap_words - 257` of them (`zero_addr : hp_addr` is
-  8-aligned and `zero_addr_above_2048` gives `zero_addr >= 2048`).  By pigeonhole the
-  walk must revisit an address, so the chain is eventually periodic and every *reachable*
-  free-list node has already been examined without a fit — the OOM is correct.  This
-  argument needs no well-formedness hypothesis: `next_fp` is an arbitrary heap word, but
-  the guards confine the walk to that same finite address set.
+  **The budget is provably sufficient — this is now machine-checked.**
+  `AllocLemmas.alloc_search_fuel_irrelevant` (in `GC.Spec.Allocator.Lemmas.Chain`)
+  proves
 
-  **The gap is formal, not behavioural:** that argument is not written down, so the
-  correctness theorem does not currently rule out a spurious OOM even though the code
-  cannot produce one.  Closing it means proving
-  `obj_out = 0 ==> no reachable free-list node fits` — a pigeonhole/no-repeat argument
-  over the walk.  It requires **no** new precondition and no change to
-  `GC.Impl.Allocator`'s interface or its callers; the cost is the finite-walk enumeration
-  lemma itself.  (`AllocLemmas.fl_chain_terminates g fp heap_words`, carried as an
-  invariant in the generational collector, is a related but stronger and unnecessary
-  hypothesis for this.)
+  ```fstar
+  fl_chain_terminates g cur fuel /\ fuel' >= fuel ==>
+    alloc_search g head prev cur wz fuel' == alloc_search g head prev cur wz fuel
+  ```
+
+  with the corollary `alloc_spec_fuel_irrelevant`: `alloc_spec g fp wz` is unchanged by
+  any surplus budget beyond `heap_words`.  Since a spurious OOM would by definition be an
+  answer that a larger budget would have improved on, fuel irrelevance *is* the
+  no-spurious-OOM statement — the `fuel = 0` branch never fires while a suitable block is
+  still reachable.
+
+  The hypothesis `fl_chain_terminates g fp heap_words` ("the free-list chain reaches a
+  terminal within `heap_words` steps") is not a new assumption: `GC.Impl.Allocator.
+  allocate_part1` already requires it, and `GC.Gen.Impl.Cheney` carries it as a loop
+  invariant.  So clients of `allocate_part1` can invoke the corollary directly with no
+  interface change.  Plain `allocate` cannot yet: it is guarded by `well_formed_heap`,
+  which constrains object layout and pointer closure but says *nothing* about the free
+  list, so it would need `fl_chain_terminates` added to its precondition.
+
+  Note where the bound really comes from.  `heap_words` is not a safety margin: an acyclic
+  free list has at most one node per distinct 8-aligned heap address, i.e. at most
+  `heap_words` of them.  The fuel is that pigeonhole bound inlined as a constant.  The
+  proof above takes the *conditional* route (assume chain termination, conclude the budget
+  never binds) rather than the unconditional pigeonhole route (derive termination from
+  acyclicity via a no-repeat/visited-set argument), because chain termination is the
+  invariant the codebase already maintains.
 
 Do **not** "simplify" the allocator's fuel away, and do not assume a counter named
 `fuel` is proof-only without checking whether the loop guard reads it.

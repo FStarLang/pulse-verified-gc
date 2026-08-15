@@ -1268,3 +1268,69 @@ let rec walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
 
 
 #pop-options
+
+/// ---------------------------------------------------------------------------
+/// Fuel saturation for alloc_search
+/// ---------------------------------------------------------------------------
+
+/// The free-list search never bottoms out on its fuel budget: if the chain from
+/// `cur_fp` reaches a terminal within `fuel` steps, then handing `alloc_search`
+/// any larger budget yields exactly the same result.
+///
+/// The point of this lemma is completeness.  `alloc_search`'s `fuel = 0` branch
+/// reports OOM, and on its own nothing rules out that branch firing while a
+/// suitable block is still reachable.  Fuel irrelevance says the budget never
+/// binds, so an OOM answer is always the genuine "walked the whole free list and
+/// nothing fits" answer rather than an artefact of the bound.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec alloc_search_fuel_irrelevant
+      (g: heap) (head_fp prev_fp cur_fp: U64.t) (requested_wz: nat) (fuel fuel': nat)
+  : Lemma
+    (requires fl_chain_terminates g cur_fp fuel /\ fuel' >= fuel)
+    (ensures alloc_search g head_fp prev_fp cur_fp requested_wz fuel' ==
+             alloc_search g head_fp prev_fp cur_fp requested_wz fuel)
+    (decreases fuel)
+  = if U64.v cur_fp < U64.v zero_addr + U64.v mword
+       || U64.v cur_fp >= heap_size
+       || U64.v cur_fp % U64.v mword <> 0
+    then
+      // `cur_fp` is terminal for alloc_search, which returns the very same OOM
+      // record as its `fuel = 0` branch, so the budget is immaterial here.
+      ()
+    else begin
+      // `cur_fp` is a bona fide object address, so the chain has not terminated
+      // and `fl_chain_terminates` cannot have been satisfied with 0 steps.
+      fl_chain_terminates_valid_zero g cur_fp;
+      assert (fuel > 0);
+      let obj : obj_addr = cur_fp in
+      let hd = hd_address obj in
+      let block_wz = U64.v (getWosize (read_word g hd)) in
+      if block_wz >= requested_wz then
+        // A fitting block is taken immediately; neither side recurses.
+        ()
+      else if U64.v hd + 16 > heap_size then begin
+        // `next_fp` is 0UL, terminal for both the chain and the search.
+        fl_chain_terminates_terminal g 0UL (fuel - 1);
+        alloc_search_fuel_irrelevant g head_fp cur_fp 0UL requested_wz (fuel - 1) (fuel' - 1)
+      end
+      else begin
+        fl_chain_terminates_elim g cur_fp fuel;
+        alloc_search_fuel_irrelevant g head_fp cur_fp (read_word g obj) requested_wz
+                                     (fuel - 1) (fuel' - 1)
+      end
+    end
+#pop-options
+
+/// Corollary: the `heap_words` budget baked into `alloc_spec` never binds.
+/// Any surplus fuel leaves the answer unchanged, so `alloc_spec` reports OOM
+/// only when the free list genuinely holds no block of the requested size.
+#push-options "--z3rlimit 30"
+let alloc_spec_fuel_irrelevant (g: heap) (fp: U64.t) (requested_wz: nat) (extra: nat)
+  : Lemma
+    (requires fl_chain_terminates g fp heap_words)
+    (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
+              alloc_spec g fp requested_wz ==
+              alloc_search g fp 0UL fp wz (heap_words + extra)))
+  = let wz = if requested_wz = 0 then 1 else requested_wz in
+    alloc_search_fuel_irrelevant g fp 0UL fp wz heap_words (heap_words + extra)
+#pop-options
