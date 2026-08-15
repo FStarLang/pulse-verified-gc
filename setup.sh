@@ -2,7 +2,7 @@
 # setup.sh — Install F* toolchain for pulse-verified-gc
 #
 # Usage:
-#   ./setup.sh              Install F* v2026.05.17 binary release
+#   ./setup.sh              Install the pinned F* nightly build
 #   ./setup.sh --release    Install latest official release instead
 #   ./setup.sh --nightly    Install latest nightly instead
 #   ./setup.sh --force      Reinstall even if the requested version is present
@@ -15,10 +15,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FSTAR_DIR="$SCRIPT_DIR/fstar"
 
-# Default: latest validated official binary release.
-SOURCE="--release"
-VERSION="v2026.05.17"
-EXPECTED_VERSION="F* 2026.05.17"
+# Default: the validated nightly build.  The proofs in this repository are
+# checked against this F* (and the Z3 4.15.3 that ships with it); see
+# Z3_VERSION in the top-level Makefile.
+SOURCE="--nightly"
+VERSION="nightly-2026-08-13"
+EXPECTED_VERSION="F* nightly-2026-08-13"
 FORCE=false
 
 red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }

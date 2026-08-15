@@ -28,8 +28,8 @@ module FreeListShape = GC.Gen.FreeListShape
 [@@"opaque_to_smt"]
 let major_heap_shape (major: heap) (fp: U64.t) : prop =
   well_formed_heap major /\
-  AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-  AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+  AllocLemmas.fl_valid major fp heap_words /\
+  AllocLemmas.fl_chain_terminates major fp heap_words /\
   FreeListShape.fp_pointer_or_zero fp /\
   FreeListShape.blue_link_fields_valid major /\
   heap_objects_dense major /\
@@ -105,8 +105,8 @@ let full_heap_shape (minor: minor_state) (major: heap) (fp: U64.t)
 
 let major_heap_shape_intro (major: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\
@@ -123,8 +123,8 @@ let major_heap_shape_intro (major: heap) (fp: U64.t)
 let major_heap_shape_elim (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
           (ensures well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\
@@ -311,7 +311,7 @@ let full_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
 /// Minor reset shape
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let minor_reset_guards_complete (minor: minor_state)
   : Lemma (ensures minor_guards_complete (minor_reset minor))
   =

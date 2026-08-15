@@ -159,6 +159,7 @@ let minor_heap_no_scan_invariant (d: minor_heap) (b: U64.t) : prop =
 
 /// Allocate an object. Small objects go to minor heap, large ones to major.
 /// Returns 0UL on failure (both heaps full).
+divergent
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pure (
@@ -196,6 +197,7 @@ fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
 ///
 /// The remaining reachability/validity preconditions state that `roots` is the
 /// complete valid minor-collection root set for the supplied remembered table.
+divergent
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
@@ -275,6 +277,7 @@ fn minor_collect_full (gh: gen_heap_t)
 /// The caller provides full heap shape plus the remembered-set table needed by
 /// `minor_collect_full`. The implementation derives the post-minor major-GC
 /// precondition before invoking mark-and-sweep.
+divergent
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)

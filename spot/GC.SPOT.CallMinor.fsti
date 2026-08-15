@@ -17,6 +17,7 @@ open GC.Impl.Heap
 
 module CheneyImpl = GC.Gen.Impl.Cheney
 
+divergent
 fn call_minor_collect_full_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)

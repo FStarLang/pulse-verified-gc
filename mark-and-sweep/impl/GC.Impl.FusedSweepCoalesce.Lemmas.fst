@@ -116,7 +116,7 @@ private let run_words_fits (g0: heap) (start: hp_addr) (objs: seq obj_addr)
         U64.v first_blue < heap_size /\
         U64.v first_blue % U64.v mword == 0 /\
         U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start))
-    (ensures run_words < heap_size / U64.v mword /\ run_words < pow2 57)
+    (ensures run_words < heap_words /\ run_words < pow2 57)
   = CoalLemmas.run_words_fits g0 start objs first_blue run_words
 
 private let fused_step_nonblack_helper (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
@@ -218,12 +218,12 @@ let nonblack_step_fused_aux_eq g0 g start first_blue run_words fp =
   assert (new_rw * U64.v mword <= next_nat);
   FStar.Math.Lemmas.lemma_div_le (new_rw * U64.v mword) heap_size (U64.v mword);
   FStar.Math.Lemmas.cancel_mul_div new_rw (U64.v mword);
-  assert (new_rw <= heap_size / U64.v mword);
+  assert (new_rw <= heap_words);
   FStar.Math.Lemmas.pow2_plus 3 54;
   assert (pow2 57 == U64.v mword * pow2 54);
   FStar.Math.Lemmas.lemma_div_exact heap_size (U64.v mword);
-  assert (heap_size == U64.v mword * (heap_size / U64.v mword));
-  assert (U64.v mword * (heap_size / U64.v mword) < U64.v mword * pow2 54);
+  assert (heap_size == U64.v mword * heap_words);
+  assert (U64.v mword * heap_words < U64.v mword * pow2 54);
   FStar.Math.Lemmas.pow2_le_compat 57 3;
   FStar.Math.Lemmas.pow2_double_sum 57;
   FStar.Math.Lemmas.pow2_lt_compat 64 58;

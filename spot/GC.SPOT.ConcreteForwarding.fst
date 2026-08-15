@@ -104,7 +104,7 @@ let spot_promote_a_success (r: unit{ConcreteMajor.spot_major_room})
   let major = ConcreteMajor.spot_major_heap r in
   let fp = ConcreteMajor.spot_major_fp r in
   let free = ConcreteMajor.spot_free_obj r in
-  let fuel = heap_size / U64.v mword in
+  let fuel = heap_words in
   ConcreteMajor.spot_major_layout_facts r;
   ConcreteMajor.spot_major_free_reads r;
   SpecHeap.hd_address_spec free;
@@ -143,7 +143,7 @@ let spot_promote_a_to_free_obj (r: unit{ConcreteMajor.spot_major_room})
   let major = ConcreteMajor.spot_major_heap r in
   let fp = ConcreteMajor.spot_major_fp r in
   let free = ConcreteMajor.spot_free_obj r in
-  let fuel = heap_size / U64.v mword in
+  let fuel = heap_words in
   ConcreteMajor.spot_major_layout_facts r;
   ConcreteMajor.spot_major_free_reads r;
   SpecHeap.hd_address_spec free;

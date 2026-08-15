@@ -27,8 +27,8 @@ val cheney_promote_fwd_target_fields_match
   (x: U64.t) (j: nat)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-              AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\
               minor_wf minor /\
               minor_infix_wf minor /\
@@ -54,8 +54,8 @@ val cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
   (x: U64.t)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-              AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\
               minor_wf minor /\
               minor_infix_wf minor /\
@@ -81,8 +81,8 @@ val cheney_promote_fwd_target_extra_field_not_pointer
   (x: U64.t) (j: nat)
   : Lemma
     (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-              AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+              AllocLemmas.fl_valid major fp heap_words /\
+              AllocLemmas.fl_chain_terminates major fp heap_words /\
               chain_objects_blue major fp /\
               minor_wf minor /\
               minor_infix_wf minor /\

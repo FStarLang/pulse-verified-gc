@@ -35,6 +35,7 @@ module SpecFields = GC.Spec.Fields
 module HeapGraph = GC.Spec.HeapGraph
 module SweepInv = GC.Spec.SweepInv
 module Header = GC.Lib.Header
+open GC.Spec.Base
 
 // Local aliases
 let well_formed_heap = SpecFields.well_formed_heap
@@ -178,7 +179,7 @@ let makeBlack_preserves_objects (obj: obj_addr) (g: GC.Spec.Base.heap)
 /// ---------------------------------------------------------------------------
 
 /// check_and_darken_bounded_spec preserves well_formed_heap
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 400 --split_queries always"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 400"
 let check_and_darken_bounded_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
     (obj: obj_addr) (wz: U64.t) (i: U64.t{U64.v i >= 1}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
@@ -431,7 +432,7 @@ let darken_roots_bounded_spec_preserves_read_word
     g st roots (Seq.length roots) cap slot
 #pop-options
 
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10 --split_queries always"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 let root_points_to_object_transfer
   (g0 g1: heap_state) (v: U64.t)
   : Lemma
@@ -1011,7 +1012,7 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Write gray header (factored out to isolate spec_read_word from combined VC)
-#push-options "--z3rlimit 200 --split_queries always --z3refresh"
+#push-options "--z3rlimit 200 --z3refresh"
 fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -1098,7 +1099,8 @@ fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Gho
   }
 }
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+divergent
 fn darken_roots_bounded
     (heap: heap_t) (st: gray_stack) (roots: array U64.t) (nroots: SZ.t)
     (cap: Ghost.erased nat)
@@ -1185,7 +1187,8 @@ fn push_step_body_bounded (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 }
 
 /// Push white children bounded: iterate fields 1..wz
-#push-options "--split_queries no --fuel 1 --ifuel 0"
+#push-options "--fuel 1 --ifuel 0"
+divergent
 fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
                               (wz: wosize) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
@@ -1239,7 +1242,7 @@ fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 /// Write black header (factored out for VC isolation)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --split_queries always --z3refresh"
+#push-options "--z3rlimit 200 --z3refresh"
 fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -1262,7 +1265,7 @@ fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
 #pop-options
 
 /// Read header wosize and tag
-#push-options "--z3rlimit 50 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --z3refresh"
 fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -1287,6 +1290,7 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 200 --z3refresh"
+divergent
 fn mark_step_bounded_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st cap /\
@@ -1381,6 +1385,7 @@ fn mark_step_bounded_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+divergent
 fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
                         (g_init: Ghost.erased heap_state)
                         (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
@@ -1496,7 +1501,7 @@ let rescan_density_bridge (start: hp_addr) (g: heap_state)
     end
 
 /// Advance to next object (duplicated from Sweep for self-containment)
-#push-options "--z3rlimit 50 --split_queries always"
+#push-options "--z3rlimit 50"
 fn rescan_next_object (h_addr: hp_addr) (wz: wosize)
   requires pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size)
   returns addr: U64.t
@@ -1842,6 +1847,7 @@ let no_gray_when_scan_complete_nat
 /// have been visited and found non-gray.
 
 #push-options "--z3rlimit 400 --z3refresh"
+divergent
 fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecFields.well_formed_heap 's /\
@@ -1975,6 +1981,7 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
 /// decreases each iteration (inner loop blackens at least one object).
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+divergent
 fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
                      (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
   requires is_heap heap 's ** is_gray_stack st 'st **

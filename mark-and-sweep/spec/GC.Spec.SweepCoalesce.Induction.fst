@@ -23,7 +23,7 @@ module Alloc = GC.Spec.Allocator
 
 open GC.Spec.SweepCoalesce.Defs
 
-#set-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always --warn_error -321"
+#set-options "--z3rlimit 50 --fuel 2 --ifuel 1 --warn_error -321"
 
 /// ========================================================================
 /// Predicates
@@ -45,6 +45,18 @@ let rec objs_contiguous (g: heap) (objs: seq obj_addr)
       U64.v (Seq.head (Seq.tail objs)) ==
         U64.v (Seq.head objs) + (U64.v (wosize_of_object (Seq.head objs) g) + 1) * 8 /\
       objs_contiguous g (Seq.tail objs)
+
+/// One-step unfolding of `objs_contiguous`.  Proved here, in a small context,
+/// so callers do not have to pay for the unfolding inside a large proof.
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
+private let contiguous_head (g: heap) (objs: seq obj_addr)
+  : Lemma (requires objs_contiguous g objs /\ Seq.length objs > 1)
+          (ensures
+            U64.v (Seq.head (Seq.tail objs)) ==
+              U64.v (Seq.head objs) + (U64.v (wosize_of_object (Seq.head objs) g) + 1) * 8 /\
+            objs_contiguous g (Seq.tail objs))
+  = ()
+#pop-options
 
 /// ========================================================================
 /// Helper 1: zero_fields reads 0UL within its range
@@ -328,6 +340,13 @@ private let black_case_below_ok
         // Bound says a + 8 <= hd_address(next_obj) = obj + wz * 8
         // But we have a >= obj + wz * 8: contradiction
         hd_address_spec next_obj;
+        // Contiguity gives `next_obj == obj + (wz_obj + 1) * 8`, hence
+        // `hd_address next_obj == obj + wz_obj * 8`, contradicting the bound
+        // `a + 8 <= hd_address next_obj` together with `a >= obj + wz_obj * 8`.
+        contiguous_head g objs;
+        ML.distributivity_add_left wz_obj 1 8;
+        assert (U64.v next_obj == U64.v obj + (wz_obj + 1) * 8);
+        assert (U64.v (hd_address next_obj) == U64.v obj + wz_obj * 8);
         assert false
       end
       else begin
@@ -670,6 +689,41 @@ private let black_case_conclude
 #pop-options
 
 /// ========================================================================
+/// Small arithmetic / termination facts used by `combined_proof`.
+///
+/// Query splitting makes every leaf goal carry the whole (very large)
+/// precondition of `combined_proof`, so even these trivial facts time out when
+/// left to the SMT solver inline. Proving them here, in an empty context, and
+/// applying them as lemmas removes the SMT call at the use site.
+/// ========================================================================
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+
+/// `new_fb - 8 + new_rw * 8 == obj + ws * 8` when the run starts at `obj`
+/// (`rw = 0`, so `new_fb = obj` and `new_rw = ws + 1`).
+private let rw0_run_bound (o: int) (ws: nat)
+  : Lemma (o - 8 + (ws + 1) * 8 == o + ws * 8)
+  = ML.distributivity_add_left ws 1 8
+
+/// `fb + new_rw * 8 == obj + (ws + 1) * 8` when extending an existing run
+/// (`new_rw = rw + ws + 1` and `fb + rw * 8 == obj`).
+private let rwpos_run_contig (fbv: int) (rw ws: nat)
+  : Lemma (fbv + (rw + ws + 1) * 8 == (fbv + rw * 8) + (ws + 1) * 8)
+  = ML.distributivity_add_left rw (ws + 1) 8
+
+/// The tail of a non-empty sequence is strictly shorter (termination measure).
+private let rwpos_run_bound (fbv ov: int) (rw ws: nat)
+  : Lemma (requires fbv + rw * 8 == ov)
+          (ensures fbv - 8 + (rw + ws + 1) * 8 == ov + ws * 8)
+  = ML.distributivity_add_left rw (ws + 1) 8;
+    ML.distributivity_add_left ws 1 8
+
+private let tail_len_lt (#a: Type) (s: Seq.seq a)
+  : Lemma (requires Seq.length s > 0)
+          (ensures Seq.length (Seq.tail s) < Seq.length s)
+  = ()
+#pop-options
+
+/// ========================================================================
 /// Main theorem
 /// ========================================================================
 
@@ -774,6 +828,8 @@ let rec combined_proof
     end else begin
       let obj = Seq.head objs in
       let rest = Seq.tail objs in
+      tail_len_lt objs;
+      assert (Seq.length rest < Seq.length objs);
 
       if is_black obj g then begin
         // ============================================================
@@ -889,12 +945,14 @@ let rec combined_proof
           // also need: new_fb - 8 + new_rw * 8 <= heap_size
           // new_fb = obj, new_rw = ws + 1
           ML.distributivity_add_left ws 1 8;
+          rw0_run_bound (U64.v obj) ws;
           assert (U64.v obj - 8 + new_rw * 8 == U64.v obj + ws * 8);
           ()
         end else begin
           assert (U64.v fb + rw * 8 == U64.v obj);
           assert (U64.v obj + ws * 8 <= heap_size);
           ML.distributivity_add_left rw (ws + 1) 8;
+          rwpos_run_bound (U64.v fb) (U64.v obj) rw ws;
           assert (U64.v fb - 8 + new_rw * 8 == U64.v obj + ws * 8);
           assert (U64.v fb - 8 + new_rw * 8 <= heap_size);
           // new_rw - 1 = rw + ws, need rw + ws < pow2 54
@@ -916,10 +974,12 @@ let rec combined_proof
         (if Seq.length rest > 0 then begin
           if rw = 0 then begin
             ML.distributivity_add_left ws 1 8;
+            rw0_run_bound (U64.v obj) ws;
             assert (U64.v new_fb + new_rw * 8 == U64.v obj + (ws + 1) * 8)
           end else begin
             assert (U64.v fb + rw * 8 == U64.v obj);
             ML.distributivity_add_left rw (ws + 1) 8;
+            rwpos_run_contig (U64.v fb) rw ws;
             assert (U64.v new_fb + new_rw * 8 == U64.v obj + (ws + 1) * 8)
           end
         end else ());

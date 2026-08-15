@@ -17,6 +17,10 @@ open GC.Spec.Allocator.Lemmas.Part1
 open GC.Spec.Allocator.Lemmas.Part2
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
+module Header = GC.Lib.Header
+module Mark = GC.Spec.Mark
+module AllocCommon = GC.Spec.Allocator.Lemmas.Common
+module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 
 /// =====================================================
 /// Re-exports from Core

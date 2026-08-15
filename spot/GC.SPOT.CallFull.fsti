@@ -18,6 +18,7 @@ open GC.Impl.Stack
 
 module CheneyImpl = GC.Gen.Impl.Cheney
 
+divergent
 fn call_gen_gc_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)

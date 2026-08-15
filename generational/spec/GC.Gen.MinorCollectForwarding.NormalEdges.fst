@@ -37,7 +37,7 @@ open GC.Gen.MinorCollectForwarding.Helpers
 module MCFE = GC.Gen.MinorCollectForwarding.Edges
 open GC.Gen.MinorCollectForwarding.Edges
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 1"
 let combined_reachable_edge_forwarded_normal
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -140,7 +140,7 @@ let combined_reachable_edge_forwarded_normal
       promoted_minor_minor_edge_forwarded minor major fp roots src dst i
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 private let fwd_disjoint_reachable_major_at
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x y: U64.t)
@@ -210,7 +210,7 @@ let fwd_disjoint_reachable_major_intro
     Classical.forall_intro_2 (Classical.move_requires_2 aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let minor_source_edge_not_no_scan
   (minor: minor_state) (major: heap) (fp: U64.t)
   (src: U64.t) (dst: CG.combined_vertex)
@@ -255,7 +255,7 @@ let minor_source_edge_not_no_scan
     end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let combined_reachable_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -358,8 +358,8 @@ private let normal_minor_source_ready_intro
     GenInv.major_heap_shape_elim major fp;
     GenInv.minor_heap_shape_elim minor;
     assert (well_formed_heap major);
-    assert (AllocLemmas.fl_valid major fp (heap_size / U64.v mword));
-    assert (AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword));
+    assert (AllocLemmas.fl_valid major fp heap_words);
+    assert (AllocLemmas.fl_chain_terminates major fp heap_words);
     assert (chain_objects_blue major fp);
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
@@ -469,7 +469,7 @@ let normal_edge_forward_ready_intro
       assert (is_minor_pointer dst)
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let normal_src_images_injective
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (u v: CG.combined_vertex)

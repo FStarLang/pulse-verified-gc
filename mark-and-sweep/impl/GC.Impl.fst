@@ -53,7 +53,8 @@ module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 /// Postcondition:
 /// - gc_postcondition: well_formed_heap preserved, all objects white or blue
 /// - full_gc_correctness: reachable objects survive with preserved data
-#push-options "--z3rlimit 200 --split_queries always"
+#push-options "--z3rlimit 200"
+divergent
 fn collect_with_roots
     (heap: heap_t) (st: gray_stack)
     (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (fp: U64.t)
@@ -101,6 +102,7 @@ fn collect_with_roots
   final_fp
 }
 
+divergent
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
             pure (gc_precondition 's 'st fp (stack_capacity st))

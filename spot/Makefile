@@ -16,8 +16,29 @@ INCLUDES = \
   --include ../mark-and-sweep/spec --include ../mark-and-sweep/impl \
   --include ../generational/spec --include ../generational/impl
 
+# Shared checked-file cache (see the root Makefile).  F* writes
+# `M.fst.checked` into --cache_dir, which defaults to the current working
+# directory, so every build in this repo points at one explicit directory.
+CACHE_DIR ?= ../_cache
+
+# Z3 version used for all SMT queries (bundled with the F* installation).
+Z3_VERSION ?= 4.15.3
+
+
+# Z3 4.15.3 flakiness workaround -- see the top-level Makefile.
+RETRY ?= --retry 3
+
+# Hard per-query wall-clock bound; see the root Makefile for the rationale.
+# Some Z3 4.15.3 searches never terminate and never charge the rlimit, so
+# `--z3rlimit` alone cannot bound them.
+Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
+
 FSTAR_BASE_FLAGS = \
+  $(RETRY) \
+  $(Z3_TIMEOUT) \
+  --z3version $(Z3_VERSION) \
   --cache_checked_modules \
+  --cache_dir $(CACHE_DIR) \
   --warn_error -321 \
   --report_assumes warn \
   $(INCLUDES)
@@ -68,13 +89,17 @@ SPOT_SRC = \
   GC.SPOT.ConcreteCallFull.fsti \
   GC.SPOT.ConcreteCallFull.fst
 
-SPOT_CHECKED = $(addsuffix .checked,$(SPOT_SRC))
+# All checked files land in one shared cache, so targets are derived from the
+# module file name alone.
+checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
+
+SPOT_CHECKED = $(call checked,$(SPOT_SRC))
 
 UPSTREAM_SPOT_HELPER_SRC = \
   ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti \
   ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst
 
-UPSTREAM_SPOT_HELPER_CHECKED = $(addsuffix .checked,$(UPSTREAM_SPOT_HELPER_SRC))
+UPSTREAM_SPOT_HELPER_CHECKED = $(call checked,$(UPSTREAM_SPOT_HELPER_SRC))
 
 COMMON_SRC = $(wildcard ../common/spec/*.fst ../common/spec/*.fsti \
                        ../common/lib/*.fst \
@@ -85,22 +110,27 @@ GEN_SRC    = $(wildcard ../generational/spec/*.fst ../generational/spec/*.fsti \
                        ../generational/impl/*.fst ../generational/impl/*.fsti)
 ALL_SRC    = $(SPOT_SRC) $(COMMON_SRC) $(MS_SRC) $(GEN_SRC)
 
+# Map a module file name back to its source path (used by the generated
+# .depend to depend on upstream *sources* without trying to rebuild them).
+src_of = $(firstword $(filter %/$(1) $(1),$(ALL_SRC)))
+
 .depend: Makefile $(ALL_SRC)
 	$(FSTAR_DEP) --dep full $(SPOT_SRC) --output_deps_to $@.raw
 	@awk -v cwd="$$(pwd)/" -v proj="$$(cd .. && pwd)/" ' \
 	  { gsub(cwd, ""); gsub(proj, "../") } \
 	  /^[^ \t].*:/ { flush(); split($$0, a, ":"); target = a[1]; \
-	    keep = (target ~ /^GC\.SPOT\..*\.checked$$/); n = 0; \
+	    keep = (target ~ /^\.\.\/_cache\/GC\.SPOT\..*\.checked$$/); n = 0; \
 	    if (keep) buf[n++] = target ": \\"; \
 	    next } \
 	  /^[A-Z_][A-Z0-9_]*[ \t]*=/ { flush(); keep = 0; n = 0; next } \
 	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
 	    if (line == "") next; \
-	    if (line ~ /^GC\.SPOT\..*\.checked$$/) { buf[n++] = $$0; next } \
-	    if (line ~ /^\.\.\/mark-and-sweep\/impl\/GC\.Impl\.MarkBoundedRootLemmas\.(fst|fsti)\.checked$$/) { \
+	    if (line ~ /^\.\.\/_cache\/GC\.SPOT\..*\.checked$$/) { buf[n++] = $$0; next } \
+	    if (line ~ /^\.\.\/_cache\/GC\.Impl\.MarkBoundedRootLemmas\.(fst|fsti)\.checked$$/) { \
 	      buf[n++] = "\t" line " \\"; next } \
-	    if (line ~ /^\.\.\/(common|mark-and-sweep|generational)\/.*\.(fst|fsti)\.checked$$/) { \
-	      sub(/\.checked$$/, "", line); buf[n++] = "\t" line " \\"; next } \
+	    if (line ~ /^\.\.\/_cache\/.*\.(fst|fsti)\.checked$$/) { \
+	      sub(/^\.\.\/_cache\//, "", line); sub(/\.checked$$/, "", line); \
+	      buf[n++] = "\t$$(call src_of," line ") \\"; next } \
 	    if (line ~ /\.(fst|fsti)$$/) buf[n++] = $$0 } \
 	  END { flush() } \
 	  function flush() { if (!keep || n == 0) return; \
@@ -119,19 +149,25 @@ depend: .depend
 verify: $(UPSTREAM_SPOT_HELPER_CHECKED) $(SPOT_CHECKED)
 	@echo "=== SPOT modules verified ==="
 
-$(SPOT_CHECKED): ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti.checked
+$(SPOT_CHECKED): $(CACHE_DIR)/GC.Impl.MarkBoundedRootLemmas.fsti.checked
 
-../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti.checked: ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti
-	$(FSTAR_UPSTREAM) --z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always $<
+$(CACHE_DIR)/GC.Impl.MarkBoundedRootLemmas.fsti.checked: ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti
+	@mkdir -p $(CACHE_DIR)
+	$(FSTAR_UPSTREAM) --z3rlimit 10 --fuel 0 --ifuel 0 $<
 
-../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst.checked: ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fsti.checked
-	$(FSTAR_UPSTREAM) --z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always $<
+$(CACHE_DIR)/GC.Impl.MarkBoundedRootLemmas.fst.checked: ../mark-and-sweep/impl/GC.Impl.MarkBoundedRootLemmas.fst $(CACHE_DIR)/GC.Impl.MarkBoundedRootLemmas.fsti.checked
+	@mkdir -p $(CACHE_DIR)
+	$(FSTAR_UPSTREAM) --z3rlimit 10 --fuel 0 --ifuel 0 $<
 
-GC.SPOT.%.fsti.checked: GC.SPOT.%.fsti
-	$(FSTAR) --z3rlimit 10 --split_queries always $<
+# Bind every SPOT cache target to its source file so `$<` is the source.
+define bind_source
+$(CACHE_DIR)/$(1).checked: $(1)
+endef
+$(foreach s,$(SPOT_SRC),$(eval $(call bind_source,$(s))))
 
-GC.SPOT.%.fst.checked: GC.SPOT.%.fst
-	$(FSTAR) --z3rlimit 10 --split_queries always $<
+$(CACHE_DIR)/GC.SPOT.%.checked:
+	@mkdir -p $(CACHE_DIR)
+	$(FSTAR) --z3rlimit 10 $<
 
 clean:
-	rm -f .depend .depend.raw *.checked
+	rm -f .depend .depend.raw $(SPOT_CHECKED) $(UPSTREAM_SPOT_HELPER_CHECKED)

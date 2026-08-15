@@ -89,6 +89,7 @@ let field_in_bounds (limit obj_addr wosize jv: nat)
 
 inline_for_extraction
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+divergent
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
                     (src_obj: U64.t) (dst_obj: U64.t)
                     (wosize: U64.t)
@@ -154,7 +155,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 
 /// Zero the padding field if the allocator gave extra space (leftover=1 case).
 /// After this, the ghost state matches zero_promote_padding.
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn zero_padding_step (major: heap_t) (dst_obj: U64.t) (wosize: U64.t)
   requires is_heap major 'ms **
@@ -195,8 +196,9 @@ fn zero_padding_step (major: heap_t) (dst_obj: U64.t) (wosize: U64.t)
 /// during a promotion loop, pointer closure (part2) is temporarily violated
 /// (minor pointers are written into the major heap body). The allocator only
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 inline_for_extraction
+divergent
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)
   requires is_minor minor 'md 'mb **
@@ -208,8 +210,8 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                  U64.v obj + minor_wosize {data='md; bump='mb} obj * 8 <= minor_heap_size /\
                  // Major heap structural well-formedness (weaker than full wfh)
                  SF.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword))
+                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words)
   returns new_addr: U64.t
   ensures exists* md2 mb2 ms2 fp2.
     is_minor minor md2 mb2 **
@@ -219,8 +221,8 @@ fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
           let wz = minor_wosize minor_st obj in
           md2 == 'md /\ mb2 == 'mb /\
           SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_valid ms2 fp2 heap_words /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           (wz > 0 ==>
             (let spec_res = PromoteSpec.promote_object minor_st 'ms obj 'fp wz in
              ms2 == spec_res.major_out /\

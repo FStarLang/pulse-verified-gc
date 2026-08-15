@@ -85,8 +85,8 @@ val full_heap_shape (minor: minor_state) (major: heap) (fp: U64.t)
 
 val major_heap_shape_intro (major: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\
@@ -102,8 +102,8 @@ val major_heap_shape_intro (major: heap) (fp: U64.t)
 val major_heap_shape_elim (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
           (ensures well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     FreeListShape.blue_link_fields_valid major /\
                     heap_objects_dense major /\

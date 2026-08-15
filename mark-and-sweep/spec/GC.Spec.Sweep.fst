@@ -6,7 +6,7 @@
 
 module GC.Spec.Sweep
 
-#set-options "--split_queries always --z3rlimit 50 --fuel 2 --ifuel 1"
+#set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 
 open FStar.Seq
 
@@ -240,7 +240,7 @@ let sweep_aux_empty (g: heap) (fp: U64.t)
 /// sweep_object at head + sweep_aux on objects from next_addr
 /// After sweep_object at obj: sweep_aux g' (objects next g') fp' == sweep_aux g' (objects next g) fp'
 /// since objects next g' == objects next g (suffix preservation)
-#push-options "--z3rlimit 600 --fuel 3 --ifuel 1 --split_queries no"
+#push-options "--z3rlimit 600 --fuel 3 --ifuel 1"
 let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\
                     Seq.length (objects h_addr g) > 0 /\
@@ -883,7 +883,7 @@ let sweep_object_white_field0
 
 ///Helper 1: sweep_aux preserves read_word at field addresses of x when x ∉ objs
 /// (no sweep_object ever processes x, so its body is never written to)
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_field_nonmember
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -1359,7 +1359,7 @@ private let sweep_get_pointer_fields_eq
     get_pointer_fields_aux_preserved g g' x 1UL ws
 #pop-options
 
-#push-options "--z3rlimit 2000 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 2000 --fuel 1 --ifuel 1"
 let sweep_preserves_edges g fp x = 
   sweep_preserves_objects g fp;
   let g' = fst (sweep g fp) in

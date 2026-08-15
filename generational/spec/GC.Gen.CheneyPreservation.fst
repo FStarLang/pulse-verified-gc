@@ -50,7 +50,7 @@ module IndDesc = FStar.IndefiniteDescription
 
 /// Helper: set_promoted_tag preserves no_black_objects.
 /// The written header has color White, and all other headers are preserved.
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let set_promoted_tag_preserves_no_black
   (g: heap) (dst: obj_addr) (tag: nat{tag < 256})
   : Lemma (requires Mark.no_black_objects g /\
@@ -84,7 +84,7 @@ private let set_promoted_tag_preserves_no_black
 #pop-options
 
 /// Helper: copy_fields preserves no_black_objects when dst_fields_valid
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let copy_fields_preserves_no_black
   (minor: minor_state) (g: heap) (obj: U64.t) (dst: obj_addr) (wz: nat{wz > 0})
   : Lemma (requires Mark.no_black_objects g /\
@@ -126,7 +126,7 @@ private let copy_fields_preserves_no_black
 #pop-options
 
 /// Helper: zero_promote_padding preserves no_black_objects
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let zero_promote_padding_preserves_no_black
   (g: heap) (dst: obj_addr) (wz: nat{wz > 0})
   : Lemma (requires Mark.no_black_objects g /\
@@ -170,13 +170,13 @@ private let zero_promote_padding_preserves_no_black
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 
 private let promote_object_preserves_no_black
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Mark.no_black_objects major)
           (ensures (let res = promote_object minor major obj fp wz in
                     Mark.no_black_objects res.major_out))
@@ -230,8 +230,8 @@ private let promote_object_preserves_no_black
 private let cheney_forward_one_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     Mark.no_black_objects cs.cs_major /\
                     minor_infix_wf minor)
           (ensures (let cs' = cheney_forward_one minor cs addr in
@@ -296,8 +296,8 @@ private let cheney_forward_one_preserves_no_black
 private let rec cheney_forward_fields_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     Mark.no_black_objects cs.cs_major /\
                     minor_infix_wf minor)
           (ensures (let cs' = cheney_forward_fields minor cs parent idx wosize in
@@ -326,12 +326,12 @@ private let rec cheney_forward_fields_preserves_no_black
 private let rec cheney_forward_roots_preserves_wfh_part1
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words)
           (ensures (let cs' = cheney_forward_roots minor cs roots idx in
                     well_formed_heap_part1 cs'.cs_major /\
-                    AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp (heap_size / U64.v mword)))
+                    AllocLemmas.fl_valid cs'.cs_major cs'.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs'.cs_major cs'.cs_fp heap_words))
           (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
   =
   if idx >= Seq.length roots then
@@ -355,8 +355,8 @@ private let rec cheney_forward_roots_preserves_wfh_part1
 private let rec cheney_forward_roots_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     Mark.no_black_objects cs.cs_major /\
                     minor_infix_wf minor)
           (ensures (let cs' = cheney_forward_roots minor cs roots idx in
@@ -380,13 +380,13 @@ private let rec cheney_forward_roots_preserves_no_black
 /// cheney_scan preserves no_black_objects (recursive)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
 
 private let rec cheney_scan_preserves_no_black
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     Mark.no_black_objects cs.cs_major /\
                     minor_infix_wf minor)
           (ensures (let cs' = cheney_scan minor cs scan fuel in
@@ -416,8 +416,8 @@ private let rec cheney_scan_preserves_no_black
 let cheney_promote_preserves_no_black
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Mark.no_black_objects major /\
                     minor_infix_wf minor)
           (ensures (let res = cheney_promote minor major fp roots in
@@ -434,12 +434,12 @@ let cheney_promote_preserves_no_black
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_no_black minor cs1 0 (cheney_fuel minor)
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let cheney_collect_preserves_no_black
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     Mark.no_black_objects major /\
                     minor_infix_wf minor)
           (ensures Mark.no_black_objects
@@ -464,7 +464,7 @@ let cheney_collect_preserves_no_black
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_collect_preserves_fp_pointer_or_zero
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires GenInv.collection_heap_shape minor major fp)
@@ -483,12 +483,12 @@ let cheney_collect_preserves_fp_pointer_or_zero
 /// Cheney promotion preserves the MajorGC color-stack precondition conjunct
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let alloc_spec_preserves_gray_black_objects_on_stack_part1
   (g: heap) (fp: U64.t) (wz: nat{wz > 0}) (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
                     chain_objects_blue g fp /\
                     gray_black_objects_on_stack g st)
           (ensures gray_black_objects_on_stack (Allocator.alloc_spec g fp wz).heap_out st)
@@ -530,7 +530,7 @@ private let alloc_spec_preserves_gray_black_objects_on_stack_part1
   end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let set_promoted_tag_preserves_gray_black_objects_on_stack
   (g: heap) (dst: obj_addr) (tag: nat{tag < 256}) (st: seq obj_addr)
   : Lemma (requires gray_black_objects_on_stack g st /\
@@ -569,7 +569,7 @@ private let set_promoted_tag_preserves_gray_black_objects_on_stack
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let copy_fields_preserves_gray_black_objects_on_stack
   (minor: minor_state) (g: heap) (obj: U64.t) (dst: obj_addr) (wz: nat{wz > 0})
   (st: seq obj_addr)
@@ -614,7 +614,7 @@ private let copy_fields_preserves_gray_black_objects_on_stack
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let zero_promote_padding_preserves_gray_black_objects_on_stack
   (g: heap) (dst: obj_addr) (wz: nat{wz > 0}) (st: seq obj_addr)
   : Lemma (requires gray_black_objects_on_stack g st /\
@@ -660,13 +660,13 @@ private let zero_promote_padding_preserves_gray_black_objects_on_stack
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let promote_object_preserves_gray_black_objects_on_stack
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     gray_black_objects_on_stack major st)
           (ensures (let res = promote_object minor major obj fp wz in
@@ -705,12 +705,12 @@ private let promote_object_preserves_gray_black_objects_on_stack
   end
 #pop-options
 
-#push-options "--z3rlimit 500 --fuel 1 --ifuel 0 --split_queries always --z3refresh"
+#push-options "--z3rlimit 500 --fuel 1 --ifuel 0 --z3refresh"
 private let cheney_forward_one_preserves_gray_black_objects_on_stack
   (minor: minor_state) (cs: cheney_state) (addr: U64.t) (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     gray_black_objects_on_stack cs.cs_major st /\
                     minor_infix_wf minor)
@@ -762,8 +762,8 @@ private let rec cheney_forward_fields_preserves_gray_black_objects_on_stack
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
   (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     gray_black_objects_on_stack cs.cs_major st /\
                     minor_infix_wf minor)
@@ -789,8 +789,8 @@ private let rec cheney_forward_roots_preserves_gray_black_objects_on_stack
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
   (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     gray_black_objects_on_stack cs.cs_major st /\
                     minor_infix_wf minor)
@@ -818,8 +818,8 @@ private let rec cheney_scan_preserves_gray_black_objects_on_stack
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     gray_black_objects_on_stack cs.cs_major st /\
                     minor_infix_wf minor)
@@ -854,8 +854,8 @@ let cheney_promote_preserves_gray_black_objects_on_stack
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     gray_black_objects_on_stack major st /\
                     minor_infix_wf minor)
@@ -872,7 +872,7 @@ let cheney_promote_preserves_gray_black_objects_on_stack
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_gray_black_objects_on_stack minor cs1 0 (cheney_fuel minor) st
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let update_major_pointers_preserves_gray_black_objects_on_stack
   (major: heap) (fwd: forwarding_map) (st: seq obj_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -899,8 +899,8 @@ let cheney_collect_preserves_gray_black_objects_on_stack
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     gray_black_objects_on_stack major st /\
                     minor_infix_wf minor)
@@ -935,8 +935,8 @@ private let cheney_forward_one_preserves_no_scan_invariant
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     no_scan_invariant cs.cs_major /\
                     minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures no_scan_invariant (cheney_forward_one minor cs addr).cs_major)
@@ -989,8 +989,8 @@ private let rec cheney_forward_fields_preserves_no_scan_invariant
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     no_scan_invariant cs.cs_major /\
                     minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures no_scan_invariant (cheney_forward_fields minor cs parent idx wosize).cs_major)
@@ -1015,8 +1015,8 @@ private let rec cheney_forward_roots_preserves_no_scan_invariant
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     no_scan_invariant cs.cs_major /\
                     minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures no_scan_invariant (cheney_forward_roots minor cs roots idx).cs_major)
@@ -1043,8 +1043,8 @@ private let rec cheney_scan_preserves_no_scan_invariant
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     no_scan_invariant cs.cs_major /\
                     minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures no_scan_invariant (cheney_scan minor cs scan fuel).cs_major)
@@ -1075,8 +1075,8 @@ let cheney_promote_preserves_no_scan_invariant
   : Lemma (requires well_formed_heap major /\
                     no_scan_invariant major /\
                     minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor)
           (ensures no_scan_invariant (cheney_promote minor major fp roots).major_final)
@@ -1096,8 +1096,8 @@ private let cheney_forward_one_preserves_blue_fields_closed
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     blue_fields_closed cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures blue_fields_closed (cheney_forward_one minor cs addr).cs_major)
@@ -1145,8 +1145,8 @@ private let rec cheney_forward_fields_preserves_blue_fields_closed
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     blue_fields_closed cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures blue_fields_closed (cheney_forward_fields minor cs parent idx wosize).cs_major)
@@ -1168,8 +1168,8 @@ private let rec cheney_forward_roots_preserves_blue_fields_closed
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     blue_fields_closed cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures blue_fields_closed (cheney_forward_roots minor cs roots idx).cs_major)
@@ -1191,8 +1191,8 @@ private let rec cheney_scan_preserves_blue_fields_closed
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
                     blue_fields_closed cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
+                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
                     chain_objects_blue cs.cs_major cs.cs_fp /\
                     minor_infix_wf minor)
           (ensures blue_fields_closed (cheney_scan minor cs scan fuel).cs_major)
@@ -1219,8 +1219,8 @@ private let rec cheney_scan_preserves_blue_fields_closed
 let cheney_promote_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor)
           (ensures blue_fields_closed (cheney_promote minor major fp roots).major_final)
@@ -1236,7 +1236,7 @@ let cheney_promote_preserves_blue_fields_closed
   let cs1 = cheney_forward_roots minor cs0 roots 0 in
   cheney_scan_preserves_blue_fields_closed minor cs1 0 (cheney_fuel minor)
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let update_major_pointers_preserves_no_scan_invariant
   (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -1289,8 +1289,8 @@ let cheney_collect_preserves_no_scan_invariant
   : Lemma (requires well_formed_heap major /\
                     no_scan_invariant major /\
                     minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor)
           (ensures no_scan_invariant (cheney_collect_spec minor major fp roots).mc_major)
@@ -1314,8 +1314,8 @@ module Injectivity = GC.Gen.CheneyPreservation.Injectivity
 let cheney_promote_fwd_valid_or_infix
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
@@ -1330,8 +1330,8 @@ let cheney_promote_frame_old_header = Frame.cheney_promote_frame_old_header
 let cheney_promote_fwd_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
@@ -1342,8 +1342,8 @@ let cheney_promote_fwd_normal_injective
 let cheney_promote_fwd_targets_not_blue
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
@@ -1354,8 +1354,8 @@ let cheney_promote_fwd_targets_not_blue
 let cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor)
@@ -1370,8 +1370,8 @@ let cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor /\
@@ -1415,7 +1415,7 @@ let field_old_pointer_targets_in_objects (major: heap) (fwd: forwarding_map) : p
      ~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==>
      Seq.mem (old_raw <: obj_addr) (objects zero_addr major))
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let header_eq_preserves_no_scan
   (g1 g2: heap) (obj: obj_addr)
   : Lemma
@@ -1446,7 +1446,7 @@ private let fwd_noninfix_target_exists
     ((fwd x) <: obj_addr)
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 private let cheney_promote_field_fwd_targets_in_objects_from_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -1548,7 +1548,7 @@ private let cheney_promote_field_fwd_targets_in_objects_from_shape
   FStar.Classical.forall_intro_2 aux
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 private let cheney_promote_field_old_targets_in_objects_from_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -1647,7 +1647,7 @@ private let cheney_promote_field_old_targets_in_objects_from_shape
   FStar.Classical.forall_intro_2 aux
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 private let update_major_pointers_preserves_wfh_part2_from_field_targets
   (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -1702,7 +1702,7 @@ private let update_major_pointers_preserves_wfh_part2_from_field_targets
   well_formed_heap_part2_from_field_closure updated field_closure
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 let cheney_collect_preserves_wfh_from_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -1731,7 +1731,7 @@ let cheney_collect_preserves_wfh_from_shape
   assert ((cheney_collect_spec minor major fp roots).mc_major == updated)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let cheney_collect_preserves_no_pointer_to_blue
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -1755,7 +1755,7 @@ let cheney_collect_preserves_no_pointer_to_blue
     prom.major_final prom.fwd_map
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 private let update_major_pointers_preserves_blue_link_fields_valid
   (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -1797,7 +1797,7 @@ private let objects_nonempty_from_header_local (g1 g2: heap) (start: hp_addr)
   = ()
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let update_major_pointers_preserves_dense
   (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -1837,16 +1837,16 @@ private let update_major_pointers_preserves_dense
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 private let update_major_pointers_preserves_chain_objects_blue
   (major: heap) (fwd: forwarding_map) (fp: U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
                     chain_objects_blue major fp)
           (ensures chain_objects_blue (update_major_pointers major fwd) fp)
   =
   let updated = update_major_pointers major fwd in
-  let fuel = heap_size / U64.v mword in
+  let fuel = heap_words in
   update_major_pointers_preserves_objects major fwd;
   reveal_opaque (`%chain_objects_blue) chain_objects_blue;
   let aux (obj: obj_addr) : Lemma
@@ -1916,12 +1916,12 @@ let cheney_collect_preserves_collection_heap_shape
   assert (well_formed_heap res.mc_major);
   cheney_collect_preserves_no_pointer_to_blue minor major fp roots;
   FreeListShape.fp_pointer_or_zero_fl_valid_implies_fp_valid
-    res.mc_fp res.mc_major (heap_size / U64.v mword);
+    res.mc_fp res.mc_major heap_words;
   FreeListShape.fp_pointer_or_zero_implies_fp_in_heap res.mc_fp res.mc_major;
   assert (heap_objects_dense res.mc_major);
   assert (chain_objects_blue res.mc_major res.mc_fp);
-  assert (AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword));
-  assert (AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword));
+  assert (AllocLemmas.fl_valid res.mc_major res.mc_fp heap_words);
+  assert (AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp heap_words);
   assert (FreeListShape.fp_pointer_or_zero res.mc_fp);
   assert (FreeListShape.blue_link_fields_valid res.mc_major);
   assert (Seq.length (objects zero_addr res.mc_major) > 0);
@@ -1934,7 +1934,7 @@ let cheney_collect_preserves_collection_heap_shape
   GenInv.collection_heap_shape_after_minor_reset minor res.mc_major res.mc_fp
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let rec stack_elements_valid_transfer_superset
   (g g': heap) (st: seq obj_addr)
   : Lemma
@@ -1953,13 +1953,13 @@ private let rec stack_elements_valid_transfer_superset
   end
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 let cheney_collect_preserves_bounded_stack_props
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (st: seq obj_addr)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     MarkBounded.bounded_stack_props major st)

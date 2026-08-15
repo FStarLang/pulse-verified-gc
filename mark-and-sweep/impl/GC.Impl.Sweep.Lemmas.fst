@@ -7,7 +7,7 @@
 
 module GC.Impl.Sweep.Lemmas
 
-#set-options "--z3rlimit 50 --split_queries always"
+#set-options "--z3rlimit 50"
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -64,7 +64,7 @@ let field1_of (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) : hp_add
 /// ---------------------------------------------------------------------------
 
 /// Bridge: Pulse whiten (write_word with makeHeader White) == spec makeWhite
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let whiten_eq (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_black f_addr g /\
@@ -84,7 +84,7 @@ let whiten_eq (g: heap_state) (f_addr: obj_addr)
 #pop-options
 
 /// Bridge: Pulse bluen (write_word with makeHeader Blue) == spec makeBlue
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let bluen_eq (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_white f_addr g /\
@@ -101,7 +101,7 @@ let bluen_eq (g: heap_state) (f_addr: obj_addr)
     SpecObject.makeBlue_spec f_addr g
 #pop-options
 
-#push-options "--z3rlimit 50 --split_queries no --fuel 4 --ifuel 2"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 2"
 let makeBlue_preserves_getWosize
   (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   : Lemma (requires Seq.length g == heap_size /\
@@ -116,7 +116,7 @@ let makeBlue_preserves_getWosize
     SpecObject.set_object_color_preserves_getWosize_at_hd obj g GC.Lib.Header.Blue
 #pop-options
 
-#push-options "--z3rlimit 50 --split_queries no --fuel 4 --ifuel 2"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 2"
 let makeWhite_preserves_getWosize
   (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   : Lemma (requires Seq.length g == heap_size /\
@@ -203,7 +203,7 @@ let density_next_bridge (h_addr: hp_addr) (g_init g_post: GC.Spec.Base.heap) (wz
 /// Bridge: from obj_in_objects (f_address h_addr) in one heap, derive objects nonempty
 /// in a related heap. Combines transfer + elim + member_implies_objects_nonempty
 /// into a single call to avoid --split_queries isolation.
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
 let derive_objects_nonempty_bridge
     (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (g_cur g_init: GC.Spec.Base.heap)
   : Lemma (requires SI.obj_in_objects (SpecHeap.f_address h_addr) g_cur /\
@@ -224,7 +224,7 @@ let derive_objects_nonempty_bridge
 /// Avoids --split_queries isolation by doing everything in one pure F* call.
 /// Takes RAW Pulse-accessible facts (spec_read_word, getWosize) to avoid long chains.
 /// Density/membership conclusions are conditional on next_v + 8 < heap_size.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
 let sweep_loop_next_bridge
     (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
     (hdr: U64.t)
@@ -428,7 +428,7 @@ let makeWhite_headers_preserved_before_spec (g: heap_state)
 
 /// Bridge: whiten via spec_write_word preserves wfh + objects
 /// Takes EXACTLY the terms from the Pulse context to avoid SMT unification
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let sweep_black_preserves (g: GC.Spec.Base.heap) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (hdr: U64.t) (wz: wosize)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
@@ -476,7 +476,7 @@ let is_black_bridge (g: heap_state) (f_addr: obj_addr) (h_addr: hp_addr) (hdr: U
 
 /// Combined white-case preservation: writing to field 1 preserves wfh + objects.
 /// Uses h_addr (outer scope) not field1_addr in ensures.
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_white_write_preserves (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecFields.well_formed_heap g /\
@@ -503,7 +503,7 @@ let sweep_white_write_preserves (g: heap_state) (h_addr: hp_addr{U64.v h_addr + 
 #pop-options
 
 /// White-case: writing to field 1 preserves header at h_addr and headers before h_addr
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let sweep_white_header_preserved (g: heap_state) (h_addr: hp_addr) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
@@ -519,7 +519,7 @@ let sweep_white_header_preserved (g: heap_state) (h_addr: hp_addr) (wz: U64.t) (
 #pop-options
 
 /// After a field write at h_addr+8, the is_white/is_blue status at f_address(h_addr) is preserved
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let sweep_white_color_preserved (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
@@ -544,7 +544,7 @@ let sweep_white_color_preserved (g: heap_state) (h_addr: hp_addr{U64.v h_addr + 
 /// Bridge: spec_write_word at field 1 == HeapGraph.set_field for field 1
 /// set_field g obj 1 fp = write_word g (hd_address obj + mword * 1) fp = write_word g obj fp
 /// spec_write_word g (h_addr + 8) fp = spec_write_word g (U64.v obj) fp = write_word g obj fp
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let set_field_1_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + U64.v mword < heap_size /\
@@ -562,7 +562,7 @@ let set_field_1_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
 
 /// Bridge: sweep_object spec equivalence for white case (wz > 0 branch)
 /// After field write + makeBlue, the result matches sweep_object
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let sweep_object_white_write_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + U64.v mword < heap_size /\
@@ -589,7 +589,7 @@ let sweep_object_white_write_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + 
 
 /// Bridge: sweep_object spec equivalence for white case (wz == 0 branch)
 /// Just makeBlue (no field write), result matches sweep_object
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let sweep_object_white_noop_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: U64.t) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + U64.v mword < heap_size /\
@@ -617,7 +617,7 @@ let sweep_object_white_noop_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U
 
 /// Bridge: after sweep_black writes makeHeader wz White tag at h_addr,
 /// the object is white and wosize is preserved.
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let sweep_black_whiteness (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (hdr: U64.t) (wz: wosize)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\
@@ -643,7 +643,7 @@ let sweep_black_whiteness (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v 
 #pop-options
 
 /// Bridge: sweep_object spec equivalence for black case
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let sweep_object_black_eq (g: heap_state) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (hdr: U64.t) (wz: wosize) (fp: U64.t)
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v h_addr + 8 < heap_size /\

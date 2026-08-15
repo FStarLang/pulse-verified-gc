@@ -42,22 +42,6 @@ let is_minor (mh: minor_heap_t) (d: minor_heap) (b: U64.t) : slprop =
   pure (U64.v b % 8 == 0 /\ U64.v b <= minor_heap_size)
 
 /// ---------------------------------------------------------------------------
-/// Allocation
-/// ---------------------------------------------------------------------------
-
-/// Bump-allocate an object in the minor heap.
-/// Returns 0UL on OOM, or the object address (bump + 8) on success.
-fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_minor mh 'd 'b **
-           pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
-                 U64.v tag < 256)
-  returns obj: U64.t
-  ensures exists* d2 b2. is_minor mh d2 b2 **
-    pure (
-      (obj == 0UL ==> d2 == 'd /\ b2 == 'b) /\
-      (obj <> 0UL ==> U64.v b2 % 8 == 0 /\ U64.v b2 <= minor_heap_size))
-
-/// ---------------------------------------------------------------------------
 /// Read / Write
 /// ---------------------------------------------------------------------------
 
@@ -74,6 +58,22 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0)
   ensures is_minor mh (minor_write_word_t 'd addr v) 'b
+
+/// ---------------------------------------------------------------------------
+/// Allocation
+/// ---------------------------------------------------------------------------
+
+/// Bump-allocate an object in the minor heap.
+/// Returns 0UL on OOM, or the object address (bump + 8) on success.
+fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
+  requires is_minor mh 'd 'b **
+           pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
+                 U64.v tag < 256)
+  returns obj: U64.t
+  ensures exists* d2 b2. is_minor mh d2 b2 **
+    pure (
+      (obj == 0UL ==> d2 == 'd /\ b2 == 'b) /\
+      (obj <> 0UL ==> U64.v b2 % 8 == 0 /\ U64.v b2 <= minor_heap_size))
 
 /// ---------------------------------------------------------------------------
 /// Reset (after minor collection)
@@ -100,6 +100,7 @@ fn alloc_minor_heap (_: unit)
 
 /// Walk the minor heap and translate all scannable objects' fields from
 /// absolute addresses to minor-relative offsets.
+divergent
 fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v 'b <= minor_heap_size /\
@@ -118,6 +119,7 @@ let fwd_arr_size : n:pos{n == minor_heap_size / 8} = minor_heap_size / 8
 /// Walk the minor heap and synthesize forwarding entries for infix sub-objects.
 /// For each closure whose parent was promoted (fwd_arr entry != 0), finds embedded
 /// infix headers and computes their forwarded address as parent_fwd + delta.
+divergent
 fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
   requires is_minor mh 'd 'b **
            pts_to fwd_arr 'farr **
@@ -138,6 +140,7 @@ fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
 ///
 /// roots: pre-allocated array with capacity `cap`
 /// nroots: current number of used entries in roots
+divergent
 fn find_infix_parents (mh: minor_heap_t)
                       (roots: array U64.t)
                       (nroots: SZ.t)

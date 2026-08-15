@@ -161,11 +161,13 @@ private let split_next_hd_objects_eq_part1
     alloc_from_block_split_normal g obj wz next_fp;
     let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
     let g1 = write_word g hd alloc_hdr in
-    let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+    aligned_plus_mul8 (U64.v hd) (1 + wz);
+    let rem_hd : hp_addr = mk_hp_addr rem_hd_nat in
     let rem_wz = block_wz - wz - 1 in
     let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
     let g2 = write_word g1 rem_hd rem_hdr in
-    let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+    aligned_plus_mul8 rem_hd_nat 1;
+    let rem_obj : hp_addr = mk_hp_addr rem_obj_nat in
     let g3 = write_word g2 rem_obj next_fp in
     if next_hd_nat < heap_size then begin
       let next_hd : hp_addr = U64.uint_to_t next_hd_nat in
@@ -437,11 +439,13 @@ let alloc_split_g3_agrees_part1
     alloc_from_block_split_normal g obj wz next_fp;
     let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
     let g1 = write_word g hd alloc_hdr in
-    let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+    aligned_plus_mul8 (U64.v hd) (1 + wz);
+    let rem_hd : hp_addr = mk_hp_addr rem_hd_nat in
     let rem_wz = block_wz - wz - 1 in
     let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
     let g2 = write_word g1 rem_hd rem_hdr in
-    let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+    aligned_plus_mul8 rem_hd_nat 1;
+    let rem_obj : hp_addr = mk_hp_addr rem_obj_nat in
     let g3 = write_word g2 rem_obj next_fp in
     read_write_different g2 rem_obj p next_fp;
     read_write_different g1 rem_hd p rem_hdr;
@@ -453,7 +457,7 @@ let alloc_split_g3_agrees_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_split_old_in_new_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\

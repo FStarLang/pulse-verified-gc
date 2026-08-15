@@ -24,8 +24,8 @@ val promote_object_nonblue_other_reflects_pre
   : Lemma
     (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (promote_object minor major obj fp wz).new_addr <> 0UL /\
       Seq.mem target (objects zero_addr (promote_object minor major obj fp wz).major_out) /\
       is_blue target (promote_object minor major obj fp wz).major_out = false /\
@@ -38,8 +38,8 @@ val cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp /\
                     minor_infix_wf minor /\
                     minor_wf minor /\

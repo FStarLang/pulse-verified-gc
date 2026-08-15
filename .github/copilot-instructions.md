@@ -4,117 +4,142 @@
 
 Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent separation logic for F\*). Four directories share common infrastructure:
 
-- **common/** — Shared F\* specs (heap model, object headers, graph theory, DFS, HeapGraph, HeapModel) and shared Pulse implementations (Heap, Object, Stack). Has `.fsti` interface files for Base, Heap, Object.
-- **mark-and-sweep/** — Sequential stop-the-world GC. **Imports** from `common/` via `--include ../common/Spec --include ../common/Lib`. Has its own Spec/ (Mark, Sweep, Correctness, SeqMemLemmas) and Pulse.Lib.GC/ (Fields, Closure, Mark, Sweep, GC entry point).
-- **concurrent/** — Concurrent GC extensions (tri-color spec, atomic colors, shadow stacks, write barriers). **Imports** from `common/`. No dependency on mark-and-sweep/.
-- **fly/** — Concurrent on-the-fly GC (Dijkstra-style tri-color marking). **Imports** from `common/` via `--include ../common/Spec`. Flat layout (no `Spec/` subdirectory). Has its own `.github/copilot-instructions.md` with fly-specific context.
+- **common/** — Foundations used by everything else. `spec/` holds the pure heap model
+  (`GC.Spec.Base`, `GC.Spec.Heap`, `GC.Spec.Object`, `GC.Spec.Fields`, `GC.Spec.Graph`,
+  `GC.Spec.DFS`, `GC.Spec.HeapGraph`, `GC.Spec.HeapModel`, `GC.Spec.ZeroAddr`);
+  `lib/` holds bit-level header/address helpers (`GC.Lib.Header`, `GC.Lib.Address`);
+  `impl/` holds the shared Pulse implementations (`GC.Impl.Heap`, `GC.Impl.Object`,
+  `GC.Impl.Stack`, `GC.Impl.ArrayWord`). `.fsti` interfaces exist for Base, Heap, Object,
+  ZeroAddr, Stack, ArrayWord.
+- **mark-and-sweep/** — Sequential stop-the-world GC. `spec/` = `GC.Spec.Mark*`,
+  `GC.Spec.Sweep*`, `GC.Spec.Coalesce`, `GC.Spec.SweepCoalesce.*`, the free-list
+  `GC.Spec.Allocator*` family, and `GC.Spec.Correctness`. `impl/` = the Pulse
+  implementation (`GC.Impl`, `GC.Impl.Mark`, `GC.Impl.Sweep`, `GC.Impl.Allocator`,
+  `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`, `GC.Impl.Closure`).
+  Also has `ocaml-integration/` and a checked-in C `snapshot/`.
+- **generational/** — Minor/major generational GC with Cheney copying collection.
+  `spec/` = `GC.Gen.Base`, `GC.Gen.MinorHeap`, `GC.Gen.Cheney*`,
+  `GC.Gen.CheneyPreservation.*`, `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`,
+  `GC.Gen.Reachability*`, `GC.Gen.TwoPassEquiv*`, `GC.Gen.HeapInvariant`.
+  `impl/` = `GC.Gen.Impl`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.Cheney`,
+  `GC.Gen.Impl.Promote`, `GC.Gen.Impl.UpdatePtrs`. Also `ocaml-integration/` + `snapshot/`.
+- **spot/** — Small concrete "spot check" scenarios (`GC.SPOT.*`) that instantiate the
+  specs on tiny fixed heaps to sanity-check pre/post-conditions. Flat layout, one `.fsti`
+  per `.fst`. See `spot/SPOT_STATUS.md`.
+
+All of `mark-and-sweep/`, `generational/` and `spot/` depend on `common/`; none of them
+depend on each other.
+
 
 ## Build & Verification
 
-Each subdirectory has its own Makefile. No top-level build; `cd` into the relevant directory.
+### Toolchain
 
-### common/
+F\* and KaRaMeL live in `./fstar/` and are installed by `./setup.sh` (which pins a
+specific nightly — see `VERSION` in that script). Z3 **4.15.3** ships with that
+installation; every build passes `--z3version 4.15.3` explicitly.
+
 ```bash
-make lax          # Quick lax-check (default)
-make verify       # Full SMT verification
-make verify-pulse # Verify Pulse.Lib.GC modules (requires Pulse tooling)
-make clean
-
-# Single module
-fstar.exe --include Spec --include Lib --cache_checked_modules \
-  Spec/Pulse.Spec.GC.Graph.fst
+./setup.sh          # download + unpack the pinned F* nightly and krml into ./fstar
 ```
 
-### mark-and-sweep/
+### Top-level build
+
+The root `Makefile` drives one unified `fstar.exe --dep full` scan across *all*
+sources (common + mark-and-sweep + generational + spot), so the whole repo can be
+verified incrementally and in parallel:
+
 ```bash
-make              # Verify all (default)
-make extract      # Extract to C via KaRaMeL
-make clean
-
-# Single spec module
-fstar.exe --include Spec --include Lib --include ../common/Spec --include ../common/Lib \
-  --cache_checked_modules --warn_error -321 \
-  Spec/Pulse.Spec.GC.Mark.fst
-
-# Single Pulse/Lib module (requires Pulse tooling)
-fstar.exe --cache_checked_modules --warn_error -321 \
-  --include $PULSE_HOME/lib/pulse/lib --include $PULSE_HOME/out/lib/pulse \
-  --include Pulse.Lib.GC --include Lib \
-  --include ../common/Spec --include ../common/Lib --include ../common/Pulse.Lib.GC \
-  --load_cmxs pulse \
-  Pulse.Lib.GC/Pulse.Lib.GC.Mark.fst
-```
-
-### concurrent/
-```bash
-make              # Verify all (default)
-make verify-spec  # Verify spec modules only (TriColor)
-make verify-lib   # Verify Pulse lib modules only (AtomicColor, ShadowStack, WriteBarrier)
+make -j24                # verify everything (default target)
+make common -j24         # common/ only
+make mark-and-sweep -j24 # common/ + mark-and-sweep/
+make generational -j24   # common/ + mark-and-sweep/ + generational/ + spot/
+make extract             # verify + extract both GCs to C via KaRaMeL
 make clean
 ```
 
-### fly/
-```bash
-make              # Verify spec modules (full SMT, ~3-5 min)
-make verify-tests # Lax-check test modules
-make extract      # Verify + extract to C via KaRaMeL
-make clean
+`make -k` is useful while fixing regressions: it keeps going after a failure so
+one run enumerates every broken module.
 
-# Single module
-fstar.exe --include $PULSE_HOME/lib/pulse/lib --include ../common/Spec \
-  --include ../common/Lib --include . --cache_checked_modules \
-  --z3rlimit 100 --max_fuel 2 --max_ifuel 1 --warn_error -331 \
-  Pulse.Spec.GC.TriColor.fst
+Each subdirectory also keeps a standalone Makefile (`common/`, `mark-and-sweep/`,
+`generational/`, `spot/`) with the same flags, for working on one GC in isolation.
+
+### Checked-file cache
+
+F\* writes `M.fst.checked` into `--cache_dir`, which defaults to the **current
+working directory** — it no longer drops the file next to the source. Every
+Makefile therefore points at one shared `_cache/` directory (`CACHE_DIR`). Stale
+`.checked` files left elsewhere in the tree will poison `--dep full`; if
+dependency scanning behaves oddly, `make clean` (or `rm -rf _cache`) and rebuild.
+
+### Verifying a single module
+
+```bash
+./fstar/bin/fstar.exe --z3version 4.15.3 --retry 3 \
+  --cache_checked_modules --cache_dir _cache --odir _output \
+  --warn_error -321 --report_assumes warn \
+  --already_cached 'Prims FStar Pulse PulseCore -GC' \
+  --include common/spec --include common/lib --include common/impl \
+  --include mark-and-sweep/spec --include mark-and-sweep/impl \
+  --include generational/spec --include generational/impl \
+  generational/spec/GC.Gen.Cheney.fst
 ```
+
+Verify a `.fsti` before its `.fst`, and never pass both to one invocation.
 
 ### Diagnostics
 ```bash
 # Count admits/assumes
-grep -c "admit()" Spec/Pulse.Spec.GC.Object.fst
-grep -c "assume " Spec/Pulse.Spec.GC.Correctness.fst
+grep -c "admit()" mark-and-sweep/spec/GC.Spec.Correctness.fst
+grep -rc "assume " common/spec/GC.Spec.Object.fst
 
 # Find high rlimits
-grep -rn "z3rlimit" --include="*.fst" --include="*.fsti"
+grep -rn "z3rlimit" --include="*.fst" --include="*.fsti" common mark-and-sweep generational spot
 
-# SMT query performance analysis
-fstar.exe --query_stats --include Spec --include Lib Spec/Pulse.Spec.GC.Graph.fst 2>&1 | grep "Query stats"
+# SMT query performance analysis: append --query_stats to the single-module command
+# above, then grep the output for "Query stats"
 
-# Syntax-only check (skip SMT)
-fstar.exe --admit_smt_queries true --include Spec --include Lib Spec/Pulse.Spec.GC.Mark.fst
+# Syntax-only check (skip SMT): append --admit_smt_queries true
 ```
 
 ## Architecture
 
 ### Module Dependency Chain
 ```
-Pulse.Lib.Header          (bitvector operations on 64-bit object headers)
+GC.Lib.Header             (bitvector operations on 64-bit object headers)
   ↓
-Pulse.Lib.Address          (field/header separation lemmas)
+GC.Lib.Address            (field/header separation lemmas)
   ↓
-Pulse.Spec.GC.Base        (core types: mword, heap, hp_addr, obj_addr)
+GC.Spec.Base              (core types: mword, heap, hp_addr, obj_addr, heap_words,
+                           mk_hp_addr, aligned_plus_mul8)
   ↓
-Pulse.Spec.GC.Heap        (read_word, write_word on byte-addressable heap)
+GC.Spec.Heap              (read_word, write_word on byte-addressable heap)
   ↓
-Pulse.Spec.GC.Object      (header fields, color predicates, color mutations)
+GC.Spec.Object            (header fields, color predicates, color mutations)
   ↓
-Pulse.Spec.GC.Fields      (object enumeration, field traversal)
+GC.Spec.Fields            (object enumeration, field traversal, objects_separated)
   ↓
-Pulse.Spec.GC.Graph       (vertex/edge types, reachability, DFS forest)
+GC.Spec.Graph             (vertex/edge types, reachability, DFS forest)
   ↓
-Pulse.Spec.GC.DFS         (DFS algorithm with termination proofs)
+GC.Spec.DFS               (DFS algorithm with termination proofs)
   ↓
-Pulse.Spec.GC.HeapGraph   (bridge: heap objects → graph edges)
+GC.Spec.HeapGraph         (bridge: heap objects → graph edges)
   ↓
-Pulse.Spec.GC.HeapModel   (graph construction from heap, create_graph)
+GC.Spec.HeapModel         (graph construction from heap, create_graph)
   ↓
-  ├── mark-and-sweep/Spec/ (Mark, Sweep, Correctness, SeqMemLemmas)
-  ├── concurrent/Spec/     (TriColor invariant spec)
-  └── fly/                 (Fields, TriColor, GraySet, CASPreservation, GraphBridge, Correctness)
+  ├── mark-and-sweep/spec/ → mark-and-sweep/impl/
+  ├── generational/spec/   → generational/impl/
+  └── spot/
 ```
 
-### Spec vs Lib Split
-- **Spec modules** (`Pulse.Spec.GC.*`) — Pure F\* specifications and lemmas. Use `module` keyword. Verifiable with standard F\*.
-- **Lib modules** (`Pulse.Lib.GC.*`) — Pulse implementations with separation logic. Use `#lang-pulse`. Require Pulse tooling (`--load_cmxs pulse`) to verify.
+### Spec vs Impl Split
+- **Spec modules** (`GC.Spec.*`, `GC.Gen.*` under `spec/`) — Pure F\* specifications and
+  lemmas. Plain F\*; no Pulse needed.
+- **Impl modules** (`GC.Impl.*`, `GC.Gen.Impl.*` under `impl/`) — Pulse implementations
+  with separation logic. Use `#lang-pulse`. `fstar.exe` handles `#lang-pulse` natively.
+
+Every impl function's postcondition should reference the corresponding spec function, and
+that connection must be exposed in the `.fsti`.
 
 ### Header Layout (OCaml-compatible, 64-bit)
 ```
@@ -122,21 +147,43 @@ Pulse.Spec.GC.HeapModel   (graph construction from heap, create_graph)
   bits 10-63          bits 8-9         bits 0-7
 ```
 
-Colors: `White=0, Gray=1, Black=2` (algebraic type `color_sem` in `Pulse.Lib.Header`). Concurrent/fly use `tricolor_sem` from `concurrent/Spec/Pulse.Spec.GC.TriColor.fst` which adds a fourth color.
+Colors (`color_sem` in `GC.Lib.Header`): `White = 0`, `Gray = 1`, `Blue = 2`,
+`Black = 3`. `Blue` marks free-list blocks, which is why the allocator and the collector
+share the same colour field.
 
-Important tags: `closure_tag = 247`, `infix_tag = 249`, `no_scan_tag = 251`. Objects with `tag >= no_scan_tag` have no pointer fields and are skipped during marking.
+Important tags: `closure_tag = 247`, `infix_tag = 249`, `no_scan_tag = 251`
+(`GC.Spec.Object`). Objects with `tag >= no_scan_tag` have no pointer fields and are
+skipped during marking and during Cheney scanning.
 
-### Tri-Color Invariant (fly/)
-Central safety property: **no black object may point to a white object**. Colors only increase: `White → Gray → Black`. All concurrent transitions use CAS. Maintained by write barriers (gray target before creating black→white edge) and mark steps (gray all children before blackening parent).
+### Mark-and-Sweep phases
+1. Mark — DFS/BFS from roots, `White → Gray → Black` (`GC.Spec.Mark`,
+   `GC.Spec.MarkBounded` for the fuel-bounded variant used by the implementation).
+2. Sweep — reclaim `White` objects onto the free list, reset `Black → White`
+   (`GC.Spec.Sweep`).
+3. Coalesce — merge adjacent free (`Blue`) blocks (`GC.Spec.Coalesce`); the
+   implementation fuses sweep and coalesce in one pass (`GC.Spec.SweepCoalesce`,
+   `GC.Impl.FusedSweepCoalesce`).
+4. Allocate — first-fit search of the free list with block splitting
+   (`GC.Spec.Allocator` + the `GC.Spec.Allocator.Lemmas.*` family).
 
-### GC Phases (fly/)
-1. Set `gc_active` — enable write barriers
-2. Root scanning — iterate per-thread shadow stacks, gray each root
-3. Mark loop — pop gray, gray children, blacken (concurrent with mutators)
-4. Sweep — stop-the-world, reclaim white objects, reset black→white
+### Generational phases
+1. Minor collection — Cheney copying from the minor heap (`GC.Gen.Cheney`,
+   `GC.Gen.CheneyBFS`), forwarding pointers rewritten in place
+   (`GC.Gen.MinorCollectForwarding.*`).
+2. Promotion — surviving minor objects are allocated in the major heap
+   (`GC.Gen.Promote`, `GC.Gen.PromoteUpdate.*`).
+3. Remembered set — major→minor edges recorded by the write barrier
+   (`GC.Gen.Remembered`).
+4. Major collection — reuses the mark-and-sweep major heap machinery.
+
+`GC.Gen.TwoPassEquiv` proves the single-pass implementation equals the two-pass
+(copy then patch) specification; `GC.Gen.CheneyCorrectness` and
+`GC.Gen.CheneyPreservation.*` carry the preservation invariants.
 
 ### End-to-End Correctness (mark-and-sweep/)
-The main theorem proves five pillars: well-formedness preservation, reachability-based survival, successor preservation, color reset, and field data preservation.
+`GC.Spec.Correctness` proves five pillars: well-formedness preservation,
+reachability-based survival, successor preservation, color reset, and field data
+preservation.
 
 ## Key Conventions
 
@@ -151,29 +198,102 @@ The main theorem proves five pillars: well-formedness preservation, reachability
 - `hd_address` computes header address from object address (subtract `mword`)
 
 ### Interface Files
-`Base.fsti`, `Heap.fsti`, and `Object.fsti` in `common/Spec/` expose the public API. `Graph.fst` and `DFS.fst` are self-documenting (no separate `.fsti`).
+`GC.Spec.Base.fsti`, `GC.Spec.Heap.fsti`, `GC.Spec.Object.fsti` and
+`GC.Spec.ZeroAddr.fsti` in `common/spec/` expose the public API. `GC.Spec.Fields.fst`,
+`GC.Spec.Graph.fst`, `GC.Spec.DFS.fst`, `GC.Spec.HeapGraph.fst` and
+`GC.Spec.HeapModel.fst` have no separate `.fsti`.
 
-### Extraction Annotations (fly/)
-- `[@@ CExtract]` — extract function to C
-- `[@@ CInline]` — inline in extracted C
-- Ghost functions are automatically excluded
+**Interface scoping is strict in the current F\* nightly.** An `.fsti`'s `open`
+declarations and `#set-options` no longer scope over the corresponding `.fst`, so both
+files must carry their own headers. Declaration order in an `.fsti` must also match the
+dependency order of the definitions (otherwise: error 233). Always verify the `.fsti`
+first, then the `.fst` — never both in one `fstar.exe` invocation.
+
+### Extraction Annotations
+- `inline_for_extraction` — inline the definition into its C callers
+- `noextract` — keep out of the extracted code entirely
+- Ghost/`erased` values and `Lemma`s are erased automatically
+
+Extraction goes through KaRaMeL (`fstar/bin/krml`): `make extract` at the top level,
+plus `make -C generational snapshot` / `make -C mark-and-sweep snapshot` to refresh the
+checked-in C.
 
 ### SMT Tuning
-Default SMT options vary by directory:
-- common/: F\* defaults (`--z3rlimit 5`)
-- mark-and-sweep/: F\* defaults with `--warn_error -321`
-- fly/: `--z3rlimit 100 --max_fuel 2 --max_ifuel 1 --warn_error -331`
+Flags are set centrally in the Makefiles, not per file:
+- Baseline: `--z3version 4.15.3 --retry 3 --warn_error -321-233-331` plus the
+  shared `--include` list and `--cache_dir _cache`.
+- Modules listed in `EAGER_QI_CHECKED` (root Makefile ~line 216, `generational/Makefile`
+  ~line 120) additionally get `--z3smtopt '(set-option :smt.qi.eager_threshold 100)'`.
+- The `GC.Spec.Allocator*` family also gets `--z3rlimit 100`.
 
-For stubborn proofs: increase `--z3rlimit`, add `--split_queries always`, or add intermediate `assert` statements to guide the solver.
+Individual modules still carry their own `#set-options` / `#push-options` for local
+fuel and rlimit tuning. Because interfaces no longer scope over implementations, an
+`.fst` needs its own `#set-options` even when the `.fsti` already has one.
+
+For stubborn proofs: add intermediate `assert` statements to guide the solver, factor the goal into a top-level helper lemma proved in an empty context, or increase `--z3rlimit`. `--split_queries` no longer exists in F\*; see "Z3 4.15.3 and `--retry`" below.
+
+### Z3 4.15.3 and `--retry`
+The project pins Z3 **4.15.3** (`--z3version 4.15.3`, bundled under `fstar/lib/fstar/z3-4.15.3/`). Under this version a number of otherwise trivial leaf goals — nat-ness side conditions (`fuel - 1 >= 0`), alignment facts (`x % 8 == 0`), `U64.uint_to_t` bounds — intermittently send the solver down a search path that exhausts the rlimit, even though a neighbouring identical goal is discharged in milliseconds.
+
+Worse, some of these searches never terminate *and never charge the rlimit*, so
+`--z3rlimit` cannot bound them: the module simply hangs. Four mitigations are in place,
+the first three already wired into every Makefile:
+
+- **`Z3_TIMEOUT` — a hard per-query Z3 wall-clock cap** (`--z3smtopt '(set-option :timeout 300000)'`). This is the single most important flag of the upgrade: it converts an unbounded hang into a normal, *localized* "SMT query timed out" error naming the offending source range. Without it a bad goal is invisible.
+
+  **When a module hangs, re-run it with a short cap to find the culprit:**
+  ```bash
+  fstar.exe ... --z3smtopt '(set-option :timeout 60000)' <module>.fst
+  ```
+  A 60 s cap turned a 60-minute hang in `GC.Spec.Allocator.Lemmas.Part2.fst` into a
+  3m43s run that named three precise line numbers. Always diagnose this way before
+  guessing at asserts.
+- **`--retry 3`** (`RETRY` variable) — re-runs a *failing* query up to 3 times and succeeds on the first one that goes through. Costs nothing on queries that succeed immediately, and clears the majority of these flakes. Note it multiplies the cost of a *genuine* failure by 4, and it is incompatible with `--quake`.
+- **`EAGER_QI`** (`--z3smtopt '(set-option :smt.qi.eager_threshold 100)'`) — dramatic on quantifier-heavy modules (`GC.Gen.CheneyPreservation.Forwarding`: >90 min → 3m13s; `GC.Spec.Allocator`: >15 min → 81s) but it makes `GC.Spec.DFS` and `GC.Spec.Heap` diverge, so it **cannot** be global. Modules opt in through the `EAGER_QI_CHECKED` lists in the root and `generational/` Makefiles. **When verifying a module by hand, check whether it is on that list and pass the flag.**
+
+  It also cuts the other way: `EAGER_QI` can be what makes a module hang. `GC.Gen.CheneyPreservation.Fields` went from a 28-minute hang to 19 s and `GC.Gen.Impl.MinorHeap` from a hard failure to verified, purely by *removing* them from the list. **If a listed module hangs, try it without the flag before touching the source.**
+- **Empty-context helper lemmas** — when `--retry` isn't enough, lift the trivial fact out of the big context into a top-level `Lemma` (ideally under `--fuel 0 --ifuel 0`) and call it explicitly. `GC.Spec.Base` provides the most common ones:
+  - `heap_words` — abbreviation for `heap_size / U64.v mword` (avoids re-deriving nat-ness at every use)
+  - `mk_hp_addr a` — `U64.uint_to_t a` at type `hp_addr`, with `r == U64.uint_to_t a` in the postcondition
+  - `aligned_plus_mul8 base k` — `(base + k * 8) % 8 == 0` from `base % 8 == 0`
+
+  Goal shapes that reliably blow up, and their fixes:
+  1. `n - 1 >= 0` / `n - 1 << n` at a recursive call → a helper carrying the facts in its *result type*, e.g. `dec_fuel (fuel: nat{fuel >= 1}) : (r: nat{r == fuel - 1 /\ r << fuel})` (`GC.Gen.Cheney`), or `dec_field_idx` (`GC.Gen.CheneyPreservation.Fields`) for an `if i < n then n - i else 0` measure.
+  2. `UInt.size a 64` for `U64.uint_to_t a` → `GC.Spec.Base.mk_hp_addr`, or a module-local `Pure` wrapper such as `mk_u64_lt_heap`.
+  3. `(base + k * 8) % 8 == 0` → `GC.Spec.Base.aligned_plus_mul8`; an `SMTPat`-carrying module-local wrapper works well when the coercion appears many times (`aligned_step`/`aligned_step8` in `GC.Gen.Cheney.Dense`). Note `(x + 8)` does *not* match a pattern written `(base + k * 8)`, so both variants are needed.
+  4. Two distinct aligned addresses being at least a word apart → an `aligned_distinct`/`aligned_apart` helper, needed before nearly every `read_write_different`.
+  5. A large local `aux` closure inside a big theorem → **hoist it to a top-level lemma over abstract parameters** (`two_pass_pointwise` in `GC.Gen.TwoPassEquiv`, `fwd_state_extend_infix` in `GC.Gen.CheneyPreservation.Fields`). The win comes from replacing huge terms with opaque variables.
+  6. Composing two frame conditions → one helper doing both steps (`frame_excl_compose`); splitting it in two never sufficed.
+  7. Assembling a multi-conjunct predicate → an `_intro` helper with the conjuncts as `requires`.
+  8. **A branchy lemma whose every branch is individually fine but whose final postcondition times out** → end *each* branch with `assert (<the exact goal>)`. The final assembly then becomes pure propositional reasoning instead of congruence over a giant nested formula. This fixed `cheney_forward_one_preserves_fwd_target_not_no_scan_state`.
+  9. **A boolean guard that will not bridge back to arithmetic.** Inside these contexts Z3 4.15.3 can burn an entire rlimit failing to derive `fuel >= 1` from the branch hypothesis `~(fuel = 0)`, or `ridx < Seq.length roots` from `~(ridx >= Seq.length roots)`. Two fixes, in order of preference:
+     - Branch on a helper whose **result type carries both branch facts**, so neither branch needs arithmetic at all:
+       ```fstar
+       private let fuel_is_zero (fuel: nat)
+         : (r: bool{(r ==> fuel == 0) /\
+                    (not r ==> fuel >= 1 /\ (fuel - 1) >= 0 /\ (fuel - 1) << fuel)})
+         = fuel = 0
+       ```
+     - Failing that, make the guard the **first statement of the branch** (`assert (i < wosize);`). Once proved it is a hypothesis for every later query in that branch — but it only works while the context is still small, so it must come before the branch's lemma calls.
+
+  Two further tricks that reliably help: replace equality/disequality guards on `nat` (`x = 0`) with inequalities (`x < 1`), and split a lemma with a large conjunctive postcondition into one lemma per conjunct.
+
+  **Adding `assert`s often makes things dramatically worse.** In `Part2.fst` three added asserts took a 5m57s run past 47 minutes. Prefer *removing* local reasoning and replacing it with a single helper call.
+
+Things that were measured and did **not** help: `--ext context_pruning`, `smt.mbqi false`, `smt.arith.nl false`, `smt.case_split 3`, `smt.arith.solver 2`, and `--z3rlimit_factor`.
 
 ### Cross-Directory Dependencies
-When editing `common/` modules, re-verify all downstream directories since they all import from common:
+`mark-and-sweep/`, `generational/` and `spot/` all import from `common/`, and the whole
+repository shares a single `_cache/` of `.checked` files. Editing anything in
+`common/spec/` — especially `GC.Spec.Base` — therefore invalidates essentially the entire
+cache and forces a multi-hour rebuild. Treat `common/spec/GC.Spec.Base.fsti` as frozen
+unless a change is genuinely required.
+
+To rebuild everything after such a change:
 ```bash
-cd mark-and-sweep && make clean && make
-cd ../concurrent && make clean && make
-cd ../fly && make clean && make
+make clean && make -k -j24
+make -C spot -j24
 ```
-`fly/` and `concurrent/` and `mark-and-sweep/` all import from `common/` — changes in common affect all three.
 
 ### Proof Gaps (Admits/Assumes)
 Track proof completeness with:
@@ -181,14 +301,18 @@ Track proof completeness with:
 grep -c "admit()" <file>       # Unproven goals (placeholder proofs)
 grep -c "assume " <file>       # Unverified assumptions (axioms)
 ```
-When eliminating admits: add intermediate `assert` statements to guide Z3, invoke helper lemmas explicitly, and verify incrementally. Assumes in `Pulse.Lib.GC.*` modules are often intentional (Pulse concurrency TCB).
+When eliminating admits: add intermediate `assert` statements to guide Z3, invoke helper lemmas explicitly, and verify incrementally. The goal for this repository is zero `admit`s and zero `assume`s.
 
-### Key Pulse Primitives (Lib modules)
-- `stt_atomic` — Atomic operations (CAS, atomic read)
-- `slprop` — Separation logic propositions
-- `heap_perm` — Heap ownership permission
-- `SpinLock` — Protects shared mutable state (e.g., gray stack)
-- Ghost state (`GhostSet`, ghost references) — Verification-only, erased at extraction
+### Key Pulse Primitives (impl modules)
+- `slprop` — separation logic propositions; `**` is separating conjunction
+- `Pulse.Lib.Reference` / `Pulse.Lib.Box` — stack (`let mut`) and heap references
+- `Pulse.Lib.Vec` / `Pulse.Lib.Array` — heap and stack arrays (`arr.(i)`, `arr.(i) <- v`)
+- `exists*` for existential slprops; `with x. _;` binds the (ghost) witness
+- `Ghost.erased` / ghost functions — verification-only, erased at extraction
+
+Loop invariants are written `while (cond) invariant exists* w. ... { body }`; do **not**
+use the older `invariant b. exists* ...` form. Functions whose termination F\* cannot
+establish must be marked `divergent` in the current nightly.
 
 ## Troubleshooting
 
@@ -198,11 +322,19 @@ Missing refinement or lemma call. Invoke helper lemmas before usage (e.g., `hd_a
 ### "SMT solver could not prove"
 1. Add intermediate `assert` statements to narrow the gap
 2. Invoke relevant lemmas explicitly
-3. Try `--z3rlimit` increase to diagnose (then optimize)
-4. Try `--split_queries always` for complex goals
+3. If the goal is trivial arithmetic, lift it into a top-level helper lemma (see "Z3 4.15.3 and `--retry`")
+4. Try `--z3rlimit` increase to diagnose (then optimize)
 
 ### "Module X not found"
-Check `--include` paths. For fly/ modules referencing common/, use `--include ../common/Spec --include ../common/Lib`.
+Check `--include` paths. Every module needs the full shared include list:
+`--include common/spec --include common/lib --include common/impl` plus the includes for
+its own directory. The Makefiles build this list once (`INCLUDES`); reuse it rather than
+hand-rolling one.
 
 ### Cached file issues
-Run `make clean` or `rm -rf .cache` and re-verify from scratch.
+The whole repository shares one `_cache/` directory (`--cache_dir _cache`). Run
+`make clean`, or `rm -rf _cache` for a full reset. Never run a full `make` and a
+single-module `fstar.exe` against `_cache/` at the same time: the single-module run can
+see a half-written cache and silently re-verify its entire dependency chain. When
+verifying one module by hand, point `--cache_dir` at a scratch copy of `_cache/` and copy
+the resulting `.checked` back only on success.

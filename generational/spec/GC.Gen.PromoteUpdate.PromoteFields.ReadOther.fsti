@@ -22,10 +22,10 @@ val promote_object_read_other
   (wosize: nat{wosize > 0}) (other: obj_addr) (addr: hp_addr)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       Seq.mem other (objects zero_addr major) /\
-      AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true /\
+      AllocLemmas.chain_avoids major fp other heap_words = true /\
       U64.v addr >= U64.v other /\
       U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8 /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
@@ -37,9 +37,9 @@ val promote_object_preserves_chain_avoids
   (wosize: nat{wosize > 0}) (excl: U64.t)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-      AllocLemmas.chain_avoids major fp excl (heap_size / U64.v mword) = true /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
+      AllocLemmas.chain_avoids major fp excl heap_words = true /\
       U64.v excl >= U64.v mword /\ U64.v excl < heap_size /\
       U64.v excl % U64.v mword == 0 /\
       Seq.mem (excl <: obj_addr) (objects zero_addr major) /\
@@ -47,7 +47,7 @@ val promote_object_preserves_chain_avoids
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures
       (let res = promote_object minor major obj fp wosize in
-       AllocLemmas.chain_avoids res.major_out res.fp_out excl (heap_size / U64.v mword) = true))
+       AllocLemmas.chain_avoids res.major_out res.fp_out excl heap_words = true))
 
 val promote_object_preserves_one_field
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
@@ -55,10 +55,10 @@ val promote_object_preserves_one_field
   (prev_addr: obj_addr) (j: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       Seq.mem prev_addr (objects zero_addr major) /\
-      AllocLemmas.chain_avoids major fp prev_addr (heap_size / U64.v mword) = true /\
+      AllocLemmas.chain_avoids major fp prev_addr heap_words = true /\
       (promote_object minor major obj fp wz).new_addr <> 0UL /\
       U64.v prev_addr + j * 8 + 8 <= heap_size /\
       U64.v prev_addr % 8 == 0 /\

@@ -31,6 +31,8 @@ module ThreeObjects = GC.SPOT.ThreeObjects
 module CallFull = GC.SPOT.CallFull
 module ConcreteSetup = GC.SPOT.ConcreteSetup
 module V = Pulse.Lib.Vec
+module SpecFields = GC.Spec.Fields
+module SpecHeap = GC.Spec.Heap
 
 let spot_gen_gc_success_post_from_gen_gc_post
   (r: unit{ConcreteMajor.spot_major_room})
@@ -67,6 +69,7 @@ let spot_gen_gc_success_post_from_gen_gc_post
       r d2 b2 roots_out ok final_major st cap
   end
 
+divergent
 fn call_concrete_gen_gc_spot_borrowed
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)
@@ -155,6 +158,7 @@ fn call_concrete_gen_gc_spot_borrowed
 }
 
 #push-options "--warn_error -288"
+divergent
 fn call_concrete_gen_gc_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)

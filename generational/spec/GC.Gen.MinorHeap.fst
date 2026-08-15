@@ -37,6 +37,15 @@ private let next_pos_mod8 (pos: nat{pos % 8 == 0}) (wz: nat)
   : Lemma (ensures (pos + (wz + 1) * 8) % 8 == 0) =
   FStar.Math.Lemmas.modulo_addition_lemma pos 8 (wz + 1)
 
+/// Helper: field `i` of an object sits one word past field `i` of its header.
+/// Proved in an empty context; query splitting makes this distributivity step
+/// surprisingly expensive inside large lemma bodies.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let field_offset_from_header (xv: int) (i: nat)
+  : Lemma (xv + i * 8 == (xv - 8) + (i + 1) * 8)
+  = ()
+#pop-options
+
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 40"
 let rec minor_chain_valid (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
   : GTot bool (decreases (bump - pos)) =
@@ -132,7 +141,7 @@ let rec minor_objects_aux (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat
     let wz = U64.v (U64.shift_right hdr 10ul) in
     if wz = 0 then Seq.empty
     else
-      let next_pos = pos + (wz + 1) * 8 in
+      let next_pos = (next_pos_mod8 pos wz; pos + (wz + 1) * 8) in
       if next_pos > bump then Seq.empty
       else begin
         assert (wz >= 1);
@@ -730,7 +739,7 @@ let rec minor_objects_aux_reaches_bump
 #pop-options
 
 /// For objects in the walk with chain_valid, their next_pos <= bump
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 200 --split_queries always --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 200 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let rec minor_objects_aux_next_bound
   (data: minor_heap)
   (pos: nat{pos % 8 == 0})
@@ -766,7 +775,7 @@ let rec minor_objects_aux_next_bound
   end
 #pop-options
 
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 200 --split_queries always --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
+#push-options "--fuel 3 --ifuel 0 --z3rlimit 200 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_objects_body_bound (ms: minor_state) (obj: U64.t)
   : Lemma (requires minor_wf ms /\ Seq.mem obj (minor_objects ms))
           (ensures minor_wosize ms obj > 0 /\
@@ -955,6 +964,7 @@ let minor_alloc_preserves_existing (ms: minor_state)
     let byte_offset = xv + i * 8 in
     assert (byte_offset + 8 <= old_bump);
     // byte_offset = hdr_addr + (i+1)*8, so byte_offset % 8 == hdr_addr % 8 == 0
+    field_offset_from_header xv i;
     assert (byte_offset == hdr_addr + (i + 1) * 8);
     FStar.Math.Lemmas.modulo_addition_lemma hdr_addr 8 (i + 1);
     assert (byte_offset % 8 == 0);

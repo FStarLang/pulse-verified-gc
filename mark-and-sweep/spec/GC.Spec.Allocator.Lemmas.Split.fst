@@ -18,6 +18,26 @@ module Seq = FStar.Seq
 /// Module-level default
 #push-options "--z3rlimit 20 --z3refresh"
 
+/// `x <> 0UL ==> U64.v x > 0`.
+///
+/// Query splitting makes each goal carry the full accumulated context of its
+/// enclosing lemma, so even this trivial fact times out when discharged inline
+/// in a large proof. Proving it here, where the context is empty, and applying
+/// it as a lemma avoids the SMT call at the use site entirely.
+#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+private let u64_ne_zero (x: U64.t)
+  : Lemma (requires x <> 0UL) (ensures U64.v x > 0)
+  = ()
+
+/// `(obj + (wz+1)*8) + idx*8 == obj + (wz+1+idx)*8`.
+///
+/// Pure (non-linear) arithmetic; proved here rather than inline for the same
+/// context-size reason as `u64_ne_zero`.
+private let field_addr_shift (o wz idx: nat)
+  : Lemma ((o + (wz + 1) * 8) + idx * 8 == o + (wz + 1 + idx) * 8)
+  = FStar.Math.Lemmas.distributivity_add_left (wz + 1) idx 8
+#pop-options
+
 /// ===========================================================================
 /// Section 5: Exact-fit preserves well_formed_heap
 /// ===========================================================================
@@ -209,11 +229,13 @@ let split_next_hd_objects_eq
     alloc_from_block_split_normal g obj wz next_fp;
     let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
     let g1 = write_word g hd alloc_hdr in
-    let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+    aligned_plus_mul8 (U64.v hd) (1 + wz);
+    let rem_hd : hp_addr = mk_hp_addr rem_hd_nat in
     let rem_wz = block_wz - wz - 1 in
     let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
     let g2 = write_word g1 rem_hd rem_hdr in
-    let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+    aligned_plus_mul8 rem_hd_nat 1;
+    let rem_obj : hp_addr = mk_hp_addr rem_obj_nat in
     let g3 = write_word g2 rem_obj next_fp in
     if next_hd_nat < heap_size then begin
       let next_hd : hp_addr = U64.uint_to_t next_hd_nat in
@@ -259,11 +281,13 @@ let split_next_hd_objects_eq_part1
     alloc_from_block_split_normal g obj wz next_fp;
     let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
     let g1 = write_word g hd alloc_hdr in
-    let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
+    aligned_plus_mul8 (U64.v hd) (1 + wz);
+    let rem_hd : hp_addr = mk_hp_addr rem_hd_nat in
     let rem_wz = block_wz - wz - 1 in
     let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
     let g2 = write_word g1 rem_hd rem_hdr in
-    let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
+    aligned_plus_mul8 rem_hd_nat 1;
+    let rem_obj : hp_addr = mk_hp_addr rem_obj_nat in
     let g3 = write_word g2 rem_obj next_fp in
     if next_hd_nat < heap_size then begin
       let next_hd : hp_addr = U64.uint_to_t next_hd_nat in
@@ -735,6 +759,12 @@ let rec split_new_mem_in_old_or_rem
 /// positions, g3 returns the same read_word as g.
 #restart-solver
 #push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+/// `base + k * 8 <> base` for `k > 0`.  Trivial, but this disequality diverges
+/// under the allocator invariants.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let ne_of_plus_pos (base k: nat) : Lemma (requires k > 0) (ensures base + k * 8 <> base) = ()
+#pop-options
+
 let alloc_split_g3_agrees
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (p: hp_addr)
   : Lemma (requires alloc_split_pre g obj wz next_fp /\
@@ -761,6 +791,10 @@ let alloc_split_g3_agrees
     alloc_from_block_split_normal g obj wz next_fp;
     let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
     let g1 = write_word g hd alloc_hdr in
+    // Alignment of rem_hd_nat used to come for free from a sibling goal; with
+    // per-goal queries the modular arithmetic must be spelled out.
+    FStar.Math.Lemmas.lemma_mod_plus (U64.v hd) (1 + wz) 8;
+    assert (rem_hd_nat % 8 == 0);
     let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
     let rem_wz = block_wz - wz - 1 in
     let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
@@ -870,7 +904,7 @@ let alloc_split_facts
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_split_old_in_new
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires alloc_split_pre g obj wz next_fp /\
@@ -910,7 +944,7 @@ let alloc_split_old_in_new
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let alloc_split_rem_in_objects
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires alloc_split_pre g obj wz next_fp)
@@ -959,7 +993,7 @@ let alloc_split_rem_in_objects
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_split_wf_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires alloc_split_pre g obj wz next_fp)
@@ -1033,7 +1067,7 @@ let alloc_split_wf_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let alloc_split_wf_part2_obj
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (dst: obj_addr)
   : Lemma (requires alloc_split_pre g obj wz next_fp /\
@@ -1094,7 +1128,7 @@ let alloc_split_wf_part2_obj
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
 let rec alloc_split_wf_part2_rem_aux
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (dst: obj_addr)
   (cur_wz: U64.t{U64.v cur_wz < pow2 54})
@@ -1124,6 +1158,9 @@ let rec alloc_split_wf_part2_rem_aux
     reveal_opaque (`%well_formed_heap) well_formed_heap;
     if cur_wz = 0UL then ()
     else begin
+      // `cur_wz <> 0UL` no longer yields `U64.v cur_wz <> 0` on its own.
+      u64_ne_zero cur_wz;
+      assert (U64.v cur_wz > 0);
       let idx = U64.sub cur_wz 1UL in
       FStar.Math.Lemmas.pow2_lt_compat 57 54;
       FStar.Math.Lemmas.pow2_lt_compat 64 57;
@@ -1147,7 +1184,7 @@ let rec alloc_split_wf_part2_rem_aux
           // read_word g3 fa = read_word g fa (since fa ≠ hd, rem_hd, rem_obj).
           // In g, this is field (wz+1+idx) of original obj.
           // fv was a pointer to dst in g too, so dst ∈ objects(0,g) → objects(0,g3).
-          if U64.v idx = 0 then begin
+          if U64.v idx < 1 then begin
             // fa = rem_obj. fv = next_fp (was written there).
             // is_pointer_to fv dst → hd_address fv = hd_address dst → fv = dst
             if fv <> dst then hd_address_injective fv dst;
@@ -1157,6 +1194,8 @@ let rec alloc_split_wf_part2_rem_aux
             alloc_split_old_in_new g obj wz next_fp dst
           end else begin
             // fa > rem_obj. fa ≠ hd, rem_hd, rem_obj. So read_word g3 fa = read_word g fa.
+            assert (U64.v rem_obj == rem_obj_nat);
+            ne_of_plus_pos rem_obj_nat (U64.v idx);
             alloc_split_g3_agrees g obj wz next_fp (fa <: hp_addr);
             assert (read_word g3 (fa <: hp_addr) == read_word g (fa <: hp_addr));
             // In g: fa = obj + (wz+1+idx)*8. This is field (wz+1+idx) of original obj.
@@ -1168,6 +1207,7 @@ let rec alloc_split_wf_part2_rem_aux
             FStar.Math.Lemmas.modulo_lemma ((wz + 1 + U64.v idx) * U64.v mword) (pow2 64);
             let fa2 = U64.add_mod obj (U64.mul_mod field_idx mword) in
             assert (U64.v fa2 == U64.v obj + (wz + 1 + U64.v idx) * 8);
+            field_addr_shift (U64.v obj) wz (U64.v idx);
             assert (U64.v fa == U64.v fa2);
             // Establish field_idx refinement for field_read_implies_exists_pointing
             assert (U64.v idx < block_wz - wz - 1);
@@ -1187,7 +1227,7 @@ let rec alloc_split_wf_part2_rem_aux
 #pop-options
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_split_wf_part2_rem
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (dst: obj_addr)
   : Lemma (requires alloc_split_pre g obj wz next_fp /\
@@ -1213,7 +1253,7 @@ let alloc_split_wf_part2_rem
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let alloc_split_wf_part2_other
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (src dst: obj_addr)
   : Lemma (requires alloc_split_pre g obj wz next_fp /\
@@ -1297,7 +1337,7 @@ let alloc_split_wf_part2_other
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_split_wf_part4
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires alloc_split_pre g obj wz next_fp)

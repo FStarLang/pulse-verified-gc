@@ -12,6 +12,7 @@ open GC.Spec.Mark
 
 module U64 = FStar.UInt64
 module SweepInv = GC.Spec.SweepInv
+open GC.Spec.Heap
 
 let mark_inv (g: heap) (st: seq obj_addr) : prop =
   well_formed_heap g /\ stack_props g st /\

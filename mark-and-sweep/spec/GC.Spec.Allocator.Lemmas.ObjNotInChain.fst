@@ -22,12 +22,12 @@ module AllocPart2 = GC.Spec.Allocator.Lemmas.Part2
 
 let alloc_spec_obj_not_in_chain (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword) /\
-                    fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    fl_valid g fp heap_words /\
+                    fl_chain_terminates g fp heap_words /\
                     requested_wz >= 1 /\
                     (alloc_spec g fp requested_wz).obj_out <> 0UL)
           (ensures (let r = alloc_spec g fp requested_wz in
-                    chain_avoids r.heap_out r.fp_out r.obj_out (heap_size / U64.v mword) = true))
+                    chain_avoids r.heap_out r.fp_out r.obj_out heap_words = true))
   = reveal_opaque (`%well_formed_heap) well_formed_heap;
     AllocPart2.alloc_spec_obj_not_in_chain_part1 g fp requested_wz
 

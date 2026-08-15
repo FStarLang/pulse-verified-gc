@@ -44,6 +44,57 @@ let post_minor_edge = MCFH.post_minor_edge
 let mem_graph_vertex_at = MCFH.mem_graph_vertex_at
 
 #push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+/// Basic size facts, discharged in an empty context and brought into scope by
+/// explicit calls: under the large reflection contexts even these diverge.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let heap_size_facts () : Lemma
+  (heap_size < pow2 64 /\ U64.v mword == 8 /\ U64.v mword <> 0 /\
+   (forall (a: nat). a + 8 <= heap_size ==> FStar.UInt.size a 64))
+  = ()
+#pop-options
+
+/// Build an `hp_addr` from a raw offset.  Bounds and alignment are trivial but
+/// diverge under the large contexts of the reflection proofs below.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let mk_hp_addr (a: nat{a < heap_size /\ a % 8 == 0})
+  : (r: hp_addr{U64.v r == a /\ r == U64.uint_to_t a}) =
+  assert (a < pow2 64);
+  U64.uint_to_t a
+#pop-options
+
+/// Build the address of field `j` of `src`.  Nat-ness / bounds / alignment are
+/// trivial but diverge under the large contexts of the reflection proofs.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let mk_field_addr (src: U64.t) (j: nat) : Pure hp_addr
+  (requires U64.v src + j * 8 < heap_size /\ (U64.v src + j * 8) % 8 == 0)
+  (ensures fun r -> U64.v r == U64.v src + j * 8 /\
+                 r == U64.uint_to_t (U64.v src + j * 8))
+= mk_hp_addr (U64.v src + j * 8)
+
+private let to_minor_offset_zero_not_pointer (_: unit)
+  : Lemma (to_minor_offset 0UL == 0UL /\ ~(is_minor_pointer (to_minor_offset 0UL)))
+  = ()
+#pop-options
+
+/// Named form of the field-read witness produced by
+/// `heap_graph_edge_to_field_read`.  Naming it keeps the well-typedness of the
+/// `U64.uint_to_t` application (which needs the preceding conjuncts) out of the
+/// very large contexts of the reflection proofs below.
+let field_read_at (g: heap) (src: obj_addr) (dst: U64.t) (j: nat) : prop =
+  j < U64.v (wosize_of_object src g) /\
+  U64.v src + j * 8 + 8 <= heap_size /\
+  (U64.v src + j * 8) % 8 == 0 /\
+  read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst
+
+#push-options "--fuel 0 --ifuel 2 --z3rlimit 20"
+private let field_read_exists (g: heap) (src dst: obj_addr)
+  : Lemma
+    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
+    (ensures exists (j: nat). field_read_at g src dst j)
+  =
+  MCFH.heap_graph_edge_to_field_read g src dst
+#pop-options
+
 private let normal_src_image_is_val_addr
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (u: CG.combined_vertex)
@@ -98,7 +149,7 @@ private let post_minor_edge_to_mem_graph_edge
     assert (mem_graph_edge post_g (x <: obj_addr) (y <: obj_addr))
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let post_edge_from_minor_image_reflects_mem_ce
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -150,13 +201,12 @@ let post_edge_from_minor_image_reflects_mem_ce
     assert (is_val_addr target_img);
     post_minor_edge_to_mem_graph_edge minor major fp roots fwd_src target_img;
     MCFH.heap_graph_edge_to_field_read updated fwd_src_obj (target_img <: obj_addr);
+    heap_size_facts ();
+    field_read_exists updated fwd_src_obj (target_img <: obj_addr);
     let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
-      (fun j ->
-        j < U64.v (wosize_of_object fwd_src_obj updated) /\
-        U64.v fwd_src + j * 8 + 8 <= heap_size /\
-        (U64.v fwd_src + j * 8) % 8 == 0 /\
-        read_word updated (U64.uint_to_t (U64.v fwd_src + j * 8)) == target_img) in
-    let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
+      (field_read_at updated fwd_src_obj target_img) in
+    assert (field_read_at updated fwd_src_obj target_img j);
+    let field_addr : hp_addr = mk_field_addr fwd_src j in
     assert (read_word updated field_addr == target_img);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
@@ -183,6 +233,7 @@ let post_edge_from_minor_image_reflects_mem_ce
       CheneyFields.cheney_promote_fwd_target_extra_field_not_pointer
         minor major fp roots src j;
       assert (old_raw == 0UL);
+      to_minor_offset_zero_not_pointer ();
       assert (~(is_minor_pointer old_val /\ prom.fwd_map old_val <> 0UL));
       assert (read_word updated field_addr == old_raw);
       assert (target_img == 0UL);
@@ -295,7 +346,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     end
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let post_edge_from_minor_image_reflects_target
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -346,13 +397,12 @@ let post_edge_from_minor_image_reflects_target
     assert (is_val_addr y);
     post_minor_edge_to_mem_graph_edge minor major fp roots fwd_src y;
     MCFH.heap_graph_edge_to_field_read updated fwd_src_obj (y <: obj_addr);
+    heap_size_facts ();
+    field_read_exists updated fwd_src_obj (y <: obj_addr);
     let j = FStar.IndefiniteDescription.indefinite_description_ghost nat
-      (fun j ->
-        j < U64.v (wosize_of_object fwd_src_obj updated) /\
-        U64.v fwd_src + j * 8 + 8 <= heap_size /\
-        (U64.v fwd_src + j * 8) % 8 == 0 /\
-        read_word updated (U64.uint_to_t (U64.v fwd_src + j * 8)) == y) in
-    let field_addr = U64.uint_to_t (U64.v fwd_src + j * 8) in
+      (field_read_at updated fwd_src_obj y) in
+    assert (field_read_at updated fwd_src_obj y j);
+    let field_addr : hp_addr = mk_field_addr fwd_src j in
     assert (read_word updated field_addr == y);
     Cheney.cheney_promote_preserves_wfh_part1 minor major fp roots;
     CheneyPres.cheney_promote_fwd_normal_injective minor major fp roots;
@@ -379,6 +429,7 @@ let post_edge_from_minor_image_reflects_target
       CheneyFields.cheney_promote_fwd_target_extra_field_not_pointer
         minor major fp roots src j;
       assert (old_raw == 0UL);
+      to_minor_offset_zero_not_pointer ();
       assert (~(is_minor_pointer old_val /\ prom.fwd_map old_val <> 0UL));
       assert (read_word updated field_addr == old_raw);
       assert (y == 0UL);

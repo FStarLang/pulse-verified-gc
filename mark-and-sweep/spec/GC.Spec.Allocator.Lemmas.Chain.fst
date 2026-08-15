@@ -714,7 +714,7 @@ let rec chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
 #pop-options
 
 #restart-solver
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\
                     fl_valid g fp fuel /\

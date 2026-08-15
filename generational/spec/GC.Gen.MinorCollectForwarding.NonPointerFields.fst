@@ -48,7 +48,7 @@ private let combined_vertex_cases (v: CG.combined_vertex)
 /// This chains fwd_noninfix_targets_valid -> well_formed_heap_part4 ->
 /// fwd_noninfix_sources_in_minor_objects in a clean, isolated context so that
 /// the three forall instantiations run cheaply at low rlimit.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 private let fwd_minor_source_in_minor_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
@@ -72,7 +72,7 @@ private let fwd_minor_source_in_minor_objects
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 1"
 private let major_non_pointer_field_preserved
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: obj_addr) (j: nat)

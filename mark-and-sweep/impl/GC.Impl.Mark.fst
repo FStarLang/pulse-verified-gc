@@ -122,7 +122,7 @@ let check_and_darken_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
 
 /// check_and_darken_spec preserves well_formed_heap and related invariants.
 /// Uses spec-level bridge lemma to avoid cross-module well_formed_heap quantifier issues.
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 100 --split_queries no"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 100"
 let check_and_darken_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
     (obj: obj_addr) (wz: U64.t) (i: U64.t{U64.v i >= 1})
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
@@ -296,7 +296,7 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
 
 /// Read header, write gray header, rewrite ghost state to makeGray.
 /// Factored out so darken_if_white's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --split_queries always --z3refresh"
+#push-options "--z3rlimit 200 --z3refresh"
 fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -361,6 +361,7 @@ fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 }
 
 /// Check if value is a pointer, and if so, darken its target if white
+divergent
 fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (Seq.length 'st < stack_capacity st)
@@ -383,6 +384,7 @@ fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
 
 /// Helper: one iteration of push_children loop
 /// Factored out to avoid Pulse loop ghost variable parameterization issue
+divergent
 fn push_step_body (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
                   (obj: obj_addr) (curr_i: U64.t{U64.v curr_i >= 1 /\ U64.v curr_i <= pow2 54 - 1}) (wz: wosize)
   requires is_heap heap 's ** is_gray_stack st 'st **
@@ -440,7 +442,8 @@ let push_children_iter_bound
   = SpecMark.push_children_stack_monotone s st_cur obj vi wz
 
 /// Push white children of an object onto the gray stack
-#push-options "--split_queries no"
+#push-options ""
+divergent
 fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (U64.v wz <= pow2 54 - 1 /\
@@ -498,6 +501,7 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
 
 /// Conditionally push children if tag < no_scan_tag
 /// When tag >= no_scan_tag, state is unchanged (exposed in postcondition)
+divergent
 fn maybe_push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize) (tag: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (U64.v wz <= pow2 54 - 1 /\
@@ -554,7 +558,7 @@ let mark_step_scan_preserves_objects
 
 /// Write black header, rewrite ghost state to makeBlack.
 /// Factored out so mark_step's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --split_queries always --z3refresh"
+#push-options "--z3rlimit 200 --z3refresh"
 fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -578,7 +582,7 @@ fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
 #pop-options
 
 /// Read header wosize and tag from spec state (no heap read needed)
-#push-options "--z3rlimit 50 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --z3refresh"
 fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -600,7 +604,8 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 
 /// Process one gray object: pop from stack, blacken, push white children
 /// Precondition: mark_inv provides well_formed_heap + stack_props
-#push-options "--z3rlimit 100 --split_queries always --z3refresh"
+#push-options "--z3rlimit 100 --z3refresh"
+divergent
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0 /\
@@ -699,6 +704,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 /// Main mark loop: process gray objects until stack is empty
 /// Precondition: mark_inv (well_formed_heap + stack_props)
 /// Postcondition: mark_inv preserved, stack empty, objects list preserved, s2 == mark 's 'st
+divergent
 fn mark_loop (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ stack_capacity st >= heap_size)

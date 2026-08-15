@@ -46,6 +46,7 @@ let spot_gen_gc_success_post
       Seq.mem a_prime (SpecFields.objects zero_addr final_major) /\
       SpecHeap.read_word final_major (ConcreteMajor.spot_c_field1 r) == a_prime
 
+divergent
 fn call_concrete_gen_gc_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)

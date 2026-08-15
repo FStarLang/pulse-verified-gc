@@ -58,6 +58,7 @@ let spot_minor_collect_full_success_post
     roots
     Layout.b_minor
 
+divergent
 fn call_concrete_minor_collect_full_spot
   (r: unit{ConcreteMajor.spot_major_room})
   (gh: gen_heap_t)

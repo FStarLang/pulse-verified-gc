@@ -10,7 +10,7 @@ module GC.Impl.Coalesce
 
 #lang-pulse
 
-#set-options "--z3rlimit 100 --split_queries always"
+#set-options "--z3rlimit 100"
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -79,6 +79,7 @@ fn flush_blue_write_link (heap: heap_t) (fb: hp_addr) (fp: U64.t)
 
 /// Zero a range of fields starting at addr, n words
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+divergent
 fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -121,6 +122,7 @@ fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
 
 /// Full flush_blue implementation
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+divergent
 fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -192,6 +194,7 @@ let coalesce_spec_inv (g0: heap_state) (g: heap_state)
 
 /// The main coalesce entry point
 #push-options "--z3rlimit 800 --fuel 2 --ifuel 1 --z3refresh"
+divergent
 fn coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecCoalesce.post_sweep_strong 's /\
@@ -292,6 +295,10 @@ fn coalesce (heap: heap_t)
       SpecObject.color_of_object_spec obj s;
       SpecObject.is_blue_iff obj s;
 
+      assert (pure (SpecObject.is_blue obj s));
+      assert (pure (SpecObject.is_blue obj 's));
+      assert (pure (Seq.head (SpecFields.objects cur 's) == obj));
+
       // Bridge lemma: produces all facts needed for the new invariant
       blue_step_coalesce_aux_eq 's s cur
         cur_fb (U64.v cur_rw) cur_fv;
@@ -338,6 +345,11 @@ fn coalesce (heap: heap_t)
       SpecHeap.hd_f_roundtrip cur;
       SpecObject.color_of_object_spec obj s;
       SpecObject.is_blue_iff obj s;
+      // Query splitting no longer carries these bridging facts over from
+      // sibling goals, so spell them out for the precondition below.
+      SpecFields.objects_nonempty_head cur 's;
+      assert (pure (Seq.head (SpecFields.objects cur 's) == obj));
+      assert (pure (~(SpecObject.is_blue obj 's)));
 
       // Bridge lemma: produces all facts needed for the new invariant
       white_step_coalesce_aux_eq 's s cur

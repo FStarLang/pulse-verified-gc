@@ -249,8 +249,8 @@ private let bfc_one_field
       new_major == (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out /\
       dst_obj == (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       blue_fields_closed new_major /\
       Seq.mem src (objects zero_addr new_major) /\
       Seq.mem dst_obj (objects zero_addr new_major) /\
@@ -292,7 +292,7 @@ private let bfc_one_field
 
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 /// Pattern: inner bfc_proof has conclusion as implication (no requires).
 private let promote_object_preserves_bfc_close
   (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)
@@ -308,8 +308,8 @@ private let promote_object_preserves_bfc_close
       tag == minor_tag minor obj /\
       g' == set_promoted_tag padded dst_obj tag /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       blue_fields_closed new_major /\
       Seq.mem dst_obj (objects zero_addr new_major) /\
       U64.v (wosize_of_object dst_obj new_major) >= wosize /\
@@ -373,14 +373,14 @@ private let promote_object_preserves_bfc_close
     FStar.Classical.forall_intro_2 bfc_proof
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let promote_object_preserves_bfc
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       blue_fields_closed major /\
       chain_objects_blue major fp /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
@@ -427,37 +427,37 @@ let promote_object_preserves_bfc
 #pop-options
 /// Helper: transfer chain_avoids from new_major to res.major_out via read preservation.
 /// Separated to keep the Z3 context small.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let chain_blue_transfer_step
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   (excl: obj_addr)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL /\
       excl <> (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out /\
       // chain_avoids on new_major is known
       AllocLemmas.chain_avoids
         (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out
         (GC.Spec.Allocator.alloc_spec major fp wosize).fp_out
-        excl (heap_size / U64.v mword) = true /\
+        excl heap_words = true /\
       AllocLemmas.chain_avoids
         (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out
         (GC.Spec.Allocator.alloc_spec major fp wosize).fp_out
         (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out
-        (heap_size / U64.v mword) = true /\
+        heap_words = true /\
       AllocLemmas.fl_valid
         (GC.Spec.Allocator.alloc_spec major fp wosize).heap_out
         (GC.Spec.Allocator.alloc_spec major fp wosize).fp_out
-        (heap_size / U64.v mword))
+        heap_words)
     (ensures
       AllocLemmas.chain_avoids
         (promote_object minor major obj fp wosize).major_out
         (promote_object minor major obj fp wosize).fp_out
-        excl (heap_size / U64.v mword) = true)
-  = let fuel = heap_size / U64.v mword in
+        excl heap_words = true)
+  = let fuel = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     let new_major = alloc_res.heap_out in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
@@ -488,15 +488,15 @@ private let chain_blue_transfer_step
 /// After alloc_spec + copy_fields + set_promoted_tag, non-blue objects that are not
 /// the destination still avoid the free-list chain. Extracted as a standalone helper
 /// to give Z3 a clean context (no inherited let-bindings from the outer proof).
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let chain_blue_proof_for_excl
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   (excl: obj_addr)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_objects_blue major fp /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL /\
       // excl-specific
@@ -507,8 +507,8 @@ private let chain_blue_proof_for_excl
       AllocLemmas.chain_avoids
         (promote_object minor major obj fp wosize).major_out
         (promote_object minor major obj fp wosize).fp_out
-        excl (heap_size / U64.v mword) = true)
-  = let fuel = heap_size / U64.v mword in
+        excl heap_words = true)
+  = let fuel = heap_words in
     let res = promote_object minor major obj fp wosize in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     let new_major = alloc_res.heap_out in
@@ -589,7 +589,7 @@ private let chain_blue_proof_for_excl
 
 /// set_promoted_tag preserves read_word at object addresses ≠ dst_obj.
 /// Used to transfer chain_avoids through set_promoted_tag.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let set_tag_preserves_read_at_obj
   (major: heap) (dst_obj: obj_addr) (tag: nat{tag < 256})
   (a: obj_addr)
@@ -609,20 +609,20 @@ private let set_tag_preserves_read_at_obj
 #pop-options
 
 /// After alloc_spec + copy_fields, non-blue objects still avoid the chain.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh"
 let promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_objects_blue major fp /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures
       chain_objects_blue (promote_object minor major obj fp wosize).major_out
                          (promote_object minor major obj fp wosize).fp_out)
-  = let fuel = heap_size / U64.v mword in
+  = let fuel = heap_words in
     let res = promote_object minor major obj fp wosize in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     let new_major = alloc_res.heap_out in
@@ -686,14 +686,14 @@ let promote_object_preserves_chain_objects_blue
 /// A successful promotion preserves the shape of the free-list head and blue
 /// link fields. Allocation establishes the shape for the immediate post-alloc
 /// heap; copy/padding/tag writes do not affect link fields of still-blue objects.
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 let promote_object_preserves_free_list_shape
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       FreeListShape.fp_pointer_or_zero fp /\
       FreeListShape.blue_link_fields_valid major /\
       chain_objects_blue major fp /\
@@ -791,14 +791,14 @@ let promote_object_preserves_free_list_shape
 #pop-options
 
 /// Inductive proof: promote_all_aux preserves blue_fields_closed.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec promote_all_aux_preserves_bfc
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       blue_fields_closed major /\
       chain_objects_blue major fp)
     (ensures
@@ -820,7 +820,7 @@ private let rec promote_all_aux_preserves_bfc
           // OOM: result is original major, bfc holds by precondition
           ()
         else begin
-          let fuel = heap_size / U64.v mword in
+          let fuel = heap_words in
           // promote_object preserves bfc
           promote_object_preserves_bfc minor major obj fp wz;
           assert (blue_fields_closed res.major_out);
@@ -837,12 +837,12 @@ private let rec promote_all_aux_preserves_bfc
 #pop-options
 
 /// After promote_all, blue objects' pointer fields target valid objects.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let promote_all_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp)
           (ensures blue_fields_closed (promote_all_spec minor major fp live_set).major_final)
   = reveal_opaque (`%well_formed_heap) well_formed_heap;

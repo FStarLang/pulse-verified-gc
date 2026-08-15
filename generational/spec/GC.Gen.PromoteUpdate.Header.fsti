@@ -55,16 +55,16 @@ val update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map
 val promote_all_fwd_all_targets_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fwd_all_targets_valid res.fwd_map res.major_final))
 
 val promote_all_adds_promoted
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final))
 
@@ -74,8 +74,8 @@ val minor_collect_preserves_reachable
   : Lemma (requires
              minor_wf minor /\
              well_formed_heap major /\
-             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words /\
              Seq.mem obj (live_set_of minor major roots))
           (ensures
              (let res = minor_collect_spec minor major fp roots in

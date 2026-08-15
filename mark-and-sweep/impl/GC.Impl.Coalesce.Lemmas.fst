@@ -16,6 +16,7 @@ module Alloc = GC.Spec.Allocator
 module HeapGraph = GC.Spec.HeapGraph
 
 #set-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+module Header = GC.Lib.Header
 
 /// Objects walk produces nonempty + advance
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
@@ -162,7 +163,7 @@ let blue_step_coalesce_aux_eq g0 g start first_blue run_words fp =
   assert (new_rw * U64.v mword <= next_nat);
   FStar.Math.Lemmas.lemma_div_le (new_rw * U64.v mword) heap_size (U64.v mword);
   FStar.Math.Lemmas.cancel_mul_div new_rw (U64.v mword);
-  assert (new_rw <= heap_size / U64.v mword);
+  assert (new_rw <= heap_words);
   // heap_size < pow2 57 = 8 * pow2 54, and heap_size is a multiple of 8
   // => heap_size / 8 < pow2 54
   FStar.Math.Lemmas.pow2_plus 3 54;
@@ -170,8 +171,8 @@ let blue_step_coalesce_aux_eq g0 g start first_blue run_words fp =
   FStar.Math.Lemmas.lemma_div_exact heap_size (U64.v mword);
   // heap_size = 8 * (heap_size / 8) and heap_size < 8 * pow2 54
   // => heap_size / 8 < pow2 54
-  assert (heap_size == U64.v mword * (heap_size / U64.v mword));
-  assert (U64.v mword * (heap_size / U64.v mword) < U64.v mword * pow2 54);
+  assert (heap_size == U64.v mword * heap_words);
+  assert (U64.v mword * heap_words < U64.v mword * pow2 54);
   // next_nat + 8 < pow2 64: next_nat <= heap_size < pow2 57, 8 <= pow2 57, pow2 58 < pow2 64
   FStar.Math.Lemmas.pow2_le_compat 57 3;
   FStar.Math.Lemmas.pow2_double_sum 57;

@@ -180,6 +180,7 @@ fn is_pointer (v: U64.t)
 /// Calls callback for each valid pointer found
 /// 
 /// Precondition: all fields fit in heap
+divergent
 fn for_each_successor (heap: heap_t) (h_addr: hp_addr) (wz: U64.t)
                        (callback: (U64.t -> stt unit (requires emp) (ensures fun _ -> emp)))
   requires is_heap heap 's **

@@ -22,11 +22,11 @@ val promote_object_wosize_preserved
   (wz: nat{wz > 0}) (other: obj_addr)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (promote_object minor major obj fp wz).new_addr <> 0UL /\
       Seq.mem other (objects zero_addr major) /\
-      AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true)
+      AllocLemmas.chain_avoids major fp other heap_words = true)
     (ensures
       wosize_of_object other (promote_object minor major obj fp wz).major_out ==
       wosize_of_object other major)
@@ -41,8 +41,8 @@ val promote_step_preserves_invariant
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       fields_match_minor minor major fwd live_set idx /\
       chain_all_inv minor major fp live_set fwd idx)
     (ensures (let obj = Seq.index live_set idx in
@@ -50,7 +50,7 @@ val promote_step_preserves_invariant
               let res = promote_object minor major obj fp wz in
               let fwd' = extend_forwarding fwd obj res.new_addr in
               well_formed_heap_part1 res.major_out /\
-              AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword) /\
-              AllocLemmas.fl_chain_terminates res.major_out res.fp_out (heap_size / U64.v mword) /\
+              AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
+              AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words /\
               fields_match_minor minor res.major_out fwd' live_set (idx + 1) /\
               chain_all_inv minor res.major_out res.fp_out live_set fwd' (idx + 1)))

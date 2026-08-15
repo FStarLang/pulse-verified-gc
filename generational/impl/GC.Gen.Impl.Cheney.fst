@@ -128,8 +128,9 @@ let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64
 /// Strategy: forward the parent closure (promote if needed), then record
 /// infix forwarding as parent_fwd + (addr - parent).
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 inline_for_extraction
+divergent
 fn forward_if_minor_infix
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -146,8 +147,8 @@ fn forward_if_minor_infix
            R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
                  Seq.length 'q == queue_size /\
                  SZ.v 'bk <= queue_size /\
@@ -173,8 +174,8 @@ fn forward_if_minor_infix
           let cs_post = CheneySpec.cheney_forward_one minor_st cs_pre addr in
           md2 == 'md /\ mb2 == 'mb /\
           SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_valid ms2 fp2 heap_words /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
           Seq.length q2 == queue_size /\
           SZ.v bk2 <= queue_size /\
@@ -286,6 +287,7 @@ fn forward_if_minor_infix
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --z3smtopt '(set-option :smt.qi.eager_threshold 100)'"
 inline_for_extraction
+divergent
 fn forward_if_minor
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -302,8 +304,8 @@ fn forward_if_minor
            R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
                  Seq.length 'q == queue_size /\
                  SZ.v 'bk <= queue_size /\
@@ -325,8 +327,8 @@ fn forward_if_minor
           let cs_post = CheneySpec.cheney_forward_one minor_st cs_pre addr in
           md2 == 'md /\ mb2 == 'mb /\
           SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_valid ms2 fp2 heap_words /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
           Seq.length q2 == queue_size /\
           SZ.v bk2 <= queue_size /\
@@ -465,6 +467,7 @@ fn forward_if_minor
 /// the impl state matches cheney_forward_roots applied from cs0.
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+divergent
 fn forward_roots
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -482,8 +485,8 @@ fn forward_roots
            pts_to roots 'rs **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
                  Seq.length 'q == queue_size /\
                  SZ.v 'bk == 0 /\
@@ -507,8 +510,8 @@ fn forward_roots
           let cs1 = CheneySpec.cheney_forward_roots minor_st cs0 'rs 0 in
           md2 == 'md /\ mb2 == 'mb /\
           SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_valid ms2 fp2 heap_words /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
           Seq.length q2 == queue_size /\
           SZ.v bk2 <= queue_size /\
@@ -538,8 +541,8 @@ fn forward_roots
             SZ.v iv <= SZ.v nroots /\
             md_i == 'md /\ mb_i == 'mb /\
             SF.well_formed_heap_part1 ms_i /\
-            AllocLemmas.fl_valid ms_i fp_i (heap_size / U64.v mword) /\
-            AllocLemmas.fl_chain_terminates ms_i fp_i (heap_size / U64.v mword) /\
+            AllocLemmas.fl_valid ms_i fp_i heap_words /\
+            AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == fwd_array_size /\
             Seq.length q_i == queue_size /\
             SZ.v bk_i <= queue_size /\
@@ -578,8 +581,15 @@ fn forward_roots
   // At exit: iv == nroots == Seq.length 'rs
   // Read final ghost state and apply base case lemma
   let cs_final = GR.op_Bang gcs;
+  assert (pure (SZ.v nroots == Seq.length 'rs));
   CheneySpec.cheney_forward_roots_base ({data='md; bump='mb} <: minor_state)
     (reveal cs_final) 'rs (SZ.v nroots);
+  assert (pure (CheneySpec.cheney_forward_roots ({data='md; bump='mb} <: minor_state)
+                  (reveal cs_final) 'rs (SZ.v nroots) == reveal cs_final));
+  assert (pure (CheneySpec.cheney_forward_roots ({data='md; bump='mb} <: minor_state)
+                  (reveal cs_final) 'rs (SZ.v nroots) ==
+                CheneySpec.cheney_forward_roots ({data='md; bump='mb} <: minor_state)
+                  cs0 'rs 0));
   let oom_final = !oom_ref;
   CheneyBFS.root_prefix_all_implies_covers_oom ({data='md; bump='mb} <: minor_state)
     (reveal cs_final) 'rs oom_final;
@@ -598,6 +608,7 @@ fn forward_roots
 /// Inner loop: separate ghost ref tracks state across fields of one object.
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+divergent
 fn scan_loop
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -613,8 +624,8 @@ fn scan_loop
            R.pts_to oom_ref 'oom_in **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
                  Seq.length 'q == queue_size /\
                  SZ.v 'bk <= queue_size /\
@@ -636,8 +647,8 @@ fn scan_loop
           let cs_final = CheneySpec.cheney_scan minor_st cs1 0 (CheneySpec.cheney_fuel minor_st) in
           md2 == 'md /\ mb2 == 'mb /\
           SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_valid ms2 fp2 heap_words /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size /\
           Seq.length q2 == queue_size /\
           SZ.v bk2 <= queue_size /\
@@ -669,8 +680,8 @@ fn scan_loop
             SZ.v bk_i <= queue_size /\
             md_i == 'md /\ mb_i == 'mb /\
             SF.well_formed_heap_part1 ms_i /\
-            AllocLemmas.fl_valid ms_i fp_i (heap_size / U64.v mword) /\
-            AllocLemmas.fl_chain_terminates ms_i fp_i (heap_size / U64.v mword) /\
+            AllocLemmas.fl_valid ms_i fp_i heap_words /\
+            AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == fwd_array_size /\
             Seq.length q_i == queue_size /\
             minor_wf minor_st /\
@@ -754,8 +765,8 @@ fn scan_loop
                 SZ.v bk_f <= queue_size /\
                 md_f == 'md /\ mb_f == 'mb /\
                 SF.well_formed_heap_part1 ms_f /\
-                AllocLemmas.fl_valid ms_f fp_f (heap_size / U64.v mword) /\
-                AllocLemmas.fl_chain_terminates ms_f fp_f (heap_size / U64.v mword) /\
+                AllocLemmas.fl_valid ms_f fp_f heap_words /\
+                AllocLemmas.fl_chain_terminates ms_f fp_f heap_words /\
                 Seq.length farr_f == fwd_array_size /\
                 Seq.length q_f == queue_size /\
                 U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\
@@ -842,6 +853,7 @@ fn scan_loop
 /// No assume_ needed — the ghost state threading proves the connection.
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+divergent
 fn cheney_promote_phase
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -855,8 +867,8 @@ fn cheney_promote_phase
            pts_to roots 'rs **
            pure (let minor_st : minor_state = {data='md; bump='mb} in
                  SF.well_formed_heap 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  PromoteSpec.heap_objects_dense 'ms /\
                  PromoteSpec.chain_objects_blue 'ms 'fp /\
                  Seq.length 'farr == fwd_array_size /\
@@ -881,8 +893,8 @@ fn cheney_promote_phase
           fp2 == prom.fp_final /\
           represents_fwd farr2 prom.fwd_map /\
           SF.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_valid ms2 fp2 heap_words /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           PromoteSpec.heap_objects_dense ms2 /\
           PromoteSpec.chain_objects_blue ms2 fp2 /\
           Seq.length (SF.objects zero_addr ms2) > 0 /\

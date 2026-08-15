@@ -224,13 +224,13 @@ val set_promoted_tag_preserves_alloc_invariants
   : Lemma (requires
              well_formed_heap_part1 major /\
              Seq.mem obj (objects zero_addr major) /\
-             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-             AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true)
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words /\
+             AllocLemmas.chain_avoids major fp obj heap_words = true)
           (ensures (let g' = set_promoted_tag major obj tag in
                     well_formed_heap_part1 g' /\
-                    AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword)))
+                    AllocLemmas.fl_valid g' fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g' fp heap_words))
 
 /// zero_promote_padding preserves allocator invariants.
 /// In the noop case (exact fit), everything trivially holds.
@@ -241,15 +241,15 @@ val zero_promote_padding_preserves_alloc_invariants
   : Lemma (requires
              well_formed_heap_part1 g /\
              Seq.mem dst (objects zero_addr g) /\
-             AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
-             AllocLemmas.chain_avoids g fp dst (heap_size / U64.v mword) = true)
+             AllocLemmas.fl_valid g fp heap_words /\
+             AllocLemmas.fl_chain_terminates g fp heap_words /\
+             AllocLemmas.chain_avoids g fp dst heap_words = true)
           (ensures (let g' = zero_promote_padding g dst wz in
                     well_formed_heap_part1 g' /\
                     Seq.mem dst (objects zero_addr g') /\
-                    AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword) /\
-                    AllocLemmas.chain_avoids g' fp dst (heap_size / U64.v mword) = true))
+                    AllocLemmas.fl_valid g' fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g' fp heap_words /\
+                    AllocLemmas.chain_avoids g' fp dst heap_words = true))
 
 /// zero_promote_padding preserves well_formed_heap_part4 (no infix objects).
 val zero_promote_padding_preserves_wfh_part4
@@ -265,12 +265,12 @@ val promote_object_preserves_alloc_invariants
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
              well_formed_heap_part1 major /\
-             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_object minor major obj fp wosize in
                     well_formed_heap_part1 res.major_out /\
-                    AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates res.major_out res.fp_out (heap_size / U64.v mword)))
+                    AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
+                    AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words))
 
 /// ---------------------------------------------------------------------------
 /// Promote All Live Objects
@@ -561,6 +561,16 @@ let dst_fields_valid (dst_obj: U64.t) (n: nat) : prop =
     (U64.v dst_obj + j * 8 + 8 <= heap_size /\
      (U64.v dst_obj + j * 8) % 8 == 0))
 
+/// Address of destination field `j`, given `dst_fields_valid`.
+///
+/// Discharging the `hp_addr` refinement here, in a minimal context, keeps the
+/// obligation out of the (very large) lemma statements that mention it.
+let dst_field_addr (dst: U64.t) (wz: nat) (j: nat)
+  : Pure hp_addr
+    (requires dst_fields_valid dst wz /\ j < wz)
+    (ensures fun r -> U64.v r == U64.v dst + j * 8)
+  = U64.uint_to_t (U64.v dst + j * 8)
+
 /// Derive dst_fields_valid from scalar upper bound + alignment
 val dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
   : Lemma (requires U64.v addr % 8 == 0 /\ U64.v addr + (wz - 1) * 8 + 8 <= heap_size)
@@ -618,8 +628,8 @@ val promote_object_extra_field_not_pointer
   (fp: U64.t) (wz: nat{wz > 0}) (field_idx: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (let res = promote_object minor major obj fp wz in
        res.new_addr <> 0UL /\
        U64.v res.new_addr >= U64.v mword /\
@@ -653,7 +663,7 @@ val promote_object_preserves_objects
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
              well_formed_heap major /\
-             GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword))
+             GC.Spec.Allocator.Lemmas.fl_valid major fp heap_words)
           (ensures
              (let res = promote_object minor major obj fp wosize in
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
@@ -671,21 +681,21 @@ val copy_fields_preserves_alloc_invariants
              Seq.mem dst_obj (objects zero_addr major) /\
              U64.v dst_obj % 8 == 0 /\
              U64.v (wosize_of_object dst_obj major) >= n /\
-             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-             AllocLemmas.chain_avoids major fp dst_obj (heap_size / U64.v mword) = true)
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words /\
+             AllocLemmas.chain_avoids major fp dst_obj heap_words = true)
            (ensures (let g' = copy_fields minor major src_obj dst_obj 0 n in
                      well_formed_heap_part1 g' /\
-                     AllocLemmas.fl_valid g' fp (heap_size / U64.v mword) /\
-                     AllocLemmas.fl_chain_terminates g' fp (heap_size / U64.v mword)))
+                     AllocLemmas.fl_valid g' fp heap_words /\
+                     AllocLemmas.fl_chain_terminates g' fp heap_words))
 
 /// promote_object preserves objects (part1 version — no full well_formed_heap needed)
 val promote_object_preserves_objects_part1
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
              well_formed_heap_part1 major /\
-             GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             GC.Spec.Allocator.Lemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+             GC.Spec.Allocator.Lemmas.fl_valid major fp heap_words /\
+             GC.Spec.Allocator.Lemmas.fl_chain_terminates major fp heap_words)
           (ensures
              (let res = promote_object minor major obj fp wosize in
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
@@ -696,8 +706,8 @@ val promote_all_preserves_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires
              well_formed_heap major /\
-             GC.Spec.Allocator.Lemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             GC.Spec.Allocator.Lemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+             GC.Spec.Allocator.Lemmas.fl_valid major fp heap_words /\
+             GC.Spec.Allocator.Lemmas.fl_chain_terminates major fp heap_words)
           (ensures
              (let res = promote_all_spec minor major fp live_set in
               (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
@@ -707,8 +717,8 @@ val promote_all_preserves_objects
 val promote_all_preserves_wfh_part1
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures well_formed_heap_part1 (promote_all_spec minor major fp live_set).major_final)
 
 /// promote_object preserves well_formed_heap_part4 (no infix objects) when the
@@ -718,8 +728,8 @@ val promote_object_preserves_wfh_part4
   : Lemma (requires
              well_formed_heap_part1 major /\
              well_formed_heap_part4 major /\
-             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words /\
              minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
            (ensures (let res = promote_object minor major obj fp wosize in
                      well_formed_heap_part4 res.major_out))
@@ -736,8 +746,8 @@ let live_set_no_infix (minor: minor_state) (live_set: seq U64.t) : prop =
 val promote_all_preserves_wfh_part4
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     live_set_no_infix minor live_set)
           (ensures well_formed_heap_part4 (promote_all_spec minor major fp live_set).major_final)
 
@@ -762,7 +772,7 @@ let minor_no_scan_invariant (minor: minor_state) : prop =
 let allocated_avoid_chain (major: heap) (fp: U64.t) : prop =
   forall (x: obj_addr).
     Seq.mem x (objects zero_addr major) /\ ~(is_blue x major) ==>
-    AllocLemmas.chain_avoids major fp x (heap_size / U64.v mword) = true
+    AllocLemmas.chain_avoids major fp x heap_words = true
 
 /// A single Cheney promotion step preserves the no-scan invariant when the
 /// promoted minor heap itself satisfies the analogous no-scan condition.
@@ -770,8 +780,8 @@ val promote_object_preserves_no_scan_invariant
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma (requires no_scan_invariant major /\
                     well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     allocated_avoid_chain major fp /\
                     minor_no_scan_invariant minor /\
                     Seq.mem obj (minor_objects minor) /\
@@ -786,8 +796,8 @@ val promote_all_preserves_no_scan_invariant
   : Lemma (requires well_formed_heap major /\
                     no_scan_invariant major /\
                     minor_no_scan_invariant minor /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     allocated_avoid_chain major fp /\
                     (forall (k:nat). k < Seq.length live_set ==>
                       Seq.mem (Seq.index live_set k) (minor_objects minor)))
@@ -891,7 +901,7 @@ val fields_match_minor_extend
        (fwd obj <> 0UL /\ wz > 0 /\
         (dst_fields_valid (fwd obj) wz /\ U64.v (fwd obj) % 8 == 0 ==>
          (forall (j:nat). j < wz ==>
-           read_word major (U64.uint_to_t (U64.v (fwd obj) + j * 8)) ==
+           read_word major (dst_field_addr (fwd obj) wz j) ==
            minor_read_field minor obj j)))))
     (ensures fields_match_minor minor major fwd live_set (idx + 1))
 
@@ -995,7 +1005,7 @@ val fields_match_minor_intro_by_proof
 let chain_objects_blue (major: heap) (fp: U64.t) : prop =
   forall (obj: obj_addr).
     Seq.mem obj (objects zero_addr major) /\ ~(is_blue obj major) ==>
-    AllocLemmas.chain_avoids major fp obj (heap_size / U64.v mword) = true
+    AllocLemmas.chain_avoids major fp obj heap_words = true
 
 /// Minor collection that promotes ALL minor objects.
 let minor_collect_all_spec (minor: minor_state) (major: heap)

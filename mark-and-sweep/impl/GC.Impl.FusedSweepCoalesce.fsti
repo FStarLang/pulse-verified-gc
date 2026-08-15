@@ -27,6 +27,7 @@ module SI = GC.Spec.SweepInv
 /// Precondition: well_formed heap, no gray objects (mark phase complete),
 ///               objects list is non-empty + dense
 /// Postcondition: result matches the fused_sweep_coalesce spec
+divergent
 fn fused_sweep_coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\

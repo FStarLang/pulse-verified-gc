@@ -19,7 +19,32 @@ KRML       ?= $(KRML_HOME)/krml
 
 FSTAR_LIB  := $(shell $(FSTAR_EXE) --locate_lib 2>/dev/null)
 
+# Z3 version used for all SMT queries (bundled with the F* installation).
+Z3_VERSION ?= 4.15.3
+
+# Z3 4.15.3 regression workaround.
+#
+# Z3's default `smt.qi.eager_threshold` is 10.  On 4.15.3 a number of this
+# repo's goals send the solver into a search that never terminates *and* never
+# charges the rlimit, so `--z3rlimit` cannot bound it; the same queries are
+# discharged in seconds by Z3 4.13.3.  Raising the eager-instantiation
+# threshold restores 4.13.3-like behaviour for those modules
+# (GC.Spec.Allocator.fst: >15min hang -> 81s).
+#
+# It cannot be applied globally: at the higher threshold *other* modules (e.g.
+# GC.Spec.DFS, GC.Spec.Heap) hang instead.  Modules are therefore opted in
+# individually, through EAGER_QI_CHECKED below.
+EAGER_QI ?= --z3smtopt '(set-option :smt.qi.eager_threshold 100)'
+
 OUTPUT_DIR = _output
+
+# Shared checked-file cache.
+#
+# F* writes `M.fst.checked` into `--cache_dir`, which defaults to the *current
+# working directory* (it no longer drops the file next to the source).  Pointing
+# every build at one explicit directory keeps `--dep full` output, the pattern
+# rules below, and the per-directory Makefiles all in agreement.
+CACHE_DIR ?= _cache
 
 # --- Include paths (all directories visible to all modules) -----------------
 
@@ -30,9 +55,38 @@ INCLUDES = \
 
 # --- F* base flags ----------------------------------------------------------
 
+# Z3 4.15.3 flakiness workaround.
+#
+# Under Z3 4.15.3 a number of otherwise trivial goals (nat-ness side
+# conditions, `x % 8 == 0` alignment facts, `fuel - 1 >= 0`) intermittently
+# send the solver down a search path that exhausts the rlimit, in contexts
+# where a neighbouring, identical goal is discharged in milliseconds.  Retrying
+# the query with a fresh solver clears them.  `--retry N` re-runs a *failing*
+# query up to N times and succeeds on the first one that goes through, so it
+# costs nothing on the (vast majority of) queries that succeed immediately.
+RETRY ?= --retry 3
+
+# Hard per-query wall-clock bound.
+#
+# Some Z3 4.15.3 searches never terminate *and never charge the rlimit*, so
+# `--z3rlimit` cannot bound them and the module hangs indefinitely (measured:
+# >90 minutes on GC.Spec.Allocator.Lemmas.Part2 and several generational spec
+# modules).  A hard `smt.timeout` turns those hangs back into ordinary query
+# failures, which `--retry` can then absorb and which point at a source line
+# instead of leaving the build wedged.
+#
+# 300 s is far above any query in this repository that legitimately succeeds
+# (the slowest measured is well under 60 s), so it only ever fires on a runaway
+# search.
+Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
+
 FSTAR_FLAGS = \
+  $(RETRY) \
+  $(Z3_TIMEOUT) \
   $(OTHERFLAGS) \
   --cache_checked_modules \
+  --cache_dir $(CACHE_DIR) \
+  --z3version $(Z3_VERSION) \
   --odir $(OUTPUT_DIR) \
   --warn_error -321 \
   --report_assumes warn \
@@ -61,6 +115,9 @@ GEN_SRC    = $(wildcard generational/spec/*.fst generational/spec/*.fsti \
 SPOT_SRC   = $(wildcard spot/*.fst spot/*.fsti)
 ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC) $(SPOT_SRC)
 
+MS_IMPL_SRC  = $(wildcard mark-and-sweep/impl/*.fst mark-and-sweep/impl/*.fsti)
+GEN_IMPL_SRC = $(wildcard generational/impl/*.fst generational/impl/*.fsti)
+
 # --- Auto-generated dependency graph ----------------------------------------
 
 .depend: Makefile $(ROOT_MODULES) $(ALL_SRC)
@@ -73,7 +130,7 @@ ALL_SRC    = $(COMMON_SRC) $(MS_SRC) $(GEN_SRC) $(SPOT_SRC)
 	  /^[A-Z_]+=/ { if (n) flush(); keep = 1; n = 0 } \
 	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
 	    if (line == "") next; \
-	    if (line !~ /:/ && line !~ /^(common|mark-and-sweep|generational|spot)\// && line !~ /^[A-Z_]+=/) next; \
+	    if (line !~ /:/ && line !~ /^(_cache|common|mark-and-sweep|generational|spot)\// && line !~ /^[A-Z_]+=/) next; \
 	    buf[n++] = $$0 } \
 	  END { if (n) flush() } \
 	  function flush() { if (!n) return; \
@@ -96,7 +153,7 @@ orphans: .depend
 	@echo ""
 	@echo "Checking for orphans..."
 	@find common mark-and-sweep generational spot -name '*.fst' -o -name '*.fsti' | grep -v archive | sort > /tmp/all_files.txt
-	@awk '/\.checked:/ {print $$1}' .depend | sed 's/\.checked://' | sort > /tmp/reachable.txt
+	@awk '/^_cache\/.*\.checked:/ { getline; gsub(/^[ \t]+|[ \t]*\\?[ \t]*$$/, ""); print }' .depend | sort -u > /tmp/reachable.txt
 	@comm -23 /tmp/all_files.txt /tmp/reachable.txt > /tmp/orphans.txt
 	@if [ -s /tmp/orphans.txt ]; then \
 	  cat /tmp/orphans.txt | while read f; do echo "  $$f"; done; \
@@ -112,77 +169,110 @@ orphans: .depend
 
 # --- Verification targets ---------------------------------------------------
 
+# Sources live in several directories but all `.checked` files land in one
+# shared cache, so targets are derived from the module file name alone.
+checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
+
+COMMON_CHECKED = $(call checked,$(COMMON_SRC))
+MS_CHECKED     = $(call checked,$(MS_SRC))
+GEN_CHECKED    = $(call checked,$(GEN_SRC))
+SPOT_CHECKED   = $(call checked,$(SPOT_SRC))
+
+MS_IMPL_CHECKED  = $(call checked,$(MS_IMPL_SRC))
+GEN_IMPL_CHECKED = $(call checked,$(GEN_IMPL_SRC))
+
+# Bind every cache target to its source file.  .depend only covers modules
+# reachable from ROOT_MODULES; this makes orphan modules buildable too, and
+# guarantees `$<` is always the source (.depend lists it first as well).
+define bind_source
+$(CACHE_DIR)/$(notdir $(1)).checked: $(1)
+endef
+$(foreach s,$(ALL_SRC),$(eval $(call bind_source,$(s))))
+
 verify: $(ALL_CHECKED_FILES)
 	@echo "=== all modules verified ==="
 
-common: $(addsuffix .checked,$(COMMON_SRC))
+common: $(COMMON_CHECKED)
 	@echo "=== common modules verified ==="
 
-mark-and-sweep: $(addsuffix .checked,$(COMMON_SRC) $(MS_SRC))
+mark-and-sweep: $(COMMON_CHECKED) $(MS_CHECKED)
 	@echo "=== mark-and-sweep modules verified ==="
 
-generational: $(addsuffix .checked,$(ALL_SRC))
+generational: $(COMMON_CHECKED) $(MS_CHECKED) $(GEN_CHECKED) $(SPOT_CHECKED)
 	@echo "=== generational modules verified ==="
 
-# --- Pattern rules (verification) -------------------------------------------
-# Per-directory flags: different SMT tuning for different proof styles.
+# --- Verification rule ------------------------------------------------------
+#
+# One rule for every module; the prerequisites (and hence `$<`, the source
+# file) come from .depend.  Per-module SMT tuning is applied through the
+# target-specific variable EXTRA_FLAGS.
+#
+# `private` is essential: without it GNU make propagates a target-specific
+# variable to every prerequisite, so one module's tuning would leak into its
+# whole dependency cone.
 
-# common/ — default flags
-common/spec/%.checked: common/spec/%
-	$(FSTAR) $<
+$(CACHE_DIR)/%.checked:
+	@mkdir -p $(CACHE_DIR)
+	$(FSTAR) $(EXTRA_FLAGS) $<
+
+# --- Per-module SMT tuning --------------------------------------------------
 
 # GC.Lib.Header needs a little more rlimit for bitvector mask reasoning.
-common/lib/GC.Lib.Header.fst.checked: common/lib/GC.Lib.Header.fst
-	$(FSTAR) --z3rlimit 20 $<
+HDR_CHECKED       = $(CACHE_DIR)/GC.Lib.Header.fst.checked
+# mark-and-sweep/impl overrides
+MS_ALLOC_CHECKED  = $(CACHE_DIR)/GC.Impl.Allocator.fst.checked
+MS_MARKB_CHECKED  = $(CACHE_DIR)/GC.Impl.MarkBounded.fst.checked
+# generational/spec overrides: --query_stats prevents Z3 context accumulation
+GEN_QSTATS_CHECKED = $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
+                     $(CACHE_DIR)/GC.Gen.WriteBodyLemmas.fst.checked
+# generational/impl root: promote_phase needs lemma-driven NL arithmetic
+GEN_ROOT_CHECKED  = $(CACHE_DIR)/GC.Gen.Impl.fst.checked
 
-common/lib/%.checked: common/lib/%
-	$(FSTAR) $<
+# Modules that hang at Z3 4.15.3's default eager-instantiation threshold.
+#
+# This is an opt-in, not a default: at the raised threshold *other* modules
+# (GC.Spec.DFS, GC.Spec.Heap) diverge instead.  Every entry below was measured
+# to hang -- in a way `--z3rlimit` cannot bound, because the search never
+# charges the rlimit -- without it, and to complete quickly with it.  E.g.
+# GC.Gen.CheneyPreservation.Forwarding: >90 min -> 3m13s.
+EAGER_QI_CHECKED = \
+  $(CACHE_DIR)/GC.Spec.Allocator.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.SearchChain.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.Part2.fst.checked \
+  $(CACHE_DIR)/GC.Impl.Allocator.fst.checked \
+  $(CACHE_DIR)/GC.Gen.Cheney.fst.checked \
+  $(CACHE_DIR)/GC.Gen.Cheney.Dense.fst.checked \
+  $(CACHE_DIR)/GC.Gen.CheneyPreservation.Forwarding.fst.checked \
+  $(CACHE_DIR)/GC.Gen.CheneyPreservation.Frame.fst.checked \
+  $(CACHE_DIR)/GC.Gen.CheneyPreservation.NonBlueOrigin.fsti.checked \
+  $(CACHE_DIR)/GC.Gen.CombinedGraph.fst.checked \
+  $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Edges.fst.checked \
+  $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Reflection.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.Step.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.BlueAlloc.fst.checked \
+  $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
+  $(CACHE_DIR)/GC.Gen.TwoPassEquiv.fst.checked \
+  $(CACHE_DIR)/GC.Gen.Impl.Cheney.fst.checked
 
-common/impl/%.checked: common/impl/%
-	$(FSTAR) --split_queries always $<
+$(EAGER_QI_CHECKED):   private EXTRA_FLAGS = $(EAGER_QI)
+$(HDR_CHECKED):        private EXTRA_FLAGS = --z3rlimit 20
+$(MS_ALLOC_CHECKED):   private EXTRA_FLAGS = --z3rlimit 100 $(EAGER_QI)
+$(MS_MARKB_CHECKED):   private EXTRA_FLAGS = --z3rlimit 300 --z3refresh
+$(GEN_QSTATS_CHECKED): private EXTRA_FLAGS = --query_stats $(EAGER_QI)
+$(GEN_ROOT_CHECKED):   private EXTRA_FLAGS = --z3rlimit 200 --z3refresh
 
-# mark-and-sweep/spec — default flags
-mark-and-sweep/spec/%.checked: mark-and-sweep/spec/%
-	$(FSTAR) $<
+# mark-and-sweep/impl — z3refresh by default
+$(filter-out $(MS_ALLOC_CHECKED) $(MS_MARKB_CHECKED),$(MS_IMPL_CHECKED)): \
+  private EXTRA_FLAGS = --z3refresh
 
-# mark-and-sweep/impl — split_queries + z3refresh by default, with overrides
-mark-and-sweep/impl/GC.Impl.Allocator.fst.checked: mark-and-sweep/impl/GC.Impl.Allocator.fst
-	$(FSTAR) --z3rlimit 100 $<
+# generational/impl — higher rlimit by default
+$(filter-out $(GEN_ROOT_CHECKED) $(EAGER_QI_CHECKED),$(GEN_IMPL_CHECKED)): \
+  private EXTRA_FLAGS = --z3rlimit 160
 
-mark-and-sweep/impl/GC.Impl.MarkBounded.fst.checked: mark-and-sweep/impl/GC.Impl.MarkBounded.fst
-	$(FSTAR) --z3rlimit 300 --split_queries always --z3refresh $<
-
-mark-and-sweep/impl/%.checked: mark-and-sweep/impl/%
-	$(FSTAR) --split_queries always --z3refresh $<
-
-# generational/spec — default flags, with specific overrides
-# Promote.fst: --query_stats prevents Z3 context accumulation across queries
-generational/spec/GC.Gen.Promote.fst.checked: generational/spec/GC.Gen.Promote.fst
-	$(FSTAR) --query_stats --split_queries always $<
-
-generational/spec/GC.Gen.WriteBodyLemmas.fst.checked: generational/spec/GC.Gen.WriteBodyLemmas.fst
-	$(FSTAR) --query_stats --split_queries always $<
-
-generational/spec/GC.Gen.MinorHeap.fst.checked: generational/spec/GC.Gen.MinorHeap.fst
-	$(FSTAR) --split_queries always $<
-
-generational/spec/GC.Gen.AllocProps.fst.checked: generational/spec/GC.Gen.AllocProps.fst
-	$(FSTAR) --query_stats $<
-
-generational/spec/%.checked: generational/spec/%
-	$(FSTAR) $<
-
-# generational/impl — higher rlimit + split_queries, with overrides
-# GC.Gen.Impl.fst: promote_phase needs lemma-driven NL arithmetic — use split+refresh
-generational/impl/GC.Gen.Impl.fst.checked: generational/impl/GC.Gen.Impl.fst
-	$(FSTAR) --z3rlimit 200 --split_queries always --z3refresh $<
-
-generational/impl/%.checked: generational/impl/%
-	$(FSTAR) --z3rlimit 160 --split_queries always $<
-
-# spot/ — SPOT verification tests, default flags
-spot/%.checked: spot/%
-	$(FSTAR) $<
+$(filter $(GEN_IMPL_CHECKED),$(EAGER_QI_CHECKED)): \
+  private EXTRA_FLAGS = --z3rlimit 160 $(EAGER_QI)
 
 # --- Extraction (mark-and-sweep) --------------------------------------------
 
@@ -208,7 +298,7 @@ extract-generational: generational
 
 clean:
 	rm -f .depend .depend.raw
-	rm -rf $(OUTPUT_DIR)
+	rm -rf $(OUTPUT_DIR) $(CACHE_DIR)
 	find common mark-and-sweep generational spot -name '*.checked' -delete 2>/dev/null || true
 	rm -rf mark-and-sweep/_output mark-and-sweep/_extract
 	rm -rf generational/_output generational/_extract

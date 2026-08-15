@@ -16,6 +16,7 @@ open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
 module R = Pulse.Lib.Reference
+module SpecBase = GC.Spec.Base
 module U64 = FStar.UInt64
 module SZ = FStar.SizeT
 module Seq = FStar.Seq
@@ -25,6 +26,9 @@ module SO = GC.Spec.Object
 module SH = GC.Spec.Heap
 module SI = GC.Spec.SweepInv
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+module SpecAlloc = GC.Spec.Allocator
+module SpecFields = GC.Spec.Fields
+module SpecObject = GC.Spec.Object
 
 /// ---------------------------------------------------------------------------
 /// Pure helper lemmas (all proven — no admits)
@@ -32,14 +36,14 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// init_heap postcondition when heap is too small
 let init_heap_small_lemma (s: heap_state)
-  : Lemma (requires heap_size / U64.v mword < 2)
+  : Lemma (requires SpecBase.heap_words < 2)
           (ensures (s, 0UL) == SA.init_heap_spec s)
   = ()
 
 /// init_heap postcondition for the normal case
 let init_heap_normal_lemma (s: heap_state) (hdr: U64.t)
-                           (wz: wosize{U64.v wz == heap_size / U64.v mword - 1})
-  : Lemma (requires heap_size / U64.v mword >= 2 /\
+                           (wz: wosize{U64.v wz == SpecBase.heap_words - 1})
+  : Lemma (requires SpecBase.heap_words >= 2 /\
                     hdr == makeHeader wz blue 0UL)
           (ensures (SH.write_word (SH.write_word s zero_addr hdr)
                                          (mword <: hp_addr) 0UL, mword)
@@ -50,6 +54,16 @@ let init_heap_normal_lemma (s: heap_state) (hdr: U64.t)
 let fuel_bound_lemma (fuel: U64.t)
   : Lemma (requires U64.v fuel > 0 /\ U64.v fuel <= heap_size / 8)
           (ensures U64.v (U64.sub fuel 1UL) <= heap_size / 8)
+  = ()
+
+/// `fuel <> 0UL ==> U64.v fuel > 0`.
+///
+/// Trivial, but every proof obligation is now discharged as its own SMT query
+/// carrying the enclosing Pulse loop's full context, in which even this times
+/// out.  Proving it here, where the context is empty, removes the SMT call at
+/// the use site.
+let fuel_nonzero_lemma (fuel: U64.t)
+  : Lemma (requires fuel <> 0UL) (ensures U64.v fuel > 0)
   = ()
 
 /// wosize bound: any wz that fits in a valid block is within pow2 54 - 1
@@ -79,7 +93,7 @@ let split_no_overflow (hd: hp_addr) (wz: U64.t)
 
 /// wosize bounds from heap arithmetic
 let wosize_from_heap_lemma (wz: U64.t)
-  : Lemma (requires U64.v wz <= heap_size / U64.v mword - 1 /\ heap_size <= pow2 57)
+  : Lemma (requires U64.v wz <= SpecBase.heap_words - 1 /\ heap_size <= pow2 57)
           (ensures U64.v wz <= pow2 54 - 1)
   = assert_norm (pow2 57 / 8 == pow2 54);
     FStar.Math.Lemmas.lemma_div_le heap_size (pow2 57) 8
@@ -133,6 +147,7 @@ fn init_heap (heap: heap_t)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 100"
+divergent
 fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SF.well_formed_heap 's)
@@ -194,6 +209,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
       SA.alloc_search_fuel_0 's vh vp vc (U64.v wz);
       go := false
     } else {
+      fuel_nonzero_lemma vfuel;
       let vcur = !cur_fp;
       let valid = is_valid_fp vcur;
       if not valid {
@@ -361,11 +377,12 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
 /// so well_formed_heap_part2 (pointer closure) is not needed.
 
 #push-options "--z3rlimit 100"
+divergent
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SF.well_formed_heap_part1 's /\
-                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
+                 AllocLemmas.fl_valid 's fp SpecBase.heap_words /\
+                 AllocLemmas.fl_chain_terminates 's fp SpecBase.heap_words)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
     pure (let spec_res = SA.alloc_spec 's fp (U64.v wosize) in
@@ -420,6 +437,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
       SA.alloc_search_fuel_0 's vh vp vc (U64.v wz);
       go := false
     } else {
+      fuel_nonzero_lemma vfuel;
       let vcur = !cur_fp;
       let valid = is_valid_fp vcur;
       if not valid {
@@ -470,6 +488,9 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
                 go := false
               }
             } else {
+              assert (pure (U64.v offset == U64.v wz_plus_1 * 8));
+              assert (pure (U64.v rem_hd_off == U64.v hd_addr + U64.v wz_plus_1 * 8));
+              SpecBase.aligned_plus_mul8 (U64.v hd_addr) (U64.v wz_plus_1);
               assert (pure (U64.v rem_hd_off < heap_size));
               assert (pure (U64.v rem_hd_off % 8 == 0));
               let rem_obj = U64.add rem_hd_off mword;
@@ -495,6 +516,8 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
                   go := false
                 }
               } else {
+                assert (pure (U64.v rem_obj == U64.v rem_hd_off + 8));
+                SpecBase.aligned_plus_mul8 (U64.v rem_hd_off) 1;
                 assert (pure (U64.v rem_obj < heap_size));
                 assert (pure (U64.v rem_obj % 8 == 0));
 

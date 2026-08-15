@@ -408,7 +408,7 @@ private val successors_aux_append : (e1: edge_list) -> (e2: edge_list) -> (v: ve
                            (Seq.append (successors_aux e1 v) (successors_aux e2 v)))
         (decreases Seq.length e1)
 
-#push-options "--z3rlimit 400 --fuel 4 --ifuel 2 --split_queries always"
+#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
 private let rec successors_aux_append e1 e2 v =
   if Seq.length e1 = 0 then begin
     assert (Seq.equal (Seq.append e1 e2) e2);

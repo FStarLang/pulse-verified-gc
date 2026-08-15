@@ -24,6 +24,7 @@ module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
 module GenInv = GC.Gen.HeapInvariant
 
+divergent
 fn call_gen_gc_spot
   (gh: gen_heap_t)
   (roots: array U64.t) (nroots: SZ.t)

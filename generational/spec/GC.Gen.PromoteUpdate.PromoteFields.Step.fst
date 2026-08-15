@@ -32,6 +32,41 @@ private let chain_avoids_implies_not_in_fl_chain = WriteBody.chain_avoids_implie
 private let copy_fields_preserves_chain_avoids_self = WriteBody.copy_fields_preserves_chain_avoids_self
 
 /// Helper: explicitly eliminate the `fields_match_minor` quantifier for a given k and j.
+/// Build an `hp_addr` from a raw offset.  The bounds and alignment obligations
+/// are trivial, but under the enclosing well-formed-heap context they are not
+/// discharged in time; proving them here keeps the caller's goals small.
+/// Two 8-aligned addresses that are strictly ordered differ by at least 8.
+///
+/// Proved in an empty context: inside `promote_object_wosize_preserved` the
+/// modular-arithmetic step diverges under the enclosing well-formed-heap and
+/// free-list hypotheses.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+private let gt_mul8_step (a b m: nat) : Lemma
+  (requires a % 8 == 0 /\ b % 8 == 0 /\ a > b + m * 8)
+  (ensures a >= b + m * 8 + 8)
+= FStar.Math.Lemmas.lemma_div_mod a 8;
+  FStar.Math.Lemmas.lemma_div_mod b 8;
+  let k : int = a / 8 - b / 8 - m in
+  assert (a - (b + m * 8) == k * 8)
+#pop-options
+
+/// If two indices of a sequence hold different elements they are different
+/// indices.  Proved in an empty context: the congruence step diverges under
+/// the enclosing well-formed-heap hypotheses.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let index_ne_gives_lt (#a: eqtype) (s: Seq.seq a) (k idx: nat) : Lemma
+  (requires k < idx + 1 /\ k < Seq.length s /\ idx < Seq.length s /\
+            ~(Seq.index s k == Seq.index s idx))
+  (ensures k < idx)
+  = ()
+#pop-options
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let mk_hp_addr (a: nat{a < heap_size /\ a % 8 == 0}) : (r: hp_addr{U64.v r == a}) =
+  assert (a < pow2 64);
+  U64.uint_to_t a
+#pop-options
+
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let fields_match_minor_elim
   (minor: minor_state) (major: heap) (fwd: forwarding_map)
@@ -53,7 +88,7 @@ private let fields_match_minor_elim
 
 /// Helper: prove field preservation for a single (k, j) pair when k < idx.
 #restart-solver
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --split_queries no"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let promote_step_one_field_other
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat) (k: nat) (j: nat)
@@ -65,8 +100,8 @@ private let promote_step_one_field_other
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       fields_match_minor minor major fwd live_set idx /\
       (let obj_k = Seq.index live_set k in
        let wz_k = minor_wosize minor obj_k in
@@ -76,7 +111,7 @@ private let promote_step_one_field_other
        U64.v (fwd obj_k) + (wz_k - 1) * 8 + 8 <= heap_size /\
        Seq.mem ((fwd obj_k) <: obj_addr) (objects zero_addr major) /\
        U64.v (wosize_of_object ((fwd obj_k) <: obj_addr) major) >= wz_k /\
-       AllocLemmas.chain_avoids major fp (fwd obj_k) (heap_size / U64.v mword) = true))
+       AllocLemmas.chain_avoids major fp (fwd obj_k) heap_words = true))
     (ensures
       (let obj = Seq.index live_set idx in
        let wz = minor_wosize minor obj in
@@ -88,14 +123,14 @@ private let promote_step_one_field_other
     let wz = minor_wosize minor obj in
     let obj_k = Seq.index live_set k in
     let prev_addr : obj_addr = fwd obj_k in
-    let field_addr : hp_addr = U64.uint_to_t (U64.v prev_addr + j * 8) in
+    let field_addr : hp_addr = mk_hp_addr (U64.v prev_addr + j * 8) in
     fields_match_minor_elim_lemma minor major fwd live_set idx k j field_addr;
     promote_object_preserves_one_field minor major obj fp wz prev_addr j
 #pop-options
 
 /// Assemble: use fields_match_minor_intro_by_proof with a proof function.
 #restart-solver
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 private let promote_step_fields_forall
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -106,8 +141,8 @@ private let promote_step_fields_forall
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       fields_match_minor minor major fwd live_set idx /\
       chain_all_inv minor major fp live_set fwd idx)
     (ensures (let obj = Seq.index live_set idx in
@@ -147,7 +182,7 @@ private let promote_step_fields_forall
         assert (is_val_addr (fwd obj_k));
         assert (Seq.mem ((fwd obj_k) <: obj_addr) (objects zero_addr major));
         assert (U64.v (wosize_of_object ((fwd obj_k) <: obj_addr) major) >= wz_k);
-        assert (AllocLemmas.chain_avoids major fp (fwd obj_k) (heap_size / U64.v mword) = true);
+        assert (AllocLemmas.chain_avoids major fp (fwd obj_k) heap_words = true);
         assert (U64.v (fwd obj_k) + j * 8 + 8 <= heap_size);
         assert (U64.v (fwd obj_k) + (wz_k - 1) * 8 + 8 <= heap_size);
         promote_step_one_field_other minor major fp live_set fwd idx k j
@@ -158,7 +193,7 @@ private let promote_step_fields_forall
 
 /// Prove basic properties (wfh, fl_valid, fl_chain_terminates, fields_match_minor).
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let promote_step_preserves_basic
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -169,8 +204,8 @@ private let promote_step_preserves_basic
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       fields_match_minor minor major fwd live_set idx /\
       chain_all_inv minor major fp live_set fwd idx)
     (ensures (let obj = Seq.index live_set idx in
@@ -178,12 +213,12 @@ private let promote_step_preserves_basic
               let res = promote_object minor major obj fp wz in
               let fwd' = extend_forwarding fwd obj res.new_addr in
               well_formed_heap_part1 res.major_out /\
-              AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword) /\
-              AllocLemmas.fl_chain_terminates res.major_out res.fp_out (heap_size / U64.v mword) /\
+              AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
+              AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words /\
               fields_match_minor minor res.major_out fwd' live_set (idx + 1)))
   = let obj = Seq.index live_set idx in
     let wz = minor_wosize minor obj in
-    let fuel : nat = heap_size / U64.v mword in
+    let fuel : nat = heap_words in
     chain_all_inv_elim minor major fp live_set fwd idx;
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
     AllocLemmas.alloc_spec_preserves_fl_valid_part1 major fp wz;
@@ -202,7 +237,7 @@ private let promote_step_preserves_basic
 
 /// For all previous k, chain_avoids is preserved through promote_object.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let promote_step_chain_forall
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -213,20 +248,20 @@ private let promote_step_chain_forall
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_all_inv minor major fp live_set fwd idx)
     (ensures (let obj = Seq.index live_set idx in
               let wz = minor_wosize minor obj in
               let res = promote_object minor major obj fp wz in
-              let fuel : nat = heap_size / U64.v mword in
+              let fuel : nat = heap_words in
               forall (k:nat). k < idx /\ k < Seq.length live_set ==>
                 (let prev_obj = Seq.index live_set k in
                  let prev_wz = minor_wosize minor prev_obj in
                  fwd prev_obj <> 0UL /\ prev_wz > 0 /\ is_val_addr (fwd prev_obj) /\
                  Seq.mem ((fwd prev_obj) <: obj_addr) (objects zero_addr major) /\
                  U64.v (wosize_of_object ((fwd prev_obj) <: obj_addr) major) >= prev_wz /\
-                 AllocLemmas.chain_avoids major fp (fwd prev_obj) (heap_size / U64.v mword) = true ==>
+                 AllocLemmas.chain_avoids major fp (fwd prev_obj) heap_words = true ==>
                  AllocLemmas.chain_avoids res.major_out res.fp_out (fwd prev_obj) fuel = true)))
   = let obj = Seq.index live_set idx in
     let wz = minor_wosize minor obj in
@@ -237,10 +272,10 @@ private let promote_step_chain_forall
                 fwd prev_obj <> 0UL /\ prev_wz > 0 /\ is_val_addr (fwd prev_obj) /\
                 Seq.mem ((fwd prev_obj) <: obj_addr) (objects zero_addr major) /\
                 U64.v (wosize_of_object ((fwd prev_obj) <: obj_addr) major) >= prev_wz /\
-                AllocLemmas.chain_avoids major fp (fwd prev_obj) (heap_size / U64.v mword) = true ==>
+                AllocLemmas.chain_avoids major fp (fwd prev_obj) heap_words = true ==>
                 AllocLemmas.chain_avoids (promote_object minor major obj fp wz).major_out
                                          (promote_object minor major obj fp wz).fp_out
-                                         (fwd prev_obj) (heap_size / U64.v mword) = true))
+                                         (fwd prev_obj) heap_words = true))
     = let prev_obj = Seq.index live_set k in
       Classical.move_requires (promote_object_preserves_chain_avoids minor major obj fp wz) (fwd prev_obj)
     in
@@ -255,15 +290,15 @@ let promote_object_wosize_preserved
   (wz: nat{wz > 0}) (other: obj_addr)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (promote_object minor major obj fp wz).new_addr <> 0UL /\
       Seq.mem other (objects zero_addr major) /\
-      AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true)
+      AllocLemmas.chain_avoids major fp other heap_words = true)
     (ensures
       wosize_of_object other (promote_object minor major obj fp wz).major_out ==
       wosize_of_object other major)
-  = let fuel : nat = heap_size / U64.v mword in
+  = let fuel : nat = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
     let new_major = alloc_res.heap_out in
     let new_addr = alloc_res.obj_out in
@@ -307,8 +342,7 @@ let promote_object_wosize_preserved
       assert (U64.v other % 8 == 0);
       assert (U64.v dst_obj % 8 == 0);
       // Explicit: other - (dst_obj + ws*8) > 0 and is a multiple of 8, so >= 8
-      assert ((U64.v other - (U64.v dst_obj + ws * 8)) % 8 == 0);
-      assert (U64.v other >= U64.v dst_obj + ws * 8 + 8);
+      gt_mul8_step (U64.v other) (U64.v dst_obj) ws;
       assert (U64.v other >= U64.v dst_obj + wz * 8 + 8);
       // Now: a = other - 8, so a >= dst_obj + wz*8
       // For k < wz: dst_obj + k*8 + 8 <= dst_obj + (wz-1)*8 + 8 = dst_obj + wz*8 <= a
@@ -365,15 +399,15 @@ private let promote_object_wosize_self
   (wz: nat{wz > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (GC.Spec.Allocator.alloc_spec major fp wz).obj_out <> 0UL /\
       is_val_addr (GC.Spec.Allocator.alloc_spec major fp wz).obj_out)
     (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
               let dst_obj : obj_addr = alloc_res.obj_out in
               let result = copy_fields minor alloc_res.heap_out obj dst_obj 0 wz in
               U64.v (wosize_of_object dst_obj result) >= wz))
-  = let fuel : nat = heap_size / U64.v mword in
+  = let fuel : nat = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
     GC.Gen.AllocProps.alloc_spec_obj_wosize_part1 major fp wz;
@@ -401,18 +435,18 @@ private let promote_step_chain_k
   (wz: nat{wz > 0}) (fwd_ok: obj_addr) (wz_k: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       Seq.mem fwd_ok (objects zero_addr major) /\
       U64.v (wosize_of_object fwd_ok major) >= wz_k /\
       U64.v (wosize_of_object fwd_ok major) >= 1 /\
-      AllocLemmas.chain_avoids major fp fwd_ok (heap_size / U64.v mword) = true /\
+      AllocLemmas.chain_avoids major fp fwd_ok heap_words = true /\
       (promote_object minor major obj fp wz).new_addr <> 0UL)
     (ensures
       (let res = promote_object minor major obj fp wz in
        Seq.mem fwd_ok (objects zero_addr res.major_out) /\
        U64.v (wosize_of_object fwd_ok res.major_out) >= wz_k /\
-       AllocLemmas.chain_avoids res.major_out res.fp_out fwd_ok (heap_size / U64.v mword) = true))
+       AllocLemmas.chain_avoids res.major_out res.fp_out fwd_ok heap_words = true))
   = promote_object_wosize_preserved minor major obj fp wz fwd_ok;
     promote_object_preserves_chain_avoids minor major obj fp wz fwd_ok;
     promote_object_preserves_objects_part1 minor major obj fp wz
@@ -420,7 +454,7 @@ private let promote_step_chain_k
 
 /// set_promoted_tag preserves read_word at object addresses ≠ dst_obj.
 /// Used to transfer chain_avoids through set_promoted_tag.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 private let set_tag_preserves_read_at_obj_step
   (major: heap) (dst_obj: obj_addr) (tag: nat{tag < 256})
   (a: obj_addr)
@@ -441,21 +475,21 @@ private let set_tag_preserves_read_at_obj_step
 
 /// chain_avoids for the newly allocated object is preserved through
 /// the full promote_object (alloc + copy_fields + set_promoted_tag).
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let promote_object_chain_avoids_self
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wz: nat{wz > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (promote_object minor major obj fp wz).new_addr <> 0UL)
     (ensures
       (let res = promote_object minor major obj fp wz in
-       let fuel = heap_size / U64.v mword in
+       let fuel = heap_words in
        AllocLemmas.chain_avoids res.major_out res.fp_out
          res.new_addr fuel = true))
-  = let fuel = heap_size / U64.v mword in
+  = let fuel = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
     GC.Gen.AllocProps.alloc_spec_obj_valid major fp wz;
     AllocLemmas.alloc_spec_preserves_wfh_part1 major fp wz;
@@ -560,8 +594,8 @@ private let promote_object_wosize_self_full
   (wz: nat{wz > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       (promote_object minor major obj fp wz).new_addr <> 0UL)
     (ensures (let res = promote_object minor major obj fp wz in
               is_val_addr res.new_addr /\
@@ -601,7 +635,7 @@ private let promote_object_wosize_self_full
 /// Single-k proof for chain_all_inv_intro: proves the body of the forall
 /// for a specific index k. TOP-LEVEL to avoid context pollution.
 #restart-solver
-#push-options "--z3rlimit 150 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 150 --fuel 0 --ifuel 0"
 private let promote_step_chain_one_k
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
@@ -614,8 +648,8 @@ private let promote_step_chain_one_k
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_all_inv minor major fp live_set fwd idx)
     (ensures (let obj = Seq.index live_set idx in
               let wz = minor_wosize minor obj in
@@ -626,7 +660,7 @@ private let promote_step_chain_one_k
               fwd' ok <> 0UL /\ wz_k > 0 /\ is_val_addr (fwd' ok) ==>
               (Seq.mem ((fwd' ok) <: obj_addr) (objects zero_addr res.major_out) /\
                U64.v (wosize_of_object ((fwd' ok) <: obj_addr) res.major_out) >= wz_k /\
-               AllocLemmas.chain_avoids res.major_out res.fp_out (fwd' ok) (heap_size / U64.v mword) = true)))
+               AllocLemmas.chain_avoids res.major_out res.fp_out (fwd' ok) heap_words = true)))
   = let obj = Seq.index live_set idx in
     let wz = minor_wosize minor obj in
     let ok = Seq.index live_set k in
@@ -656,12 +690,12 @@ private let promote_step_chain_one_k
       assert (Seq.mem dst_obj (objects zero_addr res.major_out))
     end
     else begin
-      chain_all_inv_elim minor major fp live_set fwd idx;
       let wz_k = minor_wosize minor ok in
       if fwd ok <> 0UL && wz_k > 0 && is_val_addr (fwd ok) then begin
-        assert (Seq.mem ((fwd ok) <: obj_addr) (objects zero_addr major));
-        assert (U64.v (wosize_of_object ((fwd ok) <: obj_addr) major) >= wz_k);
-        assert (AllocLemmas.chain_avoids major fp (fwd ok) (heap_size / U64.v mword) = true);
+        // Pointwise elimination: instantiating the `forall` of
+        // `chain_all_inv_elim` in this context makes Z3 diverge.
+        index_ne_gives_lt live_set k idx;
+        chain_all_inv_elim_at minor major fp live_set fwd idx k;
         promote_step_chain_k minor major obj fp wz ((fwd ok) <: obj_addr) wz_k
       end else ()
     end
@@ -682,8 +716,8 @@ private let promote_step_establish_chain_all
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_all_inv minor major fp live_set fwd idx)
     (ensures (let obj = Seq.index live_set idx in
               let wz = minor_wosize minor obj in
@@ -700,7 +734,7 @@ private let promote_step_establish_chain_all
                 fwd' ok <> 0UL /\ wz_k > 0 /\ is_val_addr (fwd' ok) ==>
                 (Seq.mem ((fwd' ok) <: obj_addr) (objects zero_addr res.major_out) /\
                  U64.v (wosize_of_object ((fwd' ok) <: obj_addr) res.major_out) >= wz_k /\
-                 AllocLemmas.chain_avoids res.major_out res.fp_out (fwd' ok) (heap_size / U64.v mword) = true)))
+                 AllocLemmas.chain_avoids res.major_out res.fp_out (fwd' ok) heap_words = true)))
     = promote_step_chain_one_k minor major fp live_set fwd idx k
     in
     FStar.Classical.forall_intro step_k;
@@ -720,8 +754,8 @@ let promote_step_preserves_invariant
        wz > 0 /\
        (promote_object minor major obj fp wz).new_addr <> 0UL) /\
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       fields_match_minor minor major fwd live_set idx /\
       chain_all_inv minor major fp live_set fwd idx)
     (ensures (let obj = Seq.index live_set idx in
@@ -729,8 +763,8 @@ let promote_step_preserves_invariant
               let res = promote_object minor major obj fp wz in
               let fwd' = extend_forwarding fwd obj res.new_addr in
               well_formed_heap_part1 res.major_out /\
-              AllocLemmas.fl_valid res.major_out res.fp_out (heap_size / U64.v mword) /\
-              AllocLemmas.fl_chain_terminates res.major_out res.fp_out (heap_size / U64.v mword) /\
+              AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
+              AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words /\
               fields_match_minor minor res.major_out fwd' live_set (idx + 1) /\
               chain_all_inv minor res.major_out res.fp_out live_set fwd' (idx + 1)))
   = promote_step_preserves_basic minor major fp live_set fwd idx;

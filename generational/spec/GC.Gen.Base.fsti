@@ -165,3 +165,9 @@ val zero_addr_above_minor : unit ->
 val to_minor_offset_stable_above_minor : (v: U64.t) ->
   Lemma (requires U64.v v >= minor_heap_size /\ U64.v v % 8 == 0)
         (ensures to_minor_offset v == v)
+
+/// The heap size measured in words.  Naming it keeps the (trivial) nat-ness
+/// obligation `heap_words >= 0` -- which needs `U64.v mword > 0`
+/// -- out of the very large contexts of the collector invariants, where the
+/// solver diverges on it.
+let heap_words : nat = heap_words

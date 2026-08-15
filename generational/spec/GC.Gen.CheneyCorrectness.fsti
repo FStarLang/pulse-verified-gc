@@ -66,9 +66,9 @@ val cheney_collect_preserves_objects
       // Major heap has valid OCaml object layout
       well_formed_heap major /\
       // Free-list from fp: each node is a valid blue object with wosize >= 1
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
       // Free-list traversal terminates (no cycles)
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+      AllocLemmas.fl_chain_terminates major fp heap_words)
     (ensures (let res = cheney_collect_spec minor major fp roots in
               // Every pre-existing object address is still in the post-collection object list
               forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
@@ -93,8 +93,8 @@ val cheney_collect_preserves_wfh_part1
       // Major heap well-formed
       well_formed_heap major /\
       // Free-list valid and terminating
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words)
     (ensures
       // Every object's header+body fits within the post-collection heap byte array
       well_formed_heap_part1 (cheney_collect_spec minor major fp roots).mc_major)
@@ -153,9 +153,9 @@ val cheney_gc_correct
       well_formed_heap major /\
       // Free-list from fp: each node is a valid blue object, wosize >= 1,
       // and the next-pointer chain is valid
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
       // Free-list terminates within bounded steps (no cycles)
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       // Free chain only visits blue objects: no allocated (non-blue) object
       // appears on the free list (prevents promote_object from clobbering
       // live data)
@@ -174,11 +174,11 @@ val cheney_gc_correct
 
               // Property 3a — Post-collection free-list validity: the new
               // free-list head (res.mc_fp) leads through valid blue objects
-              AllocLemmas.fl_valid res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+              AllocLemmas.fl_valid res.mc_major res.mc_fp heap_words /\
 
               // Property 3b — Post-collection free-list terminates (no
               // cycles introduced by consuming free-list nodes for promotion)
-              AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp (heap_size / U64.v mword) /\
+              AllocLemmas.fl_chain_terminates res.mc_major res.mc_fp heap_words /\
 
               // Property 4a — Minor heap well-formed (bump aligned, in bounds)
               minor_wf res.mc_minor /\

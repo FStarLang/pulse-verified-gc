@@ -19,10 +19,35 @@ OUTPUT_DIR  = _output
 EXTRACT_DIR = _extract
 SNAPSHOT_DIR = snapshot
 
+# Shared checked-file cache (see the root Makefile).  F* writes
+# `M.fst.checked` into --cache_dir, which defaults to the current working
+# directory, so every build in this repo points at one explicit directory.
+CACHE_DIR ?= ../_cache
+
 # --- F* flags ---------------------------------------------------------------
 
+# Z3 version used for all SMT queries (bundled with the F* installation).
+Z3_VERSION ?= 4.15.3
+
+# Z3 4.15.3 regression workaround -- see the root Makefile for details.
+# Applied per module (EAGER_QI_CHECKED), never globally: at the raised
+# eager-instantiation threshold other modules hang instead.
+EAGER_QI ?= --z3smtopt '(set-option :smt.qi.eager_threshold 100)'
+
+# Z3 4.15.3 flakiness workaround -- see the top-level Makefile.
+RETRY ?= --retry 3
+
+# Hard per-query wall-clock bound; see the root Makefile for the rationale.
+# Some Z3 4.15.3 searches never terminate and never charge the rlimit, so
+# `--z3rlimit` alone cannot bound them.
+Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
+
 FSTAR_FLAGS = \
+  $(RETRY) \
+  $(Z3_TIMEOUT) \
+  --z3version $(Z3_VERSION) \
   --cache_checked_modules \
+  --cache_dir $(CACHE_DIR) \
   --warn_error -321 \
   --report_assumes warn \
   --already_cached 'Prims FStar Pulse PulseCore -GC' \
@@ -41,9 +66,13 @@ IMPL_SRC = $(wildcard impl/*.fst impl/*.fsti)
 SPOT_SRC = spec/GC.Gen.SPOT.fst spec/GC.Gen.SPOT.Lemmas.fst impl/GC.Gen.SPOT.Pulse.fst impl/GC.Gen.SPOT.Simple.fst impl/GC.Gen.SPOT.Full.fst
 ALL_SRC  = $(filter-out $(SPOT_SRC),$(SPEC_SRC) $(IMPL_SRC))
 
+# All checked files land in one shared cache, so targets are derived from the
+# module file name alone.
+checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
+
 ROOT_SRC = impl/GC.Gen.Impl.fsti impl/GC.Gen.Impl.fst
-ROOT_CHECKED = $(addsuffix .checked,$(ROOT_SRC))
-VERIFY_CHECKED ?= $(ROOT_CHECKED)
+ROOT_CHECKED = $(call checked,$(ROOT_SRC))
+ALL_CHECKED  = $(call checked,$(ALL_SRC))
 
 # --- Auto-generated dependency graph ----------------------------------------
 
@@ -60,9 +89,9 @@ VERIFY_CHECKED ?= $(ROOT_CHECKED)
 	    print target ": \\"; \
 	    for (i=1;i<=n;i++) print "\t" deps[i] (i < n ? " \\" : ""); \
 	    print ""; delete deps; n=0 }' $@.raw > $@
-	@printf '\nVERIFY_CHECKED := ' >> $@
+	@printf '\nDEP_CHECKED := ' >> $@
 	@awk '/^[^ \t].*\.checked:/ { target=$$1; sub(/:$$/, "", target); \
-	    if (target ~ /^(spec|impl)\/.*\.checked$$/) print target }' $@ \
+	    print target }' $@ \
 	  | sort -u | tr '\n' ' ' >> $@
 	@printf '\n' >> $@
 	@rm -f $@.raw
@@ -73,27 +102,62 @@ VERIFY_CHECKED ?= $(ROOT_CHECKED)
 
 all: verify
 
+# Bind every cache target to its source file so `$<` is always the source.
+define bind_source
+$(CACHE_DIR)/$(notdir $(1)).checked: $(1)
+endef
+$(foreach s,$(SPEC_SRC) $(IMPL_SRC),$(eval $(call bind_source,$(s))))
+
 -include .depend
 
-REACHABLE_SRC = $(patsubst %.checked,%,$(VERIFY_CHECKED))
+# Restrict the dependency closure to this directory's own modules, then map
+# each checked file back to the source it was built from.
+VERIFY_CHECKED = $(filter $(ALL_CHECKED),$(DEP_CHECKED))
+REACHABLE_SRC = $(foreach c,$(VERIFY_CHECKED), \
+                  $(filter %/$(patsubst %.checked,%,$(notdir $(c))),$(ALL_SRC)))
 ORPHAN_SRC = $(filter-out $(REACHABLE_SRC),$(ALL_SRC))
 
 # --- Pattern rules (verification) -------------------------------------------
+#
+# One rule for every module; per-module SMT tuning goes through the
+# target-specific variable EXTRA_FLAGS.  `private` stops GNU make from
+# propagating it to the target's prerequisites.
 
-# GC.Gen.Promote.fst needs split_queries + higher rlimit for abstract heap_size proofs
-spec/GC.Gen.Promote.fst.checked: spec/GC.Gen.Promote.fst
-	$(FSTAR) --split_queries always --z3rlimit_factor 3 $<
+# Modules that hang at Z3 4.15.3's default eager-instantiation threshold.
+#
+# Opt-in, not a default: at the raised threshold other modules diverge instead.
+# See the top-level Makefile for the rationale.
+EAGER_QI_CHECKED = \
+  $(CACHE_DIR)/GC.Gen.Cheney.fst.checked \
+  $(CACHE_DIR)/GC.Gen.Cheney.Dense.fst.checked \
+  $(CACHE_DIR)/GC.Gen.CheneyPreservation.Forwarding.fst.checked \
+  $(CACHE_DIR)/GC.Gen.CheneyPreservation.Frame.fst.checked \
+  $(CACHE_DIR)/GC.Gen.CheneyPreservation.NonBlueOrigin.fsti.checked \
+  $(CACHE_DIR)/GC.Gen.CombinedGraph.fst.checked \
+  $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Edges.fst.checked \
+  $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Reflection.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.Step.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst.checked \
+  $(CACHE_DIR)/GC.Gen.PromoteUpdate.BlueAlloc.fst.checked \
+  $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
+  $(CACHE_DIR)/GC.Gen.TwoPassEquiv.fst.checked \
+  $(CACHE_DIR)/GC.Gen.Impl.Cheney.fst.checked
 
-spec/%.checked: spec/%
-	$(FSTAR) $<
+$(EAGER_QI_CHECKED): private EXTRA_FLAGS = $(EAGER_QI)
 
-# GC.Gen.Impl.fst manages split_queries per-function via push-options;
-# command-line --split_queries always conflicts with the derive_fwd_ptrs_classified proof
-impl/GC.Gen.Impl.fst.checked: impl/GC.Gen.Impl.fst
-	$(FSTAR) --z3rlimit 160 $<
+# GC.Gen.Promote.fst needs a higher rlimit for abstract heap_size proofs
+$(CACHE_DIR)/GC.Gen.Promote.fst.checked: private EXTRA_FLAGS = --z3rlimit_factor 3 $(EAGER_QI)
 
-impl/%.checked: impl/%
-	$(FSTAR) --z3rlimit 160 --split_queries always $<
+$(filter-out $(EAGER_QI_CHECKED),$(call checked,$(wildcard impl/*.fst impl/*.fsti))): \
+  private EXTRA_FLAGS = --z3rlimit 160
+
+$(filter $(EAGER_QI_CHECKED),$(call checked,$(wildcard impl/*.fst impl/*.fsti))): \
+  private EXTRA_FLAGS = --z3rlimit 160 $(EAGER_QI)
+
+$(CACHE_DIR)/%.checked:
+	@mkdir -p $(CACHE_DIR)
+	$(FSTAR) $(EXTRA_FLAGS) $<
 
 $(OUTPUT_DIR):
 	@mkdir -p $@
@@ -209,6 +273,6 @@ snapshot: extract
 # --- Cleanup ----------------------------------------------------------------
 
 clean:
-	rm -f spec/*.checked impl/*.checked
+	rm -f $(ALL_CHECKED)
 	rm -f .depend .depend.raw
 	rm -rf $(OUTPUT_DIR) $(EXTRACT_DIR)

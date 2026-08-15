@@ -41,6 +41,13 @@ module HeapModel = GC.Spec.HeapModel
 module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 open GC.Gen.MinorCollectForwarding.Helpers
 
+/// `U64.v mword = 8 <> 0`.  Trivial, but the well-typedness obligation for `%`
+/// diverges inside the large proof contexts below, so it is discharged once
+/// here and brought into scope by an explicit call.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let mword_nonzero () : Lemma (U64.v mword == 8 /\ U64.v mword <> 0) = ()
+#pop-options
+
 let combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -97,7 +104,9 @@ let combined_reachable_minor_has_fwd_from_slots
     remembered_roots_in_roots_from_slots major roots slots n;
     combined_reachable_minor_has_fwd minor major fp roots
 
-let combined_reachable_images_valid_or_infix
+/// The two halves of `combined_reachable_images_valid_or_infix_prop`, proved
+/// separately: the combined query diverges under Z3 4.15.3.
+private let combined_reachable_images_valid_or_infix_major
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
     (requires
@@ -108,19 +117,23 @@ let combined_reachable_images_valid_or_infix
       RBridge.minor_no_pointer_to_blue minor major /\
       RBridge.roots_valid_nonblue roots major /\
       CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
+    (ensures (
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      let res = cheney_collect_spec minor major fp roots in
+      forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MajorV v) ==>
+        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
+        Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major)))
   = let cg = CG.build_combined_graph minor major in
     let combined_roots = CG.classify_roots roots in
-    let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
-    let fwd = prom.fwd_map in
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
     GenInv.minor_heap_shape_elim minor;
     RBridge.reachable_major_valid minor major roots;
     CheneyCorr.cheney_collect_preserves_objects minor major fp roots;
-    combined_reachable_minor_has_fwd minor major fp roots;
-    CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
+    mword_nonzero ();
     let major_aux (v: U64.t) : Lemma
       (requires CG.combined_reachable cg combined_roots (CG.MajorV v))
       (ensures
@@ -128,6 +141,43 @@ let combined_reachable_images_valid_or_infix
         Seq.mem (v <: obj_addr) (objects zero_addr res.mc_major))
     = ()
     in
+    Classical.forall_intro (Classical.move_requires major_aux)
+
+private let combined_reachable_images_valid_or_infix_minor
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.remembered_roots_in_roots major roots /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures (
+      let cg = CG.build_combined_graph minor major in
+      let combined_roots = CG.classify_roots roots in
+      let prom = cheney_promote minor major fp roots in
+      let fwd = prom.fwd_map in
+      forall (v: U64.t).
+        CG.combined_reachable cg combined_roots (CG.MinorV v) /\
+        minor_wosize minor v > 0 ==>
+        fwd v <> 0UL /\
+        U64.v (fwd v) >= U64.v mword /\
+        U64.v (fwd v) < heap_size /\
+        U64.v (fwd v) % U64.v mword == 0 /\
+        (Seq.mem ((fwd v) <: obj_addr) (objects zero_addr prom.major_final) \/
+         is_infix (fwd v) prom.major_final)))
+  = let cg = CG.build_combined_graph minor major in
+    let combined_roots = CG.classify_roots roots in
+    let prom = cheney_promote minor major fp roots in
+    let fwd = prom.fwd_map in
+    GenInv.collection_heap_shape_elim minor major fp;
+    GenInv.major_heap_shape_elim major fp;
+    GenInv.minor_heap_shape_elim minor;
+    combined_reachable_minor_has_fwd minor major fp roots;
+    CheneyPres.cheney_promote_fwd_valid_or_infix minor major fp roots;
+    mword_nonzero ();
     let minor_aux (v: U64.t) : Lemma
       (requires CG.combined_reachable cg combined_roots (CG.MinorV v) /\
                 minor_wosize minor v > 0)
@@ -140,8 +190,22 @@ let combined_reachable_images_valid_or_infix
          is_infix (fwd v) prom.major_final))
     = ()
     in
-    Classical.forall_intro (Classical.move_requires major_aux);
     Classical.forall_intro (Classical.move_requires minor_aux)
+
+let combined_reachable_images_valid_or_infix
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  : Lemma
+    (requires
+      GenInv.collection_heap_shape minor major fp /\
+      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.remembered_roots_in_roots major roots /\
+      Mark.no_pointer_to_blue major /\
+      RBridge.minor_no_pointer_to_blue minor major /\
+      RBridge.roots_valid_nonblue roots major /\
+      CheneyBFS.cheney_no_oom minor major fp roots)
+    (ensures combined_reachable_images_valid_or_infix_prop minor major fp roots)
+  = combined_reachable_images_valid_or_infix_major minor major fp roots;
+    combined_reachable_images_valid_or_infix_minor minor major fp roots
 
 let combined_reachable_images_valid_or_infix_from_slots
   (minor: minor_state) (major: heap) (fp: U64.t)
@@ -190,8 +254,8 @@ let combined_reachable_major_edge_forwarded
     assert (well_formed_heap major);
     assert (minor_wf minor);
     assert (minor_infix_wf minor);
-    assert (AllocLemmas.fl_valid major fp (heap_size / U64.v mword));
-    assert (AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword));
+    assert (AllocLemmas.fl_valid major fp heap_words);
+    assert (AllocLemmas.fl_chain_terminates major fp heap_words);
     assert (chain_objects_blue major fp);
     RBridge.reachable_major_valid_nonblue minor major roots;
     CG.major_edge_elim minor major src (CG.MajorV dst);

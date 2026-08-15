@@ -479,7 +479,7 @@ private let sweep_preserves_header_parts_black
 ///   h_f = g, h_c = gs, objs = objects zero_addr g, fb = 0UL, rw = 0, fp = 0UL
 /// where gs = fst (sweep g fp).
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   : Lemma
     (requires well_formed_heap g /\

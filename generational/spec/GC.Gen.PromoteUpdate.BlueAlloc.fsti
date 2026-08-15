@@ -27,8 +27,8 @@ val wfh_part2_implies_blue_fields_closed (g: heap)
 val alloc_spec_preserves_blue_fields_closed
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
                     blue_fields_closed g /\
                     wz >= 1 /\
                     (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
@@ -38,8 +38,8 @@ val alloc_spec_preserves_blue_fields_closed
 val alloc_spec_preserves_fp_pointer_or_zero
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     wz >= 1 /\
@@ -51,8 +51,8 @@ val alloc_spec_preserves_fp_pointer_or_zero
 val alloc_spec_preserves_blue_link_fields_valid
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\
                     wz >= 1 /\
                     (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\

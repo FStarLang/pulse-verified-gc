@@ -21,12 +21,14 @@ open GC.Gen.Base
 open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
 open GC.Gen.PromoteUpdate
+module SpecHeap = GC.Spec.Heap
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
 /// ghost_fwd_of_represents proof
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --split_queries no"
+#push-options "--z3rlimit 50"
 let ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
   : Lemma (represents_fwd farr (ghost_fwd_of farr))
   = let fwd = ghost_fwd_of farr in
@@ -112,6 +114,7 @@ fn rewrite_at_index (roots: array U64.t) (fwd_arr: array U64.t) (iv: SZ.t)
 
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 inline_for_extraction
+divergent
 fn rewrite_roots_impl
   (roots: array U64.t)
   (fwd_arr: array U64.t)
@@ -219,6 +222,7 @@ fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
 /// minor-heap pointers via the forwarding array.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 inline_for_extraction
+divergent
 fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
                      (obj: U64.t) (wosize: U64.t)
                      (#fwd: erased PromoteSpec.forwarding_map)
@@ -330,6 +334,7 @@ let is_no_scan_eq (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
 
 /// Update all major-heap objects' pointer fields by walking the heap linearly.
 #push-options "--z3rlimit 80 --fuel 2 --ifuel 1 --using_facts_from '* -GC.Gen.Promote.fields_match_minor_empty -GC.Gen.Promote.fields_match_minor_extend -GC.Gen.Promote.fields_match_minor_elim_lemma -GC.Gen.Promote.fields_match_minor_weaken -GC.Gen.Promote.fields_match_minor_intro -GC.Gen.Promote.fields_match_minor_intro_flat -GC.Gen.Promote.fields_match_minor_frame -GC.Gen.Promote.fields_match_minor_intro_by_proof -FStar.UInt.to_vec -FStar.BitVector'"
+divergent
 fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
                       (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
@@ -594,6 +599,7 @@ let rec rewrite_slots_iter_snoc (major: heap) (fwd: PromoteSpec.forwarding_map)
 
 /// Rewrite heap slots loop
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+divergent
 fn rewrite_heap_slots
   (major: heap_t)
   (fwd_arr: array U64.t)
@@ -716,7 +722,8 @@ let hdr_addr_wf (obj: U64.t)
   = ()
 
 /// The main loop implementation
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+divergent
 fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
                            (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **

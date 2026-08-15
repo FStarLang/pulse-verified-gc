@@ -52,6 +52,7 @@ let gc_precondition (s: GC.Spec.Base.heap) (st: Seq.seq GC.Spec.Base.obj_addr)
   gc_precondition_with_roots s st st fp cap
 
 /// Main garbage collection entry point with an explicit ghost root set.
+divergent
 fn collect_with_roots
     (heap: heap_t) (st: gray_stack)
     (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (fp: U64.t)
@@ -68,6 +69,7 @@ fn collect_with_roots
 /// 1. Mark: bounded-stack mark with overflow handling
 /// 2. Sweep: reset black objects to white, build free list
 /// 3. Coalesce: merge adjacent free blocks
+divergent
 fn collect (heap: heap_t) (st: gray_stack) (fp: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (gc_precondition 's 'st fp (stack_capacity st))

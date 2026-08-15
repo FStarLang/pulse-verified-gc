@@ -69,6 +69,7 @@ let fused_spec_inv (g0: heap_state) (g: heap_state)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 800 --fuel 2 --ifuel 1 --z3refresh"
+divergent
 fn fused_sweep_coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\

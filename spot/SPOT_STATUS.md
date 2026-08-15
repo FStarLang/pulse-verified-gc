@@ -47,7 +47,7 @@ make verify
 The local `Makefile` uses `fstar.exe --dep full` to generate `.depend`, so
 `make -j` can schedule the `.fsti`/`.fst` files incrementally and in dependency
 order. Each active SPOT interface and implementation is checked with
-`--z3rlimit 10 --split_queries always`, using the same include paths as the
+`--z3rlimit 10 --retry 3`, using the same include paths as the
 generational development and treating upstream `GC.*` modules as already cached.
 
 ## Active Module Structure

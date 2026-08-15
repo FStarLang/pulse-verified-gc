@@ -12,40 +12,59 @@ COMMON_INCLUDES = --include lib --include spec
 # Pulse library sources
 PULSE_LIB ?= $(FSTAR_HOME)/pulse/lib/pulse/lib
 
+# Shared checked-file cache (see the root Makefile).  F* writes `M.fst.checked`
+# into --cache_dir, which defaults to the current working directory, so every
+# build in this repo points at one explicit directory.
+CACHE_DIR ?= ../_cache
+
+# Z3 version used for all SMT queries (bundled with the F* installation).
+Z3_VERSION ?= 4.15.3
+
+
+Z3_FLAGS = --z3version $(Z3_VERSION) --cache_dir $(CACHE_DIR)
+
 # Spec+Lib: pure F*, no Pulse plugin needed
-FSTAR_SPEC_FLAGS = --cache_checked_modules --report_assumes warn \
+# Z3 4.15.3 flakiness workaround -- see the top-level Makefile.
+RETRY ?= --retry 3
+
+# Hard per-query wall-clock bound; see the root Makefile for the rationale.
+# Some Z3 4.15.3 searches never terminate and never charge the rlimit, so
+# `--z3rlimit` alone cannot bound them.
+Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
+
+FSTAR_SPEC_FLAGS = $(RETRY) $(Z3_TIMEOUT) $(Z3_FLAGS) --cache_checked_modules --report_assumes warn \
   $(COMMON_INCLUDES) \
   --already_cached 'FStar -GC'
 
 # Impl: needs Pulse
-FSTAR_IMPL_FLAGS = --cache_checked_modules --report_assumes warn \
+FSTAR_IMPL_FLAGS = $(RETRY) $(Z3_TIMEOUT) $(Z3_FLAGS) --cache_checked_modules --report_assumes warn \
   $(COMMON_INCLUDES) --include impl --include $(PULSE_LIB) \
   --already_cached 'FStar Pulse -GC'
 
 # Spec+Lib checked files
 SPEC_CHECKED = \
-  lib/GC.Lib.Header.fst.checked \
-  lib/GC.Lib.Address.fst.checked \
-  spec/GC.Spec.ZeroAddr.fsti.checked \
-  spec/GC.Spec.Base.fsti.checked \
-  spec/GC.Spec.Base.fst.checked \
-  spec/GC.Spec.Heap.fsti.checked \
-  spec/GC.Spec.Heap.fst.checked \
-  spec/GC.Spec.Object.fsti.checked \
-  spec/GC.Spec.Object.fst.checked \
-  spec/GC.Spec.Graph.fst.checked \
-  spec/GC.Spec.Fields.fst.checked \
-  spec/GC.Spec.DFS.fst.checked \
-  spec/GC.Spec.HeapGraph.fst.checked \
-  spec/GC.Spec.HeapModel.fst.checked
+  $(CACHE_DIR)/GC.Lib.Header.fst.checked \
+  $(CACHE_DIR)/GC.Lib.Address.fst.checked \
+  $(CACHE_DIR)/GC.Spec.ZeroAddr.fsti.checked \
+  $(CACHE_DIR)/GC.Spec.Base.fsti.checked \
+  $(CACHE_DIR)/GC.Spec.Base.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Heap.fsti.checked \
+  $(CACHE_DIR)/GC.Spec.Heap.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Object.fsti.checked \
+  $(CACHE_DIR)/GC.Spec.Object.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Graph.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Fields.fst.checked \
+  $(CACHE_DIR)/GC.Spec.DFS.fst.checked \
+  $(CACHE_DIR)/GC.Spec.HeapGraph.fst.checked \
+  $(CACHE_DIR)/GC.Spec.HeapModel.fst.checked
 
 # Impl checked files
 IMPL_CHECKED = \
-  impl/GC.Impl.ArrayWord.fsti.checked \
-  impl/GC.Impl.Heap.fst.checked \
-  impl/GC.Impl.Object.fst.checked \
-  impl/GC.Impl.Stack.fsti.checked \
-  impl/GC.Impl.Stack.fst.checked
+  $(CACHE_DIR)/GC.Impl.ArrayWord.fsti.checked \
+  $(CACHE_DIR)/GC.Impl.Heap.fst.checked \
+  $(CACHE_DIR)/GC.Impl.Object.fst.checked \
+  $(CACHE_DIR)/GC.Impl.Stack.fsti.checked \
+  $(CACHE_DIR)/GC.Impl.Stack.fst.checked
 
 # --- Targets ---
 
@@ -63,99 +82,101 @@ verify-impl: verify-spec $(IMPL_CHECKED)
 
 # --- Spec+Lib dependencies ---
 
-lib/GC.Lib.Header.fst.checked: lib/GC.Lib.Header.fst
+$(CACHE_DIR)/GC.Lib.Header.fst.checked: lib/GC.Lib.Header.fst
 
-lib/GC.Lib.Address.fst.checked: lib/GC.Lib.Address.fst \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Lib.Address.fst.checked: lib/GC.Lib.Address.fst \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-spec/GC.Spec.ZeroAddr.fsti.checked: spec/GC.Spec.ZeroAddr.fsti
+$(CACHE_DIR)/GC.Spec.ZeroAddr.fsti.checked: spec/GC.Spec.ZeroAddr.fsti
 
-spec/GC.Spec.Base.fsti.checked: spec/GC.Spec.Base.fsti
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked: spec/GC.Spec.Base.fsti
 
-spec/GC.Spec.Base.fst.checked: spec/GC.Spec.Base.fst \
-spec/GC.Spec.Base.fsti.checked \
-spec/GC.Spec.ZeroAddr.fsti.checked
+$(CACHE_DIR)/GC.Spec.Base.fst.checked: spec/GC.Spec.Base.fst \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked \
+$(CACHE_DIR)/GC.Spec.ZeroAddr.fsti.checked
 
-spec/GC.Spec.Heap.fsti.checked: spec/GC.Spec.Heap.fsti \
-lib/GC.Lib.Header.fst.checked \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked: spec/GC.Spec.Heap.fsti \
+$(CACHE_DIR)/GC.Lib.Header.fst.checked \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-spec/GC.Spec.Heap.fst.checked: spec/GC.Spec.Heap.fst \
-spec/GC.Spec.Heap.fsti.checked
+$(CACHE_DIR)/GC.Spec.Heap.fst.checked: spec/GC.Spec.Heap.fst \
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked
 
-spec/GC.Spec.Object.fsti.checked: spec/GC.Spec.Object.fsti \
-lib/GC.Lib.Header.fst.checked \
-spec/GC.Spec.Heap.fsti.checked \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Spec.Object.fsti.checked: spec/GC.Spec.Object.fsti \
+$(CACHE_DIR)/GC.Lib.Header.fst.checked \
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-spec/GC.Spec.Object.fst.checked: spec/GC.Spec.Object.fst \
-spec/GC.Spec.Object.fsti.checked
+$(CACHE_DIR)/GC.Spec.Object.fst.checked: spec/GC.Spec.Object.fst \
+$(CACHE_DIR)/GC.Spec.Object.fsti.checked
 
-spec/GC.Spec.Graph.fst.checked: spec/GC.Spec.Graph.fst \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Spec.Graph.fst.checked: spec/GC.Spec.Graph.fst \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-spec/GC.Spec.Fields.fst.checked: spec/GC.Spec.Fields.fst \
-lib/GC.Lib.Header.fst.checked \
-spec/GC.Spec.Object.fsti.checked \
-spec/GC.Spec.Heap.fsti.checked \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Spec.Fields.fst.checked: spec/GC.Spec.Fields.fst \
+$(CACHE_DIR)/GC.Lib.Header.fst.checked \
+$(CACHE_DIR)/GC.Spec.Object.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-spec/GC.Spec.DFS.fst.checked: spec/GC.Spec.DFS.fst \
-spec/GC.Spec.Graph.fst.checked
+$(CACHE_DIR)/GC.Spec.DFS.fst.checked: spec/GC.Spec.DFS.fst \
+$(CACHE_DIR)/GC.Spec.Graph.fst.checked
 
-spec/GC.Spec.HeapGraph.fst.checked: spec/GC.Spec.HeapGraph.fst \
-lib/GC.Lib.Address.fst.checked \
-spec/GC.Spec.Graph.fst.checked \
-spec/GC.Spec.Object.fsti.checked \
-spec/GC.Spec.Heap.fsti.checked \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Spec.HeapGraph.fst.checked: spec/GC.Spec.HeapGraph.fst \
+$(CACHE_DIR)/GC.Lib.Address.fst.checked \
+$(CACHE_DIR)/GC.Spec.Graph.fst.checked \
+$(CACHE_DIR)/GC.Spec.Object.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-spec/GC.Spec.HeapModel.fst.checked: spec/GC.Spec.HeapModel.fst \
-spec/GC.Spec.HeapGraph.fst.checked \
-spec/GC.Spec.Fields.fst.checked \
-spec/GC.Spec.Graph.fst.checked \
-spec/GC.Spec.Object.fsti.checked \
-spec/GC.Spec.Heap.fsti.checked \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Spec.HeapModel.fst.checked: spec/GC.Spec.HeapModel.fst \
+$(CACHE_DIR)/GC.Spec.HeapGraph.fst.checked \
+$(CACHE_DIR)/GC.Spec.Fields.fst.checked \
+$(CACHE_DIR)/GC.Spec.Graph.fst.checked \
+$(CACHE_DIR)/GC.Spec.Object.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
 # --- Impl dependencies ---
 
-impl/GC.Impl.ArrayWord.fsti.checked: impl/GC.Impl.ArrayWord.fsti \
-spec/GC.Spec.Heap.fsti.checked \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Impl.ArrayWord.fsti.checked: impl/GC.Impl.ArrayWord.fsti \
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-impl/GC.Impl.Heap.fst.checked: impl/GC.Impl.Heap.fst \
-impl/GC.Impl.ArrayWord.fsti.checked \
-spec/GC.Spec.Heap.fsti.checked \
-spec/GC.Spec.Base.fsti.checked
+$(CACHE_DIR)/GC.Impl.Heap.fst.checked: impl/GC.Impl.Heap.fst \
+$(CACHE_DIR)/GC.Impl.ArrayWord.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Heap.fsti.checked \
+$(CACHE_DIR)/GC.Spec.Base.fsti.checked
 
-impl/GC.Impl.Object.fst.checked: impl/GC.Impl.Object.fst \
-lib/GC.Lib.Header.fst.checked \
-spec/GC.Spec.Object.fsti.checked \
-impl/GC.Impl.Heap.fst.checked
+$(CACHE_DIR)/GC.Impl.Object.fst.checked: impl/GC.Impl.Object.fst \
+$(CACHE_DIR)/GC.Lib.Header.fst.checked \
+$(CACHE_DIR)/GC.Spec.Object.fsti.checked \
+$(CACHE_DIR)/GC.Impl.Heap.fst.checked
 
-impl/GC.Impl.Stack.fsti.checked: impl/GC.Impl.Stack.fsti \
-impl/GC.Impl.Heap.fst.checked
+$(CACHE_DIR)/GC.Impl.Stack.fsti.checked: impl/GC.Impl.Stack.fsti \
+$(CACHE_DIR)/GC.Impl.Heap.fst.checked
 
-impl/GC.Impl.Stack.fst.checked: impl/GC.Impl.Stack.fst \
-impl/GC.Impl.Stack.fsti.checked
+$(CACHE_DIR)/GC.Impl.Stack.fst.checked: impl/GC.Impl.Stack.fst \
+$(CACHE_DIR)/GC.Impl.Stack.fsti.checked
 
 # --- Pattern rules ---
+#
+# All checked files live in one directory, so a single rule serves every
+# module and the flag set is selected per target.  `private` stops GNU make
+# from propagating the variable to the target's prerequisites.
 
-spec/%.checked: spec/%
-	$(FSTAR) $(FSTAR_SPEC_FLAGS) $<
+HDR_CHECKED = $(CACHE_DIR)/GC.Lib.Header.fst.checked
 
-lib/%.checked: lib/%
-	$(FSTAR) $(FSTAR_SPEC_FLAGS) $<
+$(filter-out $(HDR_CHECKED),$(SPEC_CHECKED)): private MODE_FLAGS = $(FSTAR_SPEC_FLAGS)
+$(HDR_CHECKED):  private MODE_FLAGS = $(FSTAR_SPEC_FLAGS) --z3rlimit 20
+$(IMPL_CHECKED): private MODE_FLAGS = $(FSTAR_IMPL_FLAGS)
 
-lib/GC.Lib.Header.fst.checked: lib/GC.Lib.Header.fst
-	$(FSTAR) $(FSTAR_SPEC_FLAGS) --z3rlimit 20 $<
-
-impl/%.checked: impl/%
-	$(FSTAR) $(FSTAR_IMPL_FLAGS) $<
+$(CACHE_DIR)/%.checked:
+	@mkdir -p $(CACHE_DIR)
+	$(FSTAR) $(MODE_FLAGS) $<
 
 # --- Cleanup ---
 
 clean:
-	rm -f spec/*.checked* lib/*.checked* impl/*.checked*
+	rm -f $(SPEC_CHECKED) $(IMPL_CHECKED)
 	rm -f .depend

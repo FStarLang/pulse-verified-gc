@@ -126,7 +126,7 @@ val run_words_fits (g0: heap) (start: hp_addr) (objs: seq obj_addr)
         U64.v first_blue < heap_size /\
         U64.v first_blue % U64.v mword == 0 /\
         U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start))
-    (ensures run_words < heap_size / U64.v mword /\ run_words < pow2 57)
+    (ensures run_words < heap_words /\ run_words < pow2 57)
 
 /// is_blue reading from current heap is equivalent when suffix is unchanged
 val is_blue_from_original
