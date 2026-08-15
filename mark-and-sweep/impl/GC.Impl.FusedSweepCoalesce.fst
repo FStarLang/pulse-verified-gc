@@ -69,7 +69,6 @@ let fused_spec_inv (g0: heap_state) (g: heap_state)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 800 --fuel 2 --ifuel 1 --z3refresh"
-divergent
 fn fused_sweep_coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's /\
@@ -117,6 +116,7 @@ fn fused_sweep_coalesce (heap: heap_t)
               U64.v fb - U64.v mword + op_Star (U64.v rw) (U64.v mword) == U64.v v) /\
             // Spec equivalence
             fused_spec_inv 's s (U64.v v) fb (U64.v rw) fv)
+    decreases (Prims.op_Subtraction heap_size (U64.v !current))
   {
     let cur = !current;
     let cur_fb = !fb_ref;

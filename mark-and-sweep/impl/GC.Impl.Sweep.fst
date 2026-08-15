@@ -493,6 +493,7 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
   ensures  exists* v1 fv1 s1.
              pts_to current v1 ** pts_to free_ptr fv1 ** is_heap heap s1 **
              pure (U64.v v1 % 8 == 0 /\
+                   U64.v v1 > U64.v 'v0 /\
                    U64.v v1 <= heap_size /\
                    U64.v v1 + 8 < pow2 64 /\
                    SpecFields.well_formed_heap s1 /\
@@ -566,6 +567,7 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
   SpecSweep.sweep_aux_objects_step h_addr s_cur cur_fp;
   // Assert ALL postcondition conjuncts explicitly for E-matching
   assert (pure (U64.v next_addr % 8 == 0));
+  assert (pure (U64.v next_addr > U64.v h_addr));
   assert (pure (U64.v next_addr <= heap_size));
   assert (pure (U64.v next_addr + 8 < pow2 64));
   assert (pure (SpecFields.well_formed_heap s_post));
@@ -590,7 +592,6 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
 
 /// Inner sweep loop
 #push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
-divergent
 fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
   requires pts_to current 'v0 ** pts_to free_ptr 'fv0 ** is_heap heap 's **
            pure (U64.v 'v0 % 8 == 0 /\
@@ -639,6 +640,7 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
             (U64.v v < heap_size ==>
               SpecSweep.sweep_aux s (SpecFields.objects (U64.uint_to_t (U64.v v)) s) fv == SpecSweep.sweep 's 'fv0) /\
             (U64.v v >= heap_size ==> (s, fv) == SpecSweep.sweep 's 'fv0))
+    decreases (Prims.op_Subtraction heap_size (U64.v !current))
   {
     sweep_loop_body heap current free_ptr 's;
   };
@@ -658,7 +660,6 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
 /// fp: initial free pointer (0UL for null/empty free list)
 /// Precondition: well_formed_heap ensures each object fits in heap
 #push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --z3refresh"
-divergent
 fn sweep (heap: heap_t) (fp: U64.t)
   requires is_heap heap 's ** pure (SpecFields.well_formed_heap 's /\
                                     Seq.length (SpecFields.objects zero_addr 's) > 0 /\

@@ -54,7 +54,6 @@ module Cheney = GC.Gen.Impl.Cheney
 
 /// Allocate: try minor first (if small enough), fall back to major.
 #push-options "--z3rlimit 40"
-divergent
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pure (U64.v wosize > 0 /\ U64.v tag < 256 /\
@@ -153,7 +152,6 @@ let promote_body_bound (p wosize bump: nat)
 /// Walks minor heap linearly from 0 to bump, promoting each object.
 /// Records forwarding: fwd_arr[obj/8] := new_major_addr.
 #push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
-divergent
 fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                  (fwd_arr: array U64.t)
   requires is_minor minor 'md 'mb **
@@ -197,6 +195,7 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             AllocLemmas.fl_valid ms_i fp_i heap_words /\
             AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == Seq.length 'farr)
+    decreases (Prims.op_Subtraction (U64.v bump) (U64.v !pos))
   {
     let p = !pos;
     if U64.gte (U64.add p 8UL) bump {
@@ -880,7 +879,6 @@ let minor_collect_full_isomorphism_post
 /// covers all major-heap fields holding minor pointers (not belonging to
 /// promoted objects — those are handled by update_promoted_objects).
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-divergent
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
@@ -1027,7 +1025,6 @@ fn minor_collect_full (gh: gen_heap_t)
 
 /// gen_gc composes the verified full minor collection with mark-and-sweep.
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)

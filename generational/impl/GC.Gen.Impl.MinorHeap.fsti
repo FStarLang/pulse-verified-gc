@@ -100,7 +100,6 @@ fn alloc_minor_heap (_: unit)
 
 /// Walk the minor heap and translate all scannable objects' fields from
 /// absolute addresses to minor-relative offsets.
-divergent
 fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v 'b <= minor_heap_size /\
@@ -119,7 +118,6 @@ let fwd_arr_size : n:pos{n == minor_heap_size / 8} = minor_heap_size / 8
 /// Walk the minor heap and synthesize forwarding entries for infix sub-objects.
 /// For each closure whose parent was promoted (fwd_arr entry != 0), finds embedded
 /// infix headers and computes their forwarded address as parent_fwd + delta.
-divergent
 fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
   requires is_minor mh 'd 'b **
            pts_to fwd_arr 'farr **
@@ -140,7 +138,6 @@ fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
 ///
 /// roots: pre-allocated array with capacity `cap`
 /// nroots: current number of used entries in roots
-divergent
 fn find_infix_parents (mh: minor_heap_t)
                       (roots: array U64.t)
                       (nroots: SZ.t)

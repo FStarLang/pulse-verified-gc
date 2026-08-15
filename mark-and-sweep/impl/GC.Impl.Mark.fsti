@@ -20,7 +20,6 @@ module SpecFields = GC.Spec.Fields
 
 /// Mark loop: process gray stack until empty.
 /// Postcondition: mark_inv preserved, stack empty, spec equality.
-divergent
 fn mark_loop (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ stack_capacity st >= heap_size)

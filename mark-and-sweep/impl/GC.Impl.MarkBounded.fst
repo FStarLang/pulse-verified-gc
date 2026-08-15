@@ -20,6 +20,7 @@ open GC.Impl.Stack
 open GC.Impl.Fields
 open GC.Impl.Sweep.Lemmas
 module R = Pulse.Lib.Reference
+module GR = Pulse.Lib.GhostReference
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module U8 = FStar.UInt8
@@ -1100,7 +1101,6 @@ fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Gho
 }
 
 #push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
-divergent
 fn darken_roots_bounded
     (heap: heap_t) (st: gray_stack) (roots: array U64.t) (nroots: SZ.t)
     (cap: Ghost.erased nat)
@@ -1128,6 +1128,7 @@ fn darken_roots_bounded
             stack_capacity st == cap /\
             (s_i, st_i) ==
               darken_roots_bounded_prefix_spec 's 'st 'rs (SZ.v iv) cap)
+    decreases (Prims.op_Subtraction (SZ.v nroots) (SZ.v !i))
   {
     let iv = !i;
     let r = roots.(iv);
@@ -1188,7 +1189,6 @@ fn push_step_body_bounded (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 
 /// Push white children bounded: iterate fields 1..wz
 #push-options "--fuel 1 --ifuel 0"
-divergent
 fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
                               (wz: wosize) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
@@ -1225,6 +1225,7 @@ fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
             U64.v (wosize_of_object obj s) < pow2 54 /\
             SpecMarkBounded.push_children_bounded s st_cur obj vi wz cap ==
             SpecMarkBounded.push_children_bounded 's 'st obj 1UL wz cap)
+    decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
   {
     let curr_i = !i;
     push_step_body_bounded heap st h_addr obj curr_i wz cap;
@@ -1290,7 +1291,6 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 200 --z3refresh"
-divergent
 fn mark_step_bounded_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st cap /\
@@ -1385,7 +1385,6 @@ fn mark_step_bounded_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
                         (g_init: Ghost.erased heap_state)
                         (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
@@ -1404,23 +1403,31 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
                 SpecFields.objects zero_addr s2 == SpecFields.objects zero_addr 's /\
                 SpecMarkBoundedCorr.mark_color_inv g_init s2 /\
                 SpecMarkBoundedCorr.gray_black_reachable g_init s2 roots /\
-                SpecMarkBoundedCorr.gray_stays g_init s2)
+                SpecMarkBoundedCorr.gray_stays g_init s2 /\
+                (Seq.length 'st > 0 ==>
+                  SpecMarkBounded.count_non_black s2 < SpecMarkBounded.count_non_black 's))
 {
   // Use count_non_black as fuel for inner loop spec
   let mut go = true;
-  
+  // Ghost termination measure: count_non_black strictly decreases per mark step
+  let gm = GR.alloc #nat (SpecMarkBounded.count_non_black 's);
+
   while (!go)
-    invariant exists* vc s st_cur.
+    invariant exists* vc s st_cur (m:nat).
       R.pts_to go vc **
       is_heap heap s **
       is_gray_stack st st_cur **
+      GR.pts_to gm m **
       pure (SpecMarkBoundedInv.bounded_mark_inv s st_cur cap /\
             (~vc ==> Seq.length st_cur == 0) /\
             SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's /\
             SpecMarkBoundedCorr.mark_color_inv g_init s /\
             SpecMarkBoundedCorr.gray_black_reachable g_init s roots /\
             SpecMarkBoundedCorr.gray_stays g_init s /\
-            SpecMarkBoundedCorr.stack_elems_reachable g_init st_cur roots)
+            SpecMarkBoundedCorr.stack_elems_reachable g_init st_cur roots /\
+            m == SpecMarkBounded.count_non_black s /\
+            (m < SpecMarkBounded.count_non_black 's \/ (st_cur == 'st /\ s == 's)))
+    decreases (Prims.op_Addition (GR.op_Bang gm) (if !go then 1 else 0))
   {
     let empty = is_empty st;
     if empty {
@@ -1437,8 +1444,13 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
         is_gray_stack st st_cur);
       // Establish preconditions for the spec lemma
       SpecMarkBoundedInv.bounded_mark_inv_elim_bsp s_cur st_cur (Ghost.reveal cap);
+      SpecMarkBoundedInv.bounded_mark_inv_elim_wfh s_cur st_cur (Ghost.reveal cap);
+      SpecMarkBoundedInv.bounded_mark_inv_elim_objects s_cur st_cur (Ghost.reveal cap);
+      SpecMarkBoundedInv.bounded_mark_inv_elim_density s_cur st_cur (Ghost.reveal cap);
+      SpecMarkBounded.mark_step_bounded_decreases_non_black s_cur st_cur (Ghost.reveal cap);
       mark_step_bounded_impl heap st cap;
       with s2 st2. assert (is_heap heap s2 ** is_gray_stack st st2);
+      GR.write gm (SpecMarkBounded.count_non_black s2);
       // Preserve mark_color_inv through step
       SpecMarkBoundedCorr.mark_step_bounded_preserves_color_inv
         (Ghost.reveal g_init) s_cur st_cur (Ghost.reveal cap);
@@ -1451,10 +1463,12 @@ fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
       ()
     }
   };
-  with _vc s_fin st_fin. assert (
+  with _vc s_fin st_fin m_fin. assert (
     R.pts_to go _vc **
     is_heap heap s_fin **
-    is_gray_stack st st_fin);
+    is_gray_stack st st_fin **
+    GR.pts_to gm m_fin);
+  GR.free gm;
   SpecMarkBoundedInv.bounded_mark_inv_elim_wfh s_fin st_fin cap;
   SpecMarkBoundedInv.bounded_mark_inv_elim_objects s_fin st_fin cap;
   SpecMarkBoundedInv.bounded_mark_inv_elim_density s_fin st_fin cap;
@@ -1847,7 +1861,6 @@ let no_gray_when_scan_complete_nat
 /// have been visited and found non-gray.
 
 #push-options "--z3rlimit 400 --z3refresh"
-divergent
 fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecFields.well_formed_heap 's /\
@@ -1904,6 +1917,7 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
             (Seq.length st_cur == 0 ==> no_gray_visited_at (U64.v vc) 's) /\
             // Boundary: when past heap_size and stack empty, no_gray_objects holds
             (Seq.length st_cur == 0 /\ U64.v vc >= heap_size ==> SweepInv.no_gray_objects 's))
+    decreases (Prims.op_Subtraction heap_size (U64.v !current))
   {
     let v = !current;
     hp_addr_plus_8 v;
@@ -1981,7 +1995,6 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
 /// decreases each iteration (inner loop blackens at least one object).
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
                      (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
   requires is_heap heap 's ** is_gray_stack st 'st **
@@ -2027,13 +2040,17 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
 
   // Phase 2: outer loop — rescan → if empty done, else drain → repeat
   let mut go = true;
+  // Ghost termination measure: each non-trivial outer round blackens >= 1 object
+  let gm = GR.alloc #nat (SpecMarkBounded.count_non_black s1);
 
   while (!go)
-    invariant exists* vg s st_cur.
+    invariant exists* vg s st_cur (m:nat).
       R.pts_to go vg **
       is_heap heap s **
       is_gray_stack st st_cur **
-      pure (SpecFields.well_formed_heap s /\
+      GR.pts_to gm m **
+      pure (m == SpecMarkBounded.count_non_black s /\
+            SpecFields.well_formed_heap s /\
             SweepInv.heap_objects_dense s /\
             Seq.length (SpecFields.objects zero_addr s) > 0 /\
             Seq.length st_cur == 0 /\
@@ -2043,6 +2060,7 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
             SpecMarkBoundedCorr.mark_color_inv 's s /\
             SpecMarkBoundedCorr.gray_black_reachable 's s roots /\
             SpecMarkBoundedCorr.gray_stays 's s)
+    decreases (Prims.op_Addition (GR.op_Bang gm) (if !go then 1 else 0))
   {
     with _vg s_cur st_cur. assert (
       R.pts_to go _vg **
@@ -2069,14 +2087,18 @@ fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
       SpecMarkBoundedCorr.stack_reachable_from_bsp_gbr 's s_cur st_rescan (Ghost.reveal roots);
       // Drain the stack again (carrying mark_color_inv + gbr + gray_stays)
       mark_inner_loop_impl heap st (stack_capacity st) 's (Ghost.reveal roots);
+      with s_drained st_drained. assert (is_heap heap s_drained ** is_gray_stack st st_drained);
+      GR.write gm (SpecMarkBounded.count_non_black s_drained);
       ()
     }
   };
 
-  with _vg s_final st_final. assert (
+  with _vg s_final st_final m_final. assert (
     R.pts_to go _vg **
     is_heap heap s_final **
-    is_gray_stack st st_final);
+    is_gray_stack st st_final **
+    GR.pts_to gm m_final);
+  GR.free gm;
   ()
 }
 #pop-options

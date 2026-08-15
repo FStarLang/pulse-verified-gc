@@ -180,7 +180,6 @@ fn is_pointer (v: U64.t)
 /// Calls callback for each valid pointer found
 /// 
 /// Precondition: all fields fit in heap
-divergent
 fn for_each_successor (heap: heap_t) (h_addr: hp_addr) (wz: U64.t)
                        (callback: (U64.t -> stt unit (requires emp) (ensures fun _ -> emp)))
   requires is_heap heap 's **
@@ -196,6 +195,7 @@ fn for_each_successor (heap: heap_t) (h_addr: hp_addr) (wz: U64.t)
       pts_to i vi **
       is_heap heap 's **
       pure (U64.v vi >= 1 /\ U64.v vi <= U64.v wz + 1)
+    decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
   {
     let curr_i = !i;
     

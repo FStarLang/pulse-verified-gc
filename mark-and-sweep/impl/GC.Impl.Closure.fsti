@@ -60,7 +60,6 @@ fn resolve_object (heap: heap_t) (obj: hp_addr)
   ensures is_heap heap 's
 
 /// Scan closure environment, calling callback for each pointer field
-divergent
 fn scan_closure_env (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
                      (callback: U64.t -> stt unit (requires emp) (ensures fun _ -> emp))
   requires is_heap heap 's **

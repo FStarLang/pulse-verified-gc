@@ -130,7 +130,6 @@ let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 inline_for_extraction
-divergent
 fn forward_if_minor_infix
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -287,7 +286,6 @@ fn forward_if_minor_infix
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --z3smtopt '(set-option :smt.qi.eager_threshold 100)'"
 inline_for_extraction
-divergent
 fn forward_if_minor
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -467,7 +465,6 @@ fn forward_if_minor
 /// the impl state matches cheney_forward_roots applied from cs0.
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-divergent
 fn forward_roots
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -557,6 +554,7 @@ fn forward_roots
             (not oom_i ==> CheneyBFS.root_prefix_covered minor_st cs_i 'rs (SZ.v iv)) /\
             CheneySpec.cheney_forward_roots minor_st cs_i 'rs (SZ.v iv) ==
               CheneySpec.cheney_forward_roots minor_st cs0 'rs 0)
+    decreases (Prims.op_Subtraction (SZ.v nroots) (SZ.v !i))
   {
     let iv = !i;
     let r = roots.(iv);
@@ -608,7 +606,6 @@ fn forward_roots
 /// Inner loop: separate ghost ref tracks state across fields of one object.
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-divergent
 fn scan_loop
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -695,6 +692,7 @@ fn scan_loop
             CheneySpec.cheney_scan minor_st cs_s (SZ.v sv)
               (CheneySpec.cheney_fuel minor_st - SZ.v sv) ==
               CheneySpec.cheney_scan minor_st cs1 0 (CheneySpec.cheney_fuel minor_st))
+    decreases (Prims.op_Subtraction queue_size (SZ.v !scan))
   {
     let s = !scan;
     // Read the minor address at queue[scan]
@@ -783,6 +781,7 @@ fn scan_loop
                 (not oom_f ==> CheneyBFS.field_prefix_covered minor_st cs_f obj (U64.v fi)) /\
                 CheneySpec.cheney_forward_fields minor_st cs_f obj (U64.v fi) (U64.v wosize) ==
                   CheneySpec.cheney_forward_fields minor_st (reveal cs_cur) obj 0 (U64.v wosize))
+        decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !field_idx))
       {
         let fi = !field_idx;
         assert (pure (U64.v fi < U64.v wosize));
@@ -853,7 +852,6 @@ fn scan_loop
 /// No assume_ needed — the ghost state threading proves the connection.
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
-divergent
 fn cheney_promote_phase
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)

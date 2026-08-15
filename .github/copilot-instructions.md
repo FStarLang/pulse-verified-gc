@@ -311,8 +311,68 @@ When eliminating admits: add intermediate `assert` statements to guide Z3, invok
 - `Ghost.erased` / ghost functions — verification-only, erased at extraction
 
 Loop invariants are written `while (cond) invariant exists* w. ... { body }`; do **not**
-use the older `invariant b. exists* ...` form. Functions whose termination F\* cannot
-establish must be marked `divergent` in the current nightly.
+use the older `invariant b. exists* ...` form.
+
+### Termination measures on `while` loops
+
+Every `while` loop in a plain `fn` needs a `decreases` clause; only a `divergent fn`
+(which elaborates to `stt_div` rather than `stt`) may omit one.  `divergent` is
+contagious — a plain `fn` cannot call a `divergent fn` (Error 228) — so annotations must
+be removed bottom-up through the call graph, and the `.fsti` declaration and the `.fst`
+definition must be de-annotated together.  **No function outside `spot/` is `divergent`;
+keep it that way.**
+
+The clause goes *after* the `invariant`, immediately before the body:
+
+```
+while (U64.lte !i wz)
+  invariant exists* vi. R.pts_to i vi ** pure (...)
+  decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
+{ ... }
+```
+
+Three rules that are easy to get wrong:
+
+1. **The measure cannot mention the `exists*`-bound witnesses of the invariant.**
+   Referring to `vi` above gives `Error 72: Identifier not found`.  Instead
+   *dereference the mutable reference directly* (`!i`); Pulse elaborates the measure as
+   a ghost expression, so `!i`, `R.op_Bang r` and `GR.op_Bang g` are all legal.
+2. **Spell subtraction as `Prims.op_Subtraction`.**  `Pulse.Lib.BoundedIntegers` is in
+   scope in most impl modules and rebinds `-`/`+` to bounded machine operators, which do
+   not typecheck at `int`.  `Prims.op_Addition` likewise.
+3. **`if` is allowed in the measure**, which is how loops with a `done`/`go` flag are
+   handled: the flag contributes the final "one more iteration" unit.
+
+Idioms used in this repository:
+
+| Loop shape | Measure |
+|---|---|
+| `while (U64.lte !i wz)` counting up | `Prims.op_Subtraction (U64.v wz + 1) (U64.v !i)` |
+| `while (SZ.lt !i n)` counting up | `Prims.op_Subtraction (SZ.v n) (SZ.v !i)` |
+| heap walk `while (!current + 8 < heap_size)` | `Prims.op_Subtraction heap_size (U64.v !current)` |
+| walk with a `done_` flag | `Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1)` |
+| fuel-driven `while (!go)` | `Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0)` |
+
+For a heap walk the loop body must be shown to *strictly* advance the cursor.  Where the
+body is a separate `fn` (e.g. `GC.Impl.Sweep.sweep_loop_body`) the strict increase has to
+be added to that function's postcondition (`U64.v v1 > U64.v 'v0`).
+
+**Worklist loops with no concrete counter** (the bounded mark loops in
+`GC.Impl.MarkBounded`) use a *ghost* measure: allocate a `Pulse.Lib.GhostReference` of
+type `nat`, tie it to the spec measure in the invariant
+(`GR.pts_to gm m ** pure (m == SpecMarkBounded.count_non_black s)`), update it with
+`GR.write gm ...` after each step, `GR.free gm` after the loop, and write
+`decreases (Prims.op_Addition (GR.op_Bang gm) (if !go then 1 else 0))`.  The strict
+decrease comes from the spec lemmas `mark_step_bounded_decreases_non_black` /
+`mark_inner_loop_count_decreases`.  Ghost references are erased at extraction, so the
+generated C is unchanged.
+
+To make an outer loop's measure work, an inner draining function must *expose* its
+decrease in its postcondition — e.g. `mark_inner_loop_impl` ensures
+`Seq.length 'st > 0 ==> count_non_black s2 < count_non_black 's`, proved from a loop
+invariant of the form
+`(m < count_non_black 's \/ (st_cur == 'st /\ s == 's))` ("either we made progress or
+nothing happened yet").
 
 ## Troubleshooting
 

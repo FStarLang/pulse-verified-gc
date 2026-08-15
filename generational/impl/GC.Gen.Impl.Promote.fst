@@ -89,7 +89,6 @@ let field_in_bounds (limit obj_addr wosize jv: nat)
 
 inline_for_extraction
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
-divergent
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
                     (src_obj: U64.t) (dst_obj: U64.t)
                     (wosize: U64.t)
@@ -123,6 +122,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
             // equals full copy_fields from initial state
             WBL.copy_fields {data='md; bump='mb} ms_i src_obj dst_obj (U64.v iv) (U64.v wosize) ==
             WBL.copy_fields {data='md; bump='mb} 'ms src_obj dst_obj 0 (U64.v wosize))
+    decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !i))
   {
     let iv = !i;
     assert (pure (U64.v iv < U64.v wosize));
@@ -198,7 +198,6 @@ fn zero_padding_step (major: heap_t) (dst_obj: U64.t) (wosize: U64.t)
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 inline_for_extraction
-divergent
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)
   requires is_minor minor 'md 'mb **

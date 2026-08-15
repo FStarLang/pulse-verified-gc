@@ -361,7 +361,6 @@ fn darken_if_white (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 }
 
 /// Check if value is a pointer, and if so, darken its target if white
-divergent
 fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (Seq.length 'st < stack_capacity st)
@@ -384,7 +383,6 @@ fn check_and_darken (heap: heap_t) (st: gray_stack) (v: U64.t)
 
 /// Helper: one iteration of push_children loop
 /// Factored out to avoid Pulse loop ghost variable parameterization issue
-divergent
 fn push_step_body (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
                   (obj: obj_addr) (curr_i: U64.t{U64.v curr_i >= 1 /\ U64.v curr_i <= pow2 54 - 1}) (wz: wosize)
   requires is_heap heap 's ** is_gray_stack st 'st **
@@ -443,7 +441,6 @@ let push_children_iter_bound
 
 /// Push white children of an object onto the gray stack
 #push-options ""
-divergent
 fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (U64.v wz <= pow2 54 - 1 /\
@@ -481,6 +478,7 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
             U64.v (wosize_of_object obj s) < pow2 54 /\
             SpecMark.push_children s st_cur obj vi wz ==
             SpecMark.push_children 's 'st obj 1UL wz)
+    decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
   {
     let curr_i = !i;
     // stack_capacity st >= heap_size (from push_children precondition)
@@ -501,7 +499,6 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
 
 /// Conditionally push children if tag < no_scan_tag
 /// When tag >= no_scan_tag, state is unchanged (exposed in postcondition)
-divergent
 fn maybe_push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize) (tag: U64.t)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (U64.v wz <= pow2 54 - 1 /\
@@ -605,7 +602,6 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 /// Process one gray object: pop from stack, blacken, push white children
 /// Precondition: mark_inv provides well_formed_heap + stack_props
 #push-options "--z3rlimit 100 --z3refresh"
-divergent
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0 /\
@@ -704,7 +700,6 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 /// Main mark loop: process gray objects until stack is empty
 /// Precondition: mark_inv (well_formed_heap + stack_props)
 /// Postcondition: mark_inv preserved, stack empty, objects list preserved, s2 == mark 's 'st
-divergent
 fn mark_loop (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ stack_capacity st >= heap_size)
@@ -732,6 +727,7 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
             SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's /\
             SpecMark.mark_aux s st_cur (U64.v fv) == SpecMark.mark 's 'st /\
             SpecMark.noGreyObjects (SpecMark.mark 's 'st))
+    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
   {
     let empty = is_empty st;
     if empty {

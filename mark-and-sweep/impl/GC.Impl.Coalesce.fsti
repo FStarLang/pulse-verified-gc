@@ -22,7 +22,6 @@ module SI = GC.Spec.SweepInv
 
 /// Flush a pending blue run: write merged header, link, and zero remaining fields.
 /// Shared helper used by both coalesce and fused_sweep_coalesce.
-divergent
 fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -45,7 +44,6 @@ fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
 /// Precondition: post_sweep heap (well_formed + all objects white or blue)
 ///               + objects list is non-empty + heap_objects_dense
 /// Postcondition: coalesced heap matches spec, preserves wf, all objects white or blue
-divergent
 fn coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecCoalesce.post_sweep_strong 's /\

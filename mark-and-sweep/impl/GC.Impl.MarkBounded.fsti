@@ -266,7 +266,6 @@ fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Gho
 /// Darken every root in the supplied root array.  This is the operational
 /// preparation step used before invoking bounded mark with an explicit ghost
 /// root set.
-divergent
 fn darken_roots_bounded
     (heap: heap_t) (st: gray_stack) (roots: array U64.t) (nroots: SZ.t)
     (cap: Ghost.erased nat)
@@ -285,7 +284,6 @@ fn darken_roots_bounded
 ///
 /// Postcondition: well_formed_heap preserved, no gray objects, objects preserved,
 /// mark_color_inv, gray_black_reachable, and gray_stays.
-divergent
 fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
                      (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
   requires is_heap heap 's ** is_gray_stack st 'st **

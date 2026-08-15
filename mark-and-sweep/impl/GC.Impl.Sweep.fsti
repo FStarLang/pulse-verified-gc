@@ -20,7 +20,6 @@ module SI = GC.Spec.SweepInv
 
 /// Sweep phase: reset black objects to white, build free list.
 /// Returns new free pointer.
-divergent
 fn sweep (heap: heap_t) (fp: U64.t)
   requires is_heap heap 's ** pure (SpecFields.well_formed_heap 's /\
                                      Seq.length (SpecFields.objects zero_addr 's) > 0 /\

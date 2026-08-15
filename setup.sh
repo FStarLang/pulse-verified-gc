@@ -19,8 +19,8 @@ FSTAR_DIR="$SCRIPT_DIR/fstar"
 # checked against this F* (and the Z3 4.15.3 that ships with it); see
 # Z3_VERSION in the top-level Makefile.
 SOURCE="--nightly"
-VERSION="nightly-2026-08-13"
-EXPECTED_VERSION="F* nightly-2026-08-13"
+VERSION="nightly-2026-08-15"
+EXPECTED_VERSION="F* nightly-2026-08-15"
 FORCE=false
 
 red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }

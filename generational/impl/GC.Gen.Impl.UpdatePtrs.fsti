@@ -56,7 +56,6 @@ val ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_si
 /// ---------------------------------------------------------------------------
 
 /// Rewrite program roots: replace minor pointers with their forwarded addresses.
-divergent
 fn rewrite_roots_impl
   (roots: array U64.t)
   (fwd_arr: array U64.t)
@@ -80,7 +79,6 @@ fn rewrite_roots_impl
 /// Update all pointer fields in a single major-heap object.
 /// For each field [0, wosize), reads the value, checks if it's a minor-heap
 /// pointer with a forwarding entry, and rewrites it if so.
-divergent
 fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
                      (obj: U64.t) (wosize: U64.t)
                      (#fwd: erased PromoteSpec.forwarding_map)
@@ -101,7 +99,6 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
 
 /// Walk the major heap linearly and for each object call update_one_object.
 /// Result equals PromoteSpec.update_major_pointers applied to the initial heap.
-divergent
 fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
                       (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
@@ -166,7 +163,6 @@ let rec rewrite_slots_iter (major: heap) (fwd: PromoteSpec.forwarding_map)
 /// major heap, and if it's a forwarded minor pointer, replace it.
 /// Used to apply forwarding to ref_table entries without scanning the
 /// entire major heap.
-divergent
 fn rewrite_heap_slots
   (major: heap_t)
   (fwd_arr: array U64.t)
@@ -340,7 +336,6 @@ let promoted_entries_not_blue (major: heap) (farr: Seq.seq U64.t) : prop =
 /// Update only the promoted objects' fields by iterating fwd_arr.
 /// For each non-zero fwd_arr[i], reads the header at (fwd_arr[i] - 8),
 /// and if wosize > 0 and tag < no_scan_tag, rewrites pointer fields.
-divergent
 fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
                            (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **

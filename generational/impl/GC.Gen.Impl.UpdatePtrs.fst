@@ -114,7 +114,6 @@ fn rewrite_at_index (roots: array U64.t) (fwd_arr: array U64.t) (iv: SZ.t)
 
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 inline_for_extraction
-divergent
 fn rewrite_roots_impl
   (roots: array U64.t)
   (fwd_arr: array U64.t)
@@ -146,6 +145,7 @@ fn rewrite_roots_impl
               Seq.index rs_i j == PromoteSpec.rewrite_root (Seq.index 'rs j) fwd) /\
             (forall (j: nat). j >= SZ.v iv /\ j < Seq.length 'rs ==>
               Seq.index rs_i j == Seq.index 'rs j))
+    decreases (Prims.op_Subtraction (SZ.v n) (SZ.v !i))
   {
     let iv = !i;
     rewrite_at_index roots fwd_arr iv;
@@ -222,7 +222,6 @@ fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
 /// minor-heap pointers via the forwarding array.
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 inline_for_extraction
-divergent
 fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
                      (obj: U64.t) (wosize: U64.t)
                      (#fwd: erased PromoteSpec.forwarding_map)
@@ -250,6 +249,7 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
             represents_fwd 'farr fwd /\
             PromoteSpec.update_object_pointers ms_i obj (U64.v wosize) fwd (U64.v iv) ==
             PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)
+    decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !i))
   {
     let iv = !i;
     update_one_field major fwd_arr obj wosize iv #fwd;
@@ -334,7 +334,6 @@ let is_no_scan_eq (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
 
 /// Update all major-heap objects' pointer fields by walking the heap linearly.
 #push-options "--z3rlimit 80 --fuel 2 --ifuel 1 --using_facts_from '* -GC.Gen.Promote.fields_match_minor_empty -GC.Gen.Promote.fields_match_minor_extend -GC.Gen.Promote.fields_match_minor_elim_lemma -GC.Gen.Promote.fields_match_minor_weaken -GC.Gen.Promote.fields_match_minor_intro -GC.Gen.Promote.fields_match_minor_intro_flat -GC.Gen.Promote.fields_match_minor_frame -GC.Gen.Promote.fields_match_minor_intro_by_proof -FStar.UInt.to_vec -FStar.BitVector'"
-divergent
 fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
                       (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
@@ -380,6 +379,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
               GC.Gen.Promote.update_all_objects_aux ms_i
                 (SpecFields.objects pos_i ms_i) fwd 0 ==
                 PromoteSpec.update_major_pointers 'ms fwd)))
+    decreases (Prims.op_Addition (Prims.op_Subtraction heap_size (U64.v !pos)) (if !done then 0 else 1))
   {
     let p = !pos;
     with ms_cur. assert (is_heap major ms_cur);
@@ -599,7 +599,6 @@ let rec rewrite_slots_iter_snoc (major: heap) (fwd: PromoteSpec.forwarding_map)
 
 /// Rewrite heap slots loop
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn rewrite_heap_slots
   (major: heap_t)
   (fwd_arr: array U64.t)
@@ -633,6 +632,7 @@ fn rewrite_heap_slots
             valid_slot_addrs 'sl (SZ.v n) /\
             represents_fwd 'farr fwd /\
             ms_i == rewrite_slots_iter 'ms fwd 'sl (SZ.v iv) 0)
+    decreases (Prims.op_Subtraction (SZ.v n) (SZ.v !i))
   {
     let iv = !i;
     let slot_addr = slots.(iv);
@@ -723,7 +723,6 @@ let hdr_addr_wf (obj: U64.t)
 
 /// The main loop implementation
 #push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
-divergent
 fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
                            (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
@@ -749,6 +748,7 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
             valid_fwd_entries 'farr /\
             update_promoted_iter ms_i 'farr fwd (SZ.v iv) ==
             update_promoted_iter 'ms 'farr fwd 0)
+    decreases (Prims.op_Subtraction (SZ.v fwd_size) (SZ.v !i))
   {
     let iv = !i;
     let major_addr = fwd_arr.(iv);

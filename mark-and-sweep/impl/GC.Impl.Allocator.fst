@@ -147,7 +147,6 @@ fn init_heap (heap: heap_t)
 /// ---------------------------------------------------------------------------
 
 #push-options "--z3rlimit 100"
-divergent
 fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SF.well_formed_heap 's)
@@ -199,6 +198,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
            vhead == sr.fp_out /\
            vresult == sr.obj_out))
       )
+    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
   {
     let vfuel = !fuel_ref;
     if U64.eq vfuel 0UL {
@@ -377,7 +377,6 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
 /// so well_formed_heap_part2 (pointer closure) is not needed.
 
 #push-options "--z3rlimit 100"
-divergent
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SF.well_formed_heap_part1 's /\
@@ -428,6 +427,7 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
            vhead == sr.fp_out /\
            vresult == sr.obj_out))
       )
+    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
   {
     let vfuel = !fuel_ref;
     if U64.eq vfuel 0UL {

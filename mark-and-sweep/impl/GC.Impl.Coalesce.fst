@@ -79,7 +79,6 @@ fn flush_blue_write_link (heap: heap_t) (fb: hp_addr) (fp: U64.t)
 
 /// Zero a range of fields starting at addr, n words
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
-divergent
 fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -103,6 +102,7 @@ fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
             Seq.length s == heap_size /\
             Alloc.zero_fields s (U64.uint_to_t (U64.v a)) (U64.v n - U64.v i) ==
               Alloc.zero_fields 's start_addr (U64.v n))
+    decreases (Prims.op_Subtraction (U64.v n) (U64.v !idx))
   {
     let cur_a = !addr;
     let cur_i = !idx;
@@ -122,7 +122,6 @@ fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
 
 /// Full flush_blue implementation
 #push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
-divergent
 fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -194,7 +193,6 @@ let coalesce_spec_inv (g0: heap_state) (g: heap_state)
 
 /// The main coalesce entry point
 #push-options "--z3rlimit 800 --fuel 2 --ifuel 1 --z3refresh"
-divergent
 fn coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecCoalesce.post_sweep_strong 's /\
@@ -242,6 +240,7 @@ fn coalesce (heap: heap_t)
               U64.v fb - U64.v mword + U64.v rw * U64.v mword == U64.v v) /\
             // Spec equivalence and walk validity (guarded for well-typedness)
             coalesce_spec_inv 's s (U64.v v) fb (U64.v rw) fv)
+    decreases (Prims.op_Subtraction heap_size (U64.v !current))
   {
     let cur = !current;
     let cur_fb = !fb_ref;

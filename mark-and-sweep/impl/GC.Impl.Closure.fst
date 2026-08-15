@@ -181,7 +181,6 @@ fn resolve_object (heap: heap_t) (obj: hp_addr)
 /// Precondition: All fields from 2 to wz are within heap bounds
 /// (Caller must ensure closure is valid with sufficient size)
 /// Also, wz must be a valid field index (>= 1 and <= 2^54-1, which is always true for wosize)
-divergent
 fn scan_closure_env (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
                      (callback: U64.t -> stt unit (requires emp) (ensures fun _ -> emp))
   requires is_heap heap 's **
@@ -227,6 +226,7 @@ fn scan_closure_env (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
           spec_field_address (U64.v h_addr) (U64.v vi) < heap_size
         ))
       )
+    decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
   {
     let curr_i = !i;
     

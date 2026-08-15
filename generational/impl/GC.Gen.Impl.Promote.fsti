@@ -54,7 +54,6 @@ fn read_minor_tag (minor: minor_heap_t) (obj: U64.t)
 /// ---------------------------------------------------------------------------
 
 inline_for_extraction
-divergent
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)
   requires is_minor minor 'md 'mb **

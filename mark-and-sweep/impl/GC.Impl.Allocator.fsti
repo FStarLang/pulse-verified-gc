@@ -46,7 +46,6 @@ fn init_heap (heap: heap_t)
 ///   obj_addr: allocated object address, or 0UL if out of memory
 ///
 /// Postcondition ties the result to the pure spec alloc_spec.
-divergent
 fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap 's)
@@ -64,7 +63,6 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
 /// The implementation is identical to `allocate` — the allocator only reads
 /// headers and free-list links, never inspecting object pointer fields.
 
-divergent
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap_part1 's /\

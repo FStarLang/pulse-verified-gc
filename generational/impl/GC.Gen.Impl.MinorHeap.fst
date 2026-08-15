@@ -240,7 +240,6 @@ fn translate_one_field (mh: minor_heap_t) (minor_base_addr: U64.t)
 
 /// Translate all fields of one minor object from absolute to offset
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
                            (bump: U64.t) (obj_addr: U64.t) (wosize: U64.t)
   requires is_minor mh 'd 'b **
@@ -263,6 +262,7 @@ fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
             U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size /\
             U64.v bump <= minor_heap_size /\
             U64.v minor_base_addr > 0)
+  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -276,7 +276,6 @@ fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
 /// Conditionally translate an object's fields (only if scannable)
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
-divergent
 fn maybe_translate_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
                            (bump: U64.t) (obj_addr: U64.t)
                            (wosize: U64.t) (tag_val: U64.t)
@@ -299,7 +298,6 @@ fn maybe_translate_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
 
 /// Walk the minor heap and translate all scannable objects' fields
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v 'b <= minor_heap_size /\
@@ -326,6 +324,7 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
               U64.v bump >= 8 /\
               U64.v minor_base_addr > 0 /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
+    decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
   {
     let pv = !pos;
     let hdr = minor_read mh pv;
@@ -455,7 +454,6 @@ fn maybe_synthesize_infix_field
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
-divergent
 fn synthesize_one_closure_infix
   (mh: minor_heap_t)
   (fwd_arr: array U64.t)
@@ -489,6 +487,7 @@ fn synthesize_one_closure_infix
             Seq.length farr_i == fwd_arr_size /\
             U64.v parent_fwd > 0 /\
             U64.v parent_fwd < pow2 63)
+  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -503,7 +502,6 @@ fn synthesize_one_closure_infix
 /// synthesize infix forwarding entries for all its infix sub-objects.
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
-divergent
 fn maybe_synthesize_closure
   (mh: minor_heap_t)
   (fwd_arr: array U64.t)
@@ -538,7 +536,6 @@ fn maybe_synthesize_closure
 
 /// Walk the minor heap and synthesize infix forwarding entries.
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
   requires is_minor mh 'd 'b **
            pts_to fwd_arr 'farr **
@@ -569,6 +566,7 @@ fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
               U64.v bump >= 8 /\
               Seq.length farr_i == fwd_arr_size /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
+      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;
@@ -660,7 +658,6 @@ fn maybe_add_infix_parent
 
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
-divergent
 fn find_infix_in_one_closure
   (mh: minor_heap_t)
   (roots: array U64.t)
@@ -699,6 +696,7 @@ fn find_infix_in_one_closure
             Seq.length rs_i == SZ.v cap /\
             SZ.v cnt_i <= SZ.v cap /\
             SZ.v cnt_i >= SZ.v 'cnt)
+  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -712,7 +710,6 @@ fn find_infix_in_one_closure
 /// Conditionally scan one object for infix headers and add parents to roots.
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
-divergent
 fn maybe_find_infix_in_closure
   (mh: minor_heap_t)
   (roots: array U64.t)
@@ -747,7 +744,6 @@ fn maybe_find_infix_in_closure
 /// Walk the minor heap and find all infix parent closures, appending them to roots.
 /// Returns the number of parents added.
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-divergent
 fn find_infix_parents (mh: minor_heap_t)
                       (roots: array U64.t)
                       (nroots: SZ.t)
@@ -789,6 +785,7 @@ fn find_infix_parents (mh: minor_heap_t)
               SZ.v cnt <= SZ.v cap /\
               SZ.v cnt >= SZ.v nroots /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
+      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;
