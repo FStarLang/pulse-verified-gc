@@ -15,22 +15,48 @@ open GC.Gen.WriteBodyLemmas
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
+/// Numeric core of the "other object is untouched" argument.
+///
+/// `addr` lies inside `other`; `dst` is a different, non-overlapping object, so
+/// none of `dst`'s header, fields or padding slot can alias `addr`.  Proved
+/// from the raw offsets in an empty context: inside
+/// `promote_object_read_other` these goals carry the whole well-formed-heap /
+/// free-list context and time out.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+private let other_ranges_disjoint
+  (other_v dst_v addr_v hd_dst_v wz_other wz wz_dst: nat)
+  : Lemma
+    (requires
+      addr_v % 8 == 0 /\ other_v % 8 == 0 /\ dst_v % 8 == 0 /\
+      hd_dst_v + 8 == dst_v /\ wz <= wz_dst /\
+      addr_v >= other_v /\ addr_v + 8 <= other_v + wz_other * 8 /\
+      (other_v < dst_v \/ dst_v < other_v) /\
+      (other_v < dst_v ==> dst_v > other_v + wz_other * 8) /\
+      (dst_v < other_v ==> other_v > dst_v + wz_dst * 8))
+    (ensures
+      (forall (k: nat). k < wz ==>
+         (addr_v + 8 <= dst_v + k * 8 \/ dst_v + k * 8 + 8 <= addr_v)) /\
+      addr_v <> dst_v + wz * 8 /\
+      (addr_v + 8 <= hd_dst_v \/ hd_dst_v + 8 <= addr_v))
+  = ()
+#pop-options
+
 #push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let promote_object_read_other
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0}) (other: obj_addr) (addr: hp_addr)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       Seq.mem other (objects zero_addr major) /\
-      AllocLemmas.chain_avoids major fp other (heap_size / U64.v mword) = true /\
+      AllocLemmas.chain_avoids major fp other heap_words = true /\
       U64.v addr >= U64.v other /\
       U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8 /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures read_word (promote_object minor major obj fp wosize).major_out addr ==
              read_word major addr)
-  = let fuel = heap_size / U64.v mword in
+  = let fuel = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     let new_major = alloc_res.heap_out in
     let new_addr = alloc_res.obj_out in
@@ -46,11 +72,30 @@ let promote_object_read_other
     assert (U64.v (wosize_of_object dst_obj major) >= wosize);
     hd_address_spec dst_obj;
     wfh_part1_obj_bound major dst_obj;
+    let wz_other = U64.v (wosize_of_object other major) in
+    let wz_dst = U64.v (wosize_of_object dst_obj major) in
+    let disjoint () : Lemma
+      (requires (U64.v other < U64.v dst_obj \/ U64.v dst_obj < U64.v other) /\
+                (U64.v other < U64.v dst_obj ==>
+                   U64.v dst_obj > U64.v other + wz_other * 8) /\
+                (U64.v dst_obj < U64.v other ==>
+                   U64.v other > U64.v dst_obj + wz_dst * 8))
+      (ensures (forall (k: nat). k < wosize ==>
+                  (U64.v addr + 8 <= U64.v dst_obj + k * 8 \/
+                   U64.v dst_obj + k * 8 + 8 <= U64.v addr)) /\
+               U64.v addr <> U64.v dst_obj + wosize * 8 /\
+               (U64.v addr + U64.v mword <= U64.v (hd_address dst_obj) \/
+                U64.v (hd_address dst_obj) + U64.v mword <= U64.v addr)) =
+      other_ranges_disjoint (U64.v other) (U64.v dst_obj) (U64.v addr)
+                            (U64.v (hd_address dst_obj)) wz_other wosize wz_dst
+    in
     if U64.v other < U64.v new_addr then begin
       objects_separated zero_addr major other dst_obj;
+      disjoint ();
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize addr
     end else begin
       objects_separated zero_addr major dst_obj other;
+      disjoint ();
       copy_fields_preserves_other minor new_major obj dst_obj 0 wosize addr
     end;
     // Bridge: padding and set_promoted_tag preserve read at addr
@@ -106,15 +151,15 @@ private let promote_transfer_read
     end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let promote_object_preserves_chain_avoids
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0}) (excl: U64.t)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
-      AllocLemmas.chain_avoids major fp excl (heap_size / U64.v mword) = true /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
+      AllocLemmas.chain_avoids major fp excl heap_words = true /\
       U64.v excl >= U64.v mword /\ U64.v excl < heap_size /\
       U64.v excl % U64.v mword == 0 /\
       Seq.mem (excl <: obj_addr) (objects zero_addr major) /\
@@ -122,8 +167,8 @@ let promote_object_preserves_chain_avoids
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures
       (let res = promote_object minor major obj fp wosize in
-       AllocLemmas.chain_avoids res.major_out res.fp_out excl (heap_size / U64.v mword) = true))
-  = let fuel = heap_size / U64.v mword in
+       AllocLemmas.chain_avoids res.major_out res.fp_out excl heap_words = true))
+  = let fuel = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     let new_major = alloc_res.heap_out in
     let new_fp = alloc_res.fp_out in
@@ -162,17 +207,26 @@ let promote_object_preserves_chain_avoids
     AllocLemmas.chain_avoids_transfer_excl2 new_major (set_promoted_tag padded dst_obj tag) new_fp excl dst_obj fuel
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries no"
+/// Build an `hp_addr` from a raw offset.  The bounds and alignment obligations
+/// are trivial, but under the enclosing well-formed-heap context they are not
+/// discharged in time; proving them here keeps the caller's goals small.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let mk_hp_addr (a: nat{a < heap_size /\ a % 8 == 0}) : (r: hp_addr{U64.v r == a}) =
+  assert (a < pow2 64);
+  U64.uint_to_t a
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let promote_object_preserves_one_field
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wz: nat{wz > 0})
   (prev_addr: obj_addr) (j: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       Seq.mem prev_addr (objects zero_addr major) /\
-      AllocLemmas.chain_avoids major fp prev_addr (heap_size / U64.v mword) = true /\
+      AllocLemmas.chain_avoids major fp prev_addr heap_words = true /\
       (promote_object minor major obj fp wz).new_addr <> 0UL /\
       U64.v prev_addr + j * 8 + 8 <= heap_size /\
       U64.v prev_addr % 8 == 0 /\
@@ -180,6 +234,6 @@ let promote_object_preserves_one_field
     (ensures read_word (promote_object minor major obj fp wz).major_out
                        (U64.uint_to_t (U64.v prev_addr + j * 8)) ==
              read_word major (U64.uint_to_t (U64.v prev_addr + j * 8)))
-  = let field_addr : hp_addr = U64.uint_to_t (U64.v prev_addr + j * 8) in
+  = let field_addr : hp_addr = mk_hp_addr (U64.v prev_addr + j * 8) in
     promote_object_read_other minor major obj fp wz prev_addr field_addr
 #pop-options

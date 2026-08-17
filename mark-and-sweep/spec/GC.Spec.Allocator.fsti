@@ -107,6 +107,10 @@ let alloc_from_block (g: heap) (obj: obj_addr) (requested_wz: nat) (next_fp: U64
         let rem_obj_nat = rem_hd_nat + 8 in
         // rem_hd_nat < heap_size <= pow2 57, so rem_obj_nat < pow2 64
         FStar.Math.Lemmas.pow2_lt_compat 64 57;
+        assert (rem_hd_nat < heap_size);
+        assert (heap_size < pow2 57);
+        assert_norm (pow2 57 + 8 < pow2 64);
+        assert (rem_obj_nat < pow2 64);
         if rem_obj_nat >= heap_size || rem_obj_nat >= pow2 64 ||
            rem_obj_nat % 8 <> 0 then
           (g2, U64.uint_to_t rem_obj_nat)
@@ -180,7 +184,7 @@ let rec alloc_search (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
 ///   - obj_out: allocated object address (0UL = OOM)
 let alloc_spec (g: heap) (fp: U64.t) (requested_wz: nat) : GTot alloc_result =
   let wz = if requested_wz = 0 then 1 else requested_wz in
-  alloc_search g fp 0UL fp wz (heap_size / U64.v mword)
+  alloc_search g fp 0UL fp wz heap_words
 
 /// ---------------------------------------------------------------------------
 /// Heap Initialization
@@ -189,7 +193,7 @@ let alloc_spec (g: heap) (fp: U64.t) (requested_wz: nat) : GTot alloc_result =
 /// Initialize a zero heap as one big free block.
 /// Returns (initialized heap, free pointer).
 let init_heap_spec (g: heap) : GTot (heap & U64.t) =
-  let total_words = heap_size / U64.v mword in
+  let total_words = heap_words in
   if total_words < 2 then (g, 0UL)
   else
     let wz = total_words - 1 in

@@ -31,7 +31,7 @@ private let copy_fields_preserves_wfh_part1 = WriteBody.copy_fields_preserves_wf
 private let chain_avoids_implies_not_in_fl_chain = WriteBody.chain_avoids_implies_not_in_fl_chain
 private let copy_fields_preserves_chain_avoids_self = WriteBody.copy_fields_preserves_chain_avoids_self
 
-#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1"
 let rec update_all_objects_aux_preserves_header
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat) (h: obj_addr)
   : Lemma (requires
@@ -100,7 +100,7 @@ let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (
 
 /// update_major_pointers preserves all fields of blue objects (since they are skipped).
 /// For non-blue objects that are processed: their body writes are separated from blue's fields.
-#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1"
 private let rec update_all_objects_aux_preserves_blue_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   (h: obj_addr) (j: nat)
@@ -328,8 +328,8 @@ private let promote_object_adds_new_addr
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
              well_formed_heap_part1 major /\
-             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures
              (let res = promote_object minor major obj fp wosize in
               res.new_addr <> 0UL ==>
@@ -368,13 +368,13 @@ let fwd_all_implies_positional (fwd: forwarding_map) (live_set: seq U64.t) (idx:
 
 /// The core induction: promote_all_aux puts every forwarded address into objects of the final heap.
 /// Uses the simpler fwd_all_targets_valid invariant.
-#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1"
 let rec promote_all_aux_adds_promoted
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     fwd_all_targets_valid fwd major)
           (ensures (let res = promote_all_aux minor major fp live_set fwd idx in
                     fwd_all_targets_valid res.fwd_map res.major_final))
@@ -392,7 +392,7 @@ let rec promote_all_aux_adds_promoted
         // OOM: fwd unchanged, heap unchanged — invariant trivially preserved
         ()
       else begin
-        let fuel = heap_size / U64.v mword in
+        let fuel = heap_words in
         // new_addr is in objects of res.major_out
         promote_object_adds_new_addr minor major obj fp wz;
         // existing objects persist
@@ -436,8 +436,8 @@ let rec promote_all_aux_adds_promoted
 let promote_all_fwd_all_targets_valid
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fwd_all_targets_valid res.fwd_map res.major_final)) =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
@@ -448,8 +448,8 @@ let promote_all_fwd_all_targets_valid
 let promote_all_adds_promoted
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final)) =
   promote_all_fwd_all_targets_valid minor major fp live_set;
@@ -468,8 +468,8 @@ let minor_collect_preserves_reachable
   : Lemma (requires
              minor_wf minor /\
              well_formed_heap major /\
-             AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-             AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+             AllocLemmas.fl_valid major fp heap_words /\
+             AllocLemmas.fl_chain_terminates major fp heap_words /\
              Seq.mem obj (live_set_of minor major roots))
           (ensures
              (let res = minor_collect_spec minor major fp roots in

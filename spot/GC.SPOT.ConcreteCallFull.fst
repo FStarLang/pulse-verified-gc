@@ -31,6 +31,8 @@ module ThreeObjects = GC.SPOT.ThreeObjects
 module CallFull = GC.SPOT.CallFull
 module ConcreteSetup = GC.SPOT.ConcreteSetup
 module V = Pulse.Lib.Vec
+module SpecFields = GC.Spec.Fields
+module SpecHeap = GC.Spec.Heap
 
 let spot_gen_gc_success_post_from_gen_gc_post
   (r: unit{ConcreteMajor.spot_major_room})

@@ -122,7 +122,7 @@ let check_and_darken_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
 
 /// check_and_darken_spec preserves well_formed_heap and related invariants.
 /// Uses spec-level bridge lemma to avoid cross-module well_formed_heap quantifier issues.
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 100 --split_queries no"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 100"
 let check_and_darken_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
     (obj: obj_addr) (wz: U64.t) (i: U64.t{U64.v i >= 1})
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
@@ -296,7 +296,7 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
 
 /// Read header, write gray header, rewrite ghost state to makeGray.
 /// Factored out so darken_if_white's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --split_queries always --z3refresh"
+#push-options "--z3rlimit 200 --z3refresh"
 fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -440,7 +440,7 @@ let push_children_iter_bound
   = SpecMark.push_children_stack_monotone s st_cur obj vi wz
 
 /// Push white children of an object onto the gray stack
-#push-options "--split_queries no"
+#push-options ""
 fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (U64.v wz <= pow2 54 - 1 /\
@@ -478,6 +478,7 @@ fn push_children (heap: heap_t) (st: gray_stack) (h_addr: hp_addr) (wz: wosize)
             U64.v (wosize_of_object obj s) < pow2 54 /\
             SpecMark.push_children s st_cur obj vi wz ==
             SpecMark.push_children 's 'st obj 1UL wz)
+    decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
   {
     let curr_i = !i;
     // stack_capacity st >= heap_size (from push_children precondition)
@@ -554,7 +555,7 @@ let mark_step_scan_preserves_objects
 
 /// Write black header, rewrite ghost state to makeBlack.
 /// Factored out so mark_step's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --split_queries always --z3refresh"
+#push-options "--z3rlimit 200 --z3refresh"
 fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -578,7 +579,7 @@ fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
 #pop-options
 
 /// Read header wosize and tag from spec state (no heap read needed)
-#push-options "--z3rlimit 50 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --z3refresh"
 fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -600,7 +601,7 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 
 /// Process one gray object: pop from stack, blacken, push white children
 /// Precondition: mark_inv provides well_formed_heap + stack_props
-#push-options "--z3rlimit 100 --split_queries always --z3refresh"
+#push-options "--z3rlimit 100 --z3refresh"
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0 /\
@@ -726,6 +727,7 @@ fn mark_loop (heap: heap_t) (st: gray_stack)
             SpecFields.objects zero_addr s == SpecFields.objects zero_addr 's /\
             SpecMark.mark_aux s st_cur (U64.v fv) == SpecMark.mark 's 'st /\
             SpecMark.noGreyObjects (SpecMark.mark 's 'st))
+    decreases (Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0))
   {
     let empty = is_empty st;
     if empty {

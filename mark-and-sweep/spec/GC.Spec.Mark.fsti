@@ -217,7 +217,7 @@ let rec mark_aux (g: heap) (st: seq obj_addr) (fuel: nat)
   end
 
 let mark (g: heap) (st: seq obj_addr) : GTot heap =
-  mark_aux g st (heap_size / U64.v mword)
+  mark_aux g st heap_words
 
 /// mark_aux unfolds one step
 val mark_aux_unfold : (g: heap) -> (st: seq obj_addr) -> (fuel: nat) ->

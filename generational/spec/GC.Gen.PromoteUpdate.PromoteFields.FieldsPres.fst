@@ -16,6 +16,12 @@ open GC.Gen.PromoteUpdate.PromoteFields.Step
 
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 
+/// `k < idx + 1` and `k <> idx` give `k < idx`, in an empty context.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let ne_idx_gives_lt (k idx: nat) : Lemma
+  (requires k < idx + 1 /\ ~(k == idx)) (ensures k < idx) = ()
+#pop-options
+
 /// Helper: extend chain_all_inv from idx to idx+1 when wz=0 (vacuous case).
 #restart-solver
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
@@ -27,11 +33,29 @@ private let chain_all_inv_extend_skip
       idx < Seq.length live_set /\
       minor_wosize minor (Seq.index live_set idx) = 0)
     (ensures chain_all_inv minor major fp live_set fwd (idx + 1))
-  = chain_all_inv_elim minor major fp live_set fwd idx;
-    let obj_idx = Seq.index live_set idx in
-    assert (minor_wosize minor obj_idx = 0);
-    assert (forall (k:nat). k < idx + 1 /\ k < Seq.length live_set /\ k = idx ==>
-            minor_wosize minor (Seq.index live_set k) = 0);
+  = // Establish the body of `chain_all_inv`'s forall index by index: letting Z3
+    // chain `chain_all_inv_elim`'s unpatterned forall into `chain_all_inv_intro`
+    // diverges.
+    let aux (k: nat) : Lemma
+      (ensures k < idx + 1 /\ k < Seq.length live_set ==>
+        (let obj = Seq.index live_set k in
+         let wz_k = minor_wosize minor obj in
+         fwd obj <> 0UL /\ wz_k > 0 /\ is_val_addr (fwd obj) ==>
+         (Seq.mem ((fwd obj) <: obj_addr) (objects zero_addr major) /\
+          U64.v (wosize_of_object ((fwd obj) <: obj_addr) major) >= wz_k /\
+          AllocLemmas.chain_avoids major fp (fwd obj) heap_words = true)))
+      = if k < idx + 1 && k < Seq.length live_set then begin
+          let obj = Seq.index live_set k in
+          if fwd obj <> 0UL && minor_wosize minor obj > 0 && is_val_addr (fwd obj) then begin
+            if k = idx then ()  // contradicts minor_wosize minor (index live_set idx) = 0
+            else begin
+              ne_idx_gives_lt k idx;
+              chain_all_inv_elim_at minor major fp live_set fwd idx k
+            end
+          end else ()
+        end else ()
+    in
+    FStar.Classical.forall_intro aux;
     chain_all_inv_intro minor major fp live_set fwd (idx + 1)
 #pop-options
 
@@ -59,7 +83,7 @@ private let rec fields_match_minor_extend_zero
 #pop-options
 
 #restart-solver
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --split_queries always --z3refresh"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --z3refresh"
 /// Step case helper: bridges the IH to the postcondition via promote_all_aux_step,
 /// without needing fuel-based unfolding (prevents cascade).
 private let promote_all_step_case
@@ -89,14 +113,14 @@ let fwd_zero_from (fwd: forwarding_map) (live_set: seq U64.t) (idx: nat) : prop 
 /// Main recursive proof — runs at fuel 0 to prevent cascade.
 /// The key invariant is fwd_zero_from: unprocessed positions have fwd = 0.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --z3refresh"
 private let rec promote_all_aux_preserves_fields
   (minor: minor_state) (major: heap) (fp: U64.t)
   (live_set: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       fields_match_minor minor major fwd live_set idx /\
       chain_all_inv minor major fp live_set fwd idx /\
       fwd_zero_from fwd live_set idx /\
@@ -141,8 +165,8 @@ private let rec promote_all_aux_preserves_fields
 let promote_all_preserves_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     distinct_live_set live_set)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fields_match_minor minor res.major_final res.fwd_map

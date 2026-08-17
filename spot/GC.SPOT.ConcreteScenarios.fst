@@ -198,7 +198,7 @@ let gray_objects_no_black_to_gray_black_stack (g: heap) (st: seq obj_addr)
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_gray_black_empty (r: unit{ConcreteMajor.spot_major_room})
   : Lemma
       (ensures
@@ -1212,7 +1212,7 @@ let spot_post_minor_roots_match_prepared_empty_stack
   FStar.Classical.forall_intro roots_in_stack;
   assert (GenImpl.roots_match_stack roots2 prepared_st)
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_concrete_gen_gc_major_pre_empty_stack
   (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
   : Lemma

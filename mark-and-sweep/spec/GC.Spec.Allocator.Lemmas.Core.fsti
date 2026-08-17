@@ -61,7 +61,7 @@ val alloc_from_block_objects_facts :
 /// **Main theorem**: alloc_spec preserves well_formed_heap.
 val alloc_spec_preserves_wf : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword))
+                  fl_valid g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz in
                   well_formed_heap r.heap_out))
 
@@ -167,10 +167,10 @@ val fl_chain_kcycle_not_terminates (g: heap) (fp: U64.t) (k fuel: nat)
 /// alloc_spec preserves fl_valid: the free-list chain remains valid after allocation.
 val alloc_spec_preserves_fl_valid : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword) /\
-                  fl_chain_terminates g fp (heap_size / U64.v mword))
+                  fl_valid g fp heap_words /\
+                  fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz in
-                  fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+                  fl_valid r.heap_out r.fp_out heap_words))
 
 /// chain_avoids: boolean test for "fp chain does not visit excl".
 let chain_avoids = AllocChain.chain_avoids
@@ -250,16 +250,16 @@ val fl_chain_predecessor_not_in_suffix_b (g: heap) (obj: U64.t) (fuel: nat)
 /// alloc_spec preserves fl_chain_terminates: the free-list chain still terminates after allocation.
 val alloc_spec_preserves_fl_chain_terminates : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword) /\
-                  fl_chain_terminates g fp (heap_size / U64.v mword))
+                  fl_valid g fp heap_words /\
+                  fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz in
-                  fl_chain_terminates r.heap_out r.fp_out (heap_size / U64.v mword)))
+                  fl_chain_terminates r.heap_out r.fp_out heap_words))
 
 /// **Theorem**: alloc_spec preserves object membership.
 /// Every object that existed before allocation still exists afterward.
 val alloc_spec_preserves_objects : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword))
+                  fl_valid g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz in
                   (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                     Seq.mem x (objects zero_addr r.heap_out))))
@@ -274,7 +274,7 @@ val make_header_getColor : (wz: U64.t{U64.v wz < pow2 54}) ->
 val alloc_spec_preserves_no_black : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires GC.Spec.Mark.no_black_objects g /\
                   well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword))
+                  fl_valid g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz in
                   GC.Spec.Mark.no_black_objects r.heap_out))
 
@@ -294,19 +294,19 @@ val chain_avoids_transfer_excl2 (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
 /// **Theorem**: alloc_spec removes obj_out from the chain.
 val alloc_spec_obj_not_in_chain : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap g /\
-                  fl_valid g fp (heap_size / U64.v mword) /\
-                  fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                  fl_valid g fp heap_words /\
+                  fl_chain_terminates g fp heap_words /\
                   requested_wz >= 1 /\
                   (alloc_spec g fp requested_wz).obj_out <> 0UL)
         (ensures (let r = alloc_spec g fp requested_wz in
-                  chain_avoids r.heap_out r.fp_out r.obj_out (heap_size / U64.v mword) = true))
+                  chain_avoids r.heap_out r.fp_out r.obj_out heap_words = true))
 
 /// **Theorem**: alloc_spec preserves object membership under just well_formed_heap_part1.
 /// (Weaker precondition than alloc_spec_preserves_objects.)
 val alloc_spec_preserves_objects_part1 : (g: heap) -> (fp: U64.t) -> (requested_wz: nat) ->
   Lemma (requires well_formed_heap_part1 g /\
-                  fl_valid g fp (heap_size / U64.v mword) /\
-                  fl_chain_terminates g fp (heap_size / U64.v mword))
+                  fl_valid g fp heap_words /\
+                  fl_chain_terminates g fp heap_words)
         (ensures (let r = alloc_spec g fp requested_wz in
                   (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                     Seq.mem x (objects zero_addr r.heap_out))))

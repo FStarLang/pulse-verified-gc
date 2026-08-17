@@ -47,7 +47,7 @@ private let rec objects_eq_when_reads_agree (g1 g2: heap) (start: hp_addr)
 /// Objects from start are preserved when start >= obj + wz*8.
 /// Since all field writes are at addresses < obj + wz*8 <= start,
 /// all reads from start onward are unchanged.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let update_object_pointers_preserves_objects_above
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
   (start: hp_addr)
@@ -80,7 +80,7 @@ private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
 #pop-options
 
 /// Helper: density is preserved through update_object_pointers
-#push-options "--z3rlimit 50 --fuel 0 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --fuel 0 --z3refresh"
 private let update_object_pointers_preserves_density
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -175,7 +175,7 @@ private let rec update_all_objects_aux_shift
 #pop-options
 
 /// Master positional step lemma
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 let update_all_objects_positional_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -294,7 +294,7 @@ let update_all_objects_positional_step
 
 /// Blue skip step: when the current object is blue (free-list cell),
 /// skip it without modifying the heap. The spec connection advances past it.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_blue
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -347,7 +347,7 @@ let update_all_objects_positional_step_blue
 
 /// No-scan skip step: when the current object has tag >= no_scan_tag,
 /// skip it without modifying the heap. Identical structure to the blue step.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_no_scan
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -397,7 +397,7 @@ let update_all_objects_positional_step_no_scan
 #pop-options
 
 /// Terminal step
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let update_all_objects_terminal_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\

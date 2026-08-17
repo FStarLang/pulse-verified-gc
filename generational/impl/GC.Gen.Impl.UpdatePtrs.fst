@@ -21,12 +21,14 @@ open GC.Gen.Base
 open GC.Impl.Heap
 module PromoteSpec = GC.Gen.Promote
 open GC.Gen.PromoteUpdate
+module SpecHeap = GC.Spec.Heap
+module AllocLemmas = GC.Spec.Allocator.Lemmas
 
 /// ---------------------------------------------------------------------------
 /// ghost_fwd_of_represents proof
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --split_queries no"
+#push-options "--z3rlimit 50"
 let ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
   : Lemma (represents_fwd farr (ghost_fwd_of farr))
   = let fwd = ghost_fwd_of farr in
@@ -143,6 +145,7 @@ fn rewrite_roots_impl
               Seq.index rs_i j == PromoteSpec.rewrite_root (Seq.index 'rs j) fwd) /\
             (forall (j: nat). j >= SZ.v iv /\ j < Seq.length 'rs ==>
               Seq.index rs_i j == Seq.index 'rs j))
+    decreases (Prims.op_Subtraction (SZ.v n) (SZ.v !i))
   {
     let iv = !i;
     rewrite_at_index roots fwd_arr iv;
@@ -246,6 +249,7 @@ fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
             represents_fwd 'farr fwd /\
             PromoteSpec.update_object_pointers ms_i obj (U64.v wosize) fwd (U64.v iv) ==
             PromoteSpec.update_object_pointers 'ms obj (U64.v wosize) fwd 0)
+    decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !i))
   {
     let iv = !i;
     update_one_field major fwd_arr obj wosize iv #fwd;
@@ -375,6 +379,7 @@ fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
               GC.Gen.Promote.update_all_objects_aux ms_i
                 (SpecFields.objects pos_i ms_i) fwd 0 ==
                 PromoteSpec.update_major_pointers 'ms fwd)))
+    decreases (Prims.op_Addition (Prims.op_Subtraction heap_size (U64.v !pos)) (if !done then 0 else 1))
   {
     let p = !pos;
     with ms_cur. assert (is_heap major ms_cur);
@@ -627,6 +632,7 @@ fn rewrite_heap_slots
             valid_slot_addrs 'sl (SZ.v n) /\
             represents_fwd 'farr fwd /\
             ms_i == rewrite_slots_iter 'ms fwd 'sl (SZ.v iv) 0)
+    decreases (Prims.op_Subtraction (SZ.v n) (SZ.v !i))
   {
     let iv = !i;
     let slot_addr = slots.(iv);
@@ -716,7 +722,7 @@ let hdr_addr_wf (obj: U64.t)
   = ()
 
 /// The main loop implementation
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
                            (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
@@ -742,6 +748,7 @@ fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
             valid_fwd_entries 'farr /\
             update_promoted_iter ms_i 'farr fwd (SZ.v iv) ==
             update_promoted_iter 'ms 'farr fwd 0)
+    decreases (Prims.op_Subtraction (SZ.v fwd_size) (SZ.v !i))
   {
     let iv = !i;
     let major_addr = fwd_arr.(iv);

@@ -23,7 +23,7 @@ open GC.Gen.Impl.UpdatePtrs
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module CheneySpec = GC.Gen.Cheney
 
-let heap_fuel : nat = heap_size / U64.v mword
+let heap_fuel : nat = heap_words
 
 /// ---------------------------------------------------------------------------
 /// Heap extensionality: word-level agreement implies byte-level equality
@@ -34,6 +34,19 @@ val heap_read_word_extensional (h1 h2: heap)
     (requires (forall (a: nat).
        a < heap_size /\ a % 8 == 0 ==>
        read_word h1 (U64.uint_to_t a) == read_word h2 (U64.uint_to_t a)))
+    (ensures h1 == h2)
+
+/// Same as `heap_read_word_extensional`, but phrased with `mk_hp_addr`.
+///
+/// A caller that proves word-wise agreement typically does so from inside a
+/// very large proof context; asking it to *also* discharge the `UInt.size a 64`
+/// side condition of `U64.uint_to_t a` there makes Z3 4.15.3 time out on an
+/// otherwise trivial goal.  `mk_hp_addr` carries that obligation, so this
+/// variant keeps it out of the caller's query.
+val heap_read_word_extensional_mk (h1 h2: heap)
+  : Lemma
+    (requires (forall (a: nat{a < heap_size /\ a % U64.v mword == 0}).
+       read_word h1 (mk_hp_addr a) == read_word h2 (mk_hp_addr a)))
     (ensures h1 == h2)
 
 /// ---------------------------------------------------------------------------

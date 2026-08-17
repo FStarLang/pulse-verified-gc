@@ -23,8 +23,8 @@ val promote_object_preserves_bfc
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       blue_fields_closed major /\
       chain_objects_blue major fp /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
@@ -37,8 +37,8 @@ val promote_object_preserves_chain_objects_blue
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       chain_objects_blue major fp /\
       (promote_object minor major obj fp wosize).new_addr <> 0UL)
     (ensures
@@ -50,8 +50,8 @@ val promote_object_preserves_free_list_shape
   (wosize: nat{wosize > 0})
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       FreeListShape.fp_pointer_or_zero fp /\
       FreeListShape.blue_link_fields_valid major /\
       chain_objects_blue major fp /\
@@ -66,8 +66,8 @@ val promote_object_preserves_free_list_shape
 val promote_all_preserves_blue_fields_closed
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     chain_objects_blue major fp)
           (ensures blue_fields_closed (promote_all_spec minor major fp live_set).major_final)
 

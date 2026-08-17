@@ -23,8 +23,8 @@ let distinct_live_set (live_set: seq U64.t) : prop =
 val promote_all_preserves_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
   : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words /\
                     distinct_live_set live_set)
           (ensures (let res = promote_all_spec minor major fp live_set in
                     fields_match_minor minor res.major_final res.fwd_map

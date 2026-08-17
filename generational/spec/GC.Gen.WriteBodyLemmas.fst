@@ -355,7 +355,7 @@ let write_body_preserves_fl_chain_terminates
 /// write_body_preserves_chain_avoids_self
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries no"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let write_body_preserves_chain_avoids_self
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)

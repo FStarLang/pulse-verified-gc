@@ -166,6 +166,66 @@ private let aligned_lt_heap_size (i: nat{i < heap_size})
     assert (heap_size % 8 == 0);
     assert (a < heap_size)
 
+/// Build the `hp_addr` for a word-aligned in-bounds offset.
+///
+/// Query splitting checks the `hp_addr` refinement in the caller's full
+/// context, where `U64.v (U64.uint_to_t a) % 8 == 0` is expensive; proving it
+/// once here keeps the caller's goals trivial.
+private let mk_hp_addr (a: nat{a < heap_size /\ a % 8 == 0}) : (r: hp_addr{U64.v r == a}) =
+  assert (a < pow2 64);
+  U64.uint_to_t a
+
+/// Euclidean division at the word width, discharged in an empty context.
+private let div_mod_8 (i: nat) : Lemma ((i / 8) * 8 + i % 8 == i)
+  = Math.lemma_div_mod i 8
+
+/// All eight bytes of an aligned word agree whenever the word reads agree.
+///
+/// Factored out of `heap_read_word_ext` so that the eight-way case analysis on
+/// the byte offset runs in a minimal context, rather than under the outer
+/// universally quantified extensionality hypothesis.
+private let bytes_eq_of_word_eq (h1 h2: heap) (a: nat)
+  : Lemma
+    (requires a % 8 == 0 /\ a + 7 < heap_size /\
+              read_word h1 (mk_hp_addr a) == read_word h2 (mk_hp_addr a))
+    (ensures Seq.index h1 a       == Seq.index h2 a       /\
+             Seq.index h1 (a + 1) == Seq.index h2 (a + 1) /\
+             Seq.index h1 (a + 2) == Seq.index h2 (a + 2) /\
+             Seq.index h1 (a + 3) == Seq.index h2 (a + 3) /\
+             Seq.index h1 (a + 4) == Seq.index h2 (a + 4) /\
+             Seq.index h1 (a + 5) == Seq.index h2 (a + 5) /\
+             Seq.index h1 (a + 6) == Seq.index h2 (a + 6) /\
+             Seq.index h1 (a + 7) == Seq.index h2 (a + 7))
+  = let ha = mk_hp_addr a in
+    read_word_spec h1 ha;
+    read_word_spec h2 ha;
+    let b10 = Seq.index h1 a in let b11 = Seq.index h1 (a+1) in
+    let b12 = Seq.index h1 (a+2) in let b13 = Seq.index h1 (a+3) in
+    let b14 = Seq.index h1 (a+4) in let b15 = Seq.index h1 (a+5) in
+    let b16 = Seq.index h1 (a+6) in let b17 = Seq.index h1 (a+7) in
+    let b20 = Seq.index h2 a in let b21 = Seq.index h2 (a+1) in
+    let b22 = Seq.index h2 (a+2) in let b23 = Seq.index h2 (a+3) in
+    let b24 = Seq.index h2 (a+4) in let b25 = Seq.index h2 (a+5) in
+    let b26 = Seq.index h2 (a+6) in let b27 = Seq.index h2 (a+7) in
+    combine_byte0 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte0 b20 b21 b22 b23 b24 b25 b26 b27;
+    combine_byte1 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte1 b20 b21 b22 b23 b24 b25 b26 b27;
+    combine_byte2 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte2 b20 b21 b22 b23 b24 b25 b26 b27;
+    combine_byte3 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte3 b20 b21 b22 b23 b24 b25 b26 b27;
+    combine_byte4 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte4 b20 b21 b22 b23 b24 b25 b26 b27;
+    combine_byte5 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte5 b20 b21 b22 b23 b24 b25 b26 b27;
+    combine_byte6 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte6 b20 b21 b22 b23 b24 b25 b26 b27;
+    combine_byte7 b10 b11 b12 b13 b14 b15 b16 b17;
+    combine_byte7 b20 b21 b22 b23 b24 b25 b26 b27;
+    assert (b10 == b20 /\ b11 == b21 /\ b12 == b22 /\ b13 == b23 /\
+            b14 == b24 /\ b15 == b25 /\ b16 == b26 /\ b17 == b27)
+
 let heap_read_word_ext (h1 h2: heap)
   : Lemma
     (requires (forall (a: nat).
@@ -175,33 +235,12 @@ let heap_read_word_ext (h1 h2: heap)
   = let aux (i: nat{i < heap_size}) : Lemma (Seq.index h1 i == Seq.index h2 i) =
       let a = (i / 8) * 8 in
       aligned_lt_heap_size i;
-      read_word_spec h1 (U64.uint_to_t a);
-      read_word_spec h2 (U64.uint_to_t a);
-      let b10 = Seq.index h1 a in let b11 = Seq.index h1 (a+1) in
-      let b12 = Seq.index h1 (a+2) in let b13 = Seq.index h1 (a+3) in
-      let b14 = Seq.index h1 (a+4) in let b15 = Seq.index h1 (a+5) in
-      let b16 = Seq.index h1 (a+6) in let b17 = Seq.index h1 (a+7) in
-      let b20 = Seq.index h2 a in let b21 = Seq.index h2 (a+1) in
-      let b22 = Seq.index h2 (a+2) in let b23 = Seq.index h2 (a+3) in
-      let b24 = Seq.index h2 (a+4) in let b25 = Seq.index h2 (a+5) in
-      let b26 = Seq.index h2 (a+6) in let b27 = Seq.index h2 (a+7) in
-      combine_byte0 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte0 b20 b21 b22 b23 b24 b25 b26 b27;
-      combine_byte1 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte1 b20 b21 b22 b23 b24 b25 b26 b27;
-      combine_byte2 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte2 b20 b21 b22 b23 b24 b25 b26 b27;
-      combine_byte3 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte3 b20 b21 b22 b23 b24 b25 b26 b27;
-      combine_byte4 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte4 b20 b21 b22 b23 b24 b25 b26 b27;
-      combine_byte5 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte5 b20 b21 b22 b23 b24 b25 b26 b27;
-      combine_byte6 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte6 b20 b21 b22 b23 b24 b25 b26 b27;
-      combine_byte7 b10 b11 b12 b13 b14 b15 b16 b17;
-      combine_byte7 b20 b21 b22 b23 b24 b25 b26 b27;
-      assert (i == a + (i % 8))
+      bytes_eq_of_word_eq h1 h2 a;
+      div_mod_8 i;
+      let r = i % 8 in
+      assert (i == a + r);
+      assert (r == 0 \/ r == 1 \/ r == 2 \/ r == 3 \/
+              r == 4 \/ r == 5 \/ r == 6 \/ r == 7)
     in
     FStar.Classical.forall_intro aux;
     Seq.lemma_eq_intro h1 h2

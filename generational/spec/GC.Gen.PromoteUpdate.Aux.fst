@@ -23,7 +23,7 @@ open GC.Gen.PromoteUpdate.Obj
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
 
-#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1"
 let rec update_all_objects_aux_preserves_objects
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires
@@ -88,7 +88,7 @@ let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
 
 /// update_all_objects_aux preserves well_formed_heap_part1 (inductive).
 /// Each step: update_object_pointers preserves all headers → preserves wfh_part1.
-#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1"
 let rec update_all_objects_aux_preserves_wfh_part1
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   : Lemma (requires

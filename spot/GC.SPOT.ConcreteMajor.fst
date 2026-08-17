@@ -21,6 +21,7 @@ module FreeListShape = GC.Gen.FreeListShape
 module GenInv = GC.Gen.HeapInvariant
 module Promote = GC.Gen.Promote
 module Layout = GC.SPOT.Layout
+module SpecHeap = GC.Spec.Heap
 
 let spot_major_room : prop =
   U64.v zero_addr + 40 <= heap_size
@@ -539,11 +540,11 @@ let spot_major_well_formed_heap (r: unit{spot_major_room})
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let spot_major_fl_valid (r: unit{spot_major_room})
   : Lemma (ensures AllocLemmas.fl_valid (spot_major_heap r) (spot_major_fp r)
-                    (heap_size / U64.v mword))
+                    heap_words)
   =
   let major = spot_major_heap r in
   let fp = spot_major_fp r in
-  let fuel = heap_size / U64.v mword in
+  let fuel = heap_words in
   spot_major_objects r;
   spot_major_free_reads r;
   spot_major_layout_facts r;
@@ -572,11 +573,11 @@ let spot_major_fl_valid (r: unit{spot_major_room})
 
 let spot_major_fl_chain_terminates (r: unit{spot_major_room})
   : Lemma (ensures AllocLemmas.fl_chain_terminates (spot_major_heap r) (spot_major_fp r)
-                    (heap_size / U64.v mword))
+                    heap_words)
   =
   let major = spot_major_heap r in
   let fp = spot_major_fp r in
-  let fuel = heap_size / U64.v mword in
+  let fuel = heap_words in
   spot_major_free_reads r;
   spot_major_layout_facts r;
   hd_address_spec (spot_free_obj r);
@@ -623,7 +624,7 @@ let spot_major_blue_link_fields_valid (r: unit{spot_major_room})
 let spot_major_fp_valid (r: unit{spot_major_room})
   : Lemma (ensures SweepInv.fp_valid (spot_major_fp r) (spot_major_heap r))
   =
-  let fuel = heap_size / U64.v mword in
+  let fuel = heap_words in
   assert (fuel > 0);
   spot_major_fp_pointer_or_zero r;
   spot_major_fl_valid r;
@@ -765,11 +766,11 @@ let spot_major_dense (r: unit{spot_major_room})
 let spot_major_chain_avoids_c (r: unit{spot_major_room})
   : Lemma (ensures
       AllocLemmas.chain_avoids (spot_major_heap r) (spot_major_fp r) (spot_c r)
-        (heap_size / U64.v mword) = true)
+        heap_words = true)
   =
   let major = spot_major_heap r in
   let fp = spot_major_fp r in
-  let fuel = heap_size / U64.v mword in
+  let fuel = heap_words in
   spot_major_free_reads r;
   spot_major_layout_facts r;
   assert (fuel > 0);
@@ -797,7 +798,7 @@ let spot_major_chain_objects_blue (r: unit{spot_major_room})
     : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr major) /\
                       ~(SpecObj.is_blue obj major))
             (ensures AllocLemmas.chain_avoids major (spot_major_fp r) obj
-                       (heap_size / U64.v mword) = true)
+                       heap_words = true)
     =
     spot_major_object_cases r obj;
     spot_major_c_reads r;

@@ -26,6 +26,13 @@ module ArrayWord = GC.Impl.ArrayWord
 /// Platform assumption: SizeT can hold U64 values (true on 64-bit)
 assume val platform_fits_u64 : squash SZ.fits_u64
 
+/// `a + b` stays 8-aligned when both summands are.  Proved here, in an empty
+/// context, because discharging it inside the Pulse VC for `minor_alloc` sends
+/// Z3 4.15.3 into a search it never comes back from.
+let mod8_add (a b: nat)
+  : Lemma (requires a % 8 == 0 /\ b % 8 == 0) (ensures (a + b) % 8 == 0)
+  = FStar.Math.Lemmas.modulo_distributivity a b 8
+
 /// Minor heap size as SizeT
 let minor_heap_size_sz : (n:SZ.t{SZ.v n == minor_heap_size}) =
   SZ.uint64_to_sizet minor_heap_size_u64
@@ -99,14 +106,24 @@ fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
   if U64.lte new_bump minor_heap_size_u64 {
     // Write header at bump
     let hdr = make_header wosize tag;
+    assert (pure (U64.v obj_bytes >= 8));
+    assert (pure (U64.v bump + 8 <= minor_heap_size));
     let base = SZ.uint64_to_sizet bump;
+    assert (pure (SZ.v base == U64.v bump));
+    assert (pure (SZ.v base + 8 <= minor_heap_size));
     ArrayWord.write_u64_le mh.data base hdr;
     // Advance bump
     R.op_Colon_Equals mh.bump_ref new_bump;
     assert (pure (U64.v new_bump <= minor_heap_size));
     assert (pure (U64.v obj_bytes % 8 == 0));
+    assert (pure (U64.v bump % 8 == 0));
+    assert (pure (U64.v new_bump == U64.v bump + U64.v obj_bytes));
+    mod8_add (U64.v bump) (U64.v obj_bytes);
     assert (pure (U64.v new_bump % 8 == 0));
     let obj_addr = U64.add bump 8UL;
+    assert (pure (U64.v obj_addr == U64.v bump + 8));
+    assert (pure (U64.v obj_addr >= 8));
+    assert (pure (obj_addr =!= 0UL));
     fold (is_minor mh _ new_bump);
     obj_addr
   } else {
@@ -245,6 +262,7 @@ fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
             U64.v obj_addr + U64.v wosize * 8 <= minor_heap_size /\
             U64.v bump <= minor_heap_size /\
             U64.v minor_base_addr > 0)
+  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -306,6 +324,7 @@ fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
               U64.v bump >= 8 /\
               U64.v minor_base_addr > 0 /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
+    decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
   {
     let pv = !pos;
     let hdr = minor_read mh pv;
@@ -468,6 +487,7 @@ fn synthesize_one_closure_infix
             Seq.length farr_i == fwd_arr_size /\
             U64.v parent_fwd > 0 /\
             U64.v parent_fwd < pow2 63)
+  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -546,6 +566,7 @@ fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
               U64.v bump >= 8 /\
               Seq.length farr_i == fwd_arr_size /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
+      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;
@@ -675,6 +696,7 @@ fn find_infix_in_one_closure
             Seq.length rs_i == SZ.v cap /\
             SZ.v cnt_i <= SZ.v cap /\
             SZ.v cnt_i >= SZ.v 'cnt)
+  decreases (Prims.op_Subtraction (U64.v wosize) (U64.v !j))
   {
     let jv = !j;
     minor_field_in_bounds (U64.v obj_addr) (U64.v wosize) (U64.v jv);
@@ -763,6 +785,7 @@ fn find_infix_parents (mh: minor_heap_t)
               SZ.v cnt <= SZ.v cap /\
               SZ.v cnt >= SZ.v nroots /\
               (not dn ==> U64.v pv + 8 <= U64.v bump))
+      decreases (Prims.op_Addition (Prims.op_Subtraction minor_heap_size (U64.v !pos)) (if !done_ then 0 else 1))
     {
       let pv = !pos;
       let hdr = minor_read mh pv;

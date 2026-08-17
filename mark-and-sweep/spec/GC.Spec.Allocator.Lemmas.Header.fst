@@ -24,7 +24,7 @@ module Seq = FStar.Seq
 /// ===========================================================================
 
 /// Arithmetic characterization of make_header:
-#push-options "--z3rlimit 400 "
+#push-options "--z3rlimit 400"
 let make_header_value (wz: U64.t{U64.v wz < pow2 54})
                       (c: U64.t{U64.v c < 4})
                       (t: U64.t{U64.v t < 256})
@@ -51,7 +51,7 @@ let make_header_value (wz: U64.t{U64.v wz < pow2 54})
 #pop-options
 
 /// getWosize of make_header returns the original wosize
-#push-options "--z3rlimit 400 "
+#push-options "--z3rlimit 400"
 let make_header_getWosize (wz: U64.t{U64.v wz < pow2 54})
                           (c: U64.t{U64.v c < 4})
                           (t: U64.t{U64.v t < 256})
@@ -68,7 +68,7 @@ let make_header_getWosize (wz: U64.t{U64.v wz < pow2 54})
 #pop-options
 
 /// getTag of make_header returns the original tag
-#push-options "--z3rlimit 400 "
+#push-options "--z3rlimit 400"
 let make_header_getTag (wz: U64.t{U64.v wz < pow2 54})
                        (c: U64.t{U64.v c < 4})
                        (t: U64.t{U64.v t < 256})

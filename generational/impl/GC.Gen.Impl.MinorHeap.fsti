@@ -42,22 +42,6 @@ let is_minor (mh: minor_heap_t) (d: minor_heap) (b: U64.t) : slprop =
   pure (U64.v b % 8 == 0 /\ U64.v b <= minor_heap_size)
 
 /// ---------------------------------------------------------------------------
-/// Allocation
-/// ---------------------------------------------------------------------------
-
-/// Bump-allocate an object in the minor heap.
-/// Returns 0UL on OOM, or the object address (bump + 8) on success.
-fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
-  requires is_minor mh 'd 'b **
-           pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
-                 U64.v tag < 256)
-  returns obj: U64.t
-  ensures exists* d2 b2. is_minor mh d2 b2 **
-    pure (
-      (obj == 0UL ==> d2 == 'd /\ b2 == 'b) /\
-      (obj <> 0UL ==> U64.v b2 % 8 == 0 /\ U64.v b2 <= minor_heap_size))
-
-/// ---------------------------------------------------------------------------
 /// Read / Write
 /// ---------------------------------------------------------------------------
 
@@ -74,6 +58,22 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0)
   ensures is_minor mh (minor_write_word_t 'd addr v) 'b
+
+/// ---------------------------------------------------------------------------
+/// Allocation
+/// ---------------------------------------------------------------------------
+
+/// Bump-allocate an object in the minor heap.
+/// Returns 0UL on OOM, or the object address (bump + 8) on success.
+fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
+  requires is_minor mh 'd 'b **
+           pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
+                 U64.v tag < 256)
+  returns obj: U64.t
+  ensures exists* d2 b2. is_minor mh d2 b2 **
+    pure (
+      (obj == 0UL ==> d2 == 'd /\ b2 == 'b) /\
+      (obj <> 0UL ==> U64.v b2 % 8 == 0 /\ U64.v b2 <= minor_heap_size))
 
 /// ---------------------------------------------------------------------------
 /// Reset (after minor collection)

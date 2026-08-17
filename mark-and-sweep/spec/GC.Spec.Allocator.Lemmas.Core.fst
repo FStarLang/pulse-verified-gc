@@ -165,11 +165,11 @@ let rec alloc_search_preserves_wf
 
 let alloc_spec_preserves_wf (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword))
+                    fl_valid g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz in
                     well_formed_heap r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_wf g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_wf g fp 0UL fp wz heap_words
 
 /// Re-export chain machinery required by Core.fsti (implemented in Chain)
 let fl_valid_transfer = AllocChain.fl_valid_transfer
@@ -404,6 +404,42 @@ private let rec alloc_search_preserves_objects_part1
 let alloc_split_fl_transfer_pre = AllocSearchBase.alloc_split_fl_transfer_pre
 let alloc_exact_fl_transfer_pre = AllocSearchBase.alloc_exact_fl_transfer_pre
 
+/// The free-list tail `next_fp` is distinct from the remainder object `new_fp`
+/// carved out of `obj`'s block.
+///
+/// This was originally proved inline inside `alloc_search_preserves_fl_valid`.
+/// Now that every proof obligation is discharged as its own SMT query, the
+/// accumulated context of that (very large) lemma made this goal time out, so
+/// it lives here where the context is small.
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+private let next_fp_ne_rem_obj
+  (g: heap) (obj: obj_addr) (next_fp new_fp: U64.t) (block_wz: nat)
+  : Lemma (requires
+             Seq.mem obj (objects zero_addr g) /\
+             next_fp <> obj /\
+             U64.v (wosize_of_object_as_wosize obj g) == block_wz /\
+             U64.v obj < U64.v new_fp /\
+             U64.v new_fp < U64.v obj + block_wz * 8 /\
+             U64.v new_fp < heap_size /\
+             U64.v new_fp % U64.v mword == 0 /\
+             ((U64.v next_fp >= U64.v mword /\
+               U64.v next_fp < heap_size /\
+               U64.v next_fp % U64.v mword = 0) ==>
+              Seq.mem next_fp (objects zero_addr g)))
+          (ensures next_fp <> new_fp)
+  = if next_fp = 0UL then ()
+    else if U64.v next_fp < U64.v mword then ()
+    else if U64.v next_fp >= heap_size then ()
+    else if U64.v next_fp % U64.v mword <> 0 then ()
+    else if U64.v next_fp < U64.v obj then ()
+    else begin
+      // next_fp >= obj and next_fp <> obj, so next_fp > obj; separation then
+      // places next_fp beyond obj's whole block, while new_fp sits inside it.
+      FStar.Classical.move_requires_2 U64.v_inj next_fp obj;
+      objects_separated zero_addr g obj (next_fp <: obj_addr)
+    end
+#pop-options
+
 
 /// The main recursive proof: alloc_search preserves fl_valid.
 #restart-solver
@@ -413,7 +449,7 @@ let rec alloc_search_preserves_fl_valid
   : Lemma (requires well_formed_heap g /\
                     fl_valid g cur_fp fuel /\
                     fl_chain_terminates g cur_fp fuel /\
-                    fl_valid g head_fp (heap_size / U64.v mword) /\
+                    fl_valid g head_fp heap_words /\
                     wz >= 1 /\
                     (prev_fp <> 0UL ==>
                       (prev_fp <> cur_fp /\
@@ -425,9 +461,9 @@ let rec alloc_search_preserves_fl_valid
                        U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
                        read_word g (prev_fp <: obj_addr) = cur_fp)))
           (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
-                    fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+                    fl_valid r.heap_out r.fp_out heap_words))
           (decreases fuel)
-  = let big_fuel = heap_size / U64.v mword in
+  = let big_fuel = heap_words in
     if fuel = 0 then ()
     // Base cases: result = {g, head_fp, 0UL}. fl_valid g head_fp big_fuel from precondition.
     else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
@@ -552,29 +588,15 @@ let rec alloc_search_preserves_fl_valid
             //    If in objects: objects_separated gives it's outside obj's block,
             //    but rem_obj is inside obj's block, so they differ
             assert (next_fp <> cur_fp);  // from fl_valid_next
-            (if next_fp = 0UL then ()
-             else if U64.v next_fp < U64.v mword then ()
-             else if U64.v next_fp >= heap_size then ()
-             else if U64.v next_fp % U64.v mword <> 0 then ()
-             else begin
-               // next_fp is valid and in objects(0,g)
-               assert (big_fuel > 0);
-               fl_valid_gives_mem g next_fp big_fuel;
-               assert (Seq.mem next_fp (objects zero_addr g));
-               // rem_obj is in [obj+8, obj+block_wz*8) (interior of obj's block)
-               // next_fp is either before obj or after obj's block
-               if U64.v next_fp < U64.v obj then begin
-                 // next_fp < obj < rem_obj
-                 assert (U64.v next_fp < U64.v new_fp)
-               end else begin
-                 // next_fp > obj: objects_separated gives next_fp > obj + wosize*8
-                 objects_separated zero_addr g obj (next_fp <: obj_addr);
-                 assert (U64.v next_fp > U64.v obj + block_wz * 8);
-                 // rem_obj = hd + (1+wz)*8 + 8 = obj + wz*8 + 8 < obj + block_wz*8
-                 assert (U64.v new_fp < U64.v obj + block_wz * 8);
-                 assert (U64.v next_fp > U64.v new_fp)
-               end
-             end);
+            assert (U64.v (wosize_of_object_as_wosize obj g) == block_wz);
+            assert (U64.v obj < U64.v new_fp);
+            assert (U64.v new_fp < U64.v obj + block_wz * 8);
+            introduce (U64.v next_fp >= U64.v mword /\
+                       U64.v next_fp < heap_size /\
+                       U64.v next_fp % U64.v mword = 0) ==>
+                      Seq.mem next_fp (objects zero_addr g)
+            with (assert (big_fuel > 0); fl_valid_gives_mem g next_fp big_fuel);
+            next_fp_ne_rem_obj g obj next_fp new_fp block_wz;
             assert (next_fp <> new_fp);
             // 6. Build fl_valid g' new_fp big_fuel via fl_valid_step
             fl_valid_step g' new_fp big_fuel
@@ -673,26 +695,15 @@ let rec alloc_search_preserves_fl_valid
             assert (next_fp <> cur_fp);
             assert (next_fp <> obj);
             assert (big_fuel > 0);
-            (if next_fp = 0UL then ()
-             else if U64.v next_fp < U64.v mword then ()
-             else if U64.v next_fp >= heap_size then ()
-             else if U64.v next_fp % U64.v mword <> 0 then ()
-             else begin
-               fl_valid_gives_mem g next_fp big_fuel;
-               assert (Seq.mem next_fp (objects zero_addr g));
-               assert (U64.v new_fp == rem_obj_nat);
-               assert (rem_obj_nat >= U64.v obj);
-               if U64.v next_fp < U64.v obj then begin
-                 assert (U64.v new_fp < U64.v obj + block_wz * 8);
-                 assert (U64.v next_fp < U64.v obj);
-                 assert (U64.v new_fp >= U64.v obj)
-               end else begin
-                 assert (U64.v next_fp > U64.v obj);
-                 objects_separated zero_addr g obj (next_fp <: obj_addr);
-                 assert (U64.v next_fp > U64.v obj + block_wz * 8);
-                 assert (U64.v new_fp < U64.v obj + block_wz * 8)
-               end
-             end);
+            assert (U64.v (wosize_of_object_as_wosize obj g) == block_wz);
+            assert (U64.v obj < U64.v new_fp);
+            assert (U64.v new_fp < U64.v obj + block_wz * 8);
+            introduce (U64.v next_fp >= U64.v mword /\
+                       U64.v next_fp < heap_size /\
+                       U64.v next_fp % U64.v mword = 0) ==>
+                      Seq.mem next_fp (objects zero_addr g)
+            with fl_valid_gives_mem g next_fp big_fuel;
+            next_fp_ne_rem_obj g obj next_fp new_fp block_wz;
             assert (next_fp <> new_fp);
             fl_valid_step g' new_fp big_fuel;
             assert (fl_valid g' new_fp big_fuel);
@@ -794,12 +805,12 @@ let rec alloc_search_preserves_fl_valid
 
 let alloc_spec_preserves_fl_valid (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword) /\
-                    fl_chain_terminates g fp (heap_size / U64.v mword))
+                    fl_valid g fp heap_words /\
+                    fl_chain_terminates g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz in
-                    fl_valid r.heap_out r.fp_out (heap_size / U64.v mword)))
+                    fl_valid r.heap_out r.fp_out heap_words))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_fl_valid g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_fl_valid g fp 0UL fp wz heap_words
 
 let chain_avoids_unfold_step = AllocChain.chain_avoids_unfold_step
 let chain_avoids_head_ne = AllocChain.chain_avoids_head_ne
@@ -833,12 +844,12 @@ let alloc_spec_preserves_fl_chain_terminates = AllocSearchChain.alloc_spec_prese
 
 let alloc_spec_preserves_objects (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword))
+                    fl_valid g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       Seq.mem x (objects zero_addr r.heap_out))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_objects g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_objects g fp 0UL fp wz heap_words
 
 
 /// ===========================================================================
@@ -932,7 +943,7 @@ private let field_write_preserves_no_black
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--split_queries always --z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let alloc_from_block_preserves_no_black
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires no_black_objects g /\
@@ -1137,11 +1148,11 @@ let rec alloc_search_preserves_no_black
 let alloc_spec_preserves_no_black (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires no_black_objects g /\
                     well_formed_heap g /\
-                    fl_valid g fp (heap_size / U64.v mword))
+                    fl_valid g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz in
                     no_black_objects r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_no_black g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_no_black g fp 0UL fp wz heap_words
 
 
 /// ===========================================================================
@@ -1162,10 +1173,10 @@ let alloc_spec_obj_not_in_chain = AllocObjNotInChain.alloc_spec_obj_not_in_chain
 /// alloc_spec preserves objects membership under part1
 let alloc_spec_preserves_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp (heap_size / U64.v mword) /\
-                    fl_chain_terminates g fp (heap_size / U64.v mword))
+                    fl_valid g fp heap_words /\
+                    fl_chain_terminates g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz in
                     (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
                       Seq.mem x (objects zero_addr r.heap_out))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_objects_part1 g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_objects_part1 g fp 0UL fp wz heap_words

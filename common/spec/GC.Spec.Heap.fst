@@ -16,6 +16,11 @@ module U64 = FStar.UInt64
 module U8 = FStar.UInt8
 
 open GC.Spec.Base
+module Cast = FStar.Int.Cast
+// Query splitting (now unconditional) discharges each goal in isolation, which
+// costs more per goal in this bitvector-heavy module than the interface-level
+// rlimit of 10 allowed.
+#set-options "--z3rlimit 50"
 
 /// uint8_to_uint64, uint64_to_uint8, combine_bytes defined in .fsti
 
@@ -278,6 +283,21 @@ let hd_address_injective (f1: obj_addr) (f2: obj_addr) =
 module Header = GC.Lib.Header
 
 /// Read all field words of an object (from index i to wz-1)
+/// Query splitting checks the recursive call's precondition and its decreases
+/// obligation in isolation, inside this module's large bitvector context, so
+/// give this definition more room than the module-wide rlimit.
+/// Bound and termination facts for the `read_fields` recursion.
+///
+/// Discharged in an empty context: inside `read_fields` these trivial goals
+/// carry the whole heap-and-object context, where they time out.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let field_index_step (i: nat) (wz: nat)
+  : Lemma (requires i <= wz /\ i <> wz)
+          (ensures i + 1 <= wz /\ wz - (i + 1) << wz - i)
+  = ()
+#pop-options
+
+#push-options "--z3rlimit 50"
 let rec read_fields (g: heap) (obj: obj_addr) (wz: nat) (i: nat)
   : Ghost (option (seq U64.t))
           (requires i <= wz)
@@ -287,6 +307,7 @@ let rec read_fields (g: heap) (obj: obj_addr) (wz: nat) (i: nat)
           (decreases (wz - i))
   = if i = wz then Some Seq.empty
     else
+      let _ = field_index_step i wz in
       let addr_nat = U64.v obj + i * 8 in
       if addr_nat >= heap_size || addr_nat % 8 <> 0 then None
       else begin
@@ -296,6 +317,7 @@ let rec read_fields (g: heap) (obj: obj_addr) (wz: nat) (i: nat)
         | None -> None
         | Some rest -> Some (Seq.cons v rest)
       end
+#pop-options
 
 /// Total color extraction: maps 0→White, 1→Gray, 2→Black, anything else→White
 /// (Color 3 never occurs in OCaml; mapping to White is safe)
@@ -322,6 +344,7 @@ let rec read_fields_succeeds (g: heap) (obj: obj_addr) (wz: nat) (i: nat)
 
 /// read_fields_index: the j-th element of read_fields equals read_word at the right address
 /// Note: U64.v obj + j * 8 < heap_size follows from j < wz and obj + wz * 8 <= heap_size
+#push-options "--z3rlimit 50"
 let rec read_fields_index (g: heap) (obj: obj_addr) (wz: nat) (start: nat) (j: nat)
   : Lemma
     (requires start <= wz /\ j >= start /\ j < wz /\
@@ -344,6 +367,7 @@ let rec read_fields_index (g: heap) (obj: obj_addr) (wz: nat) (start: nat) (j: n
         read_fields_index g obj wz (start + 1) j
       end
     end
+#pop-options
 
 /// Parse one object from raw heap bytes at header address h_addr.
 /// Returns None if the object doesn't fit in the heap.
@@ -553,7 +577,7 @@ let pointer_closed_ext_nil (addrs: list obj_addr)
 
 /// Structural proof: given that ALL entries at walk positions satisfy entry_check_at,
 /// prove pointer_closed. Works because unpack_objects is transparent in this module.
-#push-options "--z3rlimit 200 --split_queries always"
+#push-options "--z3rlimit 200"
 let rec pointer_closed_from_universal (g: heap) (start: hp_addr) (addrs: list obj_addr) 
   : Lemma
     (requires 

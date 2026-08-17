@@ -13,6 +13,7 @@ module GC.Impl.Allocator
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
+module SpecBase = GC.Spec.Base
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module SpecAlloc = GC.Spec.Allocator
@@ -20,6 +21,18 @@ module SpecFields = GC.Spec.Fields
 module SpecObject = GC.Spec.Object
 module SI = GC.Spec.SweepInv
 module AllocLemmas = GC.Spec.Allocator.Lemmas
+
+/// Initialize the heap as one large free block.
+///
+/// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
+/// Its first field is set to 0 (end of free list).
+///
+/// Returns the initial free-list pointer (= mword = 8).
+fn init_heap (heap: heap_t)
+  requires is_heap heap 's
+  returns fp: U64.t
+  ensures exists* s2. is_heap heap s2 **
+    pure ((s2, fp) == SpecAlloc.init_heap_spec 's)
 
 /// Allocate an object of wosize words from the free list.
 ///
@@ -53,8 +66,8 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SpecFields.well_formed_heap_part1 's /\
-                 AllocLemmas.fl_valid 's fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 's fp (heap_size / U64.v mword))
+                 AllocLemmas.fl_valid 's fp SpecBase.heap_words /\
+                 AllocLemmas.fl_chain_terminates 's fp SpecBase.heap_words)
   returns res: (U64.t & U64.t)
   ensures exists* s2. is_heap heap s2 **
     pure (let spec_res = SpecAlloc.alloc_spec 's fp (U64.v wosize) in
@@ -62,14 +75,3 @@ fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
           fst res == spec_res.fp_out /\
           snd res == spec_res.obj_out)
 
-/// Initialize the heap as one large free block.
-///
-/// The entire heap becomes a single blue object with wosize = (heap_size/8) - 1.
-/// Its first field is set to 0 (end of free list).
-///
-/// Returns the initial free-list pointer (= mword = 8).
-fn init_heap (heap: heap_t)
-  requires is_heap heap 's
-  returns fp: U64.t
-  ensures exists* s2. is_heap heap s2 **
-    pure ((s2, fp) == SpecAlloc.init_heap_spec 's)

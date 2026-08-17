@@ -29,6 +29,7 @@ open GC.Spec.DFS
 module HeapGraph = GC.Spec.HeapGraph
 module Coalesce = GC.Spec.Coalesce
 module SweepInv = GC.Spec.SweepInv
+module MarkInv = GC.Spec.MarkInv
 
 /// ---------------------------------------------------------------------------
 /// Abstract GC Postcondition (Pillars 1 + 4)
@@ -122,7 +123,7 @@ let gc_preserves_structure g st fp =
   let g_mark = mark g st in
   let g_sweep = fst (sweep g_mark fp) in
   mark_preserves_create_graph g st;
-  mark_aux_preserves_objects g st (heap_size / U64.v mword);
+  mark_aux_preserves_objects g st heap_words;
   assert (objects zero_addr g_mark == objects zero_addr g);
   sweep_preserves_objects g_mark fp;
   // objects zero_addr g_mark == objects zero_addr g_sweep
@@ -164,7 +165,7 @@ val gc_preserves_data : (g: heap) -> (st: seq obj_addr) -> (fp: U64.t) ->
 let gc_preserves_data g st fp =
   mark_preserves_wf g st;
   mark_no_grey_remains g st;
-  mark_aux_preserves_objects g st (heap_size / U64.v mword);
+  mark_aux_preserves_objects g st heap_words;
   assert (objects zero_addr (mark g st) == objects zero_addr g);
   sweep_preserves_objects (mark g st) fp;
   let aux (x: obj_addr) (i: U64.t{U64.v i >= 1}) : Lemma
@@ -207,7 +208,7 @@ let end_to_end_correctness h_init st roots fp =
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
   
-  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  mark_aux_preserves_objects h_init st heap_words;
   assert (objects zero_addr h_mark == objects zero_addr h_init);
   assert (fp_in_heap fp h_mark);
   
@@ -251,7 +252,7 @@ let gc_postcondition_from_correctness h_init st roots fp =
   let h_sweep = fst (sweep h_mark fp) in
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
-  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  mark_aux_preserves_objects h_init st heap_words;
   sweep_preserves_objects h_mark fp;
   sweep_resets_colors h_mark fp;
   sweep_preserves_wf h_mark fp;
@@ -273,7 +274,7 @@ let full_gc_correctness_from_end_to_end h_init st roots fp =
 
 let gc_safety h_init st roots fp =
   end_to_end_correctness h_init st roots fp;
-  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  mark_aux_preserves_objects h_init st heap_words;
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
   sweep_preserves_objects (mark h_init st) fp;
@@ -359,7 +360,7 @@ let mark_preserves_no_scan_invariant
   (st: seq obj_addr{stack_props h_init st})
   : Lemma (no_scan_invariant (mark h_init st))
   = let h_mark = mark h_init st in
-    mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+    mark_aux_preserves_objects h_init st heap_words;
     // Establish universal preservation facts individually
     let aux1 (src: obj_addr) : Lemma
       (requires Seq.mem src (objects zero_addr h_init))
@@ -518,7 +519,7 @@ let sweep_post_sweep_strong h_init st fp =
   mark_no_grey_remains h_init st;
   mark_preserves_no_pointer_to_blue h_init st;
   mark_preserves_no_scan_invariant h_init st;
-  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  mark_aux_preserves_objects h_init st heap_words;
   assert (objects zero_addr h_mark == objects zero_addr h_init);
   assert (fp_in_heap fp h_mark);
 
@@ -727,7 +728,7 @@ let coalesce_precondition_bridge h_mark fp =
 
 /// Helper: coalesce preserves get_pointer_fields for white survivors.
 /// Uses the now-public get_pointer_fields_aux_preserved from GC.Spec.Sweep.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 private let coalesce_preserves_edges
   (h_sweep: heap) (x: obj_addr)
   : Lemma
@@ -774,7 +775,7 @@ private let coalesce_preserves_edges
 /// Key bridge: coalesce_objects_subset ensures coalesced walk objects
 /// were in the original walk, enabling reuse of sweep-level proofs.
 
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
 let full_gc_correctness_through_coalesce
   (h_init: heap) (st: seq obj_addr) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
@@ -801,7 +802,7 @@ let full_gc_correctness_through_coalesce
   // Mark/sweep fundamentals
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
-  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  mark_aux_preserves_objects h_init st heap_words;
   sweep_preserves_objects h_mark fp;
   sweep_preserves_wf h_mark fp;
   objects_is_vertex_set h_init;
@@ -971,7 +972,7 @@ let mark_satisfies_mark_post h_init st roots fp =
   GC.Spec.MarkInv.mark_inv_elim_objects h_init st;
   mark_preserves_wf h_init st;
   mark_no_grey_remains h_init st;
-  mark_aux_preserves_objects h_init st (heap_size / U64.v mword);
+  mark_aux_preserves_objects h_init st heap_words;
   // density and objects > 0 for h_mark
   mark_preserves_density h_init st;
   mark_preserves_objects_gt0 h_init st;
@@ -1086,7 +1087,7 @@ let coalesce_precondition_bridge_gen h_init h_mark roots fp =
 /// full_gc_correctness_through_coalesce but derives mark properties
 /// from mark_post.
 
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0 --split_queries no"
+#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
 let full_gc_correctness_through_coalesce_gen h_init h_mark roots fp =
   let h_sweep = fst (sweep h_mark fp) in
   let h_coal = fst (Coalesce.coalesce h_sweep) in

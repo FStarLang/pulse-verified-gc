@@ -44,7 +44,7 @@ private let rec seq_index_of (#a:eqtype) (s: seq a) (x: a{Seq.mem x s})
 
 /// Helper: adjacent elements in objects list are strictly ordered.
 /// Proof by structural induction on the objects list construction.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let rec objects_monotone_adjacent (g: heap) (start: hp_addr) (i: nat)
   : Lemma
     (requires i + 1 < Seq.length (objects start g))
@@ -149,7 +149,7 @@ private let objects_above_after (g: heap) (obj: obj_addr) (pos: nat)
 
 /// update_all_objects_aux processing objects AFTER obj doesn't change obj's field j.
 /// Those objects are at higher addresses, so their body regions don't overlap obj's fields.
-#push-options "--z3rlimit 50 --fuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1"
 let rec update_all_objects_aux_after_preserves_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat)
@@ -224,7 +224,7 @@ let rec update_all_objects_aux_after_preserves_field
 #pop-options
 
 /// Main induction: update_all_objects_aux computes the expected field effect.
-#push-options "--z3rlimit 50 --fuel 1 --split_queries always --z3refresh"
+#push-options "--z3rlimit 50 --fuel 1 --z3refresh"
 let rec update_all_objects_aux_field_effect
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)

@@ -10,7 +10,7 @@ module GC.Impl.Coalesce
 
 #lang-pulse
 
-#set-options "--z3rlimit 100 --split_queries always"
+#set-options "--z3rlimit 100"
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -102,6 +102,7 @@ fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
             Seq.length s == heap_size /\
             Alloc.zero_fields s (U64.uint_to_t (U64.v a)) (U64.v n - U64.v i) ==
               Alloc.zero_fields 's start_addr (U64.v n))
+    decreases (Prims.op_Subtraction (U64.v n) (U64.v !idx))
   {
     let cur_a = !addr;
     let cur_i = !idx;
@@ -239,6 +240,7 @@ fn coalesce (heap: heap_t)
               U64.v fb - U64.v mword + U64.v rw * U64.v mword == U64.v v) /\
             // Spec equivalence and walk validity (guarded for well-typedness)
             coalesce_spec_inv 's s (U64.v v) fb (U64.v rw) fv)
+    decreases (Prims.op_Subtraction heap_size (U64.v !current))
   {
     let cur = !current;
     let cur_fb = !fb_ref;
@@ -292,6 +294,10 @@ fn coalesce (heap: heap_t)
       SpecObject.color_of_object_spec obj s;
       SpecObject.is_blue_iff obj s;
 
+      assert (pure (SpecObject.is_blue obj s));
+      assert (pure (SpecObject.is_blue obj 's));
+      assert (pure (Seq.head (SpecFields.objects cur 's) == obj));
+
       // Bridge lemma: produces all facts needed for the new invariant
       blue_step_coalesce_aux_eq 's s cur
         cur_fb (U64.v cur_rw) cur_fv;
@@ -338,6 +344,11 @@ fn coalesce (heap: heap_t)
       SpecHeap.hd_f_roundtrip cur;
       SpecObject.color_of_object_spec obj s;
       SpecObject.is_blue_iff obj s;
+      // Query splitting no longer carries these bridging facts over from
+      // sibling goals, so spell them out for the precondition below.
+      SpecFields.objects_nonempty_head cur 's;
+      assert (pure (Seq.head (SpecFields.objects cur 's) == obj));
+      assert (pure (~(SpecObject.is_blue obj 's)));
 
       // Bridge lemma: produces all facts needed for the new invariant
       white_step_coalesce_aux_eq 's s cur

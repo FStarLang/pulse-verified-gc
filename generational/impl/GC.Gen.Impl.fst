@@ -45,6 +45,8 @@ module FreeListShape = GC.Gen.FreeListShape
 module MinorFwd = GC.Gen.MinorCollectForwarding
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
+module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
+module Cheney = GC.Gen.Impl.Cheney
 
 /// ---------------------------------------------------------------------------
 /// Allocation
@@ -126,10 +128,30 @@ let add_no_overflow (p tw: nat)
     FStar.Math.Lemmas.lemma_mult_le_right 8 minor_heap_size (pow2 57);
     assert (minor_heap_size * 8 <= pow2 57 * 8)
 
+/// `minor_wosize` of the object at `p + 8` is the wosize field of the header word
+/// stored at `p`.  Both sides unfold to the same thing, but the `U64.uint_to_t`
+/// round-trip inside `minor_wosize` is a goal Z3 4.15.3 will not discharge under the
+/// hypothesis load of `promote_phase`'s loop, so it is proved here instead.
+let minor_wosize_at (p obj_addr: U64.t)
+  : Lemma (requires U64.v obj_addr == U64.v p + 8 /\
+                    U64.v p % 8 == 0 /\
+                    U64.v obj_addr < minor_heap_size)
+          (ensures forall (ms: minor_state).
+                     minor_wosize ms obj_addr ==
+                     U64.v (U64.shift_right (minor_read_word_t ms.data p) 10ul))
+  = ()
+
+/// `p + (wosize + 1) * 8 <= bump` gives the bound `promote_one` asks for on the
+/// object body.  Trivial, and trivially out of reach inside the loop.
+let promote_body_bound (p wosize bump: nat)
+  : Lemma (requires p + (wosize + 1) * 8 <= bump)
+          (ensures (p + 8) + wosize * 8 <= bump)
+  = ()
+
 /// Phase 1: Promote all minor objects and fill forwarding array.
 /// Walks minor heap linearly from 0 to bump, promoting each object.
 /// Records forwarding: fwd_arr[obj/8] := new_major_addr.
-#push-options "--z3rlimit 50 --fuel 4 --ifuel 1 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
 fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                  (fwd_arr: array U64.t)
   requires is_minor minor 'md 'mb **
@@ -137,8 +159,8 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
            R.pts_to fp_ref 'fp **
            pts_to fwd_arr 'farr **
            pure (SpecFields.well_formed_heap_part1 'ms /\
-                 AllocLemmas.fl_valid 'ms 'fp (heap_size / U64.v mword) /\
-                 AllocLemmas.fl_chain_terminates 'ms 'fp (heap_size / U64.v mword) /\
+                 AllocLemmas.fl_valid 'ms 'fp heap_words /\
+                 AllocLemmas.fl_chain_terminates 'ms 'fp heap_words /\
                  Seq.length 'farr == fwd_array_size /\
                  (forall (i: nat). i < Seq.length 'farr ==> Seq.index 'farr i == 0UL))
   ensures exists* md2 mb2 ms2 fp2 farr2.
@@ -148,8 +170,8 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
     pts_to fwd_arr farr2 **
     pure (md2 == 'md /\ mb2 == 'mb /\
           SpecFields.well_formed_heap_part1 ms2 /\
-          AllocLemmas.fl_valid ms2 fp2 (heap_size / U64.v mword) /\
-          AllocLemmas.fl_chain_terminates ms2 fp2 (heap_size / U64.v mword) /\
+          AllocLemmas.fl_valid ms2 fp2 heap_words /\
+          AllocLemmas.fl_chain_terminates ms2 fp2 heap_words /\
           Seq.length farr2 == fwd_array_size)
 {
   // Read bump pointer
@@ -170,9 +192,10 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             U64.v bump % 8 == 0 /\
             md_i == 'md /\ mb_i == bump /\
             SpecFields.well_formed_heap_part1 ms_i /\
-            AllocLemmas.fl_valid ms_i fp_i (heap_size / U64.v mword) /\
-            AllocLemmas.fl_chain_terminates ms_i fp_i (heap_size / U64.v mword) /\
+            AllocLemmas.fl_valid ms_i fp_i heap_words /\
+            AllocLemmas.fl_chain_terminates ms_i fp_i heap_words /\
             Seq.length farr_i == Seq.length 'farr)
+    decreases (Prims.op_Subtraction (U64.v bump) (U64.v !pos))
   {
     let p = !pos;
     if U64.gte (U64.add p 8UL) bump {
@@ -199,6 +222,8 @@ fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
             // Establish promote_one preconditions one by one
             // obj_addr alignment: p % 8 == 0 implies (p+8) % 8 == 0
             advance_aligned (U64.v p) 1;
+            minor_wosize_at p obj_addr;
+            promote_body_bound (U64.v p) (U64.v wosize) (U64.v bump);
             // obj_addr bounds: p + total_bytes <= bump <= minor_heap_size
             // so obj_addr = p+8 < p + total_bytes <= bump <= minor_heap_size
             // and obj_addr + wosize * 8 = (p+8) + wosize*8
@@ -256,7 +281,7 @@ let fwd_bounded_implies_valid_fwd_entries
         assert (U64.v addr % U64.v mword == 0)
       end
     in
-    Classical.forall_intro (fun i -> aux i)
+    Classical.forall_intro aux
 
 /// Derivation: fwd_above_zero_addr + fwd_bounded implies fwd_targets_stable.
 /// Since targets > zero_addr >= minor_heap_size and aligned, to_minor_offset is identity
@@ -458,8 +483,8 @@ let derive_slots_scannable_in_major
   : Lemma (requires
       (let prom = CheneySpec.cheney_promote minor major_pre fp roots in
        SpecFields.well_formed_heap major_pre /\
-       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
-       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_valid major_pre fp heap_words /\
+       AllocLemmas.fl_chain_terminates major_pre fp heap_words /\
        PromoteSpec.chain_objects_blue major_pre fp /\
        minor_infix_wf minor /\
        ref_table_sound major_pre slots n))
@@ -535,7 +560,7 @@ let derive_slots_scannable_in_major
 ///   - In a pre-existing non-blue object body → frame shows same value as major_pre
 ///     → ref_table_complete covers it (second disjunct)
 ///   - In a promoted object body → the promoted object is in farr (first disjunct)
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --split_queries no"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 /// Case A helper: obj was pre-existing non-blue in major_pre
 private let derive_fwd_case_a
   (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
@@ -548,8 +573,8 @@ private let derive_fwd_case_a
        Seq.length farr == fwd_array_size /\
        represents_fwd farr fwd /\
        SpecFields.well_formed_heap major_pre /\
-       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
-       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_valid major_pre fp heap_words /\
+       AllocLemmas.fl_chain_terminates major_pre fp heap_words /\
        PromoteSpec.chain_objects_blue major_pre fp /\
        minor_infix_wf minor /\
        n <= Seq.length slots /\
@@ -614,8 +639,8 @@ private let derive_fwd_case_b
        represents_fwd farr fwd /\
        SpecFields.well_formed_heap major_pre /\
        SpecFields.well_formed_heap_part1 major_final /\
-       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
-       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_valid major_pre fp heap_words /\
+       AllocLemmas.fl_chain_terminates major_pre fp heap_words /\
        PromoteSpec.chain_objects_blue major_pre fp /\
        minor_infix_wf minor /\
        minor_wf minor /\
@@ -670,8 +695,8 @@ private let derive_fwd_ptrs_classified_pointwise
        represents_fwd farr fwd /\
        SpecFields.well_formed_heap major_pre /\
        SpecFields.well_formed_heap_part1 major_final /\
-       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
-       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_valid major_pre fp heap_words /\
+       AllocLemmas.fl_chain_terminates major_pre fp heap_words /\
        PromoteSpec.chain_objects_blue major_pre fp /\
        minor_infix_wf minor /\
        minor_wf minor /\
@@ -711,8 +736,8 @@ let derive_fwd_ptrs_classified
        represents_fwd farr prom.fwd_map /\
        SpecFields.well_formed_heap major_pre /\
        SpecFields.well_formed_heap_part1 prom.major_final /\
-       AllocLemmas.fl_valid major_pre fp (heap_size / U64.v mword) /\
-       AllocLemmas.fl_chain_terminates major_pre fp (heap_size / U64.v mword) /\
+       AllocLemmas.fl_valid major_pre fp heap_words /\
+       AllocLemmas.fl_chain_terminates major_pre fp heap_words /\
        PromoteSpec.chain_objects_blue major_pre fp /\
        minor_infix_wf minor /\
        minor_wf minor /\

@@ -31,7 +31,59 @@ module WriteBody = GC.Gen.WriteBodyLemmas
 
 /// Base case: well_formed_heap_part2 implies blue_fields_closed
 /// (blue_fields_closed is a weakening of part2 — restricted to blue objects)
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --split_queries always"
+/// Field `j >= 1` of the remainder object misses all three words written by
+/// `alloc_split_normal`.  Proved in an empty context.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+private let split_field_disjoint (hd_v obj_v src_v wz j: nat) : Lemma
+  (requires hd_v == obj_v - 8 /\ src_v == hd_v + (1 + wz) * 8 + 8 /\ j >= 1)
+  (ensures (let rhn = hd_v + (1 + wz) * 8 in
+            let fa = src_v + j * 8 in
+            (fa + 8 <= hd_v \/ fa >= hd_v + 8) /\
+            (fa + 8 <= rhn \/ fa >= rhn + 8) /\
+            (fa + 8 <= rhn + 8 \/ fa >= rhn + 8 + 8)))
+  = ()
+#pop-options
+
+/// Trivial arithmetic facts that diverge in the large allocator contexts below.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let not_gt0_eq0 (n: nat) : Lemma (requires ~(n > 0)) (ensures n == 0 /\ n * 8 == 0) = ()
+
+private let lt1_eq0 (n: nat) : Lemma (requires n < 1) (ensures n == 0 /\ n * 8 == 0) = ()
+
+private let uint_to_t_v_id (x: U64.t) : Lemma (U64.uint_to_t (U64.v x) == x) = ()
+#pop-options
+
+/// Build an `hp_addr` at `base + n * 8`.  Bounds and alignment are trivial but
+/// diverge under the enclosing allocator-invariant context.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let mk_hp_addr_mul8 (base n: nat) : Pure hp_addr
+  (requires base % U64.v mword == 0 /\ base + n * 8 < heap_size)
+  (ensures fun r -> U64.v r == base + n * 8)
+= FStar.Math.Lemmas.lemma_mod_add_distr base (n * 8) 8;
+  FStar.Math.Lemmas.multiple_modulo_lemma n 8;
+  assert (base + n * 8 < pow2 64);
+  U64.uint_to_t (base + n * 8)
+#pop-options
+
+/// `hd + (1 + wz) * 8 + 8` stays 8-aligned.  Proved in an empty context.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let aligned_plus_mul8 (base n: nat) : Lemma
+  (requires base % U64.v mword == 0)
+  (ensures (base + n * 8) % U64.v mword == 0)
+  = FStar.Math.Lemmas.lemma_mod_add_distr base (n * 8) 8;
+    FStar.Math.Lemmas.multiple_modulo_lemma n 8
+#pop-options
+
+/// Address arithmetic for the split case: field `j` of the remainder object is
+/// field `wz + 1 + j` of the original block.  Proved in an empty context.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let split_field_addr_eq (obj_v hd_v src_v wz j: nat) : Lemma
+  (requires hd_v == obj_v - 8 /\ src_v == hd_v + (1 + wz) * 8 + 8)
+  (ensures src_v + j * 8 == obj_v + (wz + 1 + j) * 8)
+  = ()
+#pop-options
+
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let wfh_part2_implies_blue_fields_closed (g: heap)
   : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g)
           (ensures blue_fields_closed g)
@@ -93,7 +145,7 @@ let wfh_part2_implies_blue_fields_closed (g: heap)
 ///   - Field 0 = next_fp (original next in chain). If is_pointer: in objects by fl_valid.
 ///   - Fields j > 0: addresses were in body of original dst_obj block (which was blue).
 ///     By bfc(major) for original block: pointer targets in objects(major) <= objects(new_major).
-#push-options "--z3rlimit 150 --fuel 1 --ifuel 0 --z3refresh --split_queries always"
+#push-options "--z3rlimit 150 --fuel 1 --ifuel 0 --z3refresh"
 private let rec alloc_search_preserves_bfc
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma
@@ -236,6 +288,10 @@ private let rec alloc_search_preserves_bfc
                 // j = 0 and src = prev_fp: field_addr = src = prev_fp, overwritten
                 // v = new_rem_fp (the overwritten value)
                 // Need: is_pointer new_rem_fp ==> new_rem_fp ∈ objects(heap_out)
+                not_gt0_eq0 j;
+                uint_to_t_v_id src;
+                assert (field_addr == src);
+                assert (v == new_rem_fp);
                 wfh_part1_obj_bound g obj;
                 assert (U64.v obj + bwz * 8 <= heap_size);
                 if bwz - wz < 2 then begin
@@ -266,7 +322,8 @@ private let rec alloc_search_preserves_bfc
                       GC.Spec.Allocator.alloc_from_block_split_rem_obj_oob g obj wz next_fp;
                       // is_pointer requires U64.v v < heap_size, contradiction
                       assert (U64.v new_rem_fp >= heap_size);
-                      ()
+                      assert (~(is_pointer v));
+                      assert False
                     end
                     else begin
                       // Normal split: new_rem_fp = remainder object address
@@ -278,6 +335,7 @@ private let rec alloc_search_preserves_bfc
                       wosize_of_object_spec (prev_fp <: obj_addr) g';
                       write_body_preserves_objects g' (prev_fp <: obj_addr)
                         (prev_fp <: hp_addr) new_rem_fp;
+                      assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
                       ()
                     end
                   end
@@ -351,7 +409,7 @@ private let rec alloc_search_preserves_bfc
                 assert (rem_hd_nat2 < heap_size);
                 assert (rem_obj_nat2 < heap_size);
 
-                let rem_hd2 : hp_addr = U64.uint_to_t rem_hd_nat2 in
+                let rem_hd2 : hp_addr = mk_hp_addr_mul8 (U64.v hd) (1 + wz) in
 
                 hd_address_spec (src <: obj_addr);
                 assert (hd_address (src <: obj_addr) == rem_hd2);
@@ -369,7 +427,11 @@ private let rec alloc_search_preserves_bfc
                 assert (j < rem_wz);
 
                 // Handle field j
-                if j = 0 then begin
+                if j < 1 then begin
+                  lt1_eq0 j;
+                  uint_to_t_v_id src;
+                  uint_to_t_v_id obj;
+                  assert (field_addr == src);
                   GC.Spec.Allocator.alloc_split_normal_read_rem_field g obj wz next_fp;
                   if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
                      U64.v prev_fp % U64.v mword = 0 then
@@ -381,12 +443,15 @@ private let rec alloc_search_preserves_bfc
                   ()
                 end
                 else begin
+                  split_field_disjoint (U64.v hd) (U64.v obj) (U64.v src) wz j;
                   GC.Spec.Allocator.alloc_split_normal_read_other g obj wz next_fp field_addr;
                   if prev_fp <> 0UL && U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size &&
                      U64.v prev_fp % U64.v mword = 0 then
                     read_write_different g' (prev_fp <: hp_addr) field_addr new_rem_fp
                   else ();
                   assert (wz + 1 + j < bwz);
+                  assert (U64.v src == rem_obj_nat2);
+                  split_field_addr_eq (U64.v obj) (U64.v hd) (U64.v src) wz j;
                   blue_fields_closed_inst g obj (wz + 1 + j);
                   assert (Seq.mem (v <: obj_addr) (objects zero_addr g));
                   assert (Seq.mem (v <: obj_addr) (objects zero_addr heap_out));
@@ -415,13 +480,13 @@ private let rec alloc_search_preserves_bfc
   end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_fields_closed
   (major: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires
       well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-      AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword) /\
+      AllocLemmas.fl_valid major fp heap_words /\
+      AllocLemmas.fl_chain_terminates major fp heap_words /\
       blue_fields_closed major /\
       wz >= 1 /\
       (GC.Spec.Allocator.alloc_spec major fp wz).obj_out <> 0UL /\
@@ -429,7 +494,7 @@ let alloc_spec_preserves_blue_fields_closed
     (ensures
       blue_fields_closed (GC.Spec.Allocator.alloc_spec major fp wz).heap_out)
   =
-    let fuel = heap_size / U64.v mword in
+    let fuel = heap_words in
     AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz;
     let chain_avoids_non_blue (obj: obj_addr)
       : Lemma (requires Seq.mem obj (objects zero_addr major) /\ is_blue obj major = false)
@@ -442,7 +507,7 @@ let alloc_spec_preserves_blue_fields_closed
 
 /// The allocator's output free-list head is null or a syntactically valid heap
 /// pointer when all blue free-list link fields have that same value shape.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let alloc_from_block_fp_pointer_or_zero
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires
@@ -491,6 +556,7 @@ private let alloc_from_block_fp_pointer_or_zero
           objects_addresses_gt_start zero_addr g obj;
           assert (rem_obj_nat > U64.v obj);
           assert (rem_obj_nat > U64.v zero_addr);
+          aligned_plus_mul8 (U64.v hd) (wz + 2);
           assert (rem_obj_nat % U64.v mword == 0);
           assert (rem_obj_nat >= U64.v zero_addr + U64.v mword);
           assert (FreeListShape.fp_pointer_or_zero (U64.uint_to_t rem_obj_nat))
@@ -499,7 +565,7 @@ private let alloc_from_block_fp_pointer_or_zero
     end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_fp_pointer_or_zero
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires
@@ -568,12 +634,12 @@ private let rec alloc_search_fp_pointer_or_zero
     end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_fp_pointer_or_zero
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\
                     FreeListShape.fp_pointer_or_zero fp /\
                     wz >= 1 /\
@@ -582,7 +648,7 @@ let alloc_spec_preserves_fp_pointer_or_zero
           (ensures FreeListShape.fp_pointer_or_zero
                      (GC.Spec.Allocator.alloc_spec g fp wz).fp_out)
   =
-    let fuel = heap_size / U64.v mword in
+    let fuel = heap_words in
     let chain_avoids_non_blue (obj: obj_addr)
       : Lemma (requires Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false)
               (ensures AllocLemmas.chain_avoids g fp obj fuel = true)
@@ -592,7 +658,7 @@ let alloc_spec_preserves_fp_pointer_or_zero
     alloc_search_fp_pointer_or_zero g fp 0UL fp wz fuel
 #pop-options
 
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_blfv
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma
@@ -767,7 +833,7 @@ private let rec alloc_search_preserves_blfv
                 let rem_obj_nat2 = rem_hd_nat2 + 8 in
                 assert (rem_hd_nat2 < heap_size);
                 assert (rem_obj_nat2 < heap_size);
-                let rem_hd2 : hp_addr = U64.uint_to_t rem_hd_nat2 in
+                let rem_hd2 : hp_addr = mk_hp_addr_mul8 (U64.v hd) (1 + wz) in
                 hd_address_spec src;
                 assert (hd_address src == rem_hd2);
                 GC.Spec.Allocator.alloc_split_normal_read_rem_field g obj wz next_fp;
@@ -794,12 +860,12 @@ private let rec alloc_search_preserves_blfv
     end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_link_fields_valid
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword) /\
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words /\
                     FreeListShape.blue_link_fields_valid g /\
                     wz >= 1 /\
                     (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
@@ -807,7 +873,7 @@ let alloc_spec_preserves_blue_link_fields_valid
           (ensures FreeListShape.blue_link_fields_valid
                      (GC.Spec.Allocator.alloc_spec g fp wz).heap_out)
   =
-    let fuel = heap_size / U64.v mword in
+    let fuel = heap_words in
     AllocLemmas.alloc_spec_preserves_objects_part1 g fp wz;
     let chain_avoids_non_blue (obj: obj_addr)
       : Lemma (requires Seq.mem obj (objects zero_addr g) /\ is_blue obj g = false)

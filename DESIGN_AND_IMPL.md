@@ -1888,8 +1888,13 @@ cd generational && make snapshot
 ```
 
 For stubborn F* goals, the local Makefiles show the tuning already used in the
-project: `--split_queries always`, higher `--z3rlimit`, `--z3refresh`, and
-`--query_stats` on modules that stress the solver.
+project: `--retry 3` (a workaround for Z3 4.15.3 flakiness on trivial leaf
+goals), a raised `smt.qi.eager_threshold` on individually opted-in modules,
+higher `--z3rlimit`, `--z3refresh`, and `--query_stats` on modules that stress
+the solver. When `--retry` isn't enough, the standard remedy in this codebase is
+to lift the failing fact into a top-level helper lemma so it is proved in an
+empty context; `GC.Spec.Base` collects the recurring ones (`heap_words`,
+`mk_hp_addr`, `aligned_plus_mul8`).
 
 ## Looking ahead: incremental and concurrent GC
 

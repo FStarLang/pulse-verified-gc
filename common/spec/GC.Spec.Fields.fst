@@ -1233,7 +1233,17 @@ val color_partition : (g: heap) ->
          Seq.length (objects zero_addr g))
 
 let color_partition g = 
-  Classical.forall_intro (fun h -> colors_exhaustive_and_exclusive h g);
+  // `Classical.forall_intro` can no longer infer its predicate implicit: it
+  // occurs only in the lemma's postcondition. Introduce the quantifier directly.
+  introduce forall (h: obj_addr).
+      (is_black h g \/ is_white h g \/ is_gray h g \/ is_blue h g) /\
+      (not (is_black h g && is_white h g)) /\
+      (not (is_black h g && is_gray h g)) /\
+      (not (is_black h g && is_blue h g)) /\
+      (not (is_white h g && is_gray h g)) /\
+      (not (is_white h g && is_blue h g)) /\
+      (not (is_gray h g && is_blue h g))
+  with colors_exhaustive_and_exclusive h g;
   
   seq_filter_partition_4 
     (fun h -> is_black h g)
@@ -1666,7 +1676,7 @@ private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_ad
 #pop-options
 
 /// For src = obj: field at addr gets value v, others unchanged
-#push-options "--z3rlimit 800 --fuel 4 --ifuel 2 --split_queries always"
+#push-options "--z3rlimit 800 --fuel 4 --ifuel 2"
 private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (wz: U64.t{U64.v wz < pow2 54}) (dst: obj_addr)
   : Lemma (requires Seq.mem obj (objects zero_addr g) /\

@@ -41,7 +41,7 @@ let rec free_list_valid (g: heap) (fp: U64.t) (visited: seq U64.t) (fuel: nat)
   end
 
 let free_list_props (g: heap) (fp: U64.t) : prop =
-  free_list_valid g fp Seq.empty (heap_size / U64.v mword)
+  free_list_valid g fp Seq.empty heap_words
 
 /// Free-pointer validity: either null (0) or a valid object address in the heap
 let fp_in_heap (fp: U64.t) (g: heap) : prop =

@@ -557,6 +557,7 @@ let rec mark_inner_loop_gray_or_black_preserved g st cap fuel x
   =
   if fuel = 0 || Seq.length st = 0 then ()
   else begin
+    assert (fuel > 0);
     mark_step_bounded_gray_becomes_black g st cap x;
     mark_step_bounded_preserves_bsp g st cap;
     mark_step_bounded_preserves_objects g st cap;
@@ -587,6 +588,7 @@ let rec mark_bounded_gray_or_black_preserved g cap fuel x
       mark_inner_loop_preserves_inv g st cap inner_fuel;
       mark_inner_loop_preserves_objects g st cap inner_fuel;
       let (g', _) = mark_inner_loop g st cap inner_fuel in
+      assert (fuel > 0);
       mark_bounded_gray_or_black_preserved g' cap (fuel - 1) x
     end
   end
@@ -930,7 +932,7 @@ val mark_inner_loop_gray_or_black_backward :
                         Seq.mem x (reachable_set graph roots'))))
     (decreases fuel)
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots' =
   if fuel = 0 || Seq.length st = 0 then ()
   else begin
@@ -1000,7 +1002,7 @@ let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots'
 #pop-options
 
 /// Backward for mark_inner_loop (black only)
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 val mark_inner_loop_backward_inv :
   (h_init: heap) -> (g: heap) -> (st: seq obj_addr) -> (cap: nat) -> (fuel: nat) ->
   (graph: graph_state) -> (roots': vertex_set) ->
@@ -1388,7 +1390,7 @@ let stack_elems_reachable_empty (h_init: heap) (roots: seq obj_addr)
 /// ---------------------------------------------------------------------------
 
 /// mark_step_bounded preserves gray_black_reachable AND stack reachability
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --split_queries no"
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let mark_step_bounded_preserves_gbr
   (h_init: heap) (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   (roots: seq obj_addr)

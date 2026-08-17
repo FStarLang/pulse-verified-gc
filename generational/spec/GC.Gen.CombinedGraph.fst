@@ -537,6 +537,15 @@ private let minor_field_edge_at
 
 /// If the edge is in minor_field_edges from a later index, it's also in
 /// minor_field_edges from an earlier index
+/// Antisymmetry of `<=` on `nat`, discharged in an empty context.
+///
+/// Inside `minor_field_edge_later` the goal `start == target_idx` sends Z3 into
+/// a matching loop (it burns an unbounded rlimit while every neighbouring goal
+/// costs ~0), so the equality is established here instead.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let le_ge_eq (a b: nat) : Lemma (requires a <= b /\ b <= a) (ensures a == b) = ()
+#pop-options
+
 #push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 private let rec minor_field_edge_later
   (ms: minor_state) (major: heap) (src: U64.t) (wz: nat) (start: nat) (target_idx: nat)
@@ -546,8 +555,10 @@ private let rec minor_field_edge_later
           (ensures Seq.mem (MinorV src, dst) (minor_field_edges ms major src wz start))
           (decreases (wz - start))
   = if start >= wz then ()
-    else if start = target_idx then
+    else if start >= target_idx then begin
+      le_ge_eq start target_idx;
       minor_field_edge_at ms major src wz start dst
+    end
     else begin
       let v = minor_read_field ms src start in
       let rest = minor_field_edges ms major src wz (start + 1) in

@@ -35,6 +35,13 @@ module IndDesc = FStar.IndefiniteDescription
 /// Heap extensionality — delegates to GC.Gen.HeapExtensional
 /// ---------------------------------------------------------------------------
 
+/// `k <= n` and `k <> n` give `k + 1 <= n`.  Proved in an empty context: this
+/// step diverges inside the large recursive proofs below.
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let lt_of_le_ne (k n: nat) : Lemma
+  (requires k <= n /\ ~(k == n)) (ensures k + 1 <= n) = ()
+#pop-options
+
 let heap_read_word_extensional (h1 h2: heap)
   : Lemma
     (requires (forall (a: nat).
@@ -42,6 +49,24 @@ let heap_read_word_extensional (h1 h2: heap)
        read_word h1 (U64.uint_to_t a) == read_word h2 (U64.uint_to_t a)))
     (ensures h1 == h2)
   = HeapExt.heap_read_word_ext h1 h2
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+let heap_read_word_extensional_mk (h1 h2: heap)
+  : Lemma
+    (requires (forall (a: nat{a < heap_size /\ a % U64.v mword == 0}).
+       read_word h1 (mk_hp_addr a) == read_word h2 (mk_hp_addr a)))
+    (ensures h1 == h2)
+  = let aux (a: nat)
+      : Lemma (a < heap_size /\ a % 8 == 0 ==>
+               read_word h1 (U64.uint_to_t a) == read_word h2 (U64.uint_to_t a))
+      = if a < heap_size && a % 8 = 0 then begin
+          assert (read_word h1 (mk_hp_addr a) == read_word h2 (mk_hp_addr a));
+          assert (mk_hp_addr a == U64.uint_to_t a)
+        end
+    in
+    FStar.Classical.forall_intro aux;
+    HeapExt.heap_read_word_ext h1 h2
+#pop-options
 
 /// Addresses that the full update_major_pointers walk may rewrite: fields of
 /// non-blue, non-no_scan objects in the current major heap.
@@ -129,7 +154,7 @@ private let update_obj_ptrs_preserves_is_infix
 
 /// Helper: update_object_pointers preserves promoted_iter_frame_pre for idx+1
 /// when applied to the entry at idx.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let update_object_pointers_preserves_frame_pre
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
@@ -524,7 +549,7 @@ private let update_object_pointers_preserves_promoted_field_pre
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_entry)
 #pop-options
-#push-options "--z3rlimit 150 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
 private let rec update_promoted_iter_promoted_field_aux
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map)
   (pi: nat) (j: nat) (idx: nat)
@@ -655,6 +680,7 @@ private let rec update_promoted_iter_promoted_field_aux
       update_promoted_iter_frame major' farr fwd (pi + 1) field_addr
     end else begin
       // --- Recursive case: idx < pi ---
+      lt_of_le_ne idx pi;
       if entry = 0UL then begin
         // Zero entry: skip
         update_promoted_iter_zero major farr fwd idx;
@@ -1005,7 +1031,7 @@ let rewrite_slots_iter_slot_effect
 
 
 /// Helper: processing one entry preserves promoted_entries_valid_from for idx+1.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_entries_valid
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma
@@ -1410,7 +1436,7 @@ let rec update_promoted_iter_preserves_non_field
 /// - no step creates a forwarded minor ptr where none existed
 
 /// Helper: maintains well_formed_heap_part1 after update_object_pointers.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_wfh
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
   : Lemma
@@ -1914,6 +1940,76 @@ let if_branch_field_eq
 #pop-options
 
 /// ---------------------------------------------------------------------------
+/// Pointwise core of the main theorem, hoisted to top level.
+///
+/// This used to be a local `aux` inside `promoted_plus_slots_eq_full_update`.
+/// As a local function its verification condition carried the whole ambient
+/// context of the main theorem -- in particular every hypothesis phrased over
+/// `(cheney_promote minor major_pre fp roots).major_final` -- and the resulting
+/// single query is large enough that Z3 4.15.3 gives up on it ("Overflow
+/// encountered when expanding vector").  Stating it over an abstract `major`
+/// and `fwd` keeps the query small.
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+private let two_pass_pointwise
+  (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
+  (a: nat{a < heap_size /\ a % U64.v mword == 0})
+  : Lemma
+    (requires
+      well_formed_heap_part1 major /\
+      well_formed_heap_part4 major /\
+      Seq.length farr == fwd_array_size /\
+      promoted_entries_valid_from major farr 0 /\
+      promoted_entries_not_blue_from major farr 0 /\
+      promoted_entries_disjoint major farr /\
+      valid_slot_addrs slots n /\
+      slots_pairwise_distinct slots n /\
+      slots_scannable_in_major major slots n /\
+      fwd_targets_stable fwd /\
+      fwd_ptrs_classified major fwd farr slots n)
+    (ensures
+      (let intermediate = update_promoted_iter major farr fwd 0 in
+       let lhs = rewrite_slots_iter intermediate fwd slots n 0 in
+       let rhs = update_major_pointers major fwd in
+       read_word lhs (mk_hp_addr a) == read_word rhs (mk_hp_addr a)))
+  = let intermediate = update_promoted_iter major farr fwd 0 in
+    let addr : hp_addr = mk_hp_addr a in
+    let old_raw = read_word major addr in
+    let old_val = to_minor_offset old_raw in
+    if is_minor_pointer old_val && fwd old_val <> 0UL
+    then begin
+      if IndDesc.strong_excluded_middle (scannable_field_addr major a)
+      then begin
+        let obj : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
+          exists (j: nat).
+            Seq.mem obj (objects zero_addr major) /\
+            is_blue obj major = false /\
+            is_no_scan obj major = false /\
+            j < U64.v (wosize_of_object obj major) /\
+            a == U64.v obj + j * 8 /\
+            U64.v obj + j * 8 + 8 <= heap_size /\
+            (U64.v obj + j * 8) % 8 == 0) in
+        let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
+            Seq.mem obj (objects zero_addr major) /\
+            is_blue obj major = false /\
+            is_no_scan obj major = false /\
+            j < U64.v (wosize_of_object obj major) /\
+            a == U64.v obj + j * 8 /\
+            U64.v obj + j * 8 + 8 <= heap_size /\
+            (U64.v obj + j * 8) % 8 == 0) in
+        if_branch_field_eq major fwd farr slots n obj j addr
+      end else begin
+        update_major_pointers_preserves_non_field major fwd addr;
+        update_promoted_iter_preserves_non_field major farr fwd 0 addr;
+        slots_frame_from_non_field major slots n addr;
+        rewrite_slots_iter_frame intermediate fwd slots n 0 addr
+      end
+    end else begin
+      update_major_pointers_preserves_non_fwd major fwd addr;
+      update_promoted_iter_preserves_non_fwd major farr fwd 0 addr;
+      rewrite_slots_iter_preserves_non_fwd intermediate fwd slots n 0 addr
+    end
+#pop-options
+
 /// Main theorem: two-pass rewriting equals full update
 /// ---------------------------------------------------------------------------
 
@@ -1959,56 +2055,10 @@ let promoted_plus_slots_eq_full_update
     // address.  The forwarded-pointer case is handled only after extracting an
     // explicit non-blue scannable field witness; headers and other non-fields
     // need separate frame lemmas and must not use fwd_ptrs_classified.
-    let aux (a: nat{a < heap_size /\ a % 8 == 0})
-      : Lemma (read_word lhs (U64.uint_to_t a) == read_word rhs (U64.uint_to_t a))
-      = let addr : hp_addr = U64.uint_to_t a in
-        let old_raw = read_word major addr in
-        let old_val = to_minor_offset old_raw in
-        if IndDesc.strong_excluded_middle (scannable_field_addr major a)
-        then begin
-          let obj : obj_addr = IndDesc.indefinite_description_ghost obj_addr (fun obj ->
-            exists (j: nat).
-              Seq.mem obj (objects zero_addr major) /\
-              is_blue obj major = false /\
-              is_no_scan obj major = false /\
-              j < U64.v (wosize_of_object obj major) /\
-              a == U64.v obj + j * 8 /\
-              U64.v obj + j * 8 + 8 <= heap_size /\
-              (U64.v obj + j * 8) % 8 == 0) in
-          let j : nat = IndDesc.indefinite_description_ghost nat (fun j ->
-              Seq.mem obj (objects zero_addr major) /\
-              is_blue obj major = false /\
-              is_no_scan obj major = false /\
-              j < U64.v (wosize_of_object obj major) /\
-              a == U64.v obj + j * 8 /\
-              U64.v obj + j * 8 + 8 <= heap_size /\
-              (U64.v obj + j * 8) % 8 == 0) in
-          if is_minor_pointer old_val && fwd old_val <> 0UL then
-            if_branch_field_eq major fwd farr slots n obj j addr
-          else begin
-            update_major_pointers_preserves_non_fwd major fwd addr;
-            assert (read_word rhs addr == old_raw);
-            update_promoted_iter_preserves_non_fwd major farr fwd 0 addr;
-            assert (read_word intermediate addr == old_raw);
-            rewrite_slots_iter_preserves_non_fwd intermediate fwd slots n 0 addr
-          end
-        end else begin
-          if is_minor_pointer old_val && fwd old_val <> 0UL then begin
-            update_major_pointers_preserves_non_field major fwd addr;
-            assert (read_word rhs addr == old_raw);
-            update_promoted_iter_preserves_non_field major farr fwd 0 addr;
-            assert (read_word intermediate addr == old_raw);
-            slots_frame_from_non_field major slots n addr;
-            rewrite_slots_iter_frame intermediate fwd slots n 0 addr
-          end else begin
-            update_major_pointers_preserves_non_fwd major fwd addr;
-            assert (read_word rhs addr == old_raw);
-            update_promoted_iter_preserves_non_fwd major farr fwd 0 addr;
-            assert (read_word intermediate addr == old_raw);
-            rewrite_slots_iter_preserves_non_fwd intermediate fwd slots n 0 addr
-          end
-        end
+    let aux (a: nat{a < heap_size /\ a % U64.v mword == 0})
+      : Lemma (read_word lhs (mk_hp_addr a) == read_word rhs (mk_hp_addr a))
+      = two_pass_pointwise major fwd farr slots n a
     in
     FStar.Classical.forall_intro aux;
-    heap_read_word_extensional lhs rhs
+    heap_read_word_extensional_mk lhs rhs
 #pop-options

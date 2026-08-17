@@ -22,6 +22,7 @@ module Seq = FStar.Seq
 module V = Pulse.Lib.Vec
 module B = Pulse.Lib.Box
 module SZ = FStar.SizeT
+module U64 = FStar.UInt64
 
 /// ---------------------------------------------------------------------------
 /// Gray Stack Type

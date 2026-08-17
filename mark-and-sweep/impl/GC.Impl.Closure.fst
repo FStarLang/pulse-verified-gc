@@ -226,6 +226,7 @@ fn scan_closure_env (heap: heap_t) (h_addr: hp_addr) (wz: wosize)
           spec_field_address (U64.v h_addr) (U64.v vi) < heap_size
         ))
       )
+    decreases (Prims.op_Subtraction (U64.v wz + 1) (U64.v !i))
   {
     let curr_i = !i;
     

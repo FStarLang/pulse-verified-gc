@@ -16,10 +16,35 @@ C = ../common
 OUTPUT_DIR  = _output
 EXTRACT_DIR = _extract
 
+# Shared checked-file cache (see the root Makefile).  F* writes
+# `M.fst.checked` into --cache_dir, which defaults to the current working
+# directory, so every build in this repo points at one explicit directory.
+CACHE_DIR ?= ../_cache
+
 # --- F* flags ---------------------------------------------------------------
 
+# Z3 version used for all SMT queries (bundled with the F* installation).
+Z3_VERSION ?= 4.15.3
+
+# Z3 4.15.3 regression workaround -- see the root Makefile for details.
+# Applied per module (EAGER_QI_CHECKED), never globally: at the raised
+# eager-instantiation threshold other modules hang instead.
+EAGER_QI ?= --z3smtopt '(set-option :smt.qi.eager_threshold 100)'
+
+# Z3 4.15.3 flakiness workaround -- see the top-level Makefile.
+RETRY ?= --retry 3
+
+# Hard per-query wall-clock bound; see the root Makefile for the rationale.
+# Some Z3 4.15.3 searches never terminate and never charge the rlimit, so
+# `--z3rlimit` alone cannot bound them.
+Z3_TIMEOUT ?= --z3smtopt '(set-option :timeout 300000)'
+
 FSTAR_FLAGS = \
+  $(RETRY) \
+  $(Z3_TIMEOUT) \
+  --z3version $(Z3_VERSION) \
   --cache_checked_modules \
+  --cache_dir $(CACHE_DIR) \
   --odir $(OUTPUT_DIR) \
   --warn_error -321 \
   --report_assumes warn \
@@ -52,7 +77,7 @@ ALL_SRC  = $(filter-out $(TEST_SRC),$(SPEC_SRC) $(IMPL_SRC))
 	    keep = (/\.checked:/ || /^_output\/GC_.*\.krml:/) ? 1 : 0; n = 0 } \
 	  keep { line = $$0; sub(/^[ \t]+/, "", line); sub(/[ \t]*\\?[ \t]*$$/, "", line); \
 	    if (line == "") next; \
-	    if (line !~ /:/ && line !~ /^(spec|impl|_output)\/|^\.\.\/common\//) next; \
+	    if (line !~ /:/ && line !~ /^(spec|impl|_output)\/|^\.\.\/(common|_cache)\//) next; \
 	    buf[n++] = $$0 } \
 	  END { if (n) flush() } \
 	  function flush() { if (!n) return; \
@@ -71,42 +96,60 @@ all: verify
 
 verify: verify-impl
 
-verify-spec: $(addsuffix .checked,$(filter-out $(TEST_SRC),$(SPEC_SRC)))
+# All checked files land in one shared cache, so targets are derived from the
+# module file name alone.
+checked = $(addprefix $(CACHE_DIR)/,$(addsuffix .checked,$(notdir $(1))))
+
+SPEC_CHECKED = $(call checked,$(filter-out $(TEST_SRC),$(SPEC_SRC)))
+IMPL_CHECKED = $(call checked,$(filter-out $(SPEC_SRC),$(IMPL_SRC)))
+ALL_CHECKED  = $(call checked,$(ALL_SRC))
+
+# Bind every cache target to its source file so `$<` is always the source
+# (.depend lists it first as well, and covers the transitive dependencies).
+define bind_source
+$(CACHE_DIR)/$(notdir $(1)).checked: $(1)
+endef
+$(foreach s,$(ALL_SRC),$(eval $(call bind_source,$(s))))
+
+verify-spec: $(SPEC_CHECKED)
 	@echo "=== spec modules verified ==="
 
-verify-impl: $(addsuffix .checked,$(ALL_SRC))
+verify-impl: $(ALL_CHECKED)
 	@echo "=== all modules verified ==="
 
 verify-tests:
 	@echo "=== no mark-and-sweep test modules ==="
 
 # --- Pattern rules (verification) -------------------------------------------
+#
+# One rule for every module; per-module SMT tuning goes through the
+# target-specific variable EXTRA_FLAGS.  `private` stops GNU make from
+# propagating it to the target's prerequisites.
 
-spec/%.checked: spec/%
-	$(FSTAR) $<
+HDR_CHECKED      = $(CACHE_DIR)/GC.Lib.Header.fst.checked
+MS_ALLOC_CHECKED = $(CACHE_DIR)/GC.Impl.Allocator.fst.checked
+MS_MARKB_CHECKED = $(CACHE_DIR)/GC.Impl.MarkBounded.fst.checked
 
-$(C)/spec/%.checked: $(C)/spec/%
-	$(FSTAR) $<
+# Modules that hang at Z3 4.15.3's default eager-instantiation threshold.
+EAGER_QI_CHECKED = \
+  $(CACHE_DIR)/GC.Spec.Allocator.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.SearchChain.fst.checked \
+  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.Part2.fst.checked \
+  $(CACHE_DIR)/GC.Impl.Allocator.fst.checked
 
-$(C)/lib/%.checked: $(C)/lib/%
-	$(FSTAR) $<
+$(EAGER_QI_CHECKED): private EXTRA_FLAGS = $(EAGER_QI)
+$(HDR_CHECKED):      private EXTRA_FLAGS = --z3rlimit 20
+$(MS_ALLOC_CHECKED): private EXTRA_FLAGS = --z3rlimit 100 $(EAGER_QI)
+$(MS_MARKB_CHECKED): private EXTRA_FLAGS = --z3rlimit 300 --z3refresh
 
-$(C)/lib/GC.Lib.Header.fst.checked: $(C)/lib/GC.Lib.Header.fst
-	$(FSTAR) --z3rlimit 20 $<
+# mark-and-sweep/impl — z3refresh by default
+$(filter-out $(MS_ALLOC_CHECKED) $(MS_MARKB_CHECKED), \
+             $(call checked,$(wildcard impl/*.fst impl/*.fsti))): \
+  private EXTRA_FLAGS = --z3refresh
 
-impl/%.checked: impl/%
-	$(FSTAR) --split_queries always --z3refresh $<
-
-# Allocator proof needs cross-lemma fact chaining — no split_queries
-impl/GC.Impl.Allocator.fst.checked: impl/GC.Impl.Allocator.fst
-	$(FSTAR) --z3rlimit 100 $<
-
-# MarkBounded proof: split_queries for faster SMT; z3refresh for isolation
-impl/GC.Impl.MarkBounded.fst.checked: impl/GC.Impl.MarkBounded.fst
-	$(FSTAR) --z3rlimit 300 --split_queries always --z3refresh $<
-
-$(C)/impl/%.checked: $(C)/impl/%
-	$(FSTAR) --split_queries always $<
+$(CACHE_DIR)/%.checked:
+	@mkdir -p $(CACHE_DIR)
+	$(FSTAR) $(EXTRA_FLAGS) $<
 
 # --- Pattern rules (extraction to .krml) ------------------------------------
 #
@@ -116,10 +159,15 @@ $(C)/impl/%.checked: $(C)/impl/%
 $(OUTPUT_DIR):
 	@mkdir -p $@
 
+# Map a module name back to its source file (checked files no longer live
+# next to the sources, so the .checked prerequisite cannot be reused here).
+src_of = $(or $(firstword $(filter %/$(1).fst,$(ALL_SRC))), \
+              $(firstword $(filter %/$(1).fsti,$(ALL_SRC))))
+
 _output/%.krml: | $(OUTPUT_DIR)
 	$(FSTAR) --codegen krml \
 	  --extract_module $(subst _,.,$*) \
-	  $(patsubst %.checked,%,$(firstword $^))
+	  $(call src_of,$(subst _,.,$*))
 
 # FStar.Pervasives.Native is needed for tuple extraction
 _output/FStar_Pervasives_Native.krml: | $(OUTPUT_DIR)
@@ -195,7 +243,6 @@ snapshot: extract
 # --- Cleanup ----------------------------------------------------------------
 
 clean:
-	rm -f spec/*.checked* impl/*.checked*
-	rm -f $(C)/spec/*.checked* $(C)/lib/*.checked* $(C)/impl/*.checked*
+	rm -f $(ALL_CHECKED)
 	rm -f .depend .depend.raw
 	rm -rf $(OUTPUT_DIR) $(EXTRACT_DIR)

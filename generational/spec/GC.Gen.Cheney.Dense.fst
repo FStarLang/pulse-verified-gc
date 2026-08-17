@@ -32,6 +32,44 @@ module Part1 = GC.Spec.Allocator.Lemmas.Part1
 module Part2 = GC.Spec.Allocator.Lemmas.Part2
 
 /// ---------------------------------------------------------------------------
+/// Z3 4.15.3 arithmetic helpers
+/// ---------------------------------------------------------------------------
+///
+/// `base + k * mword` stays word-aligned, and two distinct word-aligned
+/// addresses are at least a word apart.  Both are trivial, and both are goals
+/// that Z3 4.15.3 fails to discharge inside the density proofs below, where the
+/// context carries the whole well-formed-heap and free-list invariant.  The
+/// first carries an `SMTPat` because it is needed at every `U64.uint_to_t`
+/// coercion to `hp_addr` in this module.
+
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+private let aligned_step (base k: nat)
+  : Lemma (requires base % U64.v mword == 0)
+          (ensures (base + k * 8) % U64.v mword == 0)
+          [SMTPat ((base + k * 8) % U64.v mword)]
+  = aligned_plus_mul8 base k
+
+private let aligned_step8 (base: nat)
+  : Lemma (requires base % U64.v mword == 0)
+          (ensures (base + 8) % U64.v mword == 0)
+          [SMTPat ((base + 8) % U64.v mword)]
+  = aligned_plus_mul8 base 1
+
+/// The remainder block's successor offset: splitting a block of `bwz` words into
+/// `wz` + remainder lands exactly at the original block's end.
+private let split_next_offset (hd wz bwz: nat)
+  : Lemma (requires bwz >= wz + 1)
+          (ensures hd + (1 + wz) * 8 + (bwz - wz - 1 + 1) * 8 == hd + (1 + bwz) * 8)
+  = ()
+
+private let aligned_apart (a b: U64.t)
+  : Lemma (requires a <> b /\ U64.v a % U64.v mword == 0 /\ U64.v b % U64.v mword == 0)
+          (ensures U64.v a + U64.v mword <= U64.v b \/
+                   U64.v b + U64.v mword <= U64.v a)
+  = ()
+#pop-options
+
+/// ---------------------------------------------------------------------------
 /// Helper: objects_nonempty_from_header
 /// ---------------------------------------------------------------------------
 
@@ -248,7 +286,7 @@ private let zero_promote_padding_preserves_dense
 /// alloc_from_block split case density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 
 private let alloc_from_block_split_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
@@ -303,13 +341,16 @@ private let alloc_from_block_split_dense
       = f_address_spec start;
         if start = hd_obj then begin
           // Allocated block header: wosize = wz, next = rhn = rh
+          aligned_apart ro start;
           read_write_different g2 ro start next_fp;
+          aligned_apart rh start;
           read_write_different g1 rh start rhdr;
           read_write_same g hd_obj ahdr;
           assert (read_word g' start == ahdr);
           if rhn + 8 < heap_size then begin
             f_address_spec rh;
             assert (f_address rh == rem_obj);
+            aligned_apart ro rh;
             read_write_different g2 ro rh next_fp;
             read_write_same g1 rh rhdr;
             ()
@@ -317,10 +358,12 @@ private let alloc_from_block_split_dense
         end
         else if start = rh then begin
           // Remainder header: wosize = rw, next = hd_obj + (1+bwz)*8
+          aligned_apart ro rh;
           read_write_different g2 ro rh next_fp;
           read_write_same g1 rh rhdr;
           assert (read_word g' rh == rhdr);
           let next = rhn + (rw + 1) * 8 in
+          split_next_offset (U64.v hd_obj) wz bwz;
           assert (next == U64.v hd_obj + (1 + bwz) * 8);
           if next + 8 < heap_size then begin
             let next_hp : hp_addr = U64.uint_to_t next in
@@ -334,8 +377,11 @@ private let alloc_from_block_split_dense
             assert (Seq.mem fa_next (objects zero_addr g));
             Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr);
             // Header at next_hp unchanged (beyond all writes)
+            aligned_apart ro next_hp;
             read_write_different g2 ro next_hp next_fp;
+            aligned_apart rh next_hp;
             read_write_different g1 rh next_hp rhdr;
+            aligned_apart hd_obj next_hp;
             read_write_different g hd_obj next_hp ahdr;
             objects_nonempty_from_header g g' next_hp
           end
@@ -360,8 +406,12 @@ private let alloc_from_block_split_dense
             end
           end else begin
             // start != hd_obj, start != rh, start != ro → header unchanged
+            aligned_apart ro start;
+            aligned_apart ro start;
             read_write_different g2 ro start next_fp;
+            aligned_apart rh start;
             read_write_different g1 rh start rhdr;
+            aligned_apart hd_obj start;
             read_write_different g hd_obj start ahdr;
             assert (read_word g' start == read_word g start);
             // fa must be in objects(0, g)
@@ -385,11 +435,16 @@ private let alloc_from_block_split_dense
               Part1.alloc_split_old_in_new_part1 g obj wz next_fp (fa_next <: obj_addr);
               // Header at next_hp
               if next_hp = hd_obj then begin
+                aligned_apart ro next_hp;
+                aligned_apart ro next_hp;
                 read_write_different g2 ro next_hp next_fp;
+                aligned_apart rh next_hp;
                 read_write_different g1 rh next_hp rhdr;
                 read_write_same g hd_obj ahdr;
                 ()
               end else if next_hp = rh then begin
+                aligned_apart ro next_hp;
+                aligned_apart ro next_hp;
                 read_write_different g2 ro next_hp next_fp;
                 read_write_same g1 rh rhdr;
                 ()
@@ -402,8 +457,12 @@ private let alloc_from_block_split_dense
                 wosize_of_object_spec obj g;
                 assert false
               end else begin
+                aligned_apart ro next_hp;
+                aligned_apart ro next_hp;
                 read_write_different g2 ro next_hp next_fp;
+                aligned_apart rh next_hp;
                 read_write_different g1 rh next_hp rhdr;
+                aligned_apart hd_obj next_hp;
                 read_write_different g hd_obj next_hp ahdr;
                 objects_nonempty_from_header g g' next_hp
               end
@@ -419,7 +478,7 @@ private let alloc_from_block_split_dense
 /// alloc_from_block exact case density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 
 private let alloc_from_block_exact_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
@@ -446,8 +505,10 @@ private let alloc_from_block_exact_dense
     let aux_wz (p: hp_addr) : Lemma (getWosize (read_word g' p) == getWosize (read_word g p))
       = if p = hd_obj then begin
           read_write_same g hd_obj ahdr
-        end else
+        end else begin
+          aligned_apart hd_obj p;
           read_write_different g hd_obj p ahdr
+        end
     in
     FStar.Classical.forall_intro aux_wz;
     // Transfer density directly
@@ -471,10 +532,12 @@ private let alloc_from_block_exact_dense
           let next = U64.v start + ((U64.v wz' + 1) * 8) in
           if next + 8 < heap_size then begin
             let next_hp : hp_addr = U64.uint_to_t next in
+            aligned_apart hd_obj next_hp;
             read_write_different g hd_obj next_hp ahdr;
             objects_nonempty_from_header g g' next_hp
           end
         end else begin
+          aligned_apart hd_obj start;
           read_write_different g hd_obj start ahdr;
           objects_nonempty_from_header g' g start;
           let wz' = getWosize (read_word g start) in
@@ -485,6 +548,7 @@ private let alloc_from_block_exact_dense
             if next_hp = hd_obj then
               density_at g hd_obj
             else begin
+              aligned_apart hd_obj next_hp;
               read_write_different g hd_obj next_hp ahdr;
               objects_nonempty_from_header g g' next_hp
             end
@@ -607,7 +671,7 @@ private let alloc_split_prev_mem
 
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --split_queries always"
+#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
 
 /// When alloc_search finds a block (bwz >= wz) and prev ≠ 0, the result is
 /// write_word (alloc_from_block g obj wz next) prev new_fp. Prove density.
@@ -683,8 +747,11 @@ private let alloc_search_found_prev_dense
       let rw = bwz_obj - wz - 1 in
       let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
       let g2 = write_word g1 rh rhdr in
+      aligned_apart hd_obj hd_prev;
       read_write_different g hd_obj hd_prev ahdr;
+      aligned_apart rh hd_prev;
       read_write_different g1 rh hd_prev rhdr;
+      aligned_apart ro hd_prev;
       read_write_different g2 ro hd_prev next_fp;
       assert (read_word g_alloc hd_prev == read_word g hd_prev);
       wosize_of_object_spec prev_fp g;
@@ -766,12 +833,12 @@ private let rec alloc_search_preserves_dense
 let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
                     heap_objects_dense g /\
-                    AllocLemmas.fl_valid g fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates g fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid g fp heap_words /\
+                    AllocLemmas.fl_chain_terminates g fp heap_words)
           (ensures (let r = alloc_spec g fp requested_wz in
                     heap_objects_dense r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_preserves_dense g fp 0UL fp wz (heap_size / U64.v mword)
+    alloc_search_preserves_dense g fp 0UL fp wz heap_words
 
 #pop-options
 
@@ -862,8 +929,8 @@ let promote_object_preserves_dense
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma (requires well_formed_heap_part1 major /\
                     heap_objects_dense major /\
-                    AllocLemmas.fl_valid major fp (heap_size / U64.v mword) /\
-                    AllocLemmas.fl_chain_terminates major fp (heap_size / U64.v mword))
+                    AllocLemmas.fl_valid major fp heap_words /\
+                    AllocLemmas.fl_chain_terminates major fp heap_words)
           (ensures (let res = promote_object minor major obj fp wz in
                     heap_objects_dense res.major_out))
   = let alloc_res = alloc_spec major fp wz in

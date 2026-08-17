@@ -17,6 +17,7 @@ module UInt = FStar.UInt
 open GC.Spec.Base
 open GC.Spec.Heap
 open GC.Lib.Header
+module U8 = FStar.UInt8
 
 /// ---------------------------------------------------------------------------
 /// Tag Constants

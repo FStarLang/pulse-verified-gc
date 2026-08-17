@@ -2,7 +2,7 @@
 # setup.sh — Install F* toolchain for pulse-verified-gc
 #
 # Usage:
-#   ./setup.sh              Install F* v2026.05.17 binary release
+#   ./setup.sh              Install the pinned F* nightly build
 #   ./setup.sh --release    Install latest official release instead
 #   ./setup.sh --nightly    Install latest nightly instead
 #   ./setup.sh --force      Reinstall even if the requested version is present
@@ -15,10 +15,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FSTAR_DIR="$SCRIPT_DIR/fstar"
 
-# Default: latest validated official binary release.
-SOURCE="--release"
-VERSION="v2026.05.17"
-EXPECTED_VERSION="F* 2026.05.17"
+# Default: the validated nightly build.  The proofs in this repository are
+# checked against this F* (and the Z3 4.15.3 that ships with it); see
+# Z3_VERSION in the top-level Makefile.
+SOURCE="--nightly"
+# NOTE: for --nightly the upstream installer builds the release tag as
+# "nightly-$VERSION", so VERSION must be the bare date.  Writing the full tag
+# here yields "nightly-nightly-<date>", which 404s and then fails confusingly
+# with "gzip: stdin: not in gzip format" when tar unpacks the error page.
+VERSION="2026-08-15"
+EXPECTED_VERSION="F* nightly-2026-08-15"
 FORCE=false
 
 red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
@@ -72,6 +78,11 @@ fi
 
 if [ ! -x "$FSTAR_DIR/bin/fstar.exe" ]; then
   info "Installing F* to $FSTAR_DIR ..."
+  # Defensive: tolerate a "nightly-" prefix on VERSION.  The installer prepends
+  # it, so passing the full tag would resolve to "nightly-nightly-<date>".
+  if [ "$SOURCE" = "--nightly" ]; then
+    VERSION="${VERSION#nightly-}"
+  fi
   INSTALL_ARGS=("$SOURCE" "--dest" "$FSTAR_DIR" "--no-link")
   if [ -n "$VERSION" ]; then
     INSTALL_ARGS+=("--version" "$VERSION")
@@ -96,6 +107,16 @@ if [ ! -L "$COMPAT/krml" ]; then
   ln -sf ../bin/krml       "$COMPAT/krml"
   ln -sf ../include/krml   "$COMPAT/include"
   ln -sf ../lib/krml       "$COMPAT/krmllib"
+fi
+
+# Fail loudly if we ended up with a different build than the proofs were
+# checked against, rather than surfacing it later as a spurious proof regression.
+if [ -n "$EXPECTED_VERSION" ]; then
+  INSTALLED=$("$FSTAR_DIR/bin/fstar.exe" --version 2>/dev/null | head -1 || true)
+  if [[ "$INSTALLED" != "$EXPECTED_VERSION"* ]]; then
+    red "Version mismatch: expected '$EXPECTED_VERSION', got '$INSTALLED'."
+    exit 1
+  fi
 fi
 
 green "F* toolchain ready."
