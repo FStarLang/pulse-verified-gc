@@ -185,6 +185,39 @@ skipped during marking and during Cheney scanning.
 reachability-based survival, successor preservation, color reset, and field data
 preservation.
 
+### Free-list exactness (mark-and-sweep/)
+`GC.Spec.FreeList` states that the free list is *exactly* the blue set:
+
+- `reachable_on_fl g fp obj` — `obj` is reachable from `fp` along field 1.
+  Deliberately an existential over the step count (`exists n. on_fl g fp obj n`)
+  rather than a fuel-bounded predicate, so uses of the invariant need no
+  chain-length counting argument.
+- `fl_sound` (every cell is a blue heap object) / `fl_complete` (every blue heap
+  object is a cell) / `fl_exact` (both).
+
+`GC.Spec.FreeList.Sweep` proves `sweep_preserves_fl_exact`,
+`sweep_establishes_fl_exact` (from a heap with no blue blocks and a null `fp`,
+so the invariant is reachable and preservation is not vacuous) and
+`fl_exact_blue_blocks` (exactness restated against `blue_blocks`).
+
+The step proof is self-supporting: soundness says every cell is blue, so a step
+on a *non*-blue object cannot write a cell's link word. That discharges write
+locality via the existing `sweep_object_preserves_other_body_read` — no new
+aliasing reasoning is needed.
+
+**Standing side condition — `linkable_heap`.** Every heap object must have room
+for a link word (`wosize >= 1` and field 1 inside the heap). This is *not*
+implied by `well_formed_heap` (machine-checked), yet `sweep_object` will make a
+`wosize`-0 white block blue and install it as the free-list head while skipping
+the link write, leaving the head reading the next object's header as its
+successor. The allocator's `fl_valid` already demands `wosize >= 1` of every
+cell it walks, so the requirement is not new — it was simply never stated.
+
+**Known gap.** Exactness is proved for the sweep phase only. Extending it across
+`alloc_spec` needs an exact characterisation of `objects zero_addr` after block
+splitting; the repo currently has only the `⊆` direction
+(`alloc_spec_preserves_objects`), not "objects grows by exactly the remainder".
+
 ## Key Conventions
 
 ### Naming
