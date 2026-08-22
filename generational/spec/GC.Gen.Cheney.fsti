@@ -382,19 +382,6 @@ val cheney_promote_preserves_objects
                       Seq.mem x (objects zero_addr res.major_final)))
 
 /// --- Full well_formed_heap after collection ---
-
-/// Sufficient conditions for full well_formed_heap after Cheney collection.
-/// Analogous to gen_gc_correct_full's assumptions for minor_collect_spec.
-val cheney_collect_preserves_wfh
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    True)
-          (ensures (let res = cheney_collect_spec minor major fp roots in
-                    well_formed_heap_part1 res.mc_major))
-
 /// --- Allocator (fl_valid) preservation through full collection ---
 
 /// update_major_pointers preserves fl_valid.

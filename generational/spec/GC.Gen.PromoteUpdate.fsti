@@ -34,42 +34,6 @@ val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
 val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
     (ensures well_formed_heap_part1 (update_major_pointers major fwd))
-
-/// Step lemma: unfold one iteration of update_all_objects_aux (non-blue, non-no-scan case)
-val update_all_objects_aux_step (major: heap) (objs: seq obj_addr)
-                                (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires idx < Seq.length objs /\ well_formed_heap_part1 major /\
-                    objs == objects zero_addr major /\
-                    is_blue (Seq.index objs idx) major = false /\
-                    is_no_scan (Seq.index objs idx) major = false)
-          (ensures (let obj = Seq.index objs idx in
-                    let wz = U64.v (wosize_of_object obj major) in
-                    update_all_objects_aux major objs fwd idx ==
-                    update_all_objects_aux (update_object_pointers major obj wz fwd 0) objs fwd (idx + 1)))
-
-/// Blue skip step: when the object at idx is blue, skip without modifying heap
-val update_all_objects_aux_skip_blue (major: heap) (objs: seq obj_addr)
-                                     (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires idx < Seq.length objs /\
-                    is_blue (Seq.index objs idx) major)
-          (ensures update_all_objects_aux major objs fwd idx ==
-                   update_all_objects_aux major objs fwd (idx + 1))
-
-/// No-scan skip step: when the object at idx is no-scan, skip without modifying heap
-val update_all_objects_aux_skip_no_scan (major: heap) (objs: seq obj_addr)
-                                        (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires idx < Seq.length objs /\
-                    is_blue (Seq.index objs idx) major = false /\
-                    is_no_scan (Seq.index objs idx) major)
-          (ensures update_all_objects_aux major objs fwd idx ==
-                   update_all_objects_aux major objs fwd (idx + 1))
-
-/// Done lemma: identity when idx >= Seq.length objs
-val update_all_objects_aux_done (major: heap) (objs: seq obj_addr)
-                                (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires idx >= Seq.length objs)
-          (ensures update_all_objects_aux major objs fwd idx == major)
-
 /// Connection: update_major_pointers unfolds to update_all_objects_aux at index 0
 val update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
   : Lemma (update_major_pointers major fwd ==
@@ -226,42 +190,6 @@ val update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
 val update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
     (ensures well_formed_heap_part3 (update_major_pointers major fwd))
-
-/// promote_all_spec produces fwd_all_targets_valid for its final heap.
-val promote_all_fwd_all_targets_valid
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_all_spec minor major fp live_set in
-                    fwd_all_targets_valid res.fwd_map res.major_final))
-
-/// After promote_all_spec, every forwarded object's address is in objects of the final heap.
-val promote_all_adds_promoted
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_all_spec minor major fp live_set in
-                    fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final))
-
-/// After minor collection, every promoted object's forwarded address
-/// is in the post-collection major heap's objects list.
-val minor_collect_preserves_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (obj: U64.t)
-  : Lemma (requires
-             minor_wf minor /\
-             well_formed_heap major /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words /\
-             Seq.mem obj (live_set_of minor major roots))
-          (ensures
-             (let res = minor_collect_spec minor major fp roots in
-              let live_set = live_set_of minor major roots in
-              let prom_res = promote_all_spec minor major fp live_set in
-              fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major))
-
 /// Specifies the effect of update_major_pointers on a single field:
 /// After the update, field j of object obj is either:
 ///   - fwd(old_value) if the old value was a minor pointer with valid forwarding
@@ -285,20 +213,6 @@ val update_major_pointers_field_effect
        let new_val = read_word updated field_addr in
        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw)))
-
-/// update_major_pointers establishes well_formed_heap_part2 (pointer closure):
-/// If the intermediate heap has pointer_closure_modulo_fwd and fwd targets are valid,
-/// and blue objects' pointer fields target valid objects (blue_fields_closed),
-/// and no-scan objects' fields don't look like pointers (no_scan_invariant),
-/// then after update the result satisfies part2.
-val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    pointer_closure_modulo_fwd major fwd /\
-                    fwd_all_targets_valid fwd major /\
-                    blue_fields_closed major /\
-                    no_scan_invariant major)
-    (ensures well_formed_heap_part2 (update_major_pointers major fwd))
-
 /// promote_object preserves chain_objects_blue
 val promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
@@ -329,26 +243,3 @@ val promote_object_preserves_free_list_shape
         (promote_object minor major obj fp wosize).fp_out /\
       FreeListShape.blue_link_fields_valid
         (promote_object minor major obj fp wosize).major_out)
-
-/// After promote_all_spec, blue objects' pointer fields still target valid objects.
-/// Requires chain_objects_blue: the free chain only contains blue objects.
-/// This is needed because allocation modifies the predecessor's field 0 (chain link)
-/// and the new value (remainder or next_fp) must target a valid object.
-/// Since chain nodes are blue, bfc(major) ensures their fields target objects.
-val promote_all_preserves_blue_fields_closed
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp)
-          (ensures blue_fields_closed (promote_all_spec minor major fp live_set).major_final)
-
-/// Unfold: mc_major of all-objects collection
-val minor_collect_all_spec_unfold (minor: minor_state) (major: heap)
-                                   (fp: U64.t) (roots: seq U64.t)
-  : Lemma (let all_objs = minor_objects minor in
-           let prom_res = promote_all_spec minor major fp all_objs in
-           (minor_collect_all_spec minor major fp roots).mc_major ==
-             update_major_pointers prom_res.major_final prom_res.fwd_map /\
-           (minor_collect_all_spec minor major fp roots).mc_fwd == prom_res.fwd_map /\
-           (minor_collect_all_spec minor major fp roots).mc_fp == prom_res.fp_final)

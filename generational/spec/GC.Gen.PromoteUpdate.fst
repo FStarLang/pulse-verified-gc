@@ -33,18 +33,6 @@ let update_major_pointers_preserves_objects =
 let update_major_pointers_preserves_wfh_part1 =
   GC.Gen.PromoteUpdate.Aux.update_major_pointers_preserves_wfh_part1
 
-let update_all_objects_aux_step =
-  GC.Gen.PromoteUpdate.Aux.update_all_objects_aux_step
-
-let update_all_objects_aux_skip_blue =
-  GC.Gen.PromoteUpdate.Aux.update_all_objects_aux_skip_blue
-
-let update_all_objects_aux_skip_no_scan =
-  GC.Gen.PromoteUpdate.Aux.update_all_objects_aux_skip_no_scan
-
-let update_all_objects_aux_done =
-  GC.Gen.PromoteUpdate.Aux.update_all_objects_aux_done
-
 let update_major_pointers_unfold =
   GC.Gen.PromoteUpdate.Aux.update_major_pointers_unfold
 
@@ -82,22 +70,10 @@ let update_major_pointers_preserves_wfh_part4 =
 let update_major_pointers_preserves_wfh_part3 =
   GC.Gen.PromoteUpdate.Header.update_major_pointers_preserves_wfh_part3
 
-let promote_all_fwd_all_targets_valid =
-  GC.Gen.PromoteUpdate.Header.promote_all_fwd_all_targets_valid
-
-let promote_all_adds_promoted =
-  GC.Gen.PromoteUpdate.Header.promote_all_adds_promoted
-
-let minor_collect_preserves_reachable =
-  GC.Gen.PromoteUpdate.Header.minor_collect_preserves_reachable
-
 /// --- From GC.Gen.PromoteUpdate.Field ---
 
 let update_major_pointers_field_effect =
   GC.Gen.PromoteUpdate.Field.update_major_pointers_field_effect
-
-let update_major_pointers_preserves_wfh_part2 =
-  GC.Gen.PromoteUpdate.Field.update_major_pointers_preserves_wfh_part2
 
 /// --- From GC.Gen.PromoteUpdate.BlueProm ---
 
@@ -106,9 +82,3 @@ let promote_object_preserves_chain_objects_blue =
 
 let promote_object_preserves_free_list_shape =
   GC.Gen.PromoteUpdate.BlueProm.promote_object_preserves_free_list_shape
-
-let promote_all_preserves_blue_fields_closed =
-  GC.Gen.PromoteUpdate.BlueProm.promote_all_preserves_blue_fields_closed
-
-let minor_collect_all_spec_unfold =
-  GC.Gen.PromoteUpdate.BlueProm.minor_collect_all_spec_unfold

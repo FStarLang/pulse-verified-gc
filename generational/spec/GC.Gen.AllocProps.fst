@@ -98,9 +98,6 @@ let alloc_spec_obj_valid (g: heap) (fp: U64.t) (requested_wz: nat)
 ///
 /// Proof: obj_out = cur_fp which is in the free list. fl_valid ensures
 /// free-list nodes are in objects. alloc_spec_preserves_objects preserves them.
-#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// After alloc, wosize of the allocated object >= requested_wz
 /// ---------------------------------------------------------------------------
@@ -339,95 +336,6 @@ private let write_prev_preserves_wosize_upper
 #pop-options
 
 /// Main recursive proof
-#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
-let rec alloc_search_obj_wosize
-  (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
-  (cur_fp: U64.t) (wz: nat) (fuel: nat)
-  : Lemma
-    (requires well_formed_heap g /\
-              AllocLemmas.fl_valid g cur_fp fuel /\
-              (prev_fp <> 0UL ==>
-                (prev_fp <> cur_fp /\
-                 U64.v prev_fp >= U64.v mword /\
-                 U64.v prev_fp < heap_size /\
-                 U64.v prev_fp % U64.v mword = 0 /\
-                 Seq.mem prev_fp (objects zero_addr g) /\
-                 U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1)))
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
-              r.obj_out <> 0UL ==>
-              (U64.v r.obj_out >= U64.v mword /\
-               U64.v r.obj_out < heap_size /\
-               U64.v r.obj_out % U64.v mword == 0 /\
-               U64.v (wosize_of_object (r.obj_out <: obj_addr) r.heap_out) >= wz)))
-    (decreases fuel)
-  =
-  if fuel = 0 then ()
-  else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
-  else if U64.v cur_fp >= heap_size then ()
-  else if U64.v cur_fp % U64.v mword <> 0 then ()
-  else begin
-    AllocLemmas.fl_valid_elim g cur_fp fuel;
-    let obj : obj_addr = cur_fp in
-    let hd = hd_address obj in
-    let hdr = read_word g hd in
-    let block_wz = U64.v (getWosize hdr) in
-    let next_fp =
-      if U64.v hd + 16 <= heap_size then read_word g obj
-      else 0UL
-    in
-    if block_wz >= wz then begin
-      // Found. Use alloc_from_block_wosize_lemma.
-      alloc_from_block_wosize_lemma g obj wz next_fp;
-      let (g', new_rem_fp) = alloc_from_block g obj wz next_fp in
-      // After alloc_from_block: wosize_of_object obj g' >= wz
-      // If prev_fp = 0UL, heap_out = g', done.
-      if prev_fp = 0UL then ()
-      else if U64.v prev_fp >= U64.v mword && U64.v prev_fp < heap_size && U64.v prev_fp % U64.v mword = 0 then begin
-        // prev_fp is a distinct object from obj (= cur_fp) in the objects list.
-        // By objects_separated + wosize >= 1, their regions don't overlap,
-        // so prev_fp <> hd_address(obj).
-        let prev_obj : obj_addr = prev_fp in
-        hd_address_spec obj;
-        wosize_of_object_spec prev_obj g;
-        if U64.v prev_fp < U64.v obj then begin
-          objects_separated zero_addr g prev_obj obj;
-          // obj > prev_fp + wosize(prev)*8 >= prev_fp + 8
-          // hd(obj) = obj - 8 > prev_fp
-          assert (prev_fp <> hd_address obj)
-        end else begin
-          objects_separated zero_addr g obj prev_obj;
-          // prev_fp > obj + wosize(obj)*8 >= obj + 8 > obj - 8 = hd(obj)
-          wosize_of_object_spec obj g;
-          assert (prev_fp <> hd_address obj)
-        end;
-        write_prev_preserves_wosize g' obj prev_fp new_rem_fp wz
-      end
-      else ()
-    end
-    else begin
-      // Block too small, continue
-      if U64.v hd + 16 <= heap_size then
-        alloc_search_obj_wosize g head_fp cur_fp next_fp wz (fuel - 1)
-      else ()
-    end
-  end
-#pop-options
-
-#push-options "--z3rlimit 50 --fuel 4"
-let alloc_spec_obj_wosize (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap g /\
-                    AllocLemmas.fl_valid g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    r.obj_out <> 0UL ==>
-                    (U64.v r.obj_out >= U64.v mword /\
-                     U64.v r.obj_out < heap_size /\
-                     U64.v r.obj_out % U64.v mword == 0 /\
-                     U64.v (wosize_of_object (r.obj_out <: obj_addr) r.heap_out) >= 
-                       (if requested_wz = 0 then 1 else requested_wz))))
-  = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_obj_wosize g fp 0UL fp wz heap_words
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Part1-only versions: weaker preconditions (no full well_formed_heap)
 /// ---------------------------------------------------------------------------
@@ -903,25 +811,6 @@ let write_preserves_color (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
 /// Writing the prev_fp link (which is at the prev_fp address, i.e. field[0])
 /// does not affect obj's header → obj remains not-blue.
 /// Requires prev_fp != hd_address obj (guaranteed by objects_separated at call sites).
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-let write_prev_preserves_not_blue (g': heap) (obj: obj_addr) (prev_fp: U64.t) (new_rem_fp: U64.t)
-  : Lemma (requires is_blue obj g' = false /\
-                    U64.v prev_fp >= U64.v mword /\ U64.v prev_fp < heap_size /\
-                    U64.v prev_fp % U64.v mword = 0 /\
-                    (prev_fp <: obj_addr) <> obj /\
-                    (U64.v prev_fp + 8 <= U64.v (hd_address obj) \/
-                     U64.v (hd_address obj) + 8 <= U64.v prev_fp))
-          (ensures (let g2 = write_word g' (prev_fp <: hp_addr) new_rem_fp in
-                    is_blue obj g2 = false))
-  = hd_address_spec obj;
-    read_write_different g' (prev_fp <: hp_addr) (hd_address obj) new_rem_fp;
-    let g2 = write_word g' (prev_fp <: hp_addr) new_rem_fp in
-    color_of_object_spec obj g';
-    color_of_object_spec obj g2;
-    is_blue_iff obj g';
-    is_blue_iff obj g2
-#pop-options
-
 /// alloc_from_block preserves reads at addresses outside the modified range.
 /// The modified range is: hd_address(obj) (header) and possibly a remainder header/field.
 /// If addr is outside obj's block entirely, read_word is unchanged.

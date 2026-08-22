@@ -29,13 +29,6 @@ let heap_fuel : nat = heap_words
 /// Heap extensionality: word-level agreement implies byte-level equality
 /// ---------------------------------------------------------------------------
 
-val heap_read_word_extensional (h1 h2: heap)
-  : Lemma
-    (requires (forall (a: nat).
-       a < heap_size /\ a % 8 == 0 ==>
-       read_word h1 (U64.uint_to_t a) == read_word h2 (U64.uint_to_t a)))
-    (ensures h1 == h2)
-
 /// Same as `heap_read_word_extensional`, but phrased with `mk_hp_addr`.
 ///
 /// A caller that proves word-wise agreement typically does so from inside a

@@ -125,23 +125,6 @@ let rec forward_fields_fwd_monotone
     forward_fields_fwd_monotone minor cs' parent (idx + 1) wosize x
   end
 
-let rec forward_roots_fwd_monotone
-  (minor: minor_state) (cs: CheneySpec.cheney_state)
-  (roots: seq U64.t) (idx: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
-          (ensures (CheneySpec.cheney_forward_roots minor cs roots idx).cs_fwd x <> 0UL)
-          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
-  =
-  if idx >= Seq.length roots then
-    CheneySpec.cheney_forward_roots_base minor cs roots idx
-  else begin
-    CheneySpec.cheney_forward_roots_step minor cs roots idx;
-    let r = Seq.index roots idx in
-    let cs' = CheneySpec.cheney_forward_one minor cs r in
-    forward_one_fwd_monotone minor cs r x;
-    forward_roots_fwd_monotone minor cs' roots (idx + 1) x
-  end
-
 let rec scan_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state)
   (scan: nat) (fuel: nat) (x: U64.t)

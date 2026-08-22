@@ -227,6 +227,8 @@ definition unreachable from the roots, plus an offline HTML dependence viewer.
 ```bash
 make depgraph DEPGRAPH_OCAMLPATH=<dir>/out/lib   # analyse
 make depgraph-inventory                          # regenerate docs/dead-code-inventory.md
+make depgraph-prune DEPGRAPH_PRUNE_FLAGS=--dry-run   # preview the deletions
+make depgraph-prune                              # apply them, then re-verify
 ```
 
 **Building it is the hard part.** The tool links F*'s in-tree `fstar.compiler`
@@ -267,6 +269,18 @@ code referenced only by unreachable code is itself unreachable and already
 listed. The one thing the graph cannot see is that deleting a definition changes
 the SMT context of every module that `open`s it — so validate by deleting and
 re-verifying, not by re-reading the report.
+
+**`let x : squash p = ...` is a fact, not a callee.** Nothing ever names such a
+definition, so it is always reported unreachable, but its type sits in the SMT
+context of every later proof in the module. `GC.Gen.MinorHeap.minor_pow2_bound`
+is the example that bit us: deleting it broke `minor_chain_valid_extend_aux`,
+which never mentions it. `make depgraph-prune` refuses to touch these (and
+refuses a `let rec ... and ...` group with a live member), which is why the
+report bottoms out at 3 rather than 0. The three survivors carry a comment
+saying so.
+
+The development was trimmed against this report: **616 unreachable definitions
+and 9 entirely-dead modules removed, ~14,000 lines**, with byte-identical C.
 
 ## Key Conventions
 

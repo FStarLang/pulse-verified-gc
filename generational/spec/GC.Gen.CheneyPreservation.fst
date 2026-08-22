@@ -1427,23 +1427,6 @@ private let header_eq_preserves_no_scan
   is_no_scan_spec obj g1;
   is_no_scan_spec obj g2
 
-private let fwd_noninfix_target_exists
-  (minor: minor_state) (fwd: forwarding_map) (g: heap) (x: U64.t)
-  : Lemma
-    (requires Forwarding.fwd_noninfix_targets_valid minor fwd g /\
-              fwd x <> 0UL /\
-              ~(is_infix_in_minor minor x))
-    (ensures exists (target: obj_addr).
-       fwd x == target /\ Seq.mem target (objects zero_addr g))
-  =
-  assert (U64.v (fwd x) >= U64.v mword);
-  assert (U64.v (fwd x) < heap_size);
-  assert (U64.v (fwd x) % U64.v mword == 0);
-  is_val_addr_spec (fwd x);
-  FStar.Classical.exists_intro
-    (fun (target: obj_addr) -> fwd x == target /\
-      Seq.mem target (objects zero_addr g))
-    ((fwd x) <: obj_addr)
 #pop-options
 
 #push-options "--z3rlimit 80 --fuel 0 --ifuel 0"

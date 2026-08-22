@@ -173,6 +173,9 @@ val minor_objects_valid (ms: minor_state) (x: U64.t)
 ///
 /// We model this abstractly here; the remembered set module provides the scan.
 
+/// `make depgraph` reports this unreachable and it is: nothing ever names
+/// it. It is a *fact*, not a callee -- its type sits in the SMT context of
+/// every proof below, and deleting it breaks them. Do not prune it.
 /// Establish pow2 bounds needed for U64.uint_to_t below
 let minor_heap_size_bound : squash (minor_heap_size < pow2 64) =
   assert_norm (pow2 57 < pow2 64)
@@ -408,8 +411,3 @@ val minor_objects_count_bound (ms: minor_state)
   : Lemma (requires minor_wf ms)
           (ensures Seq.length (minor_objects ms) <= minor_heap_size / 16 /\
                    Seq.length (minor_objects ms) < minor_heap_size / 8)
-
-/// When bump is 0, there are no objects (for SPOT)
-val minor_objects_zero_bump (ms: minor_state)
-  : Lemma (requires U64.v ms.bump == 0)
-          (ensures minor_objects ms == Seq.empty)

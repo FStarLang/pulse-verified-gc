@@ -74,22 +74,6 @@ private let mk_u64_lt_heap (a: nat)
   : Pure U64.t (requires a < heap_size)
                (ensures fun r -> U64.v r == a /\ r == U64.uint_to_t a)
   = U64.uint_to_t a
-
-/// Assemble `infix_fwd_ready_pre` from the branch guard plus `fwd_classified`.
-/// Every conjunct is immediate; collecting them is what Z3 4.15.3 fails to do
-/// inside `cheney_forward_one`'s infix case.
-private let infix_fwd_ready_pre_intro (minor: minor_state) (cs: cheney_state) (addr: U64.t)
-  : Lemma
-    (requires
-      is_infix_in_minor minor addr /\
-      Forwarding.fwd_classified cs /\
-      (let parent = infix_parent minor addr in
-       cs.cs_fwd parent <> 0UL /\
-       U64.v addr >= U64.v parent /\
-       U64.v (cs.cs_fwd parent) + (U64.v addr - U64.v parent) < heap_size))
-    (ensures Forwarding.infix_fwd_ready_pre minor cs addr)
-  = ()
-
 private let infix_addr_ge_parent (minor: minor_state) (addr: U64.t)
   : Lemma (requires is_infix_in_minor minor addr /\ minor_infix_wf minor)
           (ensures U64.v addr >= U64.v (infix_parent minor addr))

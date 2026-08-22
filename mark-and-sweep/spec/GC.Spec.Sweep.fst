@@ -160,30 +160,6 @@ let sweep_object_preserves_wf g obj fp =
 #pop-options
 
 /// sweep_object preserves objects from arbitrary start position
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
-let sweep_object_preserves_objects_from start g obj fp =
-  if is_infix obj g then ()
-  else if is_white obj g then begin
-    let ws = wosize_of_object obj g in
-    let hd = GC.Spec.Heap.hd_address obj in
-    let g' = 
-      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-        wosize_of_object_spec obj g;
-        GC.Spec.Heap.hd_address_spec obj;
-        write_word_preserves_objects_from start g obj obj fp;
-        HeapGraph.set_field g obj 1UL fp
-      end else g
-    in
-    makeBlue_eq obj g';
-    color_change_preserves_objects_aux start g' obj Header.Blue;
-    assert (fst (sweep_object g obj fp) == makeBlue obj g')
-  end else if is_black obj g then begin
-    colors_exclusive obj g;
-    makeWhite_eq obj g;
-    color_change_preserves_objects_aux start g obj Header.White
-  end else ()
-#pop-options
-
 /// sweep_object preserves objects from any position beyond the current object
 /// (sweep_object writes only at h_addr or h_addr+8, both < next_addr)
 #push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
@@ -222,15 +198,6 @@ let sweep_object_preserves_objects_suffix h_addr g fp =
 /// ---------------------------------------------------------------------------
 /// Sweep Aux Lemmas
 /// ---------------------------------------------------------------------------
-
-/// Definitional unfolding: sweep_aux one step
-let sweep_aux_step (g: heap) (objs: seq obj_addr) (fp: U64.t)
-  : Lemma (requires Seq.length objs > 0)
-          (ensures (let obj = Seq.head objs in
-                    let (g', fp') = sweep_object g obj fp in
-                    sweep_aux g objs fp == sweep_aux g' (Seq.tail objs) fp'))
-  = ()
-
 /// sweep_aux on empty is identity
 let sweep_aux_empty (g: heap) (fp: U64.t)
   : Lemma (sweep_aux g Seq.empty fp == (g, fp))
@@ -400,38 +367,6 @@ let rec sweep_aux_black_survives (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: 
     end
   end
 #pop-options
-
-/// sweep_aux preserves white color of objects that are white and not in the sequence
-/// (sweep_object only changes white objects via set_field on body, not color)
-let rec sweep_aux_white_stays (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires is_white x g /\ ~(Seq.mem x objs) /\
-                    well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    Seq.mem x (objects zero_addr g) /\
-                    fp_in_heap fp g)
-          (ensures is_white x (fst (sweep_aux g objs fp)))
-          (decreases Seq.length objs) =
-  if Seq.length objs = 0 then ()
-  else begin
-    let obj = Seq.head objs in
-    let (g', fp') = sweep_object g obj fp in
-    sweep_object_preserves_objects g obj fp;
-    sweep_object_preserves_wf g obj fp;
-    wf_objects_non_infix g obj;
-    // x ≠ obj since x ∉ objs
-    sweep_object_color_locality g obj x fp;
-    is_white_iff x g;
-    is_white_iff x g';
-    if is_white obj g then begin
-      assert (fp' == obj);
-      assert (fp_in_heap fp' g')
-    end else begin
-      assert (fp' == fp);
-      assert (fp_in_heap fp' g')
-    end;
-    sweep_aux_white_stays g' (Seq.tail objs) fp' x
-  end
-
 /// sweep_aux: white objects in objs become blue after sweep
 #push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
 let rec sweep_aux_white_in_objs_becomes_blue (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
@@ -645,24 +580,9 @@ let sweep_resets_colors g fp =
     else () // blue stays blue — proven by sweep_blue_stays_blue
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
-/// After sweep: no gray or black
-let sweep_final_colors g fp = 
-  sweep_resets_colors g fp;
-  sweep_preserves_objects g fp;
-  let g' = fst (sweep g fp) in
-  let aux (x: obj_addr) : Lemma 
-    (requires Seq.mem x (objects zero_addr g'))
-    (ensures not (is_gray x g') /\ not (is_black x g'))
-  = colors_exhaustive_and_exclusive x g'
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
 /// After sweep: previously-black objects are now white
 let sweep_resets_black_to_white g fp =
   sweep_black_survives g fp
-
-let sweep_no_gray_or_black g fp = sweep_final_colors g fp
 
 /// Sweep preserves wosize for black objects
 /// Single-step helper: sweep_object preserves read_word at address a in x's body when obj ≠ x

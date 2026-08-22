@@ -30,11 +30,6 @@ let obj_in_objects_intro (obj: obj_addr) (g: heap)
           (ensures obj_in_objects obj g)
   = assert (U64.v obj == U64.v obj /\ Seq.mem obj (objects zero_addr g))
 
-let fp_valid_intro (fp: obj_addr) (g: heap)
-  : Lemma (requires Seq.mem fp (objects zero_addr g))
-          (ensures fp_valid fp g)
-  = obj_in_objects_intro fp g
-
 let fp_valid_not_pointer (fp: U64.t) (g: heap)
   : Lemma (requires not (is_pointer_field fp))
           (ensures fp_valid fp g) = ()
@@ -318,10 +313,6 @@ let headers_preserved_before_trans (limit: nat) (g1 g2 g3: heap)
   : Lemma (requires headers_preserved_before limit g2 g1 /\ headers_preserved_before limit g3 g2)
           (ensures headers_preserved_before limit g3 g1) = ()
 
-let headers_preserved_before_weaken (limit1 limit2: nat) (g1 g2: heap)
-  : Lemma (requires headers_preserved_before limit2 g2 g1 /\ limit1 <= limit2)
-          (ensures headers_preserved_before limit1 g2 g1) = ()
-
 let objects_white_before (pos: nat) (g: heap) : prop =
   forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
     U64.v (hd_address x) < pos ==> (is_white x g \/ is_blue x g)
@@ -393,11 +384,6 @@ let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
         end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
-let objects_white_before_all (pos: nat) (g: heap)
-  : Lemma (requires objects_white_before pos g /\ pos >= heap_size)
-          (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
-  = ()
 
 module SpecHeapForExit = GC.Spec.Heap
 

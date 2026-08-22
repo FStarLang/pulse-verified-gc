@@ -53,17 +53,9 @@ module HeapModel = GC.Spec.HeapModel
 val remembered_slot_targets_from
   (major: heap) (slots: seq U64.t) (n idx: nat) : GTot (seq U64.t)
 
-val remembered_slot_targets_from_zero
-  (major: heap) (slots: seq U64.t)
-  : Lemma (remembered_slot_targets_from major slots 0 0 == Seq.empty)
-
 let remembered_slot_targets (major: heap) (slots: seq U64.t) (n: nat)
   : GTot (seq U64.t) =
   remembered_slot_targets_from major slots n 0
-
-let roots_with_remembered (major: heap) (roots slots: seq U64.t) (n: nat)
-  : GTot (seq U64.t) =
-  Seq.append roots (remembered_slot_targets major slots n)
 
 let remembered_targets_in_roots
   (major: heap) (roots slots: seq U64.t) (n: nat) : prop =

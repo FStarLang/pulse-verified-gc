@@ -113,21 +113,6 @@ val coalesce_unfold (g: heap)
   : Lemma
     (requires Seq.length g == heap_size)
     (ensures coalesce g == coalesce_aux g g (objects zero_addr g) 0UL 0 0UL)
-
-/// run_words bounded by heap_size / mword (fits in U64)
-val run_words_fits (g0: heap) (start: hp_addr) (objs: seq obj_addr)
-  (first_blue: U64.t) (run_words: nat)
-  : Lemma
-    (requires
-      objs == objects start g0 /\
-      Seq.length g0 == heap_size /\
-      (run_words > 0 ==>
-        U64.v first_blue >= U64.v mword /\
-        U64.v first_blue < heap_size /\
-        U64.v first_blue % U64.v mword == 0 /\
-        U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start))
-    (ensures run_words < heap_words /\ run_words < pow2 57)
-
 /// is_blue reading from current heap is equivalent when suffix is unchanged
 val is_blue_from_original
   (g0 g: heap) (obj: obj_addr) (start: hp_addr)

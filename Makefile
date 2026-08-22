@@ -341,7 +341,8 @@ DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))
 
 DEPGRAPH_ROOTS ?= $(DEPGRAPH_IFACE_ROOTS) $(DEPGRAPH_THEOREM_ROOTS) $(DEPGRAPH_SPOT_ROOTS)
 
-.PHONY: depgraph depgraph-build depgraph-check depgraph-inventory depgraph-clean
+.PHONY: depgraph depgraph-build depgraph-check depgraph-inventory \
+        depgraph-prune depgraph-clean
 
 depgraph-build:
 	@command -v dune >/dev/null || { echo "ERROR: dune not found; depgraph needs OCaml + dune."; exit 1; }
@@ -370,6 +371,14 @@ DEPGRAPH_INVENTORY ?= docs/dead-code-inventory.md
 depgraph-inventory:
 	@test -f $(DEPGRAPH_OUT)/unused-report.txt || { echo "ERROR: run 'make depgraph' first."; exit 1; }
 	python3 $(DEPGRAPH_DIR)/unused_inventory.py $(DEPGRAPH_OUT) $(DEPGRAPH_INVENTORY)
+
+# Delete every definition the last `make depgraph` run reported unreachable.
+# `DEPGRAPH_PRUNE_FLAGS=--dry-run` reports without touching anything.
+depgraph-prune:
+	@test -f $(DEPGRAPH_OUT)/unused-report.txt || { echo "ERROR: run 'make depgraph' first."; exit 1; }
+	python3 $(DEPGRAPH_DIR)/prune.py $(DEPGRAPH_OUT) . $(DEPGRAPH_PRUNE_FLAGS)
+	@echo ""
+	@echo "Now re-verify:  make -k -j24 && make -C spot -j24 && make extract"
 
 depgraph-clean:
 	rm -rf $(DEPGRAPH_OUT) $(DEPGRAPH_DIR)/_build# --- Clean ------------------------------------------------------------------

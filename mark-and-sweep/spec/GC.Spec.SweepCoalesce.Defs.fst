@@ -53,32 +53,3 @@ let fused_sweep_coalesce (g: heap) : GTot (heap & U64.t) =
 /// ---------------------------------------------------------------------------
 /// Unfolding lemmas
 /// ---------------------------------------------------------------------------
-
-let fused_aux_empty (g0 g: heap) (fb: U64.t) (rw: nat) (fp: U64.t)
-  : Lemma (fused_aux g0 g Seq.empty fb rw fp ==
-           SpecCoalesce.flush_blue g fb rw fp)
-  = ()
-
-let fused_aux_black_step (g0 g: heap) (objs: seq obj_addr)
-    (fb: U64.t) (rw: nat) (fp: U64.t)
-  : Lemma
-    (requires Seq.length objs > 0 /\ is_black (Seq.head objs) g0)
-    (ensures (let obj = Seq.head objs in
-              let rest = Seq.tail objs in
-              let (g', fp') = SpecCoalesce.flush_blue g fb rw fp in
-              let g'' = makeWhite obj g' in
-              fused_aux g0 g objs fb rw fp ==
-              fused_aux g0 g'' rest 0UL 0 fp'))
-  = ()
-
-let fused_aux_nonblack_step (g0 g: heap) (objs: seq obj_addr)
-    (fb: U64.t) (rw: nat) (fp: U64.t)
-  : Lemma
-    (requires Seq.length objs > 0 /\ ~(is_black (Seq.head objs) g0))
-    (ensures (let obj = Seq.head objs in
-              let rest = Seq.tail objs in
-              let ws = U64.v (wosize_of_object obj g0) in
-              let new_fb = if rw = 0 then obj else fb in
-              fused_aux g0 g objs fb rw fp ==
-              fused_aux g0 g rest new_fb (rw + ws + 1) fp))
-  = ()

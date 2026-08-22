@@ -34,10 +34,6 @@ val obj_in_objects_intro : (obj: obj_addr) -> (g: heap) ->
   Lemma (requires Seq.mem obj (objects zero_addr g))
         (ensures obj_in_objects obj g)
 
-val fp_valid_intro : (fp: obj_addr) -> (g: heap) ->
-  Lemma (requires Seq.mem fp (objects zero_addr g))
-        (ensures fp_valid fp g)
-
 /// fp_valid holds trivially when fp is not a pointer field (e.g., 0UL)
 val fp_valid_not_pointer : (fp: U64.t) -> (g: heap) ->
   Lemma (requires not (is_pointer_field fp))
@@ -230,10 +226,6 @@ val headers_preserved_before_trans : (limit: nat) -> (g1: heap) -> (g2: heap) ->
   Lemma (requires headers_preserved_before limit g2 g1 /\ headers_preserved_before limit g3 g2)
         (ensures headers_preserved_before limit g3 g1)
 
-val headers_preserved_before_weaken : (limit1: nat) -> (limit2: nat) -> (g1: heap) -> (g2: heap) ->
-  Lemma (requires headers_preserved_before limit2 g2 g1 /\ limit1 <= limit2)
-        (ensures headers_preserved_before limit1 g2 g1)
-
 /// All objects with header position < pos are white or blue in the given heap
 val objects_white_before : nat -> heap -> prop
 
@@ -262,12 +254,6 @@ val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: h
     Seq.mem (f_address h_addr) (objects zero_addr g_post))
   (ensures objects_white_before 
     (U64.v h_addr + ((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
-
-/// Final: when pos covers all of heap_size, all objects are white or blue
-val objects_white_before_all : (pos: nat) -> (g: heap) ->
-  Lemma (requires objects_white_before pos g /\ pos >= heap_size)
-        (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
-
 /// Exit variant: when pos + 8 >= heap_size, all objects are white or blue.
 /// At loop exit we have pos + mword >= heap_size, meaning no more objects can start at pos.
 /// All objects have hd_address(x) + 8 < heap_size (from hd_address_bounds), so hd_address(x) < pos.

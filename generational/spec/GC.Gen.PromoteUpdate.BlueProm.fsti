@@ -61,22 +61,3 @@ val promote_object_preserves_free_list_shape
         (promote_object minor major obj fp wosize).fp_out /\
       FreeListShape.blue_link_fields_valid
         (promote_object minor major obj fp wosize).major_out)
-
-/// After promote_all_spec, blue objects' pointer fields still target valid objects.
-val promote_all_preserves_blue_fields_closed
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp)
-          (ensures blue_fields_closed (promote_all_spec minor major fp live_set).major_final)
-
-/// Unfold: mc_major of all-objects collection
-val minor_collect_all_spec_unfold (minor: minor_state) (major: heap)
-                                   (fp: U64.t) (roots: seq U64.t)
-  : Lemma (let all_objs = minor_objects minor in
-           let prom_res = promote_all_spec minor major fp all_objs in
-           (minor_collect_all_spec minor major fp roots).mc_major ==
-             update_major_pointers prom_res.major_final prom_res.fwd_map /\
-           (minor_collect_all_spec minor major fp roots).mc_fwd == prom_res.fwd_map /\
-           (minor_collect_all_spec minor major fp roots).mc_fp == prom_res.fp_final)

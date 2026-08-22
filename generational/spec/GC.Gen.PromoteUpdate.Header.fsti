@@ -52,37 +52,6 @@ val update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
     (ensures well_formed_heap_part3 (update_major_pointers major fwd))
 
-val promote_all_fwd_all_targets_valid
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_all_spec minor major fp live_set in
-                    fwd_all_targets_valid res.fwd_map res.major_final))
-
-val promote_all_adds_promoted
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_all_spec minor major fp live_set in
-                    fwd_targets_in_objects res.fwd_map live_set (Seq.length live_set) res.major_final))
-
-val minor_collect_preserves_reachable
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  (obj: U64.t)
-  : Lemma (requires
-             minor_wf minor /\
-             well_formed_heap major /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words /\
-             Seq.mem obj (live_set_of minor major roots))
-          (ensures
-             (let res = minor_collect_spec minor major fp roots in
-              let live_set = live_set_of minor major roots in
-              let prom_res = promote_all_spec minor major fp live_set in
-              fwd_targets_in_objects prom_res.fwd_map live_set (Seq.length live_set) res.mc_major))
-
 /// Instantiate the blue_fields_closed opaque predicate for a specific object and field
 val blue_fields_closed_inst (major: heap) (src: obj_addr) (j: nat)
   : Lemma (requires blue_fields_closed major /\

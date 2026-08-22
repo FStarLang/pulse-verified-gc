@@ -282,15 +282,6 @@ let colorHeader_idempotent (hdr: U64.t) (c: color)
 /// Lemma 3: makeWhite_white_noop
 /// ===========================================================================
 
-let makeWhite_white_noop (obj: obj_addr) (g: heap)
-  : Lemma (requires is_white obj g)
-          (ensures makeWhite obj g == g)
-  = makeWhite_spec obj g;
-    is_white_iff obj g;
-    color_of_object_spec obj g;
-    colorHeader_idempotent (read_word g (hd_address obj)) White;
-    write_word_id g (hd_address obj)
-
 /// ===========================================================================
 /// Lemma 4: colorHeader_same_wz_tag
 /// ===========================================================================

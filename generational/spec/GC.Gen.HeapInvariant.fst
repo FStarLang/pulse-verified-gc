@@ -79,30 +79,12 @@ let minor_heap_shape (minor: minor_state) : prop =
   minor_infix_wf minor /\
   minor_no_scan_invariant minor /\
   minor_fields_no_infix_targets minor
-
-[@@"opaque_to_smt"]
-let major_stack_shape (major: heap) (st: seq obj_addr) (cap: nat) : prop =
-  MarkBoundedInv.bounded_mark_inv major st cap /\
-  Mark.root_props major st /\
-  gray_black_objects_on_stack major st /\
-  (let graph = HeapModel.create_graph major in
-   let roots' = HeapGraph.coerce_to_vertex_list st in
-   Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
-   Graph.subset_vertices roots' graph.vertices)
-
 [@@"opaque_to_smt"]
 let collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop =
   major_heap_shape major fp /\
   minor_heap_shape minor /\
   minor_major_fields_no_blue minor major /\
   major_minor_fields_no_infix_targets minor major
-
-[@@"opaque_to_smt"]
-let full_heap_shape (minor: minor_state) (major: heap) (fp: U64.t)
-                    (st: seq obj_addr) (cap: nat) : prop =
-  collection_heap_shape minor major fp /\
-  major_stack_shape major st cap
-
 let major_heap_shape_intro (major: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp heap_words /\
@@ -166,19 +148,6 @@ let minor_heap_shape_intro (minor: minor_state)
                    minor_fields_no_infix_targets minor)
           (ensures minor_heap_shape minor)
   = reveal_opaque (`%minor_heap_shape) (minor_heap_shape minor)
-
-let minor_major_fields_no_blue_intro (minor: minor_state) (major: heap)
-  : Lemma (requires
-            (forall (obj: U64.t) (j: nat).
-              Seq.mem obj (minor_objects minor) /\
-              j < minor_wosize minor obj /\
-              is_pointer_field (minor_read_field minor obj j) ==>
-              Seq.mem ((minor_read_field minor obj j) <: obj_addr)
-                     (objects zero_addr major) /\
-              ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major)))
-          (ensures minor_major_fields_no_blue minor major)
-  = reveal_opaque (`%minor_major_fields_no_blue)
-      (minor_major_fields_no_blue minor major)
 
 let minor_major_fields_no_blue_no_pointer_fields
   (minor: minor_state) (major: heap)
@@ -251,28 +220,6 @@ let major_minor_fields_no_infix_targets_intro
   = reveal_opaque (`%major_minor_fields_no_infix_targets)
       (major_minor_fields_no_infix_targets minor major)
 
-let major_stack_shape_elim (major: heap) (st: seq obj_addr) (cap: nat)
-  : Lemma (requires major_stack_shape major st cap)
-          (ensures MarkBoundedInv.bounded_mark_inv major st cap /\
-                   Mark.root_props major st /\
-                   gray_black_objects_on_stack major st /\
-                   (let graph = HeapModel.create_graph major in
-                    let roots' = HeapGraph.coerce_to_vertex_list st in
-                     Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
-                     Graph.subset_vertices roots' graph.vertices))
-  = reveal_opaque (`%major_stack_shape) (major_stack_shape major st cap)
-
-let major_stack_shape_intro (major: heap) (st: seq obj_addr) (cap: nat)
-  : Lemma (requires MarkBoundedInv.bounded_mark_inv major st cap /\
-                    Mark.root_props major st /\
-                    gray_black_objects_on_stack major st /\
-                    (let graph = HeapModel.create_graph major in
-                     let roots' = HeapGraph.coerce_to_vertex_list st in
-                     Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
-                     Graph.subset_vertices roots' graph.vertices))
-          (ensures major_stack_shape major st cap)
-  = reveal_opaque (`%major_stack_shape) (major_stack_shape major st cap)
-
 let collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires collection_heap_shape minor major fp)
           (ensures major_heap_shape major fp /\
@@ -290,22 +237,6 @@ let collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
           (ensures collection_heap_shape minor major fp)
   = reveal_opaque (`%collection_heap_shape)
       (collection_heap_shape minor major fp)
-
-let full_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
-                         (st: seq obj_addr) (cap: nat)
-  : Lemma (requires full_heap_shape minor major fp st cap)
-           (ensures collection_heap_shape minor major fp /\
-                    major_stack_shape major st cap)
-  = reveal_opaque (`%full_heap_shape)
-      (full_heap_shape minor major fp st cap)
-
-let full_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
-                          (st: seq obj_addr) (cap: nat)
-  : Lemma (requires collection_heap_shape minor major fp /\
-                    major_stack_shape major st cap)
-          (ensures full_heap_shape minor major fp st cap)
-  = reveal_opaque (`%full_heap_shape)
-      (full_heap_shape minor major fp st cap)
 
 /// ---------------------------------------------------------------------------
 /// Minor reset shape
@@ -469,10 +400,3 @@ let collection_heap_shape_after_minor_reset
 /// ---------------------------------------------------------------------------
 /// Helper Lemmas for SPOT (Empty Minor Heap)
 /// ---------------------------------------------------------------------------
-
-/// When there are no minor objects, minor_major_fields_no_blue is vacuously true
-let minor_major_fields_no_blue_empty (minor: minor_state) (major: heap)
-  : Lemma (requires minor_objects minor == Seq.empty)
-          (ensures minor_major_fields_no_blue minor major)
-  = reveal_opaque (`%minor_major_fields_no_blue) (minor_major_fields_no_blue minor major)
-    // Forall is over (obj in minor_objects minor), which is empty

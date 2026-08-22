@@ -254,11 +254,6 @@ let noGreyObjects (g: heap) : prop =
 /// No black objects initially
 let no_black_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_black obj g)
-
-/// No blue objects
-let no_blue_objects (g: heap) : prop =
-  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_blue obj g)
-
 /// No non-blue object points to a blue object
 let no_pointer_to_blue (g: heap) : prop =
   forall (src dst: obj_addr).

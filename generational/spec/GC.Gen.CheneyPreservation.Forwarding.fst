@@ -95,11 +95,6 @@ let aligned_gap (a b: nat)
           (ensures a >= b + 8)
   = ()
 
-let le_plus_trans (base x y z: nat)
-  : Lemma (requires x <= y /\ z <= base + x)
-          (ensures z <= base + y)
-  = ()
-
 let add_sub_8 (base d: nat)
   : Lemma (requires d >= 8)
           (ensures base + (d - 8) == base + d - 8)
@@ -115,26 +110,10 @@ let add_le_trans (base x y: nat)
           (ensures base + x <= base + y)
   = ()
 
-let add_mul_le_chain (base d w wfinal: nat)
-  : Lemma (requires d <= w * 8 /\ w * 8 <= wfinal * 8)
-          (ensures base + d <= base + wfinal * 8)
-  = ()
-
-let eq_add_mul_bound (sv base d w wfinal: nat)
-  : Lemma (requires sv == base + d /\ d <= w * 8 /\ w * 8 <= wfinal * 8)
-          (ensures sv <= base + wfinal * 8)
-  = ()
-
 let le_trans_nat (x y z: nat)
   : Lemma (requires x <= y /\ y <= z)
           (ensures x <= z)
   = ()
-
-let le_trans_nat_pf (x y z: nat) (_: squash (x <= y)) (_: squash (y <= z))
-  : Lemma (ensures x <= z)
-  =
-  assert (x <= y);
-  assert (y <= z)
 
 let infix_wosize_bound_chain (sv base d wz wfinal: nat)
   : Lemma (requires sv == base + d /\
@@ -758,36 +737,6 @@ let rec cheney_forward_roots_preserves_wfh_part1
     cheney_forward_roots_preserves_wfh_part1 minor cs' roots (idx + 1)
   end
 #pop-options
-
-let cfn_infix_ready_pre
-  (minor: minor_state) (cs: cheney_state) (addr a: U64.t) : prop =
-  let cs' = cheney_forward_normal minor cs addr in
-  is_infix_in_minor minor a /\
-  (let p = infix_parent minor a in
-   cs'.cs_fwd p <> 0UL /\
-   U64.v (cs'.cs_fwd p) >= U64.v mword /\
-   U64.v (cs'.cs_fwd p) < heap_size /\
-   U64.v (cs'.cs_fwd p) % U64.v mword == 0 /\
-   U64.v a >= U64.v p /\
-   U64.v (cs'.cs_fwd p) + (U64.v a - U64.v p) < heap_size)
-
-let cfn_infix_ready_post
-  (minor: minor_state) (cs: cheney_state) (addr a: U64.t)
-  (_: squash (cfn_infix_ready_pre minor cs addr a)) : prop =
-  let cs' = cheney_forward_normal minor cs addr in
-  let p = infix_parent minor a in
-  let d = U64.v a - U64.v p in
-  let fwd_parent : obj_addr = cs'.cs_fwd p in
-  let sv = U64.v fwd_parent + d in
-  sv >= U64.v mword /\
-  sv % U64.v mword == 0 /\
-  (let s : obj_addr = U64.uint_to_t sv in
-   is_infix s cs'.cs_major /\
-   Seq.mem fwd_parent (objects zero_addr cs'.cs_major) /\
-   is_blue fwd_parent cs'.cs_major = false /\
-   sv - 8 >= U64.v fwd_parent /\
-   sv <= U64.v fwd_parent +
-     U64.v (wosize_of_object fwd_parent cs'.cs_major) * 8)
 
 let cfn_success_pre (minor: minor_state) (cs: cheney_state) (addr: U64.t) : prop =
   infix_fwd_ready minor cs /\

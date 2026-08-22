@@ -30,13 +30,6 @@ module SweepInv = GC.Spec.SweepInv
 /// ---------------------------------------------------------------------------
 /// Bounded Stack Properties (no gray_objects_on_stack)
 /// ---------------------------------------------------------------------------
-
-/// bounded_stack_props is weaker than stack_props
-let bounded_from_full (g: heap) (st: seq obj_addr)
-  : Lemma (requires stack_props g st)
-          (ensures bounded_stack_props g st)
-  = ()
-
 /// ---------------------------------------------------------------------------
 /// Counting non-black objects (termination measure)
 /// ---------------------------------------------------------------------------
@@ -826,33 +819,6 @@ let mark_inner_loop_count_decreases
     mark_step_bounded_decreases_non_black g st cap;
     let (g', st') = mark_step_bounded g st cap in
     mark_inner_loop_count_non_increasing g' st' cap (fuel - 1)
-
-/// mark_inner_loop drains stack (with sufficient fuel)
-let rec mark_inner_loop_drains
-  (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
-  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects zero_addr g) > 0 /\
-                   SweepInv.heap_objects_dense g /\
-                   fuel >= count_non_black g)
-          (ensures Seq.length (snd (mark_inner_loop g st cap fuel)) = 0)
-  = if Seq.length st = 0 then ()
-    else if fuel = 0 then begin
-      // st non-empty but fuel = 0 → count_non_black g >= 1 but fuel >= count_non_black g
-      // => fuel >= 1, contradiction
-      bounded_stack_head_is_gray g st;
-      let obj = Seq.head st in
-      is_gray_iff obj g; is_black_iff obj g;
-      count_non_black_in_has_nonblack g obj (objects zero_addr g);
-      ()
-    end else begin
-      mark_step_bounded_preserves_bsp g st cap;
-      mark_step_bounded_preserves_objects g st cap;
-      mark_step_bounded_preserves_density g st cap;
-      mark_step_bounded_decreases_non_black g st cap;
-      let (g', st') = mark_step_bounded g st cap in
-      mark_inner_loop_drains g' st' cap (fuel - 1)
-    end
-
 /// ---------------------------------------------------------------------------
 /// Top-level bounded mark: outer loop
 /// ---------------------------------------------------------------------------
@@ -901,36 +867,6 @@ let rec mark_bounded_preserves_objects (g: heap) (cap: nat{cap > 0}) (fuel: nat)
         mark_bounded_preserves_objects g' cap (fuel - 1)
       end
     end
-
-/// count_non_black strictly decreases per non-trivial iteration
-let rec mark_bounded_count_decreases (g: heap) (cap: nat{cap > 0}) (fuel: nat)
-  : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects zero_addr g) > 0 /\
-                   SweepInv.heap_objects_dense g /\ fuel > 0 /\
-                   Seq.length (rescan_heap g (objects zero_addr g) Seq.empty cap) > 0)
-          (ensures count_non_black (mark_bounded g cap fuel) < count_non_black g)
-  = let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
-    rescan_heap_bounded_stack_props g (objects zero_addr g) cap;
-    rescan_heap_cap_bound g (objects zero_addr g) Seq.empty cap;
-    // st non-empty: head is gray (from bsp), gray is non-black → count_non_black > 0
-    bounded_stack_head_is_gray g st;
-    let obj = Seq.head st in
-    is_gray_iff obj g; is_black_iff obj g;
-    count_non_black_in_has_nonblack g obj (objects zero_addr g);
-    let inner_fuel = count_non_black g in
-    mark_inner_loop_preserves_inv g st cap inner_fuel;
-    mark_inner_loop_preserves_objects g st cap inner_fuel;
-    mark_inner_loop_count_decreases g st cap inner_fuel;
-    let (g', _) = mark_inner_loop g st cap inner_fuel in
-    if fuel = 1 then ()
-    else begin
-      let st' = rescan_heap g' (objects zero_addr g') Seq.empty cap in
-      if Seq.length st' = 0 then ()
-      else begin
-        mark_bounded_count_decreases g' cap (fuel - 1)
-      end
-    end
-
 /// When count_non_black_in = 0, no element in the list is gray
 let rec count_non_black_zero_not_gray (g: heap) (obj: obj_addr) (objs: seq obj_addr)
   : Lemma (requires count_non_black_in g objs = 0 /\ Seq.mem obj objs)

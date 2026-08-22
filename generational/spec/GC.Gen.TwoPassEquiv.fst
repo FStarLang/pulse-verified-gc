@@ -42,14 +42,6 @@ private let lt_of_le_ne (k n: nat) : Lemma
   (requires k <= n /\ ~(k == n)) (ensures k + 1 <= n) = ()
 #pop-options
 
-let heap_read_word_extensional (h1 h2: heap)
-  : Lemma
-    (requires (forall (a: nat).
-       a < heap_size /\ a % 8 == 0 ==>
-       read_word h1 (U64.uint_to_t a) == read_word h2 (U64.uint_to_t a)))
-    (ensures h1 == h2)
-  = HeapExt.heap_read_word_ext h1 h2
-
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let heap_read_word_extensional_mk (h1 h2: heap)
   : Lemma
@@ -1614,29 +1606,6 @@ let update_major_pointers_preserves_non_field
 /// For an address that IS a field of a scannable non-blue object with a forwarded
 /// minor pointer, update_major_pointers rewrites it to the fwd target.
 /// This is a direct corollary of update_major_pointers_field_effect.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
-let update_major_pointers_rewrites_fwd_field
-  (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
-  : Lemma
-    (requires
-      well_formed_heap_part1 major /\
-      Seq.mem obj (objects zero_addr major) /\
-      j < U64.v (wosize_of_object obj major) /\
-      U64.v obj + j * 8 + 8 <= heap_size /\
-      (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false /\
-      is_no_scan obj major = false /\
-      (let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       let old_val = to_minor_offset (read_word major field_addr) in
-       is_minor_pointer old_val /\ fwd old_val <> 0UL))
-    (ensures
-      (let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       let old_val = to_minor_offset (read_word major field_addr) in
-       read_word (update_major_pointers major fwd) field_addr == fwd old_val))
-  = let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-    PromField.update_major_pointers_field_effect major fwd obj j
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Helper: forwarding targets don't look like minor pointers
 /// ---------------------------------------------------------------------------

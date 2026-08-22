@@ -38,13 +38,6 @@ let fl_node (a: U64.t) : GTot bool =
   U64.v a >= U64.v mword &&
   U64.v a % U64.v mword = 0 &&
   U64.v a + U64.v mword <= heap_size
-
-/// A chain cell is exactly an object address.
-let fl_node_is_obj_addr (a: U64.t)
-  : Lemma (requires fl_node a)
-          (ensures U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword == 0)
-  = ()
-
 /// The link stored in a cell.
 let fl_next (g: heap) (a: U64.t) : GTot U64.t =
   if fl_node a then read_word g (a <: hp_addr) else 0UL
@@ -67,14 +60,6 @@ let reachable_on_fl (g: heap) (fp: U64.t) (obj: U64.t) : GTot prop =
 /// ---------------------------------------------------------------------------
 /// Structural lemmas
 /// ---------------------------------------------------------------------------
-
-let rec on_fl_monotone (g: heap) (fp: U64.t) (obj: U64.t) (n m: nat)
-  : Lemma (requires on_fl g fp obj n /\ n <= m)
-          (ensures on_fl g fp obj m)
-          (decreases n)
-  = if n = 0 then ()
-    else if fp = obj then ()
-    else on_fl_monotone g (fl_next g fp) obj (n - 1) (m - 1)
 
 let on_fl_head (g: heap) (fp: U64.t)
   : Lemma (requires fl_node fp)
@@ -175,65 +160,9 @@ let fl_sound_tail (g: heap) (fp: U64.t)
     with introduce _ ==> _
     with reachable_cons g fp obj
 
-let fl_exact_elim_sound (g: heap) (fp: U64.t) (obj: obj_addr)
-  : Lemma (requires fl_exact g fp /\ reachable_on_fl g fp obj)
-          (ensures Seq.mem obj (objects zero_addr g) /\ is_blue obj g)
-  = ()
-
-let fl_exact_elim_complete (g: heap) (fp: U64.t) (obj: obj_addr)
-  : Lemma (requires fl_exact g fp /\ Seq.mem obj (objects zero_addr g) /\ is_blue obj g)
-          (ensures reachable_on_fl g fp obj)
-  = ()
-
-/// A non-blue object is never on the chain.  This is the form soundness is
-/// used in: it is what licenses writing to an object without disturbing the
-/// chain.
-let fl_sound_not_blue (g: heap) (fp: U64.t) (obj: obj_addr)
-  : Lemma (requires fl_sound g fp /\ ~(is_blue obj g))
-          (ensures ~(reachable_on_fl g fp obj))
-  = ()
-
 /// ---------------------------------------------------------------------------
 /// Write locality
 /// ---------------------------------------------------------------------------
 
 /// A word write that does not alias the link word of any reachable cell leaves
 /// the chain, and hence membership, untouched.
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
-let rec on_fl_write_outside (g: heap) (a: hp_addr) (v: U64.t) (fp: U64.t) (obj: U64.t) (n: nat)
-  : Lemma
-    (requires (forall (x: U64.t). on_fl g fp x n ==>
-                 (U64.v x + U64.v mword <= U64.v a \/ U64.v a + U64.v mword <= U64.v x)))
-    (ensures on_fl (write_word g a v) fp obj n == on_fl g fp obj n)
-    (decreases n)
-  = if n = 0 then ()
-    else if not (fl_node fp) then ()
-    else if fp = obj then ()
-    else begin
-      // `fp` itself is reachable, so the write misses its link word.
-      assert (on_fl g fp fp n);
-      assert (U64.v fp + U64.v mword <= U64.v a \/ U64.v a + U64.v mword <= U64.v fp);
-      read_write_different g a (fp <: hp_addr) v;
-      assert (fl_next (write_word g a v) fp == fl_next g fp);
-      // Anything reachable from the tail is reachable from `fp`.
-      introduce forall (x: U64.t). on_fl g (fl_next g fp) x (n - 1) ==>
-                  (U64.v x + U64.v mword <= U64.v a \/ U64.v a + U64.v mword <= U64.v x)
-      with introduce _ ==> _
-      with on_fl_cons g fp x (n - 1);
-      on_fl_write_outside g a v (fl_next g fp) obj (n - 1)
-    end
-#pop-options
-
-let reachable_write_outside (g: heap) (a: hp_addr) (v: U64.t) (fp: U64.t) (obj: U64.t)
-  : Lemma
-    (requires (forall (x: U64.t) (n: nat). on_fl g fp x n ==>
-                 (U64.v x + U64.v mword <= U64.v a \/ U64.v a + U64.v mword <= U64.v x)))
-    (ensures reachable_on_fl (write_word g a v) fp obj <==> reachable_on_fl g fp obj)
-  = introduce reachable_on_fl g fp obj ==> reachable_on_fl (write_word g a v) fp obj
-    with (eliminate exists (n: nat). on_fl g fp obj n
-          with (on_fl_write_outside g a v fp obj n;
-                assert (on_fl (write_word g a v) fp obj n)));
-    introduce reachable_on_fl (write_word g a v) fp obj ==> reachable_on_fl g fp obj
-    with (eliminate exists (n: nat). on_fl (write_word g a v) fp obj n
-          with (on_fl_write_outside g a v fp obj n;
-                assert (on_fl g fp obj n)))

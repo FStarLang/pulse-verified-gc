@@ -31,16 +31,6 @@ let bounded_mark_inv_intro (g: heap) (st: seq obj_addr) (cap: nat)
                    Seq.length st <= cap /\ cap > 0)
           (ensures bounded_mark_inv g st cap)
   = ()
-
-/// From full mark_inv to bounded (stronger → weaker)
-let bounded_mark_inv_from_full (g: heap) (st: seq obj_addr) (cap: nat)
-  : Lemma (requires well_formed_heap g /\ stack_props g st /\
-                   Seq.length (objects zero_addr g) > 0 /\
-                   SweepInv.heap_objects_dense g /\
-                   Seq.length st <= cap /\ cap > 0)
-          (ensures bounded_mark_inv g st cap)
-  = bounded_from_full g st
-
 /// ---------------------------------------------------------------------------
 /// Elimination
 /// ---------------------------------------------------------------------------
@@ -81,12 +71,6 @@ let bounded_mark_inv_head_gray (g: heap) (st: seq obj_addr) (cap: nat)
 /// Step preservation
 /// ---------------------------------------------------------------------------
 
-let bounded_mark_inv_step (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  : Lemma (requires bounded_mark_inv g st cap)
-          (ensures (let (g', st') = mark_step_bounded g st cap in
-                    well_formed_heap g' /\ bounded_stack_props g' st'))
-  = mark_step_bounded_preserves_bsp g st cap
-
 /// Step preserves full invariant (including density, objects non-empty)
 #push-options "--z3rlimit 50"
 let bounded_mark_inv_step_full (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
@@ -114,41 +98,10 @@ let bounded_mark_inv_step_full (g: heap) (st: seq obj_addr{Seq.length st > 0}) (
 /// Objects preservation
 /// ---------------------------------------------------------------------------
 
-let bounded_mark_inv_step_preserves_objects
-  (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  : Lemma (requires bounded_mark_inv g st cap)
-          (ensures objects zero_addr (fst (mark_step_bounded g st cap)) == objects zero_addr g)
-  = mark_step_bounded_preserves_objects g st cap
-
 /// ---------------------------------------------------------------------------
 /// Termination: count_non_black strictly decreases
 /// ---------------------------------------------------------------------------
 
-let bounded_mark_inv_step_decreases (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  : Lemma (requires bounded_mark_inv g st cap)
-          (ensures count_non_black (fst (mark_step_bounded g st cap)) < count_non_black g)
-  = mark_step_bounded_decreases_non_black g st cap
-
 /// ---------------------------------------------------------------------------
 /// Rescan
 /// ---------------------------------------------------------------------------
-
-let bounded_mark_inv_rescan (g: heap) (cap: nat)
-  : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects zero_addr g) > 0 /\
-                   SweepInv.heap_objects_dense g /\ cap > 0)
-          (ensures (let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
-                    bounded_mark_inv g st cap))
-  = rescan_heap_bounded_stack_props g (objects zero_addr g) cap;
-    rescan_heap_cap_bound g (objects zero_addr g) Seq.empty cap
-
-/// If rescan returns empty, no gray objects remain
-let bounded_mark_inv_rescan_complete (g: heap) (cap: nat)
-  : Lemma (requires cap > 0)
-          (ensures (let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
-                    Seq.length st = 0 ==> SweepInv.no_gray_objects g))
-  = rescan_complete g cap;
-    let st = rescan_heap g (objects zero_addr g) Seq.empty cap in
-    if Seq.length st = 0 then
-      SweepInv.no_gray_intro g
-    else ()

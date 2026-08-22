@@ -275,29 +275,7 @@ let dfs_body (g: graph_state{graph_wf g})
 #pop-options
 
 /// Lemma: dfs_body increases visited length by 1
-#push-options "--z3rlimit 30"
-let dfs_body_length (g: graph_state{graph_wf g})
-                    (stack: vertex_set{nonEmpty_set stack /\ subset_vertices stack g.vertices})
-                    (visited: vertex_set{subset_vertices visited g.vertices /\ 
-                                          (forall x. Seq.mem x visited ==> ~(Seq.mem x stack))})
-  : Lemma (ensures (let (_, visited') = dfs_body g stack visited in
-                    Seq.length visited' = Seq.length visited + 1))
-  = let x = get_last_elem stack in
-    assert (~(Seq.mem x visited));
-    insert_to_vertex_set_length_lemma g x visited
-#pop-options
-
 /// Lemma: dfs_body returns visited' = insert_to_vertex_set g (get_last_elem stack) visited
-#push-options "--z3rlimit 20"
-let dfs_body_visited_grows (g: graph_state{graph_wf g})
-                           (stack: vertex_set{nonEmpty_set stack /\ subset_vertices stack g.vertices})
-                           (visited: vertex_set{subset_vertices visited g.vertices /\ 
-                                                (forall x. Seq.mem x visited ==> ~(Seq.mem x stack))})
-  : Lemma (ensures (let (_, visited') = dfs_body g stack visited in
-                    visited' == insert_to_vertex_set g (get_last_elem stack) visited))
-  = ()
-#pop-options
-
 /// Lemma: dfs_body maintains disjointness between stack and visited
 #push-options "--z3rlimit 20"
 let dfs_body_disjoint (g: graph_state{graph_wf g})
@@ -589,33 +567,6 @@ let dfs_inv (g: graph_state{graph_wf g}) (roots: vertex_set{subset_vertices root
 
 /// Helper lemma: if x is reachable from roots and y is a successor of x,
 /// then y is also reachable from roots
-#push-options "--z3rlimit 20"
-let successor_reachable (g: graph_state{graph_wf g}) 
-                        (roots: vertex_set{subset_vertices roots g.vertices})
-                        (x: vertex_id{mem_graph_vertex g x})
-                        (y: vertex_id{mem_graph_vertex g y})
-  : Lemma (requires (exists (r: vertex_id{mem_graph_vertex g r}). 
-                       Seq.mem r roots /\ reachable g r x) /\
-                    mem_graph_edge g x y)
-          (ensures (exists (r: vertex_id{mem_graph_vertex g r}). 
-                      Seq.mem r roots /\ reachable g r y))
-  = // Unpack the reachability from roots to x
-    let aux (r: vertex_id{mem_graph_vertex g r}) 
-      : Lemma (requires Seq.mem r roots /\ reachable g r x)
-              (ensures (exists (r': vertex_id{mem_graph_vertex g r'}). 
-                         Seq.mem r' roots /\ reachable g r' y))
-      = // x is reachable from r, and y is a successor of x (edge x -> y)
-        // Therefore y is reachable from r via edge
-        edge_reach g x y;
-        reach_trans g r x y;
-        // Now we have reachable g r y
-        assert (reachable g r y);
-        assert (Seq.mem r roots);
-        ()
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-#pop-options
-
 /// Helper lemma: push_unvisited_successors preserves reachability invariant
 /// This key lemma ensures that all elements pushed to the stack are reachable from roots
 #push-options "--fuel 2 --ifuel 1 --z3rlimit 50"
@@ -1031,14 +982,6 @@ let reachable_set_correct g roots =
   let result = reachable_set g roots in
   dfs_lemma_forward g roots result;
   dfs_lemma_backward g roots result
-
-/// Forest-based reachability check (constructive)
-let is_reachable_via_forest (g: graph_state{graph_wf g})
-                             (roots: vertex_set{subset_vertices roots g.vertices})
-                             (x: vertex_id)
-  : GTot bool
-  = Seq.mem x (reachable_set g roots)
-
 /// Successor closure: if x is reachable and has edge to y, then y is reachable
 val reachable_successor_closed : (g: graph_state{graph_wf g}) ->
                                   (roots: vertex_set{subset_vertices roots g.vertices}) ->

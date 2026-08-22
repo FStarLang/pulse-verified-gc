@@ -18,8 +18,6 @@ let mark_inv (g: heap) (st: seq obj_addr) : prop =
   well_formed_heap g /\ stack_props g st /\
   Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g
 
-let mark_inv_intro g st = ()
-
 let mark_inv_elim_wfh g st = ()
 
 let mark_inv_elim_sev g st = ()
@@ -51,9 +49,6 @@ let mark_inv_step_scan g obj tl =
   mark_inv_step g st
 #pop-options
 
-let mark_inv_step_preserves_objects g st =
-  mark_step_preserves_objects g st
-
 let mark_inv_elim_density g st = ()
 
 let mark_inv_stack_bound g st =
@@ -69,14 +64,3 @@ let mark_inv_push_children_bound g obj tl =
   let wz = GC.Spec.Object.wosize_of_object obj g in
   mark_inv_stack_bound (fst (push_children g' tl obj 1UL wz))
                        (snd (push_children g' tl obj 1UL wz))
-
-let push_children_stack_monotone g st obj i ws =
-  push_children_stack_monotone g st obj i ws
-
-let mark_inv_no_gray g st =
-  empty_stack_no_grey g st;
-  SweepInv.no_gray_intro g
-
-let mark_inv_noGreyObjects g st =
-  mark_inv_elim_sp g st;
-  empty_stack_no_grey g st

@@ -21,6 +21,9 @@ open GC.Gen.Promote
 /// Decidable equality for combined_vertex
 /// ---------------------------------------------------------------------------
 
+/// `make depgraph` reports this unreachable and it is: nothing ever names
+/// it. It is a *fact*, not a callee -- its type sits in the SMT context of
+/// every proof below, and deleting it breaks them. Do not prune it.
 let cv_eqtype : squash (hasEq combined_vertex) = ()
 
 /// ---------------------------------------------------------------------------
@@ -810,52 +813,7 @@ private let rec major_field_edges_source (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: if edge is in minor_field_edges, there exists a field index with classification
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-private let rec minor_field_edges_elim (ms: minor_state) (major: heap)
-  (src: U64.t) (wz: nat) (i: nat) (dst: combined_vertex)
-  : Lemma (requires Seq.mem (MinorV src, dst) (minor_field_edges ms major src wz i))
-          (ensures exists (k: nat). i <= k /\ k < wz /\
-                    classify_minor_field ms major (minor_read_field ms src k) == Some dst)
-          (decreases (wz - i))
-  = if i >= wz then ()
-    else
-      let v = minor_read_field ms src i in
-      let rest = minor_field_edges ms major src wz (i + 1) in
-      match classify_minor_field ms major v with
-      | Some d ->
-        Seq.mem_cons (MinorV src, d) rest;
-        if (MinorV src, dst) = (MinorV src, d) then ()
-        else minor_field_edges_elim ms major src wz (i + 1) dst
-      | None -> minor_field_edges_elim ms major src wz (i + 1) dst
-#pop-options
-
 /// Helper: if edge is in major_field_edges, there exists a field index with classification
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-private let rec major_field_edges_elim (ms: minor_state) (major: heap)
-  (src: obj_addr) (wz: nat) (i: nat) (dst: combined_vertex)
-  : Lemma (requires Seq.mem (MajorV src, dst) (major_field_edges ms major src wz i))
-          (ensures exists (k: nat). i <= k /\ k < wz /\
-                    (let field_offset = U64.v src + k * 8 in
-                     field_offset + 8 <= heap_size /\
-                     field_offset % 8 == 0 /\
-                     classify_major_field ms major
-                       (read_word major (U64.uint_to_t field_offset)) == Some dst))
-          (decreases (wz - i))
-  = if i >= wz then ()
-    else
-      let field_offset = U64.v src + i * 8 in
-      if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
-      else
-        let v = read_word major (U64.uint_to_t field_offset) in
-        let rest = major_field_edges ms major src wz (i + 1) in
-        match classify_major_field ms major v with
-        | Some d ->
-          Seq.mem_cons (MajorV src, d) rest;
-          if (MajorV src, dst) = (MajorV src, d) then ()
-          else major_field_edges_elim ms major src wz (i + 1) dst
-        | None -> major_field_edges_elim ms major src wz (i + 1) dst
-#pop-options
-
 /// Helper: edges from all_minor_edges can be traced to a specific object
 #push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
 private let rec all_minor_edges_to_object
@@ -1110,27 +1068,6 @@ type combined_reach (g: combined_graph) (roots: seq combined_vertex)
 /// GC Morphism
 /// ---------------------------------------------------------------------------
 
-#push-options "--ifuel 1"
-let gc_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot combined_vertex =
-  match v with
-  | MinorV a -> if fwd a <> 0UL then MajorV (fwd a) else MinorV a
-  | MajorV a -> MajorV a
-
-let gc_morphism_minor_fwd (fwd: forwarding_map) (v: U64.t)
-  : Lemma (requires fwd v <> 0UL)
-          (ensures gc_morphism fwd (MinorV v) == MajorV (fwd v))
-  = ()
-
-let gc_morphism_minor_stay (fwd: forwarding_map) (v: U64.t)
-  : Lemma (requires fwd v == 0UL)
-          (ensures gc_morphism fwd (MinorV v) == MinorV v)
-  = ()
-
-let gc_morphism_major (fwd: forwarding_map) (v: U64.t)
-  : Lemma (ensures gc_morphism fwd (MajorV v) == MajorV v)
-  = ()
-#pop-options
-
 /// The prop-level predicate: exists a derivation
 let combined_reachable (g: combined_graph) (roots: seq combined_vertex)
                        (v: combined_vertex) : GTot prop =
@@ -1205,10 +1142,6 @@ let combined_reachable_ind_with_reach
 /// ---------------------------------------------------------------------------
 /// Root Classification
 /// ---------------------------------------------------------------------------
-
-let classify_roots_impl (roots: seq U64.t)
-  : GTot (seq combined_vertex)
-  = classify_roots roots
 
 /// ---------------------------------------------------------------------------
 /// classify_roots membership lemmas

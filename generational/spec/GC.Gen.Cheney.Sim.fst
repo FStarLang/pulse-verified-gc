@@ -126,12 +126,6 @@ let not_minor_if_guards_fail (minor: minor_state) (addr: U64.t)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 
-let minor_object_passes_guards (minor: minor_state) (obj: U64.t)
-  : Lemma (requires minor_wf minor /\ Seq.mem obj (minor_objects minor))
-          (ensures minor_wosize minor obj < minor_heap_size /\
-                   U64.v obj + minor_wosize minor obj * 8 <= minor_heap_size)
-  = minor_objects_body_bound minor obj
-
 let not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf minor /\
                     U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
@@ -158,95 +152,15 @@ let promote_object_zero_noop
   end
 
 #pop-options
-
-/// Re-export for callers that need the explicit quantifier form
-let cheney_forward_one_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_forward_one minor cs addr in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-  = SimOne.queue_valid_intro minor cs.cs_queue;
-    SimOne.fwd_one_preserves_queue_valid minor cs addr;
-    SimOne.queue_valid_elim minor (CheneySpec.cheney_forward_one minor cs addr).cs_queue
-
-let cheney_forward_one_queue_bound
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (ensures (let cs' = CheneySpec.cheney_forward_one minor cs addr in
-                    Seq.length cs'.cs_queue <= Seq.length cs.cs_queue + 1))
-  = SimOne.cheney_forward_one_queue_bound minor cs addr
-
 /// ---------------------------------------------------------------------------
 /// Queue validity through forward_fields and forward_roots (induction)
 /// Uses opaque queue_valid predicate to prevent quantifier nesting.
 /// Delegates to SimOne which has the recursive proofs with equation lemmas.
 /// ---------------------------------------------------------------------------
 
-let cheney_forward_fields_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_forward_fields minor cs parent idx wosize in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-  = SimOne.queue_valid_intro minor cs.cs_queue;
-    SimOne.forward_fields_preserves_queue_valid minor cs parent idx wosize;
-    SimOne.queue_valid_elim minor (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_queue
-
-let cheney_forward_roots_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_forward_roots minor cs roots idx in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-  = SimOne.queue_valid_intro minor cs.cs_queue;
-    SimOne.forward_roots_preserves_queue_valid minor cs roots idx;
-    SimOne.queue_valid_elim minor (CheneySpec.cheney_forward_roots minor cs roots idx).cs_queue
-
-let cheney_scan_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_scan minor cs scan fuel in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-  = SimOne.queue_valid_intro minor cs.cs_queue;
-    SimOne.scan_preserves_queue_valid minor cs scan fuel;
-    SimOne.queue_valid_elim minor (CheneySpec.cheney_scan minor cs scan fuel).cs_queue
-
 /// ---------------------------------------------------------------------------
 /// Queue bound through forward_roots and scan (uses BFS invariant)
 /// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-
-let cheney_forward_roots_queue_bound
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    minor_infix_wf minor /\ minor_wf minor /\
-                    Seq.length (minor_objects minor) <= queue_size)
-          (ensures (let cs' = CheneySpec.cheney_forward_roots minor cs roots idx in
-                    SimOne.cheney_bfs_inv minor cs' /\
-                    Seq.length cs'.cs_queue <= Seq.length (minor_objects minor) /\
-                    Seq.length cs'.cs_queue <= queue_size))
-  = SimOne.forward_roots_preserves_bfs_inv minor cs roots idx;
-    SimOne.cheney_bfs_inv_bound minor (CheneySpec.cheney_forward_roots minor cs roots idx)
-
-let cheney_scan_queue_bound
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    minor_infix_wf minor /\ minor_wf minor /\
-                    Seq.length (minor_objects minor) <= queue_size)
-          (ensures (let cs' = CheneySpec.cheney_scan minor cs scan fuel in
-                    SimOne.cheney_bfs_inv minor cs' /\
-                    Seq.length cs'.cs_queue <= Seq.length (minor_objects minor) /\
-                    Seq.length cs'.cs_queue <= queue_size))
-  = SimOne.scan_preserves_bfs_inv minor cs scan fuel;
-    SimOne.cheney_bfs_inv_bound minor (CheneySpec.cheney_scan minor cs scan fuel)
-
-#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Bridge: minor_read ↔ minor_read_field

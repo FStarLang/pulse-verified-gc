@@ -56,13 +56,6 @@ let is_val_addr_spec (a: U64.t)
 /// Address Arithmetic Lemmas (implementations)
 /// ---------------------------------------------------------------------------
 
-let sum_of_aligned_is_aligned (x: U64.t{U64.v x % U64.v mword == 0})
-                               (y: U64.t{U64.v y % U64.v mword == 0})
-  : Lemma (ensures (U64.v x + U64.v y) % U64.v mword == 0) = ()
-
-let mult_mword_aligned (x: U64.t{U64.v x * U64.v mword < pow2 64})
-  : Lemma (ensures U64.v (U64.mul x mword) % U64.v mword == 0) = ()
-
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let mk_hp_addr a =
   assert (a < pow2 64);

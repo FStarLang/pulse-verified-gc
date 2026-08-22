@@ -41,45 +41,4 @@ val header_write_same_wosize_preserves_objects :
 
 /// Section 3: efptu congruence and monotonicity
 
-val efptu_congruence :
-  (g: heap) -> (g': heap) -> (src: obj_addr) ->
-  (wz: U64.t{U64.v wz < pow2 54}) -> (dst: obj_addr) ->
-  Lemma (requires (forall (k: nat{k < U64.v wz}).
-                     let fa = U64.add_mod src (U64.mul_mod (U64.uint_to_t k) mword) in
-                     U64.v fa < heap_size /\ U64.v fa % 8 == 0 ==>
-                     read_word g' fa == read_word g fa))
-        (ensures exists_field_pointing_to_unchecked g' src wz dst ==
-                 exists_field_pointing_to_unchecked g src wz dst)
-
-val efptu_monotone :
-  (g: heap) -> (src: obj_addr) ->
-  (small_wz: U64.t{U64.v small_wz < pow2 54}) ->
-  (big_wz: U64.t{U64.v big_wz < pow2 54}) ->
-  (dst: obj_addr) ->
-  Lemma (requires U64.v small_wz <= U64.v big_wz /\
-                  well_formed_object g src /\
-                  U64.v big_wz <= U64.v (wosize_of_object src g) /\
-                  exists_field_pointing_to_unchecked g src small_wz dst)
-        (ensures exists_field_pointing_to_unchecked g src big_wz dst)
-
 /// Section 4: Header write field independence
-
-val header_write_doesnt_change_own_fields :
-  (g: heap) -> (obj: obj_addr) -> (new_hdr: U64.t) -> (k: nat) ->
-  Lemma (requires k < U64.v (wosize_of_object obj g))
-        (ensures (let fa = U64.add_mod obj (U64.mul_mod (U64.uint_to_t k) mword) in
-                  let hd = hd_address obj in
-                  U64.v fa < heap_size /\ U64.v fa % 8 == 0 ==>
-                  read_word (write_word g hd new_hdr) fa == read_word g fa))
-
-val header_write_doesnt_change_other_fields :
-  (g: heap) -> (obj: obj_addr) -> (src: obj_addr) -> (new_hdr: U64.t) -> (k: nat) ->
-  Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects zero_addr g) /\
-                  Seq.mem src (objects zero_addr g) /\
-                  src <> obj /\
-                  k < U64.v (wosize_of_object src g))
-        (ensures (let fa = U64.add_mod src (U64.mul_mod (U64.uint_to_t k) mword) in
-                  let hd = hd_address obj in
-                  U64.v fa < heap_size /\ U64.v fa % 8 == 0 ==>
-                  read_word (write_word g hd new_hdr) fa == read_word g fa))

@@ -36,11 +36,3 @@ val update_major_pointers_field_effect
        let new_val = read_word updated field_addr in
        (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
        (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw)))
-
-val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    pointer_closure_modulo_fwd major fwd /\
-                    fwd_all_targets_valid fwd major /\
-                    blue_fields_closed major /\
-                    no_scan_invariant major)
-    (ensures well_formed_heap_part2 (update_major_pointers major fwd))

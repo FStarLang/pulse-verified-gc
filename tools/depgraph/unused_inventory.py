@@ -132,49 +132,58 @@ proofs. That is why the plan below re-verifies after each phase.
 """)
 
     w("## Removal plan\n")
-    w("Phases are ordered by risk. Re-run the full build (`make -k -j24`), the SPOT")
-    w("build (`make -C spot -j24`) and extraction (`make extract`, expecting a")
-    w("byte-identical C snapshot) after **each** phase; bisect within a phase if a")
-    w("proof breaks.\n")
-    n_full = sum(counts[m][0] for m in full_dead)
-    w(f"### Phase 1 — delete {len(full_dead)} entirely-dead modules ({n_full} definitions)\n")
-    w("Every definition in these modules is unreachable, so the whole `.fst`/`.fsti`")
-    w("pair goes. Remove the files, then drop any mention of them from `Makefile`,")
-    w("`*/Makefile` (verification lists, `EAGER_QI_CHECKED`, `EXTRACT_MODULES`) and")
-    w("any `open`/`include` in surviving modules.\n")
-    w("A dead module is usually still *named* by live files, because these modules")
-    w("were carved out of larger ones and the parent kept a facade of one-line")
-    w("re-exports, `let f = Sub.f`, backed by a `val` in its `.fsti`. Each wrapper")
-    w("is itself dead and so appears in Phase 2, but it is a syntactic reference,")
-    w("so the wrapper and its `val` have to go in the same commit as the module.")
-    w("The cascade is bounded: everything it drags in is already in this report,")
-    w("because a wrapper for a dead definition cannot itself be live.\n")
-    w("| Module | Defs | Area | Referenced in a Makefile |")
-    w("| --- | ---: | --- | --- |")
-    for m in full_dead:
-        refs = subprocess.run(
-            ["grep", "-rl", m, "Makefile"] +
-            [p for p in ("common/Makefile", "mark-and-sweep/Makefile",
-                         "generational/Makefile", "spot/Makefile")
-             if os.path.exists(p)],
-            capture_output=True, text=True).stdout.split()
-        w(f"| `{m}` | {counts[m][0]} | {area(m)} | {', '.join(f'`{r}`' for r in refs) or '—'} |")
-    w("")
-
-    n_part = sum(counts[m][1] for m in partial)
-    w(f"### Phase 2 — trim {len(partial)} partially-dead modules ({n_part} definitions)\n")
-    w("These modules keep some live definitions, so delete individual definitions")
-    w("rather than files. Work highest-density first: a module that is 70% dead is")
-    w("usually a proof scaffold whose intermediate lemmas were inlined or superseded.\n")
-    w("| Module | Defs | Dead | % | Area |")
-    w("| --- | ---: | ---: | ---: | --- |")
-    for m in partial:
-        nd, nu = counts[m]
-        w(f"| `{m}` | {nd} | {nu} | {100*nu//nd} | {area(m)} |")
-    w("")
-    w("### Phase 3 — re-run and confirm the fixpoint\n")
-    w("`make depgraph` again. The dead count should be 0; anything left is a")
-    w("definition that only the deleted code kept alive and is safe to remove too.\n")
+    w("`make depgraph-prune` deletes the whole set mechanically: it locates each")
+    w("definition by name in its `.fst` and `.fsti`, takes the doc comment,")
+    w("attributes and standalone qualifiers with it, and collapses any")
+    w("`#push-options`/`#pop-options` pair it empties. The unreachable set is")
+    w("closed, so one pass reaches the fixpoint.\n")
+    w("Validate with the full build (`make -k -j24`), the SPOT build")
+    w("(`make -C spot -j24`) and extraction (`make extract`, expecting C that is")
+    w("byte-identical modulo the KaRaMeL invocation banner). Bisect by module if a")
+    w("proof breaks: the graph cannot see that deleting a definition also shrinks")
+    w("the SMT context of every module that `open`s it.\n")
+    w("The pruner refuses three things, which is why this report may never reach")
+    w("zero:\n")
+    w("- **`let x : squash p = ...`** — nothing ever *names* such a definition, but")
+    w("  its type sits in the SMT context of every later proof in the module, so it")
+    w("  is a fact rather than a callee. Deleting one breaks proofs that never")
+    w("  mention it.")
+    w("- **A `let rec ... and ...` group with a live member** — the group is")
+    w("  syntactically indivisible. If every member is dead the pruner takes the")
+    w("  whole group; otherwise it leaves it alone.")
+    w("- **A definition it cannot find by name** — reported so it can be handled by")
+    w("  hand rather than silently skipped.\n")
+    if full_dead:
+        n_full = sum(counts[m][0] for m in full_dead)
+        w(f"### {len(full_dead)} entirely-dead modules ({n_full} definitions)\n")
+        w("Every definition in these is unreachable, so the whole `.fst`/`.fsti` pair")
+        w("goes. Deleting files is *not* automated: remove them, drop every mention")
+        w("from `Makefile` and `*/Makefile` (verification lists, `EAGER_QI_CHECKED`,")
+        w("`EXTRACT_MODULES`), and delete the facade re-exports (`let f = Sub.f` plus")
+        w("its `val`) that surviving parents keep for them. Those wrappers are")
+        w("themselves dead and already listed below, but they are *syntactic*")
+        w("references, so they have to go in the same commit as the module.\n")
+        w("| Module | Defs | Area | Referenced in a Makefile |")
+        w("| --- | ---: | --- | --- |")
+        for m in full_dead:
+            refs = subprocess.run(
+                ["grep", "-rl", m, "Makefile"] +
+                [p for p in ("common/Makefile", "mark-and-sweep/Makefile",
+                             "generational/Makefile", "spot/Makefile")
+                 if os.path.exists(p)],
+                capture_output=True, text=True).stdout.split()
+            w(f"| `{m}` | {counts[m][0]} | {area(m)} | "
+              f"{', '.join(f'`{r}`' for r in refs) or '—'} |")
+        w("")
+    if partial:
+        n_part = sum(counts[m][1] for m in partial)
+        w(f"### {len(partial)} partially-dead modules ({n_part} definitions)\n")
+        w("| Module | Defs | Dead | % | Area |")
+        w("| --- | ---: | ---: | ---: | --- |")
+        for m in partial:
+            nd, nu = counts[m]
+            w(f"| `{m}` | {nd} | {nu} | {100*nu//nd} | {area(m)} |")
+        w("")
 
     w("## Full inventory\n")
     w(f"Every one of the {len(rows)} unreachable definitions, grouped by module.\n")

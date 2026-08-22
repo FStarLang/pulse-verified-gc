@@ -881,108 +881,6 @@ let mark_step_black_origin g st x =
     end
   end
 #pop-options
-
-/// mark_step preserves black color of any object
-val mark_step_preserves_black : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) -> (x: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ is_black x g)
-        (ensures is_black x (fst (mark_step g st)))
-
-#push-options "--z3rlimit 100"
-let mark_step_preserves_black g st x =
-  let obj = Seq.head st in
-  stack_head_is_gray g st;
-  // obj is gray, x is black → obj <> x
-  is_gray_iff obj g;
-  is_black_iff x g;
-  colors_exhaustive_and_exclusive obj g;
-  assert (obj <> x);
-  // makeBlack obj preserves x's color
-  let g' = makeBlack obj g in
-  makeBlack_eq obj g;
-  color_change_preserves_other_color obj x g Header.Black;
-  is_black_iff x g;
-  is_black_iff x g';
-  assert (is_black x g');
-  // push_children preserves x's color
-  let ws = wosize_of_object obj g in
-  if is_no_scan obj g then ()
-  else begin
-    let st' = Seq.tail st in
-    push_children_preserves_other_black g' st' obj 1UL ws x
-  end
-#pop-options
-
-/// mark_aux preserves black color of any object
-val mark_aux_preserves_black : (g: heap{well_formed_heap g}) -> 
-                                (st: seq obj_addr{stack_props g st}) -> 
-                                (fuel: nat) -> (x: obj_addr) ->
-  Lemma (requires is_black x g)
-        (ensures is_black x (mark_aux g st fuel))
-        (decreases fuel)
-
-#push-options "--z3rlimit 50 --fuel 1"
-let rec mark_aux_preserves_black g st fuel x =
-  if Seq.length st = 0 then ()
-  else if fuel = 0 then ()
-  else begin
-    let (g', st') = mark_step g st in
-    mark_step_preserves_black g st x;
-    assert (is_black x g');
-    mark_step_preserves_stack_props g st;
-    mark_step_preserves_wf g st;
-    mark_aux_preserves_black g' st' (fuel - 1) x
-  end
-#pop-options
-
-/// mark_step makes exactly one object black (the head of stack)
-val mark_step_makes_one_black : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures (let obj = Seq.head st in
-                  is_black obj (fst (mark_step g st)) /\
-                  is_gray obj g))
-
-#push-options "--z3rlimit 100"
-let mark_step_makes_one_black g st =
-  stack_head_is_gray g st;
-  let obj = Seq.head st in
-  assert (is_gray obj g);
-  let g' = makeBlack obj g in
-  makeBlack_is_black obj g;
-  assert (is_black obj g');
-  let ws = wosize_of_object obj g in
-  if is_no_scan obj g then ()
-  else
-    push_children_preserves_parent_black g' (Seq.tail st) obj 1UL ws
-#pop-options
-
-/// Helper: non_black_count is unchanged when makeBlack on address not in list
-val non_black_count_makeBlack_other : (g: heap) -> (obj: obj_addr) -> (objs: seq obj_addr) ->
-  Lemma (requires ~(Seq.mem obj objs) /\
-                  (forall (x: obj_addr). Seq.mem x objs ==> obj <> x))
-        (ensures non_black_count (makeBlack obj g) objs == non_black_count g objs)
-        (decreases Seq.length objs)
-
-let rec non_black_count_makeBlack_other g obj objs =
-  if Seq.length objs = 0 then ()
-  else begin
-    let hd = Seq.head objs in
-    assert (Seq.mem hd objs);
-    makeBlack_eq obj g;
-    color_change_preserves_other_color obj hd g Header.Black;
-    is_black_iff hd g;
-    is_black_iff hd (makeBlack obj g);
-    assert (is_black hd (makeBlack obj g) == is_black hd g);
-    non_black_count_makeBlack_other g obj (Seq.tail objs)
-  end
-
-let non_black_count_unfold (g: heap) (objs: seq obj_addr)
-  : Lemma (requires Seq.length objs > 0)
-          (ensures non_black_count g objs == 
-                   (if is_black (Seq.head objs) g then 0 else 1) + 
-                   non_black_count g (Seq.tail objs))
-  = ()
-
-
 /// `n >= 1 ==> n - 1 << n`.  Trivial, but the termination check for the
 /// fuel-driven mark recursions diverges on it under the enclosing invariants.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
@@ -1019,21 +917,9 @@ let colors_exclusive obj g = colors_exhaustive_and_exclusive obj g
 /// Pillar 2: Mark Correctness - Black = Reachable
 /// ---------------------------------------------------------------------------
 
-let stack_to_vertices (st: seq obj_addr) : seq vertex_id =
-  HeapGraph.coerce_to_vertex_list st
-
 /// (defined at end of file after all infrastructure)
 
 /// (defined at end of file after all infrastructure)
-
-val mark_black_iff_reachable : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
-                  no_black_objects g /\ no_pointer_to_blue g /\
-                  (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-                  (let graph = create_graph g in
-                   let roots' = HeapGraph.coerce_to_vertex_list roots in
-                   graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-        (ensures True)
 
 /// (defined at end of file after all infrastructure)
 
@@ -2158,13 +2044,6 @@ let rec mark_aux_preserves_objects g st fuel
     end
   end
 #pop-options
-
-/// mark_aux preserves objects > 0 (follows from mark_aux_preserves_objects)
-let mark_aux_preserves_objects_gt0 (g: heap) (st: seq obj_addr) (fuel: nat)
-  : Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length (objects zero_addr g) > 0)
-          (ensures Seq.length (objects zero_addr (mark_aux g st fuel)) > 0)
-= mark_aux_preserves_objects g st fuel
-
 /// mark preserves objects > 0
 let mark_preserves_objects_gt0 (g: heap) (st: seq obj_addr)
   : Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length (objects zero_addr g) > 0)
@@ -2462,22 +2341,6 @@ let rec mark_aux_preserves_blue g st fuel x =
     mark_aux_preserves_blue g' st' (fuel - 1) x
   end
 #pop-options
-
-/// mark preserves no_blue_objects
-val mark_preserves_no_blue : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{stack_props g st}) ->
-  Lemma (requires no_blue_objects g)
-        (ensures no_blue_objects (mark g st))
-
-let mark_preserves_no_blue g st =
-  let gm = mark g st in
-  mark_aux_preserves_objects g st heap_words;
-  let aux (x: obj_addr) : Lemma 
-    (requires Seq.mem x (objects zero_addr gm))
-    (ensures ~(is_blue x gm)) =
-    mark_aux_no_new_blue g st heap_words x
-  in
-  Classical.forall_intro (Classical.move_requires aux)
-
 /// ---------------------------------------------------------------------------
 /// 5.3 Gray objects become black after mark
 /// ---------------------------------------------------------------------------
@@ -3967,12 +3830,6 @@ let mark_black_is_reachable g st roots =
     = graph_vertices_mem g x
   in FStar.Classical.forall_intro prove_vertex_mem
 #pop-options
-
-/// Combined: mark produces black = reachable
-let mark_black_iff_reachable g st roots =
-  mark_reachable_is_black g st roots;
-  mark_black_is_reachable g st roots
-
 /// ---------------------------------------------------------------------------
 /// Bridge for impl: check_and_darken preserves well_formed_heap
 /// ---------------------------------------------------------------------------

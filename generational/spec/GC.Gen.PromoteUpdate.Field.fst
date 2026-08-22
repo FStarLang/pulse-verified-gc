@@ -381,37 +381,3 @@ let update_major_pointers_field_effect
 
 /// update_major_pointers establishes well_formed_heap_part2 (pointer closure).
 /// Uses pointer_closure_modulo_fwd (weaker than full part2) + fwd_all_targets_valid.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
-let update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    pointer_closure_modulo_fwd major fwd /\
-                    fwd_all_targets_valid fwd major /\
-                    blue_fields_closed major /\
-                    no_scan_invariant major)
-    (ensures well_formed_heap_part2 (update_major_pointers major fwd)) =
-  let mc = update_major_pointers major fwd in
-  update_major_pointers_preserves_objects major fwd;
-  let field_closure (src: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (objects zero_addr mc) /\
-                      j < U64.v (wosize_of_object src mc) /\
-                      U64.v src + j * 8 + 8 <= heap_size)
-            (ensures (let v = read_word mc (U64.uint_to_t (U64.v src + j * 8)) in
-                      is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr mc)))
-    = update_major_pointers_preserves_header major fwd src;
-      GC.Spec.Object.wosize_of_object_spec src mc;
-      GC.Spec.Object.wosize_of_object_spec src major;
-      if is_blue src major then begin
-        update_major_pointers_preserves_blue_field major fwd src j;
-        blue_fields_closed_inst major src j
-      end else if is_no_scan src major then begin
-        // No-scan: field is preserved, and no_scan_invariant ensures it's not a pointer
-        update_major_pointers_preserves_no_scan_field major fwd src j;
-        no_scan_invariant_elim major src j
-      end else begin
-        update_major_pointers_field_effect major fwd src j;
-        ()
-      end
-  in
-  update_major_pointers_preserves_wfh_part1 major fwd;
-  well_formed_heap_part2_from_field_closure mc field_closure
-#pop-options

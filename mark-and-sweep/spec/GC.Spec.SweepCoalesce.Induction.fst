@@ -217,19 +217,6 @@ let flush_pair_preserves_outside
 /// Helper 5b: flush_blue preserves outside — specialized for addresses
 /// above the flush range (addr >= fb + rw * 8). Clean precondition
 /// using literal 8 to avoid quantifier issues in complex caller contexts.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-private let flush_pair_above
-    (h1 h2: heap) (fb: U64.t) (rw: nat) (fp: U64.t) (addr: hp_addr)
-  : Lemma
-    (requires rw > 0 /\
-      U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\ U64.v fb % U64.v mword == 0 /\
-      U64.v addr >= U64.v fb + rw * 8)
-    (ensures
-      read_word (fst (SpecCoalesce.flush_blue h1 fb rw fp)) addr == read_word h1 addr /\
-      read_word (fst (SpecCoalesce.flush_blue h2 fb rw fp)) addr == read_word h2 addr)
-  = flush_pair_preserves_outside h1 h2 fb rw fp addr
-#pop-options
-
 /// Helper 5c: else-branch proof — address past object body.
 /// Extracted to top-level to avoid quantifier context pollution from
 /// the forall-quantified conditions in black_case_below_ok.

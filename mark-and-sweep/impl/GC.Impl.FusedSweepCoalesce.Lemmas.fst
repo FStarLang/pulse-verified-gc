@@ -105,20 +105,6 @@ private let objects_advance (start: hp_addr) (g: heap)
         Seq.equal (Seq.tail (objects start g)) Seq.empty)))
   = CoalLemmas.objects_advance start g
 
-private let run_words_fits (g0: heap) (start: hp_addr) (objs: seq obj_addr)
-  (first_blue: U64.t) (run_words: nat)
-  : Lemma
-    (requires
-      objs == objects start g0 /\
-      Seq.length g0 == heap_size /\
-      (run_words > 0 ==>
-        U64.v first_blue >= U64.v mword /\
-        U64.v first_blue < heap_size /\
-        U64.v first_blue % U64.v mword == 0 /\
-        U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start))
-    (ensures run_words < heap_words /\ run_words < pow2 57)
-  = CoalLemmas.run_words_fits g0 start objs first_blue run_words
-
 private let fused_step_nonblack_helper (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
   (first_blue: U64.t) (run_words: nat) (fp: U64.t)
   : Lemma
@@ -321,9 +307,6 @@ let black_step_fused_aux_eq g0 g start first_blue run_words fp =
 /// ---------------------------------------------------------------------------
 /// flush_blue_length (delegate to coalesce lemma)
 /// ---------------------------------------------------------------------------
-
-let flush_blue_length g fb rw fp =
-  CoalLemmas.flush_blue_length g fb rw fp
 
 /// ---------------------------------------------------------------------------
 /// fused_step_empty

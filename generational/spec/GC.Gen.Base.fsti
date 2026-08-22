@@ -41,12 +41,6 @@ val max_young_wosize : n:pos{n >= 1 /\ (n + 1) * 8 <= minor_heap_size}
 
 /// Max young wosize as U64
 val max_young_wosize_u64 : n:U64.t{U64.v n == max_young_wosize}
-
-/// Helper lemma: small wosizes fit in max_young_wosize
-val small_wosize_fits (w: nat)
-  : Lemma (requires w > 0 /\ w <= 10)
-          (ensures w <= max_young_wosize)
-
 /// ---------------------------------------------------------------------------
 /// Minor Heap Base Address (abstract)
 /// ---------------------------------------------------------------------------
@@ -55,12 +49,6 @@ val small_wosize_fits (w: nat)
 /// Field values that point to minor objects are stored as absolute addresses
 /// (minor_base_addr + offset). to_minor_offset converts these to offsets.
 val minor_base_addr : U64.t
-
-/// minor_base_addr is word-aligned and minor range doesn't overflow U64.
-val minor_base_ok (_:unit)
-  : Lemma (U64.v minor_base_addr % 8 == 0 /\
-           U64.v minor_base_addr + minor_heap_size <= pow2 64)
-
 /// Convert a value from absolute minor address to minor offset.
 /// If v is in [minor_base_addr, minor_base_addr + minor_heap_size) and word-aligned,
 /// returns v - minor_base_addr. Otherwise returns v unchanged.
@@ -86,21 +74,6 @@ let minor_heap = h:seq U8.t{Seq.length h == minor_heap_size}
 /// ---------------------------------------------------------------------------
 /// Minor Heap Address Types
 /// ---------------------------------------------------------------------------
-
-/// Word-aligned address within minor heap bounds
-let minor_hp_addr = a:U64.t{
-  U64.v a >= 0 /\
-  U64.v a < minor_heap_size /\
-  U64.v a % 8 == 0
-}
-
-/// Object address in minor heap (room for header: >= 8)
-let minor_obj_addr = a:U64.t{
-  U64.v a >= 8 /\
-  U64.v a < minor_heap_size /\
-  U64.v a % 8 == 0
-}
-
 /// ---------------------------------------------------------------------------
 /// Address Classification
 /// ---------------------------------------------------------------------------
@@ -119,10 +92,6 @@ val is_minor_addr_from_bounds (a: U64.t)
   : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
           (ensures is_minor_addr a)
 
-val is_minor_addr_from_object_addr (a: U64.t)
-  : Lemma (requires is_minor_object_addr a)
-          (ensures is_minor_addr a)
-
 val is_minor_object_addr_bounds (a: U64.t)
   : Lemma (requires is_minor_object_addr a)
           (ensures U64.v a >= 8 /\ U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
@@ -130,12 +99,6 @@ val is_minor_object_addr_bounds (a: U64.t)
 val to_minor_offset_in_minor_range (a: U64.t)
   : Lemma (requires U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
           (ensures to_minor_offset a == a)
-
-/// Is a pointer value within the major heap?  
-/// (Re-export from GC.Spec.Base for convenience)
-noextract
-let is_major_addr (a: U64.t) : bool = is_hp_addr a
-
 /// ---------------------------------------------------------------------------
 /// Configuration Lemmas
 /// ---------------------------------------------------------------------------
@@ -143,12 +106,6 @@ let is_major_addr (a: U64.t) : bool = is_hp_addr a
 /// A max-sized young object fits in the minor heap
 val max_young_object_fits : unit ->
   Lemma (ensures (max_young_wosize + 1) * 8 <= minor_heap_size)
-
-/// Minor and major heaps don't overlap in the address space
-/// (We model them as separate arrays, so this is structural)
-val minor_major_disjoint : unit ->
-  Lemma (ensures minor_heap_size > 0 /\ heap_size > 0)
-
 /// The nursery is large enough for the two one-field objects used by small SPOTs.
 val minor_heap_size_at_least_two_one_field_objects : unit ->
   Lemma (ensures 32 <= minor_heap_size)

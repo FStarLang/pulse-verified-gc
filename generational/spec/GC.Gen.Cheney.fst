@@ -979,20 +979,6 @@ let cheney_promote_preserves_objects
 /// Full well_formed_heap
 /// ---------------------------------------------------------------------------
 
-let cheney_collect_preserves_wfh
-  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    True)
-          (ensures (let res = cheney_collect_spec minor major fp roots in
-                    well_formed_heap_part1 res.mc_major))
-  =
-  cheney_promote_preserves_wfh_part1 minor major fp roots;
-  let prom = cheney_promote minor major fp roots in
-  update_major_pointers_preserves_wfh_part1 prom.major_final prom.fwd_map
-
 /// ---------------------------------------------------------------------------
 /// update_major_pointers_preserves_fl_valid
 /// ---------------------------------------------------------------------------

@@ -270,25 +270,14 @@ let minor_chain_valid_write_preserved
   minor_chain_valid_read_eq data data' 0 old_bump
 #pop-options
 
+/// `make depgraph` reports this unreachable and it is: nothing ever names
+/// it. It is a *fact*, not a callee -- its type sits in the SMT context of
+/// every proof below, and deleting it breaks them. Do not prune it.
 /// Establish pow2 bound needed for U64.uint_to_t calls in preconditions
 let minor_pow2_bound : squash (pow2 57 < pow2 64 /\ minor_heap_size < pow2 64) =
   assert_norm (pow2 57 < pow2 64)
 
 /// Helper: unfold one level of minor_chain_valid to extract consequences
-#push-options "--fuel 3 --ifuel 0 --z3rlimit 120 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
-let minor_chain_valid_unfold
-  (data: minor_heap) (pos: nat{pos % 8 == 0}) (bump: nat{bump <= minor_heap_size /\ bump % 8 == 0})
-  : Lemma (requires pos + 8 <= bump /\ minor_chain_valid data pos bump == true)
-          (ensures (let hdr = minor_read_word data (U64.uint_to_t pos) in
-                    let wz = U64.v (U64.shift_right hdr 10ul) in
-                    wz > 0 /\ pos + (wz + 1) * 8 <= bump /\
-                    (pos + (wz + 1) * 8) % 8 == 0)) =
-  assert_norm (pow2 57 < pow2 64);
-  let hdr = minor_read_word data (U64.uint_to_t pos) in
-  let wz = U64.v (U64.shift_right hdr 10ul) in
-  next_pos_mod8 pos wz
-#pop-options
-
 /// Extend chain_valid: if chain_valid from pos to old_bump,
 /// and at old_bump there's a valid header pointing to new_bump,
 /// then chain_valid from pos to new_bump.
@@ -1231,13 +1220,3 @@ let minor_objects_count_bound (ms: minor_state)
 /// ---------------------------------------------------------------------------
 /// Zero Bump Lemma (for SPOT)
 /// ---------------------------------------------------------------------------
-
-/// When bump is 0, there are no objects
-let minor_objects_zero_bump (ms: minor_state)
-  : Lemma (requires U64.v ms.bump == 0)
-          (ensures minor_objects ms == Seq.empty)
-  = // When bump==0, minor_objects calls minor_objects_aux data 0 0
-    // The definition checks: if pos + 8 > bump, i.e., if 0 + 8 > 0
-    // which is true, so it returns Seq.empty
-    assert_norm (0 + 8 > 0);
-    ()

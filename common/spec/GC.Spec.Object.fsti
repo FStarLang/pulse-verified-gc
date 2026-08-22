@@ -47,8 +47,6 @@ val infix_tag_val : unit -> Lemma (infix_tag == U64.uint_to_t 249)
 /// Header Masks and Shifts
 /// ---------------------------------------------------------------------------
 
-val color_mask : U64.t
-val color_shift : U32.t
 val tag_mask : U64.t
 val wosize_shift : U32.t
 
@@ -125,16 +123,6 @@ val colorHeader_getColor : (hdr: U64.t) -> (c: color) ->
 /// colorHeader preserves getWosize
 val colorHeader_preserves_wosize : (hdr: U64.t) -> (c: color) ->
   Lemma (getWosize (colorHeader hdr c) == getWosize hdr)
-
-/// colorHeader preserves getTag
-val colorHeader_preserves_tag : (hdr: U64.t) -> (c: color) ->
-  Lemma (getTag (colorHeader hdr c) == getTag hdr)
-
-/// makeHeader from extracted fields with new color == colorHeader  
-val makeHeader_eq_colorHeader : (hdr: U64.t) -> (c: color) ->
-  Lemma (requires valid_header64 hdr)
-        (ensures makeHeader (getWosize hdr) c (getTag hdr) == colorHeader hdr c)
-
 /// makeHeader roundtrip: getWosize recovers the wosize
 val makeHeader_getWosize : (wz: wosize) -> (c: color) -> (tag: U64.t{U64.v tag < 256}) ->
   Lemma (getWosize (makeHeader wz c tag) == wz)
@@ -209,14 +197,6 @@ val is_blue_iff (h_addr: obj_addr) (g: heap)
 /// ---------------------------------------------------------------------------
 /// Color Disjointness Lemmas (trivial with algebraic type)
 /// ---------------------------------------------------------------------------
-
-val white_gray_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_white x g /\ is_gray y g)
-          (ensures x <> y)
-
-val white_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_white x g /\ is_black y g)
-          (ensures x <> y)
 
 val gray_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
   : Lemma (requires is_gray x g /\ is_black y g)
@@ -299,18 +279,6 @@ val makeBlue_spec : (obj: obj_addr) -> (g: heap) ->
 
 /// Enumerate objects starting from address
 val objects (start: hp_addr) (g: heap) : GTot (seq hp_addr)
-
-/// Get all allocated blocks
-val allocated_blocks (g: heap) : GTot (seq hp_addr)
-
-/// Coerce hp_addr to obj_addr when >= 8 is known
-val hp_to_obj (h: hp_addr{U64.v h >= U64.v mword}) : obj_addr
-
-/// All objects in objects zero_addr g have addresses >= zero_addr + mword
-val objects_addresses_ge_8 (g: heap) (x: hp_addr)
-  : Lemma (requires Seq.mem x (objects zero_addr g))
-          (ensures U64.v x >= U64.v zero_addr + U64.v mword)
-
 /// ---------------------------------------------------------------------------
 /// Color Mutation Correctness Lemmas
 /// ---------------------------------------------------------------------------
@@ -481,6 +449,3 @@ val resolve_object_in_objects : (addr: obj_addr) -> (g: heap) -> (objs: seq obj_
 /// ---------------------------------------------------------------------------
 /// Aggregate Color Predicates
 /// ---------------------------------------------------------------------------
-
-/// No grey objects in address list
-val noGreyObjects_aux (g: heap) (addrs: seq hp_addr) : GTot bool

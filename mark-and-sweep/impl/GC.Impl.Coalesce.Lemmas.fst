@@ -67,16 +67,6 @@ let objects_mem_at_zero g =
 
 let coalesce_unfold g = ()
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
-let run_words_fits g0 start objs first_blue run_words =
-  if run_words > 0 then begin
-    assert (run_words * U64.v mword <= U64.v start);
-    assert (U64.v start <= heap_size);
-    FStar.Math.Lemmas.lemma_div_le (run_words * U64.v mword) heap_size (U64.v mword);
-    FStar.Math.Lemmas.cancel_mul_div run_words (U64.v mword)
-  end
-#pop-options
-
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let is_blue_from_original g0 g obj start =
   f_address_spec start;

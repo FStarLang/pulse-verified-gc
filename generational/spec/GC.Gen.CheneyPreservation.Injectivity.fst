@@ -268,36 +268,6 @@ private let rec cheney_forward_roots_preserves_wfh_part4_local
   end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
-private let rec cheney_scan_preserves_wfh_part4_local
-  (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires well_formed_heap_part4 cs.cs_major /\
-                    well_formed_heap_part1 cs.cs_major /\
-                    AllocLemmas.fl_valid cs.cs_major cs.cs_fp heap_words /\
-                    AllocLemmas.fl_chain_terminates cs.cs_major cs.cs_fp heap_words /\
-                    minor_wf minor /\
-                    minor_infix_wf minor)
-          (ensures well_formed_heap_part4 (cheney_scan minor cs scan fuel).cs_major)
-          (decreases fuel)
-  =
-  if fuel > 0 then begin
-    if scan >= Seq.length cs.cs_queue then
-      cheney_scan_base minor cs scan fuel
-    else begin
-      cheney_scan_step minor cs scan fuel;
-      let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
-      cheney_forward_fields_preserves_wfh_part4_local minor cs obj 0 wz;
-      cheney_forward_fields_preserves_wfh_part1 minor cs obj 0 wz;
-      let cs' = cheney_forward_fields minor cs obj 0 wz in
-      let fuel' : nat = fuel - 1 in
-      assert (fuel' < fuel);
-      cheney_scan_preserves_wfh_part4_local minor cs' (scan + 1) fuel'
-    end
-  end else
-    cheney_scan_base minor cs scan fuel
-#pop-options
-
 #push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
 private let promote_object_preserves_old_target_not_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})

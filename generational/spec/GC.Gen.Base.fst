@@ -29,18 +29,11 @@ let max_young_wosize : n:pos{n >= 1 /\ (n + 1) * 8 <= minor_heap_size} = 128
 
 let max_young_wosize_u64 : n:U64.t{U64.v n == max_young_wosize} = 128UL
 
-let small_wosize_fits (w: nat)
-  : Lemma (requires w > 0 /\ w <= 10)
-          (ensures w <= max_young_wosize)
-  = ()
-
 /// ---------------------------------------------------------------------------
 /// Minor heap base address
 /// ---------------------------------------------------------------------------
 
 let minor_base_addr : U64.t = 0UL
-
-let minor_base_ok () = ()
 
 inline_for_extraction
 let to_minor_offset_u64 (v: U64.t) : Tot (r:U64.t{r == to_minor_offset v}) =
@@ -62,11 +55,6 @@ let is_minor_addr_from_bounds (a: U64.t)
           (ensures is_minor_addr a)
   = ()
 
-let is_minor_addr_from_object_addr (a: U64.t)
-  : Lemma (requires is_minor_object_addr a)
-          (ensures is_minor_addr a)
-  = ()
-
 let is_minor_object_addr_bounds (a: U64.t)
   : Lemma (requires is_minor_object_addr a)
           (ensures U64.v a >= 8 /\ U64.v a < minor_heap_size /\ U64.v a % 8 == 0)
@@ -82,8 +70,6 @@ let to_minor_offset_in_minor_range (a: U64.t)
 /// ---------------------------------------------------------------------------
 
 let max_young_object_fits () : Lemma (ensures (max_young_wosize + 1) * 8 <= minor_heap_size) = ()
-
-let minor_major_disjoint () : Lemma (ensures minor_heap_size > 0 /\ heap_size > 0) = ()
 
 let minor_heap_size_at_least_two_one_field_objects ()
   : Lemma (ensures 32 <= minor_heap_size)

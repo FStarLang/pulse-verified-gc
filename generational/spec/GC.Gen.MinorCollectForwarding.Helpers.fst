@@ -48,11 +48,6 @@ let rec remembered_slot_targets_from
       if is_minor_pointer v then Seq.cons v rest else rest
     else rest
 
-let remembered_slot_targets_from_zero
-  (major: heap) (slots: seq U64.t)
-  : Lemma (remembered_slot_targets_from major slots 0 0 == Seq.empty)
-  = ()
-
 #push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 private let rec remembered_slot_targets_from_mem
   (major: heap) (slots: seq U64.t) (n idx: nat) (i: nat)

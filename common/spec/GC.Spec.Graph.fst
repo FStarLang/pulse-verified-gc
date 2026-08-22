@@ -40,21 +40,6 @@ type edge_list = seq edge
 /// ---------------------------------------------------------------------------
 /// Vertex Set (No Duplicates)
 /// ---------------------------------------------------------------------------
-
-/// Count occurrences of element in sequence
-let rec count (#a: eqtype) (l: seq a) (x: a) : Tot nat (decreases Seq.length l) =
-  if Seq.length l = 0 then 0
-  else if Seq.index l 0 = x then 1 + count (Seq.tail l) x
-  else count (Seq.tail l) x
-
-/// Element not in list means count is 0
-let rec count_not_mem (#a: eqtype) (l: seq a) (x: a)
-  : Lemma (requires not (Seq.mem x l))
-          (ensures count l x == 0)
-          (decreases Seq.length l)
-  = if Seq.length l = 0 then ()
-    else count_not_mem (Seq.tail l) x
-
 /// Check if sequence has no duplicates
 let rec is_vertex_set (l: vertex_list) : Tot bool (decreases Seq.length l) =
   if Seq.length l = 0 then true
@@ -89,22 +74,6 @@ val is_vertex_set_cons : (hd: vertex_id) -> (tl: vertex_list{is_vertex_set tl}) 
 let is_vertex_set_cons hd tl = 
   assert (Seq.head (Seq.cons hd tl) == hd);
   assert (Seq.equal (Seq.tail (Seq.cons hd tl)) tl)
-
-/// In a vertex set, each element appears exactly once
-val is_vertex_set_count : (l: vertex_list) -> (x: vertex_id) ->
-  Lemma (requires is_vertex_set l /\ Seq.mem x l)
-        (ensures count l x == 1)
-        (decreases Seq.length l)
-
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 30"
-let rec is_vertex_set_count l x =
-  if Seq.length l = 0 then ()
-  else if Seq.head l = x then
-    count_not_mem (Seq.tail l) x
-  else
-    is_vertex_set_count (Seq.tail l) x
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Graph State
 /// ---------------------------------------------------------------------------
@@ -119,10 +88,6 @@ noeq type graph_state = {
 let graph_wf (g: graph_state) : prop =
   forall (e: edge). Seq.mem e g.edges ==> 
     (Seq.mem (fst e) g.vertices /\ Seq.mem (snd e) g.vertices)
-
-/// Well-formed graph type
-type wf_graph = g:graph_state{graph_wf g}
-
 /// Check if vertex is in graph
 let mem_graph_vertex (g: graph_state) (v: vertex_id) : bool =
   Seq.mem v g.vertices
@@ -228,13 +193,6 @@ noeq type reach (g: graph_state)
                  (z:vertex_id{mem_graph_vertex g z /\ mem_graph_edge g y z}) ->
                  reach g x y -> 
                  reach g x z
-
-/// Decidable reachability witness - always true given a valid reach term
-let reachfunc (g: graph_state) 
-              (x: vertex_id{mem_graph_vertex g x})
-              (y: vertex_id{mem_graph_vertex g y})
-              (r: reach g x y) : bool = true
-
 /// Witness that reachability holds (for vertices in the graph)
 let reachable (g: graph_state) 
               (x: vertex_id{mem_graph_vertex g x}) 
@@ -300,84 +258,9 @@ let edge_reach g x y =
 /// ---------------------------------------------------------------------------
 /// Subgraph Reachability Transfer
 /// ---------------------------------------------------------------------------
-
-/// Transfer a reach witness from g1 to g2 when vertices and edges are preserved
-let rec reach_subgraph_witness
-  (g1: graph_state) 
-  (g2: graph_state)
-  (x: vertex_id{mem_graph_vertex g1 x /\ mem_graph_vertex g2 x})
-  (y: vertex_id{mem_graph_vertex g1 y /\ mem_graph_vertex g2 y})
-  (r: reach g1 x y)
-  : Pure (reach g2 x y)
-    (requires forall s d. mem_graph_edge g1 s d ==> mem_graph_vertex g2 s /\ 
-                                                     mem_graph_vertex g2 d /\ 
-                                                     mem_graph_edge g2 s d)
-    (ensures fun _ -> True)
-    (decreases r)
-  = match r with
-  | ReachRefl _ -> ReachRefl #g2 x
-  | ReachTrans _ z _ r_xz ->
-    // z is in g1, and edge z->y is in g1
-    // By hypothesis, edge z->y is in g2, so z,y in g2 as vertices
-    let r_xz' : reach g2 x z = reach_subgraph_witness g1 g2 x z r_xz in
-    ReachTrans #g2 x z y r_xz'
-
-/// If vertices and edges are preserved, reachability transfers
-val reach_subgraph : (g1: graph_state) -> (g2: graph_state) ->
-  (x: vertex_id{mem_graph_vertex g1 x /\ mem_graph_vertex g2 x}) ->
-  (y: vertex_id{mem_graph_vertex g1 y /\ mem_graph_vertex g2 y}) ->
-  Lemma (requires 
-           reachable g1 x y /\
-           (forall s d. mem_graph_edge g1 s d ==> mem_graph_vertex g2 s /\ 
-                                                   mem_graph_vertex g2 d /\ 
-                                                   mem_graph_edge g2 s d))
-        (ensures reachable g2 x y)
-
-let reach_subgraph g1 g2 x y =
-  FStar.Classical.exists_elim
-    (reachable g2 x y)
-    #(reach g1 x y)
-    #(fun _ -> True)
-    ()
-    (fun r ->
-      let r' = reach_subgraph_witness g1 g2 x y r in
-      FStar.Classical.exists_intro (fun (_: reach g2 x y) -> True) r')
-
-/// Extract vertices along the path (not including start, not including end)
-let rec vertices_in_path (g: graph_state) 
-                         (x: vertex_id{mem_graph_vertex g x})
-                         (y: vertex_id{mem_graph_vertex g y})
-                         (r: reach g x y)
-  : Tot vertex_list (decreases r) =
-  match r with
-  | ReachRefl _ -> Seq.empty
-  | ReachTrans _ z _ r_xz -> 
-    if ReachRefl? r_xz then Seq.empty
-    else Seq.cons z (vertices_in_path g x z r_xz)
-
 /// ---------------------------------------------------------------------------
 /// Reachability from Set
 /// ---------------------------------------------------------------------------
-
-/// Vertex is reachable from some vertex in the set
-let reachable_from (g: graph_state) (roots: vertex_list) 
-                   (x: vertex_id{mem_graph_vertex g x}) : prop =
-  exists (r: vertex_id{mem_graph_vertex g r}). 
-    Seq.mem r roots /\ reachable g r x
-
-/// Alias for backward compatibility
-let reachable_from_set = reachable_from
-
-/// All roots are reachable from roots
-val roots_reachable : (g: graph_state) -> (roots: vertex_list) -> 
-                      (r: vertex_id{mem_graph_vertex g r}) ->
-  Lemma (requires Seq.mem r roots)
-        (ensures reachable_from g roots r)
-
-let roots_reachable g roots r =
-  reach_refl g r;
-  assert (reachable_from g roots r)
-
 /// ---------------------------------------------------------------------------
 /// Subset Operations
 /// ---------------------------------------------------------------------------
@@ -693,31 +576,6 @@ let rec subset_vertices_length_lemma (s1: vertex_set) (s2: vertex_set)
       subset_vertices_length_lemma tl s2'
     )
 #pop-options
-
-/// Union of two vertex sets
-let rec union_vertex_sets (g: graph_state) 
-                          (s1: vertex_set{subset_vertices s1 g.vertices}) 
-                          (s2: vertex_set{subset_vertices s2 g.vertices})
-  : Tot (r: vertex_set{(forall x. Seq.mem x r <==> Seq.mem x s1 \/ Seq.mem x s2) /\
-                       subset_vertices r g.vertices})
-        (decreases Seq.length s1)
-  = if Seq.length s1 = 0 then s2
-    else if Seq.mem (Seq.head s1) s2 then
-      union_vertex_sets g (Seq.tail s1) s2
-    else
-      let rest = union_vertex_sets g (Seq.tail s1) s2 in
-      (is_vertex_set_cons (Seq.head s1) rest;
-       // Prove membership equivalence
-       let aux (x: vertex_id) : Lemma (Seq.mem x (Seq.cons (Seq.head s1) rest)
-                                       <==> Seq.mem x s1 \/ Seq.mem x s2) =
-         mem_cons_lemma x (Seq.head s1) rest;
-         mem_cons_lemma x (Seq.head s1) (Seq.tail s1)
-       in
-       FStar.Classical.forall_intro aux;
-       // subset_vertices follows from aux and the facts that s1 and s2 are subsets
-       assert (subset_vertices (Seq.cons (Seq.head s1) rest) g.vertices);
-       Seq.cons (Seq.head s1) rest)
-
 /// ---------------------------------------------------------------------------
 /// Set Utility Lemmas
 /// ---------------------------------------------------------------------------
@@ -739,22 +597,6 @@ let insert_to_vertex_set_length_lemma (g: graph_state)
            if Seq.mem x s then Seq.length s' = Seq.length s
            else Seq.length s' = Seq.length s + 1)
   = if Seq.mem x s then () else is_vertex_set_cons x s
-
-/// Subset after remove
-let remove_lemma_subset (s: vertex_set) (x: vertex_id{Seq.mem x s}) (s': vertex_set)
-  : Lemma (requires s' == remove s x)
-          (ensures subset_vertices s' s)
-  = () // Follows from remove postcondition: forall y. y <> x ==> (Seq.mem y s' <==> Seq.mem y s)
-
-/// Membership in union
-let union_vertex_sets_mem_lemma (g: graph_state)
-                                (s1: vertex_set{subset_vertices s1 g.vertices})
-                                (s2: vertex_set{subset_vertices s2 g.vertices})
-                                (x: vertex_id)
-  : Lemma (let u = union_vertex_sets g s1 s2 in
-           Seq.mem x u <==> (Seq.mem x s1 \/ Seq.mem x s2))
-  = () // Follows from union postcondition
-
 /// ---------------------------------------------------------------------------
 /// DFS Spanning Tree (Ghost State for Proofs)
 /// ---------------------------------------------------------------------------
@@ -782,63 +624,6 @@ and mem_tree_list (x: vertex_id) (ts: list dfs_tree) : Tot bool (decreases ts) =
 /// Membership in a forest
 let mem_forest (x: vertex_id) (f: dfs_forest) : bool =
   mem_tree_list x f
-
-/// Flatten tree to vertex set (for connecting to visited set)
-let rec tree_vertices (t: dfs_tree) : Tot (list vertex_id) (decreases t) =
-  match t with
-  | Leaf -> []
-  | Node v children -> v :: tree_vertices_list children
-
-and tree_vertices_list (ts: list dfs_tree) : Tot (list vertex_id) (decreases ts) =
-  match ts with
-  | [] -> []
-  | t :: rest -> tree_vertices t @ tree_vertices_list rest
-
-/// Flatten forest to vertex set
-let forest_vertices (f: dfs_forest) : list vertex_id =
-  tree_vertices_list f
-
-/// Check if child is immediate successor of a node
-let is_immediate_child (child: vertex_id) (t: dfs_tree) : bool =
-  match t with
-  | Leaf -> false
-  | Node _ _ -> child = (match t with Node c _ -> c)
-
-/// Parent-child relationship in tree - explicit recursion for termination
-let rec is_parent_of (parent: vertex_id) (child: vertex_id) (t: dfs_tree) : Tot bool (decreases t) =
-  match t with
-  | Leaf -> false
-  | Node v children ->
-    // parent is v and child is root of some subtree
-    (v = parent && is_parent_of_list_imm child children) ||
-    // Or recurse into children
-    is_parent_of_list parent child children
-
-and is_parent_of_list_imm (child: vertex_id) (ts: list dfs_tree) : Tot bool (decreases ts) =
-  match ts with
-  | [] -> false
-  | t :: rest -> 
-    (match t with 
-     | Leaf -> false 
-     | Node c _ -> c = child) || is_parent_of_list_imm child rest
-
-and is_parent_of_list (parent: vertex_id) (child: vertex_id) (ts: list dfs_tree) 
-  : Tot bool (decreases ts) =
-  match ts with
-  | [] -> false
-  | t :: rest -> is_parent_of parent child t || is_parent_of_list parent child rest
-
-/// Key invariant: if parent discovered child, there's an edge parent -> child
-/// This is the property we'll maintain during DFS construction
-let tree_edge_property (g: graph_state) (t: dfs_tree) : prop =
-  forall parent child. is_parent_of parent child t ==> mem_graph_edge g parent child
-
-/// Edge property for entire forest
-let rec forest_edge_property (g: graph_state) (f: dfs_forest) : prop =
-  match f with
-  | [] -> True
-  | t :: rest -> tree_edge_property g t /\ forest_edge_property g rest
-
 /// Key lemma: in a tree with edge property, successors of tree members are also in tree
 /// This is the inversion of tree_edge_property
 /// If x is in tree and y is a successor of x (edge x->y), then either:
@@ -848,11 +633,6 @@ let rec forest_edge_property (g: graph_state) (f: dfs_forest) : prop =
 ///
 /// For DFS trees built from empty_set: the tree covers all processed vertices,
 /// and the edge property ensures successors are captured.
-
-/// Successor closure for a tree: all successors of members are also members
-let tree_successor_closed (g: graph_state) (t: dfs_tree) : prop =
-  forall x y. mem_tree x t /\ mem_graph_edge g x y /\ mem_graph_vertex g y ==> mem_tree y t
-
 /// Successor closure for a forest
 let forest_successor_closed (g: graph_state) (f: dfs_forest) : prop =
   forall x y. mem_forest x f /\ mem_graph_edge g x y /\ mem_graph_vertex g y ==> mem_forest y f
