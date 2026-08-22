@@ -295,7 +295,88 @@ extract-mark-and-sweep: mark-and-sweep
 extract-generational: generational
 	+$(MAKE) -C generational extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
 
-# --- Clean ------------------------------------------------------------------
+# --- Dependence graph / unused-definition report -----------------------------
+#
+# `fstar-depgraph` (tools/depgraph) reads the .checked files in $(CACHE_DIR)
+# directly -- no re-verification -- and emits an offline HTML dependence viewer
+# plus a report of definitions that are unreachable from the roots.
+#
+# Roots are the two things we actually want to keep: the **interface** that is
+# extracted to C, and the **top-level correctness theorems**.  Anything not
+# reachable from those is dead weight.  SPOT scenario modules are added as roots
+# too (DEPGRAPH_SPOT_ROOTS) because they are part of the repo's build; drop them
+# from the root set to see what only SPOT keeps alive.
+#
+# NOTE on OCAMLPATH: the tool links against the *in-tree* fstar.compiler findlib
+# library and unmarshals .checked files, so the library must be the same F*
+# build that produced them (cache version + OCaml ABI).  $(FSTAR_HOME) is a
+# binary nightly whose .cmi files are compiled against a different OCaml 5.3.0
+# build than a typical local opam switch, so linking against it usually fails
+# with "inconsistent assumptions over interface Stdlib".  In that case build F*
+# from source at the *same commit* as $(FSTAR_HOME) and point DEPGRAPH_OCAMLPATH
+# at its out/lib:
+#
+#   git -C <fstar-checkout> worktree add /tmp/fstar-src $$($(FSTAR_EXE) --version | sed -n 's/^commit=//p')
+#   make -C /tmp/fstar-src stage2 -j FSTAR_USE_KRML_EXE=1 KRML_EXE=$$(command -v krml)
+#   make depgraph DEPGRAPH_OCAMLPATH=/tmp/fstar-src/stage2/out/lib
+#
+# `make depgraph-check` verifies the cache version matches before running.
+
+DEPGRAPH_DIR       = tools/depgraph
+DEPGRAPH_EXE       = $(DEPGRAPH_DIR)/_build/default/src/fstar_depgraph.exe
+DEPGRAPH_OUT      ?= _depgraph
+DEPGRAPH_OCAMLPATH ?= $(FSTAR_HOME)/lib
+
+# The interface: every module that is extracted to C.
+DEPGRAPH_IFACE_ROOTS = \
+  GC.Impl GC.Impl.Allocator GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
+  GC.Impl.Coalesce GC.Impl.FusedSweepCoalesce GC.Impl.Fields GC.Impl.Closure \
+  GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+  GC.Gen.Impl GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
+  GC.Gen.Impl.Promote
+
+# The top-level theorems.  These are results, so nothing refers to them; they
+# have to be named explicitly or the whole proof development looks dead.
+DEPGRAPH_THEOREM_ROOTS = \
+  GC.Spec.Correctness GC.Spec.MarkBoundedCorrectness GC.Gen.CheneyCorrectness \
+  GC.Impl.MarkBoundedRootLemmas GC.Spec.FreeList.Sweep
+
+DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))))
+
+DEPGRAPH_ROOTS ?= $(DEPGRAPH_IFACE_ROOTS) $(DEPGRAPH_THEOREM_ROOTS) $(DEPGRAPH_SPOT_ROOTS)
+
+.PHONY: depgraph depgraph-build depgraph-check depgraph-inventory depgraph-clean
+
+depgraph-build:
+	@command -v dune >/dev/null || { echo "ERROR: dune not found; depgraph needs OCaml + dune."; exit 1; }
+	cd $(DEPGRAPH_DIR) && OCAMLPATH=$(abspath $(DEPGRAPH_OCAMLPATH)) dune build 2>&1 | \
+	  sed -e 's/^/  /' ; \
+	  test -x $(abspath $(DEPGRAPH_EXE))
+
+depgraph-check:
+	@want=$$($(FSTAR_EXE) --print_cache_version | grep -oE '[0-9]+$$'); \
+	echo "$(FSTAR_HOME) produces cache version $$want"; \
+	echo "checked files in $(CACHE_DIR): $$(ls $(CACHE_DIR)/*.checked 2>/dev/null | wc -l)"
+
+depgraph: depgraph-build
+	$(DEPGRAPH_EXE) \
+	  $(foreach r,$(DEPGRAPH_ROOTS),--root $(r)) \
+	  --include $(CACHE_DIR) \
+	  --source common --source mark-and-sweep --source generational --source spot \
+	  --out $(DEPGRAPH_OUT)
+	@echo ""
+	@echo "Viewer:  $(DEPGRAPH_OUT)/index.html   (open directly, no web server needed)"
+	@echo "Report:  $(DEPGRAPH_OUT)/unused-report.txt"
+
+# Regenerate docs/dead-code-inventory.md from the last `make depgraph` run.
+DEPGRAPH_INVENTORY ?= docs/dead-code-inventory.md
+
+depgraph-inventory:
+	@test -f $(DEPGRAPH_OUT)/unused-report.txt || { echo "ERROR: run 'make depgraph' first."; exit 1; }
+	python3 $(DEPGRAPH_DIR)/unused_inventory.py $(DEPGRAPH_OUT) $(DEPGRAPH_INVENTORY)
+
+depgraph-clean:
+	rm -rf $(DEPGRAPH_OUT) $(DEPGRAPH_DIR)/_build# --- Clean ------------------------------------------------------------------
 
 clean:
 	rm -f .depend .depend.raw
