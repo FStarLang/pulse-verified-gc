@@ -139,6 +139,45 @@ the single largest lever in the repository, and unlike the others it also
 improves the proofs: each of these families currently has to be re-verified in
 full whenever the underlying recursion changes.
 
+### Worked example: `GC.Spec.Sweep`
+
+Two of the `sweep_aux*` families have been merged, as a demonstration that the
+estimate is real and that the merges go through without a fight.
+
+`sweep_aux_black_survives`, `sweep_aux_white_in_objs_becomes_blue` and
+`sweep_aux_blue_stays_blue` were three inductions with a
+character-for-character identical skeleton — same preamble, same case split,
+same recursion — differing only in the colour of `x` in the precondition, the
+one step lemma used in the head case, and the colour in the conclusion. They
+are now a single induction, `sweep_aux_member_color`, carrying all three
+implications at once:
+
+```fstar
+(ensures (let gf = fst (sweep_aux g objs fp) in
+          (is_black x g ==> is_white x gf) /\
+          (is_white x g ==> is_blue  x gf) /\
+          (is_blue  x g ==> is_blue  x gf)))
+```
+
+The conjunction is provable by one induction because the head case never
+recurses: `is_vertex_set` puts `x` outside the tail, so the colour it acquires
+is frozen by `sweep_aux_non_member_color`. In the non-head case the colour of
+`x` is untouched, so the induction hypothesis applies unchanged. The three
+original statements survive as three one-line corollaries.
+
+Similarly `sweep_aux_preserves_{wosize,tag}_{nonmember,member}` were four
+inductions over the same walk. Off the sweep list the *whole header word* is
+untouched, which is a single stronger statement from which both fields follow;
+on the list a black object has only its colour bits rewritten, so one induction
+with a two-conjunct postcondition covers both. Four inductions became two, and
+the four original statements became four corollaries.
+
+Result: `GC.Spec.Sweep.fst` 1,325 → 1,187 lines (−10%), seven inductions over
+`sweep_aux` reduced to four, no change to the interface, no change to any
+caller, and the module verifies in 25 s. The remaining `sweep_aux*` lemmas
+(`preserves_field_*`, `preserves_objects`, `preserves_wf`) are genuinely
+different arguments and were left alone.
+
 ---
 
 ## 5. Restated signatures — 7,645 lines
@@ -272,7 +311,7 @@ Recorded so they are not re-investigated.
 
 | # | lever | lines | risk | notes |
 |---:|---|---:|---|---|
-| 1 | Factor the repeated inductions (§4) | 8,000–10,000 | medium | Real proof engineering. Start with `cheney_forward*` (4,762 lines over six modules), then `alloc_search*` (3,005). |
+| 1 | Factor the repeated inductions (§4) | 8,000–10,000 | medium | Real proof engineering, demonstrated on `GC.Spec.Sweep` (§4). Start with `cheney_forward*` (4,762 lines over six modules), then `alloc_search*` (3,005). |
 | 2 | Drop the standalone mark-and-sweep collector (§6) | 1,891 | none, once decided | Pure product decision. Deletes three modules outright. |
 | 3 | Replace facade `.fsti` restatement with `include` (§5) | 767 | low | Three modules. |
 | 4 | Strip token-identical `.fst` annotations (§5) | 7,645 | low, mechanical | **Not recommended** — costs readability where it matters most. Listed for completeness. |
