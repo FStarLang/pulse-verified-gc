@@ -46,66 +46,22 @@ module ImplObject = GC.Spec.Object
 
 /// When fuel = 0: OOM
 let alloc_search_fuel_0 (g: heap) (head prev cur: U64.t) (wz: nat)
-  : Lemma (alloc_search g head prev cur wz 0 ==
-           { heap_out = g; fp_out = head; obj_out = 0UL })
   = ()
 
 /// When cur is invalid (not a valid obj_addr): OOM
 let alloc_search_invalid (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
-  : Lemma (requires fuel > 0 /\
-                    (U64.v cur < U64.v zero_addr + U64.v mword \/
-                     U64.v cur >= heap_size \/
-                     U64.v cur % U64.v mword <> 0))
-          (ensures alloc_search g head prev cur wz fuel ==
-                   { heap_out = g; fp_out = head; obj_out = 0UL })
   = ()
 
 /// When the block is too small: advance to next
 let alloc_search_advance (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
-  : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v zero_addr + U64.v mword /\
-                    U64.v cur < heap_size /\
-                    U64.v cur % U64.v mword = 0 /\
-                    (let hdr = read_word g (hd_address (cur <: obj_addr)) in
-                     U64.v (getWosize hdr) < wz))
-          (ensures alloc_search g head prev cur wz fuel ==
-                   alloc_search g head cur (spec_next_fp g (cur <: obj_addr)) wz (fuel - 1))
   = ()
 
 /// When the block fits and prev = 0 (head of list)
 let alloc_search_found_head (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
-  : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v zero_addr + U64.v mword /\
-                    U64.v cur < heap_size /\
-                    U64.v cur % U64.v mword = 0 /\
-                    prev = 0UL /\
-                    (let hdr = read_word g (hd_address (cur <: obj_addr)) in
-                     U64.v (getWosize hdr) >= wz))
-          (ensures (let obj : obj_addr = cur in
-                    let next = spec_next_fp g obj in
-                    let (g', new_fp) = alloc_from_block g obj wz next in
-                    alloc_search g head prev cur wz fuel ==
-                    { heap_out = g'; fp_out = new_fp; obj_out = cur }))
   = ()
 
 /// When the block fits and prev is a valid hp_addr
 let alloc_search_found_prev (g: heap) (head prev cur: U64.t) (wz: nat) (fuel: nat)
-  : Lemma (requires fuel > 0 /\
-                    U64.v cur >= U64.v zero_addr + U64.v mword /\
-                    U64.v cur < heap_size /\
-                    U64.v cur % U64.v mword = 0 /\
-                    prev <> 0UL /\
-                    U64.v prev >= U64.v mword /\
-                    U64.v prev < heap_size /\
-                    U64.v prev % U64.v mword = 0 /\
-                    (let hdr = read_word g (hd_address (cur <: obj_addr)) in
-                     U64.v (getWosize hdr) >= wz))
-          (ensures (let obj : obj_addr = cur in
-                    let next = spec_next_fp g obj in
-                    let (g', new_fp) = alloc_from_block g obj wz next in
-                    let g2 = write_word g' (prev <: hp_addr) new_fp in
-                    alloc_search g head prev cur wz fuel ==
-                    { heap_out = g2; fp_out = head; obj_out = cur }))
   = ()
 
 /// Helper: for multiples of d, a < b implies a + d <= b
@@ -117,7 +73,6 @@ let multiple_gap_lemma (a b: nat) (d: pos)
 
 /// For a valid obj_addr, spec_next_fp always reads the field (condition is always true)
 let spec_next_fp_eq (g: heap) (obj: obj_addr)
-  : Lemma (spec_next_fp g obj == read_word g obj)
   = hd_address_bounds obj;  // U64.v (hd_address obj) + 8 < heap_size
     hd_address_spec obj;    // U64.v (hd_address obj) = U64.v obj - 8
     // hd + 8 < heap_size, both multiples of 8, so hd + 16 <= heap_size
@@ -130,15 +85,6 @@ let spec_next_fp_eq (g: heap) (obj: obj_addr)
 /// Exact fit: leftover < 2
 #push-options "--z3rlimit 25"
 let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires (let hdr = read_word g (hd_address obj) in
-                     let bwz = U64.v (getWosize hdr) in
-                     bwz >= wz /\ bwz - wz < 2))
-          (ensures (let hd = hd_address obj in
-                    let hdr = read_word g hd in
-                    let bwz = U64.v (getWosize hdr) in
-                    let ahdr = make_header (U64.uint_to_t bwz) white_bits 0UL in
-                    let g1 = write_word g hd ahdr in
-                    alloc_from_block g obj wz next == (g1, next)))
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
@@ -146,26 +92,6 @@ let alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
 /// Split, normal: all bounds pass
 #push-options "--z3rlimit 25 --fuel 1"
 let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires (let hd = hd_address obj in
-                     let hdr = read_word g hd in
-                     let bwz = U64.v (getWosize hdr) in
-                     bwz - wz >= 2 /\
-                     U64.v hd + (1 + wz) * 8 < heap_size /\
-                     U64.v hd + (1 + wz) * 8 + 8 < heap_size))
-          (ensures (let hd = hd_address obj in
-                    let hdr = read_word g hd in
-                    let bwz = U64.v (getWosize hdr) in
-                    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-                    let g1 = write_word g hd ahdr in
-                    let rhn = U64.v hd + (1 + wz) * 8 in
-                    let rh : hp_addr = U64.uint_to_t rhn in
-                    let rw = bwz - wz - 1 in
-                    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-                    let g2 = write_word g1 rh rhdr in
-                    let ron = rhn + 8 in
-                    let ro : hp_addr = U64.uint_to_t ron in
-                    let g3 = write_word g2 ro next in
-                    alloc_from_block g obj wz next == (g3, ro)))
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
@@ -173,15 +99,6 @@ let alloc_from_block_split_normal (g: heap) (obj: obj_addr) (wz: nat) (next: U64
 /// Split, rem_hd out of bounds
 #push-options "--z3rlimit 25"
 let alloc_from_block_split_rem_hd_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires (let hd = hd_address obj in
-                     let hdr = read_word g hd in
-                     let bwz = U64.v (getWosize hdr) in
-                     bwz - wz >= 2 /\
-                     U64.v hd + (1 + wz) * 8 >= heap_size))
-          (ensures (let hd = hd_address obj in
-                    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-                    let g1 = write_word g hd ahdr in
-                    alloc_from_block g obj wz next == (g1, next)))
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
@@ -189,24 +106,6 @@ let alloc_from_block_split_rem_hd_oob (g: heap) (obj: obj_addr) (wz: nat) (next:
 /// Split, rem_obj out of bounds (rem_hd ok but rem_obj >= heap_size)
 #push-options "--z3rlimit 25 --fuel 1"
 let alloc_from_block_split_rem_obj_oob (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires (let hd = hd_address obj in
-                     let hdr = read_word g hd in
-                     let bwz = U64.v (getWosize hdr) in
-                     bwz - wz >= 2 /\
-                     U64.v hd + (1 + wz) * 8 < heap_size /\
-                     U64.v hd + (1 + wz) * 8 + 8 >= heap_size))
-          (ensures (let hd = hd_address obj in
-                    let ahdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-                    let g1 = write_word g hd ahdr in
-                    let rhn = U64.v hd + (1 + wz) * 8 in
-                    let rh : hp_addr = U64.uint_to_t rhn in
-                    let hdr = read_word g hd in
-                    let bwz = U64.v (getWosize hdr) in
-                    let rw = bwz - wz - 1 in
-                    let rhdr = make_header (U64.uint_to_t rw) blue_bits 0UL in
-                    let g2 = write_word g1 rh rhdr in
-                    let ron = rhn + 8 in
-                    alloc_from_block g obj wz next == (g2, U64.uint_to_t ron)))
   = hd_address_spec obj; hd_address_bounds obj;
     reveal_opaque (`%alloc_from_block) alloc_from_block
 #pop-options
@@ -222,15 +121,6 @@ let alloc_from_block_split_rem_obj_oob (g: heap) (obj: obj_addr) (wz: nat) (next
 #push-options "--z3rlimit 25 --fuel 1"
 /// Reading the remainder header: header at rem_hd == make_header rem_wz blue 0
 let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires alloc_split_normal_pre g obj wz)
-          (ensures (let g' = alloc_split_normal_heap g obj wz next in
-                    let hd = hd_address obj in
-                    let hdr = read_word g hd in
-                    let bwz = U64.v (getWosize hdr) in
-                    let rhn = U64.v hd + (1 + wz) * 8 in
-                    let rh : hp_addr = U64.uint_to_t rhn in
-                    let rw = bwz - wz - 1 in
-                    read_word g' rh == make_header (U64.uint_to_t rw) blue_bits 0UL))
   = alloc_from_block_split_normal g obj wz next;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -254,13 +144,6 @@ let alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U6
 #push-options "--z3rlimit 25 --fuel 1"
 /// Reading the remainder field: read_word g' ro == next_fp
 let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires alloc_split_normal_pre g obj wz)
-          (ensures (let g' = alloc_split_normal_heap g obj wz next in
-                    let hd = hd_address obj in
-                    let rhn = U64.v hd + (1 + wz) * 8 in
-                    let ron = rhn + 8 in
-                    let ro : hp_addr = U64.uint_to_t ron in
-                    read_word g' ro == next))
   = alloc_from_block_split_normal g obj wz next;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -281,16 +164,6 @@ let alloc_split_normal_read_rem_field (g: heap) (obj: obj_addr) (wz: nat) (next:
 #push-options "--z3rlimit 25 --fuel 1"
 /// Reading an unwritten address: result equals original
 let alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr)
-  : Lemma (requires alloc_split_normal_pre g obj wz /\
-                    (let hd = hd_address obj in
-                     let rhn = U64.v hd + (1 + wz) * 8 in
-                     let ron = rhn + 8 in
-                     // addr doesn't overlap any of the 3 written words
-                     (U64.v addr + 8 <= U64.v hd \/ U64.v addr >= U64.v hd + 8) /\
-                     (U64.v addr + 8 <= rhn \/ U64.v addr >= rhn + 8) /\
-                     (U64.v addr + 8 <= ron \/ U64.v addr >= ron + 8)))
-          (ensures (let g' = alloc_split_normal_heap g obj wz next in
-                    read_word g' addr == read_word g addr))
   = alloc_from_block_split_normal g obj wz next;
     let hd = hd_address obj in
     let hdr = read_word g hd in

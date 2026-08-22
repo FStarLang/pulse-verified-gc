@@ -831,12 +831,6 @@ private let rec alloc_search_preserves_dense
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 
 let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    heap_objects_dense g /\
-                    AllocLemmas.fl_valid g fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    heap_objects_dense r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_dense g fp 0UL fp wz heap_words
 
@@ -927,12 +921,6 @@ private let set_promoted_tag_preserves_dense
 
 let promote_object_preserves_dense
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  : Lemma (requires well_formed_heap_part1 major /\
-                    heap_objects_dense major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wz in
-                    heap_objects_dense res.major_out))
   = let alloc_res = alloc_spec major fp wz in
     if alloc_res.obj_out = 0UL then
       promote_object_oom minor major obj fp wz

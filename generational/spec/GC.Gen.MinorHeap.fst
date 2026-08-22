@@ -15,7 +15,6 @@ module SpecHeap = GC.Spec.Heap
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_read_word_zero_heap
   (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0})
-  : Lemma (minor_read_word (Seq.create minor_heap_size 0uy) addr == 0UL)
   =
   assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr) == 0uy);
   assert (Seq.index (Seq.create minor_heap_size 0uy) (U64.v addr + 1) == 0uy);
@@ -462,14 +461,12 @@ let rec minor_objects_aux_valid (data: minor_heap) (pos: nat{pos % 8 == 0})
 #pop-options
 
 let minor_objects_valid (ms: minor_state) (x: U64.t)
-  : Lemma (requires Seq.mem x (minor_objects ms))
-          (ensures U64.v x >= 8 /\ U64.v x < minor_heap_size /\ U64.v x % 8 == 0) =
+          =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
   else minor_objects_aux_valid ms.data 0 (U64.v ms.bump) x
 
 /// Tag of a minor header is always < 256 (logand with 0xFF)
 let minor_tag_bound (ms: minor_state) (obj: U64.t)
-  : Lemma (minor_tag ms obj < 256)
   = if U64.v obj >= 8 && U64.v obj < minor_heap_size then
       let hdr_addr = U64.v obj - 8 in
       if hdr_addr + 8 <= minor_heap_size && hdr_addr % 8 = 0 then
@@ -529,8 +526,7 @@ private let rec minor_objects_aux_wosize_bound_raw
 
 /// infix_parent_value: unfolds infix_parent definition and proves the value
 let infix_parent_value (ms: minor_state) (addr: U64.t)
-  : Lemma (requires is_infix_in_minor ms addr /\ minor_infix_wf ms)
-          (ensures U64.v (infix_parent ms addr) == U64.v addr - minor_wosize ms addr * 8) =
+          =
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf ms);
   let wz = minor_wosize ms addr in
   let off = wz * 8 in
@@ -543,12 +539,7 @@ let infix_parent_value (ms: minor_state) (addr: U64.t)
   assert (U64.v addr - off < pow2 64)
 
 let infix_parent_in_minor_objects (ms: minor_state) (addr: U64.t)
-  : Lemma (requires is_infix_in_minor ms addr /\ minor_infix_wf ms)
-          (ensures (let parent = infix_parent ms addr in
-                    Seq.mem parent (minor_objects ms) /\
-                    U64.v parent >= 8 /\
-                    U64.v parent % 8 == 0 /\
-                    U64.v addr - U64.v parent < minor_wosize ms parent * 8)) =
+                    =
   reveal_opaque (`%minor_infix_wf) (minor_infix_wf ms)
 
 /// Infix sub-objects (tag=249) are never in minor_objects (when minor_wf holds).
@@ -598,8 +589,7 @@ private let rec minor_objects_aux_no_infix
 #pop-options
 
 let minor_objects_not_infix (ms: minor_state) (addr: U64.t)
-  : Lemma (requires minor_wf ms /\ Seq.mem addr (minor_objects ms))
-          (ensures minor_tag ms addr <> 249) =
+          =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
   else begin
     minor_objects_aux_no_infix ms.data 0 (U64.v ms.bump) addr;
@@ -610,8 +600,7 @@ let minor_objects_not_infix (ms: minor_state) (addr: U64.t)
   end
 
 let minor_objects_wosize_bound (ms: minor_state) (obj: U64.t)
-  : Lemma (requires Seq.mem obj (minor_objects ms))
-          (ensures (minor_wosize ms obj + 1) * 8 <= minor_heap_size) =
+          =
   if U64.v ms.bump > minor_heap_size || U64.v ms.bump % 8 <> 0 then ()
   else begin
     minor_objects_aux_valid ms.data 0 (U64.v ms.bump) obj;
@@ -766,10 +755,6 @@ let rec minor_objects_aux_next_bound
 
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 50 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_objects_body_bound (ms: minor_state) (obj: U64.t)
-  : Lemma (requires minor_wf ms /\ Seq.mem obj (minor_objects ms))
-          (ensures minor_wosize ms obj > 0 /\
-                   U64.v obj + minor_wosize ms obj * 8 <= minor_heap_size /\
-                   minor_wosize ms obj < minor_heap_size)
   =
   minor_objects_aux_next_bound ms.data 0 (U64.v ms.bump) obj;
   let xv = U64.v obj in
@@ -789,10 +774,7 @@ let minor_objects_body_bound (ms: minor_state) (obj: U64.t)
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_alloc_success_layout (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                                (tag: nat{tag < 256 /\ tag <> 249})
-  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
-          (ensures (let res = minor_alloc_spec ms wosize tag in
-                    res.obj_addr == U64.uint_to_t (U64.v ms.bump + 8) /\
-                    U64.v res.ms_out.bump == U64.v ms.bump + (wosize + 1) * 8)) =
+                    =
   assert (U64.v ms.bump % 8 == 0);
   assert (not (minor_can_alloc ms wosize) == false);
   assert (U64.v ms.bump % 8 <> 0 == false);
@@ -808,9 +790,7 @@ let minor_alloc_success_layout (ms: minor_state) (wosize: nat{wosize > 0 /\ wosi
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_alloc_success_wosize (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                                (tag: nat{tag < 256 /\ tag <> 249})
-  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
-          (ensures (let res = minor_alloc_spec ms wosize tag in
-                    minor_wosize res.ms_out res.obj_addr == wosize)) =
+                    =
   minor_alloc_success_layout ms wosize tag;
   assert_norm (pow2 57 < pow2 64);
   GC.Gen.Base.max_young_object_fits ();
@@ -831,9 +811,7 @@ let minor_alloc_success_wosize (ms: minor_state) (wosize: nat{wosize > 0 /\ wosi
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let minor_alloc_success_tag (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256 /\ tag <> 249})
-  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
-          (ensures (let res = minor_alloc_spec ms wosize tag in
-                    minor_tag res.ms_out res.obj_addr == tag)) =
+                    =
   minor_alloc_success_layout ms wosize tag;
   assert_norm (pow2 57 < pow2 64);
   GC.Gen.Base.max_young_object_fits ();
@@ -854,11 +832,7 @@ let minor_alloc_success_tag (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize 
 #push-options "--fuel 3 --ifuel 0 --z3rlimit 37 --using_facts_from '* -FStar.UInt.to_vec -FStar.BitVector'"
 let minor_alloc_adds_object (ms: minor_state) (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                             (tag: nat{tag < 256 /\ tag <> 249})
-  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize)
-          (ensures (let res = minor_alloc_spec ms wosize tag in
-                    minor_wf res.ms_out /\
-                    res.obj_addr <> 0UL /\
-                    Seq.mem res.obj_addr (minor_objects res.ms_out))) =
+                    =
   assert_norm (pow2 57 < pow2 64);
   assert_norm (pow2 57 == 8 * pow2 54);
   GC.Gen.Base.max_young_object_fits ();
@@ -905,13 +879,7 @@ let minor_alloc_preserves_existing (ms: minor_state)
                                     (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
                                     (tag: nat{tag < 256 /\ tag <> 249})
                                     (x: U64.t)
-  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\
-                    Seq.mem x (minor_objects ms))
-          (ensures (let res = minor_alloc_spec ms wosize tag in
-                    Seq.mem x (minor_objects res.ms_out) /\
-                    minor_wosize res.ms_out x == minor_wosize ms x /\
-                    (forall (i:nat). i < minor_wosize ms x ==>
-                      minor_read_field res.ms_out x i == minor_read_field ms x i))) =
+                      =
   assert_norm (pow2 57 < pow2 64);
   assert_norm (pow2 57 == 8 * pow2 54);
   GC.Gen.Base.max_young_object_fits ();
@@ -968,10 +936,6 @@ let minor_alloc_preserves_word_outside_header
   (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
   (tag: nat{tag < 256 /\ tag <> 249})
   (addr: U64.t{U64.v addr + 8 <= minor_heap_size /\ U64.v addr % 8 == 0})
-  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\
-                    U64.v addr <> U64.v ms.bump)
-          (ensures (let res = minor_alloc_spec ms wosize tag in
-                    minor_read_word res.ms_out.data addr == minor_read_word ms.data addr))
   =
   minor_alloc_success_layout ms wosize tag;
   assert_norm (pow2 57 < pow2 64);
@@ -989,11 +953,6 @@ let minor_alloc_fresh_field_read
   (wosize: nat{wosize > 0 /\ wosize <= max_young_wosize})
   (tag: nat{tag < 256 /\ tag <> 249})
   (j: nat)
-  : Lemma (requires minor_wf ms /\ minor_can_alloc ms wosize /\ j < wosize)
-          (ensures (let res = minor_alloc_spec ms wosize tag in
-                    let field_addr = U64.uint_to_t (U64.v ms.bump + 8 + j * 8) in
-                    minor_read_field res.ms_out res.obj_addr j ==
-                    minor_read_word ms.data field_addr))
   =
   minor_alloc_success_layout ms wosize tag;
   assert (U64.v ms.bump + (wosize + 1) * 8 <= minor_heap_size);
@@ -1017,11 +976,6 @@ let minor_alloc_fresh_field_read
 /// ---------------------------------------------------------------------------
 
 let minor_reset (ms: minor_state)
-  : Tot (ms':minor_state{
-      minor_wf ms' /\
-      U64.v ms'.bump == 0 /\
-      ms'.data == Seq.create minor_heap_size 0uy
-    })
   =
   { data = Seq.create minor_heap_size 0uy; bump = 0UL }
 
@@ -1042,7 +996,6 @@ private let zeroed_minor_read_word (addr: U64.t)
   assert_norm (minor_combine_bytes 0uy 0uy 0uy 0uy 0uy 0uy 0uy 0uy == 0UL)
 
 let minor_reset_wosize_zero (ms: minor_state) (addr: U64.t)
-  : Lemma (ensures minor_wosize (minor_reset ms) addr == 0)
   =
   if U64.v addr >= 8 && U64.v addr < minor_heap_size then begin
     let hdr_addr = U64.v addr - 8 in
@@ -1060,11 +1013,9 @@ let minor_reset_wosize_zero (ms: minor_state) (addr: U64.t)
   end
 
 let minor_reset_objects_empty (ms: minor_state)
-  : Lemma (ensures minor_objects (minor_reset ms) == Seq.empty)
   = ()
 
 let minor_reset_objects_not_mem (ms: minor_state) (addr: U64.t)
-  : Lemma (ensures ~(Seq.mem addr (minor_objects (minor_reset ms))))
   =
   minor_reset_objects_empty ms;
   assert_norm (Seq.count addr Seq.empty == 0)
@@ -1089,7 +1040,6 @@ private let minor_reset_tag_zero (ms: minor_state) (addr: U64.t)
   end
 
 let minor_reset_no_infix (ms: minor_state) (addr: U64.t)
-  : Lemma (ensures ~(is_infix_in_minor (minor_reset ms) addr))
   =
   minor_reset_tag_zero ms addr
 #pop-options
@@ -1207,9 +1157,6 @@ private let minor_objects_aux_count_bound
 #pop-options
 
 let minor_objects_count_bound (ms: minor_state)
-  : Lemma (requires minor_wf ms)
-          (ensures Seq.length (minor_objects ms) <= minor_heap_size / 16 /\
-                   Seq.length (minor_objects ms) < minor_heap_size / 8)
   =
   minor_objects_aux_count_bound ms.data 0 (U64.v ms.bump);
   // 16 * |minor_objects ms| <= bump - 0 = bump <= minor_heap_size

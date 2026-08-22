@@ -150,13 +150,6 @@ let remembered_targets_in_roots_intro_by_slots major roots slots n
 let post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (w: U64.t)
-  : Lemma
-    (requires (
-      let prom = cheney_promote minor major fp roots in
-      let res = cheney_collect_spec minor major fp roots in
-      Seq.mem w (rewrite_roots roots prom.fwd_map) /\
-      mem_graph_vertex_at (HeapModel.create_graph res.mc_major) w))
-    (ensures post_minor_reachable minor major fp roots w)
   =
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
@@ -181,11 +174,6 @@ let post_minor_reachable_refl_from_root
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let remembered_roots_in_roots_from_slots
   (major: heap) (roots slots: seq U64.t) (n: nat)
-  : Lemma
-    (requires
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n)
-    (ensures RBridge.remembered_roots_in_roots major roots)
   =
     let aux (r: U64.t) : Lemma
       (requires Seq.mem r (minor_roots_from_major major))
@@ -235,20 +223,6 @@ let remembered_roots_in_roots_from_slots
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let update_preserves_major_target_field
   (major: heap) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
-  : Lemma
-    (requires
-      well_formed_heap_part1 major /\
-      Seq.mem src (objects zero_addr major) /\
-      Seq.mem dst (objects zero_addr major) /\
-      j < U64.v (wosize_of_object src major) /\
-      U64.v src + j * 8 + 8 <= heap_size /\
-      (U64.v src + j * 8) % 8 == 0 /\
-      is_blue src major = false /\
-      is_no_scan src major = false /\
-      read_word major (U64.uint_to_t (U64.v src + j * 8)) == dst)
-    (ensures
-      read_word (update_major_pointers major fwd)
-        (U64.uint_to_t (U64.v src + j * 8)) == dst)
   =
     RBridge.major_object_not_minor_pointer major dst;
     PromUpdate.update_major_pointers_field_effect major fwd src j;
@@ -264,17 +238,6 @@ let update_preserves_major_target_field
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let heap_field_points_to_graph_edge
   (g: heap) (src: obj_addr) (dst: U64.t) (j: nat)
-  : Lemma
-    (requires
-      well_formed_heap g /\
-      Seq.mem src (objects zero_addr g) /\
-      ~(is_no_scan src g) /\
-      j < U64.v (wosize_of_object src g) /\
-      U64.v src + j * 8 + 8 <= heap_size /\
-      (U64.v src + j * 8) % 8 == 0 /\
-      read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst /\
-      HeapGraph.is_pointer_field dst)
-    (ensures mem_graph_edge (HeapModel.create_graph g) src dst)
   =
     wf_object_bound g src;
     HeapGraph.object_fits_from_bound src g;
@@ -397,16 +360,6 @@ private let rec get_pointer_fields_aux_mem_inv
 
 let heap_graph_edge_to_pointer_field
   (g: heap) (src dst: obj_addr)
-  : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
-    (ensures
-      Seq.mem src (objects zero_addr g) /\
-      HeapGraph.object_fits_in_heap src g /\
-      is_no_scan src g = false /\
-      HeapGraph.is_pointer_field dst /\
-      (exists (j: U64.t{U64.v j >= 1}).
-        U64.v j <= U64.v (wosize_of_object src g) /\
-        HeapGraph.get_field g src j == dst))
   =
     HeapModel.objects_is_vertex_set g;
     assert (Seq.mem (src, dst) (HeapGraph.all_edges g (objects zero_addr g)));
@@ -457,17 +410,6 @@ let heap_graph_edge_to_pointer_field
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let heap_graph_edge_to_field_read
   (g: heap) (src dst: obj_addr)
-  : Lemma
-    (requires mem_graph_edge (HeapModel.create_graph g) src dst)
-    (ensures
-      Seq.mem src (objects zero_addr g) /\
-      is_no_scan src g = false /\
-      HeapGraph.is_pointer_field dst /\
-      (exists (j: nat).
-        j < U64.v (wosize_of_object src g) /\
-        U64.v src + j * 8 + 8 <= heap_size /\
-        (U64.v src + j * 8) % 8 == 0 /\
-        read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst))
   =
     heap_graph_edge_to_pointer_field g src dst;
     assert (Seq.mem src (objects zero_addr g));
@@ -547,9 +489,6 @@ private let rec coerce_vertex_mem_is_obj_addr
 
 let mem_graph_vertex_at_is_obj_addr
   (g: heap) (w: U64.t)
-  : Lemma
-    (requires mem_graph_vertex_at (HeapModel.create_graph g) w)
-    (ensures is_val_addr w /\ Seq.mem (w <: obj_addr) (objects zero_addr g))
   =
     let post_g = HeapModel.create_graph g in
     let goal = is_val_addr w /\ Seq.mem (w <: obj_addr) (objects zero_addr g) in
@@ -573,22 +512,6 @@ let mem_graph_vertex_at_is_obj_addr
 let cheney_promote_preserves_old_major_field_context
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
-  : Lemma
-    (requires
-      GenInv.collection_heap_shape minor major fp /\
-      Seq.mem src (objects zero_addr major) /\
-      is_blue src major = false /\
-      j < U64.v (wosize_of_object src major) /\
-      U64.v src + j * 8 + 8 <= heap_size /\
-      (U64.v src + j * 8) % 8 == 0)
-    (ensures (
-      let prom = cheney_promote minor major fp roots in
-      Seq.mem src (objects zero_addr prom.major_final) /\
-      is_blue src prom.major_final = false /\
-      is_no_scan src prom.major_final == is_no_scan src major /\
-      wosize_of_object src prom.major_final == wosize_of_object src major /\
-      read_word prom.major_final (U64.uint_to_t (U64.v src + j * 8)) ==
-      read_word major (U64.uint_to_t (U64.v src + j * 8))))
   =
     GenInv.collection_heap_shape_elim minor major fp;
     GenInv.major_heap_shape_elim major fp;
@@ -609,10 +532,6 @@ let cheney_promote_preserves_old_major_field_context
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let header_eq_preserves_wosize_no_scan
   (g1 g2: heap) (src: obj_addr)
-  : Lemma
-    (requires read_word g1 (hd_address src) == read_word g2 (hd_address src))
-    (ensures wosize_of_object src g1 == wosize_of_object src g2 /\
-             is_no_scan src g1 == is_no_scan src g2)
   =
     wosize_of_object_spec src g1;
     wosize_of_object_spec src g2;

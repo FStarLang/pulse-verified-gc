@@ -85,8 +85,6 @@ private let split_field_addr_eq (obj_v hd_v src_v wz j: nat) : Lemma
 
 #push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let wfh_part2_implies_blue_fields_closed (g: heap)
-  : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g)
-          (ensures blue_fields_closed g)
   = reveal_opaque (`%blue_fields_closed) blue_fields_closed;
     let aux (src: obj_addr) (j: nat)
       : Lemma (Seq.mem src (objects zero_addr g) /\ is_blue src g /\
@@ -483,16 +481,6 @@ private let rec alloc_search_preserves_bfc
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_fields_closed
   (major: heap) (fp: U64.t) (wz: nat)
-  : Lemma (requires
-      well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
-      blue_fields_closed major /\
-      wz >= 1 /\
-      (GC.Spec.Allocator.alloc_spec major fp wz).obj_out <> 0UL /\
-      chain_objects_blue major fp)
-    (ensures
-      blue_fields_closed (GC.Spec.Allocator.alloc_spec major fp wz).heap_out)
   =
     let fuel = heap_words in
     AllocLemmas.alloc_spec_preserves_objects_part1 major fp wz;
@@ -637,16 +625,6 @@ private let rec alloc_search_fp_pointer_or_zero
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_fp_pointer_or_zero
   (g: heap) (fp: U64.t) (wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g fp heap_words /\
-                    FreeListShape.blue_link_fields_valid g /\
-                    FreeListShape.fp_pointer_or_zero fp /\
-                    wz >= 1 /\
-                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
-                    chain_objects_blue g fp)
-          (ensures FreeListShape.fp_pointer_or_zero
-                     (GC.Spec.Allocator.alloc_spec g fp wz).fp_out)
   =
     let fuel = heap_words in
     let chain_avoids_non_blue (obj: obj_addr)
@@ -863,15 +841,6 @@ private let rec alloc_search_preserves_blfv
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_link_fields_valid
   (g: heap) (fp: U64.t) (wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    AllocLemmas.fl_valid g fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g fp heap_words /\
-                    FreeListShape.blue_link_fields_valid g /\
-                    wz >= 1 /\
-                    (GC.Spec.Allocator.alloc_spec g fp wz).obj_out <> 0UL /\
-                    chain_objects_blue g fp)
-          (ensures FreeListShape.blue_link_fields_valid
-                     (GC.Spec.Allocator.alloc_spec g fp wz).heap_out)
   =
     let fuel = heap_words in
     AllocLemmas.alloc_spec_preserves_objects_part1 g fp wz;

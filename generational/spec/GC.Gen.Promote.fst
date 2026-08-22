@@ -88,34 +88,19 @@ let rec copy_fields_preserves
 
 let promote_object_oom (minor: minor_state) (major: heap) (obj: U64.t)
                        (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out == 0UL)
-          (ensures (let res = promote_object minor major obj fp wosize in
-                    res.major_out == major /\ res.fp_out == fp /\ res.new_addr == 0UL)) = ()
+                    = ()
 
 let promote_object_success (minor: minor_state) (major: heap) (obj: U64.t)
                            (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires (GC.Spec.Allocator.alloc_spec major fp wosize).obj_out <> 0UL)
-          (ensures (let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
-                    let res = promote_object minor major obj fp wosize in
-                    let copied = copy_fields minor alloc_res.heap_out obj alloc_res.obj_out 0 wosize in
-                    let padded = zero_promote_padding copied alloc_res.obj_out wosize in
-                    let tag = minor_tag minor obj in
-                    res.major_out == set_promoted_tag padded alloc_res.obj_out tag /\
-                    res.fp_out == alloc_res.fp_out /\
-                    res.new_addr == alloc_res.obj_out)) = ()
+                    = ()
 
 let set_promoted_tag_unfold
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
-  : Lemma (set_promoted_tag major obj tag ==
-           write_word major (hd_address obj)
-             (makeHeader (getWosize (read_word major (hd_address obj)))
-                         White (U64.uint_to_t tag))) = ()
+                         = ()
 
 /// zero_promote_padding lemmas
 let zero_promote_padding_frame
   (g: heap) (dst: obj_addr) (wz: nat) (addr: hp_addr)
-  : Lemma (requires U64.v addr <> U64.v dst + wz * U64.v mword)
-          (ensures read_word (zero_promote_padding g dst wz) addr == read_word g addr)
   = let actual_wz = U64.v (wosize_of_object dst g) in
     if actual_wz > wz then
       let pad_nat = U64.v dst + wz * U64.v mword in
@@ -126,7 +111,6 @@ let zero_promote_padding_frame
 
 let zero_promote_padding_preserves_wosize
   (g: heap) (dst: obj_addr) (wz: nat)
-  : Lemma (wosize_of_object dst (zero_promote_padding g dst wz) == wosize_of_object dst g)
   = let actual_wz = U64.v (wosize_of_object dst g) in
     if actual_wz > wz then
       let pad_nat = U64.v dst + wz * U64.v mword in
@@ -145,23 +129,14 @@ let zero_promote_padding_preserves_wosize
 
 let zero_promote_padding_noop
   (g: heap) (dst: obj_addr) (wz: nat)
-  : Lemma (requires U64.v (wosize_of_object dst g) <= wz)
-          (ensures zero_promote_padding g dst wz == g)
   = ()
 
 let zero_promote_padding_write
   (g: heap) (dst: obj_addr) (wz: nat)
-  : Lemma (requires U64.v (wosize_of_object dst g) > wz /\
-                    U64.v dst + wz * U64.v mword < heap_size)
-          (ensures zero_promote_padding g dst wz ==
-                   write_word g (U64.uint_to_t (U64.v dst + wz * U64.v mword) <: hp_addr) 0UL)
   = wosize_of_object_spec dst g
 
 let zero_promote_padding_preserves_objects
   (g: heap) (dst: obj_addr) (wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem dst (objects zero_addr g))
-          (ensures objects zero_addr (zero_promote_padding g dst wz) == objects zero_addr g)
   = let actual_wz = U64.v (wosize_of_object dst g) in
     if actual_wz > wz then begin
       // actual_wz > wz implies actual_wz >= wz + 1
@@ -179,12 +154,6 @@ let zero_promote_padding_preserves_objects
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let zero_promote_padding_frame_obj_header
   (g: heap) (dst src: obj_addr) (wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem dst (objects zero_addr g) /\
-                    Seq.mem src (objects zero_addr g) /\
-                    src <> dst)
-          (ensures read_word (zero_promote_padding g dst wz) (hd_address src)
-                == read_word g (hd_address src))
   = let actual_wz = U64.v (wosize_of_object dst g) in
     if actual_wz <= wz then
       zero_promote_padding_noop g dst wz
@@ -206,9 +175,6 @@ let zero_promote_padding_frame_obj_header
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let zero_promote_padding_preserves_wfh_part1
   (g: heap) (dst: obj_addr) (wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem dst (objects zero_addr g))
-          (ensures well_formed_heap_part1 (zero_promote_padding g dst wz))
   = let g' = zero_promote_padding g dst wz in
     zero_promote_padding_preserves_objects g dst wz;
     zero_promote_padding_preserves_wosize g dst wz;
@@ -260,8 +226,6 @@ let zero_promote_padding_preserves_wfh_part1
 /// Helper: set_promoted_tag preserves objects (header rewrite with same wosize)
 let set_promoted_tag_preserves_objects
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
-  : Lemma (requires Seq.mem obj (objects zero_addr major))
-          (ensures objects zero_addr (set_promoted_tag major obj tag) == objects zero_addr major)
   = let hd = hd_address obj in
     let hdr = read_word major hd in
     let wz = getWosize hdr in
@@ -275,9 +239,6 @@ let set_promoted_tag_preserves_objects
 /// Helper: set_promoted_tag preserves reads at addresses disjoint from the header
 let set_promoted_tag_read_frame
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (addr: hp_addr)
-  : Lemma (requires (U64.v addr + U64.v mword <= U64.v (hd_address obj) \/
-                     U64.v (hd_address obj) + U64.v mword <= U64.v addr))
-          (ensures read_word (set_promoted_tag major obj tag) addr == read_word major addr)
   = let hd = hd_address obj in
     let hdr = read_word major hd in
     let wz = getWosize hdr in
@@ -450,16 +411,6 @@ private let set_promoted_tag_preserves_wfh_part1
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let set_promoted_tag_preserves_alloc_invariants
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (fp: U64.t)
-  : Lemma (requires
-             well_formed_heap_part1 major /\
-             Seq.mem obj (objects zero_addr major) /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words /\
-             AllocLemmas.chain_avoids major fp obj heap_words = true)
-          (ensures (let g' = set_promoted_tag major obj tag in
-                    well_formed_heap_part1 g' /\
-                    AllocLemmas.fl_valid g' fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g' fp heap_words))
   = let fuel : nat = heap_words in
     set_promoted_tag_preserves_wfh_part1 major obj tag;
     set_promoted_tag_preserves_fl_valid major obj tag fp fuel;
@@ -470,18 +421,6 @@ let set_promoted_tag_preserves_alloc_invariants
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let zero_promote_padding_preserves_alloc_invariants
   (g: heap) (dst: obj_addr) (wz: nat) (fp: U64.t)
-  : Lemma (requires
-             well_formed_heap_part1 g /\
-             Seq.mem dst (objects zero_addr g) /\
-             AllocLemmas.fl_valid g fp heap_words /\
-             AllocLemmas.fl_chain_terminates g fp heap_words /\
-             AllocLemmas.chain_avoids g fp dst heap_words = true)
-          (ensures (let g' = zero_promote_padding g dst wz in
-                    well_formed_heap_part1 g' /\
-                    Seq.mem dst (objects zero_addr g') /\
-                    AllocLemmas.fl_valid g' fp heap_words /\
-                    AllocLemmas.fl_chain_terminates g' fp heap_words /\
-                    AllocLemmas.chain_avoids g' fp dst heap_words = true))
   = let fuel : nat = heap_words in
     let actual_wz = U64.v (wosize_of_object dst g) in
     zero_promote_padding_preserves_wfh_part1 g dst wz;
@@ -506,10 +445,6 @@ let zero_promote_padding_preserves_alloc_invariants
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let zero_promote_padding_preserves_wfh_part4
   (g: heap) (dst: obj_addr) (wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    well_formed_heap_part4 g /\
-                    Seq.mem dst (objects zero_addr g))
-          (ensures well_formed_heap_part4 (zero_promote_padding g dst wz))
   = let actual_wz = U64.v (wosize_of_object dst g) in
     if actual_wz > wz then begin
       wfh_part1_obj_bound g dst;
@@ -548,14 +483,6 @@ let zero_promote_padding_preserves_wfh_part4
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let promote_object_preserves_alloc_invariants
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires
-             well_formed_heap_part1 major /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures (let res = promote_object minor major obj fp wosize in
-                    well_formed_heap_part1 res.major_out /\
-                    AllocLemmas.fl_valid res.major_out res.fp_out heap_words /\
-                    AllocLemmas.fl_chain_terminates res.major_out res.fp_out heap_words))
   = let fuel : nat = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     if alloc_res.obj_out = 0UL then begin
@@ -641,26 +568,12 @@ private let set_promoted_tag_preserves_wfh_part4
 /// Unfold lemma: one step of update_object_pointers
 let update_object_pointers_step (major: heap) (obj: U64.t) (wosize: nat)
                                 (fwd: forwarding_map) (i: nat)
-  : Lemma (requires i < wosize /\
-                    U64.v obj + i * 8 + 8 <= heap_size /\
-                    (U64.v obj + i * 8) % 8 = 0)
-          (ensures (let field_offset = U64.v obj + i * 8 in
-                    let field_val = to_minor_offset (read_word major (U64.uint_to_t field_offset)) in
-                    update_object_pointers major obj wosize fwd i ==
-                    (if is_minor_pointer field_val then
-                       let new_val = fwd field_val in
-                       if new_val <> 0UL then
-                         update_object_pointers (write_word major (U64.uint_to_t field_offset) new_val) obj wosize fwd (i + 1)
-                       else
-                         update_object_pointers major obj wosize fwd (i + 1)
-                     else
-                       update_object_pointers major obj wosize fwd (i + 1)))) = ()
+                       = ()
 
 /// Base case: identity at i >= wosize
 let update_object_pointers_done (major: heap) (obj: U64.t) (wosize: nat)
                                 (fwd: forwarding_map) (i: nat)
-  : Lemma (requires i >= wosize)
-          (ensures update_object_pointers major obj wosize fwd i == major) = ()
+          = ()
 
 /// ---------------------------------------------------------------------------
 /// Root rewriting
@@ -681,10 +594,7 @@ let rec rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
 
 #push-options "--z3rlimit 12"
 let rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U64.t)
-  : Lemma (requires Seq.length rs2 == Seq.length roots /\
-                    (forall (j: nat). j < Seq.length roots ==>
-                      Seq.index rs2 j == rewrite_root (Seq.index roots j) fwd))
-          (ensures rs2 == rewrite_roots roots fwd) =
+          =
   rewrite_roots_length roots fwd;
   let rr = rewrite_roots roots fwd in
   assert (Seq.length rr == Seq.length rs2);
@@ -707,8 +617,6 @@ let rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U
 /// Helper: derive dst_fields_valid from scalar upper bound + alignment
 #push-options "--z3rlimit 10"
 let dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
-  : Lemma (requires U64.v addr % 8 == 0 /\ U64.v addr + (wz - 1) * 8 + 8 <= heap_size)
-          (ensures dst_fields_valid addr wz)
   = let aux (j': nat)
       : Lemma (requires j' < wz)
               (ensures U64.v addr + j' * 8 + 8 <= heap_size /\ (U64.v addr + j' * 8) % 8 == 0)
@@ -725,15 +633,7 @@ let copy_fields_frame
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
   (addr: hp_addr)
-  : Lemma
-    (requires
-      dst_fields_valid dst_obj n /\
-      U64.v dst_obj % 8 == 0 /\
-      (U64.v addr + 8 <= U64.v dst_obj \/
-       U64.v addr >= U64.v dst_obj + n * 8))
-    (ensures
-      read_word (copy_fields minor major src_obj dst_obj i n) addr ==
-      read_word major addr) =
+      =
   copy_fields_preserves_other minor major src_obj dst_obj i n addr
 #pop-options
 
@@ -743,15 +643,7 @@ let copy_fields_frame
 let copy_fields_all_correct
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: U64.t) (n: nat)
-  : Lemma
-    (requires
-      dst_fields_valid dst_obj n /\
-      U64.v dst_obj % 8 == 0)
-    (ensures
-      (let result = copy_fields minor major src_obj dst_obj 0 n in
-       (forall (j:nat). j < n ==>
-         read_word result (U64.uint_to_t (U64.v dst_obj + j * 8)) ==
-         minor_read_field minor src_obj j))) =
+         =
   if n = 0 then ()
   else begin
     assert (U64.v dst_obj + (n - 1) * 8 + 8 <= heap_size);
@@ -815,16 +707,7 @@ let promote_preserves_field_at
 let promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires
-             U64.v obj >= 8 /\ U64.v obj < minor_heap_size)
-          (ensures
-             (let res = promote_object minor major obj fp wosize in
-              res.new_addr <> 0UL ==>
-              dst_fields_valid res.new_addr wosize ==>
-              U64.v res.new_addr % 8 == 0 ==>
-              (forall (j:nat). j < wosize ==>
-                read_word res.major_out (U64.uint_to_t (U64.v res.new_addr + j * 8)) ==
-                minor_read_field minor obj j))) =
+                =
   let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
   if alloc_res.obj_out = 0UL then ()
   else begin
@@ -853,25 +736,6 @@ let promote_preserves_fields
 let promote_object_extra_field_not_pointer
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wz: nat{wz > 0}) (field_idx: nat)
-  : Lemma (requires
-      well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (let res = promote_object minor major obj fp wz in
-       res.new_addr <> 0UL /\
-       U64.v res.new_addr >= U64.v mword /\
-       U64.v res.new_addr < heap_size /\
-       U64.v res.new_addr % U64.v mword == 0 /\
-       field_idx >= wz /\
-       field_idx < U64.v (wosize_of_object (res.new_addr <: obj_addr) res.major_out) /\
-       U64.v res.new_addr + field_idx * 8 < heap_size /\
-       (U64.v res.new_addr + field_idx * 8) % U64.v mword == 0))
-     (ensures
-       (let res = promote_object minor major obj fp wz in
-        let field_addr : hp_addr =
-          U64.uint_to_t (U64.v res.new_addr + field_idx * 8) in
-        read_word res.major_out field_addr == 0UL /\
-        ~(is_pointer_field (read_word res.major_out field_addr))))
   =
   let alloc_res = GC.Spec.Allocator.alloc_spec major fp wz in
   let res = promote_object minor major obj fp wz in
@@ -938,14 +802,7 @@ private let copy_fields_preserves_wfh_part1 = WriteBody.copy_fields_preserves_wf
 #push-options "--z3rlimit 10 --fuel 1"
 let promote_object_preserves_objects_part1
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires
-             well_formed_heap_part1 major /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words)
-          (ensures
-             (let res = promote_object minor major obj fp wosize in
-              (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
-                Seq.mem x (objects zero_addr res.major_out)))) =
+                =
   let fuel : nat = heap_words in
   let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
   if alloc_res.obj_out = 0UL then ()
@@ -1023,14 +880,6 @@ private let copy_fields_preserves_wfh_part4
 #push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let promote_object_preserves_wfh_part4
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires
-             well_formed_heap_part1 major /\
-             well_formed_heap_part4 major /\
-             AllocLemmas.fl_valid major fp heap_words /\
-             AllocLemmas.fl_chain_terminates major fp heap_words /\
-             minor_tag minor obj <> U64.v GC.Spec.Object.infix_tag)
-           (ensures (let res = promote_object minor major obj fp wosize in
-                     well_formed_heap_part4 res.major_out))
   = let fuel : nat = heap_words in
     let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
     if alloc_res.obj_out = 0UL then begin
@@ -1465,17 +1314,6 @@ private let promote_no_scan_old_object
 #push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let promote_object_preserves_no_scan_invariant
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
-  : Lemma
-    (requires
-      no_scan_invariant major /\
-      well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
-      allocated_avoid_chain major fp /\
-      minor_no_scan_invariant minor /\
-      Seq.mem obj (minor_objects minor) /\
-      wz == minor_wosize minor obj)
-    (ensures no_scan_invariant (promote_object minor major obj fp wz).major_out)
   =
   let fuel : nat = heap_words in
   let res = promote_object minor major obj fp wz in

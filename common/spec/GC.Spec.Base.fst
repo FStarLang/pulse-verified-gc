@@ -48,8 +48,6 @@ let is_val_addr (a: U64.t) : bool =
   is_hp_addr a && U64.v a >= U64.v mword
 
 let is_val_addr_spec (a: U64.t)
-  : Lemma (ensures is_val_addr a <==>
-                   (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword == 0))
   = ()
 
 /// ---------------------------------------------------------------------------

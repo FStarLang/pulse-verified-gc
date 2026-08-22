@@ -1089,53 +1089,17 @@ private let cheney_promote_invs
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    minor_infix_wf minor /\
-                    minor_wf minor)
-          (ensures fwd_normal_injective (cheney_promote minor major fp roots).fwd_map
-                                         (cheney_promote minor major fp roots).major_final)
   = cheney_promote_invs minor major fp roots
 
 let cheney_promote_fwd_targets_not_blue
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    minor_infix_wf minor /\
-                    minor_wf minor)
-          (ensures fwd_targets_not_blue (cheney_promote minor major fp roots).fwd_map
-                                        (cheney_promote minor major fp roots).major_final)
   = cheney_promote_invs minor major fp roots
 
 let cheney_promote_fwd_noninfix_sources_in_minor_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    minor_infix_wf minor /\
-                    minor_wf minor)
-          (ensures fwd_noninfix_sources_in_minor_objects
-                     minor
-                      (cheney_promote minor major fp roots).fwd_map
-                      (cheney_promote minor major fp roots).major_final)
   = cheney_promote_invs minor major fp roots
 
 let cheney_promote_fwd_normal_targets_disjoint_from_old_nonblue
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    minor_infix_wf minor /\
-                    minor_wf minor)
-          (ensures fwd_normal_targets_disjoint_from_old_nonblue
-                     (cheney_promote minor major fp roots).fwd_map
-                     (cheney_promote minor major fp roots).major_final
-                     major)
   = cheney_promote_invs minor major fp roots
 #pop-options

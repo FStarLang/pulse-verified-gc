@@ -28,10 +28,6 @@ module SweepInv = GC.Spec.SweepInv
 
 /// Helper: stack head is gray
 let stack_head_is_gray (g: heap) (st: seq obj_addr)
-  : Lemma (requires stack_props g st /\ Seq.length st > 0)
-          (ensures (let obj = Seq.head st in
-                    is_gray obj g /\
-                    Seq.mem obj (objects zero_addr g)))
   = ()
 
 /// Transfer stack_elements_valid when objects are equal
@@ -42,7 +38,6 @@ let rec sev_transfer (g g': heap) (st: seq obj_addr)
 
 /// White element not in gray stack (colors exclusive)
 let white_not_in_gray_stack (g: heap) (st: seq obj_addr) (child: obj_addr)
-  : Lemma (requires stack_points_to_gray g st /\ is_white child g) (ensures ~(Seq.mem child st))
   = let aux (x: obj_addr) : Lemma (Seq.mem x st ==> x <> child) =
       if Seq.mem x st then begin is_white_iff child g; is_gray_iff x g; colors_exhaustive_and_exclusive x g end
     in FStar.Classical.forall_intro aux
@@ -68,9 +63,6 @@ let pc_step_gos (g: heap) (child: obj_addr) (st: seq obj_addr) (g': heap)
 
 /// stack_points_to_gray after makeGray step
 let pc_step_spg (g: heap) (child: obj_addr) (st: seq obj_addr) (g': heap)
-  : Lemma (requires g' == set_object_color child g Header.Gray /\
-                   is_white child g /\ stack_points_to_gray g st)
-          (ensures stack_points_to_gray g' (Seq.cons child st))
   = let aux (x: obj_addr) : Lemma
       (requires Seq.mem x (Seq.cons child st)) (ensures is_gray x g')
     = Seq.mem_cons child st;
@@ -85,8 +77,6 @@ let pc_step_spg (g: heap) (child: obj_addr) (st: seq obj_addr) (g': heap)
 
 /// obj not in cons child st when obj ≠ child and obj ∉ st
 let obj_not_in_cons (obj child: obj_addr) (st: seq obj_addr)
-  : Lemma (requires obj <> child /\ ~(Seq.mem obj st))
-          (ensures ~(Seq.mem obj (Seq.cons child st)))
   = Seq.mem_cons child st
 
 
@@ -527,8 +517,6 @@ let no_pointer_to_blue_intro_from_fields
                 (read_word g (U64.uint_to_t (U64.v src + j * 8)))
                 dst)
     (ensures ~(is_blue dst g))))
-  : Lemma (requires well_formed_heap_part1 g)
-          (ensures no_pointer_to_blue g)
   =
   let aux (src dst: obj_addr)
     : Lemma (requires Seq.mem src (objects zero_addr g) /\
@@ -806,8 +794,6 @@ let colors_exclusive obj g = colors_exhaustive_and_exclusive obj g
 
 /// When stack is empty, gray_objects_on_stack implies no gray objects
 let empty_stack_no_grey (g: heap) (st: seq obj_addr)
-  : Lemma (requires stack_props g st /\ Seq.length st = 0)
-          (ensures noGreyObjects g)
   = let aux (obj: obj_addr) : Lemma (Seq.mem obj (objects zero_addr g) ==> not (is_gray obj g))
     = ()  // Follows from gray_objects_on_stack and empty st
     in
@@ -1643,8 +1629,6 @@ let rec mark_aux_preserves_density g st fuel =
 
 /// mark preserves heap_objects_dense
 let mark_preserves_density (g: heap) (st: seq obj_addr)
-  : Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)
-          (ensures SweepInv.heap_objects_dense (mark g st))
 = mark_aux_preserves_density g st heap_words
 
 
@@ -1904,8 +1888,6 @@ let rec mark_aux_preserves_objects g st fuel
 #pop-options
 /// mark preserves objects > 0
 let mark_preserves_objects_gt0 (g: heap) (st: seq obj_addr)
-  : Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length (objects zero_addr g) > 0)
-          (ensures Seq.length (objects zero_addr (mark g st)) > 0)
 = mark_aux_preserves_objects g st heap_words
 
 /// mark_step never makes objects white (only gray->black and white->gray)
@@ -2942,17 +2924,12 @@ let mark_preserves_create_graph g st =
   mark_aux_preserves_create_graph g st heap_words
 
 /// Bridge: well_formed_heap → object_fits_in_heap (combines Fields + HeapGraph)
-let wf_implies_object_fits (g: heap) (hd: obj_addr) : Lemma
-  (requires well_formed_heap g /\ Seq.mem hd (objects zero_addr g))
-  (ensures HeapGraph.object_fits_in_heap hd g)
+let wf_implies_object_fits (g: heap) (hd: obj_addr)
   = wf_object_bound g hd;
     HeapGraph.object_fits_from_bound hd g
 
 /// Bridge: color change preserves object_fits_in_heap
-let color_preserves_object_fits (target: obj_addr) (hd: obj_addr) (g: heap) (c: Header.color_sem) : Lemma
-  (requires HeapGraph.object_fits_in_heap hd g /\ Seq.mem target (objects zero_addr g) /\
-            U64.v (wosize_of_object target g) < pow2 54)
-  (ensures HeapGraph.object_fits_in_heap hd (set_object_color target g c))
+let color_preserves_object_fits (target: obj_addr) (hd: obj_addr) (g: heap) (c: Header.color_sem)
   = HeapGraph.object_fits_to_bound hd g;
     set_object_color_length target g c;
     (if hd = target then
@@ -3345,8 +3322,6 @@ let mark_preserves_no_pointer_to_blue g st =
 /// A graph built from a well-formed heap has only in-heap object endpoints.
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let create_graph_wf_from_heap (g: heap)
-  : Lemma (requires well_formed_heap g)
-          (ensures graph_wf (create_graph g))
   =
   let graph = create_graph g in
   let objs = objects zero_addr g in
@@ -3372,8 +3347,6 @@ let create_graph_wf_from_heap (g: heap)
 /// Roots satisfying root_props are vertices of the graph built from the heap.
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let root_props_subset_create_graph (g: heap) (roots: seq obj_addr)
-  : Lemma (requires root_props g roots)
-          (ensures subset_vertices (HeapGraph.coerce_to_vertex_list roots) (create_graph g).vertices)
   =
   let graph = create_graph g in
   let roots' = HeapGraph.coerce_to_vertex_list roots in
@@ -3391,12 +3364,6 @@ let root_props_subset_create_graph (g: heap) (roots: seq obj_addr)
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let root_graph_precondition (g: heap) (roots: seq obj_addr)
-  : Lemma (requires well_formed_heap g /\
-                    root_props g roots /\
-                    is_vertex_set (HeapGraph.coerce_to_vertex_list roots))
-          (ensures (let graph = create_graph g in
-                    let roots' = HeapGraph.coerce_to_vertex_list roots in
-                    graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
   =
   create_graph_wf_from_heap g;
   root_props_subset_create_graph g roots
@@ -3697,20 +3664,6 @@ let mark_black_is_reachable g st roots =
 /// Graying such a target preserves all invariants.
 let check_and_darken_field_preserves_wf
   (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (wz: U64.t)
-  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                    U64.v wz <= U64.v (wosize_of_object obj g) /\
-                    U64.v (wosize_of_object obj g) < pow2 54 /\
-                    Seq.length g == heap_size /\
-                    U64.v i <= U64.v wz /\
-                    HeapGraph.is_pointer_field (HeapGraph.get_field g obj i))
-          (ensures (let v = HeapGraph.get_field g obj i in
-                    let target : obj_addr = v in
-                    Seq.mem target (objects zero_addr g) /\
-                    (is_white target g ==>
-                      (well_formed_heap (set_object_color target g Header.Gray) /\
-                       Seq.mem obj (objects zero_addr (set_object_color target g Header.Gray)) /\
-                       U64.v wz <= U64.v (wosize_of_object obj (set_object_color target g Header.Gray)) /\
-                       U64.v (wosize_of_object obj (set_object_color target g Header.Gray)) < pow2 54))))
   = let v = HeapGraph.get_field g obj i in
     HeapGraph.is_pointer_field_is_obj_addr v;
     let target : obj_addr = v in
@@ -3734,13 +3687,6 @@ let check_and_darken_field_preserves_wf
 /// (pointer targets in a well-formed heap are in objects and non-infix)
 let pointer_field_resolve_identity
   (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (wz: U64.t)
-  : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
-                    U64.v wz <= U64.v (wosize_of_object obj g) /\
-                    U64.v (wosize_of_object obj g) < pow2 54 /\
-                    Seq.length g == heap_size /\
-                    U64.v i <= U64.v wz /\
-                    HeapGraph.is_pointer_field (HeapGraph.get_field g obj i))
-          (ensures resolve_object (HeapGraph.get_field g obj i) g == HeapGraph.get_field g obj i)
   = let v = HeapGraph.get_field g obj i in
     HeapGraph.is_pointer_field_is_obj_addr v;
     let wz_obj = wosize_of_object obj g in

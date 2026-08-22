@@ -40,11 +40,6 @@ let spot_minor1_can_alloc_b () : Lemma (ensures minor_can_alloc spot_minor1 1) =
   minor_heap_size_at_least_two_one_field_objects ()
 
 let spot_minor_a_layout ()
-  : Lemma (ensures
-      minor_wf spot_minor1 /\
-      U64.v spot_minor1.bump == 16 /\
-      Seq.mem Layout.a_minor (minor_objects spot_minor1) /\
-      minor_wosize spot_minor1 Layout.a_minor == 1)
   =
   spot_minor0_can_alloc_a ();
   minor_alloc_success_layout spot_minor0 1 0;
@@ -56,13 +51,6 @@ let spot_minor_a_layout ()
   assert (spot_minor1 == spot_a_alloc.ms_out)
 
 let spot_minor_two_object_layout ()
-  : Lemma (ensures
-      minor_wf spot_minor2 /\
-      U64.v spot_minor2.bump == 32 /\
-      Seq.mem Layout.a_minor (minor_objects spot_minor2) /\
-      Seq.mem Layout.b_minor (minor_objects spot_minor2) /\
-      minor_wosize spot_minor2 Layout.a_minor == 1 /\
-      minor_wosize spot_minor2 Layout.b_minor == 1)
   =
   spot_minor_a_layout ();
   spot_minor_a_layout ();
@@ -104,9 +92,6 @@ let spot_minor1_word_24_zero ()
   assert (minor_read_word spot_minor0.data Layout.b_minor == 0UL)
 
 let spot_minor_two_object_fields_zero ()
-  : Lemma (ensures
-      minor_read_field spot_minor2 Layout.a_minor 0 == 0UL /\
-      minor_read_field spot_minor2 Layout.b_minor 0 == 0UL)
   =
   spot_minor_a_layout ();
   spot_minor1_can_alloc_b ();
@@ -262,8 +247,6 @@ let spot_minor2_tag_zero (addr: U64.t)
   end
 
 let spot_minor2_object_cases (obj: U64.t)
-  : Lemma (requires Seq.mem obj (minor_objects spot_minor2))
-          (ensures obj == Layout.a_minor \/ obj == Layout.b_minor)
   =
   spot_minor_two_object_layout ();
   minor_objects_valid spot_minor2 obj;
@@ -276,9 +259,6 @@ let spot_minor2_object_cases (obj: U64.t)
   end
 
 let spot_minor2_field_zero (obj: U64.t) (j: nat)
-  : Lemma (requires Seq.mem obj (minor_objects spot_minor2) /\
-                    j < minor_wosize spot_minor2 obj)
-          (ensures minor_read_field spot_minor2 obj j == 0UL)
   =
   spot_minor_two_object_layout ();
   spot_minor_two_object_fields_zero ();
@@ -293,7 +273,6 @@ let spot_minor2_field_zero (obj: U64.t) (j: nat)
   end
 
 let spot_minor_a_not_infix ()
-  : Lemma (ensures ~(is_infix_in_minor spot_minor2 Layout.a_minor))
   =
   assert (U64.v Layout.a_minor >= 8);
   assert (U64.v Layout.a_minor < minor_heap_size);
@@ -382,7 +361,6 @@ let spot_minor_fields_no_infix_targets ()
   GenInv.minor_fields_no_infix_targets_intro spot_minor2
 
 let spot_minor_heap_shape ()
-  : Lemma (ensures GenInv.minor_heap_shape spot_minor2)
   =
   spot_minor_two_object_layout ();
   spot_minor_guards_complete ();

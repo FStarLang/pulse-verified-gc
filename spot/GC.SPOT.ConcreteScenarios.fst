@@ -240,7 +240,6 @@ let spot_major_gray_black_empty (r: unit{ConcreteMajor.spot_major_room})
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_fwd_array_zero ()
-  : Lemma (Preconditions.zero_forwarding_array spot_fwd_array)
   =
   FStar.Seq.Base.lemma_create_len UpdatePtrs.fwd_array_size 0UL;
   assert (Seq.length spot_fwd_array == UpdatePtrs.fwd_array_size);
@@ -258,8 +257,6 @@ let spot_fwd_array_zero ()
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_c_slot_is_field1 (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (ThreeObjects.spot_c_to_a_slot (ConcreteMajor.spot_c r) ==
-           ConcreteMajor.spot_c_field1 r)
   =
   ConcreteMajor.spot_major_layout_facts r;
   ThreeObjects.spot_c_to_a_slot_spec (ConcreteMajor.spot_c r);
@@ -653,15 +650,6 @@ let spot_roots_valid_for_minor_collection (r: unit{ConcreteMajor.spot_major_room
 #pop-options
 
 let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma
-      (Preconditions.minor_collect_full_pre
-        ConcreteMinor.spot_minor2
-        (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
-        (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        spot_fwd_array
-        (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
-        1)
   =
   spot_collection_heap_shape r;
   spot_fwd_array_zero ();
@@ -683,14 +671,6 @@ let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room}
 
 let spot_concrete_minor_scenario_pre_from_no_oom
   (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma
-      (ensures
-        ThreeObjects.spot_minor_scenario_pre
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ConcreteMajor.spot_c r)
-          spot_fwd_array)
   =
   ConcreteForwarding.spot_concrete_no_oom r;
   spot_concrete_minor_collect_full_pre r;
@@ -720,24 +700,6 @@ let spot_concrete_minor_scenario_pre_from_no_oom
 
 let spot_concrete_gen_gc_pre_from_stack
   (r: unit{ConcreteMajor.spot_major_room}) (st: seq obj_addr) (cap: nat)
-  : Lemma
-      (requires
-        Seq.length st <= cap /\
-        GenImpl.gen_gc_major_precondition
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          st cap)
-      (ensures
-        Preconditions.gen_gc_pre
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          spot_fwd_array
-          (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
-          1 st cap)
   =
   spot_concrete_minor_collect_full_pre r;
   Preconditions.gen_gc_pre_intro
@@ -1313,36 +1275,11 @@ let spot_concrete_gen_gc_major_pre_empty_stack
 
 let spot_concrete_gen_gc_pre_empty_stack
   (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
-  : Lemma
-      (ensures
-        Preconditions.gen_gc_pre
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          spot_fwd_array
-          (ThreeObjects.spot_slots (ConcreteMajor.spot_c r))
-          1 Seq.empty cap)
   =
   spot_concrete_gen_gc_major_pre_empty_stack r cap;
   spot_concrete_gen_gc_pre_from_stack r Seq.empty cap
 
 let spot_concrete_a_promoted_from_no_oom (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma
-      (ensures (
-        let prom =
-          Cheney.cheney_promote
-            ConcreteMinor.spot_minor2
-            (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
-            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        Postconditions.promoted_image
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          Layout.a_minor
-          (prom.fwd_map Layout.a_minor)))
   =
   spot_concrete_minor_scenario_pre_from_no_oom r;
   ThreeObjects.spot_a_promoted
@@ -1354,29 +1291,6 @@ let spot_concrete_a_promoted_from_no_oom (r: unit{ConcreteMajor.spot_major_room}
 
 let spot_concrete_c_field_rewritten_from_no_oom
   (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma
-      (ensures (
-        let prom =
-          Cheney.cheney_promote
-            ConcreteMinor.spot_minor2
-            (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
-            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        let res =
-          Cheney.cheney_collect_spec
-            ConcreteMinor.spot_minor2
-            (ConcreteMajor.spot_major_heap r)
-            (ConcreteMajor.spot_major_fp r)
-            (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
-        Postconditions.promoted_image
-          ConcreteMinor.spot_minor2
-          (ConcreteMajor.spot_major_heap r)
-          (ConcreteMajor.spot_major_fp r)
-          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-          Layout.a_minor
-          (prom.fwd_map Layout.a_minor) /\
-        SpecHeap.read_word res.mc_major (ConcreteMajor.spot_c_field1 r) ==
-          prom.fwd_map Layout.a_minor))
   =
   spot_concrete_minor_scenario_pre_from_no_oom r;
   ThreeObjects.spot_c_field_rewritten_to_a_prime
@@ -1388,13 +1302,6 @@ let spot_concrete_c_field_rewritten_from_no_oom
   spot_c_slot_is_field1 r
 
 let spot_concrete_b_not_promoted (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (ensures
-      Postconditions.minor_not_promoted
-        ConcreteMinor.spot_minor2
-        (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
-        (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-        Layout.b_minor)
   =
   ConcreteForwarding.spot_concrete_b_forwarding_zero r;
   ThreeObjects.spot_b_not_promoted_from_forwarding_zero

@@ -31,8 +31,6 @@ module SpecGCPost = GC.Spec.Correctness
 
 /// Helper: h_addr + (1+wz)*8 doesn't overflow
 let lemma_next_addr_no_overflow (h_addr: nat) (wz: nat)
-  : Lemma (requires h_addr < heap_size /\ wz <= pow2 54 - 1)
-          (ensures h_addr + (1 + wz) * 8 < pow2 64)
 =
   lemma_object_size_no_overflow wz;
   assert ((1 + wz) * 8 <= pow2 57);
@@ -43,8 +41,6 @@ let lemma_next_addr_no_overflow (h_addr: nat) (wz: nat)
 
 /// Helper: any address <= heap_size has addr + 8 < pow2 64
 let lemma_addr_plus_8_no_overflow (addr: nat)
-  : Lemma (requires addr <= heap_size)
-          (ensures addr + 8 < pow2 64)
 =
   assert (heap_size <= pow2 57);
   Math.Lemmas.pow2_double_sum 57;
@@ -64,8 +60,6 @@ let lemma_addr_plus_8_no_overflow (addr: nat)
 /// ---------------------------------------------------------------------------
 /// Bridge: obj_in_objects for initial head object (avoids heap subtyping in Pulse)
 let obj_in_objects_head_bridge (g: GC.Spec.Base.heap)
-  : Lemma (requires Seq.length (SpecFields.objects zero_addr g) > 0)
-          (ensures SI.obj_in_objects (GC.Spec.Heap.f_address zero_addr) g)
   = SI.obj_in_objects_head g
 
 /// ---------------------------------------------------------------------------
@@ -131,8 +125,6 @@ let obj_in_objects_head_bridge (g: GC.Spec.Base.heap)
 
 /// Helper: next object address preserves alignment
 let lemma_next_addr_aligned (h_addr: nat) (wz: nat)
-  : Lemma (requires h_addr % 8 == 0)
-          (ensures (h_addr + (1 + wz) * 8) % 8 == 0)
 =
   ML.lemma_mod_plus_distr_l h_addr ((1 + wz) * 8) 8;
   ML.lemma_mod_mul_distr_r (1 + wz) 8 8

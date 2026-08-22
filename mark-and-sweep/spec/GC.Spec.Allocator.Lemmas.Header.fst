@@ -28,7 +28,6 @@ module Seq = FStar.Seq
 let make_header_value (wz: U64.t{U64.v wz < pow2 54})
                       (c: U64.t{U64.v c < 4})
                       (t: U64.t{U64.v t < 256})
-  : Lemma (U64.v (make_header wz c t) == U64.v wz * 1024 + U64.v c * 256 + U64.v t)
   = let open FStar.UInt in
     let w = U64.v wz in
     let cv = U64.v c in
@@ -55,7 +54,6 @@ let make_header_value (wz: U64.t{U64.v wz < pow2 54})
 let make_header_getWosize (wz: U64.t{U64.v wz < pow2 54})
                           (c: U64.t{U64.v c < 4})
                           (t: U64.t{U64.v t < 256})
-  : Lemma (getWosize (make_header wz c t) == wz)
   = let hdr = make_header wz c t in
     getWosize_spec hdr;
     make_header_value wz c t;
@@ -72,7 +70,6 @@ let make_header_getWosize (wz: U64.t{U64.v wz < pow2 54})
 let make_header_getTag (wz: U64.t{U64.v wz < pow2 54})
                        (c: U64.t{U64.v c < 4})
                        (t: U64.t{U64.v t < 256})
-  : Lemma (U64.v (getTag (make_header wz c t)) == U64.v t)
   = getTag_spec (make_header wz c t);
     make_header_value wz c t;
     FStar.UInt.logand_mask #64 (U64.v (make_header wz c t)) 8;
@@ -106,8 +103,6 @@ private let rec wosize_eq_implies_objects_eq
 /// A write to hd_address(obj) with same getWosize preserves objects from 0
 let header_write_same_wosize_preserves_objects
   (g: heap) (obj: obj_addr) (new_hdr: U64.t)
-  : Lemma (requires getWosize new_hdr == getWosize (read_word g (hd_address obj)))
-          (ensures objects zero_addr (write_word g (hd_address obj) new_hdr) == objects zero_addr g)
   = let hd = hd_address obj in
     let g' = write_word g hd new_hdr in
     hd_address_spec obj;

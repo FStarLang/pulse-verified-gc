@@ -29,10 +29,6 @@ module GenInv = GC.Gen.HeapInvariant
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_preserves_no_pointer_to_blue_from_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma
-    (requires GenInv.collection_heap_shape minor major fp)
-    (ensures Mark.no_pointer_to_blue
-      (cheney_promote minor major fp roots).major_final)
   =
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
@@ -155,15 +151,6 @@ private let header_eq_preserves_infix
 #push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let update_major_pointers_preserves_no_pointer_to_blue
   (major: heap) (fwd: forwarding_map)
-  : Lemma
-    (requires
-      well_formed_heap_part1 major /\
-      well_formed_heap (update_major_pointers major fwd) /\
-      no_scan_invariant (update_major_pointers major fwd) /\
-      Mark.no_pointer_to_blue major /\
-      Forwarding.fwd_valid_or_infix fwd major /\
-      Injectivity.fwd_targets_not_blue fwd major)
-    (ensures Mark.no_pointer_to_blue (update_major_pointers major fwd))
   =
   let updated = update_major_pointers major fwd in
   reveal_opaque (`%well_formed_heap) well_formed_heap;

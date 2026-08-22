@@ -118,16 +118,6 @@ private let or_byte_windows_identity (w: UInt.uint_t 64)
 
 #push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let combine_decompose_identity (v: U64.t)
-  : Lemma (combine_bytes
-    (uint64_to_uint8 v)
-    (uint64_to_uint8 (U64.shift_right v 8ul))
-    (uint64_to_uint8 (U64.shift_right v 16ul))
-    (uint64_to_uint8 (U64.shift_right v 24ul))
-    (uint64_to_uint8 (U64.shift_right v 32ul))
-    (uint64_to_uint8 (U64.shift_right v 40ul))
-    (uint64_to_uint8 (U64.shift_right v 48ul))
-    (uint64_to_uint8 (U64.shift_right v 56ul))
-    == v)
   = let w = U64.v v in
     assert_norm (pow2 8 == 256);
     UInt.logand_mask #64 w 8;
@@ -151,11 +141,6 @@ let combine_decompose_identity (v: U64.t)
 
 #push-options "--z3rlimit 25"
 let write_word (g: heap) (addr: hp_addr) (value: U64.t) 
-  : Pure heap
-         (requires True)
-         (ensures fun result ->
-           Seq.length result == Seq.length g /\
-           read_word result addr == value)
   =
   let a = U64.v addr in
   let b0 = uint64_to_uint8 value in
@@ -252,7 +237,6 @@ let f_hd_roundtrip f =
   hd_address_bounds f
 
 let hd_address_spec (obj: obj_addr) 
-  : Lemma (U64.v (hd_address obj) = U64.v obj - 8)
   = ()
 
 let hd_address_injective (f1: obj_addr) (f2: obj_addr) = 

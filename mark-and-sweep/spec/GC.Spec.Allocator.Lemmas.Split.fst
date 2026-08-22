@@ -51,8 +51,6 @@ module Seq = FStar.Seq
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let objects_nonempty_first_mem
   (start: hp_addr) (g: heap) (h: obj_addr)
-  : Lemma (requires Seq.mem h (objects start g))
-          (ensures Seq.mem (f_address start) (objects start g))
   = // objects start g is non-empty, so it must be of the form
     // Seq.cons (f_address start) rest, meaning f_address start is a member
     if U64.v start + 8 >= Seq.length g then ()

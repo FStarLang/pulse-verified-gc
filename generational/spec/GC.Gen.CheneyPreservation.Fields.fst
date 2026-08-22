@@ -457,26 +457,6 @@ let rec cheney_scan_preserves_fwd_target_fields_match_state
 let cheney_promote_fwd_target_fields_match
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)
-  : Lemma
-    (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
-              chain_objects_blue major fp /\
-              minor_wf minor /\
-              minor_infix_wf minor /\
-              (let prom = cheney_promote minor major fp roots in
-               prom.fwd_map x <> 0UL /\
-               Seq.mem x (minor_objects minor) /\
-               is_val_addr (prom.fwd_map x) /\
-               is_infix (prom.fwd_map x) prom.major_final = false /\
-               j < minor_wosize minor x /\
-               U64.v (prom.fwd_map x) + j * 8 + 8 <= heap_size /\
-               (U64.v (prom.fwd_map x) + j * 8) % 8 == 0))
-    (ensures
-      (let prom = cheney_promote minor major fp roots in
-       read_word prom.major_final
-         (U64.uint_to_t (U64.v (prom.fwd_map x) + j * 8))
-       == minor_read_field minor x j))
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   let cs0 : cheney_state =
@@ -906,26 +886,6 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
 let cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
-  : Lemma
-    (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
-              chain_objects_blue major fp /\
-              minor_wf minor /\
-              minor_infix_wf minor /\
-              (let prom = cheney_promote minor major fp roots in
-               prom.fwd_map x <> 0UL /\
-               Seq.mem x (minor_objects minor) /\
-               is_val_addr (prom.fwd_map x) /\
-               is_infix (prom.fwd_map x) prom.major_final = false /\
-               minor_tag minor x < 251))
-    (ensures
-      (let prom = cheney_promote minor major fp roots in
-       let target : obj_addr = prom.fwd_map x in
-       Seq.mem target (objects zero_addr prom.major_final) /\
-       is_blue target prom.major_final = false /\
-       is_no_scan target prom.major_final = false /\
-       U64.v (wosize_of_object target prom.major_final) >= minor_wosize minor x))
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   let cs0 : cheney_state =
@@ -1346,28 +1306,6 @@ let rec cheney_scan_preserves_fwd_target_extra_fields_state
 let cheney_promote_fwd_target_extra_field_not_pointer
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)
-  : Lemma
-    (requires well_formed_heap major /\
-              AllocLemmas.fl_valid major fp heap_words /\
-              AllocLemmas.fl_chain_terminates major fp heap_words /\
-              chain_objects_blue major fp /\
-              minor_wf minor /\
-              minor_infix_wf minor /\
-              (let prom = cheney_promote minor major fp roots in
-               prom.fwd_map x <> 0UL /\
-               Seq.mem x (minor_objects minor) /\
-               is_val_addr (prom.fwd_map x) /\
-               is_infix (prom.fwd_map x) prom.major_final = false /\
-               j >= minor_wosize minor x /\
-               j < U64.v (wosize_of_object (prom.fwd_map x <: obj_addr)
-                                             prom.major_final) /\
-               U64.v (prom.fwd_map x) + j * 8 + 8 <= heap_size /\
-               (U64.v (prom.fwd_map x) + j * 8) % 8 == 0))
-     (ensures
-       (let prom = cheney_promote minor major fp roots in
-       let field = read_word prom.major_final
-          (U64.uint_to_t (U64.v (prom.fwd_map x) + j * 8)) in
-       field == 0UL /\ ~(is_pointer_field field)))
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   let cs0 : cheney_state =

@@ -349,12 +349,6 @@ let scan_fwd_closed_concrete (r: unit{ConcreteMajor.spot_major_room})
   FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
 
 let spot_concrete_no_oom (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (ensures
-      CheneyBFS.cheney_no_oom
-        ConcreteMinor.spot_minor2
-        (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
-        (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)))
   =
   let c = ConcreteMajor.spot_c r in
   let roots = ThreeObjects.spot_roots c in
@@ -489,25 +483,11 @@ let scan_after_roots_b_zero (r: unit{ConcreteMajor.spot_major_room})
 
 let spot_concrete_b_forwarding_zero
   (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (ensures
-      (Cheney.cheney_promote
-        ConcreteMinor.spot_minor2
-        (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
-        (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).fwd_map
-        Layout.b_minor == 0UL)
   =
   scan_after_roots_b_zero r
 
 let spot_concrete_a_forwarding_free_obj
   (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (ensures
-      (Cheney.cheney_promote
-        ConcreteMinor.spot_minor2
-        (ConcreteMajor.spot_major_heap r)
-        (ConcreteMajor.spot_major_fp r)
-        (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))).fwd_map
-        Layout.a_minor == (ConcreteMajor.spot_free_obj r <: U64.t))
   =
   let c = ConcreteMajor.spot_c r in
   let roots = ThreeObjects.spot_roots c in

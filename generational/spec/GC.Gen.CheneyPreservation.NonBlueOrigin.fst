@@ -240,18 +240,6 @@ private let promote_object_header_from_alloc_frame
 let promote_object_nonblue_other_reflects_pre
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (target: obj_addr)
-  : Lemma
-    (requires
-      well_formed_heap_part1 major /\
-      AllocLemmas.fl_valid major fp heap_words /\
-      AllocLemmas.fl_chain_terminates major fp heap_words /\
-      (promote_object minor major obj fp wz).new_addr <> 0UL /\
-      Seq.mem target (objects zero_addr (promote_object minor major obj fp wz).major_out) /\
-      is_blue target (promote_object minor major obj fp wz).major_out = false /\
-      target <> (promote_object minor major obj fp wz).new_addr)
-    (ensures
-      Seq.mem target (objects zero_addr major) /\
-      is_blue target major = false)
   =
   let alloc_res = Allocator.alloc_spec major fp wz in
   let res = promote_object minor major obj fp wz in
@@ -520,19 +508,6 @@ private let rec cheney_scan_preserves_nonblue_origin_inv
 let cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)
-  : Lemma (requires well_formed_heap major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    chain_objects_blue major fp /\
-                    minor_infix_wf minor /\
-                    minor_wf minor /\
-                    (let res = cheney_promote minor major fp roots in
-                     Seq.mem obj (objects zero_addr res.major_final) /\
-                     is_blue obj res.major_final = false /\
-                     ~(Seq.mem obj (objects zero_addr major) /\
-                       is_blue obj major = false)))
-          (ensures (let res = cheney_promote minor major fp roots in
-                    exists (x: U64.t). res.fwd_map x == obj /\ is_minor_pointer x))
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   let cs0 : cheney_state =

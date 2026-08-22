@@ -24,9 +24,6 @@ module SimOne = GC.Gen.Cheney.SimOne
 /// ---------------------------------------------------------------------------
 
 let represents_fwd_initial (farr: seq U64.t)
-  : Lemma (requires Seq.length farr == fwd_array_size /\
-                    (forall (i:nat). i < fwd_array_size ==> Seq.index farr i == 0UL))
-          (ensures represents_fwd farr empty_forwarding)
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -38,13 +35,6 @@ let represents_fwd_initial (farr: seq U64.t)
 let represents_fwd_update
   (farr: seq U64.t) (fwd: forwarding_map)
   (addr: U64.t) (new_addr: U64.t)
-  : Lemma (requires represents_fwd farr fwd /\
-                    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\
-                    U64.v addr % 8 == 0)
-          (ensures (let idx = U64.v addr / 8 in
-                    idx < fwd_array_size /\
-                    represents_fwd (Seq.upd farr idx new_addr)
-                                   (extend_forwarding fwd addr new_addr)))
   =
   let idx = U64.v addr / 8 in
   assert (idx < fwd_array_size);
@@ -71,12 +61,6 @@ let represents_fwd_update
 
 let represents_fwd_read
   (farr: seq U64.t) (fwd: forwarding_map) (addr: U64.t)
-  : Lemma (requires represents_fwd farr fwd /\
-                    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\
-                    U64.v addr % 8 == 0)
-          (ensures (let idx = U64.v addr / 8 in
-                    idx < fwd_array_size /\
-                    Seq.index farr idx == fwd addr))
   =
   let idx = U64.v addr / 8 in
   assert (idx < fwd_array_size);
@@ -86,13 +70,6 @@ let represents_fwd_read
 
 let queue_update_correspondence
   (q: seq U64.t) (cs_queue: seq U64.t) (bk: nat) (addr: U64.t)
-  : Lemma (requires Seq.length q >= bk + 1 /\
-                    bk == Seq.length cs_queue /\
-                    (forall (j:nat). j < bk ==> Seq.index q j == Seq.index cs_queue j))
-          (ensures (let q2 = Seq.upd q bk addr in
-                    let cq2 = Seq.append cs_queue (Seq.create 1 addr) in
-                    Seq.length cq2 == bk + 1 /\
-                    (forall (j:nat). j < bk + 1 ==> Seq.index q2 j == Seq.index cq2 j)))
   =
   let q2 = Seq.upd q bk addr in
   let cq2 = Seq.append cs_queue (Seq.create 1 addr) in
@@ -120,28 +97,17 @@ let queue_update_correspondence
 /// ---------------------------------------------------------------------------
 
 let not_minor_if_guards_fail (minor: minor_state) (addr: U64.t)
-  : Lemma (requires U64.v addr < 8 \/ U64.v addr >= minor_heap_size \/ U64.v addr % 8 <> 0)
-          (ensures ~(Seq.mem addr (minor_objects minor)))
   = FStar.Classical.move_requires (minor_objects_valid minor) addr
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 
 let not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
-  : Lemma (requires minor_wf minor /\
-                    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
-                    (minor_wosize minor addr >= minor_heap_size \/
-                     U64.v addr + minor_wosize minor addr * 8 > minor_heap_size))
-          (ensures ~(Seq.mem addr (minor_objects minor)))
   =
   // Contrapositive of minor_object_passes_guards
   FStar.Classical.move_requires (minor_objects_body_bound minor) addr
 
 let promote_object_zero_noop
   (minor_st: minor_state) (ms: heap) (addr: U64.t) (fp: U64.t) (wz: nat)
-  : Lemma (requires wz > 0 /\
-                    (GC.Gen.Promote.promote_object minor_st ms addr fp wz).new_addr == 0UL)
-          (ensures (GC.Gen.Promote.promote_object minor_st ms addr fp wz).major_out == ms /\
-                   (GC.Gen.Promote.promote_object minor_st ms addr fp wz).fp_out == fp)
   =
   let alloc_out = (GC.Spec.Allocator.alloc_spec ms fp wz).obj_out in
   if alloc_out = 0UL then
@@ -167,11 +133,6 @@ let promote_object_zero_noop
 /// ---------------------------------------------------------------------------
 
 let minor_read_eq_field (ms: minor_state) (obj: U64.t) (fi: nat)
-  : Lemma (requires U64.v obj >= 8 /\ U64.v obj < minor_heap_size /\ U64.v obj % 8 == 0 /\
-                    fi < minor_heap_size /\
-                    U64.v obj + fi * 8 + 8 <= minor_heap_size)
-          (ensures minor_read_word_t ms.data (U64.uint_to_t (U64.v obj + fi * 8)) ==
-                   minor_read_field ms obj fi)
   =
   // minor_read_word_t h addr = minor_read_word h addr when in bounds
   // minor_read_field ms obj fi = minor_read_word ms.data (uint_to_t (v obj + fi*8)) when in bounds
@@ -187,11 +148,6 @@ let minor_read_eq_field (ms: minor_state) (obj: U64.t) (fi: nat)
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let cheney_bfs_inv_strict_room
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    Seq.mem addr (minor_objects minor) /\
-                    cs.CheneySpec.cs_fwd addr = 0UL /\
-                    Seq.length (minor_objects minor) <= queue_size)
-          (ensures Seq.length cs.CheneySpec.cs_queue < queue_size)
   =
   // From BFS invariant: |queue| + count_unforwarded <= |minor_objects|
   // addr is unforwarded (fwd addr = 0) and in minor_objects
@@ -205,10 +161,4 @@ let cheney_bfs_inv_strict_room
 
 /// Trivial from minor_guards_complete: just instantiate the universal quantifier.
 let minor_guards_sufficient (ms: minor_state) (addr: U64.t)
-  : Lemma (requires minor_guards_complete ms /\
-                    U64.v addr >= 8 /\ U64.v addr < minor_heap_size /\ U64.v addr % 8 == 0 /\
-                    minor_wosize ms addr > 0 /\
-                    U64.v addr + minor_wosize ms addr * 8 <= minor_heap_size /\
-                    minor_tag ms addr <> 249)
-          (ensures Seq.mem addr (minor_objects ms))
   = reveal_opaque (`%minor_guards_complete) (minor_guards_complete ms)

@@ -227,11 +227,6 @@ private let bytes_eq_of_word_eq (h1 h2: heap) (a: nat)
             b14 == b24 /\ b15 == b25 /\ b16 == b26 /\ b17 == b27)
 
 let heap_read_word_ext (h1 h2: heap)
-  : Lemma
-    (requires (forall (a: nat).
-       a < heap_size /\ a % 8 == 0 ==>
-       read_word h1 (U64.uint_to_t a) == read_word h2 (U64.uint_to_t a)))
-    (ensures h1 == h2)
   = let aux (i: nat{i < heap_size}) : Lemma (Seq.index h1 i == Seq.index h2 i) =
       let a = (i / 8) * 8 in
       aligned_lt_heap_size i;

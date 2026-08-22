@@ -86,9 +86,7 @@ let rec update_all_objects_aux_preserves_header
 
 /// update_major_pointers preserves the header word of any object in the objects list.
 let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (h: obj_addr)
-  : Lemma (requires well_formed_heap_part1 major /\ Seq.mem h (objects zero_addr major))
-    (ensures read_word (update_major_pointers major fwd) (hd_address h) ==
-             read_word major (hd_address h)) =
+             =
   update_all_objects_aux_preserves_header major (objects zero_addr major) fwd 0 h
 
 /// update_major_pointers preserves all fields of blue objects (since they are skipped).
@@ -197,22 +195,13 @@ private let rec update_all_objects_aux_preserves_blue_field
 
 let update_major_pointers_preserves_blue_field
   (major: heap) (fwd: forwarding_map) (h: obj_addr) (j: nat)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    Seq.mem h (objects zero_addr major) /\
-                    is_blue h major /\
-                    j < U64.v (wosize_of_object h major) /\
-                    U64.v h + j * 8 + 8 <= heap_size /\
-                    (U64.v h + j * 8) % 8 == 0)
-    (ensures (let field_addr = U64.uint_to_t (U64.v h + j * 8) in
-              read_word (update_major_pointers major fwd) field_addr ==
-              read_word major field_addr)) =
+              =
   update_all_objects_aux_preserves_blue_field major (objects zero_addr major) fwd 0 h j
 
 /// update_major_pointers preserves well_formed_heap_part4 (no infix objects).
 #push-options "--z3rlimit 10"
 let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part4 (update_major_pointers major fwd)) =
+    =
   update_major_pointers_preserves_objects major fwd;
   let mc = update_major_pointers major fwd in
   let aux (h: obj_addr) : Lemma
@@ -231,8 +220,7 @@ let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
 /// Since part4 holds (no objects are infix), infix_wf is vacuously true.
 #push-options "--z3rlimit 10"
 let update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
-    (ensures well_formed_heap_part3 (update_major_pointers major fwd)) =
+    =
   update_major_pointers_preserves_wfh_part4 major fwd;
   update_major_pointers_preserves_objects major fwd;
   let mc = update_major_pointers major fwd in
@@ -272,10 +260,4 @@ let update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map
 /// ---------------------------------------------------------------------------
 /// Instantiate the blue_fields_closed opaque predicate
 let blue_fields_closed_inst (major: heap) (src: obj_addr) (j: nat)
-  : Lemma (requires blue_fields_closed major /\
-                    Seq.mem src (objects zero_addr major) /\ is_blue src major /\
-                    j < U64.v (wosize_of_object src major) /\
-                    U64.v src + j * 8 + 8 <= heap_size)
-          (ensures (let v = read_word major (U64.uint_to_t (U64.v src + j * 8)) in
-                    is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr major)))
   = reveal_opaque (`%blue_fields_closed) blue_fields_closed

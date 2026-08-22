@@ -21,23 +21,15 @@ let fp_valid (fp: U64.t) (g: heap) : prop =
   is_pointer_field fp ==> obj_in_objects fp g
 
 let obj_in_objects_intro (obj: obj_addr) (g: heap)
-  : Lemma (requires Seq.mem obj (objects zero_addr g))
-          (ensures obj_in_objects obj g)
   = assert (U64.v obj == U64.v obj /\ Seq.mem obj (objects zero_addr g))
 
 let fp_valid_not_pointer (fp: U64.t) (g: heap)
-  : Lemma (requires not (is_pointer_field fp))
-          (ensures fp_valid fp g) = ()
+          = ()
 
 let fp_valid_from_obj (fp: U64.t) (g: heap)
-  : Lemma (requires obj_in_objects fp g)
-          (ensures fp_valid fp g) = ()
+          = ()
 
 let obj_in_objects_elim (obj: U64.t) (g: heap)
-  : Lemma (requires obj_in_objects obj g)
-          (ensures U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\
-                   U64.v obj % U64.v mword == 0 /\
-                   Seq.mem (obj <: obj_addr) (objects zero_addr g))
   = // From exists a: obj_addr. U64.v a == U64.v obj /\ mem a (objects zero_addr g)
     // a is obj_addr: U64.v a >= 8 /\ U64.v a < heap_size /\ U64.v a % 8 == 0
     // U64.v a == U64.v obj → obj satisfies obj_addr refinement
@@ -47,21 +39,12 @@ let obj_in_objects_elim (obj: U64.t) (g: heap)
     ()
 
 let fp_valid_elim (fp: U64.t) (g: heap)
-  : Lemma (requires fp_valid fp g)
-          (ensures is_pointer_field fp ==>
-                    (U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                     U64.v fp % U64.v mword == 0 /\
-                     Seq.mem (fp <: obj_addr) (objects zero_addr g)))
   = if is_pointer_field fp then obj_in_objects_elim fp g
 
 let fp_valid_transfer (fp: U64.t) (g1: heap) (g2: heap)
-  : Lemma (requires fp_valid fp g1 /\ objects zero_addr g2 == objects zero_addr g1)
-          (ensures fp_valid fp g2)
   = ()
 
 let obj_in_objects_head (g: heap)
-  : Lemma (requires Seq.length (objects zero_addr g) > 0)
-          (ensures obj_in_objects (f_address zero_addr) g)
   = objects_nonempty_head zero_addr g;
     Seq.lemma_mem_snoc (Seq.empty #obj_addr) (f_address zero_addr);
     assert (Seq.mem (f_address zero_addr) (objects zero_addr g));
@@ -90,39 +73,13 @@ let heap_objects_dense (g: heap) : prop =
      Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g))
 
 let heap_objects_dense_intro (g: heap)
-  : Lemma (requires (forall (start: hp_addr).
-                      U64.v start + 8 < heap_size ==>
-                      Seq.mem (f_address start) (objects zero_addr g) ==>
-                      Seq.length (objects start g) > 0 ==>
-                      (let wz = getWosize (read_word g start) in
-                       let next = U64.v start + ((U64.v wz + 1) * 8) in
-                       next + 8 < heap_size ==>
-                       Seq.length (objects (U64.uint_to_t next) g) > 0 /\
-                       Seq.mem (f_address (U64.uint_to_t next)) (objects zero_addr g))))
-          (ensures heap_objects_dense g)
   = ()
 
 let objects_dense_step (start: hp_addr) (g: heap)
-  : Lemma (requires heap_objects_dense g /\
-                    U64.v start + 8 < heap_size /\
-                    Seq.mem (f_address start) (objects zero_addr g) /\
-                    Seq.length (objects start g) > 0)
-          (ensures (let wz = getWosize (read_word g start) in
-                    let next = U64.v start + ((U64.v wz + 1) * 8) in
-                    next + 8 < heap_size ==>
-                    Seq.length (objects (U64.uint_to_t next) g) > 0))
   = ()
 
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let objects_dense_obj_in (start: hp_addr) (g: heap)
-  : Lemma (requires heap_objects_dense g /\
-                    U64.v start + 8 < heap_size /\
-                    Seq.mem (f_address start) (objects zero_addr g) /\
-                    Seq.length (objects start g) > 0)
-          (ensures (let wz = getWosize (read_word g start) in
-                    let next = U64.v start + ((U64.v wz + 1) * 8) in
-                    next + 8 < heap_size ==>
-                    obj_in_objects (U64.uint_to_t (next + 8)) g))
   = let wz = getWosize (read_word g start) in
     let next = U64.v start + ((U64.v wz + 1) * 8) in
     if next + 8 < heap_size then begin
@@ -159,10 +116,6 @@ let rec objects_eq_from_wosize (start: hp_addr) (g1 g2: heap)
 #pop-options
 
 let heap_objects_dense_transfer (g1 g2: heap)
-  : Lemma (requires heap_objects_dense g1 /\
-                    objects zero_addr g2 == objects zero_addr g1 /\
-                    (forall (p: hp_addr). getWosize (read_word g2 p) == getWosize (read_word g1 p)))
-          (ensures heap_objects_dense g2)
   = let aux (start: hp_addr) : Lemma
       (U64.v start + 8 < heap_size ==>
        Seq.mem (f_address start) (objects zero_addr g2) ==>
@@ -192,8 +145,6 @@ let heap_objects_dense_transfer (g1 g2: heap)
 /// under colorHeader, and read_word is unchanged at all other positions.
 #push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
 let color_change_preserves_density (obj: obj_addr) (g: heap) (c: color)
-  : Lemma (requires heap_objects_dense g)
-          (ensures heap_objects_dense (set_object_color obj g c))
   = let g' = set_object_color obj g c in
     // Prove: forall p. getWosize (read_word g' p) == getWosize (read_word g p)
     let wosize_eq (p: hp_addr) : Lemma
@@ -212,9 +163,6 @@ let color_change_preserves_density (obj: obj_addr) (g: heap) (c: color)
 /// Proof: wfh gives object fits → objects h g is cons oa (...) → length > 0
 #push-options "--z3rlimit 15 --fuel 2 --ifuel 1"
 let member_implies_objects_nonempty (h: hp_addr{U64.v h + 8 < heap_size}) (g: heap)
-  : Lemma (requires well_formed_heap g /\
-                    Seq.mem (f_address h) (objects zero_addr g))
-          (ensures Seq.length (objects h g) > 0)
   = let oa : obj_addr = f_address h in
     f_address_spec h;
     // oa = h + 8, oa ∈ objects zero_addr g
@@ -247,12 +195,8 @@ module SpecHeap = GC.Spec.Heap
 
 #push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let no_gray_elim (obj: obj_addr) (g: heap)
-  : Lemma (requires no_gray_objects g /\ Seq.mem obj (objects zero_addr g))
-          (ensures ~(is_gray obj g))
   = ()
 #pop-options
 
 let no_gray_intro (g: heap)
-  : Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g))
-          (ensures no_gray_objects g)
   = ()

@@ -471,12 +471,6 @@ private let alloc_exact_preserves_wfh_part1
 #push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let alloc_from_block_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hdr = read_word g (hd_address obj) in
-                     U64.v (getWosize hdr) >= wz))
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
-                    well_formed_heap_part1 g'))
   = let hdr = read_word g (hd_address obj) in
     let block_wz = U64.v (getWosize hdr) in
     if block_wz - wz >= 2 then
@@ -630,11 +624,6 @@ private let rec alloc_search_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_preserves_wfh_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    well_formed_heap_part1 r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_wfh_part1 g fp 0UL fp wz heap_words
 
@@ -1304,11 +1293,6 @@ private let rec alloc_search_preserves_fl_valid_part1
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_preserves_fl_valid_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    fl_valid r.heap_out r.fp_out heap_words))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_fl_valid_part1 g fp 0UL fp wz heap_words
 
@@ -1659,11 +1643,6 @@ private let rec alloc_search_preserves_fl_chain_terminates_part1
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_preserves_fl_chain_terminates_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    fl_chain_terminates r.heap_out r.fp_out heap_words))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     walk_chain_zero g fp;
     walk_chain_valid_zero g fp;
@@ -1976,13 +1955,6 @@ private let rec alloc_search_obj_not_in_chain_part1
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_obj_not_in_chain_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words /\
-                    requested_wz >= 1 /\
-                    (alloc_spec g fp requested_wz).obj_out <> 0UL)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    chain_avoids r.heap_out r.fp_out r.obj_out heap_words = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     walk_chain_zero g fp;
     walk_chain_valid_zero g fp;
@@ -2179,16 +2151,6 @@ private let rec alloc_search_read_other
 /// not in the free-list chain.
 let alloc_spec_read_other (g: heap) (fp: U64.t) (requested_wz: nat)
                           (other: obj_addr) (addr: hp_addr)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words /\
-                    requested_wz >= 1 /\
-                    Seq.mem other (objects zero_addr g) /\
-                    chain_avoids g fp other heap_words = true /\
-                    U64.v addr >= U64.v other /\
-                    U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other g) * 8)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    read_word r.heap_out addr == read_word g addr))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_read_other g fp 0UL fp wz heap_words other addr
 
@@ -2556,16 +2518,6 @@ private let rec alloc_search_no_alloc_unchanged
 #push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz: nat)
                                             (excl: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words /\
-                    requested_wz >= 1 /\
-                    chain_avoids g fp excl heap_words = true /\
-                    U64.v excl >= U64.v mword /\ U64.v excl < heap_size /\
-                    U64.v excl % U64.v mword == 0 /\
-                    Seq.mem (excl <: obj_addr) (objects zero_addr g))
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    chain_avoids r.heap_out r.fp_out excl heap_words = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     let big_fuel = heap_words in
     walk_chain_zero g fp;
@@ -2820,12 +2772,6 @@ private let rec alloc_search_preserves_wfh_part4
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_preserves_wfh_part4 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    well_formed_heap_part4 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    well_formed_heap_part4 r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_wfh_part4 g fp 0UL fp wz heap_words
 
@@ -3147,16 +3093,6 @@ private let rec alloc_search_new_objects_blue_part1
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_new_objects_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words /\
-                    requested_wz >= 1 /\
-                    (alloc_spec g fp requested_wz).obj_out <> 0UL)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    forall (x: obj_addr).
-                      Seq.mem x (objects zero_addr r.heap_out) /\
-                      ~(Seq.mem x (objects zero_addr g)) ==>
-                      is_blue x r.heap_out = true))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_new_objects_blue_part1 g fp 0UL fp wz heap_words
 
@@ -3169,15 +3105,6 @@ let alloc_spec_new_objects_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_from_block_objects_backward_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hdr = read_word g (hd_address obj) in
-                     let bwz = U64.v (getWosize hdr) in
-                     bwz >= wz /\ wz >= 1 /\ bwz - wz >= 2) /\
-                    (let (g', _) = alloc_from_block g obj wz next_fp in
-                     Seq.mem h (objects zero_addr g') /\
-                     ~(Seq.mem h (objects zero_addr g))))
-          (ensures h == snd (alloc_from_block g obj wz next_fp))
   = alloc_split_facts_part1 g obj wz next_fp;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -3448,12 +3375,6 @@ private let rec alloc_search_preserves_no_black_part1
 /// ---------------------------------------------------------------------------
 
 let alloc_spec_preserves_no_black_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires GC.Spec.Mark.no_black_objects g /\
-                    well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    GC.Spec.Mark.no_black_objects r.heap_out))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_no_black_part1 g fp 0UL fp wz heap_words
 

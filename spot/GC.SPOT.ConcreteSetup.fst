@@ -15,8 +15,6 @@ module ThreeObjects = GC.SPOT.ThreeObjects
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_roots_alloc_seq (c: obj_addr)
-  : Lemma (Seq.upd (Seq.create 2 (c <: U64.t)) 1 Layout.a_minor ==
-           ThreeObjects.spot_roots c)
   =
   let s0 = Seq.create 2 (c <: U64.t) in
   let s = Seq.upd s0 1 Layout.a_minor in
@@ -43,8 +41,6 @@ let spot_roots_alloc_seq (c: obj_addr)
 
 let spot_slots_alloc_seq
   (c: obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size})
-  : Lemma (Seq.create 1 ((ThreeObjects.spot_c_to_a_slot c) <: U64.t) ==
-           ThreeObjects.spot_slots c)
   =
   let s = Seq.create 1 ((ThreeObjects.spot_c_to_a_slot c) <: U64.t) in
   let t = ThreeObjects.spot_slots c in
@@ -62,8 +58,6 @@ let spot_slots_alloc_seq
   Seq.lemma_eq_intro s t
 
 let spot_fwd_alloc_seq ()
-  : Lemma (Seq.create (SZ.v CheneyImpl.queue_size_sz) 0UL ==
-           ConcreteScenarios.spot_fwd_array)
   =
   let s = Seq.create (SZ.v CheneyImpl.queue_size_sz) 0UL in
   let t = ConcreteScenarios.spot_fwd_array in

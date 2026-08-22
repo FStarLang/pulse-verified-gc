@@ -30,7 +30,6 @@ let zero_major : heap = Seq.create heap_size 0uy
 
 let spot_c
   (r: unit{spot_major_room})
-  : c:obj_addr{U64.v c + Layout.c_to_a_field_index * 8 + 8 <= heap_size}
   =
   f_address_spec zero_addr;
   assert (U64.v (f_address zero_addr) == U64.v zero_addr + 8);
@@ -83,14 +82,6 @@ let spot_major_fp (r: unit{spot_major_room}) : U64.t =
   spot_free_obj r
 
 let spot_major_layout_facts (r: unit{spot_major_room})
-  : Lemma (ensures
-      U64.v (spot_c r) == U64.v zero_addr + 8 /\
-      U64.v (spot_c_field0 r) == U64.v (spot_c r) /\
-      U64.v (spot_c_field1 r) == U64.v (spot_c r) + 8 /\
-      U64.v (spot_free_header r) == U64.v zero_addr + 24 /\
-      U64.v (spot_free_obj r) == U64.v zero_addr + 32 /\
-      U64.v (spot_major_fp r) == U64.v (spot_free_obj r) /\
-      spot_free_wosize r >= 1)
   =
   f_address_spec zero_addr;
   assert (U64.v (spot_c r) == U64.v zero_addr + 8);
@@ -122,16 +113,6 @@ let free_header_facts (r: unit{spot_major_room})
   SpecObj.makeHeader_getColor (U64.uint_to_t (spot_free_wosize r)) Header.Blue 0UL
 
 let spot_major_c_reads (r: unit{spot_major_room})
-  : Lemma (ensures (
-      let major = spot_major_heap r in
-      SpecObj.wosize_of_object (spot_c r) major == U64.uint_to_t Layout.c_wosize /\
-      read_word major (spot_c_field0 r) == 0UL /\
-      read_word major (spot_c_field1 r) == Layout.a_minor /\
-      ~(SpecObj.is_blue (spot_c r) major) /\
-      ~(SpecObj.is_gray (spot_c r) major) /\
-      ~(SpecObj.is_black (spot_c r) major) /\
-      ~(SpecObj.is_infix (spot_c r) major) /\
-      ~(SpecObj.is_no_scan (spot_c r) major)))
   =
   let g0 = zero_major in
   let g1 = write_word g0 zero_addr c_header in
@@ -200,16 +181,6 @@ let spot_major_c_reads (r: unit{spot_major_room})
   assert (~(SpecObj.is_no_scan (spot_c r) g5))
 
 let spot_major_free_reads (r: unit{spot_major_room})
-  : Lemma (ensures (
-      let major = spot_major_heap r in
-      SpecObj.wosize_of_object (spot_free_obj r) major ==
-        U64.uint_to_t (spot_free_wosize r) /\
-      read_word major (spot_free_obj r) == 0UL /\
-      SpecObj.is_blue (spot_free_obj r) major /\
-      ~(SpecObj.is_gray (spot_free_obj r) major) /\
-      ~(SpecObj.is_black (spot_free_obj r) major) /\
-      ~(SpecObj.is_infix (spot_free_obj r) major) /\
-      ~(SpecObj.is_no_scan (spot_free_obj r) major)))
   =
   let g0 = zero_major in
   let g1 = write_word g0 zero_addr c_header in
@@ -252,9 +223,6 @@ let spot_major_free_reads (r: unit{spot_major_room})
   assert (~(SpecObj.is_no_scan (spot_free_obj r) g5))
 
 let spot_major_objects (r: unit{spot_major_room})
-  : Lemma (ensures
-      SpecFields.objects zero_addr (spot_major_heap r) ==
-        Seq.cons (spot_c r) (Seq.cons (spot_free_obj r) Seq.empty))
   =
   let g = spot_major_heap r in
   assert (Seq.length g == heap_size);
@@ -302,18 +270,12 @@ let spot_major_objects (r: unit{spot_major_room})
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_c_mem (r: unit{spot_major_room})
-  : Lemma (ensures
-      Seq.mem (spot_c r)
-        (SpecFields.objects zero_addr (spot_major_heap r)))
   =
   spot_major_objects r;
   SpecFields.mem_cons_lemma (spot_c r) (spot_c r)
     (Seq.cons (spot_free_obj r) Seq.empty)
 
 let spot_major_free_mem (r: unit{spot_major_room})
-  : Lemma (ensures
-      Seq.mem (spot_free_obj r)
-        (SpecFields.objects zero_addr (spot_major_heap r)))
   =
   spot_major_objects r;
   SpecFields.mem_cons_lemma (spot_free_obj r) (spot_c r)
@@ -323,8 +285,6 @@ let spot_major_free_mem (r: unit{spot_major_room})
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_object_cases (r: unit{spot_major_room}) (obj: obj_addr)
-  : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr (spot_major_heap r)))
-          (ensures obj == spot_c r \/ obj == spot_free_obj r)
   =
   spot_major_objects r;
   SpecFields.mem_cons_lemma obj (spot_c r) (Seq.cons (spot_free_obj r) Seq.empty);
@@ -369,11 +329,6 @@ let zero_and_minor_not_major_pointers ()
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_free_field_read (r: unit{spot_major_room}) (j: nat)
-  : Lemma (requires j < spot_free_wosize r /\
-                    U64.v (spot_free_obj r) + j * 8 + 8 <= heap_size)
-          (ensures
-            read_word (spot_major_heap r)
-              (U64.uint_to_t (U64.v (spot_free_obj r) + j * 8)) == 0UL)
   =
   let g0 = zero_major in
   let g1 = write_word g0 zero_addr c_header in
@@ -857,7 +812,6 @@ let spot_major_no_scan_invariant (r: unit{spot_major_room})
 #pop-options
 
 let spot_major_heap_shape (r: unit{spot_major_room})
-  : Lemma (ensures GenInv.major_heap_shape (spot_major_heap r) (spot_major_fp r))
   =
   let major = spot_major_heap r in
   let fp = spot_major_fp r in

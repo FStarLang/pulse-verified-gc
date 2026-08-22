@@ -17,16 +17,6 @@ module Mark = GC.Spec.Mark
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let field_pointer_points_to_nat
   (g: heap) (src dst: obj_addr) (j: nat)
-  : Lemma
-    (requires well_formed_heap_part1 g /\
-              Seq.mem src (objects zero_addr g) /\
-              j < U64.v (wosize_of_object src g) /\
-              U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
-              (U64.v src + j * U64.v mword) % U64.v mword == 0 /\
-              is_pointer_to
-                (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
-                dst)
-    (ensures points_to g src dst)
   =
   wfh_part1_obj_bound g src;
   assert (well_formed_object g src);
@@ -55,33 +45,11 @@ let field_pointer_points_to_nat
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let field_pointer_no_blue_from_no_pointer_to_blue
   (g: heap) (src dst: obj_addr) (j: nat)
-  : Lemma
-    (requires well_formed_heap_part1 g /\
-              Mark.no_pointer_to_blue g /\
-              Seq.mem src (objects zero_addr g) /\
-              ~(is_blue src g) /\
-              j < U64.v (wosize_of_object src g) /\
-              U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
-              (U64.v src + j * U64.v mword) % U64.v mword == 0 /\
-              is_pointer_to
-                (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
-                dst)
-    (ensures ~(is_blue dst g))
   =
   field_pointer_points_to_nat g src dst j
 
 let field_pointer_target_in_objects_nat
   (g: heap) (src dst: obj_addr) (j: nat)
-  : Lemma
-    (requires well_formed_heap g /\
-              Seq.mem src (objects zero_addr g) /\
-              j < U64.v (wosize_of_object src g) /\
-              U64.v src + j * U64.v mword + U64.v mword <= heap_size /\
-              (U64.v src + j * U64.v mword) % U64.v mword == 0 /\
-              is_pointer_to
-                (read_word g (U64.uint_to_t (U64.v src + j * U64.v mword)))
-                dst)
-    (ensures Seq.mem dst (objects zero_addr g))
   =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   field_pointer_points_to_nat g src dst j;

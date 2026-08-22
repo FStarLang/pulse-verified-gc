@@ -253,18 +253,7 @@ private let rec scan_objects_list_sound
 
 #push-options "--fuel 2 --z3rlimit 10"
 let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
-  : Lemma (requires
-             well_formed_heap major /\
-             Seq.mem obj (objects zero_addr major) /\
-             is_blue obj major = false /\
-             is_no_scan obj major = false /\
-             field_idx >= 1 /\ field_idx < U64.v (wosize_of_object obj major) /\
-             U64.v obj + field_idx * 8 + 8 <= heap_size /\
-             (U64.v obj + field_idx * 8) % 8 == 0 /\
-              is_minor_object_addr (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8)))))
-          (ensures
-             Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))))
-                     (minor_roots_from_major major)) =
+                     =
   let target = to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) in
   let objs = objects zero_addr major in
   let wz = U64.v (wosize_of_object obj major) in
@@ -285,18 +274,6 @@ let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
 
 #push-options "--fuel 0 --ifuel 1 --z3rlimit 12"
 let minor_roots_from_major_sound (major: heap) (v: U64.t)
-  : Lemma (requires Seq.mem v (minor_roots_from_major major))
-          (ensures
-            exists (obj: obj_addr) (field_idx: nat).
-              Seq.mem obj (objects zero_addr major) /\
-              is_blue obj major = false /\
-              is_no_scan obj major = false /\
-              field_idx >= 1 /\
-              field_idx < U64.v (wosize_of_object obj major) /\
-              U64.v obj + field_idx * 8 + 8 <= heap_size /\
-              (U64.v obj + field_idx * 8) % 8 == 0 /\
-              to_minor_offset (read_word major (U64.uint_to_t (U64.v obj + field_idx * 8))) == v /\
-              is_minor_object_addr v)
   =
     let refs = scan_major_for_minor_refs major in
     extract_targets_sound refs 0 v;

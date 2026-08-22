@@ -778,22 +778,6 @@ private let coalesce_preserves_edges
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let full_gc_correctness_through_coalesce
   (h_init: heap) (st: seq obj_addr) (roots: seq obj_addr) (fp: U64.t)
-  : Lemma
-    (requires
-      well_formed_heap h_init /\
-      stack_props h_init st /\
-      root_props h_init roots /\
-      fp_in_heap fp h_init /\
-      no_black_objects h_init /\
-      no_pointer_to_blue h_init /\
-      no_scan_invariant h_init /\
-      (forall (r: obj_addr). Seq.mem r roots <==> Seq.mem r st) /\
-      (let graph = create_graph h_init in
-       let roots' = HeapGraph.coerce_to_vertex_list roots in
-       graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-    (ensures
-      full_gc_correctness h_init
-        (fst (Coalesce.coalesce (fst (sweep (mark h_init st) fp)))) roots)
   =
   let h_mark = mark h_init st in
   let h_sweep = fst (sweep h_mark fp) in

@@ -183,7 +183,6 @@ open GC.Spec.Mark
 let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
                                   (c: U64.t{U64.v c < 4})
                                   (t: U64.t{U64.v t < 256})
-  : Lemma (Header.get_color (U64.v (make_header wz c t)) == U64.v c)
   = let hdr = make_header wz c t in
     make_header_value wz c t;
     Header.get_color_val (U64.v hdr);
@@ -217,11 +216,5 @@ let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
 let chain_avoids_transfer_excl2 = AllocChain.chain_avoids_transfer_excl2
 /// alloc_spec preserves objects membership under part1
 let alloc_spec_preserves_objects_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    fl_valid g fp heap_words /\
-                    fl_chain_terminates g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    (forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
-                      Seq.mem x (objects zero_addr r.heap_out))))
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_objects_part1 g fp 0UL fp wz heap_words

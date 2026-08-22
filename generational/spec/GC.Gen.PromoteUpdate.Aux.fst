@@ -82,8 +82,7 @@ let rec update_all_objects_aux_preserves_objects
 
 /// update_major_pointers preserves the objects walk.
 let update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major)
-    (ensures objects zero_addr (update_major_pointers major fwd) == objects zero_addr major) =
+    =
   update_all_objects_aux_preserves_objects major (objects zero_addr major) fwd 0
 
 /// update_all_objects_aux preserves well_formed_heap_part1 (inductive).
@@ -143,8 +142,7 @@ let rec update_all_objects_aux_preserves_wfh_part1
 
 /// update_major_pointers preserves well_formed_heap_part1.
 let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major)
-    (ensures well_formed_heap_part1 (update_major_pointers major fwd)) =
+    =
   update_all_objects_aux_preserves_wfh_part1 major (objects zero_addr major) fwd 0
 
 /// ---------------------------------------------------------------------------
@@ -152,6 +150,4 @@ let update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map
 /// ---------------------------------------------------------------------------
 /// Unfold: update_major_pointers is update_all_objects_aux at index 0
 let update_major_pointers_unfold (major: heap) (fwd: forwarding_map)
-  : Lemma (update_major_pointers major fwd ==
-           update_all_objects_aux major (objects zero_addr major) fwd 0)
   = ()

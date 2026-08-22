@@ -28,9 +28,6 @@ module Header = GC.Lib.Header
 
 /// fp_in_heap implies fp can be coerced to obj_addr when non-null
 let fp_in_heap_elim (fp: U64.t) (g: heap)
-  : Lemma (requires fp_in_heap fp g /\ fp <> 0UL)
-          (ensures U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                   U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects zero_addr g))
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -216,9 +213,6 @@ let rec sweep_aux_non_member_color (g: heap) (objs: seq obj_addr) (fp: U64.t) (x
 // Helper: tail of coerce = coerce of tail
 #push-options "--fuel 2 --ifuel 1"
 let coerce_tail_lemma (objs: seq obj_addr)
-  : Lemma (requires Seq.length objs > 0)
-          (ensures Seq.equal (Seq.tail (HeapGraph.coerce_to_vertex_list objs))
-                             (HeapGraph.coerce_to_vertex_list (Seq.tail objs)))
   = // By definition of coerce_to_vertex_list:
     // coerce objs = cons (head objs) (coerce (tail objs))
     // So tail (coerce objs) = coerce (tail objs)
@@ -423,15 +417,6 @@ let sweep_resets_black_to_white g fp =
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_preserves_other_body_read
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
-  : Lemma (requires well_formed_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g) /\
-                    obj <> x /\
-                    U64.v a >= U64.v x /\
-                    U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
-                    U64.v a % 8 = 0)
-          (ensures read_word (fst (sweep_object g obj fp)) a == read_word g a)
   = let (g', fp') = sweep_object g obj fp in
     // Key: prove that a is at different addresses from sweep_object's writes
     // sweep_object writes to: 1) hd_address(obj), 2) obj (if white, set_field at field 1)
@@ -501,13 +486,6 @@ let sweep_object_preserves_other_body_read
 #push-options "--z3rlimit 125 --fuel 2 --ifuel 1"
 let sweep_object_preserves_other_header
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires Seq.mem obj (objects zero_addr g) /\
-                    fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g) /\
-                    obj <> x)
-          (ensures (let g' = fst (sweep_object g obj fp) in
-                    read_word g' (GC.Spec.Heap.hd_address x) == read_word g (GC.Spec.Heap.hd_address x) /\
-                    wosize_of_object x g' == wosize_of_object x g))
   = let (g', fp') = sweep_object g obj fp in
     let hd_x = GC.Spec.Heap.hd_address x in
     GC.Spec.Heap.hd_address_spec x;
@@ -572,8 +550,6 @@ let sweep_object_preserves_other_header
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_preserves_self_wosize
   (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g)
-          (ensures wosize_of_object obj (fst (sweep_object g obj fp)) == wosize_of_object obj g)
   = if is_infix obj g then ()
     else if is_white obj g then begin
       let ws = wosize_of_object obj g in
@@ -616,10 +592,6 @@ let sweep_object_preserves_self_wosize
 #push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_white_field0
   (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires is_white obj g /\ ~(is_infix obj g) /\
-                    U64.v (wosize_of_object obj g) > 0 /\
-                    U64.v (hd_address obj) + U64.v mword * 2 <= heap_size)
-          (ensures read_word (fst (sweep_object g obj fp)) obj == fp)
   = let hd = GC.Spec.Heap.hd_address obj in
     GC.Spec.Heap.hd_address_spec obj;
     // Step 1: set_field writes fp at obj (field_addr = hd + mword*1 = obj)
