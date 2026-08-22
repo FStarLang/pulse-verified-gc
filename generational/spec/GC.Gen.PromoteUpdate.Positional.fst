@@ -21,7 +21,7 @@ module WriteBody = GC.Gen.WriteBodyLemmas
 open GC.Gen.PromoteUpdate.Obj
 open GC.Gen.PromoteUpdate.Aux
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec objects_eq_when_reads_agree (g1 g2: heap) (start: hp_addr)
   : Lemma (requires Seq.length g1 == Seq.length g2 /\
                     (forall (a: hp_addr). U64.v a >= U64.v start ==>
@@ -47,7 +47,7 @@ private let rec objects_eq_when_reads_agree (g1 g2: heap) (start: hp_addr)
 /// Objects from start are preserved when start >= obj + wz*8.
 /// Since all field writes are at addresses < obj + wz*8 <= start,
 /// all reads from start onward are unchanged.
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let update_object_pointers_preserves_objects_above
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
   (start: hp_addr)
@@ -70,7 +70,7 @@ private let update_object_pointers_preserves_objects_above
 #pop-options
 
 /// Objects nonemptiness depends only on the header read at start.
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1"
 private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
   : Lemma (requires Seq.length g1 == Seq.length g2 /\
                     read_word g1 start == read_word g2 start /\
@@ -80,7 +80,7 @@ private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
 #pop-options
 
 /// Helper: density is preserved through update_object_pointers
-#push-options "--z3rlimit 25 --fuel 0 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 0 --z3refresh"
 private let update_object_pointers_preserves_density
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -149,7 +149,7 @@ private let update_object_pointers_preserves_density
 
 /// Shift lemma: processing cons hd tl from index (k+1) is the same as processing tl from index k.
 /// This is a structural property of the recursive function update_all_objects_aux.
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec update_all_objects_aux_shift
   (g: heap) (hd: obj_addr) (tl: seq obj_addr) (fwd: forwarding_map) (k: nat)
   : Lemma (ensures update_all_objects_aux g (Seq.cons hd tl) fwd (k + 1) ==
@@ -175,7 +175,7 @@ private let rec update_all_objects_aux_shift
 #pop-options
 
 /// Master positional step lemma
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 let update_all_objects_positional_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -294,7 +294,7 @@ let update_all_objects_positional_step
 
 /// Blue skip step: when the current object is blue (free-list cell),
 /// skip it without modifying the heap. The spec connection advances past it.
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_blue
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -347,7 +347,7 @@ let update_all_objects_positional_step_blue
 
 /// No-scan skip step: when the current object has tag >= no_scan_tag,
 /// skip it without modifying the heap. Identical structure to the blue step.
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_no_scan
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -397,7 +397,7 @@ let update_all_objects_positional_step_no_scan
 #pop-options
 
 /// Terminal step
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_terminal_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -442,7 +442,7 @@ let update_all_objects_terminal_step
 /// Initial membership: first object is at f_address zero_addr when heap has objects.
 /// The precondition that objects zero_addr g is nonempty is a standard heap invariant
 /// (same approach as mark-and-sweep's heap_objects_dense).
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let objects_initial_membership (g: heap)
   : Lemma (requires heap_size > 8 /\ well_formed_heap_part1 g /\
                     Seq.length (objects zero_addr g) > 0)

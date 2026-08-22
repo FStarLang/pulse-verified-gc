@@ -33,7 +33,7 @@ module WriteBody = GC.Gen.WriteBodyLemmas
 /// (blue_fields_closed is a weakening of part2 — restricted to blue objects)
 /// Field `j >= 1` of the remainder object misses all three words written by
 /// `alloc_split_normal`.  Proved in an empty context.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let split_field_disjoint (hd_v obj_v src_v wz j: nat) : Lemma
   (requires hd_v == obj_v - 8 /\ src_v == hd_v + (1 + wz) * 8 + 8 /\ j >= 1)
   (ensures (let rhn = hd_v + (1 + wz) * 8 in
@@ -45,7 +45,7 @@ private let split_field_disjoint (hd_v obj_v src_v wz j: nat) : Lemma
 #pop-options
 
 /// Trivial arithmetic facts that diverge in the large allocator contexts below.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let not_gt0_eq0 (n: nat) : Lemma (requires ~(n > 0)) (ensures n == 0 /\ n * 8 == 0) = ()
 
 private let lt1_eq0 (n: nat) : Lemma (requires n < 1) (ensures n == 0 /\ n * 8 == 0) = ()
@@ -55,7 +55,7 @@ private let uint_to_t_v_id (x: U64.t) : Lemma (U64.uint_to_t (U64.v x) == x) = (
 
 /// Build an `hp_addr` at `base + n * 8`.  Bounds and alignment are trivial but
 /// diverge under the enclosing allocator-invariant context.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let mk_hp_addr_mul8 (base n: nat) : Pure hp_addr
   (requires base % U64.v mword == 0 /\ base + n * 8 < heap_size)
   (ensures fun r -> U64.v r == base + n * 8)
@@ -66,7 +66,7 @@ private let mk_hp_addr_mul8 (base n: nat) : Pure hp_addr
 #pop-options
 
 /// `hd + (1 + wz) * 8 + 8` stays 8-aligned.  Proved in an empty context.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let aligned_plus_mul8 (base n: nat) : Lemma
   (requires base % U64.v mword == 0)
   (ensures (base + n * 8) % U64.v mword == 0)
@@ -76,14 +76,14 @@ private let aligned_plus_mul8 (base n: nat) : Lemma
 
 /// Address arithmetic for the split case: field `j` of the remainder object is
 /// field `wz + 1 + j` of the original block.  Proved in an empty context.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let split_field_addr_eq (obj_v hd_v src_v wz j: nat) : Lemma
   (requires hd_v == obj_v - 8 /\ src_v == hd_v + (1 + wz) * 8 + 8)
   (ensures src_v + j * 8 == obj_v + (wz + 1 + j) * 8)
   = ()
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let wfh_part2_implies_blue_fields_closed (g: heap)
   : Lemma (requires well_formed_heap_part1 g /\ well_formed_heap_part2 g)
           (ensures blue_fields_closed g)
@@ -145,7 +145,7 @@ let wfh_part2_implies_blue_fields_closed (g: heap)
 ///   - Field 0 = next_fp (original next in chain). If is_pointer: in objects by fl_valid.
 ///   - Fields j > 0: addresses were in body of original dst_obj block (which was blue).
 ///     By bfc(major) for original block: pointer targets in objects(major) <= objects(new_major).
-#push-options "--z3rlimit 75 --fuel 1 --ifuel 0 --z3refresh"
+#push-options "--z3rlimit 37 --fuel 1 --ifuel 0 --z3refresh"
 private let rec alloc_search_preserves_bfc
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma
@@ -480,7 +480,7 @@ private let rec alloc_search_preserves_bfc
   end
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_fields_closed
   (major: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires
@@ -507,7 +507,7 @@ let alloc_spec_preserves_blue_fields_closed
 
 /// The allocator's output free-list head is null or a syntactically valid heap
 /// pointer when all blue free-list link fields have that same value shape.
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let alloc_from_block_fp_pointer_or_zero
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires
@@ -565,7 +565,7 @@ private let alloc_from_block_fp_pointer_or_zero
     end
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let rec alloc_search_fp_pointer_or_zero
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires
@@ -634,7 +634,7 @@ private let rec alloc_search_fp_pointer_or_zero
     end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_fp_pointer_or_zero
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -658,7 +658,7 @@ let alloc_spec_preserves_fp_pointer_or_zero
     alloc_search_fp_pointer_or_zero g fp 0UL fp wz fuel
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_blfv
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma
@@ -860,7 +860,7 @@ private let rec alloc_search_preserves_blfv
     end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let alloc_spec_preserves_blue_link_fields_valid
   (g: heap) (fp: U64.t) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\

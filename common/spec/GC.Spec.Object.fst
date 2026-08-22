@@ -68,7 +68,7 @@ let gray_or_black_valid (hdr: U64.t)
   = valid_color_unpack (get_color (U64.v hdr))
 
 /// Get tag from header word
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 let getTag (header: U64.t) : (t:U64.t{U64.v t < 256}) =
   get_tag_bound (U64.v header);
   mask_tag_value ();
@@ -170,7 +170,7 @@ private let getTag_Header (hdr: U64.t)
     assert (U64.v tag_mask == GC.Lib.Header.mask_tag)
 
 /// setColor preserves wosize (fully proven!)
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let setColor_preserves_wosize_lemma (hdr: U64.t) (c: U64.t{U64.v c < 4}) 
   : Lemma (getWosize (setColor hdr c) == getWosize hdr) = 
   // Step 1: Connect setColor to Header.set_color
@@ -193,7 +193,7 @@ let setColor_preserves_wosize_lemma (hdr: U64.t) (c: U64.t{U64.v c < 4})
 #pop-options
 
 /// setColor preserves tag (fully proven!)
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let setColor_preserves_tag_lemma (hdr: U64.t) (c: U64.t{U64.v c < 4}) 
   : Lemma (getTag (setColor hdr c) == getTag hdr) = 
   // Step 1: Connect setColor to Header.set_color  
@@ -218,7 +218,7 @@ let colorHeader_preserves_wosize (hdr: U64.t) (c: color)
 /// makeHeader from extracted fields with new color == colorHeader
 /// Requires valid header (color field < 3)
 /// makeHeader roundtrip: getWosize recovers the wosize
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let makeHeader_getWosize (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (getWosize (makeHeader wz c tag) == wz)
   = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
@@ -233,7 +233,7 @@ let makeHeader_getWosize (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
 #pop-options
 
 /// makeHeader roundtrip: getColor recovers the color
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let makeHeader_getColor (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (getColor (makeHeader wz c tag) == c)
   = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
@@ -245,7 +245,7 @@ let makeHeader_getColor (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
 #pop-options
 
 /// makeHeader roundtrip: getTag recovers the tag
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let makeHeader_getTag (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
   : Lemma (getTag (makeHeader wz c tag) == tag)
   = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
@@ -263,7 +263,7 @@ let makeHeader_is_pack_header64 (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 
 
 /// Helper: word-aligned addresses that differ are separated by >= 8 bytes
 /// This makes the "else" branch unreachable in read_write_different proofs
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 private let word_aligned_separate (a b: hp_addr)
   : Lemma (requires a <> b)
           (ensures U64.v a + 8 <= U64.v b \/ U64.v b + 8 <= U64.v a)

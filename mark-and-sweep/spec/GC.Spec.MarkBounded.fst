@@ -156,7 +156,7 @@ let spg_preserved_other_color (g g': heap) (st: seq obj_addr) (child: obj_addr) 
 
 /// Combined push_children_bounded preserves bounded_stack_props
 /// Proved by induction on field index, mirroring push_children_preserves_stack_props.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec push_children_bounded_preserves_bsp g st obj i ws cap =
   if U64.v i > U64.v ws then ()
   else begin
@@ -257,7 +257,7 @@ let bounded_stack_head_is_gray (g: heap) (st: seq obj_addr)
                     Seq.mem obj (objects zero_addr g)))
   = ()
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let mark_step_bounded_preserves_bsp
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
@@ -323,7 +323,7 @@ let mark_step_bounded_preserves_bsp
 /// ---------------------------------------------------------------------------
 
 /// push_children_bounded preserves the objects list (only does makeGray)
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec push_children_bounded_preserves_objects g st obj i ws cap =
   if U64.v i > U64.v ws then ()
   else begin
@@ -553,7 +553,7 @@ let rec count_non_black_makeGray_white (g: heap) (child: obj_addr) (objs: seq ob
       count_non_black_makeGray_white g child (Seq.tail objs)
     end
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec push_children_bounded_count_non_black g st obj i ws cap =
   if U64.v i > U64.v ws then ()
   else begin
@@ -703,7 +703,7 @@ let rec rescan_heap_cap_bound
     end
 
 /// If rescan returns empty with cap > 0, it started empty and no grays in objs
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 let rec rescan_complete_gen
   (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
   : Lemma (requires cap > 0)

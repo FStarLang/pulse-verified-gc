@@ -13,7 +13,7 @@ module ConcreteScenarios = GC.SPOT.ConcreteScenarios
 module Preconditions = GC.SPOT.Preconditions
 module ThreeObjects = GC.SPOT.ThreeObjects
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_roots_alloc_seq (c: obj_addr)
   : Lemma (Seq.upd (Seq.create 2 (c <: U64.t)) 1 Layout.a_minor ==
            ThreeObjects.spot_roots c)

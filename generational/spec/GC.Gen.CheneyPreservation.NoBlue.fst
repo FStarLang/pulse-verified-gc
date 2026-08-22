@@ -26,7 +26,7 @@ module NonBlueOrigin = GC.Gen.CheneyPreservation.NonBlueOrigin
 module NoBlueUtil = GC.Gen.NoBlueUtil
 module GenInv = GC.Gen.HeapInvariant
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_preserves_no_pointer_to_blue_from_shape
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -128,7 +128,7 @@ let cheney_promote_preserves_no_pointer_to_blue_from_shape
   Mark.no_pointer_to_blue_intro_from_fields prom.major_final field_no_blue
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let header_eq_preserves_no_scan
   (g1 g2: heap) (obj: obj_addr)
   : Lemma
@@ -152,7 +152,7 @@ private let header_eq_preserves_infix
   is_infix_spec obj g2
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let update_major_pointers_preserves_no_pointer_to_blue
   (major: heap) (fwd: forwarding_map)
   : Lemma

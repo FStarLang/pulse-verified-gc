@@ -21,7 +21,7 @@ module CheneyBFS = GC.Gen.CheneyBFS
 module Reachability = GC.Gen.Reachability
 module GenInv = GC.Gen.HeapInvariant
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 
 let zero_not_in_minor_objects ()
   : Lemma (ensures ~(Seq.mem 0UL (minor_objects ConcreteMinor.spot_minor2)))

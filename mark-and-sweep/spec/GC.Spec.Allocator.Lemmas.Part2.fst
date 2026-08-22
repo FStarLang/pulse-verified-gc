@@ -21,15 +21,15 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module Header = GC.Lib.Header
 
-/// Module-level default: all functions get z3rlimit 20 unless overridden
-#push-options "--z3rlimit 20 --z3refresh"
+/// Module-level default: all functions get z3rlimit 10 unless overridden
+#push-options "--z3rlimit 10 --z3refresh"
 
 /// Two distinct word-aligned addresses are at least one word apart.
 ///
 /// Trivial, but query splitting makes each goal carry the whole context of the
 /// enclosing recursive proof, so it is discharged here where the context is
 /// empty and applied as a lemma.
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let aligned_distinct (a b: U64.t)
   : Lemma (requires a <> b /\ U64.v a % U64.v mword == 0 /\ U64.v b % U64.v mword == 0)
           (ensures U64.v a + U64.v mword <= U64.v b \/
@@ -42,7 +42,7 @@ private let aligned_distinct (a b: U64.t)
 /// below `blk` or strictly beyond `blk`'s last field, and `inner` sits between the
 /// two.  Proved here, in an empty context, because the free-list proofs that need it
 /// carry enormous hypothesis sets in which Z3 4.15.3 no longer finds this argument.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let addr_inside_block_ne (g: heap) (blk other: obj_addr) (inner: U64.t) (block_wz: nat)
   : Lemma
     (requires Seq.mem blk (objects zero_addr g) /\
@@ -59,7 +59,7 @@ private let addr_inside_block_ne (g: heap) (blk other: obj_addr) (inner: U64.t) 
 /// split allocation: `rem = hd + (1 + wz) * mword + mword`, which lies strictly
 /// between `obj = hd + mword` and the end of `obj`'s block whenever
 /// `wz + 1 < block_wz`.  Hence it differs from every other object in the heap.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let rem_obj_ne (g: heap) (obj other: obj_addr) (rem: U64.t) (hd: hp_addr) (wz block_wz: nat)
   : Lemma
     (requires Seq.mem obj (objects zero_addr g) /\
@@ -75,7 +75,7 @@ private let rem_obj_ne (g: heap) (obj other: obj_addr) (rem: U64.t) (hd: hp_addr
 /// Companion of `rem_obj_ne` for the remainder *header* address,
 /// `rem_hd = hd + (1 + wz) * mword`, which also lies strictly inside `obj`'s block
 /// whenever `wz < block_wz`.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let rem_hd_ne (g: heap) (obj other: obj_addr) (rem_hd: U64.t) (hd: hp_addr) (wz block_wz: nat)
   : Lemma
     (requires Seq.mem obj (objects zero_addr g) /\
@@ -91,7 +91,7 @@ private let rem_hd_ne (g: heap) (obj other: obj_addr) (rem_hd: U64.t) (hd: hp_ad
 /// The header of the object one word above `h` is `h` itself.  Phrased over the
 /// raw nat so that the `UInt.size` side condition of `U64.uint_to_t` is discharged
 /// here rather than inside the free-list proofs.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let hd_address_of_succ (h o: hp_addr)
   : Lemma (requires U64.v o == U64.v h + U64.v mword /\ U64.v o >= U64.v mword)
           (ensures hd_address (o <: obj_addr) == h)
@@ -105,7 +105,7 @@ private let hd_address_of_succ (h o: hp_addr)
 /// Both ingredients are already available at every call site; what Z3 4.15.3 can
 /// no longer do is chain them under the hypothesis load of the enclosing
 /// recursive proof.  Doing it here, over abstract heaps, keeps the query small.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let frame_excl_compose (g g' g2: heap) (excl: hp_addr)
   : Lemma
     (requires
@@ -137,7 +137,7 @@ private let frame_excl_compose (g g' g2: heap) (excl: hp_addr)
 #pop-options
 
 #restart-solver
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let chain_avoids_shrink (g: heap) (fp excl: U64.t) (s_small s_big: nat)
   : Lemma (requires chain_avoids g fp excl s_big = true /\ s_small <= s_big)
           (ensures chain_avoids g fp excl s_small = true)
@@ -145,7 +145,7 @@ private let chain_avoids_shrink (g: heap) (fp excl: U64.t) (s_small s_big: nat)
 #pop-options
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
                                  (c: U64.t{U64.v c < 4})
                                  (t: U64.t{U64.v t < 256})
@@ -164,7 +164,7 @@ private let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
     FStar.Math.Lemmas.small_mod (U64.v c) 4
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let make_header_color_blue (wz: U64.t{U64.v wz < pow2 54})
   : Lemma (getColor (make_header wz blue_bits 0UL) == Header.Blue)
   = let hdr = make_header wz blue_bits 0UL in
@@ -181,7 +181,7 @@ private let make_header_color_blue (wz: U64.t{U64.v wz < pow2 54})
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 3 --ifuel 1"
 private let rec split_new_mem_in_old_or_rem_part1
   (start: hp_addr) (g g3: heap)
   (obj: obj_addr) (wz block_wz: nat)
@@ -344,7 +344,7 @@ private let rec split_new_mem_in_old_or_rem_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let alloc_split_wf_part1_v2
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -419,7 +419,7 @@ private let alloc_split_wf_part1_v2
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let alloc_exact_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -468,7 +468,7 @@ private let alloc_exact_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let alloc_from_block_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -490,7 +490,7 @@ let alloc_from_block_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let write_body_preserves_wfh_part1
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -537,7 +537,7 @@ private let write_body_preserves_wfh_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_wfh_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -644,7 +644,7 @@ let alloc_spec_preserves_wfh_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let alloc_split_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -736,7 +736,7 @@ private let alloc_split_fl_transfer_pre_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let alloc_exact_fl_transfer_pre_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (a: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -795,7 +795,7 @@ private let alloc_exact_fl_transfer_pre_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let rec fl_valid_field_write_part1
   (g: heap) (p: obj_addr) (v: U64.t) (fp: U64.t) (fuel tail_fuel: nat)
   : Lemma
@@ -869,7 +869,7 @@ private let rec fl_valid_field_write_part1
 /// fl_valid_field_write_tail_part1: establishes fl_valid g' v fuel
 /// where g' = write_word g p v, using only well_formed_heap_part1.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let rec fl_valid_field_write_tail_part1
   (g: heap) (p: obj_addr) (v: U64.t) (fuel: nat)
   : Lemma
@@ -942,7 +942,7 @@ private let rec fl_valid_field_write_tail_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_fl_valid_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -1318,7 +1318,7 @@ let alloc_spec_preserves_fl_valid_part1 (g: heap) (fp: U64.t) (requested_wz: nat
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_fl_chain_terminates_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -1680,7 +1680,7 @@ let alloc_spec_preserves_fl_chain_terminates_part1 (g: heap) (fp: U64.t) (reques
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let rec alloc_search_obj_not_in_chain_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2003,7 +2003,7 @@ let alloc_spec_obj_not_in_chain_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// Helper: alloc_from_block preserves reads at addresses that don't overlap
 /// any of the written locations. For addresses in the body of a DIFFERENT
 /// object that is separated from obj.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
 private let alloc_from_block_read_other_body
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (addr: hp_addr)
   : Lemma (requires (let hdr = read_word g (hd_address obj) in
@@ -2060,7 +2060,7 @@ private let alloc_from_block_read_other_body
 /// Inductive: alloc_search preserves reads in the body of the allocated object.
 /// Inductive: alloc_search preserves reads in the body of a different object
 /// that is not in the free-list chain.
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
 private let rec alloc_search_read_other
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   (other: obj_addr) (addr: hp_addr)
@@ -2199,7 +2199,7 @@ let alloc_spec_read_other (g: heap) (fp: U64.t) (requested_wz: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_chain_avoids_other
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   (excl: U64.t)
@@ -2527,7 +2527,7 @@ private let rec alloc_search_preserves_chain_avoids_other
 
 /// Helper: when alloc_search fails (obj_out = 0UL), heap and fp are unchanged.
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec alloc_search_no_alloc_unchanged
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
@@ -2553,7 +2553,7 @@ private let rec alloc_search_no_alloc_unchanged
 
 /// Top-level: alloc_spec preserves chain_avoids for a different object.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz: nat)
                                             (excl: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2586,7 +2586,7 @@ let alloc_spec_preserves_chain_avoids_other (g: heap) (fp: U64.t) (requested_wz:
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let alloc_from_block_preserves_wfh_part4
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2684,7 +2684,7 @@ private let alloc_from_block_preserves_wfh_part4
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let write_body_preserves_wfh_part4
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2726,7 +2726,7 @@ private let write_body_preserves_wfh_part4
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_wfh_part4
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2853,7 +2853,7 @@ let alloc_from_block_preserves_objects_part1 = alloc_from_block_preserves_object
 /// In the split case, new objects (not in original objects) are the remainder
 /// and it has a blue header.
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let alloc_from_block_new_objects_blue_split
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2903,7 +2903,7 @@ private let alloc_from_block_new_objects_blue_split
 
 /// In the exact case, no new objects appear.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let alloc_from_block_no_new_objects_exact
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2929,7 +2929,7 @@ private let alloc_from_block_no_new_objects_exact
 
 /// Combined: alloc_from_block new objects are blue.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let alloc_from_block_new_objects_blue
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -2951,7 +2951,7 @@ private let alloc_from_block_new_objects_blue
 
 /// Helper: writing at prev_fp preserves is_blue for h whose header is separate.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let write_prev_preserves_blue
   (g': heap) (h: obj_addr) (prev_fp: U64.t) (val_fp: U64.t)
   : Lemma (requires is_blue h g' = true /\
@@ -2991,7 +2991,7 @@ private let write_prev_preserves_blue
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 75 --fuel 1 --ifuel 0"
 private let rec alloc_search_new_objects_blue_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -3166,7 +3166,7 @@ let alloc_spec_new_objects_blue_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_from_block_objects_backward_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -3214,7 +3214,7 @@ let alloc_from_block_objects_backward_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let field_write_preserves_no_black_part1
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires GC.Spec.Mark.no_black_objects g /\
@@ -3248,7 +3248,7 @@ private let field_write_preserves_no_black_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let alloc_from_block_preserves_no_black_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires GC.Spec.Mark.no_black_objects g /\
@@ -3353,7 +3353,7 @@ private let alloc_from_block_preserves_no_black_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_no_black_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires GC.Spec.Mark.no_black_objects g /\
@@ -3457,4 +3457,4 @@ let alloc_spec_preserves_no_black_part1 (g: heap) (fp: U64.t) (requested_wz: nat
   = let wz = if requested_wz = 0 then 1 else requested_wz in
     alloc_search_preserves_no_black_part1 g fp 0UL fp wz heap_words
 
-#pop-options // Module-level z3rlimit 20
+#pop-options // Module-level z3rlimit 10

@@ -42,7 +42,7 @@ module Part2 = GC.Spec.Allocator.Lemmas.Part2
 /// first carries an `SMTPat` because it is needed at every `U64.uint_to_t`
 /// coercion to `hp_addr` in this module.
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let aligned_step (base k: nat)
   : Lemma (requires base % U64.v mword == 0)
           (ensures (base + k * 8) % U64.v mword == 0)
@@ -117,7 +117,7 @@ private let density_at (g: heap) (start: hp_addr)
 /// A header address `hd` (where f_address hd is in objects) is disjoint from
 /// all field positions of dst_obj. This lets us invoke copy_fields_preserves_other.
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 private let header_separated_from_fields
   (major: heap) (dst_obj: obj_addr) (hd: hp_addr) (n: nat)
@@ -169,7 +169,7 @@ private let header_separated_from_fields
 /// copy_fields preserves density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 private let copy_fields_preserves_dense
   (minor: minor_state) (major: heap)
@@ -228,7 +228,7 @@ private let copy_fields_preserves_dense
 /// zero_promote_padding preserves density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 private let zero_promote_padding_preserves_dense
   (major: heap) (dst_obj: obj_addr) (wz: nat{wz > 0})
@@ -286,7 +286,7 @@ private let zero_promote_padding_preserves_dense
 /// alloc_from_block split case density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 
 private let alloc_from_block_split_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
@@ -478,7 +478,7 @@ private let alloc_from_block_split_dense
 /// alloc_from_block exact case density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 
 private let alloc_from_block_exact_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
@@ -563,7 +563,7 @@ private let alloc_from_block_exact_dense
 /// alloc_from_block preserves density (combine exact + split)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 
 private let alloc_from_block_preserves_dense
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
@@ -587,7 +587,7 @@ private let alloc_from_block_preserves_dense
 /// Write at a field position preserves density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 private let write_field_preserves_dense
   (g: heap) (obj: obj_addr) (v: U64.t)
@@ -654,7 +654,7 @@ private let write_field_preserves_dense
 /// Helper: prev≠0 found case density proof (low fuel)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 
 /// Factored helper: in the split case, prev_fp stays in objects after alloc_from_block.
 /// Separated into its own function to keep the VC context small.
@@ -671,7 +671,7 @@ private let alloc_split_prev_mem
 
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 /// When alloc_search finds a block (bwz >= wz) and prev ≠ 0, the result is
 /// write_word (alloc_from_block g obj wz next) prev new_fp. Prove density.
@@ -765,7 +765,7 @@ private let alloc_search_found_prev_dense
 /// alloc_spec preserves density (induction on alloc_search)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 300 --fuel 4 --ifuel 1"
+#push-options "--z3rlimit 150 --fuel 4 --ifuel 1"
 
 private let rec alloc_search_preserves_dense
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
@@ -828,7 +828,7 @@ private let rec alloc_search_preserves_dense
 
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 
 let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -849,7 +849,7 @@ let alloc_spec_preserves_dense_part1 (g: heap) (fp: U64.t) (requested_wz: nat)
 /// set_promoted_tag writes one header word with the same wosize.
 /// Density depends only on wosize at each header position, so is preserved.
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 
 private let set_promoted_tag_preserves_dense
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
@@ -923,7 +923,7 @@ private let set_promoted_tag_preserves_dense
 /// promote_object preserves density
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 
 let promote_object_preserves_dense
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})

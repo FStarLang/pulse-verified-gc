@@ -28,7 +28,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module Alloc = GC.Spec.Allocator
 module ML = FStar.Math.Lemmas
 
-#set-options "--z3rlimit 25 --fuel 1 --ifuel 1"
+#set-options "--z3rlimit 12 --fuel 1 --ifuel 1"
 
 /// ===========================================================================
 /// Helper: write_word byte at addr+k depends only on the value v,
@@ -38,7 +38,7 @@ module ML = FStar.Math.Lemmas
 /// After write_word_spec, both write_word results are chains of Seq.upd
 /// writing the same decomposition of v. At position addr+k, the chain
 /// produces the k-th byte of v regardless of the base heap.
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let write_word_byte_at (g1 g2: heap) (addr: hp_addr) (v: U64.t) (k: nat{k < 8})
   : Lemma (Seq.index (write_word g1 addr v) (U64.v addr + k) ==
            Seq.index (write_word g2 addr v) (U64.v addr + k))
@@ -57,7 +57,7 @@ let write_word_byte_at (g1 g2: heap) (addr: hp_addr) (v: U64.t) (k: nat{k < 8})
 /// So Seq.index g (addr+k) == Seq.index (write_word g addr v) (addr+k).
 /// And write_word_byte_at says the byte at addr+k depends only on v.
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let read_word_bytes_agree (h1 h2: heap) (addr: hp_addr) (k: nat{k < 8})
   : Lemma
     (requires read_word h1 addr == read_word h2 addr)
@@ -111,7 +111,7 @@ let heaps_word_agree_implies_equal (h1 h2: heap)
 /// (Reproduces private lemma from GC.Spec.Coalesce)
 /// ===========================================================================
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 private let rec my_zero_fields_read_within
     (g: heap) (start: U64.t) (n: nat) (addr: hp_addr)
   : Lemma
@@ -150,7 +150,7 @@ private let rec my_zero_fields_read_within
 /// (Reproduces private lemma from GC.Spec.Coalesce)
 /// ===========================================================================
 
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 private let my_flush_blue_field1
     (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t)
   : Lemma
@@ -187,7 +187,7 @@ private let my_flush_blue_field1
 /// (Reproduces private lemma from GC.Spec.Coalesce)
 /// ===========================================================================
 
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 private let my_flush_blue_field_zero
     (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t) (a: hp_addr)
   : Lemma
@@ -230,7 +230,7 @@ private let my_flush_blue_field_zero
 /// Inside field 1: my_flush_blue_field1 (both produce fp).
 /// Inside zero range: my_flush_blue_field_zero (both produce 0UL).
 
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 private let flush_blue_word_agree
     (h1 h2: heap) (fb: U64.t) (rw: nat) (fp: U64.t) (a: hp_addr)
   : Lemma
@@ -301,7 +301,7 @@ private let flush_blue_word_agree
 /// - heaps_word_agree_implies_equal (word agreement → heap equality)
 /// - flush_blue_snd_heap_independent (snd is heap-independent)
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let flush_blue_pair_agree (h1 h2: heap) (fb: U64.t) (rw: nat) (fp: U64.t)
   : Lemma
     (requires

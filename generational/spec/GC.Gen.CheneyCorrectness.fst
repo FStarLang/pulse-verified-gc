@@ -111,7 +111,7 @@ module BFS = GC.Gen.CheneyBFS
 /// which uses the reachability induction principle.
 /// `w > 0 ==> b` is equivalent to `b \/ w = 0` for `w : nat`; the case split
 /// diverges under the Cheney invariants, so it is discharged in isolation.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let disj_of_imp (w: nat) (b: bool) : Lemma (requires w > 0 ==> b) (ensures b \/ w = 0)
   = ()
 #pop-options

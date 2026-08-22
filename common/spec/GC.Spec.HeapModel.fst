@@ -27,7 +27,7 @@ module HeapGraph = GC.Spec.HeapGraph
 /// Vertex Set Property for Fields.objects
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 3 --ifuel 1"
 let rec objects_is_vertex_set_aux (start: hp_addr) (g: heap)
   : Lemma (ensures is_vertex_set (HeapGraph.coerce_to_vertex_list (objects start g)))
           (decreases (Seq.length g - U64.v start))

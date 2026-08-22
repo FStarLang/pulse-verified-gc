@@ -7,7 +7,7 @@
 
 module GC.Impl.Sweep.Lemmas
 
-#set-options "--z3rlimit 25"
+#set-options "--z3rlimit 12"
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object

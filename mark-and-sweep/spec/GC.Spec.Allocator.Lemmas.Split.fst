@@ -16,7 +16,7 @@ module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
 /// Module-level default
-#push-options "--z3rlimit 20 --z3refresh"
+#push-options "--z3rlimit 10 --z3refresh"
 
 /// `x <> 0UL ==> U64.v x > 0`.
 ///
@@ -48,7 +48,7 @@ module Seq = FStar.Seq
 /// If objects(start, g) is non-empty (contains any h), then f_address start
 /// is also a member (it's the first element).
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let objects_nonempty_first_mem
   (start: hp_addr) (g: heap) (h: obj_addr)
   : Lemma (requires Seq.mem h (objects start g))
@@ -79,7 +79,7 @@ let objects_nonempty_first_mem
 /// If h ∈ objects(later, g) and later is at a reachable object boundary from start
 /// (i.e., f_address later ∈ objects start g), then h ∈ objects(start, g).
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 3 --ifuel 1"
 let rec objects_later_in_earlier
   (start: hp_addr) (g: heap) (later: hp_addr) (h: obj_addr)
   : Lemma (requires U64.v start <= U64.v later /\
@@ -149,7 +149,7 @@ let rec objects_later_in_earlier
 /// Per-point g3 agreement: at any hp_addr p that is not one of the 3 write
 /// positions, g3 returns the same read_word as g.
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 /// `base + k * 8 <> base` for `k > 0`.  Trivial, but this disequality diverges
 /// under the allocator invariants.
 #pop-options

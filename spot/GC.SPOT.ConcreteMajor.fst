@@ -300,7 +300,7 @@ let spot_major_objects (r: unit{spot_major_room})
           Seq.cons (spot_c r) (SpecFields.objects (spot_free_header r) g));
   ()
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_c_mem (r: unit{spot_major_room})
   : Lemma (ensures
       Seq.mem (spot_c r)
@@ -321,7 +321,7 @@ let spot_major_free_mem (r: unit{spot_major_room})
   SpecFields.mem_cons_lemma (spot_free_obj r) (spot_free_obj r) Seq.empty
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_object_cases (r: unit{spot_major_room}) (obj: obj_addr)
   : Lemma (requires Seq.mem obj (SpecFields.objects zero_addr (spot_major_heap r)))
           (ensures obj == spot_c r \/ obj == spot_free_obj r)
@@ -338,7 +338,7 @@ let spot_major_object_cases (r: unit{spot_major_room}) (obj: obj_addr)
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let zero_major_read_word (addr: hp_addr)
   : Lemma (requires U64.v addr + 8 <= heap_size)
           (ensures read_word zero_major addr == 0UL)
@@ -367,7 +367,7 @@ let zero_and_minor_not_major_pointers ()
   assert (U64.v Layout.a_minor < U64.v zero_addr + U64.v mword)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_free_field_read (r: unit{spot_major_room}) (j: nat)
   : Lemma (requires j < spot_free_wosize r /\
                     U64.v (spot_free_obj r) + j * 8 + 8 <= heap_size)
@@ -409,7 +409,7 @@ let spot_major_free_field_read (r: unit{spot_major_room}) (j: nat)
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_field_not_pointer
     (r: unit{spot_major_room}) (src: obj_addr) (j: nat)
   : Lemma (requires Seq.mem src (SpecFields.objects zero_addr (spot_major_heap r)) /\
@@ -444,7 +444,7 @@ let spot_major_field_not_pointer
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_major_wfh_part1 (r: unit{spot_major_room})
   : Lemma (ensures SpecFields.well_formed_heap_part1 (spot_major_heap r))
   =
@@ -537,7 +537,7 @@ let spot_major_well_formed_heap (r: unit{spot_major_room})
   reveal_opaque (`%SpecFields.well_formed_heap) SpecFields.well_formed_heap
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let spot_major_fl_valid (r: unit{spot_major_room})
   : Lemma (ensures AllocLemmas.fl_valid (spot_major_heap r) (spot_major_fp r)
                     heap_words)
@@ -640,7 +640,7 @@ let spot_major_fp_in_heap (r: unit{spot_major_room})
     (spot_major_fp r) (spot_major_heap r)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let spot_major_objects_from_free_header (r: unit{spot_major_room})
   : Lemma (ensures
       SpecFields.objects (spot_free_header r) (spot_major_heap r) ==
@@ -762,7 +762,7 @@ let spot_major_dense (r: unit{spot_major_room})
   heap_objects_dense_intro_by_proof major proof
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let spot_major_chain_avoids_c (r: unit{spot_major_room})
   : Lemma (ensures
       AllocLemmas.chain_avoids (spot_major_heap r) (spot_major_fp r) (spot_c r)

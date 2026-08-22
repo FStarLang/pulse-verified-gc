@@ -29,7 +29,7 @@ open GC.Gen.WriteBodyLemmas
 /// Proved in an empty context: under the enclosing well-formed-heap and
 /// free-list hypotheses, combining `U64.v` injectivity with the alignment
 /// facts sends Z3 into a matching loop.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let hdr_pair_disjoint (s d: U64.t) (hs hd_v: nat) : Lemma
   (requires U64.v s % 8 == 0 /\ U64.v d % 8 == 0 /\ ~(s == d) /\
             hs == U64.v s - 8 /\ hd_v == U64.v d - 8)
@@ -52,7 +52,7 @@ private let hdr_pair_disjoint (s d: U64.t) (hs hd_v: nat) : Lemma
 
 /// After copy_fields from index i to n, reading field j (with i <= j < n) at
 /// address dst + j*8 returns minor_read_field minor src j.
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 let rec copy_fields_preserves
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat) (j: nat)
@@ -176,7 +176,7 @@ let zero_promote_padding_preserves_objects
     end else
       zero_promote_padding_noop g dst wz
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let zero_promote_padding_frame_obj_header
   (g: heap) (dst src: obj_addr) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -203,7 +203,7 @@ let zero_promote_padding_frame_obj_header
       zero_promote_padding_frame g dst wz (hd_address src)
     end
 #pop-options
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let zero_promote_padding_preserves_wfh_part1
   (g: heap) (dst: obj_addr) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -288,7 +288,7 @@ let set_promoted_tag_read_frame
 /// Helper: set_promoted_tag preserves fl_valid
 /// Key insight: writing to hd_address obj doesn't change any free-list link reads
 /// because all field addresses (>= obj) are above hd_address obj (= obj - 8).
-#push-options "--z3rlimit 20 --fuel 1"
+#push-options "--z3rlimit 10 --fuel 1"
 private let rec set_promoted_tag_preserves_fl_valid
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (fp: U64.t) (fuel: nat)
   : Lemma (requires
@@ -348,7 +348,7 @@ private let rec set_promoted_tag_preserves_fl_valid
 #pop-options
 
 /// Helper: set_promoted_tag preserves fl_chain_terminates
-#push-options "--z3rlimit 20 --fuel 1"
+#push-options "--z3rlimit 10 --fuel 1"
 private let rec set_promoted_tag_preserves_fl_chain_terminates
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (fp: U64.t) (fuel: nat)
   : Lemma (requires
@@ -404,7 +404,7 @@ private let rec set_promoted_tag_preserves_fl_chain_terminates
 /// Helper: set_promoted_tag preserves well_formed_heap_part1
 /// wfh_part1: forall h in objects, hd_address h + 8 + wosize(h)*8 <= Seq.length g
 /// objects is preserved (same wosize header write), and wosize of each object is preserved.
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let set_promoted_tag_preserves_wfh_part1
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
   : Lemma (requires
@@ -447,7 +447,7 @@ private let set_promoted_tag_preserves_wfh_part1
 #pop-options
 
 /// set_promoted_tag_preserves_alloc_invariants: combines the above helpers
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let set_promoted_tag_preserves_alloc_invariants
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256}) (fp: U64.t)
   : Lemma (requires
@@ -467,7 +467,7 @@ let set_promoted_tag_preserves_alloc_invariants
 #pop-options
 
 /// zero_promote_padding preserves allocator invariants
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let zero_promote_padding_preserves_alloc_invariants
   (g: heap) (dst: obj_addr) (wz: nat) (fp: U64.t)
   : Lemma (requires
@@ -503,7 +503,7 @@ let zero_promote_padding_preserves_alloc_invariants
 
 /// zero_promote_padding preserves wfh_part4 (no infix objects).
 /// Proof: padding writes to a field slot, never a header, so is_infix is unchanged.
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let zero_promote_padding_preserves_wfh_part4
   (g: heap) (dst: obj_addr) (wz: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -545,7 +545,7 @@ let zero_promote_padding_preserves_wfh_part4
 #pop-options
 
 /// promote_object preserves allocator invariants
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let promote_object_preserves_alloc_invariants
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
@@ -594,7 +594,7 @@ let promote_object_preserves_alloc_invariants
 
 /// set_promoted_tag preserves well_formed_heap_part4 (no infix objects)
 /// when the promoted tag is not infix_tag.
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let set_promoted_tag_preserves_wfh_part4
   (major: heap) (obj: obj_addr) (tag: nat{tag < 256})
   : Lemma (requires
@@ -679,7 +679,7 @@ let rec rewrite_roots_index (roots: seq U64.t) (fwd: forwarding_map) (i: nat)
   if i = 0 then ()
   else rewrite_roots_index (Seq.slice roots 1 (Seq.length roots)) fwd (i - 1)
 
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 let rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U64.t)
   : Lemma (requires Seq.length rs2 == Seq.length roots /\
                     (forall (j: nat). j < Seq.length roots ==>
@@ -705,7 +705,7 @@ let rewrite_roots_pointwise (roots: seq U64.t) (fwd: forwarding_map) (rs2: seq U
 /// ---------------------------------------------------------------------------
 
 /// Helper: derive dst_fields_valid from scalar upper bound + alignment
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
   : Lemma (requires U64.v addr % 8 == 0 /\ U64.v addr + (wz - 1) * 8 + 8 <= heap_size)
           (ensures dst_fields_valid addr wz)
@@ -720,7 +720,7 @@ let dst_fields_valid_from_bounds (addr: U64.t) (wz: pos)
 
 /// copy_fields doesn't modify addresses outside the dst region [dst, dst+(n-1)*8+8).
 /// Proved by delegating to the internal copy_fields_preserves_other.
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 let copy_fields_frame
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
@@ -739,7 +739,7 @@ let copy_fields_frame
 
 /// Key lemma: copy_fields correctly copies all fields (starting from index 0).
 /// Proved by instantiating the internal copy_fields_preserves for each j.
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 let copy_fields_all_correct
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: U64.t) (n: nat)
@@ -769,7 +769,7 @@ let copy_fields_all_correct
 /// Pointwise lemma: for a specific field j, promote_object preserves the value.
 /// Takes addr as pre-computed hp_addr to avoid uint_to_t subtyping cascade in ensures.
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 let promote_preserves_field_at
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0}) (j: nat)
@@ -811,7 +811,7 @@ let promote_preserves_field_at
 
 /// After promote_object, if allocation succeeds AND the destination
 /// has valid bounds, all field data is preserved.
-#push-options "--z3rlimit 20 --fuel 0"
+#push-options "--z3rlimit 10 --fuel 0"
 let promote_preserves_fields
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wosize: nat{wosize > 0})
@@ -849,7 +849,7 @@ let promote_preserves_fields
   end
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let promote_object_extra_field_not_pointer
   (minor: minor_state) (major: heap) (obj: U64.t)
   (fp: U64.t) (wz: nat{wz > 0}) (field_idx: nat)
@@ -935,7 +935,7 @@ private let copy_fields_preserves_wfh_part1 = WriteBody.copy_fields_preserves_wf
 /// promote_object preserves existing object membership.
 /// Composite lemma: copy_fields preserves all allocator invariants together.
 /// promote_object preserves objects (part1 version — no full well_formed_heap needed)
-#push-options "--z3rlimit 20 --fuel 1"
+#push-options "--z3rlimit 10 --fuel 1"
 let promote_object_preserves_objects_part1
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
@@ -979,7 +979,7 @@ let promote_object_preserves_objects_part1
 /// promote_all preserves well_formed_heap_part1
 /// copy_fields preserves well_formed_heap_part4 (no infix objects).
 /// Since copy_fields only writes to field addresses (>= dst_obj), no headers change.
-#push-options "--z3rlimit 20 --fuel 0"
+#push-options "--z3rlimit 10 --fuel 0"
 private let copy_fields_preserves_wfh_part4
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
@@ -1020,7 +1020,7 @@ private let copy_fields_preserves_wfh_part4
 
 /// promote_object preserves well_formed_heap_part4 when tag is not infix_tag.
 /// Combines alloc_spec, copy_fields, zero_promote_padding, set_promoted_tag part4 preservation.
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let promote_object_preserves_wfh_part4
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
   : Lemma (requires
@@ -1070,7 +1070,7 @@ let promote_object_preserves_wfh_part4
 
 /// Helper: for a non-blue, no-scan object src != dst_obj in the post-promote
 /// heap, its field reads are unchanged from the original heap.
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let promote_object_frame_old_field
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr) (idx: nat)
@@ -1156,7 +1156,7 @@ private let promote_object_frame_old_field
 
 /// Helper: for a non-blue, no-scan object src != dst_obj, its header is
 /// unchanged from the original heap (so is_no_scan, is_blue, wosize are same).
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let promote_object_frame_old_header
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr)
@@ -1221,7 +1221,7 @@ private let promote_object_frame_old_header
 
 /// Helper for new-object case: fields of the promoted object are non-pointer
 /// when the object is no_scan.
-#push-options "--z3rlimit 150 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 75 --fuel 0 --ifuel 0"
 private let promote_no_scan_new_object
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (field_idx: nat)
@@ -1359,7 +1359,7 @@ private let promote_no_scan_new_object
 
 /// Helper for old-object case: fields of pre-existing objects are non-pointer
 /// when the object is no_scan (frame lemma through promote_object).
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let promote_no_scan_old_object
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr) (field_idx: nat)
@@ -1462,7 +1462,7 @@ private let promote_no_scan_old_object
 #pop-options
 
 /// Main proof: promote_object preserves no_scan_invariant
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let promote_object_preserves_no_scan_invariant
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   : Lemma

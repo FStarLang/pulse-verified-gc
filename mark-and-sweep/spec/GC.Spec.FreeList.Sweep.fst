@@ -28,7 +28,7 @@ open GC.Spec.FreeList
 /// Every cell of the chain is blue, so a step that processes a non-blue object
 /// never writes a cell's link word: the only writes are to the object's own
 /// header and its own field 1, and the object is not a cell.
-#push-options "--z3rlimit 30 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 15 --fuel 2 --ifuel 1"
 let rec sweep_object_preserves_chain
   (g: heap) (obj: obj_addr) (fp: U64.t) (head: U64.t) (x: U64.t) (n: nat)
   : Lemma (requires well_formed_heap g /\ linkable_heap g /\
@@ -78,7 +78,7 @@ let sweep_object_preserves_reachable
 
 /// The white case: `obj` is freed, made blue, and pushed onto the head of the
 /// list with its link pointing at the old head.
-#push-options "--z3rlimit 75 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 37 --fuel 2 --ifuel 1"
 private let sweep_object_white_preserves_fl_exact
   (g: heap) (obj: obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\ linkable_heap g /\
@@ -135,7 +135,7 @@ private let sweep_object_white_preserves_fl_exact
 #pop-options
 
 /// The black case: `obj` is recycled to white; the list is untouched.
-#push-options "--z3rlimit 75 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 37 --fuel 2 --ifuel 1"
 private let sweep_object_black_preserves_fl_exact
   (g: heap) (obj: obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\ linkable_heap g /\
@@ -184,7 +184,7 @@ private let sweep_object_black_preserves_fl_exact
 #pop-options
 
 /// A sweep step preserves free-list exactness.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let sweep_object_preserves_fl_exact (g: heap) (obj: obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\ linkable_heap g /\
                     Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g /\
@@ -200,7 +200,7 @@ let sweep_object_preserves_fl_exact (g: heap) (obj: obj_addr) (fp: U64.t)
 /// Side conditions are preserved, so the induction goes through
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let sweep_object_preserves_linkable (g: heap) (obj: obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\ linkable_heap g /\
                     Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g)
@@ -218,7 +218,7 @@ let sweep_object_preserves_linkable (g: heap) (obj: obj_addr) (fp: U64.t)
 #pop-options
 
 /// The updated free pointer is still a heap object (or null).
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let sweep_object_preserves_fp_in_heap (g: heap) (obj: obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g)
           (ensures (let (g', fp') = sweep_object g obj fp in fp_in_heap fp' g'))
@@ -229,7 +229,7 @@ let sweep_object_preserves_fp_in_heap (g: heap) (obj: obj_addr) (fp: U64.t)
 /// The whole sweep phase preserves exactness
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_fl_exact
   (g: heap) (objs: seq obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\ linkable_heap g /\ fp_in_heap fp g /\
@@ -294,7 +294,7 @@ let sweep_establishes_fl_exact (g: heap)
 /// ---------------------------------------------------------------------------
 
 /// Membership introduction for `seq_filter` (the companion of `seq_filter_mem`).
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 private let rec seq_filter_mem_intro (#a: eqtype) (f: a -> GTot bool) (s: Seq.seq a) (x: a)
   : Lemma (requires Seq.mem x s /\ f x)
           (ensures Seq.mem x (seq_filter f s))
@@ -316,7 +316,7 @@ private let rec seq_filter_mem_intro (#a: eqtype) (f: a -> GTot bool) (s: Seq.se
 /// This is the reviewer's property in the repository's own vocabulary: the set
 /// of objects reachable along the free list coincides with the sequence of blue
 /// blocks of the heap, in both directions.
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 30"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 15"
 let fl_exact_blue_blocks (g: heap) (fp: U64.t)
   : Lemma (requires fl_exact g fp)
           (ensures forall (obj: obj_addr).

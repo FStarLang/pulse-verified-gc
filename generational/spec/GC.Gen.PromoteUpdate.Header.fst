@@ -24,7 +24,7 @@ open GC.Gen.PromoteUpdate.Aux
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
 
-#push-options "--z3rlimit 25 --fuel 1"
+#push-options "--z3rlimit 12 --fuel 1"
 let rec update_all_objects_aux_preserves_header
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat) (h: obj_addr)
   : Lemma (requires
@@ -93,7 +93,7 @@ let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (
 
 /// update_major_pointers preserves all fields of blue objects (since they are skipped).
 /// For non-blue objects that are processed: their body writes are separated from blue's fields.
-#push-options "--z3rlimit 25 --fuel 1"
+#push-options "--z3rlimit 12 --fuel 1"
 private let rec update_all_objects_aux_preserves_blue_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   (h: obj_addr) (j: nat)
@@ -209,7 +209,7 @@ let update_major_pointers_preserves_blue_field
   update_all_objects_aux_preserves_blue_field major (objects zero_addr major) fwd 0 h j
 
 /// update_major_pointers preserves well_formed_heap_part4 (no infix objects).
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
     (ensures well_formed_heap_part4 (update_major_pointers major fwd)) =
@@ -229,7 +229,7 @@ let update_major_pointers_preserves_wfh_part4 (major: heap) (fwd: forwarding_map
 
 /// update_major_pointers preserves well_formed_heap_part3 (infix well-formedness).
 /// Since part4 holds (no objects are infix), infix_wf is vacuously true.
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let update_major_pointers_preserves_wfh_part3 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\ well_formed_heap_part4 major)
     (ensures well_formed_heap_part3 (update_major_pointers major fwd)) =

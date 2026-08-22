@@ -38,7 +38,7 @@ let rec push_unvisited_successors (g: graph_state{graph_wf g}) (succs: vertex_li
       )
 
 /// Lemma: push_unvisited_successors preserves elements from input stack
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let rec push_unvisited_successors_preserves_stack (g: graph_state{graph_wf g}) (succs: vertex_list)
                                                    (visited: vertex_set) (stack: vertex_set)
   : Lemma (ensures (forall y. Seq.mem y stack ==> 
@@ -66,7 +66,7 @@ let rec push_unvisited_successors_preserves_stack (g: graph_state{graph_wf g}) (
 #pop-options
 
 /// Lemma: push_unvisited_successors preserves disjointness with visited
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let rec push_unvisited_successors_disjoint (g: graph_state{graph_wf g}) (succs: vertex_list)
                                             (visited: vertex_set) (stack: vertex_set)
   : Lemma (requires forall x. Seq.mem x visited ==> ~(Seq.mem x stack))
@@ -108,7 +108,7 @@ let rec push_unvisited_successors_disjoint (g: graph_state{graph_wf g}) (succs: 
 #pop-options
 
 /// Lemma: if y is in succs and y is not in visited, then y is in result
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let rec push_unvisited_successors_includes_new (g: graph_state{graph_wf g}) (succs: vertex_list)
                                                 (visited: vertex_set) (stack: vertex_set)
                                                 (y: vertex_id)
@@ -151,7 +151,7 @@ let rec push_unvisited_successors_includes_new (g: graph_state{graph_wf g}) (suc
 
 /// Lemma: if stack is a subset of vertices and all successors are in vertices,
 /// then push_unvisited_successors result is also a subset
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let rec push_unvisited_successors_subset (g: graph_state{graph_wf g}) (succs: vertex_list)
                                           (visited: vertex_set) (stack: vertex_set)
   : Lemma (requires subset_vertices stack g.vertices /\
@@ -198,7 +198,7 @@ let rec push_unvisited_successors_subset (g: graph_state{graph_wf g}) (succs: ve
 /// ---------------------------------------------------------------------------
 
 /// Helper lemma: successors are in graph if edge endpoints are in graph
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let rec successors_in_graph_aux (g: graph_state{graph_wf g}) (edges: edge_list) (v: vertex_id)
   : Lemma (requires (forall (e: edge). Seq.mem e edges ==> 
                        mem_graph_vertex g (fst e) /\ mem_graph_vertex g (snd e)))
@@ -227,7 +227,7 @@ let successors_in_graph (g: graph_state{graph_wf g}) (v: vertex_id)
 
 /// Single DFS step: pop from stack, add to visited, push successors
 /// Return type includes properties needed for termination
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let dfs_body (g: graph_state{graph_wf g}) 
              (stack: vertex_set{nonEmpty_set stack /\ subset_vertices stack g.vertices})
              (visited: vertex_set{subset_vertices visited g.vertices /\ 
@@ -277,7 +277,7 @@ let dfs_body (g: graph_state{graph_wf g})
 /// Lemma: dfs_body increases visited length by 1
 /// Lemma: dfs_body returns visited' = insert_to_vertex_set g (get_last_elem stack) visited
 /// Lemma: dfs_body maintains disjointness between stack and visited
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let dfs_body_disjoint (g: graph_state{graph_wf g})
                       (stack: vertex_set{nonEmpty_set stack /\ subset_vertices stack g.vertices})
                       (visited: vertex_set{subset_vertices visited g.vertices /\ 
@@ -288,7 +288,7 @@ let dfs_body_disjoint (g: graph_state{graph_wf g})
 #pop-options
 
 /// Lemma: dfs_body preserves subset_vertices property for stack
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let dfs_body_subset (g: graph_state{graph_wf g})
                     (stack: vertex_set{nonEmpty_set stack /\ subset_vertices stack g.vertices})
                     (visited: vertex_set{subset_vertices visited g.vertices /\ 
@@ -300,7 +300,7 @@ let dfs_body_subset (g: graph_state{graph_wf g})
 #pop-options
 
 /// Lemma: dfs_body preserves elements from get_first g stack
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 let dfs_body_stack_preserves (g: graph_state{graph_wf g})
                               (stack: vertex_set{nonEmpty_set stack /\ subset_vertices stack g.vertices})
                               (visited: vertex_set{subset_vertices visited g.vertices /\ 
@@ -314,7 +314,7 @@ let dfs_body_stack_preserves (g: graph_state{graph_wf g})
 #pop-options
 
 /// Lemma: successors of popped element end up in stack' if not in visited'
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 let dfs_body_successor_in_stack (g: graph_state{graph_wf g})
                                  (stack: vertex_set{nonEmpty_set stack /\ subset_vertices stack g.vertices})
                                  (visited: vertex_set{subset_vertices visited g.vertices /\ 
@@ -344,7 +344,7 @@ let dfs_body_successor_in_stack (g: graph_state{graph_wf g})
 
 /// DFS traversal with ghost spanning tree for provenance tracking
 /// The tree is erased in extraction - this IS the main DFS
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec dfs_aux (g: graph_state{graph_wf g})
                 (stack: vertex_set{subset_vertices stack g.vertices})
                 (visited: vertex_set{subset_vertices visited g.vertices /\
@@ -569,7 +569,7 @@ let dfs_inv (g: graph_state{graph_wf g}) (roots: vertex_set{subset_vertices root
 /// then y is also reachable from roots
 /// Helper lemma: push_unvisited_successors preserves reachability invariant
 /// This key lemma ensures that all elements pushed to the stack are reachable from roots
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec push_unvisited_successors_preserves_inv 
   (g: graph_state{graph_wf g}) 
   (x: vertex_id{mem_graph_vertex g x})
@@ -667,7 +667,7 @@ let rec push_unvisited_successors_preserves_inv
 #pop-options
 
 /// Strengthened DFS with invariant
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 12"
 let rec dfs_with_inv (g: graph_state{graph_wf g})
                      (roots: vertex_set{subset_vertices roots g.vertices})
                      (stack: vertex_set{subset_vertices stack g.vertices})
@@ -765,7 +765,7 @@ let rec dfs_with_inv (g: graph_state{graph_wf g})
 #pop-options
 
 /// Initial invariant: roots in stack, visited empty
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let dfs_initial_inv (g: graph_state{graph_wf g}) (roots: vertex_set{subset_vertices roots g.vertices})
   : Lemma (ensures dfs_inv g roots roots empty_set)
   = // All elements in roots are reachable from themselves
@@ -799,7 +799,7 @@ val dfs_lemma_forward : (g: graph_state{graph_wf g}) ->
                   (exists (r: vertex_id{mem_graph_vertex g r}). 
                      Seq.mem r roots /\ reachable g r x))
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 let dfs_lemma_forward g roots visited =
   // Establish initial invariant
   dfs_initial_inv g roots;
@@ -845,7 +845,7 @@ let dfs_successor_closed_from_empty (g: graph_state{graph_wf g})
     assert (Seq.mem y result)
 
 /// Helper: prove that elements initially in stack are eventually visited
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let rec dfs_stack_visited (g: graph_state{graph_wf g})
                           (stack: vertex_set{subset_vertices stack g.vertices})
                           (visited: vertex_set{subset_vertices visited g.vertices /\
@@ -895,7 +895,7 @@ let rec dfs_stack_visited (g: graph_state{graph_wf g})
 /// Combined with dfs_stack_visited, this means all successors end up in the final result.
 /// Main inductive proof: if r reaches x, then x is visited
 /// Proof by induction on the reach witness
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec dfs_reachable_visited (g: graph_state{graph_wf g})
                                (roots: vertex_set{subset_vertices roots g.vertices})
                                (r: vertex_id{mem_graph_vertex g r})
@@ -930,7 +930,7 @@ val dfs_lemma_backward : (g: graph_state{graph_wf g}) ->
                         (x: vertex_id{mem_graph_vertex g x}).
                    (Seq.mem r roots /\ reachable g r x) ==> Seq.mem x visited)
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 let dfs_lemma_backward g roots visited =
   // Use the inductive lemma
   let aux (r: vertex_id{mem_graph_vertex g r}) 

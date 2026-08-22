@@ -33,7 +33,7 @@ let represents_fwd_initial (farr: seq U64.t)
 /// Forwarding array update
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 
 let represents_fwd_update
   (farr: seq U64.t) (fwd: forwarding_map)
@@ -124,7 +124,7 @@ let not_minor_if_guards_fail (minor: minor_state) (addr: U64.t)
           (ensures ~(Seq.mem addr (minor_objects minor)))
   = FStar.Classical.move_requires (minor_objects_valid minor) addr
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 
 let not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf minor /\
@@ -184,7 +184,7 @@ let minor_read_eq_field (ms: minor_state) (obj: U64.t) (fi: nat)
 /// BFS invariant: strict room before enqueueing
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let cheney_bfs_inv_strict_room
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires SimOne.cheney_bfs_inv minor cs /\

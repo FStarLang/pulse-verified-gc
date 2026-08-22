@@ -44,7 +44,7 @@ open GC.Gen.MinorCollectForwarding.Helpers
 /// `U64.v mword = 8 <> 0`.  Trivial, but the well-typedness obligation for `%`
 /// diverges inside the large proof contexts below, so it is discharged once
 /// here and brought into scope by an explicit call.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let mword_nonzero () : Lemma (U64.v mword == 8 /\ U64.v mword <> 0) = ()
 #pop-options
 
@@ -225,7 +225,7 @@ let combined_reachable_images_valid_or_infix_from_slots
     remembered_roots_in_roots_from_slots major roots slots n;
     combined_reachable_images_valid_or_infix minor major fp roots
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let combined_reachable_major_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: obj_addr)
@@ -335,7 +335,7 @@ let combined_reachable_major_edge_forwarded
     HeapGraph.pointer_field_is_graph_edge updated (objects zero_addr updated) src j
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let combined_major_minor_field_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -402,7 +402,7 @@ let combined_major_minor_field_forwarded
     assert (read_word updated field_addr == prom.fwd_map dst)
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let combined_major_minor_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -458,7 +458,7 @@ let combined_major_minor_edge_forwarded
     heap_field_points_to_graph_edge updated src (prom.fwd_map dst) i
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let promoted_minor_major_field_preserved
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
@@ -509,7 +509,7 @@ let promoted_minor_major_field_preserved
     assert (res.mc_major == update_major_pointers prom.major_final prom.fwd_map)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let promoted_minor_major_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
@@ -566,7 +566,7 @@ let promoted_minor_major_edge_forwarded
     assert (mem_graph_edge_at (HeapModel.create_graph res.mc_major) (prom.fwd_map src) dst)
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let promoted_minor_minor_field_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)
@@ -619,7 +619,7 @@ let promoted_minor_minor_field_forwarded
     assert (res.mc_major == update_major_pointers prom.major_final prom.fwd_map)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let promoted_minor_minor_edge_forwarded
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src dst: U64.t) (j: nat)

@@ -72,7 +72,7 @@ let bounded_mark_inv_head_gray (g: heap) (st: seq obj_addr) (cap: nat)
 /// ---------------------------------------------------------------------------
 
 /// Step preserves full invariant (including density, objects non-empty)
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 let bounded_mark_inv_step_full (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires bounded_mark_inv g st cap)
           (ensures (let (g', st') = mark_step_bounded g st cap in

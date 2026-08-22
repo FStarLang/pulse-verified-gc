@@ -56,13 +56,13 @@ let is_val_addr_spec (a: U64.t)
 /// Address Arithmetic Lemmas (implementations)
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let mk_hp_addr a =
   assert (a < pow2 64);
   U64.uint_to_t a
 #pop-options
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let aligned_plus_mul8 base k =
   FStar.Math.Lemmas.lemma_mod_add_distr base (k * 8) 8;
   FStar.Math.Lemmas.multiple_modulo_lemma k 8

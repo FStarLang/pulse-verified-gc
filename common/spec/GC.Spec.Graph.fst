@@ -119,7 +119,7 @@ let mem_cons_lemma (#a: eqtype) (x: a) (hd: a) (tl: seq a)
   = FStar.Seq.Properties.lemma_mem_append (Seq.create 1 hd) tl
 
 /// Successor implies edge exists (auxiliary on edge list)
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec successors_mem_edge_aux (edges: edge_list) (v: vertex_id) (s: vertex_id)
   : Lemma (requires Seq.mem s (successors_aux edges v))
           (ensures Seq.mem (v, s) edges)
@@ -146,7 +146,7 @@ let successors_mem_edge g v s =
   successors_mem_edge_aux g.edges v s
 
 /// Edge implies successor (reverse direction)
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec edge_mem_successors_aux (edges: edge_list) (v: vertex_id) (s: vertex_id)
   : Lemma (requires Seq.mem (v, s) edges)
           (ensures Seq.mem s (successors_aux edges v))
@@ -301,7 +301,7 @@ let slice_mem_prefix (#a: eqtype) (s: seq a) (n: nat{n <= Seq.length s}) (x: a)
 
 /// Slice of vertex set is vertex set (prefix case)
 /// This requires complex reasoning about sequences and no-duplicates property
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec is_vertex_set_slice_prefix (s: vertex_list) (n: nat)
   : Lemma (requires is_vertex_set s /\ n <= Seq.length s)
           (ensures is_vertex_set (Seq.slice s 0 n))
@@ -371,7 +371,7 @@ let get_first_mem_lemma (s: vertex_set{Seq.length s > 0})  (y: vertex_id)
   = slice_mem_prefix s (Seq.length s - 1) y
 
 /// Helper: vertex_set has no duplicate at different indices
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec vertex_set_no_dup_index_aux (s: vertex_set) (i: nat) (j: nat)
   : Lemma (requires i < Seq.length s /\ j < Seq.length s /\ i <> j /\ 
                      Seq.index s i = Seq.index s j)
@@ -408,7 +408,7 @@ let rec vertex_set_no_dup_index_aux (s: vertex_set) (i: nat) (j: nat)
 #pop-options
 
 /// Element in prefix not equal to last
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let slice_neq_last (s: vertex_set{Seq.length s > 0}) (x: vertex_id)
   : Lemma (requires Seq.mem x (Seq.slice s 0 (Seq.length s - 1)))
           (ensures x <> get_last_elem s)
@@ -434,7 +434,7 @@ let slice_neq_last (s: vertex_set{Seq.length s > 0}) (x: vertex_id)
 /// Helper: element in s (except last) is in prefix slice
 /// Proof: s == prefix ++ suffix where suffix is just the last element
 /// If y in s and y <> last, then y must be in prefix
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let mem_except_last_in_prefix (s: vertex_set{Seq.length s > 0}) (y: vertex_id)
   : Lemma (requires Seq.mem y s /\ y <> get_last_elem s)
           (ensures Seq.mem y (Seq.slice s 0 (Seq.length s - 1)))
@@ -452,7 +452,7 @@ let mem_except_last_in_prefix (s: vertex_set{Seq.length s > 0}) (y: vertex_id)
 #pop-options
 
 /// Get all but the last element (stack pop operation)
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 let get_first (g: graph_state) (s: vertex_set{Seq.length s > 0 /\ subset_vertices s g.vertices})
   : Tot (r: vertex_set{Seq.length r + 1 = Seq.length s /\ 
                         subset_vertices r g.vertices /\
@@ -555,7 +555,7 @@ let subset_vertices_remove_lemma (s1: vertex_set) (s2: vertex_set) (x: vertex_id
     FStar.Classical.forall_intro aux
 
 /// If s1 ⊆ s2 and both are vertex_sets (no duplicates), then |s1| <= |s2|
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec subset_vertices_length_lemma (s1: vertex_set) (s2: vertex_set)
   : Lemma (requires subset_vertices s1 s2)
           (ensures Seq.length s1 <= Seq.length s2)

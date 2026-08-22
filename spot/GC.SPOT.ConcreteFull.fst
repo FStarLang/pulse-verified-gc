@@ -355,7 +355,7 @@ let spot_concrete_a_prime_final_survives
   assert (exists (a_prime: obj_addr).
     a_prime == img /\ Seq.mem a_prime (SpecFields.objects zero_addr final_major))
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let post_minor_c_wosize
   (r: unit{ConcreteMajor.spot_major_room})
   : Lemma
@@ -425,7 +425,7 @@ let c_field1_get_field
   assert (raw_slot == slot)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let post_roots_shape
   (r: unit{ConcreteMajor.spot_major_room})
   (roots_out: seq U64.t) (st: seq obj_addr) (cap: nat)

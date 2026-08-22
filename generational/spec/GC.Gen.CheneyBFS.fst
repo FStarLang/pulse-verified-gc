@@ -23,7 +23,7 @@ module SimOne = GC.Gen.Cheney.SimOne
 /// Uses the reachability induction principle: any predicate that holds for
 /// roots and is closed under successors holds for all reachable objects.
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 
 let fwd_well_formed_covers_reachable
   (minor: minor_state) (fwd: forwarding_map) (roots: seq U64.t)
@@ -60,7 +60,7 @@ let fwd_well_formed_covers_reachable
 /// fwd monotonicity: forward_one only extends the forwarding map
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 
 /// Helper: cheney_forward_normal preserves forwarding entries
 private let cheney_forward_normal_fwd_monotone
@@ -106,7 +106,7 @@ let forward_one_fwd_monotone
 
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 
 let rec forward_fields_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state)
@@ -165,7 +165,7 @@ let scan_preserves_fwd_covers_roots
 
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let forward_one_queue_prefix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) (k: nat)
   : Lemma (requires k < Seq.length cs.cs_queue)
@@ -235,7 +235,7 @@ let addr_covered (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t
   Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0 ==>
   cs.cs_fwd addr <> 0UL
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let addr_covered_intro
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
   : Lemma (requires (Seq.mem addr (minor_objects minor) /\
@@ -267,7 +267,7 @@ let root_prefix_covered
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat) : prop =
   forall (j:nat). j < idx /\ j < Seq.length roots ==> addr_covered minor cs (Seq.index roots j)
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let root_prefix_empty (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t)
   : Lemma (ensures root_prefix_covered minor cs roots 0)
   = reveal_opaque (`%root_prefix_covered) (root_prefix_covered minor cs roots 0)
@@ -348,7 +348,7 @@ let field_prefix_covered
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) : prop =
   forall (j:nat). j < idx ==> addr_covered minor cs (to_minor_offset (minor_read_field minor parent j))
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
 let field_prefix_empty (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
   : Lemma (ensures field_prefix_covered minor cs parent 0)
   = reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs parent 0)
@@ -433,7 +433,7 @@ let scanned_prefix_closed
     Seq.mem y (minor_successors minor (Seq.index cs.cs_queue k)) /\
     minor_wosize minor y > 0 ==> cs.cs_fwd y <> 0UL
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let scanned_prefix_empty
   (minor: minor_state) (cs: CheneySpec.cheney_state)
   : Lemma (ensures scanned_prefix_closed minor cs 0)

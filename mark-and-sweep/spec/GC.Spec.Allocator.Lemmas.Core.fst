@@ -22,8 +22,8 @@ open GC.Spec.Allocator.Lemmas.Common
 module AllocChain = GC.Spec.Allocator.Lemmas.Chain
 open GC.Spec.Allocator.Lemmas.Chain
 
-/// Module-level default: all functions get z3rlimit 20 unless overridden
-#push-options "--z3rlimit 20 --z3refresh"
+/// Module-level default: all functions get z3rlimit 10 unless overridden
+#push-options "--z3rlimit 10 --z3refresh"
 
 /// Sections 1-4 moved to GC.Spec.Allocator.Lemmas.Header
 /// Sections 5-7 moved to GC.Spec.Allocator.Lemmas.Split
@@ -55,7 +55,7 @@ let fl_chain_terminates_valid_zero = AllocChain.fl_chain_terminates_valid_zero
 
 #restart-solver
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec alloc_search_preserves_objects_part1
   (g: heap) (head_fp prev_fp cur_fp: U64.t) (wz: nat) (fuel: nat)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -179,7 +179,7 @@ open GC.Spec.Mark
 /// The color bits of make_header faithfully store the given color value
 #restart-solver
 
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let make_header_getColor (wz: U64.t{U64.v wz < pow2 54})
                                   (c: U64.t{U64.v c < 4})
                                   (t: U64.t{U64.v t < 256})

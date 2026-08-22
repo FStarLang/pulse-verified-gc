@@ -32,7 +32,7 @@ module WriteBody = GC.Gen.WriteBodyLemmas
 /// `if i < wosize then wosize - i else 0` decreases, but Z3 4.15.3 does not
 /// finish that arithmetic inside the Cheney preservation contexts, so the fact
 /// is carried in this helper's result type instead.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let dec_field_idx (i: nat) (wosize: nat{i < wosize})
   : (j: nat{j == i + 1 /\
             (if j < wosize then wosize - j else 0) <<
@@ -44,7 +44,7 @@ private let dec_field_idx (i: nat) (wosize: nat{i < wosize})
 /// does not reliably bridge a boolean guard such as `fuel = 0` back to
 /// arithmetic inside the Cheney preservation contexts; branching on this
 /// instead makes both branches propositional.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let fuel_is_zero (fuel: nat)
   : (r: bool{(r ==> fuel == 0) /\
              (not r ==> fuel >= 1 /\ (fuel - 1) >= 0 /\ (fuel - 1) << fuel)})
@@ -53,14 +53,14 @@ private let fuel_is_zero (fuel: nat)
 
 /// Fuel step for the `cheney_scan` recursions; same rationale as
 /// `dec_field_idx`.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let dec_fuel (fuel: nat{fuel >= 1}) : (r: nat{r == fuel - 1 /\ r << fuel})
   = fuel - 1
 #pop-options
 
 /// Root-index step for the `cheney_forward_roots` recursions; same rationale as
 /// `dec_field_idx`.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let dec_root_idx (ridx: nat) (n: nat{ridx < n})
   : (j: nat{j == ridx + 1 /\
             (if j < n then n - j else 0) << (if ridx < n then n - ridx else 0)})
@@ -82,7 +82,7 @@ private let infix_addr_ge_parent (minor: minor_state) (addr: U64.t)
 
 /// `n < 256 ==> n < pow2 64`.  Proved in an empty context: the `pow2`
 /// comparison diverges under the enclosing Cheney-state hypotheses.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 private let lt1_eq0 (n: nat) : Lemma (requires n < 1) (ensures n = 0) = ()
 
 private let lt256_lt_pow2_64 (n: nat) : Lemma (requires n < 256) (ensures n < pow2 64)
@@ -132,7 +132,7 @@ let fwd_target_fields_match_state_elim (minor: minor_state) (cs: cheney_state)
   =
   assert (fwd_target_field_match minor cs x j field_addr)
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let fwd_target_fields_match_initial (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma
     (ensures fwd_target_fields_match_state minor
@@ -177,7 +177,7 @@ let fwd_target_fields_match_initial (minor: minor_state) (major: heap) (fp: U64.
       aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_normal_preserves_fwd_target_fields_match_state
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -282,7 +282,7 @@ let cheney_forward_normal_preserves_fwd_target_fields_match_state
       aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_one_preserves_fwd_target_fields_match_state
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -357,7 +357,7 @@ let cheney_forward_one_preserves_fwd_target_fields_match_state
   end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 0"
 let rec cheney_forward_fields_preserves_fwd_target_fields_match_state
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma
@@ -387,7 +387,7 @@ let rec cheney_forward_fields_preserves_fwd_target_fields_match_state
   end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 0"
 let rec cheney_forward_roots_preserves_fwd_target_fields_match_state
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   : Lemma
@@ -416,7 +416,7 @@ let rec cheney_forward_roots_preserves_fwd_target_fields_match_state
   end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let rec cheney_scan_preserves_fwd_target_fields_match_state
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma
@@ -453,7 +453,7 @@ let rec cheney_scan_preserves_fwd_target_fields_match_state
   end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_target_fields_match
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)
@@ -516,7 +516,7 @@ let fwd_target_not_no_scan_match (minor: minor_state) (cs: cheney_state)
 let fwd_target_not_no_scan_state (minor: minor_state) (cs: cheney_state) : prop =
   forall (x: U64.t). fwd_target_not_no_scan_match minor cs x
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let fwd_target_not_no_scan_state_elim
   (minor: minor_state) (cs: cheney_state) (x: U64.t)
   : Lemma
@@ -568,7 +568,7 @@ let fwd_state_extend_infix
   in
   Classical.forall_intro (Classical.move_requires aux)
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma
     (ensures fwd_target_not_no_scan_state minor
@@ -594,7 +594,7 @@ let fwd_target_not_no_scan_initial (minor: minor_state) (major: heap) (fp: U64.t
   Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -699,7 +699,7 @@ let cheney_forward_normal_preserves_fwd_target_not_no_scan_state
   Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_one_preserves_fwd_target_not_no_scan_state
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -755,7 +755,7 @@ let cheney_forward_one_preserves_fwd_target_not_no_scan_state
   end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 0"
 let rec cheney_forward_fields_preserves_fwd_target_not_no_scan_state
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma
@@ -902,7 +902,7 @@ let rec cheney_scan_preserves_fwd_target_not_no_scan_state
   end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_target_not_no_scan_of_minor_tag_lt
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
@@ -999,7 +999,7 @@ let fwd_target_extra_fields_state_elim
   =
   assert (fwd_target_extra_field_not_pointer minor cs x j field_addr)
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let fwd_target_extra_fields_initial (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma
     (ensures fwd_target_extra_fields_state minor
@@ -1050,7 +1050,7 @@ let fwd_target_extra_fields_initial (minor: minor_state) (major: heap) (fp: U64.
       aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_normal_preserves_fwd_target_extra_fields_state
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -1166,7 +1166,7 @@ let cheney_forward_normal_preserves_fwd_target_extra_fields_state
       aux)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let cheney_forward_one_preserves_fwd_target_extra_fields_state
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -1247,7 +1247,7 @@ let cheney_forward_one_preserves_fwd_target_extra_fields_state
   end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 0"
 let rec cheney_forward_fields_preserves_fwd_target_extra_fields_state
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma
@@ -1277,7 +1277,7 @@ let rec cheney_forward_fields_preserves_fwd_target_extra_fields_state
   end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 0"
 let rec cheney_forward_roots_preserves_fwd_target_extra_fields_state
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   : Lemma
@@ -1306,7 +1306,7 @@ let rec cheney_forward_roots_preserves_fwd_target_extra_fields_state
   end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let rec cheney_scan_preserves_fwd_target_extra_fields_state
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma
@@ -1342,7 +1342,7 @@ let rec cheney_scan_preserves_fwd_target_extra_fields_state
     assert False
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_target_extra_field_not_pointer
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t) (j: nat)

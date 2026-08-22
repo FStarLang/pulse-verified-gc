@@ -12,7 +12,7 @@ module GC.Impl.Sweep
 
 #lang-pulse
 
-#set-options "--z3rlimit 25"
+#set-options "--z3rlimit 12"
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -57,7 +57,7 @@ fn write_freelist_link (heap: heap_t) (h_addr: hp_addr) (wz: wosize) (fp: U64.t)
   }
 }
 
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_white_field_write (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -101,7 +101,7 @@ fn sweep_white_field_write (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v 
 }
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_write_blue_hdr (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize)
   requires is_heap heap 's1 **
            pure (Seq.length 's1 == heap_size /\
@@ -123,7 +123,7 @@ fn sweep_write_blue_hdr (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mwo
 }
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_white_blue_mark (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize)
   requires is_heap heap 's1 **
            pure (Seq.length 's1 == heap_size /\
@@ -173,7 +173,7 @@ fn sweep_white_blue_mark (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mw
 }
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize) (fp: U64.t)
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
@@ -229,7 +229,7 @@ fn sweep_white_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   }
 }
 #pop-options
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 /// Helper: write a white header for the black->white sweep case
 fn sweep_write_white_hdr (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize)
   requires is_heap heap 's **
@@ -252,7 +252,7 @@ fn sweep_write_white_hdr (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mw
 }
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize) (fp: U64.t)
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
@@ -306,7 +306,7 @@ fn sweep_black_spec (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
   fp
 }
 #pop-options
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1"
 fn sweep_white_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize) (fp: U64.t)
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
@@ -341,7 +341,7 @@ fn sweep_white_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
 #pop-options
 
 /// Helper: handle black case only 
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_black_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize) (fp: U64.t)
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
@@ -377,7 +377,7 @@ fn sweep_black_case (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword <
 #pop-options
 
 /// Sweep one object: dispatch by color
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1"
 fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size}) (wz: wosize) (fp: U64.t)
   requires is_heap heap 's **
            pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size /\
@@ -433,7 +433,7 @@ fn sweep_object (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < hea
   }
 }
 #pop-options
-#push-options "--z3rlimit 25"
+#push-options "--z3rlimit 12"
 fn next_object (h_addr: hp_addr) (wz: wosize)
   requires pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size)
   returns addr: U64.t
@@ -455,7 +455,7 @@ fn next_object (h_addr: hp_addr) (wz: wosize)
 
 /// Read the object header and extract wosize, establishing spec-level connection.
 /// Factored out to isolate spec_read_word_eq from sweep_loop_body's combined VC.
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_read_wz (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -474,7 +474,7 @@ fn sweep_read_wz (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < he
 
 /// Loop body: dispatch sweep_object, advance, maintain invariants
 /// No spec_read_word in this fn — wosize comes from sweep_read_wz
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_init: Ghost.erased heap_state)
   requires pts_to current 'v0 ** pts_to free_ptr 'fv0 ** is_heap heap 's **
            with_pure (U64.v 'v0 % 8 == 0 /\
@@ -591,7 +591,7 @@ fn sweep_loop_body (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t) (g_
 #pop-options
 
 /// Inner sweep loop
-#push-options "--z3rlimit 25 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
   requires pts_to current 'v0 ** pts_to free_ptr 'fv0 ** is_heap heap 's **
            pure (U64.v 'v0 % 8 == 0 /\
@@ -659,7 +659,7 @@ fn sweep_loop (heap: heap_t) (current: ref U64.t) (free_ptr: ref U64.t)
 /// Sweep all objects in heap, building free list
 /// fp: initial free pointer (0UL for null/empty free list)
 /// Precondition: well_formed_heap ensures each object fits in heap
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1 --z3refresh"
 fn sweep (heap: heap_t) (fp: U64.t)
   requires is_heap heap 's ** pure (SpecFields.well_formed_heap 's /\
                                     Seq.length (SpecFields.objects zero_addr 's) > 0 /\

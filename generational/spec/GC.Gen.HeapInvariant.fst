@@ -242,7 +242,7 @@ let collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
 /// Minor reset shape
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 private let minor_reset_guards_complete (minor: minor_state)
   : Lemma (ensures minor_guards_complete (minor_reset minor))
   =

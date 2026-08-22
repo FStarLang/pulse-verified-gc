@@ -77,7 +77,7 @@ val remembered_targets_in_roots_intro_by_slots:
          is_minor_pointer v ==> Seq.mem v roots)))
     (ensures remembered_targets_in_roots major roots slots n)
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 /// Root validity needed to make the target be all concrete post-reachable
 /// vertices: a minor-shaped root must be a real live minor object, while a
 /// non-minor root must be an allocated major object.

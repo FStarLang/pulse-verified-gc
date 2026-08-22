@@ -48,7 +48,7 @@ let rec remembered_slot_targets_from
       if is_minor_pointer v then Seq.cons v rest else rest
     else rest
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 private let rec remembered_slot_targets_from_mem
   (major: heap) (slots: seq U64.t) (n idx: nat) (i: nat)
   : Lemma
@@ -82,7 +82,7 @@ private let rec remembered_slot_targets_from_mem
   end
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 private let rec remembered_slot_targets_from_all_in_roots
   (major: heap)
   (roots slots: seq U64.t)
@@ -146,7 +146,7 @@ let remembered_targets_in_roots_intro_by_slots major roots slots n
   remembered_slot_targets_from_all_in_roots major roots slots n 0
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (w: U64.t)
@@ -178,7 +178,7 @@ let post_minor_reachable_refl_from_root
       (fun x -> FStar.Classical.move_requires proof x)
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 1"
 let remembered_roots_in_roots_from_slots
   (major: heap) (roots slots: seq U64.t) (n: nat)
   : Lemma
@@ -232,7 +232,7 @@ let remembered_roots_in_roots_from_slots
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let update_preserves_major_target_field
   (major: heap) (fwd: forwarding_map) (src dst: obj_addr) (j: nat)
   : Lemma
@@ -261,7 +261,7 @@ let update_preserves_major_target_field
     assert (~(is_minor_pointer old_val /\ fwd old_val <> 0UL))
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let heap_field_points_to_graph_edge
   (g: heap) (src: obj_addr) (dst: U64.t) (j: nat)
   : Lemma
@@ -293,7 +293,7 @@ let heap_field_points_to_graph_edge
     HeapGraph.pointer_field_is_graph_edge g (objects zero_addr g) src field_index
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 15 --fuel 1 --ifuel 1"
 private let rec make_edges_mem_inv
   (src dst h: vertex_id) (succs: seq vertex_id)
   : Lemma
@@ -454,7 +454,7 @@ let heap_graph_edge_to_pointer_field
     end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let heap_graph_edge_to_field_read
   (g: heap) (src dst: obj_addr)
   : Lemma
@@ -519,7 +519,7 @@ let heap_graph_edge_to_field_read
       goal)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1"
 private let rec coerce_vertex_mem_is_obj_addr
   (objs: seq obj_addr) (w: vertex_id)
   : Lemma
@@ -569,7 +569,7 @@ let mem_graph_vertex_at_is_obj_addr
       (fun x -> FStar.Classical.move_requires proof x)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let cheney_promote_preserves_old_major_field_context
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
@@ -606,7 +606,7 @@ let cheney_promote_preserves_old_major_field_context
     is_no_scan_spec src prom.major_final
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let header_eq_preserves_wosize_no_scan
   (g1 g2: heap) (src: obj_addr)
   : Lemma

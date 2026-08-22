@@ -153,7 +153,7 @@ let mark_step_bounded_preserves_get_field
 /// Part 3: mark_step_bounded preserves tri_color_invariant
 /// =========================================================================
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let mark_step_bounded_preserves_tri_color g st cap =
   mark_step_bounded_heap_eq g st st cap;
   let obj = Seq.head st in
@@ -349,7 +349,7 @@ let mark_step_bounded_no_new_blue
       push_children_no_new_blue g1 (Seq.tail st) obj 1UL ws x
     end
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let mark_step_bounded_preserves_no_pointer_to_blue
   (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
@@ -384,7 +384,7 @@ let mark_step_bounded_preserves_no_pointer_to_blue
 /// Part 5: mark_step_bounded preserves mark_color_inv
 /// =========================================================================
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let mark_step_bounded_preserves_color_inv
   (h_init: heap) (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma (requires mark_color_inv h_init g /\ bounded_stack_props g st)
@@ -446,7 +446,7 @@ let mark_step_bounded_preserves_color_inv
 /// Part 6: mark_inner_loop preserves mark_color_inv
 /// =========================================================================
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let rec mark_inner_loop_preserves_color_inv
   (h_init: heap) (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
   : Lemma (requires mark_color_inv h_init g /\ bounded_stack_props g st)
@@ -493,7 +493,7 @@ let rec mark_bounded_preserves_color_inv
 
 // val now in .fsti
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let mark_step_bounded_gray_becomes_black g st cap x =
   mark_step_bounded_heap_eq g st st cap;
   let obj = Seq.head st in
@@ -605,7 +605,7 @@ let noGreyObjects_from_no_gray (g: heap)
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 /// Forward: reachable objects are black after mark_bounded completes
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 let mark_bounded_reachable_is_black
   (h_init: heap) (roots: seq obj_addr) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma
@@ -678,7 +678,7 @@ val mark_step_bounded_black_origin :
                   is_black x (fst (mark_step_bounded g st cap)) /\ ~(is_black x g))
         (ensures x == Seq.head st)
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let mark_step_bounded_black_origin g st cap x =
   mark_step_bounded_heap_eq g st st cap;
   let obj = Seq.head st in
@@ -724,7 +724,7 @@ val push_children_bounded_stack_reachable :
                         Seq.mem y (reachable_set graph roots')))
     (decreases (U64.v ws - U64.v i))
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec push_children_bounded_stack_reachable g st obj i ws cap graph roots' =
   if U64.v i > U64.v ws then ()
   else begin
@@ -798,7 +798,7 @@ val push_children_newly_gray_is_child :
     (ensures mem_graph_edge (create_graph g) obj x)
     (decreases (U64.v ws - U64.v i))
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec push_children_newly_gray_is_child g st obj i ws x =
   if U64.v i > U64.v ws then begin
     is_gray_iff x g; is_white_iff x g;
@@ -932,7 +932,7 @@ val mark_inner_loop_gray_or_black_backward :
                         Seq.mem x (reachable_set graph roots'))))
     (decreases fuel)
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots' =
   if fuel = 0 || Seq.length st = 0 then ()
   else begin
@@ -1002,7 +1002,7 @@ let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots'
 #pop-options
 
 /// Backward for mark_inner_loop (black only)
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 val mark_inner_loop_backward_inv :
   (h_init: heap) -> (g: heap) -> (st: seq obj_addr) -> (cap: nat) -> (fuel: nat) ->
   (graph: graph_state) -> (roots': vertex_set) ->
@@ -1071,7 +1071,7 @@ let rec mark_inner_loop_backward_inv h_init g st cap fuel graph roots' =
 #pop-options
 
 /// rescan_heap output stack elements are reachable
-#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 1"
 let rec rescan_heap_stack_reachable
   (g: heap) (objs: seq obj_addr) (st: seq obj_addr) (cap: nat)
   (graph: graph_state{graph_wf graph}) (roots': vertex_set{subset_vertices roots' graph.vertices})
@@ -1111,7 +1111,7 @@ let rec rescan_heap_stack_reachable
 #pop-options
 
 /// Full backward for mark_bounded
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 val mark_bounded_backward_inv :
   (h_init: heap) -> (g: heap) -> (cap: nat{cap > 0}) -> (fuel: nat) ->
   (graph: graph_state) -> (roots': vertex_set) ->
@@ -1153,7 +1153,7 @@ let rec mark_bounded_backward_inv h_init g cap fuel graph roots' =
 #pop-options
 
 /// Backward: black after mark_bounded implies reachable
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 let mark_bounded_black_is_reachable
   (h_init: heap) (roots: seq obj_addr) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma
@@ -1212,7 +1212,7 @@ let mark_color_inv_init (h_init: heap)
 
 /// Helper: mark_color_inv preserves no_scan_invariant.
 /// Factored as top-level to get its own SMT query (avoids "incomplete quantifiers").
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let mark_color_inv_preserves_no_scan_aux (h_init h_mark: heap) (src: obj_addr) (idx: nat)
   : Lemma
     (requires
@@ -1247,7 +1247,7 @@ let mark_color_inv_preserves_no_scan_aux (h_init h_mark: heap) (src: obj_addr) (
     no_scan_invariant_elim h_init src idx
 #pop-options
 
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let mark_color_inv_preserves_no_scan (h_init h_mark: heap)
   : Lemma
     (requires mark_color_inv h_init h_mark /\ no_scan_invariant h_init)
@@ -1276,7 +1276,7 @@ let mark_color_inv_preserves_no_scan (h_init h_mark: heap)
 /// Requires one additional precondition vs mark_satisfies_mark_post:
 ///   gray_iff_root — initially, the only gray/black objects are the roots.
 /// This is naturally satisfied when roots are made gray from an all-white heap.
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let mark_bounded_satisfies_mark_post
   (h_init: heap) (roots: seq obj_addr) (fp: U64.t)
   (cap: nat{cap > 0}) (fuel: nat)
@@ -1322,7 +1322,7 @@ let mark_bounded_satisfies_mark_post
 /// ---------------------------------------------------------------------------
 
 /// Initially, gray_black_reachable holds when gray/black objects are exactly roots
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let gray_black_reachable_init
   (h_init: heap) (roots: seq obj_addr)
   : Lemma
@@ -1355,7 +1355,7 @@ let gray_stays_init (h: heap)
   = ()
 
 /// Bridge: bounded_stack_props + gray_black_reachable → stack_elems_reachable
-#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let stack_reachable_from_bsp_gbr
   (h_init: heap) (g: heap) (st: seq obj_addr) (roots: seq obj_addr)
   : Lemma
@@ -1390,7 +1390,7 @@ let stack_elems_reachable_empty (h_init: heap) (roots: seq obj_addr)
 /// ---------------------------------------------------------------------------
 
 /// mark_step_bounded preserves gray_black_reachable AND stack reachability
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let mark_step_bounded_preserves_gbr
   (h_init: heap) (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   (roots: seq obj_addr)
@@ -1473,7 +1473,7 @@ let mark_step_bounded_preserves_gbr
 #pop-options
 
 /// mark_step_bounded preserves gray_stays
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let mark_step_bounded_preserves_gray_stays
   (h_init: heap) (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
   : Lemma
@@ -1499,7 +1499,7 @@ let mark_step_bounded_preserves_gray_stays
 /// ---------------------------------------------------------------------------
 
 /// Assemble mark_post from bounded mark invariants
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let mark_post_from_bounded_mark
   (h_init: heap) (h_mark: heap) (roots: seq obj_addr) (fp: U64.t)
   : Lemma

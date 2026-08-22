@@ -142,7 +142,7 @@ let objects_dense_step (start: hp_addr) (g: heap)
                     Seq.length (objects (U64.uint_to_t next) g) > 0))
   = ()
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 let objects_dense_obj_in (start: hp_addr) (g: heap)
   : Lemma (requires heap_objects_dense g /\
                     U64.v start + 8 < heap_size /\
@@ -169,7 +169,7 @@ let objects_dense_obj_in (start: hp_addr) (g: heap)
 /// The key insight: objects is defined by getWosize(read_word), so equal wosizes
 /// mean objects start g2 == objects start g1 for all start. Combined with
 /// objects zero_addr equality (for global membership), density transfers directly.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec objects_eq_from_wosize (start: hp_addr) (g1 g2: heap)
   : Lemma (requires Seq.length g1 == Seq.length g2 /\
                     (forall (p: hp_addr). getWosize (read_word g2 p) == getWosize (read_word g1 p)))
@@ -219,7 +219,7 @@ let heap_objects_dense_transfer (g1 g2: heap)
 /// Color change preserves density.
 /// set_object_color writes colorHeader at hd_address obj. getWosize is invariant
 /// under colorHeader, and read_word is unchanged at all other positions.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
 let color_change_preserves_density (obj: obj_addr) (g: heap) (c: color)
   : Lemma (requires heap_objects_dense g)
           (ensures heap_objects_dense (set_object_color obj g c))
@@ -239,7 +239,7 @@ let color_change_preserves_density (obj: obj_addr) (g: heap) (c: color)
 
 /// Walk reconstruction: if f_address h ∈ objects zero_addr g and wfh g, then objects h g > 0
 /// Proof: wfh gives object fits → objects h g is cons oa (...) → length > 0
-#push-options "--z3rlimit 30 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 15 --fuel 2 --ifuel 1"
 let member_implies_objects_nonempty (h: hp_addr{U64.v h + 8 < heap_size}) (g: heap)
   : Lemma (requires well_formed_heap g /\
                     Seq.mem (f_address h) (objects zero_addr g))
@@ -404,7 +404,7 @@ let no_gray_objects (g: heap) : prop =
 
 module SpecHeap = GC.Spec.Heap
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let no_gray_at_preserved (obj: obj_addr) (g_init g_cur: heap)
   : Lemma (requires no_gray_objects g_init /\
                     Seq.mem obj (objects zero_addr g_init) /\
