@@ -28,12 +28,19 @@ QUAL_LINE = re.compile(
     r"|total|noeq|unopteq)\s*$")
 EMPTY_OPTS = re.compile(r"^#push-options")
 QUALS = r"(?:private\s+|irreducible\s+|unfold\s+|inline_for_extraction\s+|noextract\s+|assume\s+|\[@@[^\]]*\]\s*)*"
+# Pulse introduces its own definition forms.  They are ordinary top-level
+# definitions as far as the dependence graph is concerned, but they are spelled
+# `fn` / `ghost fn` / `atomic fn` / `unobservable fn` rather than `let`, so a
+# `let|val|type`-only header regex silently refuses to delete any of them --
+# which leaves a pruned module referring to helpers that are already gone.
+PULSE_KW = r"(?:(?:ghost|atomic|unobservable)\s+)?fn"
 # `let x : squash p = ...` is a *fact*, not a callee: nothing ever names it,
 # but its type sits in the SMT context of every later proof in the module.
 FACT = re.compile(QUALS + r"(?:val|let)\s+[A-Za-z0-9_\x27]+\s*:\s*squash\b")
 TOP = re.compile(
     r"^(///|\(\*|\[@@"
     r"|(?:val|let|rec|and|type|open|module|include|friend|instance|effect|new_effect"
+    r"|fn|ghost|atomic|unobservable"
     r"|assume|private|irreducible|unfold|inline_for_extraction|noextract|abstract"
     r"|total|noeq|unopteq|sub_effect|layered_effect|polymonadic_bind|exception"
     r"|splice|option)(?:\s|$)"
@@ -47,7 +54,8 @@ NOT_IDENT = r"(?![A-Za-z0-9_\x27])"
 
 def header_re(name):
     return re.compile(
-        QUALS + r"(?:val|let|type)(?:\s+rec)?\s+" + re.escape(name) + NOT_IDENT)
+        QUALS + r"(?:val|let|type|" + PULSE_KW + r")(?:\s+rec)?\s+"
+        + re.escape(name) + NOT_IDENT)
 
 
 def and_re(name):

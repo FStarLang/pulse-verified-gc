@@ -51,7 +51,7 @@ jobs:
 
       - name: Check snapshots are up to date
         run: |
-          if ! git diff --quiet -- mark-and-sweep/snapshot/ generational/snapshot/; then
+          if ! git diff --quiet -- generational/snapshot/; then
             echo "::warning::Snapshots are out of date. Regenerate and commit them."
-            git diff --stat -- mark-and-sweep/snapshot/ generational/snapshot/
+            git diff --stat -- generational/snapshot/
           fi

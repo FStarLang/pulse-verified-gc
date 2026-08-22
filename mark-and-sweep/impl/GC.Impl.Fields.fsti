@@ -62,16 +62,6 @@ fn read_field (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
           pure (U64.v i >= 1 /\
                 spec_field_address (U64.v h_addr) (U64.v i) + 8 <= Seq.length 's /\
                 v == spec_read_word 's (spec_field_address (U64.v h_addr) (U64.v i)))
-
-/// Read successor pointer at field i
-fn read_succ (heap: heap_t) (h_addr: hp_addr) (i: U64.t)
-  requires is_heap heap 's **
-           pure (U64.v i >= 1 /\
-                 U64.v i <= pow2 54 - 1 /\
-                 spec_field_address (U64.v h_addr) (U64.v i) + 8 <= heap_size)
-  returns succ: U64.t
-  ensures is_heap heap 's
-
 /// Check if a value is a valid heap pointer
 fn is_pointer (v: U64.t)
   requires emp
@@ -79,15 +69,3 @@ fn is_pointer (v: U64.t)
   ensures emp ** pure (b <==> (U64.v v >= U64.v zero_addr + U64.v mword /\
                                U64.v v < heap_size /\
                                U64.v v % U64.v mword == 0))
-
-/// Check if an address contains a valid object header
-fn is_valid_header (heap: heap_t) (h_addr: hp_addr)
-  requires is_heap heap 's
-  returns b: bool
-  ensures is_heap heap 's
-
-/// Compute address of next object given current object's header address
-fn next_object_addr (heap: heap_t) (h_addr: hp_addr)
-  requires is_heap heap 's
-  returns addr: U64.t
-  ensures is_heap heap 's

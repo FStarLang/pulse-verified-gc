@@ -93,20 +93,6 @@ let obj_not_in_cons (obj child: obj_addr) (st: seq obj_addr)
 /// ---------------------------------------------------------------------------
 /// Stack Length Bound
 /// ---------------------------------------------------------------------------
-
-/// No-dup sequence has count <= 1 for every element
-let rec no_dup_count_le_1 (st: seq obj_addr)
-  : Lemma (requires stack_no_dups st)
-          (ensures forall (x: obj_addr). Seq.count x st <= 1)
-          (decreases Seq.length st)
-  = if Seq.length st = 0 then ()
-    else begin
-      no_dup_count_le_1 (Seq.tail st);
-      // head case: ~(mem hd tl) => count hd tl = 0, so count hd st = 1
-      // non-head case: count x st = count x tl <= 1 by IH
-      ()
-    end
-
 /// stack_elements_valid implies subset of objects
 let rec sev_mem_objects (g: heap) (st: seq obj_addr) (x: obj_addr)
   : Lemma (requires stack_elements_valid g st /\ Seq.mem x st)
@@ -118,52 +104,6 @@ let rec sev_mem_objects (g: heap) (st: seq obj_addr) (x: obj_addr)
 
 /// General helper: if count x s1 <= count x s2 for all x, then length s1 <= length s2.
 /// Proof: induction on s1. Pop head, find it in s2, remove from s2, apply IH.
-#push-options "--fuel 2 --ifuel 0 --z3rlimit 10"
-let rec count_le_length_le (#a: eqtype) (s1 s2: seq a)
-  : Lemma (requires (forall x. Seq.count x s1 <= Seq.count x s2))
-          (ensures Seq.length s1 <= Seq.length s2)
-          (decreases Seq.length s1)
-  = if Seq.length s1 = 0 then ()
-    else begin
-      let hd = Seq.head s1 in
-      let tl = Seq.tail s1 in
-      // hd is in s1, so count hd s1 >= 1, so count hd s2 >= 1
-      assert (Seq.count hd s2 > 0);
-      // Find index of hd in s2
-      let i = Seq.index_mem hd s2 in
-      let pfx = Seq.slice s2 0 i in
-      let sfx = Seq.slice s2 (i + 1) (Seq.length s2) in
-      let s2' = Seq.append pfx sfx in
-      // Key fact: s2 == append pfx (cons hd sfx)
-      assert (Seq.equal s2 (Seq.append pfx (Seq.cons hd sfx)));
-      // Prove count x tl <= count x s2' for all x
-      let aux (x: a) : Lemma (Seq.count x tl <= Seq.count x s2') =
-        Seq.lemma_append_count_aux x pfx (Seq.cons hd sfx);
-        Seq.lemma_append_count_aux x pfx sfx
-      in
-      FStar.Classical.forall_intro aux;
-      // Apply IH to tl and s2'
-      count_le_length_le tl s2'
-    end
-#pop-options
-
-/// Stack length is bounded by number of objects
-let stack_length_bound (g: heap) (st: seq obj_addr)
-  : Lemma (requires stack_elements_valid g st /\ stack_no_dups st)
-          (ensures Seq.length st <= Seq.length (objects zero_addr g))
-  = no_dup_count_le_1 st;
-    let aux (x: obj_addr) : Lemma (Seq.count x st <= Seq.count x (objects zero_addr g)) =
-      if Seq.count x st = 0 then ()
-      else begin
-        assert (Seq.mem x st);
-        sev_mem_objects g st x
-        // mem x (objects zero_addr g) => count x (objects zero_addr g) >= 1 >= count x st
-      end
-    in
-    FStar.Classical.forall_intro aux;
-    count_le_length_le st (objects zero_addr g)
-
-
 /// ---------------------------------------------------------------------------
 /// Root Properties
 /// ---------------------------------------------------------------------------
@@ -171,29 +111,6 @@ let stack_length_bound (g: heap) (st: seq obj_addr)
 /// ---------------------------------------------------------------------------
 /// Mark Step: Process One Gray Object
 /// ---------------------------------------------------------------------------
-
-/// push_children only grows the stack (or leaves it unchanged)
-let rec push_children_stack_monotone (g: heap) (st: seq obj_addr) (obj: obj_addr)
-                                     (i: U64.t{U64.v i >= 1}) (ws: U64.t)
-  : Lemma (ensures Seq.length st <= Seq.length (snd (push_children g st obj i ws)))
-          (decreases (U64.v ws - U64.v i))
-  = if U64.v i > U64.v ws then ()
-    else begin
-      let v = HeapGraph.get_field g obj i in
-      let (g', st') =
-        if HeapGraph.is_pointer_field v then begin
-          HeapGraph.is_pointer_field_is_obj_addr v;
-          let child_raw : obj_addr = v in
-          let child = resolve_object child_raw g in
-          if is_white child g then (makeGray child g, Seq.cons child st)
-          else (g, st)
-        end else (g, st)
-      in
-      if U64.v i < U64.v ws then
-        push_children_stack_monotone g' st' obj (U64.add i 1UL) ws
-      else ()
-    end
-
 /// Pillar 1: Mark Preserves Well-Formedness
 /// ---------------------------------------------------------------------------
 
@@ -407,18 +324,6 @@ let rec push_children_preserves_stack_props g st obj i ws
     end
   end
 #pop-options
-
-/// Unfold what mark_step computes
-let mark_step_unfold (g: heap{well_formed_heap g}) (st: seq obj_addr{Seq.length st > 0})
-  : Lemma (requires stack_elements_valid g st)
-          (ensures (let obj = Seq.head st in
-           let st' = Seq.tail st in
-           let g' = makeBlack obj g in
-           let ws = wosize_of_object obj g in
-           (if is_no_scan obj g then mark_step g st == (g', st')
-            else mark_step g st == push_children g' st' obj 1UL ws)))
-  = ()
-
 /// mark_step preserves stack_props
 #push-options "--z3rlimit 200"
 let mark_step_preserves_stack_props g st =
@@ -605,23 +510,6 @@ let mark_step_preserves_wf g st =
   else
     push_children_preserves_wf g' (Seq.tail st) obj 1UL ws
 #pop-options
-
-/// mark_aux unfolds one step: mark_aux g st (fuel+1) == mark_aux g' st' fuel
-/// where (g', st') = mark_step g st, when st is nonempty
-let mark_aux_unfold (g: heap) (st: seq obj_addr) (fuel: nat)
-  : Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length st > 0)
-          (ensures (let (g', st') = mark_step g st in
-                    well_formed_heap g' /\ stack_props g' st' /\
-                    mark_aux g st (fuel + 1) == mark_aux g' st' fuel))
-  = mark_step_preserves_stack_props g st;
-    mark_step_preserves_wf g st
-
-/// mark_aux on empty stack is identity
-let mark_aux_empty (g: heap) (st: seq obj_addr) (fuel: nat)
-  : Lemma (requires Seq.length st = 0)
-          (ensures mark_aux g st fuel == g)
-  = ()
-
 /// ---------------------------------------------------------------------------
 /// Mark Phase Invariants
 /// ---------------------------------------------------------------------------
@@ -681,17 +569,6 @@ let no_pointer_to_blue_intro_from_fields
   in
   Classical.forall_intro_2 (Classical.move_requires_2 aux)
 #pop-options
-
-/// Fuel must be positive when stack is non-empty and mark_aux converges
-let mark_aux_fuel_pos (g: heap) (st: seq obj_addr) (fuel: nat)
-  : Lemma (requires stack_props g st /\ Seq.length st > 0 /\
-                    noGreyObjects (mark_aux g st fuel))
-          (ensures fuel > 0)
-  = if fuel = 0 then begin
-      stack_head_is_gray g st;
-      assert (not (is_gray (Seq.head st) g))
-    end
-
 /// ---------------------------------------------------------------------------
 /// Ghost State for Mark Termination
 /// ---------------------------------------------------------------------------
@@ -1673,25 +1550,6 @@ let rec push_children_preserves_objects g st obj i ws
 #pop-options
 
 /// mark_step preserves objects enumeration (only does color changes)
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-let mark_step_preserves_objects g st =
-  let obj = Seq.head st in
-  stack_head_is_gray g st;
-  makeBlack_eq obj g;
-  color_change_preserves_objects g obj Header.Black;
-  let g' = makeBlack obj g in
-  color_change_preserves_objects_mem g obj Header.Black obj;
-  let ws = wosize_of_object obj g in
-  wosize_of_object_bound obj g;
-  set_object_color_preserves_getWosize_at_hd obj g Header.Black;
-  wosize_of_object_spec obj g; wosize_of_object_spec obj g';
-  assert (wosize_of_object obj g' == wosize_of_object obj g);
-  color_change_preserves_wf g obj Header.Black;
-  if is_no_scan obj g then ()
-  else
-    push_children_preserves_objects g' (Seq.tail st) obj 1UL ws
-#pop-options
-
 /// push_children preserves heap_objects_dense (each makeGray is a color change)
 val push_children_preserves_density : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
   (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->

@@ -65,10 +65,6 @@ val zero_addr_above_2048 (_:unit) : Lemma (U64.v zero_addr >= 2048)
 /// Object address: hp_addr with room for header before it (>= 8)
 /// Used for all operations that access object headers via hd_address
 type obj_addr = a:hp_addr{U64.v a >= U64.v mword}
-
-/// Alias for backward compatibility
-let val_addr = obj_addr
-
 /// ---------------------------------------------------------------------------
 /// Address Predicates
 /// ---------------------------------------------------------------------------

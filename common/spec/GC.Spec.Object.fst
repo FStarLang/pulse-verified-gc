@@ -464,9 +464,6 @@ let makeBlack_spec (obj: obj_addr) (g: heap)
 let makeGray_spec (obj: obj_addr) (g: heap)
   : Lemma (makeGray obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Gray)) = ()
 
-let makeBlue_spec (obj: obj_addr) (g: heap)
-  : Lemma (makeBlue obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Blue)) = ()
-
 /// ---------------------------------------------------------------------------
 /// Pointer Field Predicates
 /// ---------------------------------------------------------------------------

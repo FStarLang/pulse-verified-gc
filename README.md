@@ -23,7 +23,7 @@ bundled toolchain code and archived attempts, the active F*/Pulse tree contains
 | Area | Path | Status |
 | --- | --- | --- |
 | Shared model and Pulse infrastructure | `common/` | OCaml headers, heap words, object layout, field traversal, graph/reachability, and shared Pulse heap/stack predicates. |
-| Major collector and allocator | `mark-and-sweep/` | Verified free-list allocator, bounded-stack mark phase, sweep/coalescing, extraction rules, and snapshot C output. |
+| Major collector and allocator | `mark-and-sweep/` | Verified free-list allocator, bounded-stack mark phase, and sweep/coalescing. Extracted as part of the generational snapshot, which runs this code for its major collections. |
 | Generational collector | `generational/` | Verified minor heap, promotion, forwarding, remembered-slot/root rewriting, Cheney BFS, and composed `gen_gc`. |
 | SPOT contract audits | `spot/` | Concrete three-object scenario calls the real `minor_collect_full` and `gen_gc` entry points and proves client-visible consequences. |
 | OCaml integration | `generational/ocaml-integration/` | Extracted verified GC bridge for OCaml 4.14 bytecode, smoke tests, timing benchmarks, GC/RSS stats CSVs, heap calibration, and refreshed results. |
@@ -98,7 +98,7 @@ root/gray-stack protocol, verified boundary, and benchmark interpretation.
 | `mark-and-sweep/` | Major-heap allocator and bounded-stack stop-the-world collector. |
 | `generational/` | Minor heap, copying collection, promotion, forwarding maps, remembered slots, combined generational GC, extraction, and OCaml integration. |
 | `spot/` | Small proof-oriented tests that audit whether the exported collector contracts are usable from concrete client scenarios. |
-| `generational/snapshot/` and `mark-and-sweep/snapshot/` | Checked-in extracted C snapshots. |
+| `generational/snapshot/` | The checked-in extracted C. This is the single extraction target. |
 | `research/docs/` and older planning files | Historical notes; prefer `DESIGN_AND_IMPL.md` for the current architecture. |
 
 ## References

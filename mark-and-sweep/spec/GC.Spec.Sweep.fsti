@@ -104,40 +104,9 @@ val sweep_object_preserves_wf : (g: heap) -> (obj: obj_addr) -> (fp: U64.t) ->
                   fp_in_heap fp g)
         (ensures well_formed_heap (fst (sweep_object g obj fp)))
 
-val sweep_object_preserves_objects_suffix : (h_addr: hp_addr) -> (g: heap) -> (fp: U64.t) ->
-  Lemma (requires well_formed_heap g /\
-                  Seq.length (objects h_addr g) > 0 /\
-                  Seq.mem (f_address h_addr) (objects zero_addr g))
-        (ensures (let obj = f_address h_addr in
-                  let wz = getWosize (read_word g h_addr) in
-                  let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
-                  next_nat <= heap_size /\
-                  (next_nat < heap_size ==>
-                    (let next : hp_addr = U64.uint_to_t next_nat in
-                     objects next (fst (sweep_object g obj fp)) == objects next g))))
-
 /// ---------------------------------------------------------------------------
 /// Sweep Aux Lemmas
 /// ---------------------------------------------------------------------------
-
-val sweep_aux_empty : (g: heap) -> (fp: U64.t) ->
-  Lemma (sweep_aux g Seq.empty fp == (g, fp))
-
-val sweep_aux_objects_step : (h_addr: hp_addr) -> (g: heap) -> (fp: U64.t) ->
-  Lemma (requires well_formed_heap g /\
-                  Seq.length (objects h_addr g) > 0 /\
-                  Seq.mem (f_address h_addr) (objects zero_addr g) /\
-                  U64.v h_addr + 8 < heap_size)
-        (ensures (let obj = f_address h_addr in
-                  let wz = getWosize (read_word g h_addr) in
-                  let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
-                  let (g', fp') = sweep_object g obj fp in
-                  next_nat <= heap_size /\
-                  (next_nat < heap_size ==>
-                    (let next : hp_addr = U64.uint_to_t next_nat in
-                     sweep_aux g (objects h_addr g) fp ==
-                     sweep_aux g' (objects next g') fp')) /\
-                  (next_nat >= heap_size ==> sweep_aux g (objects h_addr g) fp == (g', fp'))))
 
 val sweep_aux_non_member_color : (g: heap) -> (objs: seq obj_addr) -> (fp: U64.t) -> (x: obj_addr) ->
   Lemma (requires ~(Seq.mem x objs) /\

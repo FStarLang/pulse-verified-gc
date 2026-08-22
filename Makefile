@@ -9,7 +9,7 @@
 #   make common         Verify common/ only
 #   make mark-and-sweep Verify mark-and-sweep/ + common/
 #   make generational   Verify generational/ + mark-and-sweep/ + common/
-#   make extract        Verify + extract both GCs to C
+#   make extract        Verify + extract the generational GC to C
 #   make clean          Clean all build artifacts
 
 FSTAR_HOME ?= $(CURDIR)/fstar
@@ -271,24 +271,19 @@ $(filter-out $(GEN_ROOT_CHECKED) $(EAGER_QI_CHECKED),$(GEN_IMPL_CHECKED)): \
 $(filter $(GEN_IMPL_CHECKED),$(EAGER_QI_CHECKED)): \
   private EXTRA_FLAGS = --z3rlimit 160 $(EAGER_QI)
 
-# --- Extraction (mark-and-sweep) --------------------------------------------
+# --- Extraction --------------------------------------------------------------
+#
+# One collector is extracted: the generational one, into generational/snapshot.
+# Its major collections run the mark-and-sweep code verbatim, so every C
+# function the mark-and-sweep directory could emit is already in that snapshot;
+# a second bundle would only be a second thing to keep in sync.
 
 $(OUTPUT_DIR):
 	@mkdir -p $@
 
-MS_EXTRACT_DIR = mark-and-sweep/_extract
+.PHONY: extract
 
-$(MS_EXTRACT_DIR):
-	@mkdir -p $@
-
-.PHONY: extract-mark-and-sweep extract-generational extract
-
-extract: extract-mark-and-sweep extract-generational
-
-extract-mark-and-sweep: mark-and-sweep
-	+$(MAKE) -C mark-and-sweep extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
-
-extract-generational: generational
+extract: generational
 	+$(MAKE) -C generational extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
 
 # --- Dependence graph / unused-definition report -----------------------------
@@ -297,8 +292,8 @@ extract-generational: generational
 # directly -- no re-verification -- and emits an offline HTML dependence viewer
 # plus a report of definitions that are unreachable from the roots.
 #
-# Roots are the two things we actually want to keep: the **interface** that is
-# extracted to C, and the **top-level correctness theorems**.  Anything not
+# Roots are the two things we actually want to keep: the **interface** of the
+# single extraction bundle, and the **top-level correctness theorems**.  Anything not
 # reachable from those is dead weight.  SPOT scenario modules are added as roots
 # too (DEPGRAPH_SPOT_ROOTS) because they are part of the repo's build; drop them
 # from the root set to see what only SPOT keeps alive.
@@ -323,11 +318,14 @@ DEPGRAPH_EXE       = $(DEPGRAPH_DIR)/_build/default/src/fstar_depgraph.exe
 DEPGRAPH_OUT      ?= _depgraph
 DEPGRAPH_OCAMLPATH ?= $(FSTAR_HOME)/lib
 
-# The interface: every module that is extracted to C.
+# The interface: the API surface of the one extraction bundle, i.e. exactly the
+# modules named on the left of `-bundle ...=` in generational/Makefile.  Modules
+# they call (GC.Impl.Heap, GC.Impl.Object, GC.Impl.Stack, GC.Impl.Fields,
+# GC.Impl.Coalesce, GC.Impl.FusedSweepCoalesce, ...) are reached transitively
+# and must NOT be listed here -- listing a module as a root asserts that we want
+# to keep it even if nothing calls it, which is how dead code survived before.
 DEPGRAPH_IFACE_ROOTS = \
-  GC.Impl GC.Impl.Allocator GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
-  GC.Impl.Coalesce GC.Impl.FusedSweepCoalesce GC.Impl.Fields GC.Impl.Closure \
-  GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
+  GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded \
   GC.Gen.Impl GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Impl.Promote
 
@@ -387,5 +385,5 @@ clean:
 	rm -f .depend .depend.raw
 	rm -rf $(OUTPUT_DIR) $(CACHE_DIR)
 	find common mark-and-sweep generational spot -name '*.checked' -delete 2>/dev/null || true
-	rm -rf mark-and-sweep/_output mark-and-sweep/_extract
+	rm -rf mark-and-sweep/_output
 	rm -rf generational/_output generational/_extract

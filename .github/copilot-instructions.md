@@ -14,9 +14,10 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
 - **mark-and-sweep/** — Sequential stop-the-world GC. `spec/` = `GC.Spec.Mark*`,
   `GC.Spec.Sweep*`, `GC.Spec.Coalesce`, `GC.Spec.SweepCoalesce.*`, the free-list
   `GC.Spec.Allocator*` family, and `GC.Spec.Correctness`. `impl/` = the Pulse
-  implementation (`GC.Impl`, `GC.Impl.Mark`, `GC.Impl.Sweep`, `GC.Impl.Allocator`,
-  `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`, `GC.Impl.Closure`).
-  Also has `ocaml-integration/` and a checked-in C `snapshot/`.
+  implementation (`GC.Impl`, `GC.Impl.MarkBounded`, `GC.Impl.Allocator`,
+  `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`).  It has no
+  extraction target of its own: the generational collector runs this code for its
+  major collections, so `generational/snapshot/` is the only checked-in C.
 - **generational/** — Minor/major generational GC with Cheney copying collection.
   `spec/` = `GC.Gen.Base`, `GC.Gen.MinorHeap`, `GC.Gen.Cheney*`,
   `GC.Gen.CheneyPreservation.*`, `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`,
@@ -453,7 +454,7 @@ Idioms used in this repository:
 | fuel-driven `while (!go)` | `Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0)` |
 
 For a heap walk the loop body must be shown to *strictly* advance the cursor.  Where the
-body is a separate `fn` (e.g. `GC.Impl.Sweep.sweep_loop_body`) the strict increase has to
+body is a separate `fn` (e.g. `GC.Impl.FusedSweepCoalesce.fused_step`) the strict increase has to
 be added to that function's postcondition (`U64.v v1 > U64.v 'v0`).
 
 **Worklist loops with no concrete counter** (the bounded mark loops in
@@ -478,7 +479,7 @@ nothing happened yet").
 Several loops carry a counter called *fuel*. These are two different things and should
 not be conflated:
 
-* **Proof-only fuel** — `GC.Impl.Mark.mark_loop`. The loop guard is `!go` (the gray
+* **Proof-only fuel** — `GC.Impl.MarkBounded.mark_loop_bounded`. The loop guard is `!go` (the gray
   stack is empty); the fuel is never consulted at runtime. It exists only to index the
   fuel-recursive spec `GC.Spec.Mark.mark_aux` and to serve as the `decreases` measure.
   Exhaustion is *proved impossible*: `mark_aux_fuel_pos` derives `fv > 0` whenever the

@@ -20,11 +20,6 @@ let obj_in_objects (obj: U64.t) (g: heap) : prop =
 let fp_valid (fp: U64.t) (g: heap) : prop =
   is_pointer_field fp ==> obj_in_objects fp g
 
-let sweep_post (g_pre g_post: heap) (new_fp: U64.t) : prop =
-  well_formed_heap g_post /\
-  objects zero_addr g_post == objects zero_addr g_pre /\
-  fp_valid new_fp g_post
-
 let obj_in_objects_intro (obj: obj_addr) (g: heap)
   : Lemma (requires Seq.mem obj (objects zero_addr g))
           (ensures obj_in_objects obj g)
@@ -59,33 +54,9 @@ let fp_valid_elim (fp: U64.t) (g: heap)
                      Seq.mem (fp <: obj_addr) (objects zero_addr g)))
   = if is_pointer_field fp then obj_in_objects_elim fp g
 
-let sweep_post_intro (g_pre: heap) (g_post: heap) (new_fp: U64.t)
-  : Lemma (requires well_formed_heap g_post /\
-                    objects zero_addr g_post == objects zero_addr g_pre /\
-                    fp_valid new_fp g_post)
-          (ensures sweep_post g_pre g_post new_fp)
-  = ()
-
-let sweep_post_elim_wfh (g_pre: heap) (g_post: heap) (new_fp: U64.t)
-  : Lemma (requires sweep_post g_pre g_post new_fp)
-          (ensures well_formed_heap g_post) = ()
-
-let sweep_post_elim_objects (g_pre: heap) (g_post: heap) (new_fp: U64.t)
-  : Lemma (requires sweep_post g_pre g_post new_fp)
-          (ensures objects zero_addr g_post == objects zero_addr g_pre) = ()
-
-let sweep_post_elim_fp (g_pre: heap) (g_post: heap) (new_fp: U64.t)
-  : Lemma (requires sweep_post g_pre g_post new_fp)
-          (ensures fp_valid new_fp g_post) = ()
-
 let fp_valid_transfer (fp: U64.t) (g1: heap) (g2: heap)
   : Lemma (requires fp_valid fp g1 /\ objects zero_addr g2 == objects zero_addr g1)
           (ensures fp_valid fp g2)
-  = ()
-
-let obj_in_objects_transfer (obj: U64.t) (g1: heap) (g2: heap)
-  : Lemma (requires obj_in_objects obj g1 /\ objects zero_addr g2 == objects zero_addr g1)
-          (ensures obj_in_objects obj g2)
   = ()
 
 let obj_in_objects_head (g: heap)
@@ -263,141 +234,11 @@ let member_implies_objects_nonempty (h: hp_addr{U64.v h + 8 < heap_size}) (g: he
 /// Header preservation across sweep operations
 /// ---------------------------------------------------------------------------
 
-let headers_preserved_from (start: nat) (g_cur g_init: heap) : prop =
-  forall (p: hp_addr). U64.v p >= start ==> read_word g_cur p == read_word g_init p
-
-let headers_preserved_from_refl (start: nat) (g: heap)
-  : Lemma (ensures headers_preserved_from start g g) = ()
-
-let headers_preserved_from_elim (start: nat) (pos: hp_addr) (g_cur g_init: heap)
-  : Lemma (requires headers_preserved_from start g_cur g_init /\ U64.v pos >= start)
-          (ensures read_word g_cur pos == read_word g_init pos) = ()
-
-let headers_preserved_from_trans (start1 start2: nat) (g1 g2 g3: heap)
-  : Lemma (requires headers_preserved_from start1 g2 g1 /\
-                    headers_preserved_from start2 g3 g2 /\
-                    start2 >= start1)
-          (ensures headers_preserved_from start2 g3 g1) = ()
-
-let headers_preserved_from_write (start: nat) (g: heap) (addr: hp_addr) (v: U64.t)
-  : Lemma (requires U64.v addr + U64.v mword <= start)
-          (ensures headers_preserved_from start (write_word g addr v) g)
-  = let aux (p: hp_addr) : Lemma
-      (requires U64.v p >= start)
-      (ensures read_word (write_word g addr v) p == read_word g p)
-    = read_write_different g addr p v
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
 /// ---------------------------------------------------------------------------
 /// Whiteness tracking implementation
 /// ---------------------------------------------------------------------------
 
-let headers_preserved_before (limit: nat) (g_cur g_init: heap) : prop =
-  forall (p: hp_addr). U64.v p < limit ==> read_word g_cur p == read_word g_init p
-
-let headers_preserved_before_refl (limit: nat) (g: heap)
-  : Lemma (ensures headers_preserved_before limit g g) = ()
-
-let headers_preserved_before_write (limit: nat) (g: heap) (addr: hp_addr) (v: U64.t)
-  : Lemma (requires U64.v addr >= limit)
-          (ensures headers_preserved_before limit (write_word g addr v) g)
-  = let aux (p: hp_addr) : Lemma
-      (requires U64.v p < limit)
-      (ensures read_word (write_word g addr v) p == read_word g p)
-    = read_write_different g addr p v
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
-let headers_preserved_before_trans (limit: nat) (g1 g2 g3: heap)
-  : Lemma (requires headers_preserved_before limit g2 g1 /\ headers_preserved_before limit g3 g2)
-          (ensures headers_preserved_before limit g3 g1) = ()
-
-let objects_white_before (pos: nat) (g: heap) : prop =
-  forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==>
-    U64.v (hd_address x) < pos ==> (is_white x g \/ is_blue x g)
-
-let objects_white_before_zero (g: heap)
-  : Lemma (ensures objects_white_before (U64.v zero_addr) g)
-  = // All x in objects zero_addr g have U64.v x > U64.v zero_addr (from objects_addresses_gt_start).
-    // Since x is word-aligned and > zero_addr (also word-aligned), U64.v x >= U64.v zero_addr + 8.
-    // Therefore hd_address x = x - 8 >= U64.v zero_addr, so hd_address x < U64.v zero_addr is false.
-    // Hence the predicate is vacuously true.
-    let aux (x: obj_addr) : Lemma (requires Seq.mem x (objects zero_addr g))
-                                   (ensures U64.v (hd_address x) >= U64.v zero_addr) =
-      objects_addresses_gt_start zero_addr g x;
-      hd_address_spec x
-    in
-    Classical.forall_intro (Classical.move_requires aux)
-
-let objects_white_before_step (h_addr: hp_addr) (g_pre g_post: heap)
-  : Lemma (requires
-      objects_white_before (U64.v h_addr) g_pre /\
-      objects zero_addr g_post == objects zero_addr g_pre /\
-      well_formed_heap g_post /\
-      U64.v h_addr + 8 < heap_size /\
-      (is_white (f_address h_addr) g_post \/ is_blue (f_address h_addr) g_post) /\
-      headers_preserved_before (U64.v h_addr) g_post g_pre /\
-      getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
-      Seq.mem (f_address h_addr) (objects zero_addr g_post))
-    (ensures objects_white_before 
-      (U64.v h_addr + ((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
-  = let obj : obj_addr = f_address h_addr in
-    let wz = getWosize (read_word g_pre h_addr) in
-    let next = U64.v h_addr + ((U64.v wz + 1) * 8) in
-    GC.Spec.Heap.hd_address_spec obj;
-    f_address_spec h_addr;
-    assert (U64.v (hd_address obj) = U64.v h_addr);
-    let aux (x: obj_addr)
-      : Lemma (requires Seq.mem x (objects zero_addr g_post) /\ U64.v (hd_address x) < next)
-              (ensures is_white x g_post \/ is_blue x g_post)
-      = GC.Spec.Heap.hd_address_spec x;
-        if U64.v (hd_address x) < U64.v h_addr then begin
-          // Case 1: before h_addr — preservation from g_pre
-          assert (Seq.mem x (objects zero_addr g_pre));
-          assert (is_white x g_pre \/ is_blue x g_pre);
-          color_of_object_spec x g_pre;
-          color_of_object_spec x g_post;
-          is_white_iff x g_pre;
-          is_white_iff x g_post;
-          is_blue_iff x g_pre;
-          is_blue_iff x g_post;
-          ()
-        end
-        else if U64.v x = U64.v obj then begin
-          FStar.UInt64.v_inj x obj;
-          ()
-        end
-        else if U64.v x > U64.v obj then begin
-          assert (U64.v x > U64.v obj);
-          objects_separated zero_addr g_post obj x;
-          wosize_of_object_spec obj g_post;
-          assert (U64.v (hd_address obj) = U64.v h_addr);
-          assert (wosize_of_object obj g_post == wz);
-          assert (U64.v x > U64.v obj + (U64.v wz * 8));
-          assert (U64.v (hd_address x) = U64.v x - 8);
-          assert (U64.v (hd_address x) > U64.v h_addr + (U64.v wz * 8) - 8 + 8);
-          assert false
-        end
-        else begin
-          assert false
-        end
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
 module SpecHeapForExit = GC.Spec.Heap
-
-let objects_white_before_exit (pos: nat) (g: heap)
-  : Lemma (requires objects_white_before pos g /\ pos + 8 >= heap_size)
-          (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
-  = let aux (x: obj_addr)
-      : Lemma (requires Seq.mem x (objects zero_addr g))
-              (ensures is_white x g \/ is_blue x g)
-      = SpecHeapForExit.hd_address_bounds x;
-        assert (U64.v (hd_address x) + 8 < heap_size);
-        assert (U64.v (hd_address x) < pos)
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 
 let no_gray_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g)
@@ -405,14 +246,6 @@ let no_gray_objects (g: heap) : prop =
 module SpecHeap = GC.Spec.Heap
 
 #push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
-let no_gray_at_preserved (obj: obj_addr) (g_init g_cur: heap)
-  : Lemma (requires no_gray_objects g_init /\
-                    Seq.mem obj (objects zero_addr g_init) /\
-                    read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
-          (ensures ~(is_gray obj g_cur))
-  = SpecHeap.hd_address_spec obj;
-    color_of_header_eq obj g_cur g_init
-
 let no_gray_elim (obj: obj_addr) (g: heap)
   : Lemma (requires no_gray_objects g /\ Seq.mem obj (objects zero_addr g))
           (ensures ~(is_gray obj g))
@@ -423,13 +256,3 @@ let no_gray_intro (g: heap)
   : Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g))
           (ensures no_gray_objects g)
   = ()
-
-let set_object_color_headers_preserved_before (h_addr: hp_addr) (obj: obj_addr) (g: heap) (c: color)
-  : Lemma (requires hd_address obj == h_addr)
-          (ensures headers_preserved_before (U64.v h_addr) (set_object_color obj g c) g)
-  = let aux (p: hp_addr) : Lemma
-      (requires U64.v p < U64.v h_addr)
-      (ensures read_word (set_object_color obj g c) p == read_word g p)
-      = set_object_color_read_word obj p g c
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires aux)

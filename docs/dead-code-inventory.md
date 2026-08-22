@@ -2,10 +2,10 @@
 
 **Generated** by `make depgraph && make depgraph-inventory` — do not edit by hand.
 
-- Roots: `GC.Impl`, `GC.Impl.Allocator`, `GC.Impl.Mark`, `GC.Impl.MarkBounded`, `GC.Impl.Sweep`, `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`, `GC.Impl.Closure`, `GC.Impl.Heap`, `GC.Impl.Object`, `GC.Impl.Stack`, `GC.Gen.Impl`, `GC.Gen.Impl.Cheney`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Promote`, `GC.Spec.Correctness`, `GC.Spec.MarkBoundedCorrectness`, `GC.Gen.CheneyCorrectness`, `GC.Impl.MarkBoundedRootLemmas`, `GC.Spec.FreeList.Sweep`, `GC.SPOT.CallFull`, `GC.SPOT.CallMinor`, `GC.SPOT.ConcreteCallFull`, `GC.SPOT.ConcreteCallMinor`, `GC.SPOT.ConcreteForwarding`, `GC.SPOT.ConcreteFull`, `GC.SPOT.ConcreteMajor`, `GC.SPOT.ConcreteMinor`, `GC.SPOT.ConcreteScenarios`, `GC.SPOT.ConcreteSetup`, `GC.SPOT.Layout`, `GC.SPOT.Postconditions`, `GC.SPOT.Preconditions`, `GC.SPOT.ThreeObjects`
+- Roots: `GC.Impl`, `GC.Impl.Allocator`, `GC.Impl.MarkBounded`, `GC.Gen.Impl`, `GC.Gen.Impl.Cheney`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Promote`, `GC.Spec.Correctness`, `GC.Spec.MarkBoundedCorrectness`, `GC.Gen.CheneyCorrectness`, `GC.Impl.MarkBoundedRootLemmas`, `GC.Spec.FreeList.Sweep`, `GC.SPOT.CallFull`, `GC.SPOT.CallMinor`, `GC.SPOT.ConcreteCallFull`, `GC.SPOT.ConcreteCallMinor`, `GC.SPOT.ConcreteForwarding`, `GC.SPOT.ConcreteFull`, `GC.SPOT.ConcreteMajor`, `GC.SPOT.ConcreteMinor`, `GC.SPOT.ConcreteScenarios`, `GC.SPOT.ConcreteSetup`, `GC.SPOT.Layout`, `GC.SPOT.Postconditions`, `GC.SPOT.Preconditions`, `GC.SPOT.ThreeObjects`
 
-- 140 modules, 3103 definitions, 1132 module edges
-- **3 definitions (0%) are unreachable from the roots**
+- 137 modules, 2911 definitions, 1092 module edges
+- **4 definitions (0%) are unreachable from the roots**
 - 2 definitions are reachable only implicitly (SMT pattern / instance / axiom)
 
 ## Why this set is safe to delete
@@ -63,24 +63,25 @@ zero:
 - **A definition it cannot find by name** — reported so it can be handled by
   hand rather than silently skipped.
 
-### 2 partially-dead modules (3 definitions)
+### 3 partially-dead modules (4 definitions)
 
 | Module | Defs | Dead | % | Area |
 | --- | ---: | ---: | ---: | --- |
 | `GC.Gen.MinorHeap` | 83 | 2 | 2 | generational |
 | `GC.Gen.CombinedGraph` | 100 | 1 | 1 | generational |
+| `GC.Impl.Heap` | 25 | 1 | 4 | mark-and-sweep |
 
 ## Full inventory
 
-Every one of the 3 unreachable definitions, grouped by module.
+Every one of the 4 unreachable definitions, grouped by module.
 
 <details>
 <summary><code>GC.Gen.MinorHeap</code> — 2/83 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `minor_heap_size_bound` | let | `GC.Gen.MinorHeap.fsti:177:0` |
-| `minor_pow2_bound` | let | `GC.Gen.MinorHeap.fst:274:0` |
+| `minor_heap_size_bound` | let | `GC.Gen.MinorHeap.fsti:180:0` |
+| `minor_pow2_bound` | let | `GC.Gen.MinorHeap.fst:277:0` |
 
 </details>
 
@@ -89,7 +90,16 @@ Every one of the 3 unreachable definitions, grouped by module.
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `cv_eqtype` | let | `GC.Gen.CombinedGraph.fst:24:0` |
+| `cv_eqtype` | let | `GC.Gen.CombinedGraph.fst:27:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Impl.Heap</code> — 1/25 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `platform_fits_u64` | val | `GC.Impl.Heap.fst:40:7` |
 
 </details>
 

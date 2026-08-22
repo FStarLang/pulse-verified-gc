@@ -902,17 +902,6 @@ let rec objects_count_le_remaining (start: hp_addr) (g: heap)
       end
     end
 #pop-options
-
-/// Number of objects is bounded by heap size
-val object_count_bound : (g: heap) ->
-  Lemma (Seq.length (objects zero_addr g) <= Seq.length g / 8)
-
-let object_count_bound g = 
-  objects_count_le_remaining zero_addr g;
-  // We have: length (objects zero_addr g) * 8 <= length g - 0 = length g
-  // Therefore: length (objects zero_addr g) <= length g / 8
-  FStar.Math.Lemmas.lemma_div_le ((Seq.length (objects zero_addr g) * 8)) (Seq.length g) 8
-
 /// Helper: colors are exhaustive and mutually exclusive
 let colors_exhaustive_and_exclusive (h: obj_addr) (g: heap)
   : Lemma (

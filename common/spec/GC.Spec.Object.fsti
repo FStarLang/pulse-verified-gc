@@ -268,11 +268,6 @@ val makeBlack_spec : (obj: obj_addr) -> (g: heap) ->
 /// Expose makeGray as write_word + colorHeader (needed for Pulse bridge)
 val makeGray_spec : (obj: obj_addr) -> (g: heap) ->
   Lemma (makeGray obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Gray))
-
-/// Expose makeBlue as write_word + colorHeader (needed for Pulse bridge)
-val makeBlue_spec : (obj: obj_addr) -> (g: heap) ->
-  Lemma (makeBlue obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Blue))
-
 /// ---------------------------------------------------------------------------
 /// Object Enumeration
 /// ---------------------------------------------------------------------------

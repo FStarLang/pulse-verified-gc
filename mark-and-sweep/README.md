@@ -18,17 +18,21 @@ mark-and-sweep/
 │   ├── GC.Spec.Correctness.fst[i]   # END-TO-END THEOREM
 ├── impl/                             # Pulse implementation modules
 │   ├── GC.Impl.Fields.fst           # Field access, successors
-│   ├── GC.Impl.Closure.fst          # Closure/infix handling
-│   ├── GC.Impl.Mark.fst             # Mark phase implementation
+│   ├── GC.Impl.MarkBounded.fst      # Bounded-stack mark phase
 │   ├── GC.Impl.Sweep.Lemmas.fst[i]  # Sweep bridge lemmas
-│   ├── GC.Impl.Sweep.fst            # Sweep phase implementation
+│   ├── GC.Impl.FusedSweepCoalesce.fst  # Fused sweep + coalesce pass
+│   ├── GC.Impl.Allocator.fst        # Free-list allocator
 │   └── GC.Impl.fst                  # Top-level GC entry point
-├── snapshot/                         # Extracted C code (self-contained)
 ├── Makefile
 └── README.md
 ```
 
 Shared infrastructure (Heap, Object, Stack, Header, Graph, DFS, etc.) lives in `../common/`.
+
+There is no extraction target here.  The generational collector performs its major
+collections with exactly this code, so `make -C generational extract` already emits every
+C function this directory could produce; `generational/snapshot/` is the only
+checked-in C in the repository.
 
 ## Building
 
@@ -36,8 +40,6 @@ Shared infrastructure (Heap, Object, Stack, Header, Graph, DFS, etc.) lives in `
 make              # Verify all modules (spec + impl)
 make verify-spec  # Verify spec modules only
 make verify-impl  # Verify impl (Pulse) modules
-make extract      # Extract to C via KaRaMeL
-make snapshot     # Update snapshot/ with extracted C
 make clean
 ```
 
