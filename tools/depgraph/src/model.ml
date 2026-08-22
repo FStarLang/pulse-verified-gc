@@ -30,6 +30,8 @@ type def_rec = {
   mutable dr_reachable : bool;
   mutable dr_indeg     : int;          (* number of distinct syntactic callers *)
   mutable dr_hints     : string list;
+  (* The checked file has no body for this definition; see Analyze.r_opaque. *)
+  mutable dr_opaque    : bool;
 }
 
 type mod_rec = {
@@ -97,6 +99,7 @@ let add_entry (m : model) (mr : mod_rec) (order : int ref) (e : Analyze.raw_entr
       d.dr_quals <- List.sort_uniq compare (d.dr_quals @ e.Analyze.r_quals);
       d.dr_attrs <- List.sort_uniq compare (d.dr_attrs @ e.Analyze.r_attr_lids);
       d.dr_generated <- d.dr_generated || e.Analyze.r_generated;
+      d.dr_opaque <- d.dr_opaque || e.Analyze.r_opaque;
       (match e.Analyze.r_loc with
        | Some _ when is_iface_loc -> if d.dr_decl_loc = None then d.dr_decl_loc <- e.Analyze.r_loc
        | Some _ -> if d.dr_impl_loc = None then d.dr_impl_loc <- e.Analyze.r_loc
@@ -117,6 +120,7 @@ let add_entry (m : model) (mr : mod_rec) (order : int ref) (e : Analyze.raw_entr
                 dr_generated = e.Analyze.r_generated;
                 dr_attrs = e.Analyze.r_attr_lids;
                 dr_order = !order;
+                dr_opaque = e.Analyze.r_opaque;
                 dr_reachable = false;
                 dr_indeg = 0;
                 dr_hints = [] } in
@@ -186,6 +190,135 @@ let load_all (cfg : config) (ix : Analyze.index) : model =
   if not cfg.c_quiet then (Printf.eprintf "\r  loaded %d modules.        \n" !n; flush stderr);
   m.order := List.rev !(m.order);
   m
+
+(* ------------------------------------------------------------------ *)
+(* recovering references from definitions with no body                  *)
+(* ------------------------------------------------------------------ *)
+
+(* A language extension (Pulse) checks its own definitions and hands F* an
+   opaque stub: `Pulse.Main.check_fndefn` emits `mk_opaque_let ... (magic ())`
+   and stashes the real, elaborated term in `sigmeta_extension_data` as a
+   `Tm_lazy` blob holding an OCaml `st_term`.  The blob is not an F* term, so
+   the syntax visitor cannot see the fvars inside it, and every lemma invoked
+   from a Pulse `fn` body would look unreferenced.
+
+   For those definitions only, we fall back to reading the body out of the
+   source file and treating every identifier we find as a possible reference.
+   That over-approximates -- an identifier in a comment counts, and an
+   unqualified name matches every definition of that name in scope -- but it
+   errs towards keeping definitions alive, which is the safe direction for a
+   report whose purpose is to authorise deletions. *)
+
+let strip_comments (s : string) : string =
+  let n = String.length s in
+  let b = Bytes.of_string s in
+  let depth = ref 0 in
+  let i = ref 0 in
+  while !i < n do
+    if !depth = 0 && !i + 1 < n && s.[!i] = '/' && s.[!i + 1] = '/' then begin
+      while !i < n && s.[!i] <> '\n' do Bytes.set b !i ' '; incr i done
+    end else if !i + 1 < n && s.[!i] = '(' && s.[!i + 1] = '*' then begin
+      incr depth; Bytes.set b !i ' '; Bytes.set b (!i + 1) ' '; i := !i + 2
+    end else if !depth > 0 && !i + 1 < n && s.[!i] = '*' && s.[!i + 1] = ')' then begin
+      decr depth; Bytes.set b !i ' '; Bytes.set b (!i + 1) ' '; i := !i + 2
+    end else begin
+      if !depth > 0 && s.[!i] <> '\n' then Bytes.set b !i ' ';
+      incr i
+    end
+  done;
+  Bytes.to_string b
+
+let is_ident_char c =
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+  || c = '_' || c = '\''
+
+(* Every identifier in [s], keeping only the last segment of a dotted path:
+   `Defs.fused_aux` contributes `fused_aux`.  The qualifier is dropped because
+   resolving module abbreviations lexically is not worth the precision. *)
+let idents_of (s : string) : (string, unit) Hashtbl.t =
+  let acc = Hashtbl.create 64 in
+  let n = String.length s in
+  let i = ref 0 in
+  while !i < n do
+    if is_ident_char s.[!i] then begin
+      let j = ref !i in
+      while !j < n && (is_ident_char s.[!j] || (s.[!j] = '.' && !j + 1 < n && is_ident_char s.[!j + 1]))
+      do incr j done;
+      let tok = String.sub s !i (!j - !i) in
+      let last = match String.rindex_opt tok '.' with
+        | Some k -> String.sub tok (k + 1) (String.length tok - k - 1)
+        | None -> tok
+      in
+      if String.length last > 1 && not (Hashtbl.mem acc last) then Hashtbl.add acc last ();
+      i := !j
+    end else incr i
+  done;
+  acc
+
+let read_lines (path : string) : string array option =
+  match open_in_bin path with
+  | exception _ -> None
+  | ic ->
+    let n = in_channel_length ic in
+    let s = really_input_string ic n in
+    close_in ic;
+    Some (Array.of_list (String.split_on_char '\n' s))
+
+(* Returns the number of definitions whose references were recovered. *)
+let recover_opaque_bodies (m : model) : int =
+  (* short name -> lids, so an identifier can be resolved to candidates *)
+  let by_short : (string, string list) Hashtbl.t = Hashtbl.create 8192 in
+  Hashtbl.iter (fun lid _ ->
+    let n = short_name lid in
+    Hashtbl.replace by_short n (lid :: (try Hashtbl.find by_short n with Not_found -> [])))
+    m.defs;
+  let recovered = ref 0 in
+  Hashtbl.iter (fun _ (mr : mod_rec) ->
+    let opaque =
+      List.filter_map (fun lid ->
+        match Hashtbl.find_opt m.defs lid with
+        | Some d when d.dr_opaque && d.dr_impl_loc <> None -> Some d
+        | _ -> None) mr.mr_defs
+    in
+    if opaque <> [] then begin
+      (* Only definitions from this module or one of its recorded dependences
+         are candidates, which keeps the over-approximation local. *)
+      let in_scope = Hashtbl.create 64 in
+      Hashtbl.replace in_scope mr.mr_lname ();
+      List.iter (fun d -> Hashtbl.replace in_scope d ()) mr.mr_decl_deps;
+      match mr.mr_impl_src with
+      | None -> ()
+      | Some path ->
+        match read_lines path with
+        | None -> ()
+        | Some lines ->
+          List.iter (fun (d : def_rec) ->
+            match d.dr_impl_loc with
+            | None -> ()
+            | Some l ->
+              let lo = max 1 l.l_line and hi = min (Array.length lines) l.l_end_line in
+              if hi >= lo then begin
+                let buf = Buffer.create 4096 in
+                for k = lo - 1 to hi - 1 do
+                  Buffer.add_string buf lines.(k); Buffer.add_char buf '\n'
+                done;
+                let toks = idents_of (strip_comments (Buffer.contents buf)) in
+                incr recovered;
+                Hashtbl.iter (fun tok () ->
+                  match Hashtbl.find_opt by_short tok with
+                  | None -> ()
+                  | Some cands ->
+                    List.iter (fun cand ->
+                      if cand <> d.dr_lid
+                         && Hashtbl.mem in_scope (lc (module_of_lid cand))
+                         && not (Hashtbl.mem d.dr_refs cand)
+                      then Hashtbl.add d.dr_refs cand ()) cands)
+                  toks
+              end)
+            opaque
+    end)
+    m.mods;
+  !recovered
 
 (* ------------------------------------------------------------------ *)
 (* liveness hints and reachability                                     *)
@@ -315,6 +448,12 @@ let build (cfg : config) : model * unused_entry list =
       (Hashtbl.length ix.Analyze.iface_checked)
       (Hashtbl.length ix.Analyze.sources);
   let m = load_all cfg ix in
+  let recovered = recover_opaque_bodies m in
+  if not cfg.c_quiet && recovered > 0 then
+    Printf.eprintf
+      "Recovered references for %d definition(s) whose body a language \
+       extension replaced by a stub (Pulse `fn`); those are read from the \
+       source and over-approximated.\n%!" recovered;
   compute_hints m;
   compute_reachability m;
   compute_indegrees m;

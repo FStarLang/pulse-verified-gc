@@ -4,8 +4,8 @@
 
 - Roots: `GC.Impl`, `GC.Impl.Allocator`, `GC.Impl.Mark`, `GC.Impl.MarkBounded`, `GC.Impl.Sweep`, `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`, `GC.Impl.Closure`, `GC.Impl.Heap`, `GC.Impl.Object`, `GC.Impl.Stack`, `GC.Gen.Impl`, `GC.Gen.Impl.Cheney`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Promote`, `GC.Spec.Correctness`, `GC.Spec.MarkBoundedCorrectness`, `GC.Gen.CheneyCorrectness`, `GC.Impl.MarkBoundedRootLemmas`, `GC.Spec.FreeList.Sweep`, `GC.SPOT.CallFull`, `GC.SPOT.CallMinor`, `GC.SPOT.ConcreteCallFull`, `GC.SPOT.ConcreteCallMinor`, `GC.SPOT.ConcreteForwarding`, `GC.SPOT.ConcreteFull`, `GC.SPOT.ConcreteMajor`, `GC.SPOT.ConcreteMinor`, `GC.SPOT.ConcreteScenarios`, `GC.SPOT.ConcreteSetup`, `GC.SPOT.Layout`, `GC.SPOT.Postconditions`, `GC.SPOT.Preconditions`, `GC.SPOT.ThreeObjects`
 
-- 151 modules, 3721 definitions, 1215 module edges
-- **865 definitions (23%) are unreachable from the roots**
+- 151 modules, 3721 definitions, 1243 module edges
+- **616 definitions (16%) are unreachable from the roots**
 - 2 definitions are reachable only implicitly (SMT pattern / instance / axiom)
 
 ## Why this set is safe to delete
@@ -16,7 +16,14 @@ referenced only by unreachable code, it is itself unreachable and already
 appears below. Deleting the whole set therefore cannot strand a live definition,
 and one pass reaches the fixpoint — no iterate-until-stable loop is needed.
 
-Two caveats the graph *does* account for:
+Three caveats the graph *does* account for:
+
+- **Pulse `fn` bodies.** Pulse type-checks its own definitions and hands F* an
+  opaque `magic ()` stub, keeping the elaborated term in a serialised
+  `sigmeta_extension_data` blob that is not an F* term. The graph would
+  therefore miss every lemma invoked from a `fn` body. For those definitions
+  only, the tool re-reads the body from the source and treats each identifier
+  as a possible reference; this over-approximates, which is the safe direction.
 
 - **SMT-pattern lemmas.** A lemma carrying `[SMTPat ...]` is used by Z3 without
   ever being named. These are classified *implicitly live*, not unreachable, and
@@ -36,7 +43,7 @@ build (`make -C spot -j24`) and extraction (`make extract`, expecting a
 byte-identical C snapshot) after **each** phase; bisect within a phase if a
 proof breaks.
 
-### Phase 1 — delete 16 entirely-dead modules (163 definitions)
+### Phase 1 — delete 9 entirely-dead modules (59 definitions)
 
 Every definition in these modules is unreachable, so the whole `.fst`/`.fsti`
 pair goes. Remove the files, then drop any mention of them from `Makefile`,
@@ -46,13 +53,6 @@ any `open`/`include` in surviving modules.
 | Module | Defs | Area | Referenced in a Makefile |
 | --- | ---: | --- | --- |
 | `GC.Gen.PromoteUpdate.PromoteFields.Step` | 24 | generational | `Makefile`, `generational/Makefile` |
-| `GC.Spec.SweepCoalesce.Induction` | 22 | mark-and-sweep | — |
-| `GC.Impl.Coalesce.Lemmas` | 19 | mark-and-sweep | — |
-| `GC.Spec.SweepCoalesce.Helpers` | 16 | mark-and-sweep | — |
-| `GC.Impl.FusedSweepCoalesce.Lemmas` | 14 | mark-and-sweep | — |
-| `GC.Spec.SweepCoalesce` | 12 | mark-and-sweep | — |
-| `GC.Spec.SweepCoalesce.FlushAgree` | 11 | mark-and-sweep | — |
-| `GC.Gen.PromoteUpdate.Positional` | 10 | generational | — |
 | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres` | 8 | generational | `Makefile`, `generational/Makefile` |
 | `GC.Gen.PromoteUpdate.PromoteFields.Frame` | 6 | generational | — |
 | `GC.Gen.PromoteUpdate.PromoteFields.ReadOther` | 6 | generational | `Makefile`, `generational/Makefile` |
@@ -62,7 +62,7 @@ any `open`/`include` in surviving modules.
 | `GC.Spec.Allocator.Lemmas.SearchChain` | 3 | mark-and-sweep | `Makefile`, `mark-and-sweep/Makefile` |
 | `GC.Spec.Allocator.Lemmas.ObjNotInChain` | 1 | mark-and-sweep | — |
 
-### Phase 2 — trim 50 partially-dead modules (702 definitions)
+### Phase 2 — trim 55 partially-dead modules (557 definitions)
 
 These modules keep some live definitions, so delete individual definitions
 rather than files. Work highest-density first: a module that is 70% dead is
@@ -70,56 +70,61 @@ usually a proof scaffold whose intermediate lemmas were inlined or superseded.
 
 | Module | Defs | Dead | % | Area |
 | --- | ---: | ---: | ---: | --- |
-| `GC.Spec.Heap` | 92 | 61 | 66 | common |
+| `GC.Spec.Heap` | 92 | 60 | 65 | common |
 | `GC.Spec.Allocator.Lemmas.Core` | 79 | 56 | 70 | mark-and-sweep |
-| `GC.Gen.Promote` | 130 | 53 | 40 | generational |
+| `GC.Gen.Promote` | 130 | 50 | 38 | generational |
 | `GC.Gen.MinorCollectForwarding` | 123 | 45 | 36 | generational |
-| `GC.Impl.Sweep.Lemmas` | 43 | 42 | 97 | mark-and-sweep |
-| `GC.Spec.Object` | 136 | 27 | 19 | common |
 | `GC.Spec.Allocator.Lemmas` | 59 | 25 | 42 | mark-and-sweep |
-| `GC.Spec.Fields` | 93 | 24 | 25 | common |
 | `GC.Spec.Graph` | 100 | 24 | 24 | common |
-| `GC.Gen.Cheney.SimOne` | 34 | 23 | 67 | generational |
-| `GC.Gen.CheneyBFS` | 36 | 23 | 63 | generational |
 | `GC.Spec.Allocator.Lemmas.Split` | 23 | 21 | 91 | mark-and-sweep |
-| `GC.Spec.SweepInv` | 44 | 21 | 47 | mark-and-sweep |
-| `GC.Gen.PromoteUpdate` | 29 | 19 | 65 | generational |
-| `GC.Spec.Mark` | 144 | 18 | 12 | mark-and-sweep |
-| `GC.Gen.Cheney.Sim` | 20 | 15 | 75 | generational |
+| `GC.Spec.Fields` | 93 | 20 | 21 | common |
+| `GC.Spec.Object` | 136 | 20 | 14 | common |
+| `GC.Gen.Cheney.SimOne` | 34 | 15 | 44 | generational |
 | `GC.Gen.PromoteUpdate.Header` | 22 | 15 | 68 | generational |
-| `GC.Lib.Header` | 84 | 15 | 17 | common |
-| `GC.Gen.MinorHeap` | 85 | 12 | 14 | generational |
-| `GC.Spec.Allocator` | 40 | 12 | 30 | mark-and-sweep |
-| `GC.Spec.MarkInv` | 18 | 12 | 66 | mark-and-sweep |
+| `GC.Gen.PromoteUpdate` | 29 | 13 | 44 | generational |
+| `GC.Lib.Header` | 84 | 11 | 13 | common |
 | `GC.Lib.Address` | 15 | 10 | 66 | common |
-| `GC.Spec.Sweep` | 56 | 10 | 17 | mark-and-sweep |
+| `GC.Spec.Mark` | 144 | 10 | 6 | mark-and-sweep |
+| `GC.Impl.Sweep.Lemmas` | 43 | 9 | 20 | mark-and-sweep |
+| `GC.Gen.Cheney.Sim` | 20 | 8 | 40 | generational |
 | `GC.Gen.CombinedGraph` | 107 | 8 | 7 | generational |
 | `GC.Gen.HeapInvariant` | 35 | 8 | 22 | generational |
+| `GC.Spec.Allocator` | 40 | 8 | 20 | mark-and-sweep |
 | `GC.Spec.Coalesce` | 68 | 8 | 11 | mark-and-sweep |
-| `GC.Spec.MarkBoundedInv` | 15 | 8 | 53 | mark-and-sweep |
 | `GC.Gen.Base` | 25 | 7 | 28 | generational |
-| `GC.Gen.Cheney` | 92 | 7 | 7 | generational |
 | `GC.Spec.Allocator.Lemmas.Header` | 12 | 7 | 58 | mark-and-sweep |
 | `GC.Spec.Allocator.Lemmas.Part2` | 56 | 7 | 12 | mark-and-sweep |
 | `GC.Spec.FreeList` | 25 | 7 | 28 | mark-and-sweep |
+| `GC.Spec.Sweep` | 56 | 7 | 12 | mark-and-sweep |
 | `GC.Gen.CheneyPreservation.Forwarding` | 58 | 6 | 10 | generational |
-| `GC.Spec.Base` | 20 | 6 | 30 | common |
+| `GC.Spec.MarkBoundedInv` | 15 | 6 | 40 | mark-and-sweep |
 | `GC.Gen.AllocProps` | 36 | 5 | 13 | generational |
-| `GC.Gen.PromoteUpdate.Aux` | 9 | 5 | 55 | generational |
 | `GC.Spec.Allocator.Lemmas.Chain` | 48 | 5 | 10 | mark-and-sweep |
+| `GC.Spec.Base` | 20 | 5 | 25 | common |
+| `GC.Spec.MarkInv` | 18 | 5 | 27 | mark-and-sweep |
+| `GC.Gen.MinorHeap` | 85 | 4 | 4 | generational |
+| `GC.Gen.PromoteUpdate.Aux` | 9 | 4 | 44 | generational |
 | `GC.Gen.PromoteUpdate.BlueProm` | 23 | 4 | 17 | generational |
 | `GC.Spec.DFS` | 32 | 4 | 12 | common |
 | `GC.Spec.MarkBounded` | 48 | 3 | 6 | mark-and-sweep |
 | `GC.Spec.SweepCoalesce.Defs` | 5 | 3 | 60 | mark-and-sweep |
+| `GC.Spec.SweepCoalesce.FlushAgree` | 11 | 3 | 27 | mark-and-sweep |
+| `GC.Spec.SweepInv` | 44 | 3 | 6 | mark-and-sweep |
 | `GC.Gen.MinorCollectForwarding.Helpers` | 29 | 2 | 6 | generational |
 | `GC.Gen.TwoPassEquiv` | 42 | 2 | 4 | generational |
+| `GC.Impl.FusedSweepCoalesce.Lemmas` | 14 | 2 | 14 | mark-and-sweep |
+| `GC.Gen.Cheney` | 92 | 1 | 1 | generational |
+| `GC.Gen.CheneyBFS` | 36 | 1 | 2 | generational |
 | `GC.Gen.CheneyPreservation` | 65 | 1 | 1 | generational |
 | `GC.Gen.CheneyPreservation.Fields` | 44 | 1 | 2 | generational |
 | `GC.Gen.CheneyPreservation.Injectivity` | 44 | 1 | 2 | generational |
 | `GC.Gen.MinorCollectForwarding.NormalEdges` | 14 | 1 | 7 | generational |
 | `GC.Gen.PromoteUpdate.Field` | 9 | 1 | 11 | generational |
+| `GC.Impl.Coalesce.Lemmas` | 19 | 1 | 5 | mark-and-sweep |
 | `GC.Spec.HeapGraph` | 32 | 1 | 3 | common |
 | `GC.Spec.HeapModel` | 5 | 1 | 20 | common |
+| `GC.Spec.SweepCoalesce.Helpers` | 16 | 1 | 6 | mark-and-sweep |
+| `GC.Spec.SweepCoalesce.Induction` | 22 | 1 | 4 | mark-and-sweep |
 
 ### Phase 3 — re-run and confirm the fixpoint
 
@@ -128,7 +133,7 @@ definition that only the deleted code kept alive and is safe to remove too.
 
 ## Full inventory
 
-Every one of the 865 unreachable definitions, grouped by module.
+Every one of the 616 unreachable definitions, grouped by module.
 
 <details>
 <summary><code>GC.Gen.PromoteUpdate.PromoteFields.Step</code> — **entire module is dead**</summary>
@@ -159,166 +164,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 | `promote_step_preserves_invariant` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:747:0` |
 | `set_promoted_tag_preserves_wosize_self` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:574:8` |
 | `set_tag_preserves_read_at_obj_step` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:458:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.SweepCoalesce.Induction</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `black_case_above_ok` | let | `GC.Spec.SweepCoalesce.Induction.fst:407:8` |
-| `black_case_below_ok` | let | `GC.Spec.SweepCoalesce.Induction.fst:279:8` |
-| `black_case_body_agree` | let | `GC.Spec.SweepCoalesce.Induction.fst:589:8` |
-| `black_case_body_agree_aux` | let | `GC.Spec.SweepCoalesce.Induction.fst:538:8` |
-| `black_case_conclude` | let | `GC.Spec.SweepCoalesce.Induction.fst:668:8` |
-| `black_case_past_body` | let | `GC.Spec.SweepCoalesce.Induction.fst:237:8` |
-| `black_case_rest_headers` | let | `GC.Spec.SweepCoalesce.Induction.fst:482:8` |
-| `combined_proof` | let rec | `GC.Spec.SweepCoalesce.Induction.fst:732:0` |
-| `contiguous_head` | let | `GC.Spec.SweepCoalesce.Induction.fst:52:8` |
-| `flush_blue_field1_spec` | let | `GC.Spec.SweepCoalesce.Induction.fst:97:8` |
-| `flush_blue_inside_agree` | let | `GC.Spec.SweepCoalesce.Induction.fst:165:0` |
-| `flush_blue_zero_spec` | let | `GC.Spec.SweepCoalesce.Induction.fst:133:8` |
-| `flush_pair_above` | let | `GC.Spec.SweepCoalesce.Induction.fst:221:8` |
-| `flush_pair_preserves_outside` | let | `GC.Spec.SweepCoalesce.Induction.fst:201:0` |
-| `nonblack_case_geo_ok` | let | `GC.Spec.SweepCoalesce.Induction.fst:626:8` |
-| `objs_contiguous` | let rec | `GC.Spec.SweepCoalesce.Induction.fst:41:0` |
-| `objs_well_separated` | let rec | `GC.Spec.SweepCoalesce.Induction.fst:32:0` |
-| `rw0_run_bound` | let | `GC.Spec.SweepCoalesce.Induction.fst:703:8` |
-| `rwpos_run_bound` | let | `GC.Spec.SweepCoalesce.Induction.fst:714:8` |
-| `rwpos_run_contig` | let | `GC.Spec.SweepCoalesce.Induction.fst:709:8` |
-| `tail_len_lt` | let | `GC.Spec.SweepCoalesce.Induction.fst:720:8` |
-| `zero_fields_read_within` | let rec | `GC.Spec.SweepCoalesce.Induction.fst:66:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Impl.Coalesce.Lemmas</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `blue_step_coalesce_aux_eq` | let | `GC.Impl.Coalesce.Lemmas.fst:127:0` |
-| `coalesce_step_blue` | let | `GC.Impl.Coalesce.Lemmas.fst:32:0` |
-| `coalesce_step_empty` | let | `GC.Impl.Coalesce.Lemmas.fst:53:0` |
-| `coalesce_step_white` | let | `GC.Impl.Coalesce.Lemmas.fst:43:0` |
-| `coalesce_unfold` | let | `GC.Impl.Coalesce.Lemmas.fst:68:0` |
-| `flush_blue_impl_wz0` | let | `GC.Impl.Coalesce.Lemmas.fst:260:0` |
-| `flush_blue_impl_wz1` | let | `GC.Impl.Coalesce.Lemmas.fst:265:0` |
-| `flush_blue_impl_wz_ge2` | let | `GC.Impl.Coalesce.Lemmas.fst:271:0` |
-| `flush_blue_length` | let | `GC.Impl.Coalesce.Lemmas.fst:56:0` |
-| `flush_blue_suffix_chain` | let | `GC.Impl.Coalesce.Lemmas.fst:195:8` |
-| `flush_blue_suffix_preserved` | let | `GC.Impl.Coalesce.Lemmas.fst:94:0` |
-| `is_blue_from_original` | let | `GC.Impl.Coalesce.Lemmas.fst:81:0` |
-| `makeHeader_bridge` | let | `GC.Impl.Coalesce.Lemmas.fst:108:0` |
-| `objects_advance` | let | `GC.Impl.Coalesce.Lemmas.fst:23:0` |
-| `objects_mem_at_zero` | let | `GC.Impl.Coalesce.Lemmas.fst:61:0` |
-| `run_words_fits` | let | `GC.Impl.Coalesce.Lemmas.fst:71:0` |
-| `set_field_1_eq_write_word` | let | `GC.Impl.Coalesce.Lemmas.fst:115:0` |
-| `white_step_coalesce_aux_eq` | let | `GC.Impl.Coalesce.Lemmas.fst:218:0` |
-| `zero_fields_step` | let | `GC.Impl.Coalesce.Lemmas.fst:90:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.SweepCoalesce.Helpers</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `byte_extract` | let | `GC.Spec.SweepCoalesce.Helpers.fst:194:8` |
-| `colorHeader_idempotent` | let | `GC.Spec.SweepCoalesce.Helpers.fst:267:0` |
-| `colorHeader_same_wz_tag` | let | `GC.Spec.SweepCoalesce.Helpers.fst:310:0` |
-| `combine_extract_nth` | let | `GC.Spec.SweepCoalesce.Helpers.fst:142:8` |
-| `combine_value_decomp` | let | `GC.Spec.SweepCoalesce.Helpers.fst:77:8` |
-| `flush_blue_snd_heap_independent` | let | `GC.Spec.SweepCoalesce.Helpers.fst:334:0` |
-| `getTag_get_tag` | let | `GC.Spec.SweepCoalesce.Helpers.fst:303:8` |
-| `getWosize_get_wosize` | let | `GC.Spec.SweepCoalesce.Helpers.fst:298:8` |
-| `makeWhite_white_noop` | let | `GC.Spec.SweepCoalesce.Helpers.fst:285:0` |
-| `nth_255` | let | `GC.Spec.SweepCoalesce.Helpers.fst:36:8` |
-| `nth_small_high_zero` | let | `GC.Spec.SweepCoalesce.Helpers.fst:42:8` |
-| `or_chain_nth` | let | `GC.Spec.SweepCoalesce.Helpers.fst:104:8` |
-| `select_byte` | let | `GC.Spec.SweepCoalesce.Helpers.fst:66:8` |
-| `shifted_byte_nth` | let | `GC.Spec.SweepCoalesce.Helpers.fst:53:8` |
-| `v0_shift_eq` | let | `GC.Spec.SweepCoalesce.Helpers.fst:136:8` |
-| `write_word_id` | let | `GC.Spec.SweepCoalesce.Helpers.fst:227:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Impl.FusedSweepCoalesce.Lemmas</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `black_step_fused_aux_eq` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:272:0` |
-| `flush_blue_length` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:325:0` |
-| `flush_blue_suffix_chain` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:245:8` |
-| `fused_step_black_helper` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:151:8` |
-| `fused_step_empty` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:332:0` |
-| `fused_step_nonblack_helper` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:122:8` |
-| `fused_unfold` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:28:0` |
-| `is_black_from_original` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:35:0` |
-| `makeWhite_length` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:61:0` |
-| `makeWhite_suffix_preserved` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:48:0` |
-| `nonblack_step_fused_aux_eq` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:186:0` |
-| `objects_advance` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:93:8` |
-| `run_words_fits` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:108:8` |
-| `whiten_from_original` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:70:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.SweepCoalesce</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `fused_eq_sweep_coalesce` | let | `GC.Spec.SweepCoalesce.fst:483:0` |
-| `objects_contiguous_lemma` | let rec | `GC.Spec.SweepCoalesce.fst:235:8` |
-| `objects_fit_lemma` | let | `GC.Spec.SweepCoalesce.fst:282:8` |
-| `objects_well_separated_lemma` | let rec | `GC.Spec.SweepCoalesce.fst:182:8` |
-| `sweep_aux_preserves_below_zero` | let rec | `GC.Spec.SweepCoalesce.fst:383:8` |
-| `sweep_aux_preserves_past_all` | let rec | `GC.Spec.SweepCoalesce.fst:298:8` |
-| `sweep_aux_preserves_wosize_any` | let rec | `GC.Spec.SweepCoalesce.fst:46:8` |
-| `sweep_color_correspondence` | let | `GC.Spec.SweepCoalesce.fst:114:8` |
-| `sweep_preserves_body_read_black` | let | `GC.Spec.SweepCoalesce.fst:160:8` |
-| `sweep_preserves_header_parts_black` | let | `GC.Spec.SweepCoalesce.fst:456:8` |
-| `sweep_preserves_past_all_objects` | let | `GC.Spec.SweepCoalesce.fst:438:8` |
-| `sweep_preserves_wosize_all` | let | `GC.Spec.SweepCoalesce.fst:98:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.SweepCoalesce.FlushAgree</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `aligned_neq_disjoint` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:103:8` |
-| `flush_blue_pair_agree` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:390:0` |
-| `flush_blue_word_agree` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:319:8` |
-| `heaps_word_agree_implies_equal` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:82:0` |
-| `my_flush_blue_field1` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:239:8` |
-| `my_flush_blue_field_zero` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:276:8` |
-| `my_zero_fields_read_within` | let rec | `GC.Spec.SweepCoalesce.FlushAgree.fst:200:8` |
-| `read_word_bytes_agree` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:61:0` |
-| `write_word_agree_at` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:114:8` |
-| `write_word_byte_at` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:42:0` |
-| `zero_fields_agree_pair` | let rec | `GC.Spec.SweepCoalesce.FlushAgree.fst:139:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.PromoteUpdate.Positional</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `objects_eq_when_reads_agree` | let rec | `GC.Gen.PromoteUpdate.Positional.fst:25:8` |
-| `objects_initial_membership` | let | `GC.Gen.PromoteUpdate.Positional.fst:446:0` |
-| `objects_nonempty_from_header` | let | `GC.Gen.PromoteUpdate.Positional.fst:74:8` |
-| `update_all_objects_aux_shift` | let rec | `GC.Gen.PromoteUpdate.Positional.fst:153:8` |
-| `update_all_objects_positional_step` | let | `GC.Gen.PromoteUpdate.Positional.fst:179:0` |
-| `update_all_objects_positional_step_blue` | let | `GC.Gen.PromoteUpdate.Positional.fst:298:0` |
-| `update_all_objects_positional_step_no_scan` | let | `GC.Gen.PromoteUpdate.Positional.fst:351:0` |
-| `update_all_objects_terminal_step` | let | `GC.Gen.PromoteUpdate.Positional.fst:401:0` |
-| `update_object_pointers_preserves_density` | let | `GC.Gen.PromoteUpdate.Positional.fst:84:8` |
-| `update_object_pointers_preserves_objects_above` | let | `GC.Gen.PromoteUpdate.Positional.fst:51:8` |
 
 </details>
 
@@ -422,7 +267,7 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Spec.Heap</code> — 61/92 dead</summary>
+<summary><code>GC.Spec.Heap</code> — 60/92 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
@@ -481,7 +326,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 | `update_field_l_preserves_domain` | let | `GC.Spec.Heap.fst:927:0` |
 | `update_field_preserves_closed` | let | `GC.Spec.Heap.fst:885:0` |
 | `valid_field_value` | let | `GC.Spec.Heap.fsti:434:0` |
-| `wosize` | let | `GC.Spec.Heap.fsti:191:5` |
 | `write_field` | let | `GC.Spec.Heap.fst:673:0` |
 | `write_fields` | let rec | `GC.Spec.Heap.fst:682:0` |
 | `write_object` | let | `GC.Spec.Heap.fst:695:0` |
@@ -555,7 +399,7 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Gen.Promote</code> — 53/130 dead</summary>
+<summary><code>GC.Gen.Promote</code> — 50/130 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
@@ -603,9 +447,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 | `promote_all_spec` | let | `GC.Gen.Promote.fsti:317:0` |
 | `promote_object_preserves_allocated_avoid_chain` | let | `GC.Gen.Promote.fst:1925:8` |
 | `promote_object_preserves_objects` | let | `GC.Gen.Promote.fst:1058:0` |
-| `rewrite_roots_pointwise` | let | `GC.Gen.Promote.fst:757:0` |
-| `update_object_pointers_done` | let | `GC.Gen.Promote.fst:734:0` |
-| `update_object_pointers_step` | let | `GC.Gen.Promote.fst:716:0` |
 | `write_body_preserves_chain_avoids_self` | let | `GC.Gen.Promote.fst:1035:8` |
 | `write_body_preserves_fl_chain_terminates` | let | `GC.Gen.Promote.fst:1034:8` |
 | `write_body_preserves_fl_valid_aux` | let | `GC.Gen.Promote.fst:1032:8` |
@@ -669,91 +510,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Impl.Sweep.Lemmas</code> — 42/43 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `bluen_eq` | let | `GC.Impl.Sweep.Lemmas.fst:88:0` |
-| `density_next_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:175:0` |
-| `derive_objects_nonempty_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:207:0` |
-| `fp_valid_transfer_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:147:0` |
-| `headers_preserved_before_spec_write` | let | `GC.Impl.Sweep.Lemmas.fst:357:0` |
-| `headers_preserved_from_spec_write` | let | `GC.Impl.Sweep.Lemmas.fst:340:0` |
-| `headers_preserved_from_trans_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:348:0` |
-| `is_black_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:462:0` |
-| `is_black_from_color` | let | `GC.Impl.Sweep.Lemmas.fst:728:0` |
-| `is_not_black_from_color` | let | `GC.Impl.Sweep.Lemmas.fst:752:0` |
-| `is_not_white_from_color` | let | `GC.Impl.Sweep.Lemmas.fst:740:0` |
-| `is_white_from_color` | let | `GC.Impl.Sweep.Lemmas.fst:716:0` |
-| `lemma_addr_plus_8_no_overflow` | let | `GC.Impl.Sweep.Lemmas.fst:45:0` |
-| `lemma_next_addr_aligned` | let | `GC.Impl.Sweep.Lemmas.fst:769:0` |
-| `lemma_next_addr_no_overflow` | let | `GC.Impl.Sweep.Lemmas.fst:33:0` |
-| `makeBlue_headers_preserved_before` | let | `GC.Impl.Sweep.Lemmas.fst:383:0` |
-| `makeBlue_headers_preserved_from` | let | `GC.Impl.Sweep.Lemmas.fst:366:0` |
-| `makeBlue_preserves_getWosize` | let | `GC.Impl.Sweep.Lemmas.fst:105:0` |
-| `makeWhite_headers_preserved_before_spec` | let | `GC.Impl.Sweep.Lemmas.fst:417:0` |
-| `makeWhite_headers_preserved_from` | let | `GC.Impl.Sweep.Lemmas.fst:402:0` |
-| `makeWhite_preserves_getWosize` | let | `GC.Impl.Sweep.Lemmas.fst:120:0` |
-| `obj_in_objects_head_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:163:0` |
-| `obj_in_objects_transfer_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:152:0` |
-| `set_field_1_eq` | let | `GC.Impl.Sweep.Lemmas.fst:548:0` |
-| `sweep_black_preserves` | let | `GC.Impl.Sweep.Lemmas.fst:432:0` |
-| `sweep_black_preserves_spec` | let | `GC.Impl.Sweep.Lemmas.fst:784:0` |
-| `sweep_black_whiteness` | let | `GC.Impl.Sweep.Lemmas.fst:621:0` |
-| `sweep_black_whiteness_spec` | let | `GC.Impl.Sweep.Lemmas.fst:800:0` |
-| `sweep_else_contradiction` | let | `GC.Impl.Sweep.Lemmas.fst:677:0` |
-| `sweep_loop_next_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:228:0` |
-| `sweep_loop_next_spec` | let | `GC.Impl.Sweep.Lemmas.fst:290:0` |
-| `sweep_object_black_eq` | let | `GC.Impl.Sweep.Lemmas.fst:647:0` |
-| `sweep_object_black_eq_spec` | let | `GC.Impl.Sweep.Lemmas.fst:810:0` |
-| `sweep_object_else_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:694:0` |
-| `sweep_object_white_noop_eq` | let | `GC.Impl.Sweep.Lemmas.fst:593:0` |
-| `sweep_object_white_write_eq` | let | `GC.Impl.Sweep.Lemmas.fst:566:0` |
-| `sweep_post_elim_objects_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:157:0` |
-| `sweep_post_intro_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:139:0` |
-| `sweep_white_color_preserved` | let | `GC.Impl.Sweep.Lemmas.fst:523:0` |
-| `sweep_white_header_preserved` | let | `GC.Impl.Sweep.Lemmas.fst:507:0` |
-| `sweep_white_write_preserves` | let | `GC.Impl.Sweep.Lemmas.fst:480:0` |
-| `whiten_eq` | let | `GC.Impl.Sweep.Lemmas.fst:68:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.Object</code> — 27/136 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `allocated_blocks` | let | `GC.Spec.Object.fst:679:0` |
-| `colorHeader_preserves_tag` | let | `GC.Spec.Object.fst:246:0` |
-| `color_mask` | let | `GC.Spec.Object.fst:37:0` |
-| `color_shift` | let | `GC.Spec.Object.fst:38:0` |
-| `exists_field_pointing_to` | let rec | `GC.Spec.Object.fst:539:0` |
-| `field_address` | let | `GC.Spec.Object.fst:60:0` |
-| `field_offset` | let | `GC.Spec.Object.fst:55:0` |
-| `field_offset_bound` | let | `GC.Spec.Object.fst:47:8` |
-| `getColor_setColor_packed` | let | `GC.Spec.Object.fst:159:0` |
-| `getColor_spec` | let | `GC.Spec.Object.fst:82:0` |
-| `getTag_bound` | let | `GC.Spec.Object.fst:99:0` |
-| `hp_to_obj` | let | `GC.Spec.Object.fst:684:0` |
-| `is_pointer` | let | `GC.Spec.Object.fst:525:0` |
-| `is_pointer_field` | let | `GC.Spec.Object.fst:529:0` |
-| `is_pointer_to_object` | let | `GC.Spec.Object.fst:564:0` |
-| `makeBlue_spec` | let | `GC.Spec.Object.fst:517:0` |
-| `makeHeader_eq_colorHeader` | let | `GC.Spec.Object.fst:254:0` |
-| `makeHeader_is_pack_header64` | let | `GC.Spec.Object.fst:302:0` |
-| `makeWhite_spec` | let | `GC.Spec.Object.fst:508:0` |
-| `noGreyObjects_aux` | let rec | `GC.Spec.Object.fst:1086:0` |
-| `objects` | let rec | `GC.Spec.Object.fst:650:0` |
-| `objects_addr_not_in_rest` | let | `GC.Spec.Object.fst:742:0` |
-| `objects_addresses_ge_8` | let | `GC.Spec.Object.fst:789:0` |
-| `objects_addresses_gt_start` | let rec | `GC.Spec.Object.fst:689:0` |
-| `white_black_disjoint` | let | `GC.Spec.Object.fst:425:0` |
-| `white_gray_disjoint` | let | `GC.Spec.Object.fst:421:0` |
-| `wosize_fits_field_index` | let | `GC.Spec.Object.fst:533:0` |
-
-</details>
-
-<details>
 <summary><code>GC.Spec.Allocator.Lemmas</code> — 25/59 dead</summary>
 
 | Definition | Kind | Location |
@@ -783,38 +539,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 | `walk_chain_valid_at` | let | `GC.Spec.Allocator.Lemmas.fst:46:0` |
 | `walk_chain_valid_prefix` | let | `GC.Spec.Allocator.Lemmas.fst:45:0` |
 | `walk_chain_valid_snoc` | let | `GC.Spec.Allocator.Lemmas.fst:47:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.Fields</code> — 24/93 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `allocated_blocks` | let | `GC.Spec.Fields.fst:369:0` |
-| `black_blocks` | let | `GC.Spec.Fields.fst:628:0` |
-| `color_partition` | let | `GC.Spec.Fields.fst:1228:0` |
-| `exists_field_checked_eq_unchecked` | let rec | `GC.Spec.Fields.fst:220:0` |
-| `exists_field_pointing_to` | let rec | `GC.Spec.Fields.fst:196:0` |
-| `field_address` | let | `GC.Spec.Fields.fst:55:0` |
-| `gray_blocks` | let | `GC.Spec.Fields.fst:632:0` |
-| `is_pointer_to_object` | let | `GC.Spec.Fields.fst:274:0` |
-| `is_pointer_to_object_implies_exists_field` | let | `GC.Spec.Fields.fst:280:0` |
-| `is_valid_header` | let | `GC.Spec.Fields.fst:1004:0` |
-| `no_gray_equiv` | let | `GC.Spec.Fields.fst:652:0` |
-| `no_gray_objects` | let | `GC.Spec.Fields.fst:648:0` |
-| `no_scan_invariant_intro_singleton` | let | `GC.Spec.Fields.fst:784:0` |
-| `no_scan_invariant_intro_vacuous` | let | `GC.Spec.Fields.fst:778:0` |
-| `object_count_bound` | let | `GC.Spec.Fields.fst:1121:0` |
-| `objects_addresses_ge_8` | let | `GC.Spec.Fields.fst:462:0` |
-| `objects_nonempty_head` | let | `GC.Spec.Fields.fst:956:0` |
-| `objects_nonempty_head_fits` | let | `GC.Spec.Fields.fst:949:0` |
-| `seq_filter_empty_implies_not_f` | let rec | `GC.Spec.Fields.fst:586:0` |
-| `seq_filter_not_f_implies_empty` | let rec | `GC.Spec.Fields.fst:611:0` |
-| `seq_filter_partition_3` | let rec | `GC.Spec.Fields.fst:1151:0` |
-| `seq_filter_partition_4` | let rec | `GC.Spec.Fields.fst:1195:0` |
-| `white_blocks` | let | `GC.Spec.Fields.fst:636:0` |
-| `write_word_preserves_objects_from` | let | `GC.Spec.Fields.fst:1422:0` |
 
 </details>
 
@@ -851,68 +575,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Gen.Cheney.SimOne</code> — 23/34 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `cheney_bfs_inv_bound` | let | `GC.Gen.Cheney.SimOne.fst:374:0` |
-| `cheney_bfs_inv_initial` | let | `GC.Gen.Cheney.SimOne.fst:359:0` |
-| `cheney_bfs_inv_strict_room` | let | `GC.Gen.Cheney.SimOne.fst:640:0` |
-| `cheney_bfs_inv_valid` | let | `GC.Gen.Cheney.SimOne.fst:379:0` |
-| `cheney_forward_one_queue_bound` | let | `GC.Gen.Cheney.SimOne.fst:113:0` |
-| `count_unforwarded_bound` | let rec | `GC.Gen.Cheney.SimOne.fst:266:8` |
-| `count_unforwarded_empty` | let rec | `GC.Gen.Cheney.SimOne.fst:273:8` |
-| `count_unforwarded_positive` | let rec | `GC.Gen.Cheney.SimOne.fst:628:8` |
-| `forward_fields_bfs_inv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:557:8` |
-| `forward_fields_preserves_bfs_inv` | let | `GC.Gen.Cheney.SimOne.fst:572:0` |
-| `forward_fields_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:192:0` |
-| `forward_fields_qv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:175:8` |
-| `forward_roots_bfs_inv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:578:8` |
-| `forward_roots_preserves_bfs_inv` | let | `GC.Gen.Cheney.SimOne.fst:593:0` |
-| `forward_roots_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:215:0` |
-| `forward_roots_qv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:198:8` |
-| `fwd_one_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:58:0` |
-| `queue_valid_elim` | let | `GC.Gen.Cheney.SimOne.fst:28:0` |
-| `queue_valid_intro` | let | `GC.Gen.Cheney.SimOne.fst:23:0` |
-| `scan_bfs_inv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:599:8` |
-| `scan_preserves_bfs_inv` | let | `GC.Gen.Cheney.SimOne.fst:615:0` |
-| `scan_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:239:0` |
-| `scan_qv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:221:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.CheneyBFS</code> — 23/36 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `addr_covered_elim` | let | `GC.Gen.CheneyBFS.fst:263:0` |
-| `addr_covered_intro` | let | `GC.Gen.CheneyBFS.fst:256:0` |
-| `field_prefix_all_implies_successors` | let | `GC.Gen.CheneyBFS.fst:420:0` |
-| `field_prefix_covered` | let | `GC.Gen.CheneyBFS.fst:364:0` |
-| `field_prefix_empty` | let | `GC.Gen.CheneyBFS.fst:369:0` |
-| `field_prefix_step` | let | `GC.Gen.CheneyBFS.fst:373:0` |
-| `field_prefix_step_oom` | let | `GC.Gen.CheneyBFS.fst:400:0` |
-| `forward_fields_queue_prefix` | let rec | `GC.Gen.CheneyBFS.fst:229:0` |
-| `forward_one_preserves_addr_covered` | let | `GC.Gen.CheneyBFS.fst:270:0` |
-| `forward_one_queue_prefix` | let | `GC.Gen.CheneyBFS.fst:186:0` |
-| `forward_roots_fwd_monotone` | let rec | `GC.Gen.CheneyBFS.fst:128:0` |
-| `root_prefix_all_implies_covers` | let | `GC.Gen.CheneyBFS.fst:337:0` |
-| `root_prefix_all_implies_covers_oom` | let | `GC.Gen.CheneyBFS.fst:355:0` |
-| `root_prefix_covered` | let | `GC.Gen.CheneyBFS.fst:283:0` |
-| `root_prefix_empty` | let | `GC.Gen.CheneyBFS.fst:288:0` |
-| `root_prefix_step` | let | `GC.Gen.CheneyBFS.fst:292:0` |
-| `root_prefix_step_oom` | let | `GC.Gen.CheneyBFS.fst:318:0` |
-| `scanned_exhausted_implies_fwd_closed` | let | `GC.Gen.CheneyBFS.fst:520:0` |
-| `scanned_exhausted_implies_fwd_closed_oom` | let | `GC.Gen.CheneyBFS.fst:546:0` |
-| `scanned_prefix_closed` | let | `GC.Gen.CheneyBFS.fst:446:0` |
-| `scanned_prefix_empty` | let | `GC.Gen.CheneyBFS.fst:454:0` |
-| `scanned_prefix_step` | let | `GC.Gen.CheneyBFS.fst:459:0` |
-| `scanned_prefix_step_oom` | let | `GC.Gen.CheneyBFS.fst:498:0` |
-
-</details>
-
-<details>
 <summary><code>GC.Spec.Allocator.Lemmas.Split</code> — 21/23 dead</summary>
 
 | Definition | Kind | Location |
@@ -942,107 +604,81 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Spec.SweepInv</code> — 21/44 dead</summary>
+<summary><code>GC.Spec.Fields</code> — 20/93 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `fp_valid_intro` | let | `GC.Spec.SweepInv.fst:33:0` |
-| `headers_preserved_before_refl` | let | `GC.Spec.SweepInv.fst:304:0` |
-| `headers_preserved_before_trans` | let | `GC.Spec.SweepInv.fst:317:0` |
-| `headers_preserved_before_weaken` | let | `GC.Spec.SweepInv.fst:321:0` |
-| `headers_preserved_before_write` | let | `GC.Spec.SweepInv.fst:307:0` |
-| `headers_preserved_from_elim` | let | `GC.Spec.SweepInv.fst:277:0` |
-| `headers_preserved_from_refl` | let | `GC.Spec.SweepInv.fst:274:0` |
-| `headers_preserved_from_trans` | let | `GC.Spec.SweepInv.fst:281:0` |
-| `headers_preserved_from_write` | let | `GC.Spec.SweepInv.fst:287:0` |
-| `no_gray_at_preserved` | let | `GC.Spec.SweepInv.fst:422:0` |
-| `obj_in_objects_head` | let | `GC.Spec.SweepInv.fst:96:0` |
-| `obj_in_objects_transfer` | let | `GC.Spec.SweepInv.fst:91:0` |
-| `objects_white_before_all` | let | `GC.Spec.SweepInv.fst:397:0` |
-| `objects_white_before_exit` | let | `GC.Spec.SweepInv.fst:404:0` |
-| `objects_white_before_step` | let | `GC.Spec.SweepInv.fst:342:0` |
-| `objects_white_before_zero` | let | `GC.Spec.SweepInv.fst:329:0` |
-| `set_object_color_headers_preserved_before` | let | `GC.Spec.SweepInv.fst:441:0` |
-| `sweep_post_elim_fp` | let | `GC.Spec.SweepInv.fst:82:0` |
-| `sweep_post_elim_objects` | let | `GC.Spec.SweepInv.fst:78:0` |
-| `sweep_post_elim_wfh` | let | `GC.Spec.SweepInv.fst:74:0` |
-| `sweep_post_intro` | let | `GC.Spec.SweepInv.fst:67:0` |
+| `allocated_blocks` | let | `GC.Spec.Fields.fst:369:0` |
+| `black_blocks` | let | `GC.Spec.Fields.fst:628:0` |
+| `color_partition` | let | `GC.Spec.Fields.fst:1228:0` |
+| `exists_field_checked_eq_unchecked` | let rec | `GC.Spec.Fields.fst:220:0` |
+| `exists_field_pointing_to` | let rec | `GC.Spec.Fields.fst:196:0` |
+| `field_address` | let | `GC.Spec.Fields.fst:55:0` |
+| `gray_blocks` | let | `GC.Spec.Fields.fst:632:0` |
+| `is_pointer_to_object` | let | `GC.Spec.Fields.fst:274:0` |
+| `is_pointer_to_object_implies_exists_field` | let | `GC.Spec.Fields.fst:280:0` |
+| `is_valid_header` | let | `GC.Spec.Fields.fst:1004:0` |
+| `no_gray_equiv` | let | `GC.Spec.Fields.fst:652:0` |
+| `no_scan_invariant_intro_singleton` | let | `GC.Spec.Fields.fst:784:0` |
+| `no_scan_invariant_intro_vacuous` | let | `GC.Spec.Fields.fst:778:0` |
+| `objects_addresses_ge_8` | let | `GC.Spec.Fields.fst:462:0` |
+| `seq_filter_empty_implies_not_f` | let rec | `GC.Spec.Fields.fst:586:0` |
+| `seq_filter_not_f_implies_empty` | let rec | `GC.Spec.Fields.fst:611:0` |
+| `seq_filter_partition_3` | let rec | `GC.Spec.Fields.fst:1151:0` |
+| `seq_filter_partition_4` | let rec | `GC.Spec.Fields.fst:1195:0` |
+| `white_blocks` | let | `GC.Spec.Fields.fst:636:0` |
+| `write_word_preserves_objects_from` | let | `GC.Spec.Fields.fst:1422:0` |
 
 </details>
 
 <details>
-<summary><code>GC.Gen.PromoteUpdate</code> — 19/29 dead</summary>
+<summary><code>GC.Spec.Object</code> — 20/136 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `distinct_live_set` | let | `GC.Gen.PromoteUpdate.fsti:303:0` |
-| `minor_collect_all_spec_unfold` | let | `GC.Gen.PromoteUpdate.fst:121:0` |
-| `minor_collect_preserves_reachable` | let | `GC.Gen.PromoteUpdate.fst:91:0` |
-| `objects_initial_membership` | let | `GC.Gen.PromoteUpdate.fst:65:0` |
-| `promote_all_adds_promoted` | let | `GC.Gen.PromoteUpdate.fst:88:0` |
-| `promote_all_fwd_all_targets_valid` | let | `GC.Gen.PromoteUpdate.fst:85:0` |
-| `promote_all_preserves_blue_fields_closed` | let | `GC.Gen.PromoteUpdate.fst:118:0` |
-| `promote_all_preserves_fields` | let | `GC.Gen.PromoteUpdate.fst:104:0` |
-| `promote_all_read_other` | let | `GC.Gen.PromoteUpdate.fst:107:0` |
-| `update_all_objects_aux_done` | let | `GC.Gen.PromoteUpdate.fst:45:0` |
-| `update_all_objects_aux_skip_blue` | let | `GC.Gen.PromoteUpdate.fst:39:0` |
-| `update_all_objects_aux_skip_no_scan` | let | `GC.Gen.PromoteUpdate.fst:42:0` |
-| `update_all_objects_aux_step` | let | `GC.Gen.PromoteUpdate.fst:36:0` |
-| `update_all_objects_positional_step` | let | `GC.Gen.PromoteUpdate.fst:53:0` |
-| `update_all_objects_positional_step_blue` | let | `GC.Gen.PromoteUpdate.fst:56:0` |
-| `update_all_objects_positional_step_no_scan` | let | `GC.Gen.PromoteUpdate.fst:59:0` |
-| `update_all_objects_terminal_step` | let | `GC.Gen.PromoteUpdate.fst:62:0` |
-| `update_major_pointers_preserves_wfh_part2` | let | `GC.Gen.PromoteUpdate.fst:99:0` |
-| `update_major_pointers_unfold` | let | `GC.Gen.PromoteUpdate.fst:48:0` |
+| `allocated_blocks` | let | `GC.Spec.Object.fst:679:0` |
+| `colorHeader_preserves_tag` | let | `GC.Spec.Object.fst:246:0` |
+| `color_mask` | let | `GC.Spec.Object.fst:37:0` |
+| `color_shift` | let | `GC.Spec.Object.fst:38:0` |
+| `exists_field_pointing_to` | let rec | `GC.Spec.Object.fst:539:0` |
+| `field_address` | let | `GC.Spec.Object.fst:60:0` |
+| `field_offset` | let | `GC.Spec.Object.fst:55:0` |
+| `field_offset_bound` | let | `GC.Spec.Object.fst:47:8` |
+| `getColor_setColor_packed` | let | `GC.Spec.Object.fst:159:0` |
+| `hp_to_obj` | let | `GC.Spec.Object.fst:684:0` |
+| `is_pointer_field` | let | `GC.Spec.Object.fst:529:0` |
+| `is_pointer_to_object` | let | `GC.Spec.Object.fst:564:0` |
+| `makeHeader_eq_colorHeader` | let | `GC.Spec.Object.fst:254:0` |
+| `noGreyObjects_aux` | let rec | `GC.Spec.Object.fst:1086:0` |
+| `objects_addr_not_in_rest` | let | `GC.Spec.Object.fst:742:0` |
+| `objects_addresses_ge_8` | let | `GC.Spec.Object.fst:789:0` |
+| `objects_addresses_gt_start` | let rec | `GC.Spec.Object.fst:689:0` |
+| `white_black_disjoint` | let | `GC.Spec.Object.fst:425:0` |
+| `white_gray_disjoint` | let | `GC.Spec.Object.fst:421:0` |
+| `wosize_fits_field_index` | let | `GC.Spec.Object.fst:533:0` |
 
 </details>
 
 <details>
-<summary><code>GC.Spec.Mark</code> — 18/144 dead</summary>
+<summary><code>GC.Gen.Cheney.SimOne</code> — 15/34 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `count_le_length_le` | let rec | `GC.Spec.Mark.fst:122:0` |
-| `mark_aux_empty` | let | `GC.Spec.Mark.fst:620:0` |
-| `mark_aux_fuel_pos` | let | `GC.Spec.Mark.fst:686:0` |
-| `mark_aux_preserves_black` | let rec | `GC.Spec.Mark.fst:916:0` |
-| `mark_aux_preserves_objects_gt0` | let | `GC.Spec.Mark.fst:2163:0` |
-| `mark_aux_unfold` | let | `GC.Spec.Mark.fst:611:0` |
-| `mark_black_iff_reachable` | let | `GC.Spec.Mark.fst:1029:0` |
-| `mark_preserves_no_blue` | let | `GC.Spec.Mark.fst:2467:0` |
-| `mark_step_makes_one_black` | let | `GC.Spec.Mark.fst:938:0` |
-| `mark_step_preserves_black` | let | `GC.Spec.Mark.fst:886:0` |
-| `mark_step_preserves_objects` | let | `GC.Spec.Mark.fst:1791:0` |
-| `mark_step_unfold` | let | `GC.Spec.Mark.fst:412:0` |
-| `no_blue_objects` | let | `GC.Spec.Mark.fsti:259:0` |
-| `no_dup_count_le_1` | let rec | `GC.Spec.Mark.fst:98:0` |
-| `non_black_count_makeBlack_other` | let rec | `GC.Spec.Mark.fst:959:0` |
-| `non_black_count_unfold` | let | `GC.Spec.Mark.fst:978:0` |
-| `stack_length_bound` | let | `GC.Spec.Mark.fst:151:0` |
-| `stack_to_vertices` | let | `GC.Spec.Mark.fst:1022:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.Cheney.Sim</code> — 15/20 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `cheney_bfs_inv_strict_room` | let | `GC.Gen.Cheney.Sim.fst:274:0` |
-| `cheney_forward_fields_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:186:0` |
-| `cheney_forward_one_queue_bound` | let | `GC.Gen.Cheney.Sim.fst:174:0` |
-| `cheney_forward_one_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:163:0` |
-| `cheney_forward_roots_queue_bound` | let | `GC.Gen.Cheney.Sim.fst:225:0` |
-| `cheney_forward_roots_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:197:0` |
-| `cheney_scan_queue_bound` | let | `GC.Gen.Cheney.Sim.fst:237:0` |
-| `cheney_scan_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:208:0` |
-| `minor_guards_sufficient` | let | `GC.Gen.Cheney.Sim.fst:293:0` |
-| `minor_object_passes_guards` | let | `GC.Gen.Cheney.Sim.fst:129:0` |
-| `minor_read_eq_field` | let | `GC.Gen.Cheney.Sim.fst:255:0` |
-| `not_minor_if_guards_fail` | let | `GC.Gen.Cheney.Sim.fst:122:0` |
-| `not_minor_if_wosize_bounds_fail` | let | `GC.Gen.Cheney.Sim.fst:135:0` |
-| `represents_fwd_initial` | let | `GC.Gen.Cheney.Sim.fst:26:0` |
-| `represents_fwd_read` | let | `GC.Gen.Cheney.Sim.fst:72:0` |
+| `cheney_forward_one_queue_bound` | let | `GC.Gen.Cheney.SimOne.fst:113:0` |
+| `count_unforwarded_bound` | let rec | `GC.Gen.Cheney.SimOne.fst:266:8` |
+| `forward_fields_bfs_inv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:557:8` |
+| `forward_fields_preserves_bfs_inv` | let | `GC.Gen.Cheney.SimOne.fst:572:0` |
+| `forward_fields_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:192:0` |
+| `forward_fields_qv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:175:8` |
+| `forward_roots_bfs_inv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:578:8` |
+| `forward_roots_preserves_bfs_inv` | let | `GC.Gen.Cheney.SimOne.fst:593:0` |
+| `forward_roots_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:215:0` |
+| `forward_roots_qv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:198:8` |
+| `fwd_one_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:58:0` |
+| `scan_bfs_inv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:599:8` |
+| `scan_preserves_bfs_inv` | let | `GC.Gen.Cheney.SimOne.fst:615:0` |
+| `scan_preserves_queue_valid` | let | `GC.Gen.Cheney.SimOne.fst:239:0` |
+| `scan_qv_aux` | let rec | `GC.Gen.Cheney.SimOne.fst:221:8` |
 
 </details>
 
@@ -1070,7 +706,28 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Lib.Header</code> — 15/84 dead</summary>
+<summary><code>GC.Gen.PromoteUpdate</code> — 13/29 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `distinct_live_set` | let | `GC.Gen.PromoteUpdate.fsti:303:0` |
+| `minor_collect_all_spec_unfold` | let | `GC.Gen.PromoteUpdate.fst:121:0` |
+| `minor_collect_preserves_reachable` | let | `GC.Gen.PromoteUpdate.fst:91:0` |
+| `promote_all_adds_promoted` | let | `GC.Gen.PromoteUpdate.fst:88:0` |
+| `promote_all_fwd_all_targets_valid` | let | `GC.Gen.PromoteUpdate.fst:85:0` |
+| `promote_all_preserves_blue_fields_closed` | let | `GC.Gen.PromoteUpdate.fst:118:0` |
+| `promote_all_preserves_fields` | let | `GC.Gen.PromoteUpdate.fst:104:0` |
+| `promote_all_read_other` | let | `GC.Gen.PromoteUpdate.fst:107:0` |
+| `update_all_objects_aux_done` | let | `GC.Gen.PromoteUpdate.fst:45:0` |
+| `update_all_objects_aux_skip_blue` | let | `GC.Gen.PromoteUpdate.fst:39:0` |
+| `update_all_objects_aux_skip_no_scan` | let | `GC.Gen.PromoteUpdate.fst:42:0` |
+| `update_all_objects_aux_step` | let | `GC.Gen.PromoteUpdate.fst:36:0` |
+| `update_major_pointers_preserves_wfh_part2` | let | `GC.Gen.PromoteUpdate.fst:99:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Lib.Header</code> — 11/84 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
@@ -1085,70 +742,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 | `set_color_sem_preserves_wosize` | let | `GC.Lib.Header.fst:154:0` |
 | `unpack_get_color` | let | `GC.Lib.Header.fst:375:0` |
 | `unpack_header64` | let | `GC.Lib.Header.fst:577:0` |
-| `unpack_header64_v` | let | `GC.Lib.Header.fst:584:0` |
-| `unpack_header_total` | let | `GC.Lib.Header.fst:132:0` |
-| `unpack_header_v` | let | `GC.Lib.Header.fst:138:0` |
-| `unpack_pack_header64` | let | `GC.Lib.Header.fst:608:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.MinorHeap</code> — 12/85 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `minor_chain_count` | let rec | `GC.Gen.MinorHeap.fst:1151:8` |
-| `minor_chain_count_bound` | let | `GC.Gen.MinorHeap.fst:1186:8` |
-| `minor_chain_count_bounded` | let rec | `GC.Gen.MinorHeap.fst:1167:8` |
-| `minor_chain_count_eq` | let rec | `GC.Gen.MinorHeap.fst:1193:8` |
-| `minor_chain_valid_unfold` | let | `GC.Gen.MinorHeap.fst:279:0` |
-| `minor_heap_size_bound` | let | `GC.Gen.MinorHeap.fsti:177:0` |
-| `minor_objects_aux_count` | let rec | `GC.Gen.MinorHeap.fst:1113:8` |
-| `minor_objects_aux_count_bound` | let | `GC.Gen.MinorHeap.fst:1210:8` |
-| `minor_objects_aux_count_eq_length` | let rec | `GC.Gen.MinorHeap.fst:1130:8` |
-| `minor_objects_count_bound` | let | `GC.Gen.MinorHeap.fst:1220:0` |
-| `minor_objects_zero_bump` | let | `GC.Gen.MinorHeap.fst:1236:0` |
-| `minor_pow2_bound` | let | `GC.Gen.MinorHeap.fst:274:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.Allocator</code> — 12/40 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `alloc_exact_heap` | let | `GC.Spec.Allocator.fsti:440:0` |
-| `alloc_exact_length` | let | `GC.Spec.Allocator.fst:405:0` |
-| `alloc_exact_pre` | let | `GC.Spec.Allocator.fsti:435:0` |
-| `alloc_exact_read_hd` | let | `GC.Spec.Allocator.fst:377:0` |
-| `alloc_exact_read_other` | let | `GC.Spec.Allocator.fst:391:0` |
-| `alloc_search_fuel_0` | let | `GC.Spec.Allocator.fst:55:0` |
-| `alloc_search_invalid` | let | `GC.Spec.Allocator.fst:61:0` |
-| `alloc_split_normal_length` | let | `GC.Spec.Allocator.fst:231:0` |
-| `alloc_split_normal_read_hd` | let | `GC.Spec.Allocator.fst:253:0` |
-| `make_header_eq_impl` | let | `GC.Spec.Allocator.fst:43:0` |
-| `multiple_gap_lemma` | let | `GC.Spec.Allocator.fst:119:0` |
-| `spec_next_fp_eq` | let | `GC.Spec.Allocator.fst:126:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.MarkInv</code> — 12/18 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `mark_inv_elim_sev` | let | `GC.Spec.MarkInv.fst:25:0` |
-| `mark_inv_intro` | let | `GC.Spec.MarkInv.fst:21:0` |
-| `mark_inv_noGreyObjects` | let | `GC.Spec.MarkInv.fst:80:0` |
-| `mark_inv_no_gray` | let | `GC.Spec.MarkInv.fst:76:0` |
-| `mark_inv_obj_fields_bound` | let | `GC.Spec.MarkInv.fst:34:0` |
-| `mark_inv_push_children_bound` | let | `GC.Spec.MarkInv.fst:66:0` |
-| `mark_inv_stack_bound` | let | `GC.Spec.MarkInv.fst:59:0` |
-| `mark_inv_step` | let | `GC.Spec.MarkInv.fst:36:0` |
-| `mark_inv_step_no_scan` | let | `GC.Spec.MarkInv.fst:43:0` |
-| `mark_inv_step_preserves_objects` | let | `GC.Spec.MarkInv.fst:54:0` |
-| `mark_inv_step_scan` | let | `GC.Spec.MarkInv.fst:48:0` |
-| `push_children_stack_monotone` | let | `GC.Spec.MarkInv.fst:73:0` |
 
 </details>
 
@@ -1171,20 +764,53 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Spec.Sweep</code> — 10/56 dead</summary>
+<summary><code>GC.Spec.Mark</code> — 10/144 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `free_list_props` | let | `GC.Spec.Sweep.fsti:43:0` |
-| `free_list_valid` | let rec | `GC.Spec.Sweep.fsti:25:0` |
-| `sweep_aux_empty` | let | `GC.Spec.Sweep.fst:235:0` |
-| `sweep_aux_objects_step` | let | `GC.Spec.Sweep.fst:244:0` |
-| `sweep_aux_step` | let | `GC.Spec.Sweep.fst:227:0` |
-| `sweep_aux_white_stays` | let rec | `GC.Spec.Sweep.fst:406:0` |
-| `sweep_final_colors` | let | `GC.Spec.Sweep.fst:650:0` |
-| `sweep_no_gray_or_black` | let | `GC.Spec.Sweep.fst:665:0` |
-| `sweep_object_preserves_objects_from` | let | `GC.Spec.Sweep.fst:164:0` |
-| `sweep_object_preserves_objects_suffix` | let | `GC.Spec.Sweep.fst:190:0` |
+| `mark_aux_preserves_black` | let rec | `GC.Spec.Mark.fst:916:0` |
+| `mark_aux_preserves_objects_gt0` | let | `GC.Spec.Mark.fst:2163:0` |
+| `mark_black_iff_reachable` | let | `GC.Spec.Mark.fst:1029:0` |
+| `mark_preserves_no_blue` | let | `GC.Spec.Mark.fst:2467:0` |
+| `mark_step_makes_one_black` | let | `GC.Spec.Mark.fst:938:0` |
+| `mark_step_preserves_black` | let | `GC.Spec.Mark.fst:886:0` |
+| `no_blue_objects` | let | `GC.Spec.Mark.fsti:259:0` |
+| `non_black_count_makeBlack_other` | let rec | `GC.Spec.Mark.fst:959:0` |
+| `non_black_count_unfold` | let | `GC.Spec.Mark.fst:978:0` |
+| `stack_to_vertices` | let | `GC.Spec.Mark.fst:1022:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Impl.Sweep.Lemmas</code> — 9/43 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `density_next_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:175:0` |
+| `derive_objects_nonempty_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:207:0` |
+| `headers_preserved_before_spec_write` | let | `GC.Impl.Sweep.Lemmas.fst:357:0` |
+| `is_black_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:462:0` |
+| `sweep_black_preserves` | let | `GC.Impl.Sweep.Lemmas.fst:432:0` |
+| `sweep_black_whiteness` | let | `GC.Impl.Sweep.Lemmas.fst:621:0` |
+| `sweep_else_contradiction` | let | `GC.Impl.Sweep.Lemmas.fst:677:0` |
+| `sweep_loop_next_bridge` | let | `GC.Impl.Sweep.Lemmas.fst:228:0` |
+| `sweep_object_black_eq` | let | `GC.Impl.Sweep.Lemmas.fst:647:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Gen.Cheney.Sim</code> — 8/20 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `cheney_forward_fields_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:186:0` |
+| `cheney_forward_one_queue_bound` | let | `GC.Gen.Cheney.Sim.fst:174:0` |
+| `cheney_forward_one_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:163:0` |
+| `cheney_forward_roots_queue_bound` | let | `GC.Gen.Cheney.Sim.fst:225:0` |
+| `cheney_forward_roots_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:197:0` |
+| `cheney_scan_queue_bound` | let | `GC.Gen.Cheney.Sim.fst:237:0` |
+| `cheney_scan_queue_valid` | let | `GC.Gen.Cheney.Sim.fst:208:0` |
+| `minor_object_passes_guards` | let | `GC.Gen.Cheney.Sim.fst:129:0` |
 
 </details>
 
@@ -1221,6 +847,22 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
+<summary><code>GC.Spec.Allocator</code> — 8/40 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `alloc_exact_heap` | let | `GC.Spec.Allocator.fsti:440:0` |
+| `alloc_exact_length` | let | `GC.Spec.Allocator.fst:405:0` |
+| `alloc_exact_pre` | let | `GC.Spec.Allocator.fsti:435:0` |
+| `alloc_exact_read_hd` | let | `GC.Spec.Allocator.fst:377:0` |
+| `alloc_exact_read_other` | let | `GC.Spec.Allocator.fst:391:0` |
+| `alloc_split_normal_length` | let | `GC.Spec.Allocator.fst:231:0` |
+| `alloc_split_normal_read_hd` | let | `GC.Spec.Allocator.fst:253:0` |
+| `make_header_eq_impl` | let | `GC.Spec.Allocator.fst:43:0` |
+
+</details>
+
+<details>
 <summary><code>GC.Spec.Coalesce</code> — 8/68 dead</summary>
 
 | Definition | Kind | Location |
@@ -1237,22 +879,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Spec.MarkBoundedInv</code> — 8/15 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `bounded_mark_inv_from_full` | let | `GC.Spec.MarkBoundedInv.fst:36:0` |
-| `bounded_mark_inv_head_gray` | let | `GC.Spec.MarkBoundedInv.fst:74:0` |
-| `bounded_mark_inv_rescan` | let | `GC.Spec.MarkBoundedInv.fst:136:0` |
-| `bounded_mark_inv_rescan_complete` | let | `GC.Spec.MarkBoundedInv.fst:146:0` |
-| `bounded_mark_inv_step` | let | `GC.Spec.MarkBoundedInv.fst:84:0` |
-| `bounded_mark_inv_step_decreases` | let | `GC.Spec.MarkBoundedInv.fst:127:0` |
-| `bounded_mark_inv_step_full` | let | `GC.Spec.MarkBoundedInv.fst:92:0` |
-| `bounded_mark_inv_step_preserves_objects` | let | `GC.Spec.MarkBoundedInv.fst:117:0` |
-
-</details>
-
-<details>
 <summary><code>GC.Gen.Base</code> — 7/25 dead</summary>
 
 | Definition | Kind | Location |
@@ -1264,21 +890,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 | `minor_major_disjoint` | let | `GC.Gen.Base.fst:86:0` |
 | `minor_obj_addr` | let | `GC.Gen.Base.fsti:98:0` |
 | `small_wosize_fits` | let | `GC.Gen.Base.fst:32:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.Cheney</code> — 7/92 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `cheney_collect_preserves_wfh` | let | `GC.Gen.Cheney.fst:982:0` |
-| `cheney_forward_fields_preserves_fwd_above_zero` | let rec | `GC.Gen.Cheney.fst:1576:8` |
-| `cheney_forward_normal_preserves_fwd_above_zero` | let | `GC.Gen.Cheney.fst:1500:8` |
-| `cheney_forward_one_preserves_fwd_above_zero` | let | `GC.Gen.Cheney.fst:1531:8` |
-| `cheney_forward_roots_preserves_fwd_above_zero` | let rec | `GC.Gen.Cheney.fst:1600:8` |
-| `cheney_promote_fwd_above_zero_addr` | let | `GC.Gen.Cheney.fst:1650:0` |
-| `cheney_scan_preserves_fwd_above_zero` | let rec | `GC.Gen.Cheney.fst:1624:8` |
 
 </details>
 
@@ -1328,6 +939,21 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
+<summary><code>GC.Spec.Sweep</code> — 7/56 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `free_list_props` | let | `GC.Spec.Sweep.fsti:43:0` |
+| `free_list_valid` | let rec | `GC.Spec.Sweep.fsti:25:0` |
+| `sweep_aux_step` | let | `GC.Spec.Sweep.fst:227:0` |
+| `sweep_aux_white_stays` | let rec | `GC.Spec.Sweep.fst:406:0` |
+| `sweep_final_colors` | let | `GC.Spec.Sweep.fst:650:0` |
+| `sweep_no_gray_or_black` | let | `GC.Spec.Sweep.fst:665:0` |
+| `sweep_object_preserves_objects_from` | let | `GC.Spec.Sweep.fst:164:0` |
+
+</details>
+
+<details>
 <summary><code>GC.Gen.CheneyPreservation.Forwarding</code> — 6/58 dead</summary>
 
 | Definition | Kind | Location |
@@ -1342,16 +968,16 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Spec.Base</code> — 6/20 dead</summary>
+<summary><code>GC.Spec.MarkBoundedInv</code> — 6/15 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `heap_fp_pair` | let | `GC.Spec.Base.fsti:117:0` |
-| `hp_addr_32` | let | `GC.Spec.Base.fsti:59:0` |
-| `mult_mword_aligned` | let | `GC.Spec.Base.fst:63:0` |
-| `stack_heap_pair` | let | `GC.Spec.Base.fsti:114:0` |
-| `sum_of_aligned_is_aligned` | let | `GC.Spec.Base.fst:59:0` |
-| `val_addr` | let | `GC.Spec.Base.fsti:78:0` |
+| `bounded_mark_inv_from_full` | let | `GC.Spec.MarkBoundedInv.fst:36:0` |
+| `bounded_mark_inv_rescan` | let | `GC.Spec.MarkBoundedInv.fst:136:0` |
+| `bounded_mark_inv_rescan_complete` | let | `GC.Spec.MarkBoundedInv.fst:146:0` |
+| `bounded_mark_inv_step` | let | `GC.Spec.MarkBoundedInv.fst:84:0` |
+| `bounded_mark_inv_step_decreases` | let | `GC.Spec.MarkBoundedInv.fst:127:0` |
+| `bounded_mark_inv_step_preserves_objects` | let | `GC.Spec.MarkBoundedInv.fst:117:0` |
 
 </details>
 
@@ -1369,19 +995,6 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Gen.PromoteUpdate.Aux</code> — 5/9 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `update_all_objects_aux_done` | let | `GC.Gen.PromoteUpdate.Aux.fst:187:0` |
-| `update_all_objects_aux_skip_blue` | let | `GC.Gen.PromoteUpdate.Aux.fst:168:0` |
-| `update_all_objects_aux_skip_no_scan` | let | `GC.Gen.PromoteUpdate.Aux.fst:177:0` |
-| `update_all_objects_aux_step` | let | `GC.Gen.PromoteUpdate.Aux.fst:155:0` |
-| `update_major_pointers_unfold` | let | `GC.Gen.PromoteUpdate.Aux.fst:194:0` |
-
-</details>
-
-<details>
 <summary><code>GC.Spec.Allocator.Lemmas.Chain</code> — 5/48 dead</summary>
 
 | Definition | Kind | Location |
@@ -1391,6 +1004,56 @@ Every one of the 865 unreachable definitions, grouped by module.
 | `fl_chain_terminates_splice` | let rec | `GC.Spec.Allocator.Lemmas.Chain.fst:393:0` |
 | `fl_valid_field_write` | let rec | `GC.Spec.Allocator.Lemmas.Chain.fst:475:0` |
 | `fl_valid_field_write_tail` | let rec | `GC.Spec.Allocator.Lemmas.Chain.fst:556:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Spec.Base</code> — 5/20 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `heap_fp_pair` | let | `GC.Spec.Base.fsti:117:0` |
+| `hp_addr_32` | let | `GC.Spec.Base.fsti:59:0` |
+| `mult_mword_aligned` | let | `GC.Spec.Base.fst:63:0` |
+| `stack_heap_pair` | let | `GC.Spec.Base.fsti:114:0` |
+| `sum_of_aligned_is_aligned` | let | `GC.Spec.Base.fst:59:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Spec.MarkInv</code> — 5/18 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `mark_inv_intro` | let | `GC.Spec.MarkInv.fst:21:0` |
+| `mark_inv_noGreyObjects` | let | `GC.Spec.MarkInv.fst:80:0` |
+| `mark_inv_no_gray` | let | `GC.Spec.MarkInv.fst:76:0` |
+| `mark_inv_step_preserves_objects` | let | `GC.Spec.MarkInv.fst:54:0` |
+| `push_children_stack_monotone` | let | `GC.Spec.MarkInv.fst:73:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Gen.MinorHeap</code> — 4/85 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `minor_chain_valid_unfold` | let | `GC.Gen.MinorHeap.fst:279:0` |
+| `minor_heap_size_bound` | let | `GC.Gen.MinorHeap.fsti:177:0` |
+| `minor_objects_zero_bump` | let | `GC.Gen.MinorHeap.fst:1236:0` |
+| `minor_pow2_bound` | let | `GC.Gen.MinorHeap.fst:274:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Gen.PromoteUpdate.Aux</code> — 4/9 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `update_all_objects_aux_done` | let | `GC.Gen.PromoteUpdate.Aux.fst:187:0` |
+| `update_all_objects_aux_skip_blue` | let | `GC.Gen.PromoteUpdate.Aux.fst:168:0` |
+| `update_all_objects_aux_skip_no_scan` | let | `GC.Gen.PromoteUpdate.Aux.fst:177:0` |
+| `update_all_objects_aux_step` | let | `GC.Gen.PromoteUpdate.Aux.fst:155:0` |
 
 </details>
 
@@ -1441,6 +1104,28 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
+<summary><code>GC.Spec.SweepCoalesce.FlushAgree</code> — 3/11 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `aligned_neq_disjoint` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:103:8` |
+| `write_word_agree_at` | let | `GC.Spec.SweepCoalesce.FlushAgree.fst:114:8` |
+| `zero_fields_agree_pair` | let rec | `GC.Spec.SweepCoalesce.FlushAgree.fst:139:8` |
+
+</details>
+
+<details>
+<summary><code>GC.Spec.SweepInv</code> — 3/44 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `fp_valid_intro` | let | `GC.Spec.SweepInv.fst:33:0` |
+| `headers_preserved_before_weaken` | let | `GC.Spec.SweepInv.fst:321:0` |
+| `objects_white_before_all` | let | `GC.Spec.SweepInv.fst:397:0` |
+
+</details>
+
+<details>
 <summary><code>GC.Gen.MinorCollectForwarding.Helpers</code> — 2/29 dead</summary>
 
 | Definition | Kind | Location |
@@ -1457,6 +1142,34 @@ Every one of the 865 unreachable definitions, grouped by module.
 | --- | --- | --- |
 | `heap_read_word_extensional` | let | `GC.Gen.TwoPassEquiv.fst:45:0` |
 | `update_major_pointers_rewrites_fwd_field` | let | `GC.Gen.TwoPassEquiv.fst:1618:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Impl.FusedSweepCoalesce.Lemmas</code> — 2/14 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `flush_blue_length` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:325:0` |
+| `run_words_fits` | let | `GC.Impl.FusedSweepCoalesce.Lemmas.fst:108:8` |
+
+</details>
+
+<details>
+<summary><code>GC.Gen.Cheney</code> — 1/92 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `cheney_collect_preserves_wfh` | let | `GC.Gen.Cheney.fst:982:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Gen.CheneyBFS</code> — 1/36 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `forward_roots_fwd_monotone` | let rec | `GC.Gen.CheneyBFS.fst:128:0` |
 
 </details>
 
@@ -1506,6 +1219,15 @@ Every one of the 865 unreachable definitions, grouped by module.
 </details>
 
 <details>
+<summary><code>GC.Impl.Coalesce.Lemmas</code> — 1/19 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `run_words_fits` | let | `GC.Impl.Coalesce.Lemmas.fst:71:0` |
+
+</details>
+
+<details>
 <summary><code>GC.Spec.HeapGraph</code> — 1/32 dead</summary>
 
 | Definition | Kind | Location |
@@ -1520,6 +1242,24 @@ Every one of the 865 unreachable definitions, grouped by module.
 | Definition | Kind | Location |
 | --- | --- | --- |
 | `field_reads_equal` | let | `GC.Spec.HeapModel.fst:90:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Spec.SweepCoalesce.Helpers</code> — 1/16 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `makeWhite_white_noop` | let | `GC.Spec.SweepCoalesce.Helpers.fst:285:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Spec.SweepCoalesce.Induction</code> — 1/22 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `flush_pair_above` | let | `GC.Spec.SweepCoalesce.Induction.fst:221:8` |
 
 </details>
 

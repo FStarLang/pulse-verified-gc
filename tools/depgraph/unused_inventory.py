@@ -110,7 +110,14 @@ referenced only by unreachable code, it is itself unreachable and already
 appears below. Deleting the whole set therefore cannot strand a live definition,
 and one pass reaches the fixpoint — no iterate-until-stable loop is needed.
 
-Two caveats the graph *does* account for:
+Three caveats the graph *does* account for:
+
+- **Pulse `fn` bodies.** Pulse type-checks its own definitions and hands F* an
+  opaque `magic ()` stub, keeping the elaborated term in a serialised
+  `sigmeta_extension_data` blob that is not an F* term. The graph would
+  therefore miss every lemma invoked from a `fn` body. For those definitions
+  only, the tool re-reads the body from the source and treats each identifier
+  as a possible reference; this over-approximates, which is the safe direction.
 
 - **SMT-pattern lemmas.** A lemma carrying `[SMTPat ...]` is used by Z3 without
   ever being named. These are classified *implicitly live*, not unreachable, and

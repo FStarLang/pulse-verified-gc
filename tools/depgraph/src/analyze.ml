@@ -133,7 +133,20 @@ type raw_entry = {
   r_children : string list;        (* datacons of an inductive, actions of an effect *)
   r_generated : bool;
   r_attr_lids : string list;
+  (* True when the checked file does not actually contain this definition's
+     body.  A language extension such as Pulse type-checks the definition
+     itself and hands F* an opaque `magic ()` stub, keeping the real term in
+     `sigmeta_extension_data` as a serialised blob we cannot walk.  References
+     made from such a body have to be recovered from the source. *)
+  r_opaque : bool;
 }
+
+(* A definition whose body a language extension replaced by a stub.  See
+   `r_opaque`. *)
+let is_opaque_extension (se : SS.sigelt) : bool =
+  match of_flist se.SS.sigmeta.SS.sigmeta_extension_data with
+  | [] -> false
+  | _ -> true
 
 let quals_of (se : SS.sigelt) : string list * bool =
   let generated = ref false in
@@ -225,10 +238,11 @@ let rec entries_of_sigelt (se : SS.sigelt) : raw_entry list =
   let attrs = of_flist se.SS.sigattrs in
   let attr_lids = collect_fvars_terms attrs in
   let qlids = qual_lids se in
+  let opaque = is_opaque_extension se in
   let mk ?(children=[]) ?(gen=generated) kind lids refs =
     { r_lids = lids; r_kind = kind; r_quals = quals; r_loc = loc;
       r_refs = qlids @ refs; r_children = children; r_generated = gen;
-      r_attr_lids = attr_lids }
+      r_attr_lids = attr_lids; r_opaque = opaque }
   in
   match se.SS.sigel with
   | SS.Sig_bundle p ->
@@ -284,7 +298,7 @@ let rec entries_of_sigelt (se : SS.sigelt) : raw_entry list =
         in
         Some { r_lids = [lid]; r_kind = kind; r_quals = quals; r_loc = l;
                r_refs = refs; r_children = []; r_generated = generated;
-               r_attr_lids = attr_lids })
+               r_attr_lids = attr_lids; r_opaque = opaque })
       lbs
 
   | SS.Sig_new_effect ed ->
