@@ -178,6 +178,55 @@ caller, and the module verifies in 25 s. The remaining `sweep_aux*` lemmas
 (`preserves_field_*`, `preserves_objects`, `preserves_wf`) are genuinely
 different arguments and were left alone.
 
+### Two more worked examples, and the criterion that decides them
+
+`GC.Gen.CheneyPreservation.Injectivity.fst` (1,412 → 1,142, −270) had three
+invariants each pushed separately through all four Cheney operations —
+`forward_fields`, `forward_roots`, `scan`, `promote` — for **twelve**
+near-identical inductions. They are now four, one per operation, each carrying
+the conjunction. The shared `requires`/`ensures` blocks were factored into two
+`unfold let ... : prop` abbreviations; `unfold` matters, because it keeps them
+definitionally transparent so Z3 sees straight through them and the merged
+proofs need no extra hints. Verified first try in 29.5 s.
+
+`GC.Gen.AllocProps.fst` (1,239 → 1,086, −153) had three lower-bound /
+upper-bound *pairs* — the same proof written twice, once for `>= wz` and once
+for `<= wz + 1`. Two lessons:
+
+* `write_prev_preserves_wosize{,_upper}` were byte-identical apart from those
+  two lines. Both were really proving that the write lands on a word other than
+  `obj`'s header, so the merged lemma states the **equality**
+  `wosize_of_object obj g2 == wosize_of_object obj g_after_alloc` and drops the
+  `wz` parameter entirely. When two lemmas bound the same quantity from both
+  sides, look for the equality hiding underneath them.
+* `alloc_from_block_wosize{,_upper}_lemma` and
+  `alloc_search_obj_wosize{,_upper}_part1` genuinely need both bounds (the value
+  is `bwz` on an exact fit and `wz` on a split), so those merged into a single
+  two-conjunct postcondition, with the public `alloc_spec_*` wrappers retained
+  verbatim to project whichever bound each caller wants.
+
+**The criterion.** Textual similarity picks the candidates, but what decides
+whether a merge is cheap is *whether the family members take the same
+parameters*:
+
+| situation | verdict |
+|---|---|
+| identical parameters, invariant differs | merge — mechanical, one conjunctive postcondition |
+| identical parameters, bounds differ | merge — and check for an underlying equality first |
+| **different extra parameters** | **do not merge** — needs a `forall` inside the induction |
+
+Two families were rejected on the third row despite high similarity:
+`push_children_preserves_{is_no_scan,objects,resolve}` and
+`push_children_preserves_{wosize,get_field}` in `GC.Spec.Mark.fst` (0.83–0.88,
+but the members take `b`, nothing, `addr`, and `x`/`j` respectively), and
+`frame_field` / `frame_header` in `CheneyPreservation.Frame.fst` (0.76–0.83,
+`frame_field` carries an extra `idx`). Introducing a bounded `forall` into a
+50–250-line induction destabilises the SMT for a few hundred lines of saving;
+that is a bad trade.
+
+**Running total across the three merged modules: −561 lines**, no interface
+change, no caller change, and every module verified on the first attempt.
+
 ---
 
 ## 5. Restated signatures — 7,645 lines
@@ -311,16 +360,20 @@ Recorded so they are not re-investigated.
 
 | # | lever | lines | risk | notes |
 |---:|---|---:|---|---|
-| 1 | Factor the repeated inductions (§4) | 8,000–10,000 | medium | Real proof engineering, demonstrated on `GC.Spec.Sweep` (§4). Start with `cheney_forward*` (4,762 lines over six modules), then `alloc_search*` (3,005). |
+| 1 | Factor the repeated inductions (§4) | 4,000–6,000 | medium | Real proof engineering. −561 done so far across `GC.Spec.Sweep`, `…Injectivity` and `GC.Gen.AllocProps` (§4). Estimate revised down from 8,000–10,000: screening the whole repo at ≥0.82 similarity found only ~20 mergeable pairs, and roughly half fail the same-parameters test. Next best: `coalesce_aux*` (three 240-line inductions at 0.84–0.92) and `GC.Spec.Allocator.Lemmas.Part2`'s `wfh_part1`/`wfh_part4` (0.94). |
 | 2 | Drop the standalone mark-and-sweep collector (§6) | 1,891 | none, once decided | Pure product decision. Deletes three modules outright. |
 | 3 | Replace facade `.fsti` restatement with `include` (§5) | 767 | low | Three modules. |
 | 4 | Strip token-identical `.fst` annotations (§5) | 7,645 | low, mechanical | **Not recommended** — costs readability where it matters most. Listed for completeness. |
 | 5 | Account for SPOT separately (§6) | 6,389 | none | Reporting change, not a deletion. |
 
-Doing 1–3 takes the development from 92,599 to roughly **80,000 lines**, of
-which ~6,400 is the SPOT test suite and ~21,000 is comments and blank lines —
-about **53,000 lines of actual code and proof** for the shipped collector, a
-20 : 1 ratio against the extracted C.
+Doing 1–3 takes the development from 92,599 to roughly **84,000 lines**, of
+which ~6,400 is the SPOT test suite and ~22,000 is comments and blank lines —
+about **56,000 lines of actual code and proof** for the shipped collector, a
+21 : 1 ratio against the extracted C. The honest conclusion after acting on
+lever 1 is that this development is not padded with copy-paste to the degree
+the raw similarity numbers suggest: most of the near-duplicate *text* is
+near-duplicate because the lemmas genuinely quantify over different things, and
+only the same-parameter families collapse for free.
 
 ---
 
