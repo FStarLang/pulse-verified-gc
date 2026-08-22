@@ -19,7 +19,7 @@
 
 module GC.Spec.Coalesce
 
-#set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#set-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 
 open FStar.Seq
 
@@ -187,7 +187,7 @@ let coalesce_heap_unfold (g0 g: heap) (objs: seq obj_addr)
 
 /// Addresses within one object's region are outside any other object's region.
 /// Follows from objects_separated which shows non-overlapping layout.
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 val addr_in_object_outside_other
   (g: heap) (x o: obj_addr) (addr: hp_addr)
   : Lemma
@@ -335,7 +335,7 @@ val flush_blue_preserves_outside
     (ensures read_word (fst (flush_blue g first_blue run_words fp)) addr
           == read_word g addr)
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let flush_blue_preserves_outside g first_blue run_words fp addr =
   if run_words = 0 then ()
   else if U64.v first_blue < U64.v mword
@@ -380,7 +380,7 @@ val flush_blue_preserves_length
   (g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
   : Lemma (Seq.length (fst (flush_blue g first_blue run_words fp)) == Seq.length g)
 
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 let flush_blue_preserves_length g first_blue run_words fp =
   if run_words = 0 then ()
   else if U64.v first_blue < U64.v mword
@@ -428,7 +428,7 @@ val flush_blue_header_spec
       read_word g' (hd_address first_blue) ==
         makeHeader (U64.uint_to_t (run_words - 1)) Blue 0UL))
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let flush_blue_header_spec g first_blue run_words fp =
   let fb = first_blue in
   let hd = hd_address fb in
@@ -466,7 +466,7 @@ let flush_blue_header_spec g first_blue run_words fp =
 
 /// When objects walk ends (next >= heap_size), tail is empty.
 /// This follows from the objects definition with fuel 2.
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 val objects_tail_empty_when_done (start: hp_addr) (g: heap)
   : Lemma
     (requires
@@ -504,7 +504,7 @@ val coalesce_aux_preserves_before_run_start
            == read_word g addr)
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec coalesce_aux_preserves_before_run_start g0 g start objs first_blue run_words fp addr =
   if Seq.length objs = 0 then begin
     // flush_blue: addr is before the run, so preserved
@@ -589,7 +589,7 @@ val coalesce_aux_preserves_outside
 /// Geometric helper: extending a blue run preserves the "addr outside" property.
 /// When run_words = 0, the run starts fresh at obj.
 /// When run_words > 0, the old run is contiguous with obj.
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 val extend_run_preserves_outside
   (addr: hp_addr) (first_blue: U64.t) (run_words: nat) (obj: obj_addr) (ws: nat)
   (start_val: nat)
@@ -643,7 +643,7 @@ let extend_run_preserves_outside addr first_blue run_words obj ws start_val =
   end
 #pop-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec coalesce_aux_preserves_outside g0 g start objs first_blue run_words fp all_objs addr =
   if Seq.length objs = 0 then
     flush_blue_preserves_outside g first_blue run_words fp addr
@@ -712,7 +712,7 @@ val coalesce_preserves_survivor_header (g: heap) (x: obj_addr)
     (ensures read_word (fst (coalesce g)) (hd_address x)
           == read_word g (hd_address x))
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let coalesce_preserves_survivor_header g x =
   hd_address_spec x;
   wosize_of_object_bound x g;
@@ -731,7 +731,7 @@ val coalesce_preserves_survivor_field
     (ensures HeapGraph.get_field (fst (coalesce g)) x i
           == HeapGraph.get_field g x i)
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let coalesce_preserves_survivor_field g x i =
   hd_address_spec x;
   wosize_of_object_bound x g;
@@ -794,7 +794,7 @@ let coalesce_heap_preserves_length
   = coalesce_heap_unfold g0 g objs first_blue run_words fp;
     coalesce_aux_preserves_length g0 g objs first_blue run_words fp
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 50"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 25"
 let coalesce_heap_preserves_outside
   (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
   (first_blue: U64.t) (run_words: nat) (fp: U64.t)
@@ -821,7 +821,7 @@ let coalesce_heap_preserves_outside
     coalesce_aux_preserves_outside g0 g start objs first_blue run_words fp all_objs addr
 #pop-options
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 50"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 25"
 let coalesce_heap_preserves_before_run_start
   (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
   (first_blue: U64.t) (run_words: nat) (fp: U64.t)
@@ -870,7 +870,7 @@ let walk_pre (g0 g: heap) (start: hp_addr) (objs all_objs: seq obj_addr)
 
 /// Helper: objects walk is non-empty when start is a valid walk position
 /// with a valid header producing a bounded next.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let objects_nonempty_at (start: hp_addr) (g g0: heap)
   : Lemma
     (requires
@@ -884,7 +884,7 @@ private let objects_nonempty_at (start: hp_addr) (g g0: heap)
 
 /// Helper: derive run_words bound from walk_pre constraints.
 /// When run_words > 0 and walk_pre holds, run_words < pow2 54.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let run_words_bound
   (fb: U64.t) (run_words: pos) (start: hp_addr)
   : Lemma
@@ -913,7 +913,7 @@ private let run_words_bound
 /// - objects (hd_address fb) g' is non-empty
 /// - fb is in that list
 /// - any x in objects start g' is also in that list
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 private let merged_block_step
   (g': heap) (fb: obj_addr) (run_words: pos) (start: hp_addr) (x: obj_addr)
   : Lemma
@@ -947,7 +947,7 @@ private let merged_block_step
 #pop-options
 
 /// Helper: if the merged header is present, the object is blue.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 private let merged_block_is_blue
   (g': heap) (fb: obj_addr) (wz: wosize)
   : Lemma
@@ -962,7 +962,7 @@ private let merged_block_is_blue
 
 /// Helper: decompose membership in the merged block walk.
 /// If y ∈ objects (hd_address fb) g', then either y = fb or y ∈ objects start g'.
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 private let merged_block_decompose
   (g': heap) (fb: obj_addr) (run_words: pos) (start: U64.t) (y: obj_addr)
   : Lemma
@@ -1021,7 +1021,7 @@ val coalesce_aux_survivors_in_walk
       Seq.mem x (objects sync (coalesce_heap g0 g objs first_blue run_words fp))))
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let rec coalesce_aux_survivors_in_walk g0 g start objs first_blue run_words fp all_objs x =
   if Seq.length objs = 0 then ()
   else begin
@@ -1192,7 +1192,7 @@ val coalesce_aux_walk_all_wb
       (Seq.mem y objs /\ is_white y g0) \/ is_blue y g'))
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let rec coalesce_aux_walk_all_wb g0 g start objs first_blue run_words fp all_objs y =
   if Seq.length objs = 0 then begin
     assert (Seq.equal objs Seq.empty);
@@ -1438,7 +1438,7 @@ val coalesce_survivors_in_objects (g: heap) (x: obj_addr)
     (requires post_sweep g /\ Seq.mem x (objects zero_addr g) /\ is_white x g)
     (ensures Seq.mem x (objects zero_addr (fst (coalesce g))))
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let coalesce_survivors_in_objects g x =
   coalesce_aux_survivors_in_walk g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g) x;
   coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL
@@ -1451,7 +1451,7 @@ val coalesce_all_white_or_blue (g: heap)
                Seq.mem x (objects zero_addr (fst (coalesce g))) ==>
                is_white x (fst (coalesce g)) \/ is_blue x (fst (coalesce g))))
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let coalesce_all_white_or_blue g =
   coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
   let g' = fst (coalesce g) in
@@ -1496,7 +1496,7 @@ val coalesce_preserves_wf (g: heap)
 /// ---------------------------------------------------------------------------
 
 /// Arithmetic: efptu field address doesn't overflow for obj_addr indices
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 private let efptu_field_addr_arith (h: obj_addr) (idx: U64.t{U64.v idx < pow2 54})
   : Lemma (
       U64.v (U64.mul_mod idx mword) == U64.v idx * U64.v mword /\
@@ -1513,7 +1513,7 @@ private let efptu_field_addr_arith (h: obj_addr) (idx: U64.t{U64.v idx < pow2 54
 
 /// Blue objects after coalescing satisfy the size bound (part1).
 /// Admitted: proving this requires reasoning about merged block sizes.
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 private let coalesce_blue_size_bound (g: heap) (obj: obj_addr)
   : Lemma
     (requires
@@ -1554,7 +1554,7 @@ val coalesce_aux_blue_tag_zero
     (ensures tag_of_object y (coalesce_heap g0 g objs first_blue run_words fp) == 0UL)
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let rec coalesce_aux_blue_tag_zero g0 g start objs first_blue run_words fp all_objs y =
   let g' = coalesce_heap g0 g objs first_blue run_words fp in
   if Seq.length objs = 0 then begin
@@ -1794,7 +1794,7 @@ let rec coalesce_aux_blue_tag_zero g0 g start objs first_blue run_words fp all_o
 #pop-options
 
 /// Blue objects after coalescing are not infix (tag = 0, not infix_tag).
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 private let coalesce_blue_not_infix (g: heap) (obj: obj_addr)
   : Lemma
     (requires
@@ -1990,7 +1990,7 @@ val coalesce_aux_blue_field0_valid
     (decreases Seq.length objs)
 
 /// Helper: prove field 0 of the merged block is preserved through tail walk.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let merged_block_field0_preserved
   (g0 g_flush: heap) (next: hp_addr) (tail_objs: seq obj_addr)
   (fp_flush: U64.t)
@@ -2023,7 +2023,7 @@ private let merged_block_field0_preserved
 #pop-options
 
 /// Helper: prove zero fields for the merged block are preserved through tail walk.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let merged_block_zero_field_preserved
   (g0 g_flush: heap) (next: hp_addr) (tail_objs: seq obj_addr)
   (fp_flush: U64.t)
@@ -2066,7 +2066,7 @@ private let flush_blue_snd_cases_local (g: heap) (first_blue: U64.t) (run_words:
 
 /// Helper: when g' == flush result directly (tail empty, rest >= heap_size),
 /// prove field0 validity and higher fields zero for src = first_blue.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let flush_only_blue_fields
   (g0 g g': heap) (start: hp_addr) (objs: seq obj_addr)
   (first_blue: obj_addr) (run_words: pos) (fp: U64.t)
@@ -2112,7 +2112,7 @@ private let flush_only_blue_fields
 
 /// Helper: white step, rest >= heap_size (tail empty) case for blue_field0_valid.
 /// Factored out to keep the recursive function small for Z3.
-#push-options "--z3rlimit 600 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 300 --fuel 2 --ifuel 1"
 private let blue_field0_white_tail_empty
   (g0 g: heap) (start: hp_addr) (objs all_objs: seq obj_addr)
   (first_blue: U64.t) (run_words: nat) (fp: U64.t) (src: obj_addr)
@@ -2217,7 +2217,7 @@ private let blue_field0_white_tail_empty
     end
 #pop-options
 
-#push-options "--z3rlimit 600 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 300 --fuel 1 --ifuel 1"
 let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_words fp src =
   let g' = coalesce_heap g0 g objs first_blue run_words fp in
   let sync : hp_addr =
@@ -2522,7 +2522,7 @@ let rec coalesce_aux_blue_field0_valid g0 g start objs all_objs first_blue run_w
 
 
 /// Blue source objects after coalescing: if efptu g' src wz dst, then dst in objects g'.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
 private let coalesce_blue_field_closure (g: heap) (src dst: obj_addr)
   : Lemma
     (requires
@@ -2575,7 +2575,7 @@ private let coalesce_blue_field_closure (g: heap) (src dst: obj_addr)
 
 /// Helper: if efptu g src wz dst and src is white and dst is blue, contradiction
 /// from post_sweep_strong.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 private let rec coalesce_white_field_not_blue
   (g: heap) (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (dst: obj_addr)
   : Lemma
@@ -2631,7 +2631,7 @@ private let rec coalesce_white_field_not_blue
 #pop-options
 
 /// Key recursive lemma: for white survivors, efptu on g' implies efptu on g.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 private let rec white_src_efptu_transfer
   (g: heap) (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (dst: obj_addr)
   : Lemma
@@ -2675,7 +2675,7 @@ private let rec white_src_efptu_transfer
 #pop-options
 
 /// For a white source in g', if efptu g' src wz dst, then dst in objects zero_addr g'.
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
 private let white_src_field_closure (g: heap) (src dst: obj_addr)
   : Lemma
     (requires
@@ -2711,7 +2711,7 @@ private let white_src_field_closure (g: heap) (src dst: obj_addr)
 /// Main proof: coalesce_preserves_wf
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let coalesce_preserves_wf g =
   let g' = fst (coalesce g) in
   coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
@@ -2860,7 +2860,7 @@ val coalesce_aux_objects_subset
     (ensures Seq.mem y all_objs)
     (decreases Seq.length objs)
 
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let rec coalesce_aux_objects_subset g0 g start objs first_blue run_words fp all_objs y =
   if Seq.length objs = 0 then begin
     assert (Seq.equal objs Seq.empty);
@@ -3107,7 +3107,7 @@ val coalesce_objects_subset (g: heap) (y: obj_addr)
     (requires post_sweep g /\ Seq.mem y (objects zero_addr (fst (coalesce g))))
     (ensures Seq.mem y (objects zero_addr g))
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let coalesce_objects_subset g y =
   coalesce_heap_unfold g g (objects zero_addr g) 0UL 0 0UL;
   coalesce_aux_objects_subset g g zero_addr (objects zero_addr g) 0UL 0 0UL (objects zero_addr g) y

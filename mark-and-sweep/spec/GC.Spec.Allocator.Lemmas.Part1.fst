@@ -83,7 +83,7 @@ private let objects_nonempty_first_mem
 /// If h ∈ objects(later, g) and later is at a reachable object boundary from start
 /// (i.e., f_address later ∈ objects start g), then h ∈ objects(start, g).
 #restart-solver
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
 private let rec objects_later_in_earlier
   (start: hp_addr) (g: heap) (later: hp_addr) (h: obj_addr)
   : Lemma (requires U64.v start <= U64.v later /\
@@ -128,7 +128,7 @@ private let rec objects_later_in_earlier
 #pop-options
 
 /// Part1 variant: same as split_next_hd_objects_eq but only requires well_formed_heap_part1
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let split_next_hd_objects_eq_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -186,7 +186,7 @@ private let split_next_hd_objects_eq_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 3 --ifuel 1"
 private let rec split_old_mem_in_new_part1
   (start: hp_addr) (g g3: heap)
   (obj: obj_addr) (wz block_wz: nat)
@@ -328,7 +328,7 @@ private let rec split_old_mem_in_new_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let alloc_split_facts_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -411,7 +411,7 @@ let alloc_split_facts_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let alloc_split_g3_agrees_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (p: hp_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -457,7 +457,7 @@ let alloc_split_g3_agrees_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let alloc_split_old_in_new_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -500,7 +500,7 @@ let alloc_split_old_in_new_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let alloc_from_block_objects_facts_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -534,7 +534,7 @@ let alloc_from_block_objects_facts_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 0"
 let rec write_body_preserves_objects_local
   (start: hp_addr) (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires
@@ -587,7 +587,7 @@ let rec write_body_preserves_objects_local
 /// alloc_from_block_preserves_objects_part1
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let alloc_from_block_preserves_objects_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -604,7 +604,7 @@ let alloc_from_block_preserves_objects_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let alloc_from_block_rem_in_objects_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\

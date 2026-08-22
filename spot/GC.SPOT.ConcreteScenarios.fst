@@ -44,7 +44,7 @@ module SpecGraph = GC.Spec.Graph
 let spot_fwd_array : seq U64.t =
   Seq.create UpdatePtrs.fwd_array_size 0UL
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let zero_not_minor_pointer ()
   : Lemma (ensures ~(Promote.is_minor_pointer 0UL))
   = assert_norm (Promote.is_minor_pointer 0UL == false)
@@ -68,7 +68,7 @@ let nat_lt_two_cases (i: nat)
   end
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let fp_in_heap_transfer (fp: U64.t) (g1 g2: heap)
   : Lemma
       (requires
@@ -198,7 +198,7 @@ let gray_objects_no_black_to_gray_black_stack (g: heap) (st: seq obj_addr)
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_major_gray_black_empty (r: unit{ConcreteMajor.spot_major_room})
   : Lemma
       (ensures
@@ -238,7 +238,7 @@ let spot_major_gray_black_empty (r: unit{ConcreteMajor.spot_major_room})
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_fwd_array_zero ()
   : Lemma (Preconditions.zero_forwarding_array spot_fwd_array)
   =
@@ -256,7 +256,7 @@ let spot_fwd_array_zero ()
   Preconditions.zero_forwarding_array_intro spot_fwd_array
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_c_slot_is_field1 (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (ThreeObjects.spot_c_to_a_slot (ConcreteMajor.spot_c r) ==
            ConcreteMajor.spot_c_field1 r)
@@ -269,7 +269,7 @@ let spot_c_slot_is_field1 (r: unit{ConcreteMajor.spot_major_room})
           U64.v (ConcreteMajor.spot_c r) + 8)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_minor_major_fields_no_blue (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (GenInv.minor_major_fields_no_blue
              ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r))
@@ -292,7 +292,7 @@ let spot_minor_major_fields_no_blue (r: unit{ConcreteMajor.spot_major_room})
     ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_major_minor_fields_no_infix_targets (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (GenInv.major_minor_fields_no_infix_targets
              ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r))
@@ -367,7 +367,7 @@ let spot_collection_heap_shape (r: unit{ConcreteMajor.spot_major_room})
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_ref_table_sound (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (UpdatePtrs.ref_table_sound
              (ConcreteMajor.spot_major_heap r)
@@ -417,7 +417,7 @@ let spot_ref_table_sound (r: unit{ConcreteMajor.spot_major_room})
   FStar.Classical.forall_intro aux
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_ref_table_covers_minor_ptrs (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (UpdatePtrs.ref_table_covers_minor_ptrs
              (ConcreteMajor.spot_major_heap r)
@@ -496,7 +496,7 @@ let spot_ref_table_covers_minor_ptrs (r: unit{ConcreteMajor.spot_major_room})
   FStar.Classical.forall_intro_2 aux
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_remembered_targets_in_roots (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (MinorFwd.remembered_targets_in_roots
              (ConcreteMajor.spot_major_heap r)
@@ -534,7 +534,7 @@ let spot_remembered_targets_in_roots (r: unit{ConcreteMajor.spot_major_room})
     (ThreeObjects.spot_slots (ConcreteMajor.spot_c r)) 1
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_major_field_zero_no_minor (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (RBridge.major_field_zero_no_minor
              ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r))
@@ -573,7 +573,7 @@ let spot_major_field_zero_no_minor (r: unit{ConcreteMajor.spot_major_room})
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_roots_valid_nonblue (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (RBridge.roots_valid_nonblue
              (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
@@ -612,7 +612,7 @@ let spot_roots_valid_nonblue (r: unit{ConcreteMajor.spot_major_room})
   FStar.Classical.forall_intro aux
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_roots_valid_for_minor_collection (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (MinorFwd.roots_valid_for_minor_collection
              ConcreteMinor.spot_minor2
@@ -1212,7 +1212,7 @@ let spot_post_minor_roots_match_prepared_empty_stack
   FStar.Classical.forall_intro roots_in_stack;
   assert (GenImpl.roots_match_stack roots2 prepared_st)
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_concrete_gen_gc_major_pre_empty_stack
   (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
   : Lemma

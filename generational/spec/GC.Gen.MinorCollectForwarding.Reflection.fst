@@ -43,10 +43,10 @@ let normal_src_reachable = MCFNE.normal_src_reachable
 let post_minor_edge = MCFH.post_minor_edge
 let mem_graph_vertex_at = MCFH.mem_graph_vertex_at
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 /// Basic size facts, discharged in an empty context and brought into scope by
 /// explicit calls: under the large reflection contexts even these diverge.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 private let heap_size_facts () : Lemma
   (heap_size < pow2 64 /\ U64.v mword == 8 /\ U64.v mword <> 0 /\
    (forall (a: nat). a + 8 <= heap_size ==> FStar.UInt.size a 64))
@@ -55,7 +55,7 @@ private let heap_size_facts () : Lemma
 
 /// Build an `hp_addr` from a raw offset.  Bounds and alignment are trivial but
 /// diverge under the large contexts of the reflection proofs below.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 private let mk_hp_addr (a: nat{a < heap_size /\ a % 8 == 0})
   : (r: hp_addr{U64.v r == a /\ r == U64.uint_to_t a}) =
   assert (a < pow2 64);
@@ -64,7 +64,7 @@ private let mk_hp_addr (a: nat{a < heap_size /\ a % 8 == 0})
 
 /// Build the address of field `j` of `src`.  Nat-ness / bounds / alignment are
 /// trivial but diverge under the large contexts of the reflection proofs.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 private let mk_field_addr (src: U64.t) (j: nat) : Pure hp_addr
   (requires U64.v src + j * 8 < heap_size /\ (U64.v src + j * 8) % 8 == 0)
   (ensures fun r -> U64.v r == U64.v src + j * 8 /\
@@ -149,7 +149,7 @@ private let post_minor_edge_to_mem_graph_edge
     assert (mem_graph_edge post_g (x <: obj_addr) (y <: obj_addr))
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let post_edge_from_minor_image_reflects_mem_ce
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -346,7 +346,7 @@ let post_edge_from_minor_image_reflects_mem_ce
     end
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 let post_edge_from_minor_image_reflects_target
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)

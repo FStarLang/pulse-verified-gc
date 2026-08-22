@@ -28,7 +28,7 @@ module AllocLemmas = GC.Spec.Allocator.Lemmas
 /// ghost_fwd_of_represents proof
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let ghost_fwd_of_represents (farr: Seq.seq U64.t{Seq.length farr == fwd_array_size})
   : Lemma (represents_fwd farr (ghost_fwd_of farr))
   = let fwd = ghost_fwd_of farr in
@@ -73,7 +73,7 @@ let rewrite_at_spec (rs: Seq.seq U64.t) (farr: Seq.seq U64.t) (iv: nat) : GTot (
 /// Rewrite one root at a given index (factored out for clean branch merging)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 inline_for_extraction
 fn rewrite_at_index (roots: array U64.t) (fwd_arr: array U64.t) (iv: SZ.t)
   requires pts_to roots 'rs **
@@ -112,7 +112,7 @@ fn rewrite_at_index (roots: array U64.t) (fwd_arr: array U64.t) (iv: SZ.t)
 /// Rewrite roots loop
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 inline_for_extraction
 fn rewrite_roots_impl
   (roots: array U64.t)
@@ -171,7 +171,7 @@ module U8 = FStar.UInt8
 
 /// Factored-out helper: handle one field in the pointer update loop.
 /// Reads field, checks if minor pointer + forwarded, conditionally writes.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
                     (obj: U64.t) (wosize: U64.t) (iv: U64.t)
@@ -220,7 +220,7 @@ fn update_one_field (major: heap_t) (fwd_arr: array U64.t)
 
 /// Update pointers in one object: iterate fields [0, wosize) and rewrite
 /// minor-heap pointers via the forwarding array.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 inline_for_extraction
 fn update_one_object (major: heap_t) (fwd_arr: array U64.t)
                      (obj: U64.t) (wosize: U64.t)
@@ -293,7 +293,7 @@ let next_pos_no_overflow (np: nat)
   = assert_norm (pow2 57 + 8 < pow2 64)
 
 /// Helper: raw color == 2 implies is_blue
-#push-options "--z3rlimit 40"
+#push-options "--z3rlimit 20"
 let color_2_implies_blue (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
   : Lemma (requires hdr == GC.Spec.Heap.read_word g p /\
                     Seq.mem (GC.Spec.Heap.f_address p) (SpecFields.objects zero_addr g) /\
@@ -333,7 +333,7 @@ let is_no_scan_eq (hdr: U64.t) (p: hp_addr{U64.v p + 8 < heap_size}) (g: heap)
 #pop-options
 
 /// Update all major-heap objects' pointer fields by walking the heap linearly.
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1 --using_facts_from '* -GC.Gen.Promote.fields_match_minor_empty -GC.Gen.Promote.fields_match_minor_extend -GC.Gen.Promote.fields_match_minor_elim_lemma -GC.Gen.Promote.fields_match_minor_weaken -GC.Gen.Promote.fields_match_minor_intro -GC.Gen.Promote.fields_match_minor_intro_flat -GC.Gen.Promote.fields_match_minor_frame -GC.Gen.Promote.fields_match_minor_intro_by_proof -FStar.UInt.to_vec -FStar.BitVector'"
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1 --using_facts_from '* -GC.Gen.Promote.fields_match_minor_empty -GC.Gen.Promote.fields_match_minor_extend -GC.Gen.Promote.fields_match_minor_elim_lemma -GC.Gen.Promote.fields_match_minor_weaken -GC.Gen.Promote.fields_match_minor_intro -GC.Gen.Promote.fields_match_minor_intro_flat -GC.Gen.Promote.fields_match_minor_frame -GC.Gen.Promote.fields_match_minor_intro_by_proof -FStar.UInt.to_vec -FStar.BitVector'"
 fn update_all_objects (major: heap_t) (fwd_arr: array U64.t)
                       (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **
@@ -527,7 +527,7 @@ let rewrite_one_slot_spec (major: heap) (fwd: PromoteSpec.forwarding_map) (slot_
 /// Factored-out helper: handle one heap slot.
 /// Reads from heap at the given address, checks if it's a forwarded minor
 /// pointer, and rewrites if so.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn rewrite_one_heap_slot
   (major: heap_t)
@@ -598,7 +598,7 @@ let rec rewrite_slots_iter_snoc (major: heap) (fwd: PromoteSpec.forwarding_map)
     end
 
 /// Rewrite heap slots loop
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 fn rewrite_heap_slots
   (major: heap_t)
   (fwd_arr: array U64.t)
@@ -722,7 +722,7 @@ let hdr_addr_wf (obj: U64.t)
   = ()
 
 /// The main loop implementation
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 fn update_promoted_objects (major: heap_t) (fwd_arr: array U64.t)
                            (#fwd: erased PromoteSpec.forwarding_map)
   requires is_heap major 'ms **

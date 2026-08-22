@@ -56,7 +56,7 @@ let combined_reachable_edge_forwarded_normal = MCFNE.combined_reachable_edge_for
 let fwd_disjoint_reachable_major_intro = MCFNE.fwd_disjoint_reachable_major_intro
 let normal_edge_forward_ready_intro = MCFNE.normal_edge_forward_ready_intro
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let normal_src_image_is_val_addr
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (u: CG.combined_vertex)
@@ -111,7 +111,7 @@ private let post_minor_edge_to_mem_graph_edge
     assert (mem_graph_edge post_g (x <: obj_addr) (y <: obj_addr))
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
 private let old_major_field_pointer_target_nonblue
   (major: heap) (src: obj_addr) (dst: U64.t) (j: nat)
   : Lemma
@@ -240,7 +240,7 @@ let normal_classified_root_image_in_rewrite_roots
       assert (CG.fwd_morphism prom.fwd_map u == rewrite_root v prom.fwd_map)
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let normal_image_vertex_is_post_vertex
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (w: U64.t)
@@ -307,7 +307,7 @@ let normal_image_vertex_is_post_vertex
       (fun u -> FStar.Classical.move_requires proof u)
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 private let post_rewritten_root_is_normal_image
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat) (rr: U64.t)
@@ -390,7 +390,7 @@ private let post_rewritten_root_is_normal_image
     end
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let normal_classified_root_image_post_reachable
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots: seq U64.t) (u: CG.combined_vertex)
@@ -421,7 +421,7 @@ let normal_classified_root_image_post_reachable
 let combined_reachable_normal_injective = MCFNE.combined_reachable_normal_injective
 private let normal_src_images_injective = MCFNE.normal_src_images_injective
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_edge_from_major_image_reflects_mem_ce
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -593,7 +593,7 @@ private let post_edge_from_major_image_reflects_mem_ce
     end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_edge_from_major_image_reflects_target
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -725,7 +725,7 @@ private let post_edge_from_major_image_reflects_target
     end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_edge_from_minor_image_reflects_mem_ce
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -751,7 +751,7 @@ private let post_edge_from_minor_image_reflects_mem_ce
       minor major fp roots slots n src v
 #pop-options
 
-#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let post_edge_from_minor_image_reflects_target
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -776,7 +776,7 @@ private let post_edge_from_minor_image_reflects_target
     MCFR.post_edge_from_minor_image_reflects_target minor major fp roots slots n src y
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 1"
 let normal_image_reachable_subgraph_isomorphism
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
@@ -880,7 +880,7 @@ let normal_image_reachable_subgraph_isomorphism
     Classical.forall_intro_2 (fun u -> Classical.move_requires (edge u))
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let post_successor_of_normal_image_reflects
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -923,7 +923,7 @@ private let post_successor_of_normal_image_reflects
       (fun u -> FStar.Classical.move_requires proof u)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 private let rec post_reach_witness_is_normal_image
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -976,7 +976,7 @@ private let rec post_reach_witness_is_normal_image
       post_successor_of_normal_image_reflects minor major fp roots slots n mid dst
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
 let normal_src_edge_preserves_post_minor_reachable
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -1108,7 +1108,7 @@ let normal_src_edge_preserves_post_minor_reachable
       (fun target -> FStar.Classical.move_requires finish_with_target target)
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let rec ready_src_reach_image_post_reachable
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -1371,7 +1371,7 @@ let normal_image_reachable_is_post_reachable_all
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 1"
 let post_normal_image_edges_reflect_src
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -1405,7 +1405,7 @@ let post_normal_image_edges_reflect_src
       normal_edge_forward_ready_intro minor major fp roots (CG.MinorV src) v
 #pop-options
 
-#push-options "--z3rlimit 120 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
 let post_minor_reachable_is_normal_image_reachable_all
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -1456,7 +1456,7 @@ let post_minor_reachable_is_normal_image_reachable_all
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
 let normal_post_reachable_subgraph_isomorphism
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
@@ -1539,7 +1539,7 @@ let normal_post_reachable_subgraph_isomorphism
     FStar.Classical.forall_intro_2 (fun u -> FStar.Classical.move_requires (edge u))
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let normal_post_reachable_subgraph_isomorphism_to_result
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (post_major: heap) (post_roots: seq U64.t)

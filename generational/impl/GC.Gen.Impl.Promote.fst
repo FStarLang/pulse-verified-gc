@@ -88,7 +88,7 @@ let field_in_bounds (limit obj_addr wosize jv: nat)
   FStar.Math.Lemmas.modulo_addition_lemma obj_addr 8 jv
 
 inline_for_extraction
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
                     (src_obj: U64.t) (dst_obj: U64.t)
                     (wosize: U64.t)
@@ -155,7 +155,7 @@ fn copy_fields_loop (minor: minor_heap_t) (major: heap_t)
 
 /// Zero the padding field if the allocator gave extra space (leftover=1 case).
 /// After this, the ghost state matches zero_promote_padding.
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn zero_padding_step (major: heap_t) (dst_obj: U64.t) (wosize: U64.t)
   requires is_heap major 'ms **
@@ -196,7 +196,7 @@ fn zero_padding_step (major: heap_t) (dst_obj: U64.t) (wosize: U64.t)
 /// during a promotion loop, pointer closure (part2) is temporarily violated
 /// (minor pointers are written into the major heap body). The allocator only
 /// needs part1 + fl_valid + fl_chain_terminates to function correctly.
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn promote_one (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                (obj: U64.t)

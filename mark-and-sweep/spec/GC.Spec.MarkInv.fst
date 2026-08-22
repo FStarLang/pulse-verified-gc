@@ -37,7 +37,7 @@ let mark_inv_step g st =
   mark_step_preserves_objects g st;
   mark_step_preserves_density g st
 
-#push-options "--z3rlimit 50 --fuel 2"
+#push-options "--z3rlimit 25 --fuel 2"
 let mark_inv_step_no_scan g obj tl =
   let st = Seq.cons obj tl in
   Seq.lemma_tl obj tl;

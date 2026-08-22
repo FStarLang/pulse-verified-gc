@@ -27,7 +27,7 @@ open GC.Spec.Object
 
 module SpecCoalesce = GC.Spec.Coalesce
 
-#set-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#set-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 
 /// ===========================================================================
 /// Private bit-level helpers for write_word_id
@@ -73,7 +73,7 @@ private let select_byte (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) (k: nat{k <= 7}) : U8.t 
   else if k = 6 then b6
   else b7
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let combine_value_decomp (b0 b1 b2 b3 b4 b5 b6 b7: U8.t)
   : Lemma
     (let t0 = U8.v b0 in
@@ -138,7 +138,7 @@ private let v0_shift_eq (b0: U8.t) (i: nat{i < 64})
            UInt.nth #64 (UInt.shift_left #64 (U8.v b0) 0) i)
   = UInt.shift_left_lemma_2 #64 (U8.v b0) 0 i
 
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 private let combine_extract_nth
     (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) (k: nat{k <= 7}) (i: nat{i < 64})
   : Lemma
@@ -190,7 +190,7 @@ private let combine_extract_nth
     end
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
 private let byte_extract
     (b0 b1 b2 b3 b4 b5 b6 b7: U8.t) (k: nat{k <= 7})
   : Lemma
@@ -223,7 +223,7 @@ private let byte_extract
 /// Lemma 1: write_word_id
 /// ===========================================================================
 
-#push-options "--z3rlimit 400 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 let write_word_id (g: heap) (addr: hp_addr)
   : Lemma (write_word g addr (read_word g addr) == g)
   = let v = read_word g addr in
@@ -263,7 +263,7 @@ let write_word_id (g: heap) (addr: hp_addr)
 /// Lemma 2: colorHeader_idempotent
 /// ===========================================================================
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 2"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 2"
 let colorHeader_idempotent (hdr: U64.t) (c: color)
   : Lemma (requires getColor hdr == c)
           (ensures colorHeader hdr c == hdr)
@@ -290,14 +290,14 @@ private let getWosize_get_wosize (hdr: U64.t)
   : Lemma (U64.v (getWosize hdr) == get_wosize (U64.v hdr))
   = getWosize_spec hdr
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 private let getTag_get_tag (hdr: U64.t)
   : Lemma (U64.v (getTag hdr) == get_tag (U64.v hdr))
   = getTag_spec hdr;
     mask_tag_value ()
 #pop-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 2"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 2"
 let colorHeader_same_wz_tag (h1 h2: U64.t) (c: color)
   : Lemma (requires getWosize h1 == getWosize h2 /\ getTag h1 == getTag h2)
           (ensures colorHeader h1 c == colorHeader h2 c)
@@ -321,7 +321,7 @@ let colorHeader_same_wz_tag (h1 h2: U64.t) (c: color)
 /// Lemma 5: flush_blue_snd_heap_independent
 /// ===========================================================================
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let flush_blue_snd_heap_independent (g1 g2: heap) (fb: U64.t) (rw: nat) (fp: U64.t)
   : Lemma (requires Seq.length g1 == heap_size /\ Seq.length g2 == heap_size)
           (ensures snd (SpecCoalesce.flush_blue g1 fb rw fp) == snd (SpecCoalesce.flush_blue g2 fb rw fp))

@@ -20,7 +20,7 @@ module Cast = FStar.Int.Cast
 // Query splitting (now unconditional) discharges each goal in isolation, which
 // costs more per goal in this bitvector-heavy module than the interface-level
 // rlimit of 10 allowed.
-#set-options "--z3rlimit 50"
+#set-options "--z3rlimit 25"
 
 /// uint8_to_uint64, uint64_to_uint8, combine_bytes defined in .fsti
 
@@ -87,7 +87,7 @@ private let or_bytes_nth (t0 t1 t2 t3 t4 t5 t6 t7: UInt.uint_t 64) (i: nat{i < 6
     UInt.logor_definition #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 t0 t1) t2) t3) t4) t5) t6 i;
     UInt.logor_definition #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 t0 t1) t2) t3) t4) t5) t6) t7 i
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let or_byte_windows_identity (w: UInt.uint_t 64)
   : Lemma (
     let t0 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 0) 255) 0 in
@@ -116,7 +116,7 @@ private let or_byte_windows_identity (w: UInt.uint_t 64)
     UInt.nth_lemma #64 (or_bytes t0 t1 t2 t3 t4 t5 t6 t7) w
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let combine_decompose_identity (v: U64.t)
   : Lemma (combine_bytes
     (uint64_to_uint8 v)
@@ -149,7 +149,7 @@ let combine_decompose_identity (v: U64.t)
 /// Word Write Operations
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let write_word (g: heap) (addr: hp_addr) (value: U64.t) 
   : Pure heap
          (requires True)
@@ -192,18 +192,18 @@ let write_word_spec g addr v = ()
 /// Read/Write Lemmas
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let read_write_same g addr v = ()
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let read_write_different g addr1 addr2 v =
   // write_word produces a chain of Seq.upd starting from g
   // Each Seq.upd only changes one index, all addr2+k are outside [addr1, addr1+8)
   ()
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let write_preserves_before g addr v = 
   let prove_for_a (a: hp_addr) : Lemma 
     (requires U64.v a + U64.v mword <= U64.v addr)
@@ -213,7 +213,7 @@ let write_preserves_before g addr v =
   FStar.Classical.forall_intro (FStar.Classical.move_requires prove_for_a)
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let write_preserves_after g addr v = 
   let prove_for_a (a: hp_addr) : Lemma 
     (requires U64.v a >= U64.v addr + U64.v mword)

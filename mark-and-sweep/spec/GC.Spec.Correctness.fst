@@ -11,7 +11,7 @@
 
 module GC.Spec.Correctness
 
-#set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#set-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 
 open FStar.Seq
 
@@ -161,7 +161,7 @@ val gc_preserves_data : (g: heap) -> (st: seq obj_addr) -> (fp: U64.t) ->
                    HeapGraph.get_field g x i == 
                    HeapGraph.get_field (fst (sweep (mark g st) fp)) x i))
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 let gc_preserves_data g st fp =
   mark_preserves_wf g st;
   mark_no_grey_remains g st;
@@ -301,7 +301,7 @@ let no_black_implies_tri_color (g: heap) : Lemma
 = ()
 
 /// Helper 1: mark preserves read_word at field addresses (top-level for own query)
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let mark_preserves_field_read
   (h_init: heap{well_formed_heap h_init})
   (st: seq obj_addr{stack_props h_init st})
@@ -324,7 +324,7 @@ let mark_preserves_field_read
 #pop-options
 
 /// Helper 2: universal field read preservation for one object (top-level for own query)
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let mark_preserves_field_read_forall
   (h_init: heap{well_formed_heap h_init})
   (st: seq obj_addr{stack_props h_init st})
@@ -354,7 +354,7 @@ let mark_preserves_field_read_forall
 #pop-options
 
 /// mark preserves no_scan_invariant
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let mark_preserves_no_scan_invariant
   (h_init: heap{well_formed_heap h_init /\ no_scan_invariant h_init})
   (st: seq obj_addr{stack_props h_init st})
@@ -391,7 +391,7 @@ let mark_preserves_no_scan_invariant
 /// Split into sub-cases for small Z3 queries.
 
 /// Sub-case: no_scan object has no pointer fields (contradiction branch)
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let sweep_field_no_scan_contradiction
   (h_mark h_sweep: heap) (x: obj_addr) (i: nat) (fp: U64.t)
   : Lemma
@@ -422,7 +422,7 @@ private let sweep_field_no_scan_contradiction
 #pop-options
 
 /// Sub-case: pointer field → successor was black → contradiction with blue
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let sweep_field_black_successor_not_blue
   (h_mark h_sweep: heap) (x: obj_addr) (i: nat) (fp: U64.t)
   : Lemma
@@ -458,7 +458,7 @@ private let sweep_field_black_successor_not_blue
 
 /// Combined: prove white object's field property after sweep
 /// (shared by sweep_post_sweep_strong and sweep_post_sweep_strong_gen)
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let sweep_post_field_property
   (h_mark h_sweep: heap) (x: obj_addr) (i: nat) (fp: U64.t)
   : Lemma
@@ -509,7 +509,7 @@ private let sweep_post_field_property
     end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let sweep_post_sweep_strong h_init st fp =
   let h_mark = mark h_init st in
   let h_sweep = fst (sweep h_mark fp) in
@@ -579,7 +579,7 @@ let sweep_post_sweep_strong h_init st fp =
 /// structure and hence heap_objects_dense.
 
 /// Helper: one step of sweep_aux preserves wosize and recursive preconditions
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 private let sweep_aux_step_wosize
   (g: heap) (objs: seq obj_addr{Seq.length objs > 0}) (fp: U64.t) (x: obj_addr)
   : Lemma (requires
@@ -623,7 +623,7 @@ private let sweep_aux_step_wosize
 #pop-options
 
 /// sweep_aux preserves wosize: now uses the step helper for small rlimit
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 private let rec sweep_aux_preserves_wosize
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires
@@ -658,7 +658,7 @@ private let sweep_preserves_wosize_any (g: heap) (fp: U64.t) (x: obj_addr)
 /// so the walk stride is identical. The density of g then transfers the
 /// conclusion about the next position, and objects equality + wfh give the
 /// length conditions.
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_preserves_density (g: heap) (fp: U64.t) =
   let g_sweep = fst (sweep g fp) in
   sweep_preserves_objects g fp;
@@ -713,7 +713,7 @@ let sweep_preserves_density (g: heap) (fp: U64.t) =
 /// Coalesce Precondition Bridge
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let coalesce_precondition_bridge h_mark fp =
   let h_sweep = fst (sweep h_mark fp) in
   // sweep_preserves_objects: objects zero_addr h_sweep == objects zero_addr h_mark
@@ -728,7 +728,7 @@ let coalesce_precondition_bridge h_mark fp =
 
 /// Helper: coalesce preserves get_pointer_fields for white survivors.
 /// Uses the now-public get_pointer_fields_aux_preserved from GC.Spec.Sweep.
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
 private let coalesce_preserves_edges
   (h_sweep: heap) (x: obj_addr)
   : Lemma
@@ -775,7 +775,7 @@ private let coalesce_preserves_edges
 /// Key bridge: coalesce_objects_subset ensures coalesced walk objects
 /// were in the original walk, enabling reuse of sweep-level proofs.
 
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let full_gc_correctness_through_coalesce
   (h_init: heap) (st: seq obj_addr) (roots: seq obj_addr) (fp: U64.t)
   : Lemma
@@ -963,7 +963,7 @@ let mark_post_elim_fp h_init h_mark roots fp =
 let mark_post_elim_no_scan h_init h_mark roots fp = ()
 
 /// `mark h_init st` satisfies mark_post
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let mark_satisfies_mark_post h_init st roots fp =
   let h_mark = mark h_init st in
   GC.Spec.MarkInv.mark_inv_elim_wfh h_init st;
@@ -1015,7 +1015,7 @@ let mark_satisfies_mark_post h_init st roots fp =
 /// The proof is structurally identical to sweep_post_sweep_strong but
 /// derives mark properties from mark_post instead of calling mark_preserves_*.
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let sweep_post_sweep_strong_gen h_init h_mark roots fp =
   let h_sweep = fst (sweep h_mark fp) in
   // Extract mark properties
@@ -1068,7 +1068,7 @@ let sweep_post_sweep_strong_gen h_init h_mark roots fp =
 /// Generalized coalesce_precondition_bridge
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let coalesce_precondition_bridge_gen h_init h_mark roots fp =
   mark_post_elim_wfh h_init h_mark roots fp;
   mark_post_elim_no_grey h_init h_mark roots fp;
@@ -1087,7 +1087,7 @@ let coalesce_precondition_bridge_gen h_init h_mark roots fp =
 /// full_gc_correctness_through_coalesce but derives mark properties
 /// from mark_post.
 
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let full_gc_correctness_through_coalesce_gen h_init h_mark roots fp =
   let h_sweep = fst (sweep h_mark fp) in
   let h_coal = fst (Coalesce.coalesce h_sweep) in
@@ -1200,7 +1200,7 @@ let full_gc_correctness_through_coalesce_gen h_init h_mark roots fp =
   full_gc_correctness_intro h_init h_mark h_coal roots
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
 let major_gc_live_subgraph_isomorphism_gen h_init h_mark roots fp =
   let h_sweep = fst (sweep h_mark fp) in
   let h_coal = fst (Coalesce.coalesce h_sweep) in
@@ -1288,7 +1288,7 @@ let major_gc_live_subgraph_isomorphism_gen h_init h_mark roots fp =
   FStar.Classical.forall_intro_2 field_preserved
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 private let rec coerce_mem_is_obj_addr (s: seq obj_addr) (x: vertex_id)
   : Lemma
     (requires Seq.mem x (HeapGraph.coerce_to_vertex_list s))
@@ -1437,7 +1437,7 @@ private let heap_reachable_transfer_init_to_coal
     goal ()
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
 let major_gc_unreachable_final_blue_gen h_init h_mark roots fp =
   let h_sweep = fst (sweep h_mark fp) in
   let h_coal = fst (Coalesce.coalesce h_sweep) in
@@ -1498,7 +1498,7 @@ let major_gc_unreachable_final_blue_gen h_init h_mark roots fp =
 /// Generalized gc_postcondition
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let gc_postcondition_gen h_init h_mark roots fp =
   mark_post_elim_wfh h_init h_mark roots fp;
   mark_post_elim_fp h_init h_mark roots fp;

@@ -167,7 +167,7 @@ let upd_index_diff (s: Seq.seq U8.t) (i j: nat{i < Seq.length s /\ j < Seq.lengt
   : Lemma (Seq.index (Seq.upd s i v) j == Seq.index s j) = ()
 
 /// After 8 sequential updates, reading at each position gives the written value
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let spec_write_read_byte (s: heap_state) 
                          (addr: nat{addr + 8 <= Seq.length s})
                          (v: U64.t) (k: nat{k < 8})
@@ -239,7 +239,7 @@ private let or_bytes_nth (t0 t1 t2 t3 t4 t5 t6 t7: UInt.uint_t 64) (i: nat{i < 6
     UInt.logor_definition #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 (UInt.logor #64 t0 t1) t2) t3) t4) t5) t6) t7 i
 
 /// Core identity at uint_t 64 level: OR of 8 disjoint byte windows = identity
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let or_byte_windows_identity (w: UInt.uint_t 64)
   : Lemma (
     let t0 = UInt.shift_left #64 (UInt.logand #64 (UInt.shift_right #64 w 0) 255) 0 in
@@ -270,7 +270,7 @@ private let or_byte_windows_identity (w: UInt.uint_t 64)
 
 /// Bridge: combine_bytes(decompose(v)) == v
 /// Connects U64.t-level combine_bytes with uint_t-level or_byte_windows_identity
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let combine_decompose_identity (v: U64.t)
   : Lemma (combine_bytes
     (uint64_to_uint8 v)
@@ -297,7 +297,7 @@ let combine_decompose_identity (v: U64.t)
 #pop-options
 
 /// Read-after-write: reading back from the same address yields the written value
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 let read_write_same (s: heap_state)
                     (addr: nat{addr + 8 <= Seq.length s})
                     (v: U64.t)
@@ -393,7 +393,7 @@ fn write_word (h: heap_t) (addr: hp_addr) (v: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Allocate a new heap
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 fn alloc_heap (_: unit)
   requires emp
   returns h: heap_t

@@ -128,7 +128,7 @@ let promote_new_addr_bound (ms: minor_state) (major: heap) (obj: U64.t) (fp: U64
 /// Strategy: forward the parent closure (promote if needed), then record
 /// infix forwarding as parent_fwd + (addr - parent).
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn forward_if_minor_infix
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
@@ -284,7 +284,7 @@ fn forward_if_minor_infix
 }
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0 --z3smtopt '(set-option :smt.qi.eager_threshold 100)'"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0 --z3smtopt '(set-option :smt.qi.eager_threshold 100)'"
 inline_for_extraction
 fn forward_if_minor
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
@@ -464,7 +464,7 @@ fn forward_if_minor
 /// The equational invariant proves that after processing all roots,
 /// the impl state matches cheney_forward_roots applied from cs0.
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 fn forward_roots
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -605,7 +605,7 @@ fn forward_roots
 /// Outer loop: ghost ref tracks the current cheney_state across queue entries.
 /// Inner loop: separate ghost ref tracks state across fields of one object.
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 fn scan_loop
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)
@@ -851,7 +851,7 @@ fn scan_loop
 /// then derives the spec correspondence from the ghost loop invariants.
 /// No assume_ needed — the ghost state threading proves the connection.
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 fn cheney_promote_phase
   (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
   (fwd_arr: array U64.t)

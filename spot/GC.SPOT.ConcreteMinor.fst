@@ -126,7 +126,7 @@ let spot_minor_two_object_fields_zero ()
     minor_read_word spot_minor1.data Layout.b_minor);
   assert (minor_read_field spot_minor2 Layout.b_minor 0 == 0UL)
 
-#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let addr_not_b_header_nat (addr: U64.t)
   : Lemma (requires addr <> Layout.b_minor)
           (ensures U64.v addr - 8 <> 16)

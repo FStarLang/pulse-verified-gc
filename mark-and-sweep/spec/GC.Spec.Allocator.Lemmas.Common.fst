@@ -11,7 +11,7 @@ module Seq = FStar.Seq
 /// Free-list validity: every node in the free list is a member of objects zero_addr g.
 /// This is an invariant maintained by sweep and allocation.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_valid (g: heap) (fp: U64.t) (fuel: nat) : Tot prop (decreases fuel) =
   if fuel = 0 then True
   else if fp = 0UL then True
@@ -106,7 +106,7 @@ let fl_valid_terminal (g: heap) (fp: U64.t) (fuel: nat)
   = ()
 
 /// fl_valid weakening: more fuel implies less fuel.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_valid_weaken (g: heap) (fp: U64.t) (fuel_strong fuel_weak: nat)
   : Lemma (requires fl_valid g fp fuel_strong /\ fuel_weak <= fuel_strong)
           (ensures fl_valid g fp fuel_weak)

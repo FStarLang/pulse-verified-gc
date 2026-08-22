@@ -55,7 +55,7 @@ let disjoint_inv (major0: heap) (cs: cheney_state) : prop =
   old_nonblue_preserved major0 cs /\
   fwd_normal_targets_disjoint_from_old_nonblue cs.cs_fwd cs.cs_major major0
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let extend_infix_preserves_fwd_normal_injective
   (fwd: forwarding_map) (g: heap) (addr sum: U64.t)
   : Lemma (requires fwd_normal_injective fwd g /\
@@ -98,7 +98,7 @@ private let extend_infix_preserves_fwd_normal_injective
   FStar.Classical.forall_intro_2 (FStar.Classical.move_requires_2 aux)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let source_inv_elim (minor: minor_state) (cs: cheney_state) (x: U64.t)
   : Lemma (requires source_inv minor cs /\
                     cs.cs_fwd x <> 0UL /\
@@ -108,7 +108,7 @@ private let source_inv_elim (minor: minor_state) (cs: cheney_state) (x: U64.t)
   = ()
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let old_nonblue_preserved_elim
   (major0: heap) (cs: cheney_state) (y: obj_addr)
   : Lemma (requires disjoint_inv major0 cs /\
@@ -130,7 +130,7 @@ private let disjoint_inv_elim
   = ()
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let chain_avoids_from_blue
   (major: heap) (fp: U64.t) (obj: obj_addr)
   : Lemma
@@ -141,7 +141,7 @@ private let chain_avoids_from_blue
   = reveal_opaque (`%chain_objects_blue) chain_objects_blue
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_wfh_part4_local
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part4 cs.cs_major /\
@@ -184,7 +184,7 @@ private let cheney_forward_normal_preserves_wfh_part4_local
     end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let cheney_forward_one_preserves_wfh_part4_local
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part4 cs.cs_major /\
@@ -220,7 +220,7 @@ private let cheney_forward_one_preserves_wfh_part4_local
   end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let rec cheney_forward_fields_preserves_wfh_part4_local
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
   : Lemma (requires well_formed_heap_part4 cs.cs_major /\
@@ -244,7 +244,7 @@ private let rec cheney_forward_fields_preserves_wfh_part4_local
   end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let rec cheney_forward_roots_preserves_wfh_part4_local
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (idx: nat)
   : Lemma (requires well_formed_heap_part4 cs.cs_major /\
@@ -268,7 +268,7 @@ private let rec cheney_forward_roots_preserves_wfh_part4_local
   end
 #pop-options
 
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let promote_object_preserves_old_target_not_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (target: obj_addr)
@@ -297,7 +297,7 @@ private let promote_object_preserves_old_target_not_blue
   is_blue_iff target res.major_out
 #pop-options
 
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_old_target_preserved
   (minor: minor_state) (cs: cheney_state) (addr: U64.t) (x: U64.t)
   : Lemma
@@ -381,7 +381,7 @@ private let cheney_forward_normal_old_target_preserved
   end
 #pop-options
 
-#push-options "--z3rlimit 260 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 130 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_disjoint_inv
   (minor: minor_state) (major0: heap) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires disjoint_inv major0 cs /\
@@ -460,7 +460,7 @@ private let cheney_forward_normal_preserves_disjoint_inv
       end
 #pop-options
 
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_inj_inv
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires inj_inv cs /\
@@ -575,7 +575,7 @@ private let cheney_forward_normal_preserves_inj_inv
       end
 #pop-options
 
-#push-options "--z3rlimit 300 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
 private let cheney_forward_one_preserves_inj_inv
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires inj_inv cs /\
@@ -672,7 +672,7 @@ private let cheney_forward_one_preserves_inj_inv
   end
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let infix_delta_value (minor: minor_state) (addr: U64.t)
   : Lemma (requires is_infix_in_minor minor addr /\ minor_infix_wf minor)
           (ensures U64.v addr - U64.v (infix_parent minor addr) ==
@@ -693,7 +693,7 @@ private let infix_delta_value (minor: minor_state) (addr: U64.t)
 
 #restart-solver
 
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_source_inv
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires source_inv minor cs /\
@@ -845,7 +845,7 @@ private let cheney_forward_one_preserves_source_inv
   end
 #pop-options
 
-#push-options "--z3rlimit 220 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 110 --fuel 1 --ifuel 0"
 private let cheney_forward_one_preserves_disjoint_inv
   (minor: minor_state) (major0: heap) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires disjoint_inv major0 cs /\
@@ -948,7 +948,7 @@ private let cheney_forward_one_preserves_disjoint_inv
   end
 #pop-options
 
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let rec cheney_forward_fields_preserves_inj_inv
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma (requires inj_inv cs /\
@@ -980,7 +980,7 @@ private let rec cheney_forward_fields_preserves_inj_inv
   end
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec cheney_forward_roots_preserves_inj_inv
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   : Lemma (requires inj_inv cs /\
@@ -1012,7 +1012,7 @@ private let rec cheney_forward_roots_preserves_inj_inv
   end
 #pop-options
 
-#push-options "--z3rlimit 180 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 90 --fuel 1 --ifuel 0"
 private let rec cheney_scan_preserves_inj_inv
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires inj_inv cs /\
@@ -1049,7 +1049,7 @@ private let rec cheney_scan_preserves_inj_inv
     cheney_scan_base minor cs scan fuel
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec cheney_forward_fields_preserves_source_inv
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   : Lemma (requires source_inv minor cs /\
@@ -1115,7 +1115,7 @@ private let rec cheney_forward_roots_preserves_source_inv
   end
 #pop-options
 
-#push-options "--z3rlimit 160 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 private let rec cheney_scan_preserves_source_inv
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   : Lemma (requires source_inv minor cs /\
@@ -1154,7 +1154,7 @@ private let rec cheney_scan_preserves_source_inv
     cheney_scan_base minor cs scan fuel
 #pop-options
 
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let rec cheney_forward_fields_preserves_disjoint_inv
   (minor: minor_state) (major0: heap) (cs: cheney_state)
   (parent: U64.t) (i: nat) (wosize: nat)
@@ -1259,7 +1259,7 @@ private let rec cheney_scan_preserves_disjoint_inv
     cheney_scan_base minor cs scan fuel
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let cheney_promote_inj_inv
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -1290,7 +1290,7 @@ private let cheney_promote_inj_inv
   cheney_scan_preserves_inj_inv minor cs1 0 (cheney_fuel minor)
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let cheney_promote_source_inv
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -1323,7 +1323,7 @@ private let cheney_promote_source_inv
   cheney_scan_preserves_source_inv minor cs1 0 (cheney_fuel minor)
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 private let cheney_promote_disjoint_inv
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\
@@ -1356,7 +1356,7 @@ private let cheney_promote_disjoint_inv
   cheney_scan_preserves_disjoint_inv minor major cs1 0 (cheney_fuel minor)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let cheney_promote_fwd_normal_injective
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma (requires well_formed_heap major /\

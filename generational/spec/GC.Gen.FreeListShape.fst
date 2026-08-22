@@ -26,7 +26,7 @@ let blue_link_fields_valid (major: heap) : prop =
     (let v = read_word major src in
      v = 0UL \/ HeapGraph.is_pointer_field v)
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let blue_link_fields_valid_elim (major: heap) (src: obj_addr)
   : Lemma (requires blue_link_fields_valid major /\
                     Seq.mem src (objects zero_addr major) /\
@@ -38,7 +38,7 @@ let blue_link_fields_valid_elim (major: heap) (src: obj_addr)
   = reveal_opaque (`%blue_link_fields_valid) (blue_link_fields_valid major)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let blue_link_fields_valid_intro (major: heap)
   (proof: (src: obj_addr ->
     Lemma (requires Seq.mem src (objects zero_addr major) /\
@@ -62,7 +62,7 @@ let blue_link_fields_valid_intro (major: heap)
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let fp_pointer_or_zero_implies_fp_in_heap (fp: U64.t) (g: heap)
   : Lemma (requires fp_pointer_or_zero fp /\ SweepInv.fp_valid fp g)
           (ensures Sweep.fp_in_heap fp g)

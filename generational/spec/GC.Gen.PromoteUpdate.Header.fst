@@ -24,7 +24,7 @@ open GC.Gen.PromoteUpdate.Aux
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
 
-#push-options "--z3rlimit 50 --fuel 1"
+#push-options "--z3rlimit 25 --fuel 1"
 let rec update_all_objects_aux_preserves_header
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat) (h: obj_addr)
   : Lemma (requires
@@ -93,7 +93,7 @@ let update_major_pointers_preserves_header (major: heap) (fwd: forwarding_map) (
 
 /// update_major_pointers preserves all fields of blue objects (since they are skipped).
 /// For non-blue objects that are processed: their body writes are separated from blue's fields.
-#push-options "--z3rlimit 50 --fuel 1"
+#push-options "--z3rlimit 25 --fuel 1"
 private let rec update_all_objects_aux_preserves_blue_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   (h: obj_addr) (j: nat)

@@ -53,7 +53,7 @@ module Cheney = GC.Gen.Impl.Cheney
 /// ---------------------------------------------------------------------------
 
 /// Allocate: try minor first (if small enough), fall back to major.
-#push-options "--z3rlimit 40"
+#push-options "--z3rlimit 20"
 fn gen_alloc (gh: gen_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_gen_heap gh 'd 'b 's 'fp **
            pure (U64.v wosize > 0 /\ U64.v tag < 256 /\
@@ -151,7 +151,7 @@ let promote_body_bound (p wosize bump: nat)
 /// Phase 1: Promote all minor objects and fill forwarding array.
 /// Walks minor heap linearly from 0 to bump, promoting each object.
 /// Records forwarding: fwd_arr[obj/8] := new_major_addr.
-#push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 4 --ifuel 1"
 fn promote_phase (minor: minor_heap_t) (major: heap_t) (fp_ref: R.ref U64.t)
                  (fwd_arr: array U64.t)
   requires is_minor minor 'md 'mb **
@@ -324,7 +324,7 @@ module Sim = GC.Gen.Cheney.Sim
 /// implies promoted_entries_valid_from.
 /// Each non-zero farr entry fwd(i*8) has valid bounds (from fwd_bounded),
 /// and is either in objects (with wosize bounds from wfh_part1) or is_infix.
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
 let derive_promoted_entries_valid_from
   (major: heap_state) (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map)
   : Lemma (requires
@@ -368,7 +368,7 @@ let derive_promoted_entries_valid_from
 /// implies promoted_entries_disjoint.
 /// Non-infix entries are in objects (by exclusion from fwd_valid_or_infix + part4),
 /// and objects_separated gives body disjointness.
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let derive_promoted_entries_disjoint
   (major: heap_state) (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map)
   : Lemma (requires
@@ -434,7 +434,7 @@ let derive_promoted_entries_disjoint
 
 /// Derivation: farr represents a Cheney forwarding map whose normal targets are
 /// non-blue, hence every non-zero non-infix farr entry is non-blue.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let derive_promoted_entries_not_blue
   (major: heap_state) (farr: Seq.seq U64.t) (fwd: PromoteSpec.forwarding_map)
   : Lemma (requires
@@ -476,7 +476,7 @@ let derive_promoted_entries_not_blue
 /// soundness.  The slots point into pre-existing non-blue objects; Cheney frame
 /// preserves those objects' headers, so they remain non-blue scannable objects
 /// at the same field addresses in major_final.
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let derive_slots_scannable_in_major
   (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
   (slots: Seq.seq U64.t) (n: nat)
@@ -560,7 +560,7 @@ let derive_slots_scannable_in_major
 ///   - In a pre-existing non-blue object body → frame shows same value as major_pre
 ///     → ref_table_complete covers it (second disjunct)
 ///   - In a promoted object body → the promoted object is in farr (first disjunct)
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 /// Case A helper: obj was pre-existing non-blue in major_pre
 private let derive_fwd_case_a
   (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
@@ -726,7 +726,7 @@ private let derive_fwd_ptrs_classified_pointwise
       derive_fwd_case_b minor major_pre fp roots farr slots n obj j
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let derive_fwd_ptrs_classified
   (minor: minor_state) (major_pre: heap_state) (fp: U64.t) (roots: Seq.seq U64.t)
   (farr: Seq.seq U64.t) (slots: Seq.seq U64.t) (n: nat)
@@ -829,7 +829,7 @@ let two_pass_implies_full_update
     TwoPass.promoted_plus_slots_eq_full_update minor major_pre fp roots farr slots n;
     cheney_collect_spec_unfold minor major_pre fp roots
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let minor_collect_full_isomorphism_post
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: Seq.seq U64.t) (n: nat) (ok: bool)
@@ -878,7 +878,7 @@ let minor_collect_full_isomorphism_post
 /// cheney_collect_spec correctness.  Takes a ref_table (slots array) that
 /// covers all major-heap fields holding minor pointers (not belonging to
 /// promoted objects — those are handled by update_promoted_objects).
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 fn minor_collect_full (gh: gen_heap_t)
                       (roots: array U64.t) (nroots: SZ.t)
                       (fwd_arr: array U64.t)
@@ -1024,7 +1024,7 @@ fn minor_collect_full (gh: gen_heap_t)
 /// ---------------------------------------------------------------------------
 
 /// gen_gc composes the verified full minor collection with mark-and-sweep.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 fn gen_gc (gh: gen_heap_t)
            (roots: array U64.t) (nroots: SZ.t)
            (fwd_arr: array U64.t)

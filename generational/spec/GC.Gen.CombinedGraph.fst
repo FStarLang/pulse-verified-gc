@@ -91,7 +91,7 @@ let classify_minor_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x
           (ensures to_minor_offset v == x /\ is_minor_addr x /\ Seq.mem x (minor_objects ms))
   = ()
 
-#push-options "--z3rlimit 10"
+#push-options "--z3rlimit 20"
 let classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_minor_field ms major v == Some (MajorV x))
           (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
@@ -105,7 +105,7 @@ let classify_major_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x
           (ensures to_minor_offset v == x /\ is_minor_pointer x /\ Seq.mem x (minor_objects ms))
   = ()
 
-#push-options "--z3rlimit 10"
+#push-options "--z3rlimit 20"
 let classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
   : Lemma (requires classify_major_field ms major v == Some (MajorV x))
           (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
@@ -213,7 +213,7 @@ let build_combined_graph (ms: minor_state) (major: heap)
 /// Tag membership lemmas
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec tag_minor_mem (objs: seq U64.t) (idx: nat) (a: U64.t)
   : Lemma (ensures Seq.mem (MinorV a) (tag_minor objs idx) <==>
                    (exists (k:nat). idx <= k /\ k < Seq.length objs /\
@@ -226,7 +226,7 @@ let rec tag_minor_mem (objs: seq U64.t) (idx: nat) (a: U64.t)
     end
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec tag_major_mem (objs: seq obj_addr) (idx: nat) (a: obj_addr)
   : Lemma (ensures Seq.mem (MajorV a) (tag_major objs idx) <==>
                    (exists (k:nat). idx <= k /\ k < Seq.length objs /\
@@ -240,7 +240,7 @@ let rec tag_major_mem (objs: seq obj_addr) (idx: nat) (a: obj_addr)
 #pop-options
 
 /// MinorV never appears in tag_major
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec tag_major_no_minor (objs: seq obj_addr) (idx: nat) (a: U64.t)
   : Lemma (ensures ~(Seq.mem (MinorV a) (tag_major objs idx)))
           (decreases (Seq.length objs - idx))
@@ -252,7 +252,7 @@ let rec tag_major_no_minor (objs: seq obj_addr) (idx: nat) (a: U64.t)
 #pop-options
 
 /// MajorV never appears in tag_minor
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec tag_minor_no_major (objs: seq U64.t) (idx: nat) (a: U64.t)
   : Lemma (ensures ~(Seq.mem (MajorV a) (tag_minor objs idx)))
           (decreases (Seq.length objs - idx))
@@ -267,7 +267,7 @@ let rec tag_minor_no_major (objs: seq U64.t) (idx: nat) (a: U64.t)
 /// Vertex Membership Characterization
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let minor_vertex_char (ms: minor_state) (major: heap) (a: U64.t)
   : Lemma (ensures
       mem_cv (MinorV a) (build_combined_graph ms major) <==>
@@ -284,7 +284,7 @@ let minor_vertex_char (ms: minor_state) (major: heap) (a: U64.t)
     ()
 #pop-options
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let major_vertex_char (ms: minor_state) (major: heap) (a: obj_addr)
   : Lemma (ensures
       mem_cv (MajorV a) (build_combined_graph ms major) <==>
@@ -321,7 +321,7 @@ private let rec tag_major_valid (objs: seq obj_addr) (idx: nat) (v: U64.t)
     end
 #pop-options
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 15"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 let major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (requires mem_cv (MajorV v) (build_combined_graph ms major))
           (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
@@ -545,7 +545,7 @@ private let minor_field_edge_at
 /// Inside `minor_field_edge_later` the goal `start == target_idx` sends Z3 into
 /// a matching loop (it burns an unbounded rlimit while every neighbouring goal
 /// costs ~0), so the equality is established here instead.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 private let le_ge_eq (a b: nat) : Lemma (requires a <= b /\ b <= a) (ensures a == b) = ()
 #pop-options
 
@@ -869,7 +869,7 @@ private let rec major_field_edges_no_minor (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: major_object_edges never has MinorV source
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 private let major_object_edges_no_minor (ms: minor_state) (major: heap)
   (obj: obj_addr) (a: U64.t) (dst: combined_vertex)
   : Lemma (ensures ~(Seq.mem (MinorV a, dst) (major_object_edges ms major obj)))
@@ -910,7 +910,7 @@ private let rec minor_field_edges_no_major (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: minor_object_edges never has MajorV source
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 private let minor_object_edges_no_major (ms: minor_state) (major: heap)
   (obj: U64.t) (a: U64.t) (dst: combined_vertex)
   : Lemma (ensures ~(Seq.mem (MajorV a, dst) (minor_object_edges ms major obj)))
@@ -1147,7 +1147,7 @@ let combined_reachable_ind_with_reach
 /// classify_roots membership lemmas
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
   : Lemma (requires Seq.mem r roots /\ is_minor_pointer r)
           (ensures Seq.mem (MinorV r) (classify_roots roots))
@@ -1165,7 +1165,7 @@ let rec classify_roots_minor_mem (roots: seq U64.t) (r: U64.t)
     end
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
   : Lemma (requires Seq.mem r roots /\ ~(is_minor_pointer r))
           (ensures Seq.mem (MajorV r) (classify_roots roots))
@@ -1183,7 +1183,7 @@ let rec classify_roots_major_mem (roots: seq U64.t) (r: U64.t)
     end
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec classify_roots_inv_minor (roots: seq U64.t) (v: U64.t)
   : Lemma (requires Seq.mem (MinorV v) (classify_roots roots))
           (ensures Seq.mem v roots /\ is_minor_pointer v)
@@ -1201,7 +1201,7 @@ let rec classify_roots_inv_minor (roots: seq U64.t) (v: U64.t)
     end
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
 let rec classify_roots_inv_major (roots: seq U64.t) (v: U64.t)
   : Lemma (requires Seq.mem (MajorV v) (classify_roots roots))
           (ensures Seq.mem v roots /\ ~(is_minor_pointer v))

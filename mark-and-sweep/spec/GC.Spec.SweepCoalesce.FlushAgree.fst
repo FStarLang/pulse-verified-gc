@@ -28,7 +28,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module Alloc = GC.Spec.Allocator
 module ML = FStar.Math.Lemmas
 
-#set-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#set-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 
 /// ===========================================================================
 /// Helper: write_word byte at addr+k depends only on the value v,

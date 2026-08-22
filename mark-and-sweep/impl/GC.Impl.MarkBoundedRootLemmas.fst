@@ -11,7 +11,7 @@ module MarkBounded = GC.Impl.MarkBounded
 
 open GC.Spec.Base
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let darken_roots_bounded_prefix_base
   (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t) (cap: nat)
   : Lemma

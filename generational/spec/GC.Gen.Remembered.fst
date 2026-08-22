@@ -111,7 +111,7 @@ private let rec extract_targets_sound (refs: seq remembered_ref) (idx: nat) (v: 
 
 /// scan_object_fields produces an entry whose .rem_target is the normalized target.
 /// Returns the concrete index of that entry as a Ghost witness.
-#push-options "--fuel 2 --z3rlimit 40"
+#push-options "--fuel 2 --z3rlimit 20"
 let rec scan_object_fields_witness (major: heap) (obj: obj_addr) (wosize: nat) (i: nat) (field_idx: nat)
   : Ghost nat
     (requires
@@ -142,7 +142,7 @@ let rec scan_object_fields_witness (major: heap) (obj: obj_addr) (wosize: nat) (
   end
 #pop-options
 
-#push-options "--fuel 1 --z3rlimit 40"
+#push-options "--fuel 1 --z3rlimit 20"
 private let rec scan_object_fields_sound
   (major: heap) (obj: obj_addr) (wosize: nat) (i: nat) (k: nat)
   : Lemma
@@ -178,7 +178,7 @@ private let rec scan_object_fields_sound
 
 /// If an entry at index j0 in scan_object_for_minor_refs of object k appears
 /// in the full scan_objects_list, returns the concrete index in the combined result.
-#push-options "--fuel 1 --z3rlimit 30"
+#push-options "--fuel 1 --z3rlimit 20"
 let rec scan_objects_list_witness (major: heap) (objs: seq obj_addr) (idx: nat) (k: nat) (j0: nat)
   : Ghost nat
     (requires
@@ -197,7 +197,7 @@ let rec scan_objects_list_witness (major: heap) (objs: seq obj_addr) (idx: nat) 
     first_len + j'
 #pop-options
 
-#push-options "--fuel 1 --z3rlimit 50"
+#push-options "--fuel 1 --z3rlimit 25"
 private let rec scan_objects_list_sound
   (major: heap) (objs: seq obj_addr) (idx: nat) (k: nat)
   : Lemma
@@ -251,7 +251,7 @@ private let rec scan_objects_list_sound
 /// Correctness
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 2 --z3rlimit 40"
+#push-options "--fuel 2 --z3rlimit 20"
 let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   : Lemma (requires
              well_formed_heap major /\
@@ -283,7 +283,7 @@ let scan_complete (major: heap) (obj: obj_addr) (field_idx: nat)
   extract_targets_mem (scan_major_for_minor_refs major) 0 j
 #pop-options
 
-#push-options "--fuel 0 --ifuel 1 --z3rlimit 50"
+#push-options "--fuel 0 --ifuel 1 --z3rlimit 25"
 let minor_roots_from_major_sound (major: heap) (v: U64.t)
   : Lemma (requires Seq.mem v (minor_roots_from_major major))
           (ensures

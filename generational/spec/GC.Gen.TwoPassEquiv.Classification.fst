@@ -16,7 +16,7 @@ open GC.Gen.MinorHeap
 open GC.Gen.Promote
 open GC.Gen.Impl.UpdatePtrs
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let fwd_ptrs_classified_field
   (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   (obj: obj_addr) (j: nat)

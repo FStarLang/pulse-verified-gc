@@ -86,7 +86,7 @@ let set_color (v: uint_t 64) (c: uint_t 64{c < 4}) : uint_t 64 =
   logor #64 (logand #64 v (lognot #64 mask_color)) (shift_left #64 c 8)
 
 /// Bounds lemmas needed for unpacking
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let get_tag_bound (v: uint_t 64) : Lemma (get_tag v < 256) =
   logand_le #64 v 255
 #pop-options
@@ -213,7 +213,7 @@ private let setColor_bit_54_55 (v: uint_t 64) (c: uint_t 64{c < 4}) (i: nat{i < 
 /// Key Lemmas (bitvector level)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 
 #restart-solver
 
@@ -305,7 +305,7 @@ private let small_2bit_nth (c: uint_t 64{c < 4}) (i: nat{i < 64 /\ i < 62})
     pow2_nth_lemma #64 1 i
 
 /// Helper: color<<8 only affects bits 54-55
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 private let nth_c_shifted_only_color (c: uint_t 64{c < 4}) (i: nat{i < 64})
   : Lemma (i <> 54 /\ i <> 55 ==> nth (shift_left c 8) i = false)
   = if i >= 56 then shift_left_lemma_1 #64 c 8 i
@@ -322,7 +322,7 @@ private let nth_wosize_shifted_not_color (w: uint_t 64) (i: nat{i < 64})
     else if i = 55 then shift_left_lemma_1 #64 w 10 i
 
 /// Setting color semantically then packing = setting color on packed
-#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 150 --fuel 0 --ifuel 0"
 let pack_set_color (h: header_sem) (c: color_sem)
   : Lemma (pack_header (set_color_sem h c) == set_color (pack_header h) (pack_color c))
   = let lhs = pack_header (set_color_sem h c) in
@@ -361,7 +361,7 @@ let pack_set_color (h: header_sem) (c: color_sem)
 /// ---------------------------------------------------------------------------
 
 /// mask_tag = 255
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 let mask_tag_value () : Lemma (mask_tag == 255) =
   shift_right_value_lemma #64 (ones 64) 56;
   assert_norm (pow2 64 - 1 == 18446744073709551615);
@@ -383,7 +383,7 @@ private let nth_mask_tag (i: nat{i < 64}) : Lemma (nth mask_tag i = (i >= 56)) =
     ones_nth_lemma #64 (i - 56)
   end
 
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let get_tag_pack_header (h: header_sem)
   : Lemma (get_tag (pack_header h) == h.tag)
   = let ph = pack_header h in
@@ -402,7 +402,7 @@ let get_tag_pack_header (h: header_sem)
     in forall_intro aux; nth_lemma (get_tag ph) h.tag
 #pop-options
 
-#push-options "--z3rlimit 500 --fuel 0 --ifuel 0"  
+#push-options "--z3rlimit 250 --fuel 0 --ifuel 0"  
 let get_color_pack_header (h: header_sem)
   : Lemma (get_color (pack_header h) == pack_color h.color)
   = let ph = pack_header h in
@@ -427,7 +427,7 @@ let get_color_pack_header (h: header_sem)
     in forall_intro aux; nth_lemma (get_color ph) c
 #pop-options
 
-#push-options "--z3rlimit 800 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 400 --fuel 0 --ifuel 0"
 let get_wosize_pack_header (h: header_sem)
   : Lemma (get_wosize (pack_header h) == h.wosize)
   = let ph = pack_header h in
@@ -475,7 +475,7 @@ let get_wosize_pack_header (h: header_sem)
 
 /// pack (unpack h) == Some h
 /// unpack (pack v) == v when valid
-#push-options "--z3rlimit 500 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 250 --fuel 0 --ifuel 0"
 let unpack_pack_header (v: uint_t 64)
   : Lemma (requires valid_header v)
           (ensures pack_header (Some?.v (unpack_header v)) == v)
@@ -553,7 +553,7 @@ let unpack_pack_header64 (v: U64.t{valid_header64 v})
   unpack_pack_header (U64.v v)
 
 /// makeHeader from extracted fields with new color == set_color
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let repack_set_color64 (v: U64.t{valid_header64 v}) (c: color_sem)
   : Lemma (requires get_wosize (U64.v v) < pow2 54 /\ get_tag (U64.v v) < 256)
           (ensures pack_header64 { wosize = get_wosize (U64.v v); color = c; tag = get_tag (U64.v v) } ==

@@ -19,7 +19,7 @@ open GC.Spec.Allocator.Lemmas.Common
 #push-options "--z3rlimit 20 --z3refresh"
 
 /// Transfer fl_valid from g to g' with the same fuel
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_valid_transfer (g g': heap) (fp: U64.t) (fuel: nat)
   : Lemma
     (requires fl_valid g fp fuel /\
@@ -67,7 +67,7 @@ let rec fl_valid_transfer (g g': heap) (fp: U64.t) (fuel: nat)
 #pop-options
 
 /// Chain termination: the free-list chain from fp hits a base case within `steps` iterations.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates (g: heap) (fp: U64.t) (steps: nat) : Tot bool (decreases steps) =
   if fp = 0UL then true
   else if U64.v fp < U64.v mword then true
@@ -88,7 +88,7 @@ let fl_chain_terminates_terminal (g: heap) (fp: U64.t) (steps: nat)
 
 /// If fl_valid holds AND the chain terminates within fuel steps,
 /// then fl_valid holds for any fuel'.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_valid_any_fuel (g: heap) (fp: U64.t) (fuel fuel': nat)
   : Lemma
     (requires fl_valid g fp fuel /\ fl_chain_terminates g fp fuel)
@@ -129,7 +129,7 @@ let rec fl_valid_any_fuel (g: heap) (fp: U64.t) (fuel fuel': nat)
 #pop-options
 
 /// Chain termination transfers when links are preserved
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_transfer (g g': heap) (fp: U64.t) (steps: nat)
   : Lemma
     (requires fl_chain_terminates g fp steps /\
@@ -170,7 +170,7 @@ let rec fl_chain_terminates_transfer (g g': heap) (fp: U64.t) (steps: nat)
 
 /// Chain termination monotonicity: more steps suffice
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_weaken (g: heap) (fp: U64.t) (s1 s2: nat)
   : Lemma (requires fl_chain_terminates g fp s1 /\ s2 >= s1)
           (ensures fl_chain_terminates g fp s2)
@@ -189,7 +189,7 @@ let rec fl_chain_terminates_weaken (g: heap) (fp: U64.t) (s1 s2: nat)
 
 /// Chain termination introduction: fp → next terminates if next terminates
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let fl_chain_terminates_step (g: heap) (fp: U64.t) (steps: nat)
   : Lemma (requires steps > 0 /\
                     U64.v fp >= U64.v mword /\
@@ -227,7 +227,7 @@ let fl_chain_terminates_valid_zero (g: heap) (fp: U64.t)
 
 /// walk_chain: walk n steps following free-list links.
 /// Stops early if the chain reaches a terminal node (null, out-of-bounds, unaligned, or hd+16 > hs).
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec walk_chain (g: heap) (fp: U64.t) (n: nat) : Tot U64.t (decreases n) =
   if n = 0 then fp
   else if fp = 0UL then fp
@@ -245,7 +245,7 @@ let walk_chain_zero (g: heap) (fp: U64.t)
   = ()
 
 /// walk_chain_valid: all intermediate nodes (positions 0..n-1) are valid (non-terminal).
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec walk_chain_valid (g: heap) (fp: U64.t) (n: nat) : Tot prop (decreases n) =
   if n = 0 then True
   else
@@ -259,7 +259,7 @@ let walk_chain_valid_zero (g: heap) (fp: U64.t)
   = ()
 
 /// walk_chain_valid prefix: if all of first k steps are valid, then first j <= k steps are valid.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_prefix (g: heap) (fp: U64.t) (k j: nat)
   : Lemma (requires walk_chain_valid g fp k /\ j <= k)
           (ensures walk_chain_valid g fp j)
@@ -269,7 +269,7 @@ let rec walk_chain_valid_prefix (g: heap) (fp: U64.t) (k j: nat)
 #pop-options
 
 /// walk_chain_valid_at: position j (< k) in a walk_chain_valid chain is a valid node.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_at (g: heap) (fp: U64.t) (k j: nat)
   : Lemma (requires walk_chain_valid g fp k /\ j < k)
           (ensures (let node = walk_chain g fp j in
@@ -282,7 +282,7 @@ let rec walk_chain_valid_at (g: heap) (fp: U64.t) (k j: nat)
 #pop-options
 
 /// walk_chain_valid_snoc: extend walk_chain_valid by one step if the node at position k is valid.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_snoc (g: heap) (fp: U64.t) (k: nat)
   : Lemma (requires walk_chain_valid g fp k /\
                     (let node = walk_chain g fp k in
@@ -296,7 +296,7 @@ let rec walk_chain_valid_snoc (g: heap) (fp: U64.t) (k: nat)
 #pop-options
 
 /// walk_chain_append: composing walks. Walking m+n steps = walking m steps then n steps from there.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec walk_chain_append (g: heap) (fp: U64.t) (m n: nat)
   : Lemma (requires walk_chain_valid g fp m)
           (ensures walk_chain g fp (m + n) = walk_chain g (walk_chain g fp m) n)
@@ -308,7 +308,7 @@ let rec walk_chain_append (g: heap) (fp: U64.t) (m n: nat)
 /// fl_chain_terminates_unfold_steps: if first n steps are valid (non-terminal),
 /// then fl_chain_terminates g fp fuel = fl_chain_terminates g (walk_chain g fp n) (fuel - n).
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_unfold_steps (g: heap) (fp: U64.t) (n fuel: nat)
   : Lemma (requires n <= fuel /\ walk_chain_valid g fp n)
           (ensures fl_chain_terminates g fp fuel = fl_chain_terminates g (walk_chain g fp n) (fuel - n))
@@ -326,7 +326,7 @@ let rec fl_chain_terminates_unfold_steps (g: heap) (fp: U64.t) (n fuel: nat)
 /// fl_chain_kcycle_not_terminates: a k-cycle (walk_chain g fp k = fp with all valid intermediate
 /// nodes) prevents termination for any fuel.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_kcycle_not_terminates (g: heap) (fp: U64.t) (k fuel: nat)
   : Lemma (requires k > 0 /\ walk_chain g fp k = fp /\ walk_chain_valid g fp k)
           (ensures fl_chain_terminates g fp fuel = false)
@@ -359,7 +359,7 @@ let rec fl_chain_kcycle_not_terminates (g: heap) (fp: U64.t) (k fuel: nat)
 /// If a → b → a (with both valid nodes and hd + 16 <= heap_size), then
 /// fl_chain_terminates g a n = false for all n.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_2cycle_not_terminates
   (g: heap) (a b: U64.t) (n: nat)
   : Lemma (requires U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
@@ -465,7 +465,7 @@ let chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
 /// are preserved in heap g' (for objects in objects(g) with wosize >= 1), then chain_avoids
 /// also holds in g'. Uses fl_valid to know chain nodes are in objects(g).
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\
                     fl_valid g fp fuel /\
@@ -500,7 +500,7 @@ let rec chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
 #pop-options
 
 #restart-solver
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\
                     fl_valid g fp fuel /\
@@ -552,7 +552,7 @@ let rec chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
 #pop-options
 
 /// chain_avoids_weaken: if chain_avoids holds for fuel steps, it also holds for fewer steps.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\ fuel' <= fuel)
           (ensures chain_avoids g fp excl fuel' = true)
@@ -573,7 +573,7 @@ let rec chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
     end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec chain_avoids_strengthen (g: heap) (fp excl: U64.t) (s1 s2: nat)
   : Lemma (requires chain_avoids g fp excl s1 = true /\
                     fl_chain_terminates g fp s1 /\
@@ -600,7 +600,7 @@ let rec chain_avoids_strengthen (g: heap) (fp excl: U64.t) (s1 s2: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer_excl
   (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma
@@ -646,7 +646,7 @@ let rec chain_avoids_transfer_excl
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer_excl2
   (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
   : Lemma
@@ -697,7 +697,7 @@ let rec chain_avoids_transfer_excl2
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec chain_avoids_unfold_steps (g: heap) (fp excl: U64.t) (n fuel: nat)
   : Lemma (requires n <= fuel /\ walk_chain_valid g fp n /\
                     chain_avoids g fp excl n = true)
@@ -714,7 +714,7 @@ let rec chain_avoids_unfold_steps (g: heap) (fp excl: U64.t) (n fuel: nat)
 
 /// first_hit: if chain_avoids = false (i.e., dst_obj IS in chain), gives the position where
 /// dst_obj first appears.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec first_hit (g: heap) (fp dst_obj: U64.t) (fuel: nat) : Tot nat (decreases fuel) =
   if fuel = 0 then 0
   else if fp = 0UL then 0
@@ -731,7 +731,7 @@ let rec first_hit (g: heap) (fp dst_obj: U64.t) (fuel: nat) : Tot nat (decreases
 /// first_hit_spec: when chain_avoids = false, walk_chain to first_hit gives dst_obj,
 /// the path is walk_chain_valid, and first_hit <= fuel.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec first_hit_spec (g: heap) (fp dst_obj: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp dst_obj fuel = false)
           (ensures walk_chain g fp (first_hit g fp dst_obj fuel) = dst_obj /\
@@ -769,7 +769,7 @@ let walk_chain_one_step (g: heap) (fp: U64.t)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let chain_avoids_prev
   (g: heap) (prev_fp cur_fp next_fp: U64.t) (steps: nat)
   : Lemma
@@ -846,7 +846,7 @@ let not_in_fl_chain_b_is_chain_avoids (g: heap) (fp dst_obj: U64.t) (fuel: nat)
 /// If obj's chain terminates and is fl_valid, then obj does not appear in the chain
 /// starting from its successor.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let fl_chain_predecessor_not_in_suffix_b (g: heap) (obj: U64.t) (fuel: nat)
   : Lemma (requires fl_chain_terminates g obj fuel /\
                     fl_valid g obj fuel /\
@@ -874,7 +874,7 @@ let fl_chain_predecessor_not_in_suffix_b (g: heap) (obj: U64.t) (fuel: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_transfer_excl
   (g g': heap) (fp excl: U64.t) (steps: nat)
   : Lemma
@@ -926,7 +926,7 @@ let rec fl_chain_terminates_transfer_excl
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let rec walk_chain_valid_suffix (g: heap) (fp: U64.t) (j d: nat)
   : Lemma (requires walk_chain_valid g fp d /\ j <= d)
           (ensures walk_chain_valid g (walk_chain g fp j) (d - j))
@@ -942,7 +942,7 @@ private let rec walk_chain_valid_suffix (g: heap) (fp: U64.t) (j d: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec fl_chain_no_early_repeat (g: heap) (fp: U64.t) (d fuel: nat)
   : Lemma (requires walk_chain_valid g fp d /\ d > 0 /\
                     fl_chain_terminates g fp fuel /\ fl_valid g fp fuel /\ fuel >= d)
@@ -1007,7 +1007,7 @@ let rec fl_chain_no_early_repeat (g: heap) (fp: U64.t) (d fuel: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
   : Lemma
     (requires walk_chain_valid g fp d /\

@@ -284,7 +284,7 @@ val spec_next_fp_eq (g: heap) (obj: obj_addr)
 /// alloc_from_block unfolding lemmas (for Pulse proof)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 
 /// Exact fit: leftover < 2
 val alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)

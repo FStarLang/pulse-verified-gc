@@ -32,7 +32,7 @@ let nonblue_origin_inv (major0: heap) (cs: cheney_state) : prop =
     ~(Seq.mem obj (objects zero_addr major0) /\ is_blue obj major0 = false) ==>
     exists (x: U64.t). cs.cs_fwd x == obj /\ is_minor_pointer x
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_cob
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
@@ -152,7 +152,7 @@ private let rec cheney_forward_roots_preserves_wfh_part1
   end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_wfh_part1
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
@@ -178,7 +178,7 @@ private let cheney_forward_normal_preserves_wfh_part1
       end
 #pop-options
 
-#push-options "--z3rlimit 120 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 private let promote_object_header_from_alloc_frame
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (target: obj_addr)
@@ -236,7 +236,7 @@ private let promote_object_header_from_alloc_frame
   set_promoted_tag_read_frame padded dst tag hd
 #pop-options
 
-#push-options "--z3rlimit 120 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 let promote_object_nonblue_other_reflects_pre
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (target: obj_addr)
@@ -289,7 +289,7 @@ let promote_object_nonblue_other_reflects_pre
   end
 #pop-options
 
-#push-options "--z3rlimit 160 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_nonblue_origin_inv
   (major0: heap) (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma
@@ -516,7 +516,7 @@ private let rec cheney_scan_preserves_nonblue_origin_inv
   end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let cheney_promote_nonblue_origin
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)

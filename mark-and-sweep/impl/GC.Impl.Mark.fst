@@ -14,7 +14,7 @@ module GC.Impl.Mark
 
 #lang-pulse
 
-#set-options "--z3rlimit 50"
+#set-options "--z3rlimit 25"
 
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
@@ -60,7 +60,7 @@ let field_addr_of (hd: hp_addr) (i: U64.t{U64.v i >= 1})
 
 /// Bridge: spec_read_word at field address == HeapGraph.get_field
 /// Both read from hd_address obj + mword * i
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 let read_field_get_field_eq (g: heap_state) (obj: obj_addr) (i: U64.t{U64.v i >= 1})
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v (SpecHeap.hd_address obj) + U64.v mword * U64.v i + U64.v mword <= heap_size)
@@ -122,7 +122,7 @@ let check_and_darken_spec (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
 
 /// check_and_darken_spec preserves well_formed_heap and related invariants.
 /// Uses spec-level bridge lemma to avoid cross-module well_formed_heap quantifier issues.
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 100"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 50"
 let check_and_darken_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
     (obj: obj_addr) (wz: U64.t) (i: U64.t{U64.v i >= 1})
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
@@ -149,7 +149,7 @@ let check_and_darken_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U6
 
 /// Bridge: check_and_darken_spec matches the spec push_children one-step
 /// Also decomposes push_children by one recursion step
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 100"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 50"
 let push_children_step (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
                        (i: U64.t{U64.v i >= 1}) (wz: U64.t)
   : Lemma (requires U64.v i <= U64.v wz /\
@@ -180,7 +180,7 @@ let push_children_base (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
 
 /// Combined: step decomposition + read_field bridge
 /// Expressed in terms of spec_read_word (matching read_field postcondition)
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 100"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 50"
 let push_children_step_rw (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
                            (i: U64.t{U64.v i >= 1}) (wz: U64.t) (h_addr: hp_addr)
   : Lemma (requires U64.v i <= U64.v wz /\
@@ -204,7 +204,7 @@ let push_children_step_rw (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
 /// with wz = wosize_of_object f g = getWosize(SpecHeap.read_word g (hd_address f))
 /// The Pulse read gives: hdr == spec_read_word g (hd_address f) == SpecHeap.read_word g (hd_address f)
 /// So getWosize hdr == wosize_of_object f g, and spec_field_address hd (wz+1) <= heap_size
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires SpecFields.well_formed_heap g /\
                     Seq.mem f_addr (SpecFields.objects zero_addr g))
@@ -222,7 +222,7 @@ let mark_step_field_bound (g: heap_state) (f_addr: obj_addr)
 #pop-options
 
 /// Bridge: Pulse blacken (write_word with makeHeader Black) == spec makeBlack
-#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 250 --fuel 2 --ifuel 1"
 let blacken_eq (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_gray f_addr g /\
@@ -252,7 +252,7 @@ let blacken_eq (g: heap_state) (f_addr: obj_addr)
 
 /// Bridge: Pulse grayen (write_word with makeHeader Gray) == spec makeGray
 /// Requires valid_header64 since makeHeader_eq_colorHeader needs roundtrip
-#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 250 --fuel 2 --ifuel 1"
 let grayen_eq (g: heap_state) (child: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_white child g /\
@@ -296,7 +296,7 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
 
 /// Read header, write gray header, rewrite ghost state to makeGray.
 /// Factored out so darken_if_white's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --z3refresh"
+#push-options "--z3rlimit 100 --z3refresh"
 fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -529,7 +529,7 @@ let makeBlack_preserves_objects (obj: obj_addr) (g: GC.Spec.Base.heap)
 
 /// Bridge: full mark_step preserves objects (scan branch)
 /// Combined: makeBlack preserves + push_children preserves, with all needed preconditions
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let mark_step_scan_preserves_objects
     (g: GC.Spec.Base.heap) (f_addr: obj_addr) (tl: Seq.seq obj_addr)
     (wz: U64.t)
@@ -555,7 +555,7 @@ let mark_step_scan_preserves_objects
 
 /// Write black header, rewrite ghost state to makeBlack.
 /// Factored out so mark_step's combined VC doesn't include spec_read_word.
-#push-options "--z3rlimit 200 --z3refresh"
+#push-options "--z3rlimit 100 --z3refresh"
 fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -579,7 +579,7 @@ fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
 #pop-options
 
 /// Read header wosize and tag from spec state (no heap read needed)
-#push-options "--z3rlimit 50 --z3refresh"
+#push-options "--z3rlimit 25 --z3refresh"
 fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -601,7 +601,7 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 
 /// Process one gray object: pop from stack, blacken, push white children
 /// Precondition: mark_inv provides well_formed_heap + stack_props
-#push-options "--z3rlimit 100 --z3refresh"
+#push-options "--z3rlimit 50 --z3refresh"
 fn mark_step (heap: heap_t) (st: gray_stack)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkInv.mark_inv 's 'st /\ Seq.length 'st > 0 /\
@@ -695,7 +695,7 @@ fn mark_step (heap: heap_t) (st: gray_stack)
 }
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 
 /// Main mark loop: process gray objects until stack is empty
 /// Precondition: mark_inv (well_formed_heap + stack_props)

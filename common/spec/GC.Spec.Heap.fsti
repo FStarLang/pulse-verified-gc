@@ -8,7 +8,7 @@
 
 module GC.Spec.Heap
 
-#set-options "--z3rlimit 10"
+#set-options "--z3rlimit 20"
 
 open FStar.Seq
 

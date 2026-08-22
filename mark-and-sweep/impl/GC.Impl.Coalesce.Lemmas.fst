@@ -15,11 +15,11 @@ open GC.Spec.Coalesce
 module Alloc = GC.Spec.Allocator
 module HeapGraph = GC.Spec.HeapGraph
 
-#set-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 module Header = GC.Lib.Header
 
 /// Objects walk produces nonempty + advance
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let objects_advance start g =
   let hdr = read_word g start in
   let wz = getWosize hdr in
@@ -28,7 +28,7 @@ let objects_advance start g =
   assert (heap_size < pow2 64)
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let coalesce_step_blue g0 g start objs first_blue run_words fp =
   objects_advance start g0;
   let obj = Seq.head objs in
@@ -39,7 +39,7 @@ let coalesce_step_blue g0 g start objs first_blue run_words fp =
   assert (wosize_of_object obj g0 == getWosize (read_word g0 start))
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let coalesce_step_white g0 g start objs first_blue run_words fp =
   objects_advance start g0;
   let obj = Seq.head objs in
@@ -52,12 +52,12 @@ let coalesce_step_white g0 g start objs first_blue run_words fp =
 
 let coalesce_step_empty g0 g first_blue run_words fp = ()
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let flush_blue_length g fb rw fp =
   flush_blue_preserves_length g fb rw fp
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let objects_mem_at_zero g =
   objects_nonempty_head zero_addr g;
   let objs = objects zero_addr g in
@@ -67,7 +67,7 @@ let objects_mem_at_zero g =
 
 let coalesce_unfold g = ()
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let is_blue_from_original g0 g obj start =
   f_address_spec start;
   hd_f_roundtrip start;
@@ -76,11 +76,11 @@ let is_blue_from_original g0 g obj start =
   color_of_header_eq obj g0 g
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 0"
 let zero_fields_step g addr n = ()
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let flush_blue_suffix_preserved g first_blue run_words fp cursor =
   if run_words = 0 then ()
   else begin
@@ -94,14 +94,14 @@ let flush_blue_suffix_preserved g first_blue run_words fp cursor =
   end
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let makeHeader_bridge wz c tag =
   makeHeader_is_pack_header64 wz c tag;
   GC.Impl.Object.makeHeader_eq_pack_header wz c tag;
   U64.v_inj (GC.Impl.Object.makeHeader wz c tag) (makeHeader wz c tag)
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 0"
 let set_field_1_eq_write_word g fb fp =
   hd_address_spec fb;
   // set_field g fb 1UL fp unfolds to:
@@ -113,7 +113,7 @@ let set_field_1_eq_write_word g fb fp =
   U64.v_inj (U64.add (hd_address fb) (U64.mul mword 1UL)) fb
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let blue_step_coalesce_aux_eq g0 g start first_blue run_words fp =
   coalesce_step_blue g0 g start (objects start g0) first_blue run_words fp;
   let wz = getWosize (read_word g0 start) in
@@ -181,7 +181,7 @@ let blue_step_coalesce_aux_eq g0 g start first_blue run_words fp =
 /// Top-level suffix chain: composes flush_blue_preserves_outside (for specific addr)
 /// with g→g0 suffix to get g'→g0 suffix.
 /// Avoids universals that fail to instantiate with --split_queries always.
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 private let flush_blue_suffix_chain
   (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
   (start_val: nat) (addr: hp_addr)
@@ -204,7 +204,7 @@ private let flush_blue_suffix_chain
     assert (read_word (fst (flush_blue g first_blue run_words fp)) addr == read_word g addr)
 #pop-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let white_step_coalesce_aux_eq g0 g start first_blue run_words fp =
   coalesce_step_white g0 g start (objects start g0) first_blue run_words fp;
   let wz = getWosize (read_word g0 start) in
@@ -246,18 +246,18 @@ let white_step_coalesce_aux_eq g0 g start first_blue run_words fp =
   end
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let flush_blue_impl_wz0 g fb fp g1 =
   hd_address_spec fb
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let flush_blue_impl_wz1 g fb fp g1 g2 =
   hd_address_spec fb;
   set_field_1_eq_write_word g1 fb fp
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let flush_blue_impl_wz_ge2 g fb wz fp g1 g2 g3 =
   hd_address_spec fb;
   set_field_1_eq_write_word g1 fb fp;

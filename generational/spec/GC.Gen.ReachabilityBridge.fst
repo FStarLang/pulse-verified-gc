@@ -45,7 +45,7 @@ private let aligned_gt_ge_plus_mword (x z: nat)
 
 /// The central collection heap shape already contains the stronger
 /// `GenInv.minor_major_fields_no_blue` condition.
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 let minor_no_pointer_to_blue_from_collection_shape
   (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires GenInv.collection_heap_shape minor major fp)
@@ -81,7 +81,7 @@ let minor_no_pointer_to_blue_from_collection_shape
 
 /// Helper: from `major_edge_elim`'s witness, establish `points_to` for
 /// `Mark.no_pointer_to_blue`.
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 0"
 let major_edge_points_to
   (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
   : Lemma
@@ -108,7 +108,7 @@ let major_edge_points_to
     field_read_implies_exists_pointing major src wz k (dst <: obj_addr)
 #pop-options
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let major_object_not_minor_pointer
   (major: heap) (obj: obj_addr)
   : Lemma (requires Seq.mem obj (objects zero_addr major))
@@ -120,7 +120,7 @@ let major_object_not_minor_pointer
     to_minor_offset_stable_above_minor obj
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let reachable_major_valid_nonblue
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   : Lemma
@@ -202,7 +202,7 @@ let reachable_major_valid_nonblue
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let reachable_major_valid
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   : Lemma
@@ -259,7 +259,7 @@ private let minor_succ_in_live_set
   = let full_roots = Seq.append roots (minor_roots_from_major major) in
     minor_reachable_closed minor full_roots u v
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 let live_set_in_minor_reachable
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   : Lemma
@@ -296,7 +296,7 @@ let live_set_in_minor_reachable
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
 let reachability_bridge
   (minor: minor_state) (major: heap) (roots: seq U64.t)
   : Lemma

@@ -37,7 +37,7 @@ module IndDesc = FStar.IndefiniteDescription
 
 /// `k <= n` and `k <> n` give `k + 1 <= n`.  Proved in an empty context: this
 /// step diverges inside the large recursive proofs below.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 private let lt_of_le_ne (k n: nat) : Lemma
   (requires k <= n /\ ~(k == n)) (ensures k + 1 <= n) = ()
 #pop-options
@@ -78,7 +78,7 @@ private let scannable_field_addr (major: heap) (a: nat) : prop =
 
 /// Infix header values are not word-aligned (mod 8 ≠ 0), hence never minor pointers.
 /// Proof: getTag hdr == infix_tag (=249) → hdr mod 256 == 249 → hdr mod 8 == 1.
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let infix_header_not_minor_pointer (hdr: U64.t)
   : Lemma (requires getTag hdr = infix_tag)
           (ensures U64.v hdr % 8 <> 0 /\
@@ -92,7 +92,7 @@ private let infix_header_not_minor_pointer (hdr: U64.t)
 
 /// Helper: update_object_pointers preserves is_infix status because
 /// infix header values are not minor pointers and thus are never rewritten.
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_is_infix
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
   (other: obj_addr)
@@ -146,7 +146,7 @@ private let update_obj_ptrs_preserves_is_infix
 
 /// Helper: update_object_pointers preserves promoted_iter_frame_pre for idx+1
 /// when applied to the entry at idx.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let update_object_pointers_preserves_frame_pre
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
@@ -241,7 +241,7 @@ private let update_object_pointers_preserves_frame_pre
 
 /// Frame: addresses outside all promoted object bodies are unchanged.
 /// Proof: induction on idx, mirroring the recursive structure of update_promoted_iter.
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 let rec update_promoted_iter_frame
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
@@ -302,7 +302,7 @@ let rec update_promoted_iter_frame
 
 /// Small helper: update_object_pointers on entry preserves a field_addr that is
 /// outside entry's body (either below or above).
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let update_object_pointers_preserves_disjoint_field
   (major: heap) (entry: obj_addr) (wz_e: nat) (fwd: forwarding_map)
   (field_addr: hp_addr)
@@ -326,7 +326,7 @@ private let update_object_pointers_preserves_disjoint_field
 
 /// Small helper: update_object_pointers on entry preserves header of another
 /// object that comes after it in the heap.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let update_object_pointers_preserves_other_obj_header
   (major: heap) (entry: obj_addr) (wz_e: nat) (fwd: forwarding_map)
   (other: obj_addr)
@@ -353,7 +353,7 @@ private let update_object_pointers_preserves_other_obj_header
 
 /// Helper: after processing entry idx (which is != pi), the promoted_field_aux
 /// precondition holds for the updated heap at idx+1.
-#push-options "--z3rlimit 500 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 250 --fuel 1 --ifuel 0"
 private let update_object_pointers_preserves_promoted_field_pre
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map)
   (pi: nat) (j: nat) (idx: nat)
@@ -541,7 +541,7 @@ private let update_object_pointers_preserves_promoted_field_pre
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_entry)
 #pop-options
-#push-options "--z3rlimit 150 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 75 --fuel 1 --ifuel 0"
 private let rec update_promoted_iter_promoted_field_aux
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map)
   (pi: nat) (j: nat) (idx: nat)
@@ -767,7 +767,7 @@ let update_promoted_iter_promoted_field
 /// ---------------------------------------------------------------------------
 
 /// Frame: addresses not in the slot list are unchanged.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 let rec rewrite_slots_iter_frame
   (major: heap) (fwd: forwarding_map) (slots: seq U64.t) (n: nat) (idx: nat)
   (addr: hp_addr)
@@ -806,7 +806,7 @@ let rec rewrite_slots_iter_frame
     end
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let slots_frame_from_non_field
   (major: heap) (slots: seq U64.t) (n: nat) (addr: hp_addr)
   : Lemma
@@ -849,7 +849,7 @@ private let slots_frame_from_non_field
 /// If the value at addr does NOT have a forwarded minor pointer, then
 /// rewrite_slots_iter preserves it — even if addr happens to be a slot address.
 /// This is because the rewrite condition fails at addr, so no step writes there.
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 let rec rewrite_slots_iter_preserves_non_fwd
   (major: heap) (fwd: forwarding_map) (slots: seq U64.t) (n: nat) (idx: nat)
   (addr: hp_addr)
@@ -911,7 +911,7 @@ let rec rewrite_slots_iter_preserves_non_fwd
 /// Proof: induction on idx. Steps before si don't modify slot_addr (distinct
 /// aligned addresses → frame). At step si, the write (or no-op) produces the
 /// expected result. Steps after si also don't modify slot_addr (frame again).
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 let rec rewrite_slots_iter_slot_effect_aux
   (major: heap) (fwd: forwarding_map) (slots: seq U64.t) (n: nat) (si: nat) (idx: nat)
   : Lemma
@@ -1023,7 +1023,7 @@ let rewrite_slots_iter_slot_effect
 
 
 /// Helper: processing one entry preserves promoted_entries_valid_from for idx+1.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_entries_valid
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma
@@ -1109,7 +1109,7 @@ private let update_obj_ptrs_preserves_entries_valid
 /// Reflection lemma: update_object_pointers only mutates object fields, not
 /// headers or the object list.  Thus any scannable-field witness after the
 /// update was already a scannable-field witness before the update.
-#push-options "--z3rlimit 120 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 private let update_obj_ptrs_reflects_scannable_field_addr
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
@@ -1195,7 +1195,7 @@ private let promoted_entries_not_blue_from (major: heap) (farr: seq U64.t) (idx:
      is_infix obj major = false ==>
      is_blue obj major = false))
 
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_entries_not_blue_from
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat)
   : Lemma
@@ -1270,7 +1270,7 @@ private let update_obj_ptrs_preserves_entries_not_blue_from
 ///   - doesn't touch addr (addr outside body): below/above preservation
 ///   - addr is inside body but condition false: field_self second conjunct
 /// In both cases, value unchanged → condition still false → induction continues.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let rec update_promoted_iter_preserves_non_fwd
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat) (addr: hp_addr)
   : Lemma
@@ -1338,7 +1338,7 @@ let rec update_promoted_iter_preserves_non_fwd
 /// scannable field.  The promoted_entries_not_blue_from invariant is what
 /// excludes the otherwise-unsound case where farr names a blue object that
 /// update_major_pointers would skip.
-#push-options "--z3rlimit 120 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 1 --ifuel 0"
 let rec update_promoted_iter_preserves_non_field
   (major: heap) (farr: seq U64.t) (fwd: forwarding_map) (idx: nat) (addr: hp_addr)
   : Lemma
@@ -1428,7 +1428,7 @@ let rec update_promoted_iter_preserves_non_field
 /// - no step creates a forwarded minor ptr where none existed
 
 /// Helper: maintains well_formed_heap_part1 after update_object_pointers.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let update_obj_ptrs_preserves_wfh
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
   : Lemma
@@ -1468,7 +1468,7 @@ private let update_obj_ptrs_preserves_wfh
 #pop-options
 
 /// Recursive helper: update_all_objects_aux preserves non-fwd addresses.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec update_all_objects_aux_preserves_non_fwd
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
@@ -1520,7 +1520,7 @@ private let rec update_all_objects_aux_preserves_non_fwd
     end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let update_major_pointers_preserves_non_fwd
   (major: heap) (fwd: forwarding_map) (addr: hp_addr)
   : Lemma
@@ -1536,7 +1536,7 @@ let update_major_pointers_preserves_non_fwd
 /// Recursive helper: update_all_objects_aux preserves addresses that are not
 /// fields of any non-blue scannable object, irrespective of the word stored at
 /// that address.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec update_all_objects_aux_preserves_non_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   (addr: hp_addr)
@@ -1615,7 +1615,7 @@ let update_major_pointers_preserves_non_field
 /// This prevents double-application of the forwarding map.
 ///
 /// Now trivially follows from fwd_targets_stable precondition.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let fwd_targets_not_minor_ptr
   (fwd: forwarding_map) (old_val: U64.t)
   : Lemma
@@ -1635,7 +1635,7 @@ let fwd_targets_not_minor_ptr
 ///
 /// Given witnesses obj, j from fwd_ptrs_classified part (1), the full-walk
 /// update_major_pointers rewrites the field to fwd(to_minor_offset(old)).
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let if_branch_rhs
   (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
@@ -1663,7 +1663,7 @@ let if_branch_rhs
 /// When addr is in the body of a promoted object farr[pi], pass 1
 /// (update_promoted_iter) rewrites it to fwd(old), and pass 2
 /// (rewrite_slots_iter) preserves it (fwd_targets_stable prevents re-rewrite).
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let if_branch_lhs_promoted
   (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t)
   (n: nat) (pi: nat) (addr: hp_addr)
@@ -1728,7 +1728,7 @@ let if_branch_lhs_promoted
 ///
 /// When addr is a remembered-set slot and not in any promoted body:
 /// pass 1 preserves old_raw (via frame), pass 2 rewrites it (slot effect).
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let if_branch_lhs_slot
   (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t)
   (n: nat) (si: nat) (addr: hp_addr)
@@ -1771,7 +1771,7 @@ let if_branch_lhs_slot
 ///
 /// If addr is at offset j within obj, and obj_pi is a different object in
 /// the heap, then addr is not in obj_pi's body (objects don't overlap).
-#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 3 --ifuel 1"
 let field_not_in_other_obj
   (major: heap) (obj obj_pi: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
@@ -1804,7 +1804,7 @@ let field_not_in_other_obj
 /// Helper: if obj is not in farr, then addr (a field of obj) is not in any
 /// promoted body.
 /// ---------------------------------------------------------------------------
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let field_not_in_any_promoted_body
   (major: heap) (farr: seq U64.t) (obj: obj_addr) (j: nat) (addr: hp_addr)
   : Lemma
@@ -1850,7 +1850,7 @@ let field_not_in_any_promoted_body
 /// The old address-only helper was intentionally removed: after
 /// fwd_ptrs_classified was reformulated over (obj,j) field positions, an
 /// arbitrary aligned address is not enough to recover a field witness.
-#push-options "--z3rlimit 120 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 let if_branch_field_eq
   (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   (obj: obj_addr) (j: nat) (addr: hp_addr)
@@ -1918,7 +1918,7 @@ let if_branch_field_eq
 /// single query is large enough that Z3 4.15.3 gives up on it ("Overflow
 /// encountered when expanding vector").  Stating it over an abstract `major`
 /// and `fwd` keeps the query small.
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let two_pass_pointwise
   (major: heap) (fwd: forwarding_map) (farr: seq U64.t) (slots: seq U64.t) (n: nat)
   (a: nat{a < heap_size /\ a % U64.v mword == 0})
@@ -1982,7 +1982,7 @@ private let two_pass_pointwise
 /// Main theorem: two-pass rewriting equals full update
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 300 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 150 --fuel 0 --ifuel 0"
 let promoted_plus_slots_eq_full_update
   (minor: minor_state) (major_pre: heap) (fp: U64.t) (roots: seq U64.t)
   (farr: seq U64.t) (slots: seq U64.t) (n: nat)

@@ -30,7 +30,7 @@ private let write_body_preserves_objects = WriteBody.write_body_preserves_object
 
 /// update_object_pointers writes only within the body of `obj`, so
 /// the objects walk is unchanged.
-#push-options "--z3rlimit 40 --fuel 1"
+#push-options "--z3rlimit 20 --fuel 1"
 let rec update_object_pointers_preserves_objects
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map) (i: nat)
   : Lemma (requires
@@ -68,7 +68,7 @@ let rec update_object_pointers_preserves_objects
 
 /// update_object_pointers does not modify headers of OTHER objects.
 /// Needed for the fold: after updating obj_a, obj_b's wosize is unchanged.
-#push-options "--z3rlimit 40 --fuel 1"
+#push-options "--z3rlimit 20 --fuel 1"
 let rec update_object_pointers_preserves_other_header
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map) (i: nat)
   (other: obj_addr)
@@ -118,7 +118,7 @@ let rec update_object_pointers_preserves_other_header
 
 /// update_object_pointers preserves the header of obj itself.
 /// All writes are at obj + i*8 (i >= 0), header is at obj - 8 < obj.
-#push-options "--z3rlimit 40 --fuel 1"
+#push-options "--z3rlimit 20 --fuel 1"
 let rec update_object_pointers_preserves_self_header
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map) (i: nat)
   : Lemma (requires
@@ -158,7 +158,7 @@ let rec update_object_pointers_preserves_self_header
 
 /// update_object_pointers preserves reads at any address below obj.
 /// All writes are at obj + j*8 >= obj, so any addr < obj is untouched.
-#push-options "--z3rlimit 40 --fuel 1"
+#push-options "--z3rlimit 20 --fuel 1"
 let rec update_object_pointers_preserves_addr_below
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map) (i: nat)
   (addr: hp_addr)
@@ -202,7 +202,7 @@ let rec update_object_pointers_preserves_addr_below
 
 /// update_object_pointers preserves reads at addresses >= obj + wosize*8.
 /// All writes are at obj + j*8 where j < wosize, so addr above the body is untouched.
-#push-options "--z3rlimit 40 --fuel 1"
+#push-options "--z3rlimit 20 --fuel 1"
 let rec update_object_pointers_preserves_addr_above
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map) (i: nat)
   (addr: hp_addr)
@@ -247,7 +247,7 @@ let rec update_object_pointers_preserves_addr_above
 /// Field-self lemma: what update_object_pointers does to field j of obj
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 1"
+#push-options "--z3rlimit 20 --fuel 1"
 let rec update_object_pointers_field_self
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map) (i: nat) (j: nat)
   : Lemma

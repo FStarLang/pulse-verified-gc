@@ -37,7 +37,7 @@ val fp_in_heap_elim : (fp: U64.t) -> (g: heap) ->
 /// Sweep Step: Process One Object
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let sweep_object (g: heap) (obj: obj_addr) (fp: U64.t) 
   : GTot (heap & U64.t)
   =

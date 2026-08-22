@@ -10,7 +10,7 @@ module GC.Impl.MarkBounded
 
 #lang-pulse
 
-#set-options "--z3rlimit 100"
+#set-options "--z3rlimit 50"
 
 open Pulse.Lib.Pervasives
 open Pulse.Lib.Array.PtsTo
@@ -62,7 +62,7 @@ let field_addr_of (hd: hp_addr) (i: U64.t{U64.v i >= 1})
   = ML.lemma_mod_plus_distr_l (U64.v hd) (U64.v mword * U64.v i) (U64.v mword);
     U64.add hd (U64.mul mword i)
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 50"
 let read_field_get_field_eq (g: heap_state) (obj: obj_addr) (i: U64.t{U64.v i >= 1})
   : Lemma (requires Seq.length g == heap_size /\
                     U64.v (SpecHeap.hd_address obj) + U64.v mword * U64.v i + U64.v mword <= heap_size)
@@ -125,7 +125,7 @@ let mark_step_field_bound_rt (g: heap_state) (f_addr: obj_addr) (h: U64.t) (w: U
     SpecObject.wosize_of_object_spec f_addr g;
     getWosize_eq (SpecHeap.read_word g (SpecHeap.hd_address f_addr))
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let blacken_eq (g: heap_state) (f_addr: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_gray f_addr g /\
@@ -149,7 +149,7 @@ let blacken_eq (g: heap_state) (f_addr: obj_addr)
     SpecObject.makeBlack_spec f_addr g
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let grayen_eq (g: heap_state) (child: obj_addr)
   : Lemma (requires Seq.length g == heap_size /\
                     SpecObject.is_white child g /\
@@ -180,7 +180,7 @@ let makeBlack_preserves_objects (obj: obj_addr) (g: GC.Spec.Base.heap)
 /// ---------------------------------------------------------------------------
 
 /// check_and_darken_bounded_spec preserves well_formed_heap
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 400"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 200"
 let check_and_darken_bounded_preserves_inv (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t)
     (obj: obj_addr) (wz: U64.t) (i: U64.t{U64.v i >= 1}) (cap: nat)
   : Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g) /\
@@ -205,7 +205,7 @@ let check_and_darken_bounded_preserves_inv (g: heap_state) (st: Seq.seq obj_addr
     end
 #pop-options
 
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
 let check_and_darken_bounded_spec_length_le_cap
   (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
   : Lemma (requires Seq.length st <= cap)
@@ -252,7 +252,7 @@ let rec darken_roots_bounded_prefix_length_le_cap
 
 #pop-options
 
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
 let check_and_darken_bounded_spec_preserves_wosize
   (g: heap_state) (st: Seq.seq obj_addr) (v: U64.t) (cap: nat)
   (obj: obj_addr)
@@ -433,7 +433,7 @@ let darken_roots_bounded_spec_preserves_read_word
     g st roots (Seq.length roots) cap slot
 #pop-options
 
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
 let root_points_to_object_transfer
   (g0 g1: heap_state) (v: U64.t)
   : Lemma
@@ -951,7 +951,7 @@ let darken_roots_bounded_spec_preserves_no_scan_invariant
 #pop-options
 
 /// Step decomposition: push_children_bounded unfolds to check-and-darken + rest
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 100"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 50"
 let push_children_bounded_step (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
                                 (i: U64.t{U64.v i >= 1}) (wz: U64.t) (cap: nat)
                                 (h_addr: hp_addr)
@@ -979,7 +979,7 @@ let push_children_bounded_step (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_
 #pop-options
 
 /// Base case: when i > wz, returns (g, st) unchanged
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
 let push_children_bounded_base (g: heap_state) (st: Seq.seq obj_addr) (obj: obj_addr)
                                (i: U64.t{U64.v i >= 1}) (wz: U64.t) (cap: nat)
   : Lemma (requires U64.v i > U64.v wz)
@@ -1013,7 +1013,7 @@ fn write_word_ex (heap: heap_t) (h_addr: hp_addr) (v: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Write gray header (factored out to isolate spec_read_word from combined VC)
-#push-options "--z3rlimit 200 --z3refresh"
+#push-options "--z3rlimit 100 --z3refresh"
 fn darken_write_gray (heap: heap_t) (h_addr: hp_addr) (obj: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -1100,7 +1100,7 @@ fn check_and_darken_bounded (heap: heap_t) (st: gray_stack) (v: U64.t) (cap: Gho
   }
 }
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 fn darken_roots_bounded
     (heap: heap_t) (st: gray_stack) (roots: array U64.t) (nroots: SZ.t)
     (cap: Ghost.erased nat)
@@ -1243,7 +1243,7 @@ fn push_children_bounded_impl (heap: heap_t) (st: gray_stack) (h_addr: hp_addr)
 /// Write black header (factored out for VC isolation)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --z3refresh"
+#push-options "--z3rlimit 100 --z3refresh"
 fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -1266,7 +1266,7 @@ fn mark_write_black (heap: heap_t) (h_addr: hp_addr) (f_addr: obj_addr)
 #pop-options
 
 /// Read header wosize and tag
-#push-options "--z3rlimit 50 --z3refresh"
+#push-options "--z3rlimit 25 --z3refresh"
 fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
   requires is_heap heap 's **
            pure (U64.v h_addr + U64.v mword < heap_size /\
@@ -1290,7 +1290,7 @@ fn mark_read_header (heap: heap_t) (h_addr: hp_addr)
 /// Bounded mark_step: pop, blacken, push_children_bounded
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --z3refresh"
+#push-options "--z3rlimit 100 --z3refresh"
 fn mark_step_bounded_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecMarkBoundedInv.bounded_mark_inv 's 'st cap /\
@@ -1384,7 +1384,7 @@ fn mark_step_bounded_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat
 /// Inner loop: drain the gray stack
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 fn mark_inner_loop_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
                         (g_init: Ghost.erased heap_state)
                         (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
@@ -1515,7 +1515,7 @@ let rescan_density_bridge (start: hp_addr) (g: heap_state)
     end
 
 /// Advance to next object (duplicated from Sweep for self-containment)
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 fn rescan_next_object (h_addr: hp_addr) (wz: wosize)
   requires pure (U64.v h_addr + (1 + U64.v wz) * 8 <= heap_size)
   returns addr: U64.t
@@ -1532,7 +1532,7 @@ fn rescan_next_object (h_addr: hp_addr) (wz: wosize)
 #pop-options
 
 /// Check if an object is gray (runtime color check)
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 25"
 fn is_gray_check (heap: heap_t) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size)
@@ -1588,7 +1588,7 @@ let cons_establishes_postcondition
           (ensures rescan_push_postcondition g st (Seq.cons obj st) cap bound obj)
   = cons_preserves_addr_bound obj st bound
 
-#push-options "--z3rlimit 200 --z3refresh --retry 3"
+#push-options "--z3rlimit 100 --z3refresh --retry 3"
 fn rescan_push_if_gray (heap: heap_t) (st: gray_stack) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (Seq.length 's == heap_size /\
@@ -1674,7 +1674,7 @@ let no_gray_visited_at_init (g: heap_state)
 ///
 /// Split into two parts: arithmetic (next_nat is valid hp_addr) and 
 /// decomposition (objects start = cons ... (objects next)).
-#push-options "--fuel 2 --ifuel 0 --z3rlimit 200"
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 100"
 let objects_nonempty_decompose_arith (start: hp_addr) (g: heap_state)
   : Lemma (requires Seq.length (SpecFields.objects start g) > 0 /\
                     Seq.length g == heap_size)
@@ -1688,7 +1688,7 @@ let objects_nonempty_decompose_arith (start: hp_addr) (g: heap_state)
       (U64.v (SpecObject.getWosize (SpecHeap.read_word g start)) + 1) 8 8
 #pop-options
 
-#push-options "--fuel 2 --ifuel 0 --z3rlimit 100"
+#push-options "--fuel 2 --ifuel 0 --z3rlimit 50"
 let objects_nonempty_decompose (start: hp_addr) (g: heap_state)
   (next: hp_addr)
   : Lemma (requires Seq.length (SpecFields.objects start g) > 0 /\
@@ -1701,7 +1701,7 @@ let objects_nonempty_decompose (start: hp_addr) (g: heap_state)
 
 /// Step: extend no_gray_visited when we check an object and find it non-gray.
 /// Also handles the case when the stack is non-empty (LHS of implication becomes false).
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let no_gray_visited_step (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state) (next: hp_addr)
   : Lemma (requires no_gray_visited v g /\
                     ~(SpecObject.is_gray (SpecHeap.f_address v) g) /\
@@ -1722,7 +1722,7 @@ let no_gray_visited_step (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: hea
 #pop-options
 
 /// Complete: after scanning all objects, derive no_gray_objects
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 50"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 25"
 let no_gray_visited_complete (vc: hp_addr) (g: heap_state)
   : Lemma (requires no_gray_visited vc g /\
                     Seq.length (SpecFields.objects vc g) == 0)
@@ -1733,7 +1733,7 @@ let no_gray_visited_complete (vc: hp_addr) (g: heap_state)
 /// Combined coverage maintenance: handles both empty and non-empty stack cases.
 /// If the stack is empty after push_if_gray, the object wasn't gray (from the postcondition),
 /// so we can extend coverage. If non-empty, coverage is vacuous.
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let no_gray_visited_maintain
   (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state) (st_old st_new: Seq.seq obj_addr) (cap: nat)
   (next: hp_addr)
@@ -1775,7 +1775,7 @@ let no_gray_when_scan_complete
 /// Boundary case: when v is the last object (next >= heap_size),
 /// no_gray_visited v g + v not gray → no_gray_objects g.
 /// objects(v, g) is the singleton [f_address(v)] when next >= heap_size.
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let no_gray_visited_boundary
   (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state)
   : Lemma (requires no_gray_visited v g /\
@@ -1805,7 +1805,7 @@ let no_gray_visited_boundary
 /// Combined coverage maintenance: no `next` parameter needed (computed internally).
 /// Returns fact about no_gray_visited_at next_val where next_val is the nat value.
 /// Also establishes no_gray_objects when the next position goes past heap_size.
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
 let no_gray_visited_maintain_at
   (v: hp_addr{U64.v v + U64.v mword < heap_size}) (g: heap_state) (st_old st_new: Seq.seq obj_addr) (cap: nat)
   : Lemma (requires (Seq.length st_old == 0 ==> no_gray_visited_at (U64.v v) g) /\
@@ -1860,7 +1860,7 @@ let no_gray_when_scan_complete_nat
 /// via no_gray_visited. When the stack is empty at the end, all objects
 /// have been visited and found non-gray.
 
-#push-options "--z3rlimit 400 --z3refresh"
+#push-options "--z3rlimit 200 --z3refresh"
 fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecFields.well_formed_heap 's /\
@@ -1994,7 +1994,7 @@ fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
 /// until no grays remain. Termination: count_non_black strictly
 /// decreases each iteration (inner loop blackens at least one object).
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 fn mark_loop_bounded (heap: heap_t) (st: gray_stack)
                      (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr))
   requires is_heap heap 's ** is_gray_stack st 'st **

@@ -197,7 +197,7 @@ let cheney_bfs_inv_valid (minor: minor_state) (cs: CheneySpec.cheney_state)
 /// Forward_one preserves BFS invariant
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 private let fwd_one_bfs_inv_success
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
@@ -258,7 +258,7 @@ private let fwd_one_bfs_inv_success
 #pop-options
 
 /// Forward_normal preserves BFS invariant (same logic as old forward_one)
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 private let fwd_normal_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
@@ -286,7 +286,7 @@ private let fwd_normal_preserves_bfs_inv
 /// For the infix case: forward parent preserves bfs_inv, then extending
 /// fwd for the infix addr (which is NOT in minor_objects) doesn't change
 /// the queue or count_unforwarded.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 let fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
@@ -379,7 +379,7 @@ private let rec count_unforwarded_positive
     else if fwd (Seq.index objs start) = 0UL then ()
     else count_unforwarded_positive objs fwd (start + 1) k
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 let cheney_bfs_inv_strict_room
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)

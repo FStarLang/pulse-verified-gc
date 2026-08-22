@@ -33,7 +33,7 @@ private let copy_fields_preserves_fl_chain_terminates = WriteBody.copy_fields_pr
 private let copy_fields_preserves_wfh_part1 = WriteBody.copy_fields_preserves_wfh_part1
 private let chain_avoids_implies_not_in_fl_chain = WriteBody.chain_avoids_implies_not_in_fl_chain
 
-#push-options "--z3rlimit 5 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 /// Helper: construct field address as hp_addr
 private let field_addr_of (src: obj_addr) (j: nat{U64.v src + j * 8 + 8 <= heap_size})
@@ -66,7 +66,7 @@ private let headers_disjoint_from_separation
 /// Helper: prove copy_fields_preserves_other precondition for the obj address
 /// when ao and dst_obj are distinct objects. Minimal context for Z3.
 /// Also calls copy_fields_preserves_other directly (Z3 proves the forall + call in clean context).
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let copy_fields_other_obj_precond
   (minor: minor_state) (g: heap) (src_obj: U64.t)
   (ao dst_obj: obj_addr) (wosize: nat{wosize > 0})
@@ -93,7 +93,7 @@ private let copy_fields_other_obj_precond
 /// Helper: read at any object address of a non-dst object is preserved through
 /// copy_fields + zero_promote_padding + set_promoted_tag (full promote pipeline).
 /// Requires ao's wosize >= 1 to ensure ao doesn't overlap with hd_address(dst_obj)
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let read_word_preserved_at_obj
   (minor: minor_state) (g: heap) (src_obj: U64.t)
   (ao dst_obj: obj_addr) (wosize: nat{wosize > 0}) (tag: nat{tag < 256})
@@ -135,7 +135,7 @@ private let read_word_preserved_at_obj
 
 /// Helper: prove copy_fields_preserves_other precondition for hd_address src
 /// when src and dst_obj are distinct objects
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let copy_fields_other_hdr_precond
   (g: heap) (src dst_obj: obj_addr) (wosize: nat{wosize > 0})
   : Lemma
@@ -161,7 +161,7 @@ private let copy_fields_other_hdr_precond
 
 /// Helper: read at any address of a non-dst object is preserved through
 /// copy_fields + zero_promote_padding + set_promoted_tag (full promote pipeline).
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let promote_read_non_dst
   (minor: minor_state) (new_major: heap) (obj: U64.t)
   (dst_obj: obj_addr) (wosize: nat{wosize > 0})
@@ -197,7 +197,7 @@ private let promote_read_non_dst
 #pop-options
 
 /// Helper: derive copy_fields_preserves_other precondition from objects_separated
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 private let bfc_field_disjoint
   (new_major: heap) (src dst_obj: obj_addr) (j: nat) (wosize: nat{wosize > 0})
   : Lemma
@@ -236,7 +236,7 @@ private let bfc_field_disjoint
     end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 /// Pattern: inner bfc_proof has conclusion as implication (no requires).
 private let promote_object_preserves_bfc_close
   (minor: minor_state) (major new_major: heap) (obj: U64.t) (fp: U64.t)
@@ -317,7 +317,7 @@ private let promote_object_preserves_bfc_close
     FStar.Classical.forall_intro_2 bfc_proof
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 let promote_object_preserves_bfc
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -371,7 +371,7 @@ let promote_object_preserves_bfc
 #pop-options
 /// Helper: transfer chain_avoids from new_major to res.major_out via read preservation.
 /// Separated to keep the Z3 context small.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let chain_blue_transfer_step
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -432,7 +432,7 @@ private let chain_blue_transfer_step
 /// After alloc_spec + copy_fields + set_promoted_tag, non-blue objects that are not
 /// the destination still avoid the free-list chain. Extracted as a standalone helper
 /// to give Z3 a clean context (no inherited let-bindings from the outer proof).
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 private let chain_blue_proof_for_excl
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -533,7 +533,7 @@ private let chain_blue_proof_for_excl
 
 /// set_promoted_tag preserves read_word at object addresses ≠ dst_obj.
 /// Used to transfer chain_avoids through set_promoted_tag.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 private let set_tag_preserves_read_at_obj
   (major: heap) (dst_obj: obj_addr) (tag: nat{tag < 256})
   (a: obj_addr)
@@ -553,7 +553,7 @@ private let set_tag_preserves_read_at_obj
 #pop-options
 
 /// After alloc_spec + copy_fields, non-blue objects still avoid the chain.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0 --z3refresh"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0 --z3refresh"
 let promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})
@@ -630,7 +630,7 @@ let promote_object_preserves_chain_objects_blue
 /// A successful promotion preserves the shape of the free-list head and blue
 /// link fields. Allocation establishes the shape for the immediate post-alloc
 /// heap; copy/padding/tag writes do not affect link fields of still-blue objects.
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 let promote_object_preserves_free_list_shape
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)
   (wosize: nat{wosize > 0})

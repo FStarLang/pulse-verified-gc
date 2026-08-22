@@ -23,7 +23,7 @@ module Allocator = GC.Spec.Allocator
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module AllocProps = GC.Gen.AllocProps
 
-#push-options "--z3rlimit 120 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 let promote_object_frame_old_field_derived
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr) (idx: nat)
@@ -90,7 +90,7 @@ private let aligned_gap (a b: nat)
           (ensures a >= b + 8)
   = ()
 
-#push-options "--z3rlimit 120 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
 let promote_object_frame_old_header_derived
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wz: nat{wz > 0})
   (src: obj_addr)
@@ -153,7 +153,7 @@ let promote_object_frame_old_header_derived
   set_promoted_tag_read_frame padded dst_obj tag hd_src
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_cob
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
@@ -209,7 +209,7 @@ private let cheney_forward_one_preserves_cob
   end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_preserves_objects
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   : Lemma (requires well_formed_heap_part1 cs.cs_major /\
@@ -452,7 +452,7 @@ private let rec cheney_forward_roots_preserves_wfh_part1
   end
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let cheney_forward_normal_frame_field
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr) (idx: nat)
@@ -491,7 +491,7 @@ let cheney_forward_normal_frame_field
       end
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 let cheney_forward_one_frame_field
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr) (idx: nat)
@@ -526,7 +526,7 @@ let cheney_forward_one_frame_field
   end
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec cheney_forward_fields_frame_field
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   (src: obj_addr) (idx: nat)
@@ -562,7 +562,7 @@ private let rec cheney_forward_fields_frame_field
   end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let rec cheney_forward_roots_frame_field
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   (src: obj_addr) (idx: nat)
@@ -598,7 +598,7 @@ private let rec cheney_forward_roots_frame_field
   end
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let rec cheney_scan_frame_field
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   (src: obj_addr) (idx: nat)
@@ -637,7 +637,7 @@ private let rec cheney_scan_frame_field
   end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let cheney_promote_frame_old_fields
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr) (j: nat)
@@ -666,7 +666,7 @@ let cheney_promote_frame_old_fields
   cheney_scan_frame_field minor cs1 0 (cheney_fuel minor) obj j
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let cheney_forward_normal_frame_header
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr)
@@ -701,7 +701,7 @@ private let cheney_forward_normal_frame_header
       end
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let cheney_forward_one_frame_header
   (minor: minor_state) (cs: cheney_state) (addr: U64.t)
   (src: obj_addr)
@@ -733,7 +733,7 @@ private let cheney_forward_one_frame_header
   end
 #pop-options
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
 private let rec cheney_forward_fields_frame_header
   (minor: minor_state) (cs: cheney_state) (parent: U64.t) (i: nat) (wosize: nat)
   (src: obj_addr)
@@ -766,7 +766,7 @@ private let rec cheney_forward_fields_frame_header
   end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
 private let rec cheney_forward_roots_frame_header
   (minor: minor_state) (cs: cheney_state) (roots: seq U64.t) (ridx: nat)
   (src: obj_addr)
@@ -799,7 +799,7 @@ private let rec cheney_forward_roots_frame_header
   end
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
 private let rec cheney_scan_frame_header
   (minor: minor_state) (cs: cheney_state) (scan: nat) (fuel: nat)
   (src: obj_addr)
@@ -835,7 +835,7 @@ private let rec cheney_scan_frame_header
   end
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
 let cheney_promote_frame_old_header
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (obj: obj_addr)

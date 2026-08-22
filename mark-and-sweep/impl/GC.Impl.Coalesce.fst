@@ -10,7 +10,7 @@ module GC.Impl.Coalesce
 
 #lang-pulse
 
-#set-options "--z3rlimit 100"
+#set-options "--z3rlimit 50"
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -43,7 +43,7 @@ ghost fn coalesce_heap_length (h: heap_t)
 /// ---------------------------------------------------------------------------
 
 /// Write the merged header for a blue run
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
 fn flush_blue_write_header (heap: heap_t) (fb: obj_addr) (rw: U64.t{U64.v rw >= 1 /\ U64.v rw < pow2 54})
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size)
@@ -64,7 +64,7 @@ fn flush_blue_write_header (heap: heap_t) (fb: obj_addr) (rw: U64.t{U64.v rw >= 
 #pop-options
 
 /// Write free list link to field 1 of merged block
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
 fn flush_blue_write_link (heap: heap_t) (fb: hp_addr) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -78,7 +78,7 @@ fn flush_blue_write_link (heap: heap_t) (fb: hp_addr) (fp: U64.t)
 #pop-options
 
 /// Zero a range of fields starting at addr, n words
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
 fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -121,7 +121,7 @@ fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
 #pop-options
 
 /// Full flush_blue implementation
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1 --z3refresh"
 fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -192,7 +192,7 @@ let coalesce_spec_inv (g0: heap_state) (g: heap_state)
     SpecCoalesce.coalesce_aux g0 g Seq.empty fb rw_nat fv == SpecCoalesce.coalesce g0
 
 /// The main coalesce entry point
-#push-options "--z3rlimit 800 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 400 --fuel 2 --ifuel 1 --z3refresh"
 fn coalesce (heap: heap_t)
   requires is_heap heap 's **
            pure (SpecCoalesce.post_sweep_strong 's /\

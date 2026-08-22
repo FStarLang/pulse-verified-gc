@@ -6,7 +6,7 @@
 
 module GC.Spec.Sweep
 
-#set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#set-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 
 open FStar.Seq
 
@@ -49,7 +49,7 @@ let sweep_object_black_becomes_white g obj fp =
   colors_exclusive obj g;
   makeWhite_is_white obj g
 
-#reset-options "--z3rlimit 800 --fuel 2 --ifuel 1"
+#reset-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let sweep_object_color_locality g obj1 obj2 fp =
   if is_infix obj1 g then ()
   else if is_white obj1 g then begin
@@ -82,7 +82,7 @@ let sweep_object_color_locality g obj1 obj2 fp =
   end else ()
 #reset-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_preserves_objects g obj fp =
   if is_infix obj g then ()
   else
@@ -107,7 +107,7 @@ let sweep_object_preserves_objects g obj fp =
   end else ()
 #pop-options
 
-#reset-options "--z3rlimit 800 --fuel 2 --ifuel 1"
+#reset-options "--z3rlimit 400 --fuel 2 --ifuel 1"
 let sweep_object_resets_self_color g obj fp =
   if is_white obj g then begin
     let ws = wosize_of_object obj g in
@@ -132,7 +132,7 @@ let sweep_object_resets_self_color g obj fp =
   end
 #reset-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_preserves_wf g obj fp =
   if is_infix obj g then ()
   else if is_white obj g then begin
@@ -162,7 +162,7 @@ let sweep_object_preserves_wf g obj fp =
 /// sweep_object preserves objects from arbitrary start position
 /// sweep_object preserves objects from any position beyond the current object
 /// (sweep_object writes only at h_addr or h_addr+8, both < next_addr)
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_preserves_objects_suffix h_addr g fp =
   let obj = f_address h_addr in
   f_address_spec h_addr;
@@ -207,7 +207,7 @@ let sweep_aux_empty (g: heap) (fp: U64.t)
 /// sweep_object at head + sweep_aux on objects from next_addr
 /// After sweep_object at obj: sweep_aux g' (objects next g') fp' == sweep_aux g' (objects next g) fp'
 /// since objects next g' == objects next g (suffix preservation)
-#push-options "--z3rlimit 600 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 300 --fuel 3 --ifuel 1"
 let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\
                     Seq.length (objects h_addr g) > 0 /\
@@ -254,7 +254,7 @@ let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
 #pop-options
 
 /// sweep_aux preserves color of objects not in the sequence
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let rec sweep_aux_non_member_color (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires ~(Seq.mem x objs) /\
                     well_formed_heap g /\
@@ -313,7 +313,7 @@ let coerce_tail_lemma (objs: seq obj_addr)
             Seq.cons (Seq.head objs) (HeapGraph.coerce_to_vertex_list (Seq.tail objs)))
 #pop-options
 
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
+#push-options "--z3rlimit 200 --fuel 3 --ifuel 2"
 let rec sweep_aux_black_survives (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\ is_black x g /\ Seq.mem x objs /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
@@ -368,7 +368,7 @@ let rec sweep_aux_black_survives (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: 
   end
 #pop-options
 /// sweep_aux: white objects in objs become blue after sweep
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
+#push-options "--z3rlimit 200 --fuel 3 --ifuel 2"
 let rec sweep_aux_white_in_objs_becomes_blue (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires is_white x g /\ Seq.mem x objs /\
                     well_formed_heap g /\
@@ -421,7 +421,7 @@ let rec sweep_aux_white_in_objs_becomes_blue (g: heap) (objs: seq obj_addr) (fp:
 #pop-options
 
 /// sweep_aux: blue objects stay blue (sweep_object is identity for blue)
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
+#push-options "--z3rlimit 200 --fuel 3 --ifuel 2"
 let rec sweep_aux_blue_stays_blue (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires is_blue x g /\ Seq.mem x objs /\
                     well_formed_heap g /\
@@ -471,7 +471,7 @@ let rec sweep_aux_blue_stays_blue (g: heap) (objs: seq obj_addr) (fp: U64.t) (x:
 /// ---------------------------------------------------------------------------
 
 // Helper lemma: sweep_aux preserves objects
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_objects (g: heap) (objs: seq obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
@@ -501,7 +501,7 @@ let sweep_preserves_objects g fp =
   sweep_aux_preserves_objects g (objects zero_addr g) fp
 
 // Helper lemma: sweep_aux preserves well_formed_heap
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_wf (g: heap) (objs: seq obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
@@ -586,7 +586,7 @@ let sweep_resets_black_to_white g fp =
 
 /// Sweep preserves wosize for black objects
 /// Single-step helper: sweep_object preserves read_word at address a in x's body when obj ≠ x
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_preserves_other_body_read
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -664,7 +664,7 @@ let sweep_object_preserves_other_body_read
 #pop-options
 
 /// Single-step: sweep_object preserves header (and thus wosize/tag) of different object
-#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 250 --fuel 2 --ifuel 1"
 let sweep_object_preserves_other_header
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires Seq.mem obj (objects zero_addr g) /\
@@ -735,7 +735,7 @@ let sweep_object_preserves_other_header
 
 /// sweep_object preserves wosize of the processed object itself.
 /// For all cases: infix (no-op), white (set_field + makeBlue), black (makeWhite), blue/gray (no-op).
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_preserves_self_wosize
   (g: heap) (obj: obj_addr) (fp: U64.t)
   : Lemma (requires Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g)
@@ -779,7 +779,7 @@ let sweep_object_preserves_self_wosize
 
 /// sweep_object on a white object with wosize > 0 writes fp to field 0.
 /// After sweep_object, read_word at obj returns the original fp argument.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_white_field0
   (g: heap) (obj: obj_addr) (fp: U64.t)
   : Lemma (requires is_white obj g /\ ~(is_infix obj g) /\
@@ -803,7 +803,7 @@ let sweep_object_white_field0
 
 ///Helper 1: sweep_aux preserves read_word at field addresses of x when x ∉ objs
 /// (no sweep_object ever processes x, so its body is never written to)
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1000 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_field_nonmember
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -845,7 +845,7 @@ private let rec sweep_aux_preserves_field_nonmember
 /// Self-case: sweep_object on a black object preserves body reads
 /// (makeWhite writes only at hd_address(x), body addresses a >= x are untouched)
 /// Isolated from quantifier-heavy contexts to avoid "incomplete quantifiers" failures.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_body_read
   (g: heap) (x: obj_addr) (fp: U64.t) (a: hp_addr)
   : Lemma (requires is_black x g /\ ~(is_infix x g) /\
@@ -860,7 +860,7 @@ private let sweep_object_self_preserves_body_read
 #pop-options
 
 /// Self-case: sweep_object on a black object preserves wosize
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_wosize
   (g: heap) (x: obj_addr) (fp: U64.t)
   : Lemma (requires is_black x g /\ ~(is_infix x g))
@@ -878,7 +878,7 @@ private let sweep_object_self_fp
   = colors_exclusive x g
 
 /// Self-case: sweep_object on a black object preserves tag
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_tag
   (g: heap) (x: obj_addr) (fp: U64.t)
   : Lemma (requires is_black x g /\ ~(is_infix x g))
@@ -894,7 +894,7 @@ private let sweep_object_self_preserves_tag
 /// Helper 2: sweep_aux preserves read_word at field addresses of BLACK x ∈ objs
 /// When x is processed: makeWhite only (x is black, not white → no set_field)
 /// Then x ∉ tail (vertex set), so use nonmember helper for remaining
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1000 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_field_member
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -963,7 +963,7 @@ let rec sweep_aux_preserves_field_member
 /// ---------------------------------------------------------------------------
 
 /// Helper 1: sweep_aux preserves wosize for x when x ∉ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1000 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_wosize_nonmember
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
@@ -1000,7 +1000,7 @@ let rec sweep_aux_preserves_wosize_nonmember
 #pop-options
 
 /// Helper 2: sweep_aux preserves wosize for BLACK x ∈ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1000 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_wosize_member
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
@@ -1060,7 +1060,7 @@ private let rec sweep_aux_preserves_wosize_member
 /// ---------------------------------------------------------------------------
 
 /// Helper 1: sweep_aux preserves tag for x when x ∉ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1000 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_tag_nonmember
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
@@ -1099,7 +1099,7 @@ private let rec sweep_aux_preserves_tag_nonmember
 #pop-options
 
 /// Helper 2: sweep_aux preserves tag for BLACK x ∈ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1000 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_tag_member
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
@@ -1154,7 +1154,7 @@ private let rec sweep_aux_preserves_tag_member
     end
 #pop-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_preserves_wosize_black g fp x =
   let g' = fst (sweep g fp) in
   GC.Spec.Heap.hd_address_spec x;
@@ -1168,7 +1168,7 @@ let sweep_preserves_wosize_black g fp x =
 #pop-options
 
 /// Sweep preserves tag for black objects
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_preserves_tag_black g fp x =
   let g' = fst (sweep g fp) in
   GC.Spec.Heap.hd_address_spec x;
@@ -1185,7 +1185,7 @@ let sweep_preserves_tag_black g fp x =
 
 /// Helper: show that HeapGraph.get_field is preserved for all field indices
 /// This is needed to prove HeapGraph.get_pointer_fields_aux equality
-#push-options "--z3rlimit 5000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 2500 --fuel 2 --ifuel 1"
 private let sweep_aux_preserves_all_fields
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (i: U64.t)
   : Lemma (requires well_formed_heap g /\
@@ -1212,7 +1212,7 @@ private let sweep_aux_preserves_all_fields
 #pop-options
 
 /// Recursive lemma: HeapGraph.get_pointer_fields_aux is preserved when fields are preserved
-#push-options "--z3rlimit 2000 --fuel 3 --ifuel 2"
+#push-options "--z3rlimit 1000 --fuel 3 --ifuel 2"
 let rec get_pointer_fields_aux_preserved
   (g: heap) (g': heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : Lemma (requires (forall (j: U64.t). U64.v j >= U64.v i /\ U64.v j <= U64.v ws ==>
@@ -1235,7 +1235,7 @@ let rec get_pointer_fields_aux_preserved
 #pop-options
 
 /// Helper lemma to establish the quantifier needed by get_pointer_fields_aux_preserved
-#push-options "--z3rlimit 3000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1500 --fuel 2 --ifuel 1"
 private let sweep_aux_preserves_all_fields_range
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (i: U64.t) (ws: U64.t)
   : Lemma (requires well_formed_heap g /\
@@ -1261,7 +1261,7 @@ private let sweep_aux_preserves_all_fields_range
 /// Isolated helper: prove get_pointer_fields equality directly
 /// Combines the field range proof with the get_pointer_fields_aux recursive proof.
 /// Specialized to objs = objects zero_addr g (forall o. Seq.mem o objs ==> Seq.mem o (objects zero_addr g) is trivial).
-#push-options "--z3rlimit 3000 --fuel 3 --ifuel 2"
+#push-options "--z3rlimit 1500 --fuel 3 --ifuel 2"
 private let sweep_get_pointer_fields_eq
   (g: heap) (fp: U64.t) (x: obj_addr) (ws: U64.t)
   : Lemma (requires well_formed_heap g /\
@@ -1279,7 +1279,7 @@ private let sweep_get_pointer_fields_eq
     get_pointer_fields_aux_preserved g g' x 1UL ws
 #pop-options
 
-#push-options "--z3rlimit 2000 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 1000 --fuel 1 --ifuel 1"
 let sweep_preserves_edges g fp x = 
   sweep_preserves_objects g fp;
   let g' = fst (sweep g fp) in
