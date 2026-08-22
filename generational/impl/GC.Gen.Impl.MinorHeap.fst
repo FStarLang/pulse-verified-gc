@@ -87,7 +87,17 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
 /// Allocation
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 10"
+/// `minor_alloc`'s VC needs deep unfolding: two of its goals -- the body VC and
+/// the `minor_heap_size` refinement from GC.Gen.Base -- only discharge at fuel
+/// 8.  Left to find that itself, F* escalates (2,1) -> (2,2) -> (4,2) -> (8,2),
+/// and each losing attempt runs the full rlimit to exhaustion first; those dead
+/// attempts, not the successful proof, were the bulk of this module's runtime.
+/// Naming the setting that works turns ~14 Z3 calls into 2, and this module
+/// from the slowest in the repository into an unremarkable one: 802s -> 32s.
+///
+/// rlimit 30, not the file default: the body VC lands at 9.4 even when it
+/// succeeds, so 10 leaves no margin.
+#push-options "--z3rlimit 30 --fuel 8 --ifuel 2"
 fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\

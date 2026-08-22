@@ -1859,8 +1859,13 @@ let no_gray_when_scan_complete_nat
 /// The rescan loop maintains bounded_stack_props and tracks coverage
 /// via no_gray_visited. When the stack is empty at the end, all objects
 /// have been visited and found non-gray.
-
-#push-options "--z3rlimit 100 --z3refresh"
+///
+/// `--fuel 8 --ifuel 2` is not decoration: this function's loop-body VC
+/// discharges only at that setting.  Left to search, F* tries (2,1), (2,2) and (4,2) three
+/// times each, and every one of those nine attempts runs the whole rlimit 100
+/// to exhaustion before being thrown away -- far more work than the proof that
+/// eventually succeeds.  See PROOF_COMPLEXITY.md §6.4.
+#push-options "--z3rlimit 100 --z3refresh --fuel 8 --ifuel 2"
 fn rescan_heap_impl (heap: heap_t) (st: gray_stack) (cap: Ghost.erased nat)
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (SpecFields.well_formed_heap 's /\

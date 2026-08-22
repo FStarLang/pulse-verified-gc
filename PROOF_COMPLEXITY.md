@@ -247,14 +247,17 @@ resulting C-visible byte sequence *equal* to `cheney_collect_spec`'s output.
 ## 3. Where the effort actually is
 
 Wall-clock verification time per module (single module, cold cache, on an otherwise idle
-128-core machine — see §9), against module size and configured rlimit:
+128-core machine — see §9), against module size and configured rlimit. Rows are ordered by
+the *original* cost, so that the three struck-through entries show where the effort used to
+be; §6.4 explains what moved them.
 
 | seconds | lines | rlimit | module |
 |---:|---:|---|---|
+| ~~802.6~~ → **32.9** | 835 | 30 + **fuel 8** (local) | `GC.Gen.Impl.MinorHeap` — see §6.4 |
 | **577.8** | 1,637 | EAGER_QI | `GC.Gen.Cheney` |
-| **512.2** | 2,104 | **300** + `z3refresh` | `GC.Impl.MarkBounded` |
+| ~~413.9~~ → **71.5** | 2,109 | 25 (file) + **fuel 8** (local) | `GC.Impl.MarkBounded` — see §6.4 |
 | **369.5** | **188** | EAGER_QI | `GC.Spec.Allocator` |
-| 239.6 | 959 | 160 + EAGER_QI | `GC.Gen.Impl.Cheney` |
+| 239.6 | 959 | EAGER_QI | `GC.Gen.Impl.Cheney` |
 | 150.7 | 1,429 | EAGER_QI | `GC.Gen.CheneyPreservation.Forwarding` |
 | 144.5 | 3,381 | EAGER_QI | `GC.Spec.Allocator.Lemmas.Part2` |
 | 142.9 | 1,460 | — | `GC.Gen.MinorCollectForwarding` |
@@ -264,11 +267,25 @@ Wall-clock verification time per module (single module, cold cache, on an otherw
 | 105.2 | 1,947 | EAGER_QI | `GC.Gen.TwoPassEquiv` |
 | 93.3 | 2,687 | — | `GC.Spec.Coalesce` |
 | 89.3 | 1,495 | — | `GC.Spec.Correctness` |
-| 80.0 | 584 | 100 + EAGER_QI | `GC.Impl.Allocator` |
-| 72.5 | 1,171 | **200** + `z3refresh` | `GC.Gen.Impl` |
+| 80.0 | 584 | 12 (file) + EAGER_QI | `GC.Impl.Allocator` |
+| ~~73.4~~ → **17.4** | 570 | 12 + **fuel 8** (local) | `GC.Lib.Header` — see §6.4 |
+| 72.5 | 1,171 | `z3refresh` | `GC.Gen.Impl` |
 | 63.7 | 1,608 | — | `GC.Spec.Fields` |
 | 20.5 | 1,060 | up to **1250** (local) | `GC.Spec.Sweep` |
 | 12.2 | 998 | — | `GC.Spec.DFS` |
+
+The rlimit column lists what is *in effect*. It used to list the `Makefile`'s blanket
+overrides; §6.4 established that all of those were dead — in `GC.Impl.MarkBounded` and
+`GC.Impl.Allocator` because a file-level `#set-options` supersedes the command line, and
+elsewhere because no goal came near the budget — so they have been deleted and the column
+now shows the file-level or local setting that actually binds.
+
+`GC.Gen.Impl.MinorHeap` was missing from the first version of this table, and the reason is
+worth recording as a hazard: it was confused with the *spec* module `GC.Gen.MinorHeap`
+(24.9s), a different file. The implementation was the slowest module in the repository, at
+802s, and nobody had noticed. It is now 32.9s; §6.4 has the diagnosis. Its cost was **not**
+proof difficulty but silent fuel escalation, which is invisible in build output because the
+proof still succeeds.
 
 **Length and difficulty are close to uncorrelated — and the two extremes are nearly two
 orders of magnitude apart in cost per line.** `GC.Spec.Allocator` is **188 lines and takes
@@ -514,7 +531,7 @@ long because the shared induction was never factored out.
 free-block *split* case under promotion, and contains the single longest lemma in the
 repository.
 
-### 5.3 `GC.Impl.MarkBounded.fst` — 512 s, rlimit 300, plus eight local overrides
+### 5.3 `GC.Impl.MarkBounded.fst` — 512 s, file rlimit 25, plus 25 local overrides
 
 The hardest *engineering*. It is where the most things must be true simultaneously: a
 bounded stack whose overflow behaviour is semantically observable, two nested fuel
@@ -522,12 +539,21 @@ measures, a ghost termination witness, a nine-conjunct invariant of which four c
 are themselves multi-clause spec predicates, and the entire framing burden of §4.1. Half
 the file is lemmas that exist so the other half's loop invariants close.
 
+The rlimit 300 this section originally reported was the `Makefile`'s, and §6.4 showed it
+never applied: line 13 sets `--z3rlimit 25`, and everything after inherits that. The file
+verifies identically with `--z3rlimit 1` on the command line. Its 25 local `#push-options`
+blocks, ranging 10–100, are the settings that actually bind.
+
 ### 5.4 `GC.Gen.Cheney.fst` — 577 s, the slowest module in the repository
 
 1,637 lines that verify in nearly ten minutes. This is the confluence point: BFS
 traversal, allocator interaction, infix forwarding, OOM handling, and free-list
 invariants all meet in `cheney_forward_one`/`cheney_forward_normal`. Every one of the
 five generational complexity drivers (§4.5) is present in one module.
+
+(This claim was false when first written — `GC.Gen.Impl.MinorHeap` was then 802 s, and had
+been missed. It is true again now that §6.4 has brought that module down to 33 s. Unlike
+MinorHeap's, this module's cost is real proof difficulty rather than fuel escalation.)
 
 ### 5.5 `GC.Gen.TwoPassEquiv.fst` (1,947 lines) — paying for a performance requirement
 
@@ -603,20 +629,99 @@ exactly when it matters most.
 **Verdict.** Do it where the invariant is stable; leave it inline where it is still being
 developed.
 
-### 6.4 Extract the hard sub-goals out from under the blanket rlimits
+### 6.4 Extract the hard sub-goals out from under the blanket rlimits — **done**
 
-**What.** `GC.Impl.MarkBounded.fst` carries a file-wide rlimit of 300 covering 2,104
-lines, plus eight local overrides. Pull the specific hard steps (bitvector mask reasoning,
-the alignment/nat-ness side conditions the Makefile blames for Z3 4.15.3 hangs) into small,
-tightly scoped modules with modest rlimits of their own.
+**What was proposed.** `GC.Impl.MarkBounded.fst` carries a file-wide rlimit of 300 covering
+2,104 lines, plus eight local overrides. Pull the specific hard steps into small, tightly
+scoped modules with modest rlimits of their own.
 
-**Payoff.** Faster, more predictable incremental rebuilds, and — more importantly — the
-hard step becomes *visible in the file layout* instead of hidden inside a 300-rlimit
-budget.
+**What measurement found.** The premise was wrong in an instructive way. Every blanket
+`--z3rlimit` in the `Makefile` was **dead**, and removing all of them changed no
+verification time by more than noise:
 
-**Cost.** More module boundaries.
+| module | blanket | measured without it | why it was dead |
+|---|---|---|---|
+| `GC.Impl.MarkBounded.fst` | 300 | passes at rlimit **1**, 411.9s (vs 412.1, 414.3) | superseded by `#set-options` on line 13 |
+| `GC.Impl.Allocator.fst` | 100 | passes at rlimit **1**, 74.9s (vs 75.1) | superseded by `#set-options` on line 13 |
+| `GC.Gen.Impl.fst` | 200 | 48.6s (vs 48.6s) | no goal exceeds the default of 5 |
+| `GC.Lib.Header.fst` | 20 | 73.4s (vs 72.7s) | ditto |
+| `GC.Gen.Impl.MinorHeap.fst` | 160 | 803.1s (vs 802.6s) | ditto |
+| `GC.Gen.Impl.Cheney.fst` | 160 | 230.3s (vs 239.6s) | ditto |
+| `GC.Gen.Impl.Promote.fst` | 160 | 18.5s | ditto |
+| `GC.Gen.Impl.UpdatePtrs.fst` | 160 | 64.5s | ditto |
 
-**Verdict.** Cheap. Do it.
+Two findings are worth keeping. First, **`#set-options` in a source file supersedes the
+command line**, so a Makefile blanket is not merely redundant in those two files — it is
+invisible. `GC.Impl.MarkBounded.fst` verifies unchanged with `--z3rlimit 1` on the command
+line. Second, in the other six files the ambient budget was 30× larger than any goal
+needed; `--query_stats` shows file-level goals consuming ~0.05 rlimit against a budget of
+160.
+
+So the stated payoff — "faster, more predictable incremental rebuilds" — was **not
+delivered, and could not have been**. An unused budget costs nothing. The real payoff is
+the one listed second: a local `#push-options "--z3rlimit 50"` inside a file-wide 300 reads
+like a raise but is actually a *cut*, and no reader can tell without checking the build
+system. All eight overrides are now gone.
+
+**Where the time actually was.** Profiling for this exercise turned up something the
+timing table in §3 had missed entirely: `generational/impl/GC.Gen.Impl.MinorHeap.fst` took
+**802s**, making it the slowest module in the repository. It had been overlooked because of
+a name collision — §3 timed the *spec* module `GC.Gen.MinorHeap` (24.9s), a different file.
+
+All 28 of its failing goals were in one 30-line function, `minor_alloc`, and none of them
+were rlimit-bound. Two goals — the body VC, and the `minor_heap_size` refinement from
+`GC.Gen.Base` — discharge only at **fuel 8**. Left to discover that itself, F* escalates
+`(2,1) → (2,2) → (4,2) → (8,2)`, and *each losing attempt runs the rlimit to exhaustion
+before being abandoned*. The dead attempts, not the successful proof, were essentially the
+entire runtime. Writing the winning setting down:
+
+```fstar
+#push-options "--z3rlimit 30 --fuel 8 --ifuel 2"
+fn minor_alloc ...
+```
+
+takes the module from **802s to 32s**, a 25× speedup, with zero failing goals. This is the
+genuine instance of the pattern §6.4 was reaching for, and it is a fuel problem rather than
+an rlimit one.
+
+**The same pathology, found repo-wide.** Since escalation leaves a signature in
+`--query_stats` — a goal that *fails while consuming its entire rlimit*, repeatedly, at
+rising fuel — the whole development was rebuilt under `OTHERFLAGS='--query_stats'` and the
+66,448 resulting queries audited for it. Two more instances turned up, and both fixes are
+one line:
+
+| goal | wasted before | module: before → after |
+|---|---|---|
+| `GC.Gen.Impl.MinorHeap.minor_alloc` | 14 attempts, ~130 rlimit | 802s → **33s** (24×) |
+| `GC.Impl.MarkBounded.rescan_heap_impl` | 9 attempts × rlimit 100 | 414s → **71s** (5.8×) |
+| `GC.Lib.Header.get_tag_bound` | 8 attempts × rlimit 12 | 73s → **17s** (4.2×) |
+
+`get_tag_bound` is worth dwelling on. It is a **one-line lemma** —
+`logand_le #64 v 255` proving `get_tag v < 256` — and it was costing 56 seconds, because
+proving it needs fuel 8 and F* had to discover that by exhausting rlimit 12 eight times
+first. Nothing about the source suggests a problem; the lemma is correct, small, and
+obviously true.
+
+The remaining rlimit-exhausting failures in the audit (`alloc_from_block_split_normal`,
+`scan_loop`, `promote_no_scan_new_object`, and about eight others) are a *different*
+phenomenon and are deliberately left alone: they fail and then succeed **at the same fuel
+setting**, which is Z3 4.15.3 nondeterminism rescued by `--retry 3`, not escalation. §4.7
+covers that.
+
+**The generalisable lesson.** Escalation is silent: a proof that needs high fuel still
+*succeeds*, so nothing in the build output flags it, yet it can cost an order of magnitude.
+It is also invisible in the source — none of the three sites looks expensive, and the
+one-line `get_tag_bound` looks trivial. `--query_stats` plus a grep for goals that failed
+while using their full rlimit is the cheapest audit in this repository, and it is worth
+re-running after any Z3 upgrade, since which goals need which fuel is a solver-version
+property. Note the token is `Query-stats`, hyphenated, and it is printed on stdout.
+
+**Cost.** Three `#push-options` lines. No module boundaries were needed after all.
+
+**Verdict.** Done, but for different reasons than predicted. The rlimit cleanup was
+legibility only; the fuel fix was the win. Full clean verify: 13m23s → **12m36s** wall on
+24 cores — the parallel critical path hides most of it, but the serial cost of these three
+modules fell from 1,289s to 121s, which is what a developer re-checking one module feels.
 
 ### 6.5 A Pulse simulation combinator for "loop = unrolled pure twin"
 
@@ -693,9 +798,10 @@ avoids it. Recorded as the largest lever, at prohibitive cost.
 |---|---|
 | **Deepest mathematics** | `GC.Spec.Mark.fst` §5 — black ⇔ reachable, 1,813 lines, two unrelated inductions |
 | **Largest bulk** | the allocator families — `Allocator.Lemmas.Part2` (3,381) + `PromoteUpdate.BlueAlloc`/`.BlueProm` (1,564); one induction shape × 7 invariants × 6 cases |
-| **Hardest engineering** | `GC.Impl.MarkBounded.fst` — rlimit 300 + 8 local overrides, 512 s, half the file is framing lemmas |
+| **Hardest engineering** | `GC.Impl.MarkBounded.fst` — file rlimit 25 + 25 local overrides, 72 s, half the file is framing lemmas |
 | **Slowest module** | `GC.Gen.Cheney.fst` — 577 s; every generational complexity driver meets in one file |
 | **Most avoidable** | ~2,000 lines of repeated allocator inductions (§6.1) |
+| **Cheapest win found** | three `#push-options` lines pinning fuel, worth 19 minutes of serial verification (§6.4) |
 | **Least avoidable** | the copying-collector graph isomorphism (~3,400 lines) and the byte-sequence framing tax (§4.1) |
 
 The honest summary is that the proof is roughly the size it has to be *given three
@@ -747,9 +853,29 @@ rm -f _cache/GC.Gen.Cheney.fst.checked
 # Dead-code inventory
 make depgraph && make depgraph-inventory   # needs DEPGRAPH_OCAMLPATH set
 
-# Full verification (~11-20 min on 24 cores) and extraction
+# Full verification (~12-13 min on 24 cores) and extraction
 make -k -j24 verify
 make extract       # C output must match generational/snapshot/
+                   # (modulo the 5-line KaRaMeL banner: path + version hash)
+
+# Fuel-escalation audit (§6.4).  Rebuild everything with query stats, then look
+# for goals that FAILED while consuming their whole rlimit -- that is F*
+# escalating fuel, and each such attempt is wasted work.  Note the token is
+# `Query-stats`, hyphenated, and it goes to stdout.
+rm -rf _cache
+make -k -j24 verify OTHERFLAGS='--query_stats' > /tmp/qs.log 2>&1
+grep 'failed' /tmp/qs.log | sed 's/{reason-unknown=[^}]*}//' \
+  | grep -oE 'Query-stats \([^,]+,[^)]*\).*rlimit ([0-9]+) \(used rlimit ([0-9.]+)' \
+  | awk '{n=split($0,a,"rlimit "); if ((a[3]+0) >= (a[2]+0)*0.95) print}' \
+  | grep -oE 'Query-stats \([^,]+' | sed 's/Query-stats (//' | sort | uniq -c | sort -rn
+
+# A hit is real escalation only if the retries are at *rising* fuel; if the same
+# goal fails and then succeeds at the SAME fuel, that is Z3 nondeterminism
+# rescued by --retry (§4.7), and pinning fuel will not help.  Check with:
+#   grep 'Query-stats (<name>,' /tmp/qs.log | grep -oE '(failed|succeeded) with fuel [0-9]+ and ifuel [0-9]+'
+
+# Try one module with different flags, without disturbing the shared _cache:
+tools/try-module.sh generational/impl/GC.Gen.Impl.MinorHeap.fst --query_stats
 ```
 
 The per-module timings in §3 were taken cold (`.checked` removed first), one module at a

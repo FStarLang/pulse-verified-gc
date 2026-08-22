@@ -86,7 +86,13 @@ let set_color (v: uint_t 64) (c: uint_t 64{c < 4}) : uint_t 64 =
   logor #64 (logand #64 v (lognot #64 mask_color)) (shift_left #64 c 8)
 
 /// Bounds lemmas needed for unpacking
-#push-options "--z3rlimit 12"
+///
+/// `--fuel 8 --ifuel 2`: this one-line lemma discharges only at fuel 8.  Left to
+/// search, F* tries (2,1), (2,2) and (4,2) three times each and every one of
+/// those eight attempts runs the whole rlimit 12 to exhaustion before being
+/// discarded -- roughly a hundred rlimit units of pure waste for a proof that
+/// then costs 6.6.  See PROOF_COMPLEXITY.md §6.4.
+#push-options "--z3rlimit 12 --fuel 8 --ifuel 2"
 let get_tag_bound (v: uint_t 64) : Lemma (get_tag v < 256) =
   logand_le #64 v 255
 #pop-options

@@ -217,16 +217,41 @@ $(CACHE_DIR)/%.checked:
 	$(FSTAR) $(EXTRA_FLAGS) $<
 
 # --- Per-module SMT tuning --------------------------------------------------
+#
+# rlimits live in the *source*, never here.
+#
+# This block used to carry five blanket `--z3rlimit` overrides (GC.Lib.Header
+# 20, GC.Impl.Allocator 100, GC.Impl.MarkBounded 300, GC.Gen.Impl 200, and 160
+# across generational/impl).  Every one of them was measured to be dead:
+#
+#   * GC.Impl.MarkBounded.fst and GC.Impl.Allocator.fst both open with a
+#     file-level `#set-options "--z3rlimit ..."` (25 and 12 respectively), which
+#     supersedes the command line for everything after it.  Both verify
+#     unchanged with `--z3rlimit 1` passed here -- 411.9s vs 412.1s/414.3s, and
+#     74.9s vs 75.1s -- so the 300 and the 100 were pure decoration.
+#
+#   * GC.Lib.Header, GC.Gen.Impl, GC.Gen.Impl.{MinorHeap,Promote,UpdatePtrs,
+#     Cheney} have no file-level setting, but every goal in them fits in F*'s
+#     default rlimit of 5; dropping the override changed no verification time
+#     by more than noise (e.g. MinorHeap 802.6s -> 803.1s, Cheney 239.6s ->
+#     230.3s).
+#
+# A blanket set here is invisible from the source and hides which step is
+# actually hard: a local `#push-options "--z3rlimit 50"` inside a file-wide 300
+# reads like a raise but is really a *cut*.  Anything that genuinely needs more
+# than the default should say so at the definition that needs it, where a
+# reader will see it.
+#
+# What remains below are not rlimits: they are the Z3 4.15.3 workarounds
+# (eager-instantiation threshold, fresh-solver, query_stats), which have no
+# in-source equivalent.
 
-# GC.Lib.Header needs a little more rlimit for bitvector mask reasoning.
-HDR_CHECKED       = $(CACHE_DIR)/GC.Lib.Header.fst.checked
 # mark-and-sweep/impl overrides
-MS_ALLOC_CHECKED  = $(CACHE_DIR)/GC.Impl.Allocator.fst.checked
 MS_MARKB_CHECKED  = $(CACHE_DIR)/GC.Impl.MarkBounded.fst.checked
 # generational/spec overrides: --query_stats prevents Z3 context accumulation
 GEN_QSTATS_CHECKED = $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
                      $(CACHE_DIR)/GC.Gen.WriteBodyLemmas.fst.checked
-# generational/impl root: promote_phase needs lemma-driven NL arithmetic
+# generational/impl root
 GEN_ROOT_CHECKED  = $(CACHE_DIR)/GC.Gen.Impl.fst.checked
 
 # Modules that hang at Z3 4.15.3's default eager-instantiation threshold.
@@ -254,22 +279,15 @@ EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Gen.Impl.Cheney.fst.checked
 
 $(EAGER_QI_CHECKED):   private EXTRA_FLAGS = $(EAGER_QI)
-$(HDR_CHECKED):        private EXTRA_FLAGS = --z3rlimit 20
-$(MS_ALLOC_CHECKED):   private EXTRA_FLAGS = --z3rlimit 100 $(EAGER_QI)
-$(MS_MARKB_CHECKED):   private EXTRA_FLAGS = --z3rlimit 300 --z3refresh
+$(MS_MARKB_CHECKED):   private EXTRA_FLAGS = --z3refresh
 $(GEN_QSTATS_CHECKED): private EXTRA_FLAGS = --query_stats $(EAGER_QI)
-$(GEN_ROOT_CHECKED):   private EXTRA_FLAGS = --z3rlimit 200 --z3refresh
+$(GEN_ROOT_CHECKED):   private EXTRA_FLAGS = --z3refresh
 
 # mark-and-sweep/impl — z3refresh by default
-$(filter-out $(MS_ALLOC_CHECKED) $(MS_MARKB_CHECKED),$(MS_IMPL_CHECKED)): \
+$(filter-out $(MS_MARKB_CHECKED) $(EAGER_QI_CHECKED),$(MS_IMPL_CHECKED)): \
   private EXTRA_FLAGS = --z3refresh
 
-# generational/impl — higher rlimit by default
-$(filter-out $(GEN_ROOT_CHECKED) $(EAGER_QI_CHECKED),$(GEN_IMPL_CHECKED)): \
-  private EXTRA_FLAGS = --z3rlimit 160
-
-$(filter $(GEN_IMPL_CHECKED),$(EAGER_QI_CHECKED)): \
-  private EXTRA_FLAGS = --z3rlimit 160 $(EAGER_QI)
+# generational/impl takes no extra flags beyond the two rules above.
 
 # --- Extraction --------------------------------------------------------------
 #
