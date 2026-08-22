@@ -5,7 +5,7 @@
 - Roots: `GC.Impl`, `GC.Impl.Allocator`, `GC.Impl.MarkBounded`, `GC.Gen.Impl`, `GC.Gen.Impl.Cheney`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Promote`, `GC.Spec.Correctness`, `GC.Spec.MarkBoundedCorrectness`, `GC.Gen.CheneyCorrectness`, `GC.Impl.MarkBoundedRootLemmas`, `GC.Spec.FreeList.Sweep`, `GC.SPOT.CallFull`, `GC.SPOT.CallMinor`, `GC.SPOT.ConcreteCallFull`, `GC.SPOT.ConcreteCallMinor`, `GC.SPOT.ConcreteForwarding`, `GC.SPOT.ConcreteFull`, `GC.SPOT.ConcreteMajor`, `GC.SPOT.ConcreteMinor`, `GC.SPOT.ConcreteScenarios`, `GC.SPOT.ConcreteSetup`, `GC.SPOT.Layout`, `GC.SPOT.Postconditions`, `GC.SPOT.Preconditions`, `GC.SPOT.ThreeObjects`
 
 - 137 modules, 2911 definitions, 1092 module edges
-- **4 definitions (0%) are unreachable from the roots**
+- **6 definitions (0%) are unreachable from the roots**
 - 2 definitions are reachable only implicitly (SMT pattern / instance / axiom)
 
 ## Why this set is safe to delete
@@ -63,17 +63,28 @@ zero:
 - **A definition it cannot find by name** — reported so it can be handled by
   hand rather than silently skipped.
 
-### 3 partially-dead modules (4 definitions)
+### 4 partially-dead modules (6 definitions)
 
 | Module | Defs | Dead | % | Area |
 | --- | ---: | ---: | ---: | --- |
+| `GC.Gen.MinorCollectForwarding.Reflection` | 16 | 2 | 12 | generational |
 | `GC.Gen.MinorHeap` | 83 | 2 | 2 | generational |
 | `GC.Gen.CombinedGraph` | 100 | 1 | 1 | generational |
 | `GC.Impl.Heap` | 25 | 1 | 4 | mark-and-sweep |
 
 ## Full inventory
 
-Every one of the 4 unreachable definitions, grouped by module.
+Every one of the 6 unreachable definitions, grouped by module.
+
+<details>
+<summary><code>GC.Gen.MinorCollectForwarding.Reflection</code> — 2/16 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `mem_graph_vertex_at` | let | `GC.Gen.MinorCollectForwarding.Reflection.fst:44:0` |
+| `remembered_targets_in_roots` | let | `GC.Gen.MinorCollectForwarding.Reflection.fst:40:0` |
+
+</details>
 
 <details>
 <summary><code>GC.Gen.MinorHeap</code> — 2/83 dead</summary>
@@ -81,7 +92,7 @@ Every one of the 4 unreachable definitions, grouped by module.
 | Definition | Kind | Location |
 | --- | --- | --- |
 | `minor_heap_size_bound` | let | `GC.Gen.MinorHeap.fsti:180:0` |
-| `minor_pow2_bound` | let | `GC.Gen.MinorHeap.fst:277:0` |
+| `minor_pow2_bound` | let | `GC.Gen.MinorHeap.fst:276:0` |
 
 </details>
 

@@ -22,21 +22,9 @@ open GC.Gen.WriteBodyLemmas
 module AllocLemmas = GC.Spec.Allocator.Lemmas
 module WriteBody = GC.Gen.WriteBodyLemmas
 
-val update_all_objects_aux_preserves_objects
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires well_formed_heap_part1 major /\ objs == objects zero_addr major)
-    (ensures objects zero_addr (update_all_objects_aux major objs fwd idx) == objs)
-    (decreases (Seq.length objs - idx))
-
 val update_major_pointers_preserves_objects (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)
     (ensures objects zero_addr (update_major_pointers major fwd) == objects zero_addr major)
-
-val update_all_objects_aux_preserves_wfh_part1
-  (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
-  : Lemma (requires well_formed_heap_part1 major /\ objs == objects zero_addr major)
-    (ensures well_formed_heap_part1 (update_all_objects_aux major objs fwd idx))
-    (decreases (Seq.length objs - idx))
 
 val update_major_pointers_preserves_wfh_part1 (major: heap) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major)

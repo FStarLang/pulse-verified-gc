@@ -867,11 +867,15 @@ let mark_step_bounded_makes_gray_reachable
       reachable_successor_closed graph roots' hd x
     end
 
-/// Combined gray-or-black backward invariant for mark_inner_loop
-val mark_inner_loop_gray_or_black_backward :
-  (h_init: heap) -> (g: heap) -> (st: seq obj_addr) -> (cap: nat) -> (fuel: nat) ->
-  (graph: graph_state) -> (roots': vertex_set) ->
-  Lemma
+/// Shared core of the per-step gray/black + stack reachability preservation
+/// proof, phrased over an explicit graph/root-set pair so that both the
+/// exported `mark_step_bounded_preserves_gbr` and the `mark_inner_loop`
+/// induction below can use it instead of repeating the argument.
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+private let mark_step_bounded_preserves_gbr_gen
+  (h_init: heap) (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
+  (graph: graph_state) (roots': vertex_set)
+  : Lemma
     (requires well_formed_heap g /\ bounded_stack_props g st /\
              Seq.length (objects zero_addr g) > 0 /\
              SweepInv.heap_objects_dense g /\
@@ -881,18 +885,14 @@ val mark_inner_loop_gray_or_black_backward :
              (forall x. Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g) ==>
                         Seq.mem x (reachable_set graph roots')) /\
              (forall x. Seq.mem x st ==> Seq.mem x (reachable_set graph roots')))
-    (ensures (let g' = fst (mark_inner_loop g st cap fuel) in
-             (forall x. Seq.mem x (objects zero_addr g) /\ (is_gray x g' \/ is_black x g') ==>
-                        Seq.mem x (reachable_set graph roots'))))
-    (decreases fuel)
-
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots' =
-  if fuel = 0 || Seq.length st = 0 then ()
-  else begin
-    let (g', st') = mark_step_bounded g st cap in
+    (ensures (let (g', st') = mark_step_bounded g st cap in
+             (forall x. Seq.mem x (objects zero_addr g') /\ (is_gray x g' \/ is_black x g') ==>
+                        Seq.mem x (reachable_set graph roots')) /\
+             (forall x. Seq.mem x st' ==> Seq.mem x (reachable_set graph roots'))))
+  = let (g', st') = mark_step_bounded g st cap in
     let hd = Seq.head st in
     mark_step_bounded_preserves_objects g st cap;
+    // Part 1: gray/black objects of g' are reachable
     let prove_gb_in_g' (x: obj_addr)
       : Lemma (requires Seq.mem x (objects zero_addr g') /\ (is_gray x g' \/ is_black x g'))
               (ensures Seq.mem x (reachable_set graph roots'))
@@ -905,15 +905,19 @@ let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots'
           colors_exhaustive_and_exclusive x g'
         end else begin
           if is_black x g' then begin
+            // x not gray/black/blue in g, but black in g'
+            // mark_step_bounded_black_origin: x == hd
+            // bounded_stack_head_is_gray: hd is gray in g
+            // Contradiction: x is not gray in g but x == hd which IS gray
             mark_step_bounded_black_origin g st cap x;
             bounded_stack_head_is_gray g st;
             is_gray_iff hd g; is_white_iff hd g;
             colors_exhaustive_and_exclusive hd g
           end else begin
-            // x is not gray/black/blue in g, so white
+            // x is not black in g', so must be gray in g' (from precondition)
+            // x not gray/black/blue in g, so white
             color_exhaustive x g;
             assert (is_white x g);
-            // x is gray or black in g', but not black, so gray
             assert (is_gray x g');
             mark_step_bounded_makes_gray_reachable g st cap x graph roots'
           end
@@ -921,6 +925,7 @@ let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots'
       end
     in
     FStar.Classical.forall_intro (FStar.Classical.move_requires prove_gb_in_g');
+    // Part 2: stack reachability for st'
     bounded_stack_head_is_gray g st;
     makeBlack_eq hd g;
     let g1 = makeBlack hd g in
@@ -947,17 +952,11 @@ let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots'
       = Seq.lemma_mem_inversion st
       in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_tail);
       push_children_bounded_stack_reachable g1 (Seq.tail st) hd 1UL ws cap graph roots'
-    end;
-    mark_step_bounded_preserves_bsp g st cap;
-    mark_step_bounded_preserves_density g st cap;
-    mark_step_bounded_preserves_color_inv h_init g st cap;
-    mark_inner_loop_gray_or_black_backward h_init g' st' cap (fuel - 1) graph roots'
-  end
+    end
 #pop-options
 
-/// Backward for mark_inner_loop (black only)
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-val mark_inner_loop_backward_inv :
+/// Combined gray-or-black backward invariant for mark_inner_loop
+val mark_inner_loop_gray_or_black_backward :
   (h_init: heap) -> (g: heap) -> (st: seq obj_addr) -> (cap: nat) -> (fuel: nat) ->
   (graph: graph_state) -> (roots': vertex_set) ->
   Lemma
@@ -967,60 +966,25 @@ val mark_inner_loop_backward_inv :
              mark_color_inv h_init g /\
              graph == create_graph h_init /\ graph_wf graph /\
              is_vertex_set roots' /\ subset_vertices roots' graph.vertices /\
-             (forall x. is_black x g /\ Seq.mem x (objects zero_addr g) ==>
+             (forall x. Seq.mem x (objects zero_addr g) /\ (is_gray x g \/ is_black x g) ==>
                         Seq.mem x (reachable_set graph roots')) /\
              (forall x. Seq.mem x st ==> Seq.mem x (reachable_set graph roots')))
-    (ensures (forall x. Seq.mem x (objects zero_addr g) /\
-                        is_black x (fst (mark_inner_loop g st cap fuel)) ==>
-                        Seq.mem x (reachable_set graph roots')))
+    (ensures (let g' = fst (mark_inner_loop g st cap fuel) in
+             (forall x. Seq.mem x (objects zero_addr g) /\ (is_gray x g' \/ is_black x g') ==>
+                        Seq.mem x (reachable_set graph roots'))))
     (decreases fuel)
 
-let rec mark_inner_loop_backward_inv h_init g st cap fuel graph roots' =
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+let rec mark_inner_loop_gray_or_black_backward h_init g st cap fuel graph roots' =
   if fuel = 0 || Seq.length st = 0 then ()
   else begin
     let (g', st') = mark_step_bounded g st cap in
-    let hd = Seq.head st in
-    let prove_black_in_g' (x: obj_addr)
-      : Lemma (requires Seq.mem x (objects zero_addr g') /\ is_black x g')
-              (ensures Seq.mem x (reachable_set graph roots'))
-    = mark_step_bounded_preserves_objects g st cap;
-      if is_black x g then ()
-      else begin
-        mark_step_bounded_black_origin g st cap x;
-        assert (Seq.mem hd st)
-      end
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires prove_black_in_g');
     mark_step_bounded_preserves_objects g st cap;
-    bounded_stack_head_is_gray g st;
-    makeBlack_eq hd g;
-    let g1 = makeBlack hd g in
-    let ws = wosize_of_object hd g in
-    if is_no_scan hd g then begin
-      let prove_tail (y: obj_addr) : Lemma
-        (requires Seq.mem y st') (ensures Seq.mem y (reachable_set graph roots'))
-      = Seq.lemma_mem_inversion st
-      in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_tail)
-    end else begin
-      color_preserves_create_graph hd g Header.Black;
-      color_change_preserves_wf g hd Header.Black;
-      color_change_preserves_objects g hd Header.Black;
-      color_preserves_is_no_scan hd g Header.Black;
-      color_preserves_wosize hd g Header.Black;
-      wosize_of_object_bound hd g;
-      objects_is_vertex_set g1;
-      wf_implies_object_fits g hd;
-      color_preserves_object_fits hd hd g Header.Black;
-      let prove_tail (y: obj_addr) : Lemma
-        (requires Seq.mem y (Seq.tail st)) (ensures Seq.mem y (reachable_set graph roots'))
-      = Seq.lemma_mem_inversion st
-      in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_tail);
-      push_children_bounded_stack_reachable g1 (Seq.tail st) hd 1UL ws cap graph roots'
-    end;
+    mark_step_bounded_preserves_gbr_gen h_init g st cap graph roots';
     mark_step_bounded_preserves_bsp g st cap;
     mark_step_bounded_preserves_density g st cap;
     mark_step_bounded_preserves_color_inv h_init g st cap;
-    mark_inner_loop_backward_inv h_init g' st' cap (fuel - 1) graph roots'
+    mark_inner_loop_gray_or_black_backward h_init g' st' cap (fuel - 1) graph roots'
   end
 #pop-options
 
@@ -1095,7 +1059,6 @@ let rec mark_bounded_backward_inv h_init g cap fuel graph roots' =
     else begin
       rescan_heap_stack_reachable g (objects zero_addr g) Seq.empty cap graph roots';
       let inner_fuel = count_non_black g in
-      mark_inner_loop_backward_inv h_init g st cap inner_fuel graph roots';
       mark_inner_loop_preserves_inv g st cap inner_fuel;
       mark_inner_loop_preserves_objects g st cap inner_fuel;
       mark_inner_loop_preserves_color_inv h_init g st cap inner_fuel;
@@ -1299,77 +1262,9 @@ let stack_elems_reachable_empty (h_init: heap) (roots: seq obj_addr)
 /// ---------------------------------------------------------------------------
 
 /// mark_step_bounded preserves gray_black_reachable AND stack reachability
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let mark_step_bounded_preserves_gbr
-  (h_init: heap) (g: heap) (st: seq obj_addr{Seq.length st > 0}) (cap: nat)
-  (roots: seq obj_addr)
-  = let graph = create_graph h_init in
-    let roots' = HeapGraph.coerce_to_vertex_list roots in
-    let (g', st') = mark_step_bounded g st cap in
-    let hd = Seq.head st in
-    mark_step_bounded_preserves_objects g st cap;
-    // Part 1: Prove gray_black_reachable h_init g' roots
-    let prove_gb_in_g' (x: obj_addr)
-      : Lemma (requires Seq.mem x (objects zero_addr g') /\ (is_gray x g' \/ is_black x g'))
-              (ensures Seq.mem x (reachable_set graph roots'))
-    = assert (Seq.mem x (objects zero_addr g));
-      if is_gray x g || is_black x g then ()
-      else begin
-        if is_blue x g then begin
-          mark_step_bounded_preserves_blue g st cap x;
-          is_blue_iff x g'; is_gray_iff x g'; is_black_iff x g';
-          colors_exhaustive_and_exclusive x g'
-        end else begin
-          if is_black x g' then begin
-            // x not gray/black/blue in g, but black in g'
-            // mark_step_bounded_black_origin: x == hd
-            // bounded_stack_head_is_gray: hd is gray in g
-            // Contradiction: x is not gray in g but x == hd which IS gray
-            mark_step_bounded_black_origin g st cap x;
-            bounded_stack_head_is_gray g st;
-            is_gray_iff hd g; is_white_iff hd g;
-            colors_exhaustive_and_exclusive hd g
-          end else begin
-            // x is not black in g', so must be gray in g' (from precondition)
-            // x not gray/black/blue in g, so white
-            color_exhaustive x g;
-            assert (is_white x g);
-            assert (is_gray x g');
-            mark_step_bounded_makes_gray_reachable g st cap x graph roots'
-          end
-        end
-      end
-    in
-    FStar.Classical.forall_intro (FStar.Classical.move_requires prove_gb_in_g');
-    // Part 2: Prove stack reachability for st'
-    bounded_stack_head_is_gray g st;
-    makeBlack_eq hd g;
-    let g1 = makeBlack hd g in
-    let ws = wosize_of_object hd g in
-    if is_no_scan hd g then begin
-      let prove_tail (y: obj_addr) : Lemma
-        (requires Seq.mem y st')
-        (ensures Seq.mem y (reachable_set graph roots'))
-      = Seq.lemma_mem_inversion st
-      in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_tail)
-    end else begin
-      color_preserves_create_graph hd g Header.Black;
-      color_change_preserves_wf g hd Header.Black;
-      color_change_preserves_objects g hd Header.Black;
-      color_preserves_is_no_scan hd g Header.Black;
-      color_preserves_wosize hd g Header.Black;
-      wosize_of_object_bound hd g;
-      objects_is_vertex_set g1;
-      wf_implies_object_fits g hd;
-      color_preserves_object_fits hd hd g Header.Black;
-      let prove_tail (y: obj_addr) : Lemma
-        (requires Seq.mem y (Seq.tail st))
-        (ensures Seq.mem y (reachable_set graph roots'))
-      = Seq.lemma_mem_inversion st
-      in FStar.Classical.forall_intro (FStar.Classical.move_requires prove_tail);
-      push_children_bounded_stack_reachable g1 (Seq.tail st) hd 1UL ws cap graph roots'
-    end
-#pop-options
+let mark_step_bounded_preserves_gbr h_init g st cap roots =
+  mark_step_bounded_preserves_gbr_gen h_init g st cap
+    (create_graph h_init) (HeapGraph.coerce_to_vertex_list roots)
 
 /// mark_step_bounded preserves gray_stays
 #push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
