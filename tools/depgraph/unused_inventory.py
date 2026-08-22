@@ -142,6 +142,13 @@ proofs. That is why the plan below re-verifies after each phase.
     w("pair goes. Remove the files, then drop any mention of them from `Makefile`,")
     w("`*/Makefile` (verification lists, `EAGER_QI_CHECKED`, `EXTRACT_MODULES`) and")
     w("any `open`/`include` in surviving modules.\n")
+    w("A dead module is usually still *named* by live files, because these modules")
+    w("were carved out of larger ones and the parent kept a facade of one-line")
+    w("re-exports, `let f = Sub.f`, backed by a `val` in its `.fsti`. Each wrapper")
+    w("is itself dead and so appears in Phase 2, but it is a syntactic reference,")
+    w("so the wrapper and its `val` have to go in the same commit as the module.")
+    w("The cascade is bounded: everything it drags in is already in this report,")
+    w("because a wrapper for a dead definition cannot itself be live.\n")
     w("| Module | Defs | Area | Referenced in a Makefile |")
     w("| --- | ---: | --- | --- |")
     for m in full_dead:

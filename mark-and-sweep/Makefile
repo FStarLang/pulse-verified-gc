@@ -133,7 +133,6 @@ MS_MARKB_CHECKED = $(CACHE_DIR)/GC.Impl.MarkBounded.fst.checked
 # Modules that hang at Z3 4.15.3's default eager-instantiation threshold.
 EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Spec.Allocator.fst.checked \
-  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.SearchChain.fst.checked \
   $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.Part2.fst.checked \
   $(CACHE_DIR)/GC.Impl.Allocator.fst.checked
 

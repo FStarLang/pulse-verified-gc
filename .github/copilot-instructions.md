@@ -218,6 +218,56 @@ cell it walks, so the requirement is not new — it was simply never stated.
 splitting; the repo currently has only the `⊆` direction
 (`alloc_spec_preserves_objects`), not "objects grows by exactly the remainder".
 
+## Dead-code analysis (`make depgraph`)
+
+`tools/depgraph` is a port of `fstar-depgraph` from FStarLang/FStar. It reads the
+`.checked` files in `_cache` directly — no re-verification — and reports every
+definition unreachable from the roots, plus an offline HTML dependence viewer.
+
+```bash
+make depgraph DEPGRAPH_OCAMLPATH=<dir>/out/lib   # analyse
+make depgraph-inventory                          # regenerate docs/dead-code-inventory.md
+```
+
+**Building it is the hard part.** The tool links F*'s in-tree `fstar.compiler`
+library and unmarshals `.checked` files, so it must be built against *the same
+F\* build* that produced them:
+
+- The cache version must match (`fstar.exe --print_cache_version`). Our
+  nightly-2026-08-15 emits **89**; a current FStar checkout emits 90.
+- Linking against `./fstar/lib` fails with *"inconsistent assumptions over
+  interface Stdlib"*: the binary nightly's `.cmi`s were built against a
+  different OCaml 5.3.0 build than a typical opam switch.
+
+So build F* from source at the same commit and point `DEPGRAPH_OCAMLPATH` at it:
+
+```bash
+git -C <FStar> worktree add /tmp/fstar-v89 ae858eacbd
+cd /tmp/fstar-v89 && make stage2 -j24 FSTAR_USE_KRML_EXE=1 KRML_EXE=$(which krml)
+make setlink-2          # `make stage2` installs to stage2/out, not out
+```
+
+**Roots matter.** A correctness theorem is a *result* — nothing refers to it —
+so the theorems must be named as roots explicitly or the whole proof development
+is reported dead. `DEPGRAPH_ROOTS` is the C interface + the theorems + SPOT.
+Dropping `DEPGRAPH_SPOT_ROOTS` shows what only SPOT keeps alive.
+
+**Pulse `fn` bodies are invisible to the graph.** `Pulse.Main.check_fndefn`
+emits `mk_opaque_let ... (magic ())`, so the `.checked` file records
+`irreducible let f = _` and keeps the elaborated program in
+`sigmeta_extension_data` as a `Tm_lazy` blob holding an OCaml `st_term`, which
+is not an F* term. Only the *type* survives, so slprops and loop invariants
+produce edges but ghost lemma calls do not. The tool compensates by re-reading
+those bodies from the source and over-approximating; without that, 249
+definitions were falsely reported dead. If you ever see a "dead" lemma that is
+plainly called from a `fn`, this is why.
+
+**The unreachable set is closed**, so deleting all of it in one pass is safe:
+code referenced only by unreachable code is itself unreachable and already
+listed. The one thing the graph cannot see is that deleting a definition changes
+the SMT context of every module that `open`s it — so validate by deleting and
+re-verifying, not by re-reading the report.
+
 ## Key Conventions
 
 ### Naming

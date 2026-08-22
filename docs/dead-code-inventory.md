@@ -4,8 +4,8 @@
 
 - Roots: `GC.Impl`, `GC.Impl.Allocator`, `GC.Impl.Mark`, `GC.Impl.MarkBounded`, `GC.Impl.Sweep`, `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`, `GC.Impl.Closure`, `GC.Impl.Heap`, `GC.Impl.Object`, `GC.Impl.Stack`, `GC.Gen.Impl`, `GC.Gen.Impl.Cheney`, `GC.Gen.Impl.MinorHeap`, `GC.Gen.Impl.UpdatePtrs`, `GC.Gen.Impl.Promote`, `GC.Spec.Correctness`, `GC.Spec.MarkBoundedCorrectness`, `GC.Gen.CheneyCorrectness`, `GC.Impl.MarkBoundedRootLemmas`, `GC.Spec.FreeList.Sweep`, `GC.SPOT.CallFull`, `GC.SPOT.CallMinor`, `GC.SPOT.ConcreteCallFull`, `GC.SPOT.ConcreteCallMinor`, `GC.SPOT.ConcreteForwarding`, `GC.SPOT.ConcreteFull`, `GC.SPOT.ConcreteMajor`, `GC.SPOT.ConcreteMinor`, `GC.SPOT.ConcreteScenarios`, `GC.SPOT.ConcreteSetup`, `GC.SPOT.Layout`, `GC.SPOT.Postconditions`, `GC.SPOT.Preconditions`, `GC.SPOT.ThreeObjects`
 
-- 151 modules, 3721 definitions, 1243 module edges
-- **616 definitions (16%) are unreachable from the roots**
+- 140 modules, 3581 definitions, 1153 module edges
+- **476 definitions (13%) are unreachable from the roots**
 - 2 definitions are reachable only implicitly (SMT pattern / instance / axiom)
 
 ## Why this set is safe to delete
@@ -43,26 +43,25 @@ build (`make -C spot -j24`) and extraction (`make extract`, expecting a
 byte-identical C snapshot) after **each** phase; bisect within a phase if a
 proof breaks.
 
-### Phase 1 — delete 9 entirely-dead modules (59 definitions)
+### Phase 1 — delete 0 entirely-dead modules (0 definitions)
 
 Every definition in these modules is unreachable, so the whole `.fst`/`.fsti`
 pair goes. Remove the files, then drop any mention of them from `Makefile`,
 `*/Makefile` (verification lists, `EAGER_QI_CHECKED`, `EXTRACT_MODULES`) and
 any `open`/`include` in surviving modules.
 
+A dead module is usually still *named* by live files, because these modules
+were carved out of larger ones and the parent kept a facade of one-line
+re-exports, `let f = Sub.f`, backed by a `val` in its `.fsti`. Each wrapper
+is itself dead and so appears in Phase 2, but it is a syntactic reference,
+so the wrapper and its `val` have to go in the same commit as the module.
+The cascade is bounded: everything it drags in is already in this report,
+because a wrapper for a dead definition cannot itself be live.
+
 | Module | Defs | Area | Referenced in a Makefile |
 | --- | ---: | --- | --- |
-| `GC.Gen.PromoteUpdate.PromoteFields.Step` | 24 | generational | `Makefile`, `generational/Makefile` |
-| `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres` | 8 | generational | `Makefile`, `generational/Makefile` |
-| `GC.Gen.PromoteUpdate.PromoteFields.Frame` | 6 | generational | — |
-| `GC.Gen.PromoteUpdate.PromoteFields.ReadOther` | 6 | generational | `Makefile`, `generational/Makefile` |
-| `GC.Gen.PromoteUpdate.PromoteFields.ChainInv` | 4 | generational | — |
-| `GC.Spec.Allocator.Lemmas.SearchBase` | 4 | mark-and-sweep | — |
-| `GC.Gen.PromoteUpdate.PromoteFields` | 3 | generational | `Makefile`, `generational/Makefile` |
-| `GC.Spec.Allocator.Lemmas.SearchChain` | 3 | mark-and-sweep | `Makefile`, `mark-and-sweep/Makefile` |
-| `GC.Spec.Allocator.Lemmas.ObjNotInChain` | 1 | mark-and-sweep | — |
 
-### Phase 2 — trim 55 partially-dead modules (557 definitions)
+### Phase 2 — trim 54 partially-dead modules (476 definitions)
 
 These modules keep some live definitions, so delete individual definitions
 rather than files. Work highest-density first: a module that is 70% dead is
@@ -71,18 +70,16 @@ usually a proof scaffold whose intermediate lemmas were inlined or superseded.
 | Module | Defs | Dead | % | Area |
 | --- | ---: | ---: | ---: | --- |
 | `GC.Spec.Heap` | 92 | 60 | 65 | common |
-| `GC.Spec.Allocator.Lemmas.Core` | 79 | 56 | 70 | mark-and-sweep |
-| `GC.Gen.Promote` | 130 | 50 | 38 | generational |
+| `GC.Gen.Promote` | 129 | 49 | 37 | generational |
 | `GC.Gen.MinorCollectForwarding` | 123 | 45 | 36 | generational |
-| `GC.Spec.Allocator.Lemmas` | 59 | 25 | 42 | mark-and-sweep |
 | `GC.Spec.Graph` | 100 | 24 | 24 | common |
 | `GC.Spec.Allocator.Lemmas.Split` | 23 | 21 | 91 | mark-and-sweep |
 | `GC.Spec.Fields` | 93 | 20 | 21 | common |
 | `GC.Spec.Object` | 136 | 20 | 14 | common |
 | `GC.Gen.Cheney.SimOne` | 34 | 15 | 44 | generational |
 | `GC.Gen.PromoteUpdate.Header` | 22 | 15 | 68 | generational |
-| `GC.Gen.PromoteUpdate` | 29 | 13 | 44 | generational |
 | `GC.Lib.Header` | 84 | 11 | 13 | common |
+| `GC.Gen.PromoteUpdate` | 26 | 10 | 38 | generational |
 | `GC.Lib.Address` | 15 | 10 | 66 | common |
 | `GC.Spec.Mark` | 144 | 10 | 6 | mark-and-sweep |
 | `GC.Impl.Sweep.Lemmas` | 43 | 9 | 20 | mark-and-sweep |
@@ -97,8 +94,8 @@ usually a proof scaffold whose intermediate lemmas were inlined or superseded.
 | `GC.Spec.FreeList` | 25 | 7 | 28 | mark-and-sweep |
 | `GC.Spec.Sweep` | 56 | 7 | 12 | mark-and-sweep |
 | `GC.Gen.CheneyPreservation.Forwarding` | 58 | 6 | 10 | generational |
+| `GC.Spec.Allocator.Lemmas` | 40 | 6 | 15 | mark-and-sweep |
 | `GC.Spec.MarkBoundedInv` | 15 | 6 | 40 | mark-and-sweep |
-| `GC.Gen.AllocProps` | 36 | 5 | 13 | generational |
 | `GC.Spec.Allocator.Lemmas.Chain` | 48 | 5 | 10 | mark-and-sweep |
 | `GC.Spec.Base` | 20 | 5 | 25 | common |
 | `GC.Spec.MarkInv` | 18 | 5 | 27 | mark-and-sweep |
@@ -106,6 +103,7 @@ usually a proof scaffold whose intermediate lemmas were inlined or superseded.
 | `GC.Gen.PromoteUpdate.Aux` | 9 | 4 | 44 | generational |
 | `GC.Gen.PromoteUpdate.BlueProm` | 23 | 4 | 17 | generational |
 | `GC.Spec.DFS` | 32 | 4 | 12 | common |
+| `GC.Gen.AllocProps` | 34 | 3 | 8 | generational |
 | `GC.Spec.MarkBounded` | 48 | 3 | 6 | mark-and-sweep |
 | `GC.Spec.SweepCoalesce.Defs` | 5 | 3 | 60 | mark-and-sweep |
 | `GC.Spec.SweepCoalesce.FlushAgree` | 11 | 3 | 27 | mark-and-sweep |
@@ -133,138 +131,7 @@ definition that only the deleted code kept alive and is safe to remove too.
 
 ## Full inventory
 
-Every one of the 616 unreachable definitions, grouped by module.
-
-<details>
-<summary><code>GC.Gen.PromoteUpdate.PromoteFields.Step</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `chain_avoids_implies_not_in_fl_chain` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:31:8` |
-| `copy_fields_preserves_chain_avoids_self` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:32:8` |
-| `copy_fields_preserves_fl_chain_terminates` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:29:8` |
-| `copy_fields_preserves_fl_valid_aux` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:28:8` |
-| `copy_fields_preserves_objects_aux` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:27:8` |
-| `copy_fields_preserves_wfh_part1` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:30:8` |
-| `fields_match_minor_elim` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:71:8` |
-| `gt_mul8_step` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:44:8` |
-| `index_ne_gives_lt` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:57:8` |
-| `mk_hp_addr` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:65:8` |
-| `promote_object_chain_avoids_self` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:479:8` |
-| `promote_object_wosize_preserved` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:288:0` |
-| `promote_object_wosize_self` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:397:8` |
-| `promote_object_wosize_self_full` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:592:8` |
-| `promote_step_chain_forall` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:241:8` |
-| `promote_step_chain_k` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:433:8` |
-| `promote_step_chain_one_k` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:639:8` |
-| `promote_step_establish_chain_all` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:709:8` |
-| `promote_step_fields_forall` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:134:8` |
-| `promote_step_one_field_other` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:92:8` |
-| `promote_step_preserves_basic` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:197:8` |
-| `promote_step_preserves_invariant` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:747:0` |
-| `set_promoted_tag_preserves_wosize_self` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:574:8` |
-| `set_tag_preserves_read_at_obj_step` | let | `GC.Gen.PromoteUpdate.PromoteFields.Step.fst:458:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.PromoteUpdate.PromoteFields.FieldsPres</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `chain_all_inv_extend_skip` | let | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst:28:8` |
-| `distinct_live_set` | let | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fsti:19:0` |
-| `fields_match_minor_extend_zero` | let rec | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst:66:8` |
-| `fwd_zero_from` | let | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst:110:0` |
-| `ne_idx_gives_lt` | let | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst:21:8` |
-| `promote_all_aux_preserves_fields` | let rec | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst:117:8` |
-| `promote_all_preserves_fields` | let | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst:165:0` |
-| `promote_all_step_case` | let | `GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst:89:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.PromoteUpdate.PromoteFields.Frame</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `copy_fields_preserves_fl_chain_terminates` | let | `GC.Gen.PromoteUpdate.PromoteFields.Frame.fst:23:8` |
-| `copy_fields_preserves_fl_valid_aux` | let | `GC.Gen.PromoteUpdate.PromoteFields.Frame.fst:22:8` |
-| `copy_fields_preserves_wfh_part1` | let | `GC.Gen.PromoteUpdate.PromoteFields.Frame.fst:21:8` |
-| `promote_all_aux_read_other` | let rec | `GC.Gen.PromoteUpdate.PromoteFields.Frame.fst:65:8` |
-| `promote_all_read_other` | let | `GC.Gen.PromoteUpdate.PromoteFields.Frame.fst:107:0` |
-| `promote_step_frame_preconditions` | let | `GC.Gen.PromoteUpdate.PromoteFields.Frame.fst:29:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.PromoteUpdate.PromoteFields.ReadOther</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `mk_hp_addr` | let | `GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst:214:8` |
-| `other_ranges_disjoint` | let | `GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst:26:8` |
-| `promote_object_preserves_chain_avoids` | let | `GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst:155:0` |
-| `promote_object_preserves_one_field` | let | `GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst:220:0` |
-| `promote_object_read_other` | let | `GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst:45:0` |
-| `promote_transfer_read` | let | `GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst:116:8` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.PromoteUpdate.PromoteFields.ChainInv</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `chain_all_inv` | let | `GC.Gen.PromoteUpdate.PromoteFields.ChainInv.fst:18:0` |
-| `chain_all_inv_elim` | let | `GC.Gen.PromoteUpdate.PromoteFields.ChainInv.fst:41:0` |
-| `chain_all_inv_elim_at` | let | `GC.Gen.PromoteUpdate.PromoteFields.ChainInv.fst:59:0` |
-| `chain_all_inv_intro` | let | `GC.Gen.PromoteUpdate.PromoteFields.ChainInv.fst:28:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.Allocator.Lemmas.SearchBase</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `alloc_exact_fl_transfer_pre` | let | `GC.Spec.Allocator.Lemmas.SearchBase.fst:202:0` |
-| `alloc_from_block_objects_facts` | let | `GC.Spec.Allocator.Lemmas.SearchBase.fst:61:0` |
-| `alloc_split_fl_transfer_pre` | let | `GC.Spec.Allocator.Lemmas.SearchBase.fst:109:0` |
-| `next_fp_in_objects` | let | `GC.Spec.Allocator.Lemmas.SearchBase.fst:24:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.PromoteUpdate.PromoteFields</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `distinct_live_set` | let | `GC.Gen.PromoteUpdate.PromoteFields.fsti:25:0` |
-| `promote_all_preserves_fields` | let | `GC.Gen.PromoteUpdate.PromoteFields.fst:26:0` |
-| `promote_all_read_other` | let | `GC.Gen.PromoteUpdate.PromoteFields.fst:37:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.Allocator.Lemmas.SearchChain</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `aligned_distinct` | let | `GC.Spec.Allocator.Lemmas.SearchChain.fst:32:8` |
-| `alloc_search_preserves_fl_chain_terminates` | let rec | `GC.Spec.Allocator.Lemmas.SearchChain.fst:48:8` |
-| `alloc_spec_preserves_fl_chain_terminates` | let | `GC.Spec.Allocator.Lemmas.SearchChain.fst:401:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.Allocator.Lemmas.ObjNotInChain</code> — **entire module is dead**</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `alloc_spec_obj_not_in_chain` | let | `GC.Spec.Allocator.Lemmas.ObjNotInChain.fst:23:0` |
-
-</details>
+Every one of the 476 unreachable definitions, grouped by module.
 
 <details>
 <summary><code>GC.Spec.Heap</code> — 60/92 dead</summary>
@@ -335,118 +202,53 @@ Every one of the 616 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Spec.Allocator.Lemmas.Core</code> — 56/79 dead</summary>
+<summary><code>GC.Gen.Promote</code> — 49/129 dead</summary>
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `alloc_exact_fl_transfer_pre` | let | `GC.Spec.Allocator.Lemmas.Core.fst:405:0` |
-| `alloc_from_block_objects_facts` | let | `GC.Spec.Allocator.Lemmas.Core.fst:44:0` |
-| `alloc_from_block_preserves_no_black` | let | `GC.Spec.Allocator.Lemmas.Core.fst:947:8` |
-| `alloc_from_block_preserves_wf` | let | `GC.Spec.Allocator.Lemmas.Core.fst:37:0` |
-| `alloc_search_preserves_fl_valid` | let rec | `GC.Spec.Allocator.Lemmas.Core.fst:447:0` |
-| `alloc_search_preserves_no_black` | let rec | `GC.Spec.Allocator.Lemmas.Core.fst:1050:0` |
-| `alloc_search_preserves_objects` | let rec | `GC.Spec.Allocator.Lemmas.Core.fst:201:0` |
-| `alloc_search_preserves_wf` | let rec | `GC.Spec.Allocator.Lemmas.Core.fst:47:0` |
-| `alloc_spec_obj_not_in_chain` | let | `GC.Spec.Allocator.Lemmas.Core.fst:1171:0` |
-| `alloc_spec_preserves_fl_chain_terminates` | let | `GC.Spec.Allocator.Lemmas.Core.fst:840:0` |
-| `alloc_spec_preserves_fl_valid` | let | `GC.Spec.Allocator.Lemmas.Core.fst:806:0` |
-| `alloc_spec_preserves_no_black` | let | `GC.Spec.Allocator.Lemmas.Core.fst:1148:0` |
-| `alloc_spec_preserves_objects` | let | `GC.Spec.Allocator.Lemmas.Core.fst:845:0` |
-| `alloc_spec_preserves_wf` | let | `GC.Spec.Allocator.Lemmas.Core.fst:166:0` |
-| `alloc_split_fl_transfer_pre` | let | `GC.Spec.Allocator.Lemmas.Core.fst:404:0` |
-| `chain_avoids_prev` | let | `GC.Spec.Allocator.Lemmas.Core.fst:824:0` |
-| `chain_avoids_strengthen` | let | `GC.Spec.Allocator.Lemmas.Core.fst:821:0` |
-| `chain_avoids_transfer_excl` | let | `GC.Spec.Allocator.Lemmas.Core.fst:1168:0` |
-| `chain_avoids_unfold_step` | let | `GC.Spec.Allocator.Lemmas.Core.fst:815:0` |
-| `chain_avoids_unfold_steps` | let | `GC.Spec.Allocator.Lemmas.Core.fst:1170:0` |
-| `chain_avoids_weaken` | let | `GC.Spec.Allocator.Lemmas.Core.fst:820:0` |
-| `field_write_preserves_no_black` | let | `GC.Spec.Allocator.Lemmas.Core.fst:912:8` |
-| `first_hit` | let | `GC.Spec.Allocator.Lemmas.Core.fsti:227:0` |
-| `first_hit_spec` | let | `GC.Spec.Allocator.Lemmas.Core.fst:822:0` |
-| `fl_chain_2cycle_not_terminates` | let | `GC.Spec.Allocator.Lemmas.Core.fst:191:0` |
-| `fl_chain_kcycle_not_terminates` | let | `GC.Spec.Allocator.Lemmas.Core.fst:190:0` |
-| `fl_chain_no_early_repeat` | let | `GC.Spec.Allocator.Lemmas.Core.fst:828:0` |
-| `fl_chain_predecessor_not_in_suffix_b` | let | `GC.Spec.Allocator.Lemmas.Core.fst:826:0` |
-| `fl_chain_terminates_splice` | let | `GC.Spec.Allocator.Lemmas.Core.fst:192:0` |
-| `fl_chain_terminates_transfer` | let | `GC.Spec.Allocator.Lemmas.Core.fst:178:0` |
-| `fl_chain_terminates_transfer_excl` | let | `GC.Spec.Allocator.Lemmas.Core.fst:827:0` |
-| `fl_chain_terminates_unfold_steps` | let | `GC.Spec.Allocator.Lemmas.Core.fst:189:0` |
-| `fl_chain_terminates_weaken` | let | `GC.Spec.Allocator.Lemmas.Core.fst:179:0` |
-| `fl_valid_any_fuel` | let | `GC.Spec.Allocator.Lemmas.Core.fst:177:0` |
-| `fl_valid_field_write` | let | `GC.Spec.Allocator.Lemmas.Core.fst:193:0` |
-| `fl_valid_field_write_tail` | let | `GC.Spec.Allocator.Lemmas.Core.fst:194:0` |
-| `fl_valid_next` | let | `GC.Spec.Allocator.Lemmas.Core.fsti:46:0` |
-| `fl_valid_transfer` | let | `GC.Spec.Allocator.Lemmas.Core.fst:175:0` |
-| `fl_valid_weaken` | let | `GC.Spec.Allocator.Lemmas.Core.fsti:84:0` |
-| `make_header_color_blue` | let | `GC.Spec.Allocator.Lemmas.Core.fst:898:0` |
-| `make_header_color_white` | let | `GC.Spec.Allocator.Lemmas.Core.fst:889:8` |
-| `make_header_getTag` | let | `GC.Spec.Allocator.Lemmas.Core.fst:36:0` |
-| `next_fp_in_objects` | let | `GC.Spec.Allocator.Lemmas.Core.fst:43:0` |
-| `next_fp_ne_rem_obj` | let | `GC.Spec.Allocator.Lemmas.Core.fst:415:8` |
-| `not_in_fl_chain_b` | let | `GC.Spec.Allocator.Lemmas.Core.fsti:238:0` |
-| `not_in_fl_chain_b_is_chain_avoids` | let | `GC.Spec.Allocator.Lemmas.Core.fst:825:0` |
-| `walk_chain` | let | `GC.Spec.Allocator.Lemmas.Core.fsti:125:0` |
-| `walk_chain_append` | let | `GC.Spec.Allocator.Lemmas.Core.fst:188:0` |
-| `walk_chain_one_step` | let | `GC.Spec.Allocator.Lemmas.Core.fst:823:0` |
-| `walk_chain_valid` | let | `GC.Spec.Allocator.Lemmas.Core.fsti:128:0` |
-| `walk_chain_valid_at` | let | `GC.Spec.Allocator.Lemmas.Core.fst:186:0` |
-| `walk_chain_valid_prefix` | let | `GC.Spec.Allocator.Lemmas.Core.fst:185:0` |
-| `walk_chain_valid_preserved` | let | `GC.Spec.Allocator.Lemmas.Core.fst:829:0` |
-| `walk_chain_valid_snoc` | let | `GC.Spec.Allocator.Lemmas.Core.fst:187:0` |
-| `walk_chain_valid_zero` | let | `GC.Spec.Allocator.Lemmas.Core.fst:184:0` |
-| `walk_chain_zero` | let | `GC.Spec.Allocator.Lemmas.Core.fst:183:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.Promote</code> — 50/130 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `copy_fields_preserves_alloc_invariants` | let | `GC.Gen.Promote.fst:1097:0` |
+| `copy_fields_preserves_alloc_invariants` | let | `GC.Gen.Promote.fst:1062:0` |
 | `copy_fields_preserves_chain_avoids_self` | let | `GC.Gen.Promote.fst:1041:8` |
 | `copy_fields_preserves_fl_chain_terminates` | let | `GC.Gen.Promote.fst:1040:8` |
 | `copy_fields_preserves_fl_valid_aux` | let | `GC.Gen.Promote.fst:1039:8` |
 | `copy_fields_preserves_objects` | let | `GC.Gen.Promote.fst:1045:0` |
 | `dec_nat` | let | `GC.Gen.Promote.fst:39:8` |
 | `dst_field_addr` | let | `GC.Gen.Promote.fsti:568:0` |
-| `fields_match_minor` | let rec | `GC.Gen.Promote.fsti:867:0` |
-| `fields_match_minor_elim_helper` | let rec | `GC.Gen.Promote.fst:2212:0` |
-| `fields_match_minor_elim_lemma` | let | `GC.Gen.Promote.fst:2235:0` |
-| `fields_match_minor_empty` | let | `GC.Gen.Promote.fst:2185:0` |
-| `fields_match_minor_extend` | let | `GC.Gen.Promote.fst:2192:0` |
-| `fields_match_minor_frame` | let rec | `GC.Gen.Promote.fst:2313:0` |
-| `fields_match_minor_intro` | let rec | `GC.Gen.Promote.fst:2270:0` |
-| `fields_match_minor_intro_by_proof` | let rec | `GC.Gen.Promote.fst:2337:0` |
-| `fields_match_minor_intro_flat` | let rec | `GC.Gen.Promote.fst:2292:0` |
-| `fields_match_minor_weaken` | let rec | `GC.Gen.Promote.fst:2256:0` |
-| `fwd_all_targets_valid` | let | `GC.Gen.Promote.fsti:834:0` |
-| `fwd_targets_in_objects` | let | `GC.Gen.Promote.fsti:824:0` |
-| `live_set_no_infix` | let | `GC.Gen.Promote.fsti:742:0` |
+| `fields_match_minor` | let rec | `GC.Gen.Promote.fsti:856:0` |
+| `fields_match_minor_elim_helper` | let rec | `GC.Gen.Promote.fst:2177:0` |
+| `fields_match_minor_elim_lemma` | let | `GC.Gen.Promote.fst:2200:0` |
+| `fields_match_minor_empty` | let | `GC.Gen.Promote.fst:2150:0` |
+| `fields_match_minor_extend` | let | `GC.Gen.Promote.fst:2157:0` |
+| `fields_match_minor_frame` | let rec | `GC.Gen.Promote.fst:2278:0` |
+| `fields_match_minor_intro` | let rec | `GC.Gen.Promote.fst:2235:0` |
+| `fields_match_minor_intro_by_proof` | let rec | `GC.Gen.Promote.fst:2302:0` |
+| `fields_match_minor_intro_flat` | let rec | `GC.Gen.Promote.fst:2257:0` |
+| `fields_match_minor_weaken` | let rec | `GC.Gen.Promote.fst:2221:0` |
+| `fwd_all_targets_valid` | let | `GC.Gen.Promote.fsti:823:0` |
+| `fwd_targets_in_objects` | let | `GC.Gen.Promote.fsti:813:0` |
+| `live_set_no_infix` | let | `GC.Gen.Promote.fsti:731:0` |
 | `lt_of_ne_pred` | let | `GC.Gen.Promote.fst:30:8` |
-| `minor_collect_all_spec` | let | `GC.Gen.Promote.fsti:1011:0` |
+| `minor_collect_all_spec` | let | `GC.Gen.Promote.fsti:1000:0` |
 | `minor_collect_resets_minor` | let | `GC.Gen.Promote.fst:786:0` |
 | `minor_collect_rewrites_roots` | let | `GC.Gen.Promote.fst:791:0` |
 | `minor_collect_spec` | let | `GC.Gen.Promote.fsti:519:0` |
 | `minor_collect_spec_unfold` | let | `GC.Gen.Promote.fst:777:0` |
 | `not_in_fl_chain` | let | `GC.Gen.Promote.fst:1025:0` |
-| `pointer_closure_modulo_fwd` | let | `GC.Gen.Promote.fsti:842:0` |
+| `pointer_closure_modulo_fwd` | let | `GC.Gen.Promote.fsti:831:0` |
 | `promote_all_aux` | let rec | `GC.Gen.Promote.fsti:296:0` |
 | `promote_all_aux_base` | let | `GC.Gen.Promote.fst:665:0` |
 | `promote_all_aux_oom` | let | `GC.Gen.Promote.fst:699:0` |
-| `promote_all_aux_preserves_no_scan_invariant` | let rec | `GC.Gen.Promote.fst:2104:8` |
-| `promote_all_aux_preserves_objects` | let rec | `GC.Gen.Promote.fst:1163:0` |
-| `promote_all_aux_preserves_wfh_part1` | let rec | `GC.Gen.Promote.fst:1236:0` |
-| `promote_all_aux_preserves_wfh_part4` | let rec | `GC.Gen.Promote.fst:1380:0` |
+| `promote_all_aux_preserves_no_scan_invariant` | let rec | `GC.Gen.Promote.fst:2069:8` |
+| `promote_all_aux_preserves_objects` | let rec | `GC.Gen.Promote.fst:1128:0` |
+| `promote_all_aux_preserves_wfh_part1` | let rec | `GC.Gen.Promote.fst:1201:0` |
+| `promote_all_aux_preserves_wfh_part4` | let rec | `GC.Gen.Promote.fst:1345:0` |
 | `promote_all_aux_skip` | let | `GC.Gen.Promote.fst:690:0` |
 | `promote_all_aux_step` | let | `GC.Gen.Promote.fst:673:0` |
-| `promote_all_preserves_no_scan_invariant` | let | `GC.Gen.Promote.fst:2168:0` |
-| `promote_all_preserves_objects` | let | `GC.Gen.Promote.fst:1223:0` |
-| `promote_all_preserves_wfh_part1` | let | `GC.Gen.Promote.fst:1284:0` |
-| `promote_all_preserves_wfh_part4` | let | `GC.Gen.Promote.fst:1439:0` |
+| `promote_all_preserves_no_scan_invariant` | let | `GC.Gen.Promote.fst:2133:0` |
+| `promote_all_preserves_objects` | let | `GC.Gen.Promote.fst:1188:0` |
+| `promote_all_preserves_wfh_part1` | let | `GC.Gen.Promote.fst:1249:0` |
+| `promote_all_preserves_wfh_part4` | let | `GC.Gen.Promote.fst:1404:0` |
 | `promote_all_spec` | let | `GC.Gen.Promote.fsti:317:0` |
-| `promote_object_preserves_allocated_avoid_chain` | let | `GC.Gen.Promote.fst:1925:8` |
-| `promote_object_preserves_objects` | let | `GC.Gen.Promote.fst:1058:0` |
+| `promote_object_preserves_allocated_avoid_chain` | let | `GC.Gen.Promote.fst:1890:8` |
 | `write_body_preserves_chain_avoids_self` | let | `GC.Gen.Promote.fst:1035:8` |
 | `write_body_preserves_fl_chain_terminates` | let | `GC.Gen.Promote.fst:1034:8` |
 | `write_body_preserves_fl_valid_aux` | let | `GC.Gen.Promote.fst:1032:8` |
@@ -506,39 +308,6 @@ Every one of the 616 unreachable definitions, grouped by module.
 | `remembered_slot_targets_zero` | let | `GC.Gen.MinorCollectForwarding.fst:2174:0` |
 | `roots_with_remembered` | let | `GC.Gen.MinorCollectForwarding.fsti:65:0` |
 | `update_preserves_major_target_field` | let | `GC.Gen.MinorCollectForwarding.fst:50:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Spec.Allocator.Lemmas</code> — 25/59 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `alloc_from_block_objects_facts` | let | `GC.Spec.Allocator.Lemmas.fst:33:0` |
-| `alloc_from_block_preserves_wf` | let | `GC.Spec.Allocator.Lemmas.fst:30:0` |
-| `alloc_spec_obj_not_in_chain` | let | `GC.Spec.Allocator.Lemmas.fst:64:0` |
-| `alloc_spec_preserves_fl_chain_terminates` | let | `GC.Spec.Allocator.Lemmas.fst:59:0` |
-| `alloc_spec_preserves_fl_valid` | let | `GC.Spec.Allocator.Lemmas.fst:51:0` |
-| `alloc_spec_preserves_no_black` | let | `GC.Spec.Allocator.Lemmas.fst:62:0` |
-| `alloc_spec_preserves_objects` | let | `GC.Spec.Allocator.Lemmas.fst:60:0` |
-| `alloc_spec_preserves_wf` | let | `GC.Spec.Allocator.Lemmas.fst:34:0` |
-| `alloc_spec_read_body` | let | `GC.Spec.Allocator.Lemmas.fst:74:0` |
-| `alloc_spec_read_field_gt0` | let | `GC.Spec.Allocator.Lemmas.fst:78:0` |
-| `chain_avoids_weaken` | let | `GC.Spec.Allocator.Lemmas.fst:56:0` |
-| `first_hit` | let | `GC.Spec.Allocator.Lemmas.fsti:272:0` |
-| `first_hit_spec` | let | `GC.Spec.Allocator.Lemmas.fst:57:0` |
-| `fl_chain_kcycle_not_terminates` | let | `GC.Spec.Allocator.Lemmas.fst:50:0` |
-| `fl_chain_predecessor_not_in_suffix_b` | let | `GC.Spec.Allocator.Lemmas.fst:58:0` |
-| `fl_chain_terminates_unfold_steps` | let | `GC.Spec.Allocator.Lemmas.fst:49:0` |
-| `fl_valid_weaken` | let | `GC.Spec.Allocator.Lemmas.fst:40:0` |
-| `make_header_getTag` | let | `GC.Spec.Allocator.Lemmas.fst:29:0` |
-| `not_in_fl_chain_b` | let | `GC.Spec.Allocator.Lemmas.fsti:283:0` |
-| `walk_chain` | let | `GC.Spec.Allocator.Lemmas.fsti:170:0` |
-| `walk_chain_append` | let | `GC.Spec.Allocator.Lemmas.fst:48:0` |
-| `walk_chain_valid` | let | `GC.Spec.Allocator.Lemmas.fsti:173:0` |
-| `walk_chain_valid_at` | let | `GC.Spec.Allocator.Lemmas.fst:46:0` |
-| `walk_chain_valid_prefix` | let | `GC.Spec.Allocator.Lemmas.fst:45:0` |
-| `walk_chain_valid_snoc` | let | `GC.Spec.Allocator.Lemmas.fst:47:0` |
 
 </details>
 
@@ -706,27 +475,6 @@ Every one of the 616 unreachable definitions, grouped by module.
 </details>
 
 <details>
-<summary><code>GC.Gen.PromoteUpdate</code> — 13/29 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `distinct_live_set` | let | `GC.Gen.PromoteUpdate.fsti:303:0` |
-| `minor_collect_all_spec_unfold` | let | `GC.Gen.PromoteUpdate.fst:121:0` |
-| `minor_collect_preserves_reachable` | let | `GC.Gen.PromoteUpdate.fst:91:0` |
-| `promote_all_adds_promoted` | let | `GC.Gen.PromoteUpdate.fst:88:0` |
-| `promote_all_fwd_all_targets_valid` | let | `GC.Gen.PromoteUpdate.fst:85:0` |
-| `promote_all_preserves_blue_fields_closed` | let | `GC.Gen.PromoteUpdate.fst:118:0` |
-| `promote_all_preserves_fields` | let | `GC.Gen.PromoteUpdate.fst:104:0` |
-| `promote_all_read_other` | let | `GC.Gen.PromoteUpdate.fst:107:0` |
-| `update_all_objects_aux_done` | let | `GC.Gen.PromoteUpdate.fst:45:0` |
-| `update_all_objects_aux_skip_blue` | let | `GC.Gen.PromoteUpdate.fst:39:0` |
-| `update_all_objects_aux_skip_no_scan` | let | `GC.Gen.PromoteUpdate.fst:42:0` |
-| `update_all_objects_aux_step` | let | `GC.Gen.PromoteUpdate.fst:36:0` |
-| `update_major_pointers_preserves_wfh_part2` | let | `GC.Gen.PromoteUpdate.fst:99:0` |
-
-</details>
-
-<details>
 <summary><code>GC.Lib.Header</code> — 11/84 dead</summary>
 
 | Definition | Kind | Location |
@@ -742,6 +490,24 @@ Every one of the 616 unreachable definitions, grouped by module.
 | `set_color_sem_preserves_wosize` | let | `GC.Lib.Header.fst:154:0` |
 | `unpack_get_color` | let | `GC.Lib.Header.fst:375:0` |
 | `unpack_header64` | let | `GC.Lib.Header.fst:577:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Gen.PromoteUpdate</code> — 10/26 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `minor_collect_all_spec_unfold` | let | `GC.Gen.PromoteUpdate.fst:113:0` |
+| `minor_collect_preserves_reachable` | let | `GC.Gen.PromoteUpdate.fst:91:0` |
+| `promote_all_adds_promoted` | let | `GC.Gen.PromoteUpdate.fst:88:0` |
+| `promote_all_fwd_all_targets_valid` | let | `GC.Gen.PromoteUpdate.fst:85:0` |
+| `promote_all_preserves_blue_fields_closed` | let | `GC.Gen.PromoteUpdate.fst:110:0` |
+| `update_all_objects_aux_done` | let | `GC.Gen.PromoteUpdate.fst:45:0` |
+| `update_all_objects_aux_skip_blue` | let | `GC.Gen.PromoteUpdate.fst:39:0` |
+| `update_all_objects_aux_skip_no_scan` | let | `GC.Gen.PromoteUpdate.fst:42:0` |
+| `update_all_objects_aux_step` | let | `GC.Gen.PromoteUpdate.fst:36:0` |
+| `update_major_pointers_preserves_wfh_part2` | let | `GC.Gen.PromoteUpdate.fst:99:0` |
 
 </details>
 
@@ -913,13 +679,13 @@ Every one of the 616 unreachable definitions, grouped by module.
 
 | Definition | Kind | Location |
 | --- | --- | --- |
-| `alloc_from_block_read_body` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:2019:8` |
-| `alloc_search_read_body` | let rec | `GC.Spec.Allocator.Lemmas.Part2.fst:2142:8` |
-| `alloc_search_read_field_gt0` | let rec | `GC.Spec.Allocator.Lemmas.Part2.fst:3034:8` |
-| `alloc_spec_read_body` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:2237:0` |
-| `alloc_spec_read_field_gt0` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:3137:0` |
-| `u64_lt_of_ge_ne` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:49:8` |
-| `u64_v_ne` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:42:8` |
+| `alloc_from_block_read_body` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:2018:8` |
+| `alloc_search_read_body` | let rec | `GC.Spec.Allocator.Lemmas.Part2.fst:2141:8` |
+| `alloc_search_read_field_gt0` | let rec | `GC.Spec.Allocator.Lemmas.Part2.fst:3033:8` |
+| `alloc_spec_read_body` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:2236:0` |
+| `alloc_spec_read_field_gt0` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:3136:0` |
+| `u64_lt_of_ge_ne` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:48:8` |
+| `u64_v_ne` | let | `GC.Spec.Allocator.Lemmas.Part2.fst:41:8` |
 
 </details>
 
@@ -968,6 +734,20 @@ Every one of the 616 unreachable definitions, grouped by module.
 </details>
 
 <details>
+<summary><code>GC.Spec.Allocator.Lemmas</code> — 6/40 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `alloc_spec_read_body` | let | `GC.Spec.Allocator.Lemmas.fst:55:0` |
+| `alloc_spec_read_field_gt0` | let | `GC.Spec.Allocator.Lemmas.fst:59:0` |
+| `first_hit` | let | `GC.Spec.Allocator.Lemmas.fsti:180:0` |
+| `not_in_fl_chain_b` | let | `GC.Spec.Allocator.Lemmas.fsti:184:0` |
+| `walk_chain` | let | `GC.Spec.Allocator.Lemmas.fsti:128:0` |
+| `walk_chain_valid` | let | `GC.Spec.Allocator.Lemmas.fsti:131:0` |
+
+</details>
+
+<details>
 <summary><code>GC.Spec.MarkBoundedInv</code> — 6/15 dead</summary>
 
 | Definition | Kind | Location |
@@ -978,19 +758,6 @@ Every one of the 616 unreachable definitions, grouped by module.
 | `bounded_mark_inv_step` | let | `GC.Spec.MarkBoundedInv.fst:84:0` |
 | `bounded_mark_inv_step_decreases` | let | `GC.Spec.MarkBoundedInv.fst:127:0` |
 | `bounded_mark_inv_step_preserves_objects` | let | `GC.Spec.MarkBoundedInv.fst:117:0` |
-
-</details>
-
-<details>
-<summary><code>GC.Gen.AllocProps</code> — 5/36 dead</summary>
-
-| Definition | Kind | Location |
-| --- | --- | --- |
-| `alloc_search_obj_in_objects_pre` | let rec | `GC.Gen.AllocProps.fst:102:0` |
-| `alloc_search_obj_wosize` | let rec | `GC.Gen.AllocProps.fst:400:0` |
-| `alloc_spec_obj_in_objects` | let | `GC.Gen.AllocProps.fst:144:0` |
-| `alloc_spec_obj_wosize` | let | `GC.Gen.AllocProps.fst:474:0` |
-| `write_prev_preserves_not_blue` | let | `GC.Gen.AllocProps.fst:964:0` |
 
 </details>
 
@@ -1078,6 +845,17 @@ Every one of the 616 unreachable definitions, grouped by module.
 | `dfs_body_visited_grows` | let | `GC.Spec.DFS.fst:292:0` |
 | `is_reachable_via_forest` | let | `GC.Spec.DFS.fst:1036:0` |
 | `successor_reachable` | let | `GC.Spec.DFS.fst:593:0` |
+
+</details>
+
+<details>
+<summary><code>GC.Gen.AllocProps</code> — 3/34 dead</summary>
+
+| Definition | Kind | Location |
+| --- | --- | --- |
+| `alloc_search_obj_wosize` | let rec | `GC.Gen.AllocProps.fst:343:0` |
+| `alloc_spec_obj_wosize` | let | `GC.Gen.AllocProps.fst:417:0` |
+| `write_prev_preserves_not_blue` | let | `GC.Gen.AllocProps.fst:907:0` |
 
 </details>
 

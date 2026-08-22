@@ -136,9 +136,6 @@ EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Gen.CombinedGraph.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Edges.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Reflection.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.Step.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst.checked \
   $(CACHE_DIR)/GC.Gen.PromoteUpdate.BlueAlloc.fst.checked \
   $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
   $(CACHE_DIR)/GC.Gen.TwoPassEquiv.fst.checked \

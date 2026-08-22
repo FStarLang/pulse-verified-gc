@@ -1055,41 +1055,6 @@ let copy_fields_preserves_objects
 
 /// promote_object preserves existing object membership.
 #push-options "--z3rlimit 60 --fuel 1"
-let promote_object_preserves_objects
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires
-             well_formed_heap major /\
-             AllocLemmas.fl_valid major fp heap_words)
-          (ensures
-             (let res = promote_object minor major obj fp wosize in
-              (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
-                Seq.mem x (objects zero_addr res.major_out)))) =
-  let alloc_res = GC.Spec.Allocator.alloc_spec major fp wosize in
-  if alloc_res.obj_out = 0UL then ()
-  else begin
-    AllocLemmas.alloc_spec_preserves_objects major fp wosize;
-    AllocLemmas.alloc_spec_preserves_wf major fp wosize;
-    GC.Gen.AllocProps.alloc_spec_obj_valid major fp wosize;
-    GC.Gen.AllocProps.alloc_spec_obj_in_objects major fp wosize;
-    GC.Gen.AllocProps.alloc_spec_obj_wosize major fp wosize;
-    let dst_obj : obj_addr = alloc_res.obj_out in
-    copy_fields_preserves_objects minor alloc_res.heap_out obj dst_obj wosize;
-    assert (objects zero_addr (copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize) ==
-            objects zero_addr alloc_res.heap_out);
-    let copied = copy_fields minor alloc_res.heap_out obj dst_obj 0 wosize in
-    // zero_promote_padding preserves objects — need wfh_part1 on copied
-    // well_formed_heap => well_formed_heap_part1, but well_formed_heap is opaque
-    reveal_opaque (`%well_formed_heap) well_formed_heap;
-    assert (well_formed_heap_part1 alloc_res.heap_out);
-    copy_fields_preserves_wfh_part1 minor alloc_res.heap_out obj dst_obj wosize;
-    assert (Seq.mem dst_obj (objects zero_addr copied));
-    zero_promote_padding_preserves_objects copied dst_obj wosize;
-    let padded = zero_promote_padding copied dst_obj wosize in
-    assert (Seq.mem dst_obj (objects zero_addr padded));
-    let tag = minor_tag minor obj in
-    minor_tag_bound minor obj;
-    set_promoted_tag_preserves_objects padded dst_obj tag
-  end
 #pop-options
 
 /// Composite lemma: copy_fields preserves all allocator invariants together.

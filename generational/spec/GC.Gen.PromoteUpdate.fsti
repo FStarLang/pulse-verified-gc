@@ -299,40 +299,6 @@ val update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map
                     no_scan_invariant major)
     (ensures well_formed_heap_part2 (update_major_pointers major fwd))
 
-/// Distinctness: no two positions in live_set share the same address.
-let distinct_live_set (live_set: seq U64.t) : prop =
-  forall (i j: nat). i < Seq.length live_set /\ j < Seq.length live_set /\ i <> j ==>
-    Seq.index live_set i <> Seq.index live_set j
-
-/// After promote_all_spec, all promoted objects' fields match the minor heap values.
-/// This is the pre-pointer-update field correspondence.
-val promote_all_preserves_fields
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    distinct_live_set live_set)
-          (ensures (let res = promote_all_spec minor major fp live_set in
-                    fields_match_minor minor res.major_final res.fwd_map
-                                       live_set (Seq.length live_set)))
-
-/// For objects in the original major heap that avoid the free chain, their body
-/// contents are unchanged through the entire promote_all_spec operation.
-/// This is critical for proving well_formed_heap_part2 after promotion:
-/// non-promoted objects' pointer fields still target valid objects.
-val promote_all_read_other
-  (minor: minor_state) (major: heap) (fp: U64.t) (live_set: seq U64.t)
-  (other: obj_addr) (addr: hp_addr)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    AllocLemmas.fl_valid major fp heap_words /\
-                    AllocLemmas.fl_chain_terminates major fp heap_words /\
-                    Seq.mem other (objects zero_addr major) /\
-                    AllocLemmas.chain_avoids major fp other heap_words = true /\
-                    U64.v addr >= U64.v other /\
-                    U64.v addr + 8 <= U64.v other + U64.v (wosize_of_object other major) * 8)
-          (ensures (let res = promote_all_spec minor major fp live_set in
-                    read_word res.major_final addr == read_word major addr))
-
 /// promote_object preserves chain_objects_blue
 val promote_object_preserves_chain_objects_blue
   (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t)

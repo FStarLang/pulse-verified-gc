@@ -238,7 +238,6 @@ GEN_ROOT_CHECKED  = $(CACHE_DIR)/GC.Gen.Impl.fst.checked
 # GC.Gen.CheneyPreservation.Forwarding: >90 min -> 3m13s.
 EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Spec.Allocator.fst.checked \
-  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.SearchChain.fst.checked \
   $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.Part2.fst.checked \
   $(CACHE_DIR)/GC.Impl.Allocator.fst.checked \
   $(CACHE_DIR)/GC.Gen.Cheney.fst.checked \
@@ -249,9 +248,6 @@ EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Gen.CombinedGraph.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Edges.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Reflection.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.Step.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst.checked \
   $(CACHE_DIR)/GC.Gen.PromoteUpdate.BlueAlloc.fst.checked \
   $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
   $(CACHE_DIR)/GC.Gen.TwoPassEquiv.fst.checked \

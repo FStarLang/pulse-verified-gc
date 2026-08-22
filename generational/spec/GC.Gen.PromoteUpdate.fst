@@ -99,14 +99,6 @@ let update_major_pointers_field_effect =
 let update_major_pointers_preserves_wfh_part2 =
   GC.Gen.PromoteUpdate.Field.update_major_pointers_preserves_wfh_part2
 
-/// --- From GC.Gen.PromoteUpdate.PromoteFields ---
-
-let promote_all_preserves_fields =
-  GC.Gen.PromoteUpdate.PromoteFields.promote_all_preserves_fields
-
-let promote_all_read_other =
-  GC.Gen.PromoteUpdate.PromoteFields.promote_all_read_other
-
 /// --- From GC.Gen.PromoteUpdate.BlueProm ---
 
 let promote_object_preserves_chain_objects_blue =

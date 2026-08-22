@@ -99,64 +99,7 @@ let alloc_spec_obj_valid (g: heap) (fp: U64.t) (requested_wz: nat)
 /// Proof: obj_out = cur_fp which is in the free list. fl_valid ensures
 /// free-list nodes are in objects. alloc_spec_preserves_objects preserves them.
 #push-options "--z3rlimit 50 --fuel 4 --ifuel 1"
-let rec alloc_search_obj_in_objects_pre
-  (g: heap) (head_fp: U64.t) (prev_fp: U64.t)
-  (cur_fp: U64.t) (wz: nat) (fuel: nat)
-  : Lemma
-    (requires well_formed_heap g /\
-              AllocLemmas.fl_valid g cur_fp fuel)
-    (ensures (let r = alloc_search g head_fp prev_fp cur_fp wz fuel in
-              r.obj_out <> 0UL ==>
-              (U64.v r.obj_out >= U64.v mword /\
-               U64.v r.obj_out < heap_size /\
-               U64.v r.obj_out % U64.v mword == 0 /\
-               Seq.mem (r.obj_out <: obj_addr) (objects zero_addr g))))
-    (decreases fuel)
-  =
-  if fuel = 0 then ()
-  else if U64.v cur_fp < U64.v zero_addr + U64.v mword then ()
-  else if U64.v cur_fp >= heap_size then ()
-  else if U64.v cur_fp % U64.v mword <> 0 then ()
-  else begin
-    AllocLemmas.fl_valid_elim g cur_fp fuel;
-    // fl_valid_elim gives: Seq.mem cur_fp (objects zero_addr g)
-    let obj : obj_addr = cur_fp in
-    let hd = hd_address obj in
-    let hdr = read_word g hd in
-    let block_wz = U64.v (getWosize hdr) in
-    let next_fp =
-      if U64.v hd + 16 <= heap_size then read_word g obj
-      else 0UL
-    in
-    if block_wz >= wz then
-      // Found: obj_out = cur_fp which is in objects zero_addr g
-      ()
-    else begin
-      // Continue search — need fl_valid for next_fp
-      if U64.v hd + 16 <= heap_size then
-        alloc_search_obj_in_objects_pre g head_fp cur_fp next_fp wz (fuel - 1)
-      else ()
-    end
-  end
 #pop-options
-
-/// After alloc, the returned object is in objects of the output heap
-let alloc_spec_obj_in_objects (g: heap) (fp: U64.t) (requested_wz: nat)
-  : Lemma (requires well_formed_heap g /\
-                    AllocLemmas.fl_valid g fp heap_words)
-          (ensures (let r = alloc_spec g fp requested_wz in
-                    r.obj_out <> 0UL ==>
-                    (U64.v r.obj_out >= U64.v mword /\
-                     U64.v r.obj_out < heap_size /\
-                     U64.v r.obj_out % U64.v mword == 0 /\
-                     Seq.mem (r.obj_out <: obj_addr) (objects zero_addr r.heap_out))))
-  =
-  let wz = if requested_wz = 0 then 1 else requested_wz in
-  let fuel = heap_words in
-  // First: show obj_out was in objects zero_addr g
-  alloc_search_obj_in_objects_pre g fp zero_addr fp wz fuel;
-  // Second: alloc_spec_preserves_objects shows old objects survive
-  AllocLemmas.alloc_spec_preserves_objects g fp requested_wz
 
 /// ---------------------------------------------------------------------------
 /// After alloc, wosize of the allocated object >= requested_wz

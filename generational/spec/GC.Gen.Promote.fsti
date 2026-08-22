@@ -658,17 +658,6 @@ val copy_fields_preserves_objects
           (ensures
              objects zero_addr (copy_fields minor major src_obj dst_obj 0 n) == objects zero_addr major)
 
-/// promote_object preserves existing object membership
-val promote_object_preserves_objects
-  (minor: minor_state) (major: heap) (obj: U64.t) (fp: U64.t) (wosize: nat{wosize > 0})
-  : Lemma (requires
-             well_formed_heap major /\
-             GC.Spec.Allocator.Lemmas.fl_valid major fp heap_words)
-          (ensures
-             (let res = promote_object minor major obj fp wosize in
-              (forall (x: obj_addr). Seq.mem x (objects zero_addr major) ==>
-                Seq.mem x (objects zero_addr res.major_out))))
-
 /// copy_fields preserves the allocator invariants (wfh_part1, fl_valid, fl_chain_terminates)
 /// when dst_obj is not in the free-list chain.
 /// This is the key lemma enabling Pulse promote_one to maintain loop invariants.

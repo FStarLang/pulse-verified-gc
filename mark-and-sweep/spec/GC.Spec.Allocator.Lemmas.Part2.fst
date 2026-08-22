@@ -17,7 +17,6 @@ open GC.Spec.Allocator.Lemmas.Split
 open GC.Spec.Allocator.Lemmas.Part1
 open GC.Spec.Allocator.Lemmas.Common
 open GC.Spec.Allocator.Lemmas.Chain
-open GC.Spec.Allocator.Lemmas.SearchBase
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 module Header = GC.Lib.Header
