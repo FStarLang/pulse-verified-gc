@@ -27,7 +27,6 @@ let minor_collect_full_pre
   UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
   UpdatePtrs.slots_pairwise_distinct slots nslots /\
   MinorFwd.remembered_targets_in_roots major roots slots nslots /\
-  RBridge.major_field_zero_no_minor minor major /\
   MinorFwd.roots_valid_for_minor_collection minor major roots
 
 let gen_gc_pre

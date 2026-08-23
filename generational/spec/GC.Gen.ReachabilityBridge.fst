@@ -309,17 +309,21 @@ let reachability_bridge
                       (U64.v src + i * 8) % 8 == 0 /\
                       classify_major_field minor major
                         (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MinorV v))
-            (ensures Seq.mem v (minor_roots_from_major major) /\ Seq.mem v (minor_objects minor))
+            (ensures Seq.mem v full_roots /\ Seq.mem v (minor_objects minor))
           = let fv = read_word major (U64.uint_to_t (U64.v src + i * 8)) in
             classify_major_field_inv_minor minor major fv v;
             assert (to_minor_offset fv == v);
             assert (is_minor_pointer v);
             assert (Seq.mem v (minor_objects minor));
+            Seq.lemma_mem_append roots (minor_roots_from_major major);
             if i = 0 then begin
+              // Field 0 is outside the remembered-set scan window, so the
+              // target is not available from `minor_roots_from_major`.  The
+              // field-0 hypothesis instead places it directly in `roots`,
+              // which is the other half of `full_roots`.
               assert (U64.uint_to_t (U64.v src + i * 8) == src);
               assert (U64.v src + 8 <= heap_size);
-              assert (is_minor_pointer (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))));
-              assert False
+              assert (Seq.mem v roots)
             end else begin
               assert (i >= 1);
               assert (is_minor_object_addr v);

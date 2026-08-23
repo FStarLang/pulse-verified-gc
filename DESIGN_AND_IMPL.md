@@ -1152,7 +1152,6 @@ The precondition includes:
 - root-array length consistency;
 - a zeroed forwarding array of the expected size;
 - remembered slot soundness, coverage, distinctness, and root inclusion;
-- the `major_field_zero_no_minor` invariant used by the update code;
 - root validity and non-blue target facts.
 
 The postcondition states, among other facts:

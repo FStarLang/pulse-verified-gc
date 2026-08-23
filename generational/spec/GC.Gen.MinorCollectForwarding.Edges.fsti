@@ -56,7 +56,7 @@ val combined_reachable_minor_has_fwd
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   : Lemma
     (requires
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       RBridge.remembered_roots_in_roots major roots /\
       well_formed_heap major /\
       minor_wf minor /\
@@ -78,7 +78,7 @@ val combined_reachable_minor_has_fwd_from_slots
   (roots slots: seq U64.t) (n: nat)
   : Lemma
     (requires
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       well_formed_heap major /\
@@ -125,7 +125,7 @@ val combined_reachable_images_valid_or_infix
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       RBridge.remembered_roots_in_roots major roots /\
       Mark.no_pointer_to_blue major /\
       RBridge.minor_no_pointer_to_blue minor major /\
@@ -140,7 +140,7 @@ val combined_reachable_images_valid_or_infix_from_slots
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -180,7 +180,7 @@ val combined_major_minor_field_forwarded
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -211,7 +211,7 @@ val combined_major_minor_edge_forwarded
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\

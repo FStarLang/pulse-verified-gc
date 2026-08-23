@@ -532,45 +532,6 @@ let spot_remembered_targets_in_roots (r: unit{ConcreteMajor.spot_major_room})
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let spot_major_field_zero_no_minor (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (RBridge.major_field_zero_no_minor
-             ConcreteMinor.spot_minor2 (ConcreteMajor.spot_major_heap r))
-  =
-  let major = ConcreteMajor.spot_major_heap r in
-  let aux (src: obj_addr)
-    : Lemma
-        (requires
-          Seq.mem src (SpecFields.objects zero_addr major) /\
-          ~(SpecObj.is_no_scan src major) /\
-          U64.v src + 8 <= heap_size)
-        (ensures
-          (let v = to_minor_offset (SpecHeap.read_word major (U64.uint_to_t (U64.v src))) in
-           ~(Promote.is_minor_pointer v)))
-    =
-    ConcreteMajor.spot_major_object_cases r src;
-    ConcreteMajor.spot_major_c_reads r;
-    ConcreteMajor.spot_major_free_reads r;
-    if src = ConcreteMajor.spot_c r then begin
-      ConcreteMajor.spot_major_layout_facts r;
-      assert (src == ConcreteMajor.spot_c r);
-      assert (U64.v (ConcreteMajor.spot_c_field0 r) == U64.v src);
-      assert (U64.uint_to_t (U64.v src) == ConcreteMajor.spot_c_field0 r);
-      assert (SpecHeap.read_word major (U64.uint_to_t (U64.v src)) == 0UL);
-      zero_not_minor_pointer ()
-    end else begin
-      assert (src == ConcreteMajor.spot_free_obj r);
-      ConcreteMajor.spot_major_layout_facts r;
-      assert (0 < ConcreteMajor.spot_free_wosize r);
-      assert (U64.v (ConcreteMajor.spot_free_obj r) + 0 * 8 + 8 <= heap_size);
-      ConcreteMajor.spot_major_free_field_read r 0;
-      assert (SpecHeap.read_word major (U64.uint_to_t (U64.v src)) == 0UL);
-      zero_not_minor_pointer ()
-    end
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-#pop-options
-
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_roots_valid_for_minor_collection (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (MinorFwd.roots_valid_for_minor_collection
              ConcreteMinor.spot_minor2
@@ -618,7 +579,6 @@ let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room}
   spot_ref_table_covers_minor_ptrs r;
   ThreeObjects.spot_slots_singleton_distinct (ConcreteMajor.spot_c r);
   spot_remembered_targets_in_roots r;
-  spot_major_field_zero_no_minor r;
   spot_roots_valid_for_minor_collection r;
   Preconditions.minor_collect_full_pre_intro
     ConcreteMinor.spot_minor2

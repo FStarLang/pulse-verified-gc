@@ -843,7 +843,6 @@ let minor_collect_full_isomorphism_post
       post_roots == PromoteSpec.rewrite_roots roots
         (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
       MinorFwd.remembered_targets_in_roots major roots slots n /\
-      RBridge.major_field_zero_no_minor minor major /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
       (ok ==> CheneyBFS.cheney_no_oom minor major fp roots))
     (ensures
@@ -856,6 +855,7 @@ let minor_collect_full_isomorphism_post
     if ok
     then begin
       MCFH.roots_valid_for_minor_collection_nonblue minor major roots;
+      MCFH.major_field_zero_covered_from_slots minor major roots slots n;
       GenInv.collection_heap_shape_elim minor major fp;
       GenInv.major_heap_shape_elim major fp;
       RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp;
@@ -899,8 +899,6 @@ fn minor_collect_full (gh: gen_heap_t)
                   ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
                   slots_pairwise_distinct 'sl (SZ.v nslots) /\
                   MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-                  RBridge.major_field_zero_no_minor
-                    ({ data = 'd; bump = 'b } <: minor_state) 's /\
                   MinorFwd.roots_valid_for_minor_collection
                     ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
@@ -940,6 +938,8 @@ fn minor_collect_full (gh: gen_heap_t)
          minor_st 's 'fp 'rs s2))
 {
   unfold is_gen_heap;
+  MCFH.major_field_zero_covered_from_slots
+    ({data = 'd; bump = 'b} <: minor_state) 's 'rs 'sl (SZ.v nslots);
   GenInv.collection_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state) 's 'fp;
   GenInv.major_heap_shape_elim 's 'fp;
   GenInv.minor_heap_shape_elim ({data = 'd; bump = 'b} <: minor_state);
@@ -1050,8 +1050,6 @@ fn gen_gc (gh: gen_heap_t)
                ref_table_covers_minor_ptrs 's 'sl (SZ.v nslots) /\
                slots_pairwise_distinct 'sl (SZ.v nslots) /\
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
-               RBridge.major_field_zero_no_minor
-                 ({ data = 'd; bump = 'b } <: minor_state) 's /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)

@@ -46,7 +46,7 @@ val post_edge_from_minor_image_reflects_mem_ce
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       MCFH.remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\
@@ -67,7 +67,7 @@ val post_edge_from_minor_image_reflects_target
   : Lemma
     (requires
       GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
+      RBridge.major_field_zero_covered minor major roots /\
       UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
       MCFH.remembered_targets_in_roots major roots slots n /\
       Mark.no_pointer_to_blue major /\

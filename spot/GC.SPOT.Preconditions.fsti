@@ -47,7 +47,6 @@ val minor_collect_full_pre_elim
             UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
             UpdatePtrs.slots_pairwise_distinct slots nslots /\
             GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots nslots /\
-            GC.Gen.ReachabilityBridge.major_field_zero_no_minor minor major /\
             GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
 
 val minor_collect_full_pre_intro
@@ -61,7 +60,6 @@ val minor_collect_full_pre_intro
         UpdatePtrs.ref_table_covers_minor_ptrs major slots nslots /\
         UpdatePtrs.slots_pairwise_distinct slots nslots /\
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots nslots /\
-        GC.Gen.ReachabilityBridge.major_field_zero_no_minor minor major /\
         GC.Gen.MinorCollectForwarding.roots_valid_for_minor_collection minor major roots)
       (ensures minor_collect_full_pre minor major fp roots farr slots nslots)
 

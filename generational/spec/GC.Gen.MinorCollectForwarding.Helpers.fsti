@@ -104,6 +104,27 @@ val roots_valid_for_minor_collection_nonblue
     (requires roots_valid_for_minor_collection minor major roots)
     (ensures RBridge.roots_valid_nonblue roots major)
 
+/// The slot table already covers field 0.
+///
+/// `ref_table_covers_minor_ptrs` quantifies over `j < wosize` at address
+/// `obj + j*8`, so `j = 0` -- the word at `obj + 0` -- is included; the write
+/// barrier records that field like any other.  Combined with
+/// `remembered_targets_in_roots`, which puts every recorded slot's minor target
+/// into the Cheney root sequence, the two preconditions that
+/// `minor_collect_full` already demands are together enough to discharge
+/// `RBridge.major_field_zero_covered` outright.
+///
+/// Callers therefore do not need to supply a separate field-0 hypothesis at
+/// all: it is discharged inside `minor_collect_full` from preconditions the
+/// caller was already required to establish.
+val major_field_zero_covered_from_slots
+  (minor: minor_state) (major: heap) (roots slots: seq U64.t) (n: nat)
+  : Lemma
+    (requires
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n)
+    (ensures RBridge.major_field_zero_covered minor major roots)
+
 /// Raw-address view of graph-edge membership, useful when the endpoint is a
 /// forwarding-map image whose `hp_addr` refinement is proved by preconditions.
 let mem_graph_edge_at (g: graph_state) (src dst: U64.t) : prop =

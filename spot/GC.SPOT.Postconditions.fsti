@@ -56,7 +56,7 @@ val major_minor_field_rewritten
     Lemma
       (requires
         GC.Gen.HeapInvariant.collection_heap_shape minor major fp /\
-        GC.Gen.ReachabilityBridge.major_field_zero_no_minor minor major /\
+        GC.Gen.ReachabilityBridge.major_field_zero_covered minor major roots /\
         GC.Gen.Impl.UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
         GC.Gen.MinorCollectForwarding.remembered_targets_in_roots major roots slots n /\
         GC.Spec.Mark.no_pointer_to_blue major /\

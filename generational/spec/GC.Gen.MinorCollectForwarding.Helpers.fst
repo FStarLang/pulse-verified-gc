@@ -148,6 +148,60 @@ let remembered_targets_in_roots_intro_by_slots major roots slots n
 
 let roots_valid_for_minor_collection_nonblue minor major roots = ()
 
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 1"
+private let field_zero_target_in_roots
+  (major: heap) (roots slots: seq U64.t) (n: nat) (src: obj_addr)
+  : Lemma
+    (requires
+      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
+      remembered_targets_in_roots major roots slots n /\
+      Seq.mem src (objects zero_addr major) /\
+      is_blue src major = false /\
+      is_no_scan src major = false /\
+      0 < U64.v (wosize_of_object src major) /\
+      U64.v src + 8 <= heap_size /\
+      is_minor_pointer (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))))
+    (ensures
+      Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))) roots)
+  =
+  // Spell out the `j := 0` instance of `ref_table_covers_minor_ptrs`; Z3 does
+  // not find it on its own, because the trigger is written over `obj + j * 8`
+  // and the goal mentions the syntactically distinct `U64.v src`.
+  let jz : nat = 0 in
+  assert (
+    (Seq.mem src (objects zero_addr major) /\
+     is_blue src major = false /\
+     is_no_scan src major = false /\
+     jz < U64.v (wosize_of_object src major) /\
+     U64.v src + jz * 8 + 8 <= heap_size /\
+     (let field_val = to_minor_offset
+        (read_word major (U64.uint_to_t (U64.v src + jz * 8))) in
+      is_minor_pointer field_val))
+    ==> (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v src + jz * 8));
+  assert (exists (i: nat). i < n /\ U64.v (Seq.index slots i) == U64.v src);
+  let i = FStar.IndefiniteDescription.indefinite_description_ghost nat
+            (fun i -> i < n /\ U64.v (Seq.index slots i) == U64.v src) in
+  assert (U64.v (Seq.index slots i) < heap_size);
+  assert (U64.v (Seq.index slots i) % U64.v mword == 0);
+  remembered_slot_targets_from_mem major slots n 0 i
+#pop-options
+
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+let major_field_zero_covered_from_slots minor major roots slots n =
+  let aux (src: obj_addr) : Lemma
+    (requires
+      Seq.mem src (objects zero_addr major) /\
+      ~(is_blue src major) /\ ~(is_no_scan src major) /\
+      0 < U64.v (wosize_of_object src major) /\
+      U64.v src + 8 <= heap_size /\
+      is_minor_pointer (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))))
+    (ensures
+      Seq.mem (to_minor_offset (read_word major (U64.uint_to_t (U64.v src)))) roots)
+  = field_zero_target_in_roots major roots slots n src
+  in
+  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)
