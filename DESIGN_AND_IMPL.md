@@ -1250,9 +1250,49 @@ let gen_gc_prepared_state minor major fp roots st cap =
 ```
 
 So callers do not have to pre-color roots, pre-seed the mark stack, or reason
-about `darken_roots_bounded_spec` at all.  The OCaml bridge uses the simplest
-case: an initially empty gray stack, for which `gray_objects_on_stack` reduces
-to "the post-minor major heap has no gray objects".
+about `darken_roots_bounded_spec` at all.
+
+The same is true one phase earlier, for the minor collection.  Seven of
+`darken_precondition`'s ten conjuncts mention only the major heap and the
+caller's own gray stack, and `GC.Gen.CheneyPreservation` already proves that
+each survives `cheney_collect_spec`.  `GC.Gen.MajorPrecondition` does that
+transport once:
+
+```fstar
+val darken_precondition_after_minor minor major fp roots st cap
+  : Lemma (requires
+             GenInv.collection_heap_shape minor major fp /\
+             MarkBoundedInv.bounded_mark_inv major st cap /\
+             SpecMark.gray_objects_on_stack major st /\
+             post_minor_root_obligations minor major fp roots st cap)
+          (ensures
+             let result = Cheney.cheney_collect_spec minor major fp roots in
+             MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap)
+```
+
+re-exported at the top level as `gen_gc_major_precondition_intro`.  Note where
+the hypotheses live: `collection_heap_shape` is already a `gen_gc` precondition,
+and the other two are asked for on the **pre**-minor heap.  The only residue is
+`post_minor_root_obligations`, the three conjuncts that genuinely mention the
+post-minor root set — the caller's stack is a subset of it, the capacity budget
+covers it, and each of its members is a real non-blue major object.  Those
+cannot be internalised: the minor collection rewrites the roots, so only the
+caller knows how the result relates to the stack it supplied.
+
+One consequence is worth stating explicitly, because it is easy to miss.  The
+third residual conjunct already implies that **every live minor root was
+forwarded**.  `rewrite_root` leaves an unforwarded minor root unchanged, so such
+a root would still be a nursery address after the collection, and the
+`zero_addr_above_minor` configuration axiom places the whole nursery strictly
+below the first major object address.  `gen_gc`'s precondition therefore rules
+out the only kind of promotion failure that can affect a root, even though
+`gen_gc` reports out-of-memory through its `ok` result rather than requiring
+`cheney_no_oom` up front.  This is proved, not asserted, by
+`post_minor_root_obligations_implies_roots_forwarded`.
+
+The OCaml bridge uses the simplest case: an initially empty gray stack, for
+which `gray_objects_on_stack` reduces to "the major heap has no gray objects"
+and the first two residual conjuncts hold vacuously.
 
 Note also that `Seq.length 'st <= stack_capacity st` is no longer restated in the
 precondition: it is already part of the `bounded_mark_inv` inside

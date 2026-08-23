@@ -21,6 +21,37 @@ module Cheney = GC.Gen.Cheney
 module CheneyPres = GC.Gen.CheneyPreservation
 module MBP = GC.Impl.MarkBoundedPrecondition
 
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let post_minor_root_obligations_implies_roots_forwarded minor major fp roots st cap
+  =
+  let prom = Cheney.cheney_promote minor major fp roots in
+  let result = Cheney.cheney_collect_spec minor major fp roots in
+  zero_addr_above_minor ();
+  Promote.rewrite_roots_length roots prom.fwd_map;
+  let aux (i: nat)
+    : Lemma
+        (ensures i < Seq.length roots ==>
+                 Promote.is_minor_pointer (Seq.index roots i) ==>
+                 prom.fwd_map (Seq.index roots i) <> 0UL)
+    =
+    if i < Seq.length roots then begin
+      let r = Seq.index roots i in
+      Promote.rewrite_roots_index roots prom.fwd_map i;
+      assert (Seq.index result.mc_roots i == Promote.rewrite_root r prom.fwd_map);
+      if Promote.is_minor_pointer r && prom.fwd_map r = 0UL then begin
+        // The root survives `rewrite_root` unchanged, so it is still a nursery
+        // address -- strictly below `zero_addr`, hence not a major object.
+        assert (Seq.index result.mc_roots i == r);
+        assert (U64.v r < minor_heap_size);
+        assert (U64.v r < U64.v zero_addr + U64.v mword);
+        assert (MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i));
+        assert False
+      end
+    end
+  in
+  FStar.Classical.forall_intro aux
+#pop-options
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let gray_black_objects_on_stack_weaken (g: heap) (st: seq obj_addr)
   : Lemma (requires CheneyPres.gray_black_objects_on_stack g st)

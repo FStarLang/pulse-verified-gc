@@ -35,6 +35,7 @@ module SpecFields = GC.Spec.Fields
 module SpecMark = GC.Spec.Mark
 module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module GenInv = GC.Gen.HeapInvariant
+module Promote = GC.Gen.Promote
 module Cheney = GC.Gen.Cheney
 module CheneyPres = GC.Gen.CheneyPreservation
 module MBP = GC.Impl.MarkBoundedPrecondition
@@ -52,6 +53,30 @@ let post_minor_root_obligations
   Seq.length st + Seq.length result.mc_roots <= cap /\
   (forall (i: nat). i < Seq.length result.mc_roots ==>
      MBP.root_valid_for_darkening result.mc_major (Seq.index result.mc_roots i))
+
+/// `post_minor_root_obligations` is not as innocent as it looks: its third
+/// conjunct already implies that every live minor root was forwarded.
+///
+/// `rewrite_root` leaves an unforwarded minor root unchanged, so such a root
+/// would still be a minor pointer after the collection -- and the nursery lies
+/// strictly below the major heap (`minor_heap_size = 2048`, and the
+/// `zero_addr_above_minor` configuration axiom puts `zero_addr` at or above
+/// `minor_heap_size`), so it could never satisfy `root_valid_for_darkening`.
+///
+/// In other words `gen_gc`'s precondition silently rules out the only kind of
+/// promotion failure that can affect a root, even though `gen_gc` reports
+/// out-of-memory through its `ok` result rather than demanding `cheney_no_oom`
+/// up front.  Recorded here so the tension is visible rather than latent.
+val post_minor_root_obligations_implies_roots_forwarded
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
+  (st: seq obj_addr) (cap: nat)
+  : Lemma
+    (requires post_minor_root_obligations minor major fp roots st cap)
+    (ensures (
+      let prom = Cheney.cheney_promote minor major fp roots in
+      forall (i: nat). i < Seq.length roots ==>
+        Promote.is_minor_pointer (Seq.index roots i) ==>
+        prom.fwd_map (Seq.index roots i) <> 0UL))
 
 /// `CheneyPreservation` states the color-stack condition in its gray-or-black
 /// form because that is what promotion preserves; the major GC wants the

@@ -822,6 +822,20 @@ its callers:
 
 All four are `prop`-level; the extracted C is byte-identical.
 
+A follow-up review asked the obvious next question: `gen_gc_major_precondition`
+is still *stated* on the post-minor state, so why is that acceptable?  It was
+not.  `GC.Gen.MajorPrecondition.darken_precondition_after_minor` now transports
+seven of the ten conjuncts across `cheney_collect_spec` inside the library,
+using the `CheneyPreservation` family, and needs no hypothesis `gen_gc` did not
+already demand.  The three that remain — `st` is a subset of the post-minor
+roots, the capacity budget covers them, and each is a real non-blue major object
+— genuinely mention the rewritten root set and belong to the caller.  `spot`'s
+discharge dropped from ~50 lines citing eight preservation lemmas to ~25 citing
+two.  A by-product, `post_minor_root_obligations_implies_roots_forwarded`,
+records a latent tension: the third residual conjunct already implies that every
+live minor root was promoted, so the entry contract silently excludes root-level
+out-of-memory even though `gen_gc` reports OOM through its `ok` result.
+
 **Residue.** `major_heap_shape` (`GC.Gen.HeapInvariant.fst:29`) still has no
 `no_gray_objects` conjunct, which is why `gray_objects_on_stack` survives as a caller
 obligation even though every caller discharges it trivially (empty stack, no gray
