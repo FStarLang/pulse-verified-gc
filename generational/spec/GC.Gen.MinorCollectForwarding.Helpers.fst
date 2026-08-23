@@ -146,6 +146,8 @@ let remembered_targets_in_roots_intro_by_slots major roots slots n
   remembered_slot_targets_from_all_in_roots major roots slots n 0
 #pop-options
 
+let roots_valid_for_minor_collection_nonblue minor major roots = ()
+
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let post_minor_reachable_refl_from_root
   (minor: minor_state) (major: heap) (fp: U64.t)

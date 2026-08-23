@@ -217,7 +217,6 @@ fn minor_collect_full (gh: gen_heap_t)
                   MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                   RBridge.major_field_zero_no_minor
                     ({ data = 'd; bump = 'b } <: minor_state) 's /\
-                  RBridge.roots_valid_nonblue 'rs 's /\
                   MinorFwd.roots_valid_for_minor_collection
                     ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
@@ -306,7 +305,6 @@ fn gen_gc (gh: gen_heap_t)
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                RBridge.major_field_zero_no_minor
                  ({ data = 'd; bump = 'b } <: minor_state) 's /\
-               RBridge.roots_valid_nonblue 'rs 's /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)

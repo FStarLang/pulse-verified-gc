@@ -43,6 +43,7 @@ module TwoPass = GC.Gen.TwoPassEquiv
 module GenInv = GC.Gen.HeapInvariant
 module FreeListShape = GC.Gen.FreeListShape
 module MinorFwd = GC.Gen.MinorCollectForwarding
+module MCFH = GC.Gen.MinorCollectForwarding.Helpers
 module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
@@ -843,7 +844,6 @@ let minor_collect_full_isomorphism_post
         (CheneySpec.cheney_promote minor major fp roots).fwd_map /\
       MinorFwd.remembered_targets_in_roots major roots slots n /\
       RBridge.major_field_zero_no_minor minor major /\
-      RBridge.roots_valid_nonblue roots major /\
       MinorFwd.roots_valid_for_minor_collection minor major roots /\
       (ok ==> CheneyBFS.cheney_no_oom minor major fp roots))
     (ensures
@@ -855,6 +855,7 @@ let minor_collect_full_isomorphism_post
   =
     if ok
     then begin
+      MCFH.roots_valid_for_minor_collection_nonblue minor major roots;
       GenInv.collection_heap_shape_elim minor major fp;
       GenInv.major_heap_shape_elim major fp;
       RBridge.minor_no_pointer_to_blue_from_collection_shape minor major fp;
@@ -900,7 +901,6 @@ fn minor_collect_full (gh: gen_heap_t)
                   MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                   RBridge.major_field_zero_no_minor
                     ({ data = 'd; bump = 'b } <: minor_state) 's /\
-                  RBridge.roots_valid_nonblue 'rs 's /\
                   MinorFwd.roots_valid_for_minor_collection
                     ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns ok: bool
@@ -1052,7 +1052,6 @@ fn gen_gc (gh: gen_heap_t)
                MinorFwd.remembered_targets_in_roots 's 'rs 'sl (SZ.v nslots) /\
                RBridge.major_field_zero_no_minor
                  ({ data = 'd; bump = 'b } <: minor_state) 's /\
-               RBridge.roots_valid_nonblue 'rs 's /\
                MinorFwd.roots_valid_for_minor_collection
                  ({ data = 'd; bump = 'b } <: minor_state) 's 'rs)
   returns res: (U64.t & bool)

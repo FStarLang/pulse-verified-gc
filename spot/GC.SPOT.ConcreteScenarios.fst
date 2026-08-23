@@ -571,45 +571,6 @@ let spot_major_field_zero_no_minor (r: unit{ConcreteMajor.spot_major_room})
 #pop-options
 
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
-let spot_roots_valid_nonblue (r: unit{ConcreteMajor.spot_major_room})
-  : Lemma (RBridge.roots_valid_nonblue
-             (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
-             (ConcreteMajor.spot_major_heap r))
-  =
-  let major = ConcreteMajor.spot_major_heap r in
-  let aux (root: U64.t)
-    : Lemma
-        (ensures
-          Seq.mem root (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) /\
-          ~(Promote.is_minor_pointer root) /\
-          is_val_addr root /\
-          Seq.mem (root <: obj_addr) (SpecFields.objects zero_addr major) ==>
-          ~(SpecObj.is_blue (root <: obj_addr) major))
-    =
-    if Seq.mem root (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) /\
-       ~(Promote.is_minor_pointer root) /\
-       is_val_addr root /\
-       Seq.mem (root <: obj_addr) (SpecFields.objects zero_addr major)
-    then begin
-      ThreeObjects.spot_roots_cases (ConcreteMajor.spot_c r) root;
-      if root = (ConcreteMajor.spot_c r <: U64.t) then begin
-        assert ((root <: obj_addr) == ConcreteMajor.spot_c r);
-        ConcreteMajor.spot_major_c_reads r
-      end else begin
-        assert (root == Layout.a_minor);
-        if root = Layout.a_minor then begin
-          Layout.a_minor_is_minor_pointer ();
-          assert False
-        end else begin
-          assert False
-        end
-      end
-    end
-  in
-  FStar.Classical.forall_intro aux
-#pop-options
-
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let spot_roots_valid_for_minor_collection (r: unit{ConcreteMajor.spot_major_room})
   : Lemma (MinorFwd.roots_valid_for_minor_collection
              ConcreteMinor.spot_minor2
@@ -658,7 +619,6 @@ let spot_concrete_minor_collect_full_pre (r: unit{ConcreteMajor.spot_major_room}
   ThreeObjects.spot_slots_singleton_distinct (ConcreteMajor.spot_c r);
   spot_remembered_targets_in_roots r;
   spot_major_field_zero_no_minor r;
-  spot_roots_valid_nonblue r;
   spot_roots_valid_for_minor_collection r;
   Preconditions.minor_collect_full_pre_intro
     ConcreteMinor.spot_minor2
