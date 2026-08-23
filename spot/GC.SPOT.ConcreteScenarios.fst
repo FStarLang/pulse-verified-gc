@@ -41,6 +41,7 @@ module SpecHeapModel = GC.Spec.HeapModel
 module SpecHeapGraph = GC.Spec.HeapGraph
 module SpecGraph = GC.Spec.Graph
 module MBP = GC.Impl.MarkBoundedPrecondition
+module GMP = GC.Gen.MajorPrecondition
 
 let spot_fwd_array : seq U64.t =
   Seq.create UpdatePtrs.fwd_array_size 0UL
@@ -821,7 +822,7 @@ let spot_post_minor_roots_valid_for_darkening
   FStar.Classical.forall_intro aux
 
 
-#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let spot_concrete_gen_gc_major_pre_empty_stack
   (r: unit{ConcreteMajor.spot_major_room}) (cap: nat{cap >= 2})
   : Lemma
@@ -839,53 +840,25 @@ let spot_concrete_gen_gc_major_pre_empty_stack
   let c = ConcreteMajor.spot_c r in
   let roots = ThreeObjects.spot_roots c in
   let result = Cheney.cheney_collect_spec minor major fp roots in
-  let prepared = GenImpl.gen_gc_prepared_state minor major fp roots Seq.empty cap in
-  let prepared_major = fst prepared in
-  let prepared_st = snd prepared in
   spot_collection_heap_shape r;
   GenInv.collection_heap_shape_elim minor major fp;
   GenInv.major_heap_shape_elim major fp;
-  GenInv.minor_heap_shape_elim minor;
-  ConcreteForwarding.spot_concrete_no_oom r;
-  CheneyPres.cheney_collect_preserves_collection_heap_shape minor major fp roots;
-  GenInv.collection_heap_shape_elim result.mc_minor result.mc_major result.mc_fp;
-  GenInv.major_heap_shape_elim result.mc_major result.mc_fp;
-  CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
-  CheneyPres.cheney_collect_preserves_no_black minor major fp roots;
-  CheneyPres.cheney_collect_preserves_no_pointer_to_blue minor major fp roots;
-  CheneyPres.cheney_collect_preserves_no_scan_invariant minor major fp roots;
+  // The pre-minor stack is empty, so `bounded_mark_inv` and the color-stack
+  // condition hold on the *pre*-minor heap for free.
   SpecMarkBounded.empty_bounded_stack_props major;
-  SpecMarkBounded.empty_bounded_stack_props result.mc_major;
-  CheneyPres.cheney_collect_preserves_bounded_stack_props minor major fp roots Seq.empty;
-  spot_post_minor_roots_shape r;
-  assert (Seq.length result.mc_roots == 2);
-  assert (Seq.length (Seq.empty #obj_addr) + Seq.length result.mc_roots <= cap);
+  GC.Spec.SweepInv.heap_objects_dense_intro major;
+  SpecMarkBoundedInv.bounded_mark_inv_intro major Seq.empty cap;
   spot_major_gray_black_empty r;
-  CheneyPres.cheney_collect_preserves_gray_black_objects_on_stack
-    minor major fp roots (Seq.empty #obj_addr);
-  cheney_gray_black_stack_to_gray_stack result.mc_major (Seq.empty #obj_addr);
-  MarkBoundedImpl.darken_roots_bounded_prefix_length_le_cap
-    result.mc_major Seq.empty result.mc_roots (Seq.length result.mc_roots) cap;
-  assert (Seq.length prepared_st <= cap);
-  assert (SpecMarkBounded.bounded_stack_props result.mc_major Seq.empty);
-  assert (SpecMarkBounded.bounded_stack_props result.mc_major Seq.empty);
-  assert (SpecMark.no_black_objects result.mc_major);
-  assert (SpecMark.no_pointer_to_blue result.mc_major);
-  assert (SpecFields.no_scan_invariant result.mc_major);
-  assert (SpecFields.well_formed_heap result.mc_major);
-  assert (Promote.heap_objects_dense result.mc_major);
-  GC.Spec.SweepInv.heap_objects_dense_intro result.mc_major;
-  assert (GC.Spec.SweepInv.heap_objects_dense result.mc_major);
-  assert (Seq.length (SpecFields.objects zero_addr result.mc_major) > 0);
-  assert (GC.Spec.SweepInv.fp_valid result.mc_fp result.mc_major);
-  assert (GC.Spec.Sweep.fp_in_heap result.mc_fp result.mc_major);
-  assert (Seq.length (Seq.empty #obj_addr) <= cap);
-  SpecMarkBoundedInv.bounded_mark_inv_intro result.mc_major Seq.empty cap;
-  assert (SpecMarkBoundedInv.bounded_mark_inv result.mc_major Seq.empty cap);
-  spot_post_minor_roots_valid_for_darkening r;
+  cheney_gray_black_stack_to_gray_stack major (Seq.empty #obj_addr);
+  // The three residual obligations, which do mention the post-minor roots.
+  spot_post_minor_roots_shape r;
   empty_stack_roots_subset result.mc_roots;
-  assert (MBP.darken_precondition result.mc_major Seq.empty result.mc_roots result.mc_fp cap);
-  assert (GenImpl.gen_gc_major_precondition minor major fp roots Seq.empty cap)
+  CheneyPres.cheney_collect_preserves_wfh_from_shape minor major fp roots;
+  CheneyPres.cheney_collect_preserves_no_pointer_to_blue minor major fp roots;
+  spot_post_minor_roots_valid_for_darkening r;
+  assert (GMP.post_minor_root_obligations minor major fp roots Seq.empty cap);
+  // Everything else is transported by the library.
+  GenImpl.gen_gc_major_precondition_intro minor major fp roots Seq.empty cap
 #pop-options
 
 let spot_concrete_gen_gc_pre_empty_stack

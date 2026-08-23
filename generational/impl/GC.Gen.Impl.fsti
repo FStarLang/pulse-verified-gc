@@ -33,6 +33,8 @@ module PromoteSpec = GC.Gen.Promote
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
 module MBP = GC.Impl.MarkBoundedPrecondition
+module GMP = GC.Gen.MajorPrecondition
+module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Cheney = GC.Gen.Impl.Cheney
@@ -106,6 +108,23 @@ let gen_gc_major_precondition
   (st: Seq.seq obj_addr) (cap: nat) : prop =
   let result = CheneySpec.cheney_collect_spec minor major fp roots in
   MBP.darken_precondition result.mc_major st result.mc_roots result.mc_fp cap
+
+/// Introduction, so that a caller never has to transport the major-GC entry
+/// condition across the minor collection by hand.  Seven of `darken_precondition`'s
+/// ten conjuncts are pure heap-shape transport that `GC.Gen.CheneyPreservation`
+/// already proves; only the three in `post_minor_root_obligations` -- the ones
+/// relating the caller's own stack and capacity budget to the *post-minor* root
+/// set -- are genuinely the caller's to discharge.
+val gen_gc_major_precondition_intro
+  (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)
+  (st: Seq.seq obj_addr) (cap: nat)
+  : Lemma
+      (requires
+        GenInv.collection_heap_shape minor major fp /\
+        MarkBoundedInv.bounded_mark_inv major st cap /\
+        Mark.gray_objects_on_stack major st /\
+        GMP.post_minor_root_obligations minor major fp roots st cap)
+      (ensures gen_gc_major_precondition minor major fp roots st cap)
 
 val gen_gc_major_precondition_elim
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: Seq.seq U64.t)

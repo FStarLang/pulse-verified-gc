@@ -35,6 +35,8 @@ module ML = FStar.Math.Lemmas
 module MajorGC = GC.Impl
 module MarkBoundedImpl = GC.Impl.MarkBounded
 module MBP = GC.Impl.MarkBoundedPrecondition
+module GMP = GC.Gen.MajorPrecondition
+module MarkBoundedInv = GC.Spec.MarkBoundedInv
 module SpecGCPost = GC.Spec.Correctness
 module Mark = GC.Spec.Mark
 module Sweep = GC.Spec.Sweep
@@ -49,6 +51,11 @@ module RBridge = GC.Gen.ReachabilityBridge
 module CheneyBFS = GC.Gen.CheneyBFS
 module UpdatePtrs = GC.Gen.Impl.UpdatePtrs
 module Cheney = GC.Gen.Impl.Cheney
+
+/// The Cheney transport lives in `GC.Gen.MajorPrecondition`; this is the thin
+/// re-export that names it at the top-level interface.
+let gen_gc_major_precondition_intro minor major fp roots st cap
+  = GMP.darken_precondition_after_minor minor major fp roots st cap
 
 /// The caller-facing `gen_gc_major_precondition` is stated on the post-minor
 /// heap and the *pre*-darkening stack.  Turning it into the obligation that
