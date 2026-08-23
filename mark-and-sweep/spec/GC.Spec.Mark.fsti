@@ -524,14 +524,6 @@ val root_props_subset_create_graph : (g: heap) -> (roots: seq obj_addr) ->
   Lemma (requires root_props g roots)
         (ensures subset_vertices (HeapGraph.coerce_to_vertex_list roots) (create_graph g).vertices)
 
-val root_graph_precondition : (g: heap) -> (roots: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\
-                  root_props g roots /\
-                  is_vertex_set (HeapGraph.coerce_to_vertex_list roots))
-        (ensures (let graph = create_graph g in
-                  let roots' = HeapGraph.coerce_to_vertex_list roots in
-                  graph_wf graph /\ is_vertex_set roots' /\ subset_vertices roots' graph.vertices))
-
 val mark_reachable_is_black : (g: heap) -> (st: seq obj_addr) -> (roots: seq obj_addr) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ root_props g roots /\
                   no_black_objects g /\ no_pointer_to_blue g /\

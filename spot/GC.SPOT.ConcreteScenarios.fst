@@ -897,3 +897,17 @@ let spot_concrete_b_not_promoted (r: unit{ConcreteMajor.spot_major_room})
     (ConcreteMajor.spot_major_heap r)
     (ConcreteMajor.spot_major_fp r)
     (ConcreteMajor.spot_c r)
+
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+let spot_a_forwarded_from_gen_gc_precondition (r: unit{ConcreteMajor.spot_major_room}) (cap: nat)
+  =
+  let minor = ConcreteMinor.spot_minor2 in
+  let major = ConcreteMajor.spot_major_heap r in
+  let fp = ConcreteMajor.spot_major_fp r in
+  let roots = ThreeObjects.spot_roots (ConcreteMajor.spot_c r) in
+  ThreeObjects.spot_roots_len (ConcreteMajor.spot_c r);
+  ThreeObjects.spot_roots_index_a (ConcreteMajor.spot_c r);
+  Layout.a_minor_is_minor_pointer ();
+  assert (GMP.post_minor_root_obligations minor major fp roots Seq.empty cap);
+  GMP.post_minor_root_obligations_implies_roots_forwarded minor major fp roots Seq.empty cap
+#pop-options

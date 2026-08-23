@@ -61,22 +61,6 @@ let rec prefix_preserves_not_black
         g0 st0 (Seq.index roots (idx - 1)) cap x
     end
 
-let rec prefix_preserves_stack_mem
-  (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)
-  (idx: nat{idx <= Seq.length roots}) (cap: nat) (x: obj_addr)
-  : Lemma
-      (requires Seq.mem x st)
-      (ensures
-        Seq.mem x (snd (MB.darken_roots_bounded_prefix_spec g st roots idx cap)))
-      (decreases idx)
-  = if idx = 0 then ()
-    else begin
-      prefix_preserves_stack_mem g st roots (idx - 1) cap x;
-      let (g0, st0) = MB.darken_roots_bounded_prefix_spec g st roots (idx - 1) cap in
-      RL.check_and_darken_bounded_spec_preserves_stack_mem
-        g0 st0 (Seq.index roots (idx - 1)) cap x
-    end
-
 /// Darkening only ever pushes elements of `roots`, so the stack stays a subset.
 let rec prefix_preserves_stack_roots
   (g: heap) (st: Seq.seq obj_addr) (roots: Seq.seq U64.t)

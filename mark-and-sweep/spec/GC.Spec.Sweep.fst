@@ -26,10 +26,6 @@ module Header = GC.Lib.Header
 /// Free List Properties
 /// ---------------------------------------------------------------------------
 
-/// fp_in_heap implies fp can be coerced to obj_addr when non-null
-let fp_in_heap_elim (fp: U64.t) (g: heap)
-  = ()
-
 /// ---------------------------------------------------------------------------
 /// Sweep Step: Process One Object
 /// ---------------------------------------------------------------------------

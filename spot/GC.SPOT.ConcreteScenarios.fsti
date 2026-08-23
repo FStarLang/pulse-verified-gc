@@ -139,3 +139,29 @@ val spot_concrete_b_not_promoted
         (ConcreteMajor.spot_major_fp r)
         (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
         GC.SPOT.Layout.b_minor)
+
+/// The concrete witness for `GC.Gen.MajorPrecondition`'s observation that
+/// `gen_gc`'s entry contract already excludes root-level out-of-memory.
+///
+/// `a` is a live nursery root of this scenario.  This derives that it must have
+/// been promoted *from the precondition alone* -- note the absence of any
+/// appeal to `ConcreteForwarding.spot_concrete_no_oom`, which is how every
+/// other `a`-promotion result in this module is obtained.
+val spot_a_forwarded_from_gen_gc_precondition
+  : r:unit{ConcreteMajor.spot_major_room} ->
+    cap:nat ->
+    Lemma
+      (requires
+        GenImpl.gen_gc_major_precondition
+          ConcreteMinor.spot_minor2
+          (ConcreteMajor.spot_major_heap r)
+          (ConcreteMajor.spot_major_fp r)
+          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r))
+          Seq.empty cap)
+      (ensures (
+        let prom = Cheney.cheney_promote
+          ConcreteMinor.spot_minor2
+          (ConcreteMajor.spot_major_heap r)
+          (ConcreteMajor.spot_major_fp r)
+          (ThreeObjects.spot_roots (ConcreteMajor.spot_c r)) in
+        prom.fwd_map GC.SPOT.Layout.a_minor <> 0UL))
