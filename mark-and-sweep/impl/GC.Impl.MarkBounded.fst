@@ -1618,8 +1618,6 @@ let cons_establishes_postcondition
 fn rescan_push_if_gray (heap: heap_t) (st: gray_stack) (h_addr: hp_addr{U64.v h_addr + U64.v mword < heap_size})
   requires is_heap heap 's ** is_gray_stack st 'st **
            pure (Seq.length 's == heap_size /\
-                 Seq.length 'st <= stack_capacity st /\
-                 stack_capacity st > 0 /\
                  SpecMarkBounded.bounded_stack_props 's 'st /\
                  SweepInv.obj_in_objects (SpecHeap.f_address h_addr) 's /\
                  ~(Seq.mem (SpecHeap.f_address h_addr) 'st) /\
@@ -1627,6 +1625,9 @@ fn rescan_push_if_gray (heap: heap_t) (st: gray_stack) (h_addr: hp_addr{U64.v h_
   ensures is_heap heap 's ** (exists* st2. is_gray_stack st st2 **
           pure (rescan_push_postcondition 's 'st st2 (stack_capacity st) (U64.v h_addr + U64.v mword) (SpecHeap.f_address h_addr)))
 {
+  // `Seq.length 'st <= stack_capacity st` and `stack_capacity st > 0` are
+  // conjuncts of `is_gray_stack`; recover them instead of demanding them.
+  stack_facts st;
   let b = is_gray_check heap h_addr;
   if b {
     let full = is_full st;

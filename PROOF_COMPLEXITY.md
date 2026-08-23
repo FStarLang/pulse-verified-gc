@@ -790,6 +790,45 @@ by spec and implementation alike, and would have to be re-justified against a C 
 target that is a raw pointer with a fixed layout. That is precisely why the current design
 avoids it. Recorded as the largest lever, at prohibitive cost.
 
+### 6.9 Entry-contract hygiene — **done, with one residue**
+
+**What was wrong.** `GC.Gen.Impl.fsti`'s `gen_gc` contract leaked four internal facts to
+its callers:
+
+1. `is_gray_stack`'s abstraction hid two of its own conjuncts — `Seq.length s <=
+   stack_capacity st` and `stack_capacity st > 0` — so roughly a dozen sites restated
+   them as preconditions.
+2. `roots_valid_nonblue` was a strict consequence of the neighbouring
+   `roots_valid_for_minor_collection`.
+3. `gen_gc_major_precondition` was stated about the *post-darkening* state, forcing every
+   caller to simulate `darken_roots_bounded_spec` before it could call the collector.
+4. `major_field_zero_no_minor` demanded that no major object hold a minor pointer in
+   field 0 — a hypothesis no real heap satisfies, since field 0 is a legitimate pointer
+   slot; it was an artifact of the *generic* reachability bridge, not of write-back.
+
+**What was done.**
+
+- `GC.Impl.Stack.fsti` now exports a ghost `stack_facts` that recovers (1) from ownership
+  of `is_gray_stack`, so the clauses can simply be dropped from client preconditions.
+- `roots_valid_for_minor_collection_nonblue` derives (2) once; the conjunct was removed
+  from eight contracts.
+- `GC.Impl.MarkBoundedPrecondition` states the major-GC entry condition on the
+  *pre-darkening* state (`darken_precondition`) and proves the transport lemma
+  (`darken_establishes_precondition`) once, inside the library. `gen_gc`'s precondition is
+  now a single application of it, discharged by `gen_gc_major_precondition_elim`.
+- `major_field_zero_covered` replaces (4) with the satisfiable statement — field-0 minor
+  pointers are permitted provided they are covered by the root set — and
+  `reachability_bridge` was reproved against it.
+
+All four are `prop`-level; the extracted C is byte-identical.
+
+**Residue.** `major_heap_shape` (`GC.Gen.HeapInvariant.fst:29`) still has no
+`no_gray_objects` conjunct, which is why `gray_objects_on_stack` survives as a caller
+obligation even though every caller discharges it trivially (empty stack, no gray
+objects). Adding the conjunct would remove the last non-derivable clause from the
+major-GC entry contract. It touches an opaque predicate used throughout the generational
+tree, so it is recorded here rather than done opportunistically.
+
 ---
 
 ## 7. Summary
