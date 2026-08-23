@@ -68,21 +68,9 @@ let gray_black_objects_on_stack (major: heap) (st: seq obj_addr) : prop =
   forall (obj: obj_addr).
     Seq.mem obj (objects zero_addr major) /\
     (is_gray obj major \/ is_black obj major) ==> Seq.mem obj st
-
-/// Stack-coupled major-GC facts: bounded mark invariant, root validity, the
-/// gray/black stack condition, and graph/root well-formedness.
-[@@"opaque_to_smt"]
-val major_stack_shape (major: heap) (st: seq obj_addr) (cap: nat) : prop
-
 /// Non-stack combined heap shape used by minor collection.
 [@@"opaque_to_smt"]
 val collection_heap_shape (minor: minor_state) (major: heap) (fp: U64.t) : prop
-
-/// Full combined heap shape used by `gen_gc`.
-[@@"opaque_to_smt"]
-val full_heap_shape (minor: minor_state) (major: heap) (fp: U64.t)
-                    (st: seq obj_addr) (cap: nat) : prop
-
 val major_heap_shape_intro (major: heap) (fp: U64.t)
   : Lemma (requires well_formed_heap major /\
                     AllocLemmas.fl_valid major fp heap_words /\
@@ -140,17 +128,6 @@ val minor_heap_shape_intro (minor: minor_state)
                     minor_no_scan_invariant minor /\
                     minor_fields_no_infix_targets minor)
           (ensures minor_heap_shape minor)
-
-val minor_major_fields_no_blue_intro (minor: minor_state) (major: heap)
-  : Lemma (requires
-            (forall (obj: U64.t) (j: nat).
-              Seq.mem obj (minor_objects minor) /\
-              j < minor_wosize minor obj /\
-              is_pointer_field (minor_read_field minor obj j) ==>
-              Seq.mem ((minor_read_field minor obj j) <: obj_addr)
-                     (objects zero_addr major) /\
-              ~(is_blue ((minor_read_field minor obj j) <: obj_addr) major)))
-          (ensures minor_major_fields_no_blue minor major)
 
 val minor_major_fields_no_blue_no_pointer_fields
   : minor:minor_state -> major:heap ->
@@ -212,26 +189,6 @@ val major_minor_fields_no_infix_targets_intro
                is_minor_pointer v ==> ~(is_infix_in_minor minor v))))
           (ensures major_minor_fields_no_infix_targets minor major)
 
-val major_stack_shape_elim (major: heap) (st: seq obj_addr) (cap: nat)
-  : Lemma (requires major_stack_shape major st cap)
-          (ensures MarkBoundedInv.bounded_mark_inv major st cap /\
-                   Mark.root_props major st /\
-                   gray_black_objects_on_stack major st /\
-                   (let graph = HeapModel.create_graph major in
-                    let roots' = HeapGraph.coerce_to_vertex_list st in
-                    Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
-                    Graph.subset_vertices roots' graph.vertices))
-
-val major_stack_shape_intro (major: heap) (st: seq obj_addr) (cap: nat)
-  : Lemma (requires MarkBoundedInv.bounded_mark_inv major st cap /\
-                    Mark.root_props major st /\
-                    gray_black_objects_on_stack major st /\
-                    (let graph = HeapModel.create_graph major in
-                     let roots' = HeapGraph.coerce_to_vertex_list st in
-                     Graph.graph_wf graph /\ Graph.is_vertex_set roots' /\
-                     Graph.subset_vertices roots' graph.vertices))
-          (ensures major_stack_shape major st cap)
-
 val collection_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires collection_heap_shape minor major fp)
            (ensures major_heap_shape major fp /\
@@ -245,18 +202,6 @@ val collection_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
                     minor_major_fields_no_blue minor major /\
                     major_minor_fields_no_infix_targets minor major)
           (ensures collection_heap_shape minor major fp)
-
-val full_heap_shape_elim (minor: minor_state) (major: heap) (fp: U64.t)
-                          (st: seq obj_addr) (cap: nat)
-  : Lemma (requires full_heap_shape minor major fp st cap)
-          (ensures collection_heap_shape minor major fp /\
-                    major_stack_shape major st cap)
-
-val full_heap_shape_intro (minor: minor_state) (major: heap) (fp: U64.t)
-                          (st: seq obj_addr) (cap: nat)
-  : Lemma (requires collection_heap_shape minor major fp /\
-                    major_stack_shape major st cap)
-          (ensures full_heap_shape minor major fp st cap)
 
 /// Resetting the nursery clears stale headers and makes all minor-side shape
 /// and cross-generation minor-pointer obligations vacuous.
@@ -274,8 +219,3 @@ val collection_heap_shape_after_minor_reset
   (minor: minor_state) (major: heap) (fp: U64.t)
   : Lemma (requires major_heap_shape major fp)
           (ensures collection_heap_shape (minor_reset minor) major fp)
-
-/// Helper lemma: when there are no minor objects, minor_major_fields_no_blue holds vacuously
-val minor_major_fields_no_blue_empty (minor: minor_state) (major: heap)
-  : Lemma (requires minor_objects minor == Seq.empty)
-          (ensures minor_major_fields_no_blue minor major)

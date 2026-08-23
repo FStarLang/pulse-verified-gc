@@ -23,15 +23,10 @@ module SimOne = GC.Gen.Cheney.SimOne
 /// Uses the reachability induction principle: any predicate that holds for
 /// roots and is closed under successors holds for all reachable objects.
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 
 let fwd_well_formed_covers_reachable
   (minor: minor_state) (fwd: forwarding_map) (roots: seq U64.t)
-  : Lemma (requires fwd_well_formed minor fwd roots)
-          (ensures forall (x: U64.t).
-            Seq.mem x (minor_reachable minor roots) /\
-            minor_wosize minor x > 0 ==>
-            fwd x <> 0UL)
   =
   let p (x: U64.t) : prop =
     Seq.mem x (minor_objects minor) /\ (minor_wosize minor x > 0 ==> fwd x <> 0UL) in
@@ -60,7 +55,7 @@ let fwd_well_formed_covers_reachable
 /// fwd monotonicity: forward_one only extends the forwarding map
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 
 /// Helper: cheney_forward_normal preserves forwarding entries
 private let cheney_forward_normal_fwd_monotone
@@ -85,8 +80,6 @@ private let cheney_forward_normal_fwd_monotone
 
 let forward_one_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
-          (ensures (CheneySpec.cheney_forward_one minor cs addr).cs_fwd x <> 0UL)
   =
   if cs.cs_fwd addr <> 0UL then
     CheneySpec.cheney_forward_one_noop minor cs addr
@@ -106,7 +99,7 @@ let forward_one_fwd_monotone
 
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 
 let rec forward_fields_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state)
@@ -123,23 +116,6 @@ let rec forward_fields_fwd_monotone
     let cs' = CheneySpec.cheney_forward_one minor cs field_val in
     forward_one_fwd_monotone minor cs field_val x;
     forward_fields_fwd_monotone minor cs' parent (idx + 1) wosize x
-  end
-
-let rec forward_roots_fwd_monotone
-  (minor: minor_state) (cs: CheneySpec.cheney_state)
-  (roots: seq U64.t) (idx: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
-          (ensures (CheneySpec.cheney_forward_roots minor cs roots idx).cs_fwd x <> 0UL)
-          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
-  =
-  if idx >= Seq.length roots then
-    CheneySpec.cheney_forward_roots_base minor cs roots idx
-  else begin
-    CheneySpec.cheney_forward_roots_step minor cs roots idx;
-    let r = Seq.index roots idx in
-    let cs' = CheneySpec.cheney_forward_one minor cs r in
-    forward_one_fwd_monotone minor cs r x;
-    forward_roots_fwd_monotone minor cs' roots (idx + 1) x
   end
 
 let rec scan_fwd_monotone
@@ -164,10 +140,6 @@ let rec scan_fwd_monotone
 let scan_preserves_fwd_covers_roots
   (minor: minor_state) (cs: CheneySpec.cheney_state)
   (roots: seq U64.t) (scan fuel: nat)
-  : Lemma (requires minor_infix_wf minor /\
-                    fwd_covers_roots minor cs.cs_fwd roots)
-          (ensures fwd_covers_roots minor
-            (CheneySpec.cheney_scan minor cs scan fuel).cs_fwd roots)
   =
     let aux (r: U64.t) : Lemma
       (requires Seq.mem r roots /\
@@ -182,13 +154,9 @@ let scan_preserves_fwd_covers_roots
 
 #pop-options
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 let forward_one_queue_prefix
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t) (k: nat)
-  : Lemma (requires k < Seq.length cs.cs_queue)
-          (ensures k < Seq.length (CheneySpec.cheney_forward_one minor cs addr).cs_queue /\
-                   Seq.index (CheneySpec.cheney_forward_one minor cs addr).cs_queue k ==
-                   Seq.index cs.cs_queue k)
   =
     if cs.cs_fwd addr <> 0UL then
       CheneySpec.cheney_forward_one_noop minor cs addr
@@ -252,25 +220,17 @@ let addr_covered (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t
   Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0 ==>
   cs.cs_fwd addr <> 0UL
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let addr_covered_intro
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires (Seq.mem addr (minor_objects minor) /\
-                     minor_wosize minor addr > 0 ==> cs.cs_fwd addr <> 0UL))
-          (ensures addr_covered minor cs addr)
   = reveal_opaque (`%addr_covered) (addr_covered minor cs addr)
 
 let addr_covered_elim
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires addr_covered minor cs addr /\
-                    Seq.mem addr (minor_objects minor) /\ minor_wosize minor addr > 0)
-          (ensures cs.cs_fwd addr <> 0UL)
   = reveal_opaque (`%addr_covered) (addr_covered minor cs addr)
 
 let forward_one_preserves_addr_covered
   (minor: minor_state) (cs: CheneySpec.cheney_state) (step_addr x: U64.t)
-  : Lemma (requires minor_infix_wf minor /\ addr_covered minor cs x)
-          (ensures addr_covered minor (CheneySpec.cheney_forward_one minor cs step_addr) x)
   =
     reveal_opaque (`%addr_covered) (addr_covered minor cs x);
     reveal_opaque (`%addr_covered)
@@ -284,21 +244,12 @@ let root_prefix_covered
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat) : prop =
   forall (j:nat). j < idx /\ j < Seq.length roots ==> addr_covered minor cs (Seq.index roots j)
 
-#push-options "--z3rlimit 40 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let root_prefix_empty (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t)
-  : Lemma (ensures root_prefix_covered minor cs roots 0)
   = reveal_opaque (`%root_prefix_covered) (root_prefix_covered minor cs roots 0)
 
 let root_prefix_step
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires idx < Seq.length roots /\
-                    minor_infix_wf minor /\
-                    root_prefix_covered minor cs roots idx /\
-                    addr_covered minor (CheneySpec.cheney_forward_one minor cs (Seq.index roots idx))
-                      (Seq.index roots idx))
-          (ensures root_prefix_covered minor
-                    (CheneySpec.cheney_forward_one minor cs (Seq.index roots idx))
-                    roots (idx + 1))
   =
     let r = Seq.index roots idx in
     let cs' = CheneySpec.cheney_forward_one minor cs r in
@@ -318,16 +269,6 @@ let root_prefix_step
 let root_prefix_step_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
   (oom_before oom_after: bool)
-  : Lemma (requires idx < Seq.length roots /\
-                    minor_infix_wf minor /\
-                    (oom_before == true ==> oom_after == true) /\
-                    (not oom_before ==> root_prefix_covered minor cs roots idx) /\
-                    (not oom_after ==> addr_covered minor
-                      (CheneySpec.cheney_forward_one minor cs (Seq.index roots idx))
-                      (Seq.index roots idx)))
-          (ensures not oom_after ==> root_prefix_covered minor
-                    (CheneySpec.cheney_forward_one minor cs (Seq.index roots idx))
-                    roots (idx + 1))
   =
     if not oom_after then begin
       assert (not oom_before);
@@ -336,8 +277,6 @@ let root_prefix_step_oom
 
 let root_prefix_all_implies_covers
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t)
-  : Lemma (requires root_prefix_covered minor cs roots (Seq.length roots))
-          (ensures fwd_covers_roots minor cs.cs_fwd roots)
   =
     reveal_opaque (`%root_prefix_covered)
       (root_prefix_covered minor cs roots (Seq.length roots));
@@ -354,8 +293,6 @@ let root_prefix_all_implies_covers
 
 let root_prefix_all_implies_covers_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (oom: bool)
-  : Lemma (requires (not oom ==> root_prefix_covered minor cs roots (Seq.length roots)))
-          (ensures not oom ==> fwd_covers_roots minor cs.cs_fwd roots)
   =
     if not oom then root_prefix_all_implies_covers minor cs roots
 #pop-options
@@ -365,23 +302,12 @@ let field_prefix_covered
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) : prop =
   forall (j:nat). j < idx ==> addr_covered minor cs (to_minor_offset (minor_read_field minor parent j))
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 0"
 let field_prefix_empty (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
-  : Lemma (ensures field_prefix_covered minor cs parent 0)
   = reveal_opaque (`%field_prefix_covered) (field_prefix_covered minor cs parent 0)
 
 let field_prefix_step
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat)
-  : Lemma (requires minor_infix_wf minor /\
-                    field_prefix_covered minor cs parent idx /\
-                    addr_covered minor
-                      (CheneySpec.cheney_forward_one minor cs
-                        (to_minor_offset (minor_read_field minor parent idx)))
-                      (to_minor_offset (minor_read_field minor parent idx)))
-          (ensures field_prefix_covered minor
-                    (CheneySpec.cheney_forward_one minor cs
-                      (to_minor_offset (minor_read_field minor parent idx)))
-                    parent (idx + 1))
   =
     let child = to_minor_offset (minor_read_field minor parent idx) in
     let cs' = CheneySpec.cheney_forward_one minor cs child in
@@ -400,17 +326,6 @@ let field_prefix_step
 let field_prefix_step_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat)
   (oom_before oom_after: bool)
-  : Lemma (requires minor_infix_wf minor /\
-                    (oom_before == true ==> oom_after == true) /\
-                    (not oom_before ==> field_prefix_covered minor cs parent idx) /\
-                    (not oom_after ==> addr_covered minor
-                      (CheneySpec.cheney_forward_one minor cs
-                        (to_minor_offset (minor_read_field minor parent idx)))
-                      (to_minor_offset (minor_read_field minor parent idx))))
-          (ensures not oom_after ==> field_prefix_covered minor
-                    (CheneySpec.cheney_forward_one minor cs
-                      (to_minor_offset (minor_read_field minor parent idx)))
-                    parent (idx + 1))
   =
     if not oom_after then begin
       assert (not oom_before);
@@ -419,10 +334,6 @@ let field_prefix_step_oom
 
 let field_prefix_all_implies_successors
   (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t)
-  : Lemma (requires field_prefix_covered minor cs parent (minor_wosize minor parent))
-          (ensures forall (y: U64.t).
-            Seq.mem y (minor_successors minor parent) /\
-            minor_wosize minor y > 0 ==> cs.cs_fwd y <> 0UL)
   =
     reveal_opaque (`%field_prefix_covered)
       (field_prefix_covered minor cs parent (minor_wosize minor parent));
@@ -450,26 +361,13 @@ let scanned_prefix_closed
     Seq.mem y (minor_successors minor (Seq.index cs.cs_queue k)) /\
     minor_wosize minor y > 0 ==> cs.cs_fwd y <> 0UL
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 let scanned_prefix_empty
   (minor: minor_state) (cs: CheneySpec.cheney_state)
-  : Lemma (ensures scanned_prefix_closed minor cs 0)
   = reveal_opaque (`%scanned_prefix_closed) (scanned_prefix_closed minor cs 0)
 
 let scanned_prefix_step
   (minor: minor_state) (cs cs': CheneySpec.cheney_state) (scan: nat)
-  : Lemma
-    (requires
-      minor_infix_wf minor /\
-      scanned_prefix_closed minor cs scan /\
-      scan < Seq.length cs.cs_queue /\
-      cs' == CheneySpec.cheney_forward_fields minor cs
-        (Seq.index cs.cs_queue scan) 0
-        (minor_wosize minor (Seq.index cs.cs_queue scan)) /\
-      field_prefix_covered minor cs'
-        (Seq.index cs.cs_queue scan)
-        (minor_wosize minor (Seq.index cs.cs_queue scan)))
-    (ensures scanned_prefix_closed minor cs' (scan + 1))
   =
     let parent = Seq.index cs.cs_queue scan in
     reveal_opaque (`%scanned_prefix_closed) (scanned_prefix_closed minor cs scan);
@@ -498,19 +396,6 @@ let scanned_prefix_step
 let scanned_prefix_step_oom
   (minor: minor_state) (cs cs': CheneySpec.cheney_state) (scan: nat)
   (oom_before oom_after: bool)
-  : Lemma
-    (requires
-      minor_infix_wf minor /\
-      (oom_before == true ==> oom_after == true) /\
-      (not oom_before ==> scanned_prefix_closed minor cs scan) /\
-      scan < Seq.length cs.cs_queue /\
-      cs' == CheneySpec.cheney_forward_fields minor cs
-        (Seq.index cs.cs_queue scan) 0
-        (minor_wosize minor (Seq.index cs.cs_queue scan)) /\
-      (not oom_after ==> field_prefix_covered minor cs'
-        (Seq.index cs.cs_queue scan)
-        (minor_wosize minor (Seq.index cs.cs_queue scan))))
-    (ensures not oom_after ==> scanned_prefix_closed minor cs' (scan + 1))
   =
     if not oom_after then begin
       assert (not oom_before);
@@ -519,10 +404,6 @@ let scanned_prefix_step_oom
 
 let scanned_exhausted_implies_fwd_closed
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat)
-  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    scanned_prefix_closed minor cs scan /\
-                    scan >= Seq.length cs.cs_queue)
-          (ensures fwd_closed minor cs.cs_fwd)
   =
     SimOne.cheney_bfs_inv_fwd_in_queue minor cs;
     reveal_opaque (`%scanned_prefix_closed) (scanned_prefix_closed minor cs scan);
@@ -545,10 +426,6 @@ let scanned_exhausted_implies_fwd_closed
 
 let scanned_exhausted_implies_fwd_closed_oom
   (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (oom: bool)
-  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    (not oom ==> scanned_prefix_closed minor cs scan) /\
-                    scan >= Seq.length cs.cs_queue)
-          (ensures not oom ==> fwd_closed minor cs.cs_fwd)
   =
     if not oom then scanned_exhausted_implies_fwd_closed minor cs scan
 #pop-options
@@ -560,16 +437,6 @@ let scanned_exhausted_implies_fwd_closed_oom
 let cheney_no_oom_from_loop_posts
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (oom_roots oom_final: bool)
-  : Lemma (requires minor_infix_wf minor /\
-                    (let cs0 : CheneySpec.cheney_state =
-                       { CheneySpec.cs_major = major; CheneySpec.cs_fp = fp;
-                         CheneySpec.cs_fwd = empty_forwarding; CheneySpec.cs_queue = Seq.empty } in
-                     let cs1 = CheneySpec.cheney_forward_roots minor cs0 roots 0 in
-                     let cs2 = CheneySpec.cheney_scan minor cs1 0 (CheneySpec.cheney_fuel minor) in
-                     (oom_roots == true ==> oom_final == true) /\
-                     (not oom_roots ==> fwd_covers_roots minor cs1.CheneySpec.cs_fwd roots) /\
-                     (not oom_final ==> fwd_closed minor cs2.CheneySpec.cs_fwd)))
-          (ensures not oom_final ==> cheney_no_oom minor major fp roots)
   =
     if not oom_final then begin
       let cs0 : CheneySpec.cheney_state =
@@ -585,12 +452,6 @@ let cheney_no_oom_from_loop_posts
 
 let cheney_promotes_all_reachable
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
-  : Lemma (requires cheney_no_oom minor major fp roots)
-          (ensures (let prom = CheneySpec.cheney_promote minor major fp roots in
-                    forall (x: U64.t).
-                      Seq.mem x (minor_reachable minor roots) /\
-                      minor_wosize minor x > 0 ==>
-                      prom.fwd_map x <> 0UL))
   =
   let prom = CheneySpec.cheney_promote minor major fp roots in
   fwd_well_formed_covers_reachable minor prom.fwd_map roots

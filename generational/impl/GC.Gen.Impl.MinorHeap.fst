@@ -87,7 +87,17 @@ fn minor_write (mh: minor_heap_t) (addr: U64.t) (v: U64.t)
 /// Allocation
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 10"
+/// `minor_alloc`'s VC needs deep unfolding: two of its goals -- the body VC and
+/// the `minor_heap_size` refinement from GC.Gen.Base -- only discharge at fuel
+/// 8.  Left to find that itself, F* escalates (2,1) -> (2,2) -> (4,2) -> (8,2),
+/// and each losing attempt runs the full rlimit to exhaustion first; those dead
+/// attempts, not the successful proof, were the bulk of this module's runtime.
+/// Naming the setting that works turns ~14 Z3 calls into 2, and this module
+/// from the slowest in the repository into an unremarkable one: 802s -> 32s.
+///
+/// rlimit 30, not the file default: the body VC lands at 9.4 even when it
+/// succeeds, so 10 leaves no margin.
+#push-options "--z3rlimit 30 --fuel 8 --ifuel 2"
 fn minor_alloc (mh: minor_heap_t) (wosize: U64.t) (tag: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v wosize > 0 /\ U64.v wosize <= max_young_wosize /\
@@ -156,7 +166,7 @@ fn minor_heap_reset (mh: minor_heap_t)
 /// Initialization
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 12"
 fn alloc_minor_heap (_: unit)
   requires emp
   returns mh: minor_heap_t
@@ -213,7 +223,7 @@ let minor_field_in_bounds (obj_addr wosize jv: nat)
 
 /// Translate a single field: if it's an absolute minor pointer, replace with offset.
 /// minor_base_addr is the absolute address of the minor heap data buffer.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn translate_one_field (mh: minor_heap_t) (minor_base_addr: U64.t)
                        (bump: U64.t) (field_addr: U64.t)
@@ -239,7 +249,7 @@ fn translate_one_field (mh: minor_heap_t) (minor_base_addr: U64.t)
 #pop-options
 
 /// Translate all fields of one minor object from absolute to offset
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
                            (bump: U64.t) (obj_addr: U64.t) (wosize: U64.t)
   requires is_minor mh 'd 'b **
@@ -274,7 +284,7 @@ fn translate_object_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
 #pop-options
 
 /// Conditionally translate an object's fields (only if scannable)
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn maybe_translate_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
                            (bump: U64.t) (obj_addr: U64.t)
@@ -297,7 +307,7 @@ fn maybe_translate_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
 #pop-options
 
 /// Walk the minor heap and translate all scannable objects' fields
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 fn translate_minor_fields (mh: minor_heap_t) (minor_base_addr: U64.t)
   requires is_minor mh 'd 'b **
            pure (U64.v 'b <= minor_heap_size /\
@@ -400,7 +410,7 @@ let infix_fwd_no_overflow (parent_fwd delta: nat)
 /// Inner loop: for one closure at `hdr_pos` with `wosize` fields, check each
 /// field for an infix header and synthesize its forwarding entry.
 /// Conditional write to fwd_arr — wraps the bounds check and write.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn maybe_write_fwd_entry (fwd_arr: array U64.t) (idx: SZ.t) (v: U64.t)
   requires pts_to fwd_arr 'farr **
@@ -416,7 +426,7 @@ fn maybe_write_fwd_entry (fwd_arr: array U64.t) (idx: SZ.t) (v: U64.t)
 #pop-options
 
 /// Check one field for an infix header and synthesize its forwarding entry.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn maybe_synthesize_infix_field
   (mh: minor_heap_t)
@@ -452,7 +462,7 @@ fn maybe_synthesize_infix_field
 }
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn synthesize_one_closure_infix
   (mh: minor_heap_t)
@@ -500,7 +510,7 @@ fn synthesize_one_closure_infix
 
 /// Check if this object is a closure with a promoted parent, and if so,
 /// synthesize infix forwarding entries for all its infix sub-objects.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn maybe_synthesize_closure
   (mh: minor_heap_t)
@@ -535,7 +545,7 @@ fn maybe_synthesize_closure
 #pop-options
 
 /// Walk the minor heap and synthesize infix forwarding entries.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
   requires is_minor mh 'd 'b **
            pts_to fwd_arr 'farr **
@@ -619,7 +629,7 @@ fn synthesize_infix_forwarding (mh: minor_heap_t) (fwd_arr: array U64.t)
 /// and append parent object address to roots.
 
 /// Helper: conditionally add parent to roots if field has infix tag
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn maybe_add_infix_parent
   (mh: minor_heap_t)
@@ -656,7 +666,7 @@ fn maybe_add_infix_parent
 }
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn find_infix_in_one_closure
   (mh: minor_heap_t)
@@ -708,7 +718,7 @@ fn find_infix_in_one_closure
 #pop-options
 
 /// Conditionally scan one object for infix headers and add parents to roots.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 inline_for_extraction
 fn maybe_find_infix_in_closure
   (mh: minor_heap_t)
@@ -743,7 +753,7 @@ fn maybe_find_infix_in_closure
 
 /// Walk the minor heap and find all infix parent closures, appending them to roots.
 /// Returns the number of parents added.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 fn find_infix_parents (mh: minor_heap_t)
                       (roots: array U64.t)
                       (nroots: SZ.t)

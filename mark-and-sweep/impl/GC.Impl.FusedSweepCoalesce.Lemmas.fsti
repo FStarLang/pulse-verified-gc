@@ -196,12 +196,6 @@ val black_step_fused_aux_eq
 
 /// These are used by both coalesce and fused loops; we re-export the signatures
 /// so callers only need to open one Lemmas module.
-
-/// flush_blue preserves heap length
-val flush_blue_length
-  (g: heap) (fb: U64.t) (rw: nat) (fp: U64.t)
-  : Lemma (Seq.length (fst (SpecCoalesce.flush_blue g fb rw fp)) == Seq.length g)
-
 /// Empty case: flush final run
 val fused_step_empty
   (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)

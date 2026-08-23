@@ -91,12 +91,6 @@ val obj_not_in_cons : (obj: obj_addr) -> (child: obj_addr) -> (st: seq obj_addr)
 val sev_mem_objects : (g: heap) -> (st: seq obj_addr) -> (x: obj_addr) ->
   Lemma (requires stack_elements_valid g st /\ Seq.mem x st)
         (ensures Seq.mem x (objects zero_addr g))
-
-/// Stack length is bounded by number of objects
-val stack_length_bound : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires stack_elements_valid g st /\ stack_no_dups st)
-        (ensures Seq.length st <= Seq.length (objects zero_addr g))
-
 /// ---------------------------------------------------------------------------
 /// Root Properties
 /// ---------------------------------------------------------------------------
@@ -136,12 +130,6 @@ let rec push_children (g: heap) (st: seq obj_addr) (obj: obj_addr) (i: U64.t{U64
       push_children g' st' obj (U64.add i 1UL) ws
     else
       (g', st')
-
-/// push_children only grows the stack (or leaves it unchanged)
-val push_children_stack_monotone : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-                                    (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (ensures Seq.length st <= Seq.length (snd (push_children g st obj i ws)))
-
 /// ---------------------------------------------------------------------------
 /// Well-Formedness Preservation
 /// ---------------------------------------------------------------------------
@@ -180,17 +168,6 @@ let mark_step (g: heap) (st: seq obj_addr)
     (g', st')
   else
     push_children g' st' obj 1UL ws
-
-/// Unfold what mark_step computes
-val mark_step_unfold : (g: heap{well_formed_heap g}) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires stack_elements_valid g st)
-        (ensures (let obj = Seq.head st in
-         let st' = Seq.tail st in
-         let g' = makeBlack obj g in
-         let ws = wosize_of_object obj g in
-         (if is_no_scan obj g then mark_step g st == (g', st')
-          else mark_step g st == push_children g' st' obj 1UL ws)))
-
 /// mark_step preserves stack_props
 val mark_step_preserves_stack_props : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st)
@@ -218,19 +195,6 @@ let rec mark_aux (g: heap) (st: seq obj_addr) (fuel: nat)
 
 let mark (g: heap) (st: seq obj_addr) : GTot heap =
   mark_aux g st heap_words
-
-/// mark_aux unfolds one step
-val mark_aux_unfold : (g: heap) -> (st: seq obj_addr) -> (fuel: nat) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\ Seq.length st > 0)
-        (ensures (let (g', st') = mark_step g st in
-                  well_formed_heap g' /\ stack_props g' st' /\
-                  mark_aux g st (fuel + 1) == mark_aux g' st' fuel))
-
-/// mark_aux on empty stack is identity
-val mark_aux_empty : (g: heap) -> (st: seq obj_addr) -> (fuel: nat) ->
-  Lemma (requires Seq.length st = 0)
-        (ensures mark_aux g st fuel == g)
-
 /// ---------------------------------------------------------------------------
 /// Mark Phase Invariants
 /// ---------------------------------------------------------------------------
@@ -254,11 +218,6 @@ let noGreyObjects (g: heap) : prop =
 /// No black objects initially
 let no_black_objects (g: heap) : prop =
   forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_black obj g)
-
-/// No blue objects
-let no_blue_objects (g: heap) : prop =
-  forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_blue obj g)
-
 /// No non-blue object points to a blue object
 let no_pointer_to_blue (g: heap) : prop =
   forall (src dst: obj_addr).
@@ -287,13 +246,6 @@ val no_pointer_to_blue_intro_from_fields
 /// ---------------------------------------------------------------------------
 /// Mark Aux/Mark Lemmas
 /// ---------------------------------------------------------------------------
-
-/// Fuel must be positive when stack is non-empty and mark_aux converges
-val mark_aux_fuel_pos : (g: heap) -> (st: seq obj_addr) -> (fuel: nat) ->
-  Lemma (requires stack_props g st /\ Seq.length st > 0 /\
-                  noGreyObjects (mark_aux g st fuel))
-        (ensures fuel > 0)
-
 /// ---------------------------------------------------------------------------
 /// Mark Preserves Well-Formedness
 /// ---------------------------------------------------------------------------
@@ -397,10 +349,6 @@ val push_children_preserves_objects : (g: heap) -> (st: seq obj_addr) -> (obj: o
                   U64.v (wosize_of_object obj g) < pow2 54)
         (ensures (let (g', _) = push_children g st obj i ws in
                   objects zero_addr g' == objects zero_addr g))
-
-val mark_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st)
-        (ensures objects zero_addr (fst (mark_step g st)) == objects zero_addr g)
 
 val mark_step_preserves_density : (g: heap) -> (st: seq obj_addr{Seq.length st > 0}) ->
   Lemma (requires well_formed_heap g /\ stack_props g st /\ SweepInv.heap_objects_dense g)

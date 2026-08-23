@@ -21,7 +21,7 @@ module WriteBody = GC.Gen.WriteBodyLemmas
 open GC.Gen.PromoteUpdate.Obj
 open GC.Gen.PromoteUpdate.Aux
 
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec objects_eq_when_reads_agree (g1 g2: heap) (start: hp_addr)
   : Lemma (requires Seq.length g1 == Seq.length g2 /\
                     (forall (a: hp_addr). U64.v a >= U64.v start ==>
@@ -47,7 +47,7 @@ private let rec objects_eq_when_reads_agree (g1 g2: heap) (start: hp_addr)
 /// Objects from start are preserved when start >= obj + wz*8.
 /// Since all field writes are at addresses < obj + wz*8 <= start,
 /// all reads from start onward are unchanged.
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let update_object_pointers_preserves_objects_above
   (major: heap) (obj: obj_addr) (wosize: nat) (fwd: forwarding_map)
   (start: hp_addr)
@@ -70,7 +70,7 @@ private let update_object_pointers_preserves_objects_above
 #pop-options
 
 /// Objects nonemptiness depends only on the header read at start.
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1"
 private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
   : Lemma (requires Seq.length g1 == Seq.length g2 /\
                     read_word g1 start == read_word g2 start /\
@@ -80,7 +80,7 @@ private let objects_nonempty_from_header (g1 g2: heap) (start: hp_addr)
 #pop-options
 
 /// Helper: density is preserved through update_object_pointers
-#push-options "--z3rlimit 50 --fuel 0 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 0 --z3refresh"
 private let update_object_pointers_preserves_density
   (major: heap) (obj: obj_addr) (wz: nat) (fwd: forwarding_map)
   : Lemma (requires well_formed_heap_part1 major /\
@@ -149,7 +149,7 @@ private let update_object_pointers_preserves_density
 
 /// Shift lemma: processing cons hd tl from index (k+1) is the same as processing tl from index k.
 /// This is a structural property of the recursive function update_all_objects_aux.
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec update_all_objects_aux_shift
   (g: heap) (hd: obj_addr) (tl: seq obj_addr) (fwd: forwarding_map) (k: nat)
   : Lemma (ensures update_all_objects_aux g (Seq.cons hd tl) fwd (k + 1) ==
@@ -175,34 +175,9 @@ private let rec update_all_objects_aux_shift
 #pop-options
 
 /// Master positional step lemma
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1 --z3refresh"
 let update_all_objects_positional_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    heap_objects_dense major /\
-                    U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects zero_addr major) /\
-                    Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major = false /\
-                    is_no_scan (f_address pos) major = false)
-          (ensures (let hdr = read_word major pos in
-                    let wz = U64.v (getWosize hdr) in
-                    let obj : obj_addr = f_address pos in
-                    let major' = update_object_pointers major obj wz fwd 0 in
-                    let next_nat = U64.v pos + (wz + 1) * 8 in
-                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
-                    U64.v obj + wz * 8 <= heap_size /\
-                    well_formed_heap_part1 major' /\
-                    heap_objects_dense major' /\
-                    objects zero_addr major' == objects zero_addr major /\
-                    (next_nat < heap_size ==>
-                      update_all_objects_aux major' (objects (U64.uint_to_t next_nat) major') fwd 0 ==
-                        update_all_objects_aux major (objects pos major) fwd 0) /\
-                    (next_nat >= heap_size ==>
-                      major' == update_all_objects_aux major (objects pos major) fwd 0) /\
-                    (next_nat + 8 < heap_size ==>
-                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects zero_addr major') /\
-                      Seq.length (objects (U64.uint_to_t next_nat) major') > 0)))
   = // Step 1: Establish bounds
     let obj : obj_addr = f_address pos in
     objects_nonempty_head_fits pos major;
@@ -294,32 +269,9 @@ let update_all_objects_positional_step
 
 /// Blue skip step: when the current object is blue (free-list cell),
 /// skip it without modifying the heap. The spec connection advances past it.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_blue
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    heap_objects_dense major /\
-                    U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects zero_addr major) /\
-                    Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major)
-          (ensures (let hdr = read_word major pos in
-                    let wz = U64.v (getWosize hdr) in
-                    let obj : obj_addr = f_address pos in
-                    let next_nat = U64.v pos + (wz + 1) * 8 in
-                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
-                    U64.v obj + wz * 8 <= heap_size /\
-                    // Spec: skipping blue advances to the next object with same heap
-                    (next_nat < heap_size ==>
-                      update_all_objects_aux major (objects (U64.uint_to_t next_nat) major) fwd 0 ==
-                        update_all_objects_aux major (objects pos major) fwd 0) /\
-                    // Terminal: when next reaches heap_size, result is just major
-                    (next_nat >= heap_size ==>
-                      major == update_all_objects_aux major (objects pos major) fwd 0) /\
-                    // Density: next position is valid
-                    (next_nat + 8 < heap_size ==>
-                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects zero_addr major) /\
-                      Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
   = let obj : obj_addr = f_address pos in
     objects_nonempty_head_fits pos major;
     wfh_part1_obj_bound major obj;
@@ -347,30 +299,9 @@ let update_all_objects_positional_step_blue
 
 /// No-scan skip step: when the current object has tag >= no_scan_tag,
 /// skip it without modifying the heap. Identical structure to the blue step.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_positional_step_no_scan
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    heap_objects_dense major /\
-                    U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects zero_addr major) /\
-                    Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major = false /\
-                    is_no_scan (f_address pos) major)
-          (ensures (let hdr = read_word major pos in
-                    let wz = U64.v (getWosize hdr) in
-                    let obj : obj_addr = f_address pos in
-                    let next_nat = U64.v pos + (wz + 1) * 8 in
-                    next_nat <= heap_size /\ next_nat % 8 == 0 /\ next_nat < pow2 64 /\
-                    U64.v obj + wz * 8 <= heap_size /\
-                    (next_nat < heap_size ==>
-                      update_all_objects_aux major (objects (U64.uint_to_t next_nat) major) fwd 0 ==
-                        update_all_objects_aux major (objects pos major) fwd 0) /\
-                    (next_nat >= heap_size ==>
-                      major == update_all_objects_aux major (objects pos major) fwd 0) /\
-                    (next_nat + 8 < heap_size ==>
-                      Seq.mem (f_address (U64.uint_to_t next_nat)) (objects zero_addr major) /\
-                      Seq.length (objects (U64.uint_to_t next_nat) major) > 0)))
   = let obj : obj_addr = f_address pos in
     objects_nonempty_head_fits pos major;
     wfh_part1_obj_bound major obj;
@@ -397,24 +328,9 @@ let update_all_objects_positional_step_no_scan
 #pop-options
 
 /// Terminal step
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let update_all_objects_terminal_step
   (major: heap) (fwd: forwarding_map) (pos: hp_addr)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    U64.v pos + 8 < heap_size /\
-                    Seq.mem (f_address pos) (objects zero_addr major) /\
-                    Seq.length (objects pos major) > 0 /\
-                    is_blue (f_address pos) major = false /\
-                    is_no_scan (f_address pos) major = false)
-          (ensures (let hdr = read_word major pos in
-                    let wz = U64.v (getWosize hdr) in
-                    let obj : obj_addr = f_address pos in
-                    let next_nat = U64.v pos + (wz + 1) * 8 in
-                    next_nat <= heap_size /\ next_nat % 8 == 0 /\
-                    U64.v obj + wz * 8 <= heap_size /\
-                    (next_nat + 8 >= heap_size ==>
-                      (let major' = update_object_pointers major obj wz fwd 0 in
-                       major' == update_all_objects_aux major (objects pos major) fwd 0))))
   = // With fuel 2, Z3 unfolds update_all_objects_aux on singleton [obj]:
     //   idx=0 < length [obj]=1: unfolds to aux major' [obj] fwd 1
     //   idx=1 >= length [obj]=1: returns major'
@@ -442,11 +358,8 @@ let update_all_objects_terminal_step
 /// Initial membership: first object is at f_address zero_addr when heap has objects.
 /// The precondition that objects zero_addr g is nonempty is a standard heap invariant
 /// (same approach as mark-and-sweep's heap_objects_dense).
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 40"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let objects_initial_membership (g: heap)
-  : Lemma (requires heap_size > 8 /\ well_formed_heap_part1 g /\
-                    Seq.length (objects zero_addr g) > 0)
-          (ensures Seq.mem (f_address zero_addr) (objects zero_addr g))
   = // With fuel 2, Z3 can unfold objects zero_addr g and see that when it's nonempty,
     // the head is f_address zero_addr. From the definition:
     // objects zero_addr g = cons (f_address zero_addr) (objects next g) when nonempty.

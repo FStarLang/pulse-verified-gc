@@ -22,10 +22,6 @@ val obj_in_objects (obj: U64.t) (g: heap) : prop
 
 /// Abstract: free pointer validity — if it's a pointer, it's in objects
 val fp_valid (fp: U64.t) (g: heap) : prop
-
-/// Abstract: sweep postcondition — wfh preserved, objects preserved, fp valid
-val sweep_post : heap -> heap -> U64.t -> prop
-
 /// ---------------------------------------------------------------------------
 /// Introduction lemmas
 /// ---------------------------------------------------------------------------
@@ -33,10 +29,6 @@ val sweep_post : heap -> heap -> U64.t -> prop
 val obj_in_objects_intro : (obj: obj_addr) -> (g: heap) ->
   Lemma (requires Seq.mem obj (objects zero_addr g))
         (ensures obj_in_objects obj g)
-
-val fp_valid_intro : (fp: obj_addr) -> (g: heap) ->
-  Lemma (requires Seq.mem fp (objects zero_addr g))
-        (ensures fp_valid fp g)
 
 /// fp_valid holds trivially when fp is not a pointer field (e.g., 0UL)
 val fp_valid_not_pointer : (fp: U64.t) -> (g: heap) ->
@@ -69,24 +61,6 @@ val fp_valid_elim : (fp: U64.t) -> (g: heap) ->
 /// Sweep postcondition: introduction and elimination
 /// ---------------------------------------------------------------------------
 
-val sweep_post_intro : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
-  Lemma (requires well_formed_heap g_post /\
-                  objects zero_addr g_post == objects zero_addr g_pre /\
-                  fp_valid new_fp g_post)
-        (ensures sweep_post g_pre g_post new_fp)
-
-val sweep_post_elim_wfh : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
-  Lemma (requires sweep_post g_pre g_post new_fp)
-        (ensures well_formed_heap g_post)
-
-val sweep_post_elim_objects : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
-  Lemma (requires sweep_post g_pre g_post new_fp)
-        (ensures objects zero_addr g_post == objects zero_addr g_pre)
-
-val sweep_post_elim_fp : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
-  Lemma (requires sweep_post g_pre g_post new_fp)
-        (ensures fp_valid new_fp g_post)
-
 /// ---------------------------------------------------------------------------
 /// Preservation: sweep_post transfers fp_valid across equal objects lists
 /// ---------------------------------------------------------------------------
@@ -94,10 +68,6 @@ val sweep_post_elim_fp : (g_pre: heap) -> (g_post: heap) -> (new_fp: U64.t) ->
 val fp_valid_transfer : (fp: U64.t) -> (g1: heap) -> (g2: heap) ->
   Lemma (requires fp_valid fp g1 /\ objects zero_addr g2 == objects zero_addr g1)
         (ensures fp_valid fp g2)
-
-val obj_in_objects_transfer : (obj: U64.t) -> (g1: heap) -> (g2: heap) ->
-  Lemma (requires obj_in_objects obj g1 /\ objects zero_addr g2 == objects zero_addr g1)
-        (ensures obj_in_objects obj g2)
 
 /// Initial loop invariant: when objects from zero_addr is non-empty,
 /// the head object (at f_address zero_addr) is in the objects list
@@ -181,116 +151,15 @@ val member_implies_objects_nonempty : (h: hp_addr{U64.v h + 8 < heap_size}) -> (
 /// ---------------------------------------------------------------------------
 /// Header preservation across sweep operations
 /// ---------------------------------------------------------------------------
-
-/// Abstract: all words at positions >= start are unchanged between two heaps.
-/// Uses nat for start to avoid U64.uint_to_t overflow issues in Pulse postconditions.
-val headers_preserved_from : nat -> heap -> heap -> prop
-
-/// Reflexivity: same heap trivially preserves all words
-val headers_preserved_from_refl : (start: nat) -> (g: heap) ->
-  Lemma (ensures headers_preserved_from start g g)
-
-/// Elimination: extract a specific read_word equality
-val headers_preserved_from_elim : (start: nat) -> (pos: hp_addr) -> (g_cur: heap) -> (g_init: heap) ->
-  Lemma (requires headers_preserved_from start g_cur g_init /\ U64.v pos >= start)
-        (ensures read_word g_cur pos == read_word g_init pos)
-
-/// Transitivity with weakening: chain two preservation facts
-val headers_preserved_from_trans : (start1: nat) -> (start2: nat) ->
-  (g1: heap) -> (g2: heap) -> (g3: heap) ->
-  Lemma (requires headers_preserved_from start1 g2 g1 /\
-                  headers_preserved_from start2 g3 g2 /\
-                  start2 >= start1)
-        (ensures headers_preserved_from start2 g3 g1)
-
-/// After a write at addr with addr + mword <= start, all words from start onward
-/// are preserved. Used to prove sweep_object preserves headers at the next position.
-val headers_preserved_from_write : (start: nat) -> (g: heap) -> (addr: hp_addr) -> (v: U64.t) ->
-  Lemma (requires U64.v addr + U64.v mword <= start)
-        (ensures headers_preserved_from start (write_word g addr v) g)
-
 /// ---------------------------------------------------------------------------
 /// Whiteness tracking: all objects before a position are white
 /// ---------------------------------------------------------------------------
-
-/// Headers preserved before a limit (positions < limit unchanged from g_init)
-val headers_preserved_before : nat -> heap -> heap -> prop
-
-/// Reflexivity
-val headers_preserved_before_refl : (limit: nat) -> (g: heap) ->
-  Lemma (ensures headers_preserved_before limit g g)
-
-/// Write at position >= limit preserves headers before limit
-val headers_preserved_before_write : (limit: nat) -> (g: heap) -> (addr: hp_addr) -> (v: U64.t) ->
-  Lemma (requires U64.v addr >= limit)
-        (ensures headers_preserved_before limit (write_word g addr v) g)
-
-/// Transitivity
-val headers_preserved_before_trans : (limit: nat) -> (g1: heap) -> (g2: heap) -> (g3: heap) ->
-  Lemma (requires headers_preserved_before limit g2 g1 /\ headers_preserved_before limit g3 g2)
-        (ensures headers_preserved_before limit g3 g1)
-
-val headers_preserved_before_weaken : (limit1: nat) -> (limit2: nat) -> (g1: heap) -> (g2: heap) ->
-  Lemma (requires headers_preserved_before limit2 g2 g1 /\ limit1 <= limit2)
-        (ensures headers_preserved_before limit1 g2 g1)
-
-/// All objects with header position < pos are white or blue in the given heap
-val objects_white_before : nat -> heap -> prop
-
-/// Vacuously true at the start (no objects before position 0)
-val objects_white_before_zero : (g: heap) ->
-  Lemma (ensures objects_white_before (U64.v zero_addr) g)
-
-/// Step: extend swept region from h_addr to h_addr + (wz+1)*8
-/// Requires:
-/// - All objects before h_addr are white or blue in g_pre
-/// - Objects list is preserved
-/// - Heap is well-formed
-/// - Current object at h_addr is white or blue in g_post
-/// - Headers before h_addr are preserved from g_pre to g_post
-/// - Wosize at h_addr is the same in g_post and g_pre (color-only change)
-/// - f_address h_addr is in the objects list
-val objects_white_before_step : (h_addr: hp_addr) -> (g_pre: heap) -> (g_post: heap) ->
-  Lemma (requires
-    objects_white_before (U64.v h_addr) g_pre /\
-    objects zero_addr g_post == objects zero_addr g_pre /\
-    well_formed_heap g_post /\
-    U64.v h_addr + 8 < heap_size /\
-    (is_white (f_address h_addr) g_post \/ is_blue (f_address h_addr) g_post) /\
-    headers_preserved_before (U64.v h_addr) g_post g_pre /\
-    getWosize (read_word g_post h_addr) == getWosize (read_word g_pre h_addr) /\
-    Seq.mem (f_address h_addr) (objects zero_addr g_post))
-  (ensures objects_white_before 
-    (U64.v h_addr + ((U64.v (getWosize (read_word g_pre h_addr)) + 1) * 8)) g_post)
-
-/// Final: when pos covers all of heap_size, all objects are white or blue
-val objects_white_before_all : (pos: nat) -> (g: heap) ->
-  Lemma (requires objects_white_before pos g /\ pos >= heap_size)
-        (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
-
-/// Exit variant: when pos + 8 >= heap_size, all objects are white or blue.
-/// At loop exit we have pos + mword >= heap_size, meaning no more objects can start at pos.
-/// All objects have hd_address(x) + 8 < heap_size (from hd_address_bounds), so hd_address(x) < pos.
-val objects_white_before_exit : (pos: nat) -> (g: heap) ->
-  Lemma (requires objects_white_before pos g /\ pos + 8 >= heap_size)
-        (ensures forall (x: obj_addr). Seq.mem x (objects zero_addr g) ==> (is_white x g \/ is_blue x g))
-
 /// ---------------------------------------------------------------------------
 /// No Gray Objects
 /// ---------------------------------------------------------------------------
 
 /// Abstract: no gray objects in the heap
 val no_gray_objects : heap -> prop
-
-/// Derive per-object non-gray from headers preservation + global no-gray
-/// Key insight: if headers at h_addr are preserved from g_init to g_cur,
-/// then the color at h_addr is the same, so no-gray transfers.
-val no_gray_at_preserved : (obj: obj_addr) -> (g_init: heap) -> (g_cur: heap) ->
-  Lemma (requires no_gray_objects g_init /\
-                  Seq.mem obj (objects zero_addr g_init) /\
-                  read_word g_cur (hd_address obj) == read_word g_init (hd_address obj))
-        (ensures ~(is_gray obj g_cur))
-
 /// Eliminate: extract per-object non-gray from no_gray_objects
 val no_gray_elim : (obj: obj_addr) -> (g: heap) ->
   Lemma (requires no_gray_objects g /\ Seq.mem obj (objects zero_addr g))
@@ -300,8 +169,3 @@ val no_gray_elim : (obj: obj_addr) -> (g: heap) ->
 val no_gray_intro : (g: heap) ->
   Lemma (requires forall (obj: obj_addr). Seq.mem obj (objects zero_addr g) ==> ~(is_gray obj g))
         (ensures no_gray_objects g)
-
-/// set_object_color at h_addr preserves all headers before h_addr
-val set_object_color_headers_preserved_before : (h_addr: hp_addr) -> (obj: obj_addr) -> (g: heap) -> (c: color) ->
-  Lemma (requires hd_address obj == h_addr)
-        (ensures headers_preserved_before (U64.v h_addr) (set_object_color obj g c) g)

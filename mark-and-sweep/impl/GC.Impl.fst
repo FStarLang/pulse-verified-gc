@@ -13,7 +13,7 @@ module GC.Impl
 
 #lang-pulse
 
-#set-options "--fuel 0 --ifuel 0 --z3rlimit 50"
+#set-options "--fuel 0 --ifuel 0 --z3rlimit 12"
 
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
@@ -53,7 +53,7 @@ module SpecSweepCoalesce = GC.Spec.SweepCoalesce
 /// Postcondition:
 /// - gc_postcondition: well_formed_heap preserved, all objects white or blue
 /// - full_gc_correctness: reachable objects survive with preserved data
-#push-options "--z3rlimit 200"
+#push-options "--z3rlimit 50"
 fn collect_with_roots
     (heap: heap_t) (st: gray_stack)
     (roots: Ghost.erased (Seq.seq GC.Spec.Base.obj_addr)) (fp: U64.t)

@@ -21,7 +21,7 @@ open GC.Spec.Heap
 /// ---------------------------------------------------------------------------
 
 /// Arithmetic characterization: combine_bytes is the little-endian sum
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let shift_no_overflow (b: U8.t) (s: nat{s < 64 /\ s % 8 == 0})
   : Lemma (U8.v b * pow2 s < pow2 64)
   = Math.pow2_plus 8 s; Math.pow2_le_compat 64 (8 + s)
@@ -87,7 +87,7 @@ private let extract_digit (sum low high bk rest divisor: nat)
     Math.small_mod bk (pow2 8)
 
 /// Byte extraction: decomposing combine_bytes recovers each original byte
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let combine_byte0 (b0 b1 b2 b3 b4 b5 b6 b7: U8.t)
   : Lemma (uint64_to_uint8 (combine_bytes b0 b1 b2 b3 b4 b5 b6 b7) == b0)
   = combine_bytes_value b0 b1 b2 b3 b4 b5 b6 b7; pow2_factor_norms ();
@@ -157,7 +157,7 @@ private let combine_byte7 (b0 b1 b2 b3 b4 b5 b6 b7: U8.t)
 /// Main lemma: heap extensionality from word reads
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 private let aligned_lt_heap_size (i: nat{i < heap_size})
   : Lemma ((i / 8) * 8 + 7 < heap_size)
   = let a = (i / 8) * 8 in
@@ -227,11 +227,6 @@ private let bytes_eq_of_word_eq (h1 h2: heap) (a: nat)
             b14 == b24 /\ b15 == b25 /\ b16 == b26 /\ b17 == b27)
 
 let heap_read_word_ext (h1 h2: heap)
-  : Lemma
-    (requires (forall (a: nat).
-       a < heap_size /\ a % 8 == 0 ==>
-       read_word h1 (U64.uint_to_t a) == read_word h2 (U64.uint_to_t a)))
-    (ensures h1 == h2)
   = let aux (i: nat{i < heap_size}) : Lemma (Seq.index h1 i == Seq.index h2 i) =
       let a = (i / 8) * 8 in
       aligned_lt_heap_size i;

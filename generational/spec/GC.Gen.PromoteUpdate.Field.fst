@@ -44,7 +44,7 @@ private let rec seq_index_of (#a:eqtype) (s: seq a) (x: a{Seq.mem x s})
 
 /// Helper: adjacent elements in objects list are strictly ordered.
 /// Proof by structural induction on the objects list construction.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let rec objects_monotone_adjacent (g: heap) (start: hp_addr) (i: nat)
   : Lemma
     (requires i + 1 < Seq.length (objects start g))
@@ -96,7 +96,7 @@ private let rec objects_monotone_adjacent (g: heap) (start: hp_addr) (i: nat)
 /// Helper: objects list is strictly monotone — earlier positions have lower addresses.
 /// Proof: objects_addresses_gt_start shows all elements at index > 0 have address > first element.
 /// By induction on the sequence structure, earlier positions have lower addresses.
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let rec objects_strictly_monotone (g: heap) (i j: nat)
   : Lemma
     (requires
@@ -112,7 +112,7 @@ private let rec objects_strictly_monotone (g: heap) (i j: nat)
 #pop-options
 
 /// Helper: objects before position pos have addresses < obj
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 private let objects_below_before (g: heap) (obj: obj_addr) (pos: nat)
   : Lemma
     (requires
@@ -130,7 +130,7 @@ private let objects_below_before (g: heap) (obj: obj_addr) (pos: nat)
 #pop-options
 
 /// Helper: objects after position pos have addresses > obj
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 private let objects_above_after (g: heap) (obj: obj_addr) (pos: nat)
   : Lemma
     (requires
@@ -149,7 +149,7 @@ private let objects_above_after (g: heap) (obj: obj_addr) (pos: nat)
 
 /// update_all_objects_aux processing objects AFTER obj doesn't change obj's field j.
 /// Those objects are at higher addresses, so their body regions don't overlap obj's fields.
-#push-options "--z3rlimit 50 --fuel 1"
+#push-options "--z3rlimit 12 --fuel 1"
 let rec update_all_objects_aux_after_preserves_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat)
@@ -224,7 +224,7 @@ let rec update_all_objects_aux_after_preserves_field
 #pop-options
 
 /// Main induction: update_all_objects_aux computes the expected field effect.
-#push-options "--z3rlimit 50 --fuel 1 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 1 --z3refresh"
 let rec update_all_objects_aux_field_effect
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map)
   (idx: nat) (obj: obj_addr) (j: nat) (pos: nat)
@@ -357,23 +357,7 @@ let rec update_all_objects_aux_field_effect
 /// Top-level: update_major_pointers field effect
 let update_major_pointers_field_effect
   (major: heap) (fwd: forwarding_map) (obj: obj_addr) (j: nat)
-  : Lemma
-    (requires
-      well_formed_heap_part1 major /\
-      Seq.mem obj (objects zero_addr major) /\
-      j < U64.v (wosize_of_object obj major) /\
-      U64.v obj + j * 8 + 8 <= heap_size /\
-      (U64.v obj + j * 8) % 8 == 0 /\
-      is_blue obj major = false /\
-      is_no_scan obj major = false)
-    (ensures
-      (let updated = update_major_pointers major fwd in
-       let field_addr = U64.uint_to_t (U64.v obj + j * 8) in
-       let old_raw = read_word major field_addr in
-       let old_val = to_minor_offset old_raw in
-       let new_val = read_word updated field_addr in
-       (is_minor_pointer old_val /\ fwd old_val <> 0UL ==> new_val == fwd old_val) /\
-       (~(is_minor_pointer old_val /\ fwd old_val <> 0UL) ==> new_val == old_raw))) =
+       =
   let objs = objects zero_addr major in
   let pos = seq_index_of objs obj in
   objects_below_before major obj pos;
@@ -381,37 +365,3 @@ let update_major_pointers_field_effect
 
 /// update_major_pointers establishes well_formed_heap_part2 (pointer closure).
 /// Uses pointer_closure_modulo_fwd (weaker than full part2) + fwd_all_targets_valid.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
-let update_major_pointers_preserves_wfh_part2 (major: heap) (fwd: forwarding_map)
-  : Lemma (requires well_formed_heap_part1 major /\
-                    pointer_closure_modulo_fwd major fwd /\
-                    fwd_all_targets_valid fwd major /\
-                    blue_fields_closed major /\
-                    no_scan_invariant major)
-    (ensures well_formed_heap_part2 (update_major_pointers major fwd)) =
-  let mc = update_major_pointers major fwd in
-  update_major_pointers_preserves_objects major fwd;
-  let field_closure (src: obj_addr) (j: nat)
-    : Lemma (requires Seq.mem src (objects zero_addr mc) /\
-                      j < U64.v (wosize_of_object src mc) /\
-                      U64.v src + j * 8 + 8 <= heap_size)
-            (ensures (let v = read_word mc (U64.uint_to_t (U64.v src + j * 8)) in
-                      is_pointer v ==> Seq.mem (v <: obj_addr) (objects zero_addr mc)))
-    = update_major_pointers_preserves_header major fwd src;
-      GC.Spec.Object.wosize_of_object_spec src mc;
-      GC.Spec.Object.wosize_of_object_spec src major;
-      if is_blue src major then begin
-        update_major_pointers_preserves_blue_field major fwd src j;
-        blue_fields_closed_inst major src j
-      end else if is_no_scan src major then begin
-        // No-scan: field is preserved, and no_scan_invariant ensures it's not a pointer
-        update_major_pointers_preserves_no_scan_field major fwd src j;
-        no_scan_invariant_elim major src j
-      end else begin
-        update_major_pointers_field_effect major fwd src j;
-        ()
-      end
-  in
-  update_major_pointers_preserves_wfh_part1 major fwd;
-  well_formed_heap_part2_from_field_closure mc field_closure
-#pop-options

@@ -10,7 +10,7 @@ module GC.Impl.Allocator
 
 #lang-pulse
 
-#set-options "--fuel 1 --ifuel 0 --z3rlimit 50"
+#set-options "--fuel 1 --ifuel 0 --z3rlimit 12"
 
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
@@ -146,7 +146,7 @@ fn init_heap (heap: heap_t)
 /// Main allocation function (fully proved — 0 admits)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 25"
 fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SF.well_formed_heap 's)
@@ -376,7 +376,7 @@ fn allocate (heap: heap_t) (fp: U64.t) (wosize: U64.t)
 /// and free-list link pointers — it never inspects object pointer fields,
 /// so well_formed_heap_part2 (pointer closure) is not needed.
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 25"
 fn allocate_part1 (heap: heap_t) (fp: U64.t) (wosize: U64.t)
   requires is_heap heap 's **
            pure (SF.well_formed_heap_part1 's /\

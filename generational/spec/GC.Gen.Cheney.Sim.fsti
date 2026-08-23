@@ -102,13 +102,6 @@ val queue_update_correspondence
 val not_minor_if_guards_fail (minor: minor_state) (addr: U64.t)
   : Lemma (requires U64.v addr < 8 \/ U64.v addr >= minor_heap_size \/ U64.v addr % 8 <> 0)
           (ensures ~(Seq.mem addr (minor_objects minor)))
-
-/// Minor objects always pass the wosize/bounds guards
-val minor_object_passes_guards (minor: minor_state) (obj: U64.t)
-  : Lemma (requires minor_wf minor /\ Seq.mem obj (minor_objects minor))
-          (ensures minor_wosize minor obj < minor_heap_size /\
-                   U64.v obj + minor_wosize minor obj * 8 <= minor_heap_size)
-
 /// Contrapositive: if wosize/bounds guards fail, addr is not a minor object
 val not_minor_if_wosize_bounds_fail (minor: minor_state) (addr: U64.t)
   : Lemma (requires minor_wf minor /\
@@ -128,53 +121,9 @@ val promote_object_zero_noop
 /// ---------------------------------------------------------------------------
 /// Queue length bounds: bounded by |minor_objects| via BFS invariant
 /// ---------------------------------------------------------------------------
-
-/// Forward_one preserves queue entry validity
-val cheney_forward_one_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_forward_one minor cs addr in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-
-/// Forward_one adds at most 1 to the queue
-val cheney_forward_one_queue_bound
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (ensures (let cs' = CheneySpec.cheney_forward_one minor cs addr in
-                    Seq.length cs'.cs_queue <= Seq.length cs.cs_queue + 1))
-
 /// ---------------------------------------------------------------------------
 /// Queue entries are minor objects (maintained through BFS)
 /// ---------------------------------------------------------------------------
-
-/// After cheney_forward_fields, all queue entries are minor objects
-val cheney_forward_fields_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_forward_fields minor cs parent idx wosize in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-
-/// After cheney_forward_roots, all queue entries are minor objects
-val cheney_forward_roots_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_forward_roots minor cs roots idx in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-
-/// After cheney_scan, all queue entries are minor objects
-val cheney_scan_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires (forall (j:nat). j < Seq.length cs.cs_queue ==>
-                      Seq.mem (Seq.index cs.cs_queue j) (minor_objects minor)))
-          (ensures (let cs' = CheneySpec.cheney_scan minor cs scan fuel in
-                    forall (j:nat). j < Seq.length cs'.cs_queue ==>
-                      Seq.mem (Seq.index cs'.cs_queue j) (minor_objects minor)))
-
 /// ---------------------------------------------------------------------------
 /// BFS invariant: compound predicate for queue length bound
 ///
@@ -186,29 +135,6 @@ val cheney_scan_queue_valid
 /// ---------------------------------------------------------------------------
 
 /// Re-export: BFS invariant from SimOne for queue bounds
-
-/// The queue length never exceeds |minor_objects|, which is <= queue_size.
-/// Requires the BFS invariant (established at initialization and maintained throughout).
-val cheney_forward_roots_queue_bound
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    minor_infix_wf minor /\ minor_wf minor /\
-                    Seq.length (minor_objects minor) <= queue_size)
-          (ensures (let cs' = CheneySpec.cheney_forward_roots minor cs roots idx in
-                    SimOne.cheney_bfs_inv minor cs' /\
-                    Seq.length cs'.cs_queue <= Seq.length (minor_objects minor) /\
-                    Seq.length cs'.cs_queue <= queue_size))
-
-val cheney_scan_queue_bound
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires SimOne.cheney_bfs_inv minor cs /\
-                    minor_infix_wf minor /\ minor_wf minor /\
-                    Seq.length (minor_objects minor) <= queue_size)
-          (ensures (let cs' = CheneySpec.cheney_scan minor cs scan fuel in
-                    SimOne.cheney_bfs_inv minor cs' /\
-                    Seq.length cs'.cs_queue <= Seq.length (minor_objects minor) /\
-                    Seq.length cs'.cs_queue <= queue_size))
-
 /// ---------------------------------------------------------------------------
 /// Bridge: minor_read ↔ minor_read_field
 /// ---------------------------------------------------------------------------

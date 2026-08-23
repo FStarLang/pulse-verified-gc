@@ -43,7 +43,7 @@ let normal_src_reachable = MCFNE.normal_src_reachable
 let post_minor_edge = MCFH.post_minor_edge
 let mem_graph_vertex_at = MCFH.mem_graph_vertex_at
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 /// Basic size facts, discharged in an empty context and brought into scope by
 /// explicit calls: under the large reflection contexts even these diverge.
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
@@ -86,7 +86,7 @@ let field_read_at (g: heap) (src: obj_addr) (dst: U64.t) (j: nat) : prop =
   (U64.v src + j * 8) % 8 == 0 /\
   read_word g (U64.uint_to_t (U64.v src + j * 8)) == dst
 
-#push-options "--fuel 0 --ifuel 2 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 2 --z3rlimit 10"
 private let field_read_exists (g: heap) (src dst: obj_addr)
   : Lemma
     (requires mem_graph_edge (HeapModel.create_graph g) src dst)
@@ -154,22 +154,6 @@ let post_edge_from_minor_image_reflects_mem_ce
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
   (src: U64.t) (v: CG.combined_vertex)
-  : Lemma
-    (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
-      CheneyBFS.cheney_no_oom minor major fp roots /\
-      normal_src_reachable minor major fp roots (CG.MinorV src) /\
-      normal_src_reachable minor major fp roots v /\
-      (let prom = cheney_promote minor major fp roots in
-       post_minor_edge minor major fp roots (prom.fwd_map src)
-         (CG.fwd_morphism prom.fwd_map v)))
-    (ensures CG.mem_ce (CG.MinorV src, v) (CG.build_combined_graph minor major))
   =
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in
@@ -351,22 +335,6 @@ let post_edge_from_minor_image_reflects_target
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
   (src y: U64.t)
-  : Lemma
-    (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
-      CheneyBFS.cheney_no_oom minor major fp roots /\
-      normal_src_reachable minor major fp roots (CG.MinorV src) /\
-      (let prom = cheney_promote minor major fp roots in
-       post_minor_edge minor major fp roots (prom.fwd_map src) y) /\
-      (let res = cheney_collect_spec minor major fp roots in
-       mem_graph_vertex_at (HeapModel.create_graph res.mc_major) y))
-    (ensures normal_image_reachable minor major fp roots y)
   =
     let prom = cheney_promote minor major fp roots in
     let res = cheney_collect_spec minor major fp roots in

@@ -6,7 +6,7 @@
 
 module GC.Spec.Sweep
 
-#set-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#set-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 
 open FStar.Seq
 
@@ -28,9 +28,6 @@ module Header = GC.Lib.Header
 
 /// fp_in_heap implies fp can be coerced to obj_addr when non-null
 let fp_in_heap_elim (fp: U64.t) (g: heap)
-  : Lemma (requires fp_in_heap fp g /\ fp <> 0UL)
-          (ensures U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                   U64.v fp % U64.v mword == 0 /\ Seq.mem (fp <: obj_addr) (objects zero_addr g))
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -49,7 +46,7 @@ let sweep_object_black_becomes_white g obj fp =
   colors_exclusive obj g;
   makeWhite_is_white obj g
 
-#reset-options "--z3rlimit 800 --fuel 2 --ifuel 1"
+#reset-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_color_locality g obj1 obj2 fp =
   if is_infix obj1 g then ()
   else if is_white obj1 g then begin
@@ -82,7 +79,7 @@ let sweep_object_color_locality g obj1 obj2 fp =
   end else ()
 #reset-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_preserves_objects g obj fp =
   if is_infix obj g then ()
   else
@@ -107,7 +104,7 @@ let sweep_object_preserves_objects g obj fp =
   end else ()
 #pop-options
 
-#reset-options "--z3rlimit 800 --fuel 2 --ifuel 1"
+#reset-options "--z3rlimit 200 --fuel 2 --ifuel 1"
 let sweep_object_resets_self_color g obj fp =
   if is_white obj g then begin
     let ws = wosize_of_object obj g in
@@ -132,7 +129,7 @@ let sweep_object_resets_self_color g obj fp =
   end
 #reset-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_preserves_wf g obj fp =
   if is_infix obj g then ()
   else if is_white obj g then begin
@@ -160,134 +157,14 @@ let sweep_object_preserves_wf g obj fp =
 #pop-options
 
 /// sweep_object preserves objects from arbitrary start position
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
-let sweep_object_preserves_objects_from start g obj fp =
-  if is_infix obj g then ()
-  else if is_white obj g then begin
-    let ws = wosize_of_object obj g in
-    let hd = GC.Spec.Heap.hd_address obj in
-    let g' = 
-      if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-        wosize_of_object_spec obj g;
-        GC.Spec.Heap.hd_address_spec obj;
-        write_word_preserves_objects_from start g obj obj fp;
-        HeapGraph.set_field g obj 1UL fp
-      end else g
-    in
-    makeBlue_eq obj g';
-    color_change_preserves_objects_aux start g' obj Header.Blue;
-    assert (fst (sweep_object g obj fp) == makeBlue obj g')
-  end else if is_black obj g then begin
-    colors_exclusive obj g;
-    makeWhite_eq obj g;
-    color_change_preserves_objects_aux start g obj Header.White
-  end else ()
-#pop-options
-
 /// sweep_object preserves objects from any position beyond the current object
 /// (sweep_object writes only at h_addr or h_addr+8, both < next_addr)
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
-let sweep_object_preserves_objects_suffix h_addr g fp =
-  let obj = f_address h_addr in
-  f_address_spec h_addr;
-  let wz = getWosize (read_word g h_addr) in
-  let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
-  objects_nonempty_head_fits h_addr g;
-  if next_nat >= heap_size then ()
-  else begin
-    let next : hp_addr = U64.uint_to_t next_nat in
-    if is_infix obj g then ()
-    else if is_white obj g then begin
-      let ws = wosize_of_object obj g in
-      let hd = GC.Spec.Heap.hd_address obj in
-      GC.Spec.Heap.hd_address_spec obj;
-      wosize_of_object_spec obj g;
-      let g' = 
-        if U64.v ws > 0 && U64.v hd + U64.v mword * 2 <= heap_size then begin
-          assert (U64.v obj < U64.v next);
-          write_word_preserves_objects_before next g obj fp;
-          HeapGraph.set_field g obj 1UL fp
-        end else g
-      in
-      makeBlue_eq obj g';
-      color_change_preserves_objects_aux next g' obj Header.Blue
-    end else if is_black obj g then begin
-      colors_exclusive obj g;
-      makeWhite_eq obj g;
-      color_change_preserves_objects_aux next g obj Header.White
-    end else ()
-  end
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// Sweep Aux Lemmas
-/// ---------------------------------------------------------------------------
-
-/// Definitional unfolding: sweep_aux one step
-let sweep_aux_step (g: heap) (objs: seq obj_addr) (fp: U64.t)
-  : Lemma (requires Seq.length objs > 0)
-          (ensures (let obj = Seq.head objs in
-                    let (g', fp') = sweep_object g obj fp in
-                    sweep_aux g objs fp == sweep_aux g' (Seq.tail objs) fp'))
-  = ()
-
-/// sweep_aux on empty is identity
-let sweep_aux_empty (g: heap) (fp: U64.t)
-  : Lemma (sweep_aux g Seq.empty fp == (g, fp))
-  = ()
-
 /// Core invariant step: sweep_aux on objects from h_addr decomposes into
 /// sweep_object at head + sweep_aux on objects from next_addr
 /// After sweep_object at obj: sweep_aux g' (objects next g') fp' == sweep_aux g' (objects next g) fp'
 /// since objects next g' == objects next g (suffix preservation)
-#push-options "--z3rlimit 600 --fuel 3 --ifuel 1"
-let sweep_aux_objects_step (h_addr: hp_addr) (g: heap) (fp: U64.t)
-  : Lemma (requires well_formed_heap g /\
-                    Seq.length (objects h_addr g) > 0 /\
-                    Seq.mem (f_address h_addr) (objects zero_addr g) /\
-                    U64.v h_addr + 8 < heap_size)
-          (ensures (let obj = f_address h_addr in
-                    let wz = getWosize (read_word g h_addr) in
-                    let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
-                    let (g', fp') = sweep_object g obj fp in
-                    next_nat <= heap_size /\
-                    (next_nat < heap_size ==>
-                      (let next : hp_addr = U64.uint_to_t next_nat in
-                       sweep_aux g (objects h_addr g) fp ==
-                       sweep_aux g' (objects next g') fp')) /\
-                    (next_nat >= heap_size ==> sweep_aux g (objects h_addr g) fp == (g', fp'))))
-  = let obj = f_address h_addr in
-    f_address_spec h_addr;
-    let wz = getWosize (read_word g h_addr) in
-    let next_nat = U64.v h_addr + ((U64.v wz + 1) * 8) in
-    objects_nonempty_head_fits h_addr g;
-    objects_nonempty_next h_addr g;
-    if next_nat >= heap_size then ()
-    else begin
-      let next : hp_addr = U64.uint_to_t next_nat in
-      let rest = objects next g in
-      // Step 1: objects h_addr g == cons obj rest
-      assert (objects h_addr g == Seq.cons obj rest);
-      // Step 2: sweep_aux g (cons obj rest) fp unfolds
-      assert (Seq.length (Seq.cons obj rest) > 0);
-      assert (Seq.head (Seq.cons obj rest) == obj);
-      Seq.lemma_tl obj rest;
-      assert (Seq.equal (Seq.tail (Seq.cons obj rest)) rest);
-      let (g', fp') = sweep_object g obj fp in
-      assert (sweep_aux g (Seq.cons obj rest) fp == sweep_aux g' rest fp');
-      // Step 3: objects next g' == objects next g
-      sweep_object_preserves_objects_suffix h_addr g fp;
-      assert (objects next (fst (sweep_object g obj fp)) == rest);
-      assert (g' == fst (sweep_object g obj fp));
-      assert (objects next g' == rest);
-      // Step 4: combine
-      assert (sweep_aux g (objects h_addr g) fp == sweep_aux g' rest fp');
-      assert (sweep_aux g' rest fp' == sweep_aux g' (objects next g') fp')
-    end
-#pop-options
-
 /// sweep_aux preserves color of objects not in the sequence
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec sweep_aux_non_member_color (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires ~(Seq.mem x objs) /\
                     well_formed_heap g /\
@@ -336,9 +213,6 @@ let rec sweep_aux_non_member_color (g: heap) (objs: seq obj_addr) (fp: U64.t) (x
 // Helper: tail of coerce = coerce of tail
 #push-options "--fuel 2 --ifuel 1"
 let coerce_tail_lemma (objs: seq obj_addr)
-  : Lemma (requires Seq.length objs > 0)
-          (ensures Seq.equal (Seq.tail (HeapGraph.coerce_to_vertex_list objs))
-                             (HeapGraph.coerce_to_vertex_list (Seq.tail objs)))
   = // By definition of coerce_to_vertex_list:
     // coerce objs = cons (head objs) (coerce (tail objs))
     // So tail (coerce objs) = coerce (tail objs)
@@ -346,13 +220,25 @@ let coerce_tail_lemma (objs: seq obj_addr)
             Seq.cons (Seq.head objs) (HeapGraph.coerce_to_vertex_list (Seq.tail objs)))
 #pop-options
 
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
-let rec sweep_aux_black_survives (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires well_formed_heap g /\ is_black x g /\ Seq.mem x objs /\
+/// ---------------------------------------------------------------------------
+/// sweep_aux: how the sweep transforms the colour of a member of `objs`
+///
+/// Black becomes white, white becomes blue, blue stays blue.  These used to be
+/// three separate inductions over `sweep_aux` with a character-for-character
+/// identical skeleton, differing only in the colour carried through it.  They
+/// are one induction carrying all three implications; the individual
+/// statements are recovered as corollaries immediately below.
+/// ---------------------------------------------------------------------------
+#push-options "--z3rlimit 100 --fuel 3 --ifuel 2"
+let rec sweep_aux_member_color (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\ Seq.mem x objs /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                     is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                     fp_in_heap fp g)
-          (ensures is_white x (fst (sweep_aux g objs fp)))
+          (ensures (let gf = fst (sweep_aux g objs fp) in
+                    (is_black x g ==> is_white x gf) /\
+                    (is_white x g ==> is_blue  x gf) /\
+                    (is_blue  x g ==> is_blue  x gf)))
           (decreases Seq.length objs) =
   if Seq.length objs = 0 then ()
   else begin
@@ -362,181 +248,58 @@ let rec sweep_aux_black_survives (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: 
     sweep_object_preserves_objects g obj fp;
     sweep_object_preserves_wf g obj fp;
     wf_objects_non_infix g obj;
-    // is_vertex_set: head ∉ tail  
     coerce_tail_lemma objs;
-    let cobjs = HeapGraph.coerce_to_vertex_list objs in
-    assert (is_vertex_set cobjs);
-    // tail objs forms a vertex_set
     assert (is_vertex_set (HeapGraph.coerce_to_vertex_list (Seq.tail objs)));
+    if is_white obj g then assert (fp_in_heap fp' g') else assert (fp' == fp);
     if x = obj then begin
-      // x is black → sweep_object makes it white
-      sweep_object_black_becomes_white g obj fp;
-      assert (is_white x g');
-      // x = head objs, and is_vertex_set → x ∉ tail objs
-      // is_vertex_set (coerce objs) means head (coerce objs) ∉ tail (coerce objs)
-      // head (coerce objs) = obj, tail (coerce objs) = coerce (tail objs)
+      // x is the head: it is swept exactly once, and `is_vertex_set` places it
+      // outside the tail, so its colour is then frozen by non_member_color.
       HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
       assert (~(Seq.mem x (Seq.tail objs)));
-      // fp' in objects for recursion
-      if is_white obj g then assert (fp_in_heap fp' g')
-      else assert (fp' == fp);
-      // x is white in g' and not in tail → sweep_aux_non_member_color preserves color
-      is_white_iff x g';
-      sweep_aux_non_member_color g' (Seq.tail objs) fp' x;
-      is_white_iff x (fst (sweep_aux g' (Seq.tail objs) fp'))
-    end else begin
-      // x ≠ obj: x is still black in g' via color_locality  
-      sweep_object_color_locality g obj x fp;
-      is_black_iff x g;
-      is_black_iff x g';
-      assert (is_black x g');
-      // x ∈ objs and x ≠ head → x ∈ tail objs
-      Seq.lemma_mem_inversion objs;
-      // fp' in objects for recursion
-      if is_white obj g then assert (fp_in_heap fp' g')
-      else assert (fp' == fp);
-      // Recurse on tail
-      sweep_aux_black_survives g' (Seq.tail objs) fp' x
-    end
-  end
-#pop-options
-
-/// sweep_aux preserves white color of objects that are white and not in the sequence
-/// (sweep_object only changes white objects via set_field on body, not color)
-let rec sweep_aux_white_stays (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires is_white x g /\ ~(Seq.mem x objs) /\
-                    well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    Seq.mem x (objects zero_addr g) /\
-                    fp_in_heap fp g)
-          (ensures is_white x (fst (sweep_aux g objs fp)))
-          (decreases Seq.length objs) =
-  if Seq.length objs = 0 then ()
-  else begin
-    let obj = Seq.head objs in
-    let (g', fp') = sweep_object g obj fp in
-    sweep_object_preserves_objects g obj fp;
-    sweep_object_preserves_wf g obj fp;
-    wf_objects_non_infix g obj;
-    // x ≠ obj since x ∉ objs
-    sweep_object_color_locality g obj x fp;
-    is_white_iff x g;
-    is_white_iff x g';
-    if is_white obj g then begin
-      assert (fp' == obj);
-      assert (fp_in_heap fp' g')
-    end else begin
-      assert (fp' == fp);
-      assert (fp_in_heap fp' g')
-    end;
-    sweep_aux_white_stays g' (Seq.tail objs) fp' x
-  end
-
-/// sweep_aux: white objects in objs become blue after sweep
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
-let rec sweep_aux_white_in_objs_becomes_blue (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires is_white x g /\ Seq.mem x objs /\
-                    well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
-                    fp_in_heap fp g)
-          (ensures is_blue x (fst (sweep_aux g objs fp)))
-          (decreases Seq.length objs) =
-  if Seq.length objs = 0 then ()
-  else begin
-    let obj = Seq.head objs in
-    let (g', fp') = sweep_object g obj fp in
-    Seq.lemma_index_is_nth objs 0;
-    sweep_object_preserves_objects g obj fp;
-    sweep_object_preserves_wf g obj fp;
-    wf_objects_non_infix g obj;
-    coerce_tail_lemma objs;
-    let cobjs = HeapGraph.coerce_to_vertex_list objs in
-    assert (is_vertex_set cobjs);
-    assert (is_vertex_set (HeapGraph.coerce_to_vertex_list (Seq.tail objs)));
-    if obj = x then begin
-      // x is white, sweep_object makes it blue
-      sweep_object_resets_self_color g obj fp;
-      assert (is_blue x g');
-      assert (fp' == obj);
-      assert (Seq.mem obj (objects zero_addr g));
-      assert (objects zero_addr g' == objects zero_addr g);
-      assert (fp_in_heap fp' g');
-      HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
-      assert (~(Seq.mem x (Seq.tail objs)));
-      assert (Seq.mem x (objects zero_addr g'));
-      is_blue_iff x g';
-      sweep_aux_non_member_color g' (Seq.tail objs) fp' x;
-      is_blue_iff x (fst (sweep_aux g' (Seq.tail objs) fp'))
-    end else begin
-      sweep_object_color_locality g obj x fp;
-      is_white_iff x g;
-      is_white_iff x g';
-      if is_white obj g then begin
-        assert (fp' == obj);
-        assert (fp_in_heap fp' g')
-      end else begin
-        assert (fp' == fp);
-        assert (fp_in_heap fp' g')
-      end;
-      Seq.lemma_mem_inversion objs;
-      sweep_aux_white_in_objs_becomes_blue g' (Seq.tail objs) fp' x
-    end
-  end
-#pop-options
-
-/// sweep_aux: blue objects stay blue (sweep_object is identity for blue)
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 2"
-let rec sweep_aux_blue_stays_blue (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires is_blue x g /\ Seq.mem x objs /\
-                    well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
-                    fp_in_heap fp g)
-          (ensures is_blue x (fst (sweep_aux g objs fp)))
-          (decreases Seq.length objs) =
-  if Seq.length objs = 0 then ()
-  else begin
-    let obj = Seq.head objs in
-    let (g', fp') = sweep_object g obj fp in
-    Seq.lemma_index_is_nth objs 0;
-    sweep_object_preserves_objects g obj fp;
-    sweep_object_preserves_wf g obj fp;
-    wf_objects_non_infix g obj;
-    coerce_tail_lemma objs;
-    assert (is_vertex_set (HeapGraph.coerce_to_vertex_list (Seq.tail objs)));
-    if x = obj then begin
-      // x is blue → sweep_object is identity: (g, fp)
       colors_exclusive x g;
-      assert (~(is_white x g));
-      assert (~(is_black x g));
-      assert (g' == g);
-      assert (fp' == fp);
-      // x ∉ tail (vertex set)
-      HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
-      assert (~(Seq.mem x (Seq.tail objs)));
-      // x still blue in g', use non_member_color for tail
-      is_blue_iff x g';
-      sweep_aux_non_member_color g' (Seq.tail objs) fp' x;
-      is_blue_iff x (fst (sweep_aux g' (Seq.tail objs) fp'))
+      if is_black x g then begin
+        sweep_object_black_becomes_white g obj fp;
+        assert (is_white x g');
+        is_white_iff x g';
+        sweep_aux_non_member_color g' (Seq.tail objs) fp' x;
+        is_white_iff x (fst (sweep_aux g' (Seq.tail objs) fp'))
+      end else if is_white x g then begin
+        sweep_object_resets_self_color g obj fp;
+        assert (is_blue x g');
+        is_blue_iff x g';
+        sweep_aux_non_member_color g' (Seq.tail objs) fp' x;
+        is_blue_iff x (fst (sweep_aux g' (Seq.tail objs) fp'))
+      end else begin
+        assert (~(is_white x g));
+        assert (~(is_black x g));
+        assert (g' == g);
+        is_blue_iff x g';
+        sweep_aux_non_member_color g' (Seq.tail objs) fp' x;
+        is_blue_iff x (fst (sweep_aux g' (Seq.tail objs) fp'))
+      end
     end else begin
-      // x ≠ obj: color_locality preserves x's color
+      // x is not the head: sweep_object leaves its colour alone, so the
+      // induction hypothesis applies with x's colour unchanged.
       sweep_object_color_locality g obj x fp;
-      is_blue_iff x g;
-      is_blue_iff x g';
-      assert (is_blue x g');
+      is_black_iff x g; is_black_iff x g';
+      is_white_iff x g; is_white_iff x g';
+      is_blue_iff  x g; is_blue_iff  x g';
       Seq.lemma_mem_inversion objs;
-      if is_white obj g then assert (fp_in_heap fp' g')
-      else assert (fp' == fp);
-      sweep_aux_blue_stays_blue g' (Seq.tail objs) fp' x
+      sweep_aux_member_color g' (Seq.tail objs) fp' x
     end
   end
 #pop-options
+
+let sweep_aux_black_survives g objs fp x = sweep_aux_member_color g objs fp x
+
+let sweep_aux_white_in_objs_becomes_blue g objs fp x = sweep_aux_member_color g objs fp x
+
+let sweep_aux_blue_stays_blue g objs fp x = sweep_aux_member_color g objs fp x
 
 /// ---------------------------------------------------------------------------
 
 // Helper lemma: sweep_aux preserves objects
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_objects (g: heap) (objs: seq obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
@@ -566,7 +329,7 @@ let sweep_preserves_objects g fp =
   sweep_aux_preserves_objects g (objects zero_addr g) fp
 
 // Helper lemma: sweep_aux preserves well_formed_heap
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_wf (g: heap) (objs: seq obj_addr) (fp: U64.t)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
@@ -645,39 +408,15 @@ let sweep_resets_colors g fp =
     else () // blue stays blue — proven by sweep_blue_stays_blue
   in
   FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
-/// After sweep: no gray or black
-let sweep_final_colors g fp = 
-  sweep_resets_colors g fp;
-  sweep_preserves_objects g fp;
-  let g' = fst (sweep g fp) in
-  let aux (x: obj_addr) : Lemma 
-    (requires Seq.mem x (objects zero_addr g'))
-    (ensures not (is_gray x g') /\ not (is_black x g'))
-  = colors_exhaustive_and_exclusive x g'
-  in
-  FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
-
 /// After sweep: previously-black objects are now white
 let sweep_resets_black_to_white g fp =
   sweep_black_survives g fp
 
-let sweep_no_gray_or_black g fp = sweep_final_colors g fp
-
 /// Sweep preserves wosize for black objects
 /// Single-step helper: sweep_object preserves read_word at address a in x's body when obj ≠ x
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_preserves_other_body_read
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
-  : Lemma (requires well_formed_heap g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g) /\
-                    obj <> x /\
-                    U64.v a >= U64.v x /\
-                    U64.v a < U64.v x + op_Star (U64.v (wosize_of_object x g)) 8 /\
-                    U64.v a % 8 = 0)
-          (ensures read_word (fst (sweep_object g obj fp)) a == read_word g a)
   = let (g', fp') = sweep_object g obj fp in
     // Key: prove that a is at different addresses from sweep_object's writes
     // sweep_object writes to: 1) hd_address(obj), 2) obj (if white, set_field at field 1)
@@ -744,16 +483,9 @@ let sweep_object_preserves_other_body_read
 #pop-options
 
 /// Single-step: sweep_object preserves header (and thus wosize/tag) of different object
-#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 125 --fuel 2 --ifuel 1"
 let sweep_object_preserves_other_header
   (g: heap) (obj: obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires Seq.mem obj (objects zero_addr g) /\
-                    fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g) /\
-                    obj <> x)
-          (ensures (let g' = fst (sweep_object g obj fp) in
-                    read_word g' (GC.Spec.Heap.hd_address x) == read_word g (GC.Spec.Heap.hd_address x) /\
-                    wosize_of_object x g' == wosize_of_object x g))
   = let (g', fp') = sweep_object g obj fp in
     let hd_x = GC.Spec.Heap.hd_address x in
     GC.Spec.Heap.hd_address_spec x;
@@ -815,11 +547,9 @@ let sweep_object_preserves_other_header
 
 /// sweep_object preserves wosize of the processed object itself.
 /// For all cases: infix (no-op), white (set_field + makeBlue), black (makeWhite), blue/gray (no-op).
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_preserves_self_wosize
   (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires Seq.mem obj (objects zero_addr g) /\ fp_in_heap fp g)
-          (ensures wosize_of_object obj (fst (sweep_object g obj fp)) == wosize_of_object obj g)
   = if is_infix obj g then ()
     else if is_white obj g then begin
       let ws = wosize_of_object obj g in
@@ -859,13 +589,9 @@ let sweep_object_preserves_self_wosize
 
 /// sweep_object on a white object with wosize > 0 writes fp to field 0.
 /// After sweep_object, read_word at obj returns the original fp argument.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_object_white_field0
   (g: heap) (obj: obj_addr) (fp: U64.t)
-  : Lemma (requires is_white obj g /\ ~(is_infix obj g) /\
-                    U64.v (wosize_of_object obj g) > 0 /\
-                    U64.v (hd_address obj) + U64.v mword * 2 <= heap_size)
-          (ensures read_word (fst (sweep_object g obj fp)) obj == fp)
   = let hd = GC.Spec.Heap.hd_address obj in
     GC.Spec.Heap.hd_address_spec obj;
     // Step 1: set_field writes fp at obj (field_addr = hd + mword*1 = obj)
@@ -883,7 +609,7 @@ let sweep_object_white_field0
 
 ///Helper 1: sweep_aux preserves read_word at field addresses of x when x ∉ objs
 /// (no sweep_object ever processes x, so its body is never written to)
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_field_nonmember
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -925,7 +651,7 @@ private let rec sweep_aux_preserves_field_nonmember
 /// Self-case: sweep_object on a black object preserves body reads
 /// (makeWhite writes only at hd_address(x), body addresses a >= x are untouched)
 /// Isolated from quantifier-heavy contexts to avoid "incomplete quantifiers" failures.
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_body_read
   (g: heap) (x: obj_addr) (fp: U64.t) (a: hp_addr)
   : Lemma (requires is_black x g /\ ~(is_infix x g) /\
@@ -940,7 +666,7 @@ private let sweep_object_self_preserves_body_read
 #pop-options
 
 /// Self-case: sweep_object on a black object preserves wosize
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_wosize
   (g: heap) (x: obj_addr) (fp: U64.t)
   : Lemma (requires is_black x g /\ ~(is_infix x g))
@@ -958,7 +684,7 @@ private let sweep_object_self_fp
   = colors_exclusive x g
 
 /// Self-case: sweep_object on a black object preserves tag
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 private let sweep_object_self_preserves_tag
   (g: heap) (x: obj_addr) (fp: U64.t)
   : Lemma (requires is_black x g /\ ~(is_infix x g))
@@ -974,7 +700,7 @@ private let sweep_object_self_preserves_tag
 /// Helper 2: sweep_aux preserves read_word at field addresses of BLACK x ∈ objs
 /// When x is processed: makeWhite only (x is black, not white → no set_field)
 /// Then x ∉ tail (vertex set), so use nonmember helper for remaining
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
 let rec sweep_aux_preserves_field_member
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -1039,19 +765,26 @@ let rec sweep_aux_preserves_field_member
 #pop-options
 
 /// ---------------------------------------------------------------------------
-/// Wosize Preservation Helpers (for black objects)
+/// Header preservation helpers
+///
+/// `sweep_object` only ever rewrites the colour bits, so everything else in an
+/// object's header survives a sweep.  The wosize and the tag used to be proved
+/// by four separate inductions over `sweep_aux` -- one per field, times the
+/// member/non-member split -- with identical skeletons.  There are now two
+/// inductions, and the four original statements are corollaries.
 /// ---------------------------------------------------------------------------
 
-/// Helper 1: sweep_aux preserves wosize for x when x ∉ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
-let rec sweep_aux_preserves_wosize_nonmember
+/// Off the sweep list, the whole header word is untouched.
+#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+private let rec sweep_aux_preserves_header_nonmember
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
                     fp_in_heap fp g /\
                     Seq.mem x (objects zero_addr g) /\
                     ~(Seq.mem x objs))
-          (ensures wosize_of_object x g == wosize_of_object x (fst (sweep_aux g objs fp)))
+          (ensures read_word (fst (sweep_aux g objs fp)) (GC.Spec.Heap.hd_address x) ==
+                   read_word g (GC.Spec.Heap.hd_address x))
           (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
@@ -1061,126 +794,26 @@ let rec sweep_aux_preserves_wosize_nonmember
       sweep_object_preserves_objects g obj fp;
       sweep_object_preserves_wf g obj fp;
       wf_objects_non_infix g obj;
-      // obj ≠ x (since x ∉ objs but obj ∈ objs)
       assert (obj <> x);
-      // wosize preserved via header helper
       sweep_object_preserves_other_header g obj fp x;
-      assert (wosize_of_object x g' == wosize_of_object x g);
-      // x still in objects
-      assert (Seq.mem x (objects zero_addr g'));
-      // x not in tail objs
-      assert (~(Seq.mem x (Seq.tail objs)));
-      // fp' in objects or 0
-      if is_white obj g then ()
-      else ();
-      assert (fp_in_heap fp' g');
-      // Recursive call for tail
-      sweep_aux_preserves_wosize_nonmember g' (Seq.tail objs) fp' x
-    end
-#pop-options
-
-/// Helper 2: sweep_aux preserves wosize for BLACK x ∈ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
-private let rec sweep_aux_preserves_wosize_member
-  (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g) /\
-                    Seq.mem x objs /\
-                    is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
-                    is_black x g)
-          (ensures wosize_of_object x g == wosize_of_object x (fst (sweep_aux g objs fp)))
-          (decreases Seq.length objs)
-  = if Seq.length objs = 0 then ()
-    else begin
-      let obj = Seq.head objs in
-      let (g', fp') = sweep_object g obj fp in
-      Seq.lemma_index_is_nth objs 0;
-      sweep_object_preserves_objects g obj fp;
-      sweep_object_preserves_wf g obj fp;
-      wf_objects_non_infix g obj;
-      coerce_tail_lemma objs;
-      if obj = x then begin
-        // x is BLACK → sweep_object does makeWhite only
-        // Use isolated helpers to avoid quantifier explosion
-        sweep_object_self_preserves_wosize g x fp;
-        sweep_object_self_fp g x fp;
-        // x ∉ tail objs (vertex set: head ∉ tail)
-        HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
-        // x still in objects g'
-        assert (Seq.mem x (objects zero_addr g'));
-        // Now use nonmember helper for tail
-        sweep_aux_preserves_wosize_nonmember g' (Seq.tail objs) fp' x
-      end else begin
-        // obj ≠ x: use header preservation
-        assert (obj <> x);
-        sweep_object_preserves_other_header g obj fp x;
-        assert (wosize_of_object x g' == wosize_of_object x g);
-        // x still black in g'
-        sweep_object_color_locality g obj x fp;
-        is_black_iff x g;
-        is_black_iff x g';
-        // x ∈ tail objs
-        Seq.lemma_mem_inversion objs;
-        assert (Seq.mem x (Seq.tail objs));
-        // x still in objects g'
-        assert (Seq.mem x (objects zero_addr g'));
-        // fp' in objects
-        if is_white obj g then ()
-        else ();
-        assert (fp_in_heap fp' g');
-        sweep_aux_preserves_wosize_member g' (Seq.tail objs) fp' x
-      end
-    end
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// Tag Preservation Helpers (for black objects)
-/// ---------------------------------------------------------------------------
-
-/// Helper 1: sweep_aux preserves tag for x when x ∉ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
-private let rec sweep_aux_preserves_tag_nonmember
-  (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
-  : Lemma (requires well_formed_heap g /\
-                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
-                    fp_in_heap fp g /\
-                    Seq.mem x (objects zero_addr g) /\
-                    ~(Seq.mem x objs))
-          (ensures getTag (read_word g (GC.Spec.Heap.hd_address x)) ==
-                   getTag (read_word (fst (sweep_aux g objs fp)) (GC.Spec.Heap.hd_address x)))
-          (decreases Seq.length objs)
-  = if Seq.length objs = 0 then ()
-    else begin
-      let obj = Seq.head objs in
-      let (g', fp') = sweep_object g obj fp in
-      Seq.lemma_index_is_nth objs 0;
-      sweep_object_preserves_objects g obj fp;
-      sweep_object_preserves_wf g obj fp;
-      wf_objects_non_infix g obj;
-      // obj ≠ x
-      assert (obj <> x);
-      // header preserved via helper
-      sweep_object_preserves_other_header g obj fp x;
-      assert (read_word g' (GC.Spec.Heap.hd_address x) == 
+      assert (read_word g' (GC.Spec.Heap.hd_address x) ==
               read_word g (GC.Spec.Heap.hd_address x));
-      // x still in objects
       assert (Seq.mem x (objects zero_addr g'));
-      // x not in tail objs
       assert (~(Seq.mem x (Seq.tail objs)));
-      // fp' in objects or 0
-      if is_white obj g then ()
-      else ();
       assert (fp_in_heap fp' g');
-      // Recursive call
-      sweep_aux_preserves_tag_nonmember g' (Seq.tail objs) fp' x
+      sweep_aux_preserves_header_nonmember g' (Seq.tail objs) fp' x
     end
 #pop-options
 
-/// Helper 2: sweep_aux preserves tag for BLACK x ∈ objs
-#push-options "--z3rlimit 2000 --fuel 2 --ifuel 1"
-private let rec sweep_aux_preserves_tag_member
+let sweep_aux_preserves_wosize_nonmember g objs fp x =
+  sweep_aux_preserves_header_nonmember g objs fp x;
+  wosize_of_object_spec x g;
+  wosize_of_object_spec x (fst (sweep_aux g objs fp))
+
+/// On the sweep list, a black object has its colour bits rewritten, so only the
+/// other header fields survive.
+#push-options "--z3rlimit 500 --fuel 2 --ifuel 1"
+private let rec sweep_aux_preserves_header_member
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
                     (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
@@ -1189,8 +822,10 @@ private let rec sweep_aux_preserves_tag_member
                     Seq.mem x objs /\
                     is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
                     is_black x g)
-          (ensures getTag (read_word g (GC.Spec.Heap.hd_address x)) ==
-                   getTag (read_word (fst (sweep_aux g objs fp)) (GC.Spec.Heap.hd_address x)))
+          (ensures (let gf = fst (sweep_aux g objs fp) in
+                    wosize_of_object x g == wosize_of_object x gf /\
+                    getTag (read_word g (GC.Spec.Heap.hd_address x)) ==
+                    getTag (read_word gf (GC.Spec.Heap.hd_address x))))
           (decreases Seq.length objs)
   = if Seq.length objs = 0 then ()
     else begin
@@ -1202,39 +837,60 @@ private let rec sweep_aux_preserves_tag_member
       wf_objects_non_infix g obj;
       coerce_tail_lemma objs;
       if obj = x then begin
-        // x is BLACK → makeWhite only
-        // Use isolated helpers to avoid quantifier explosion
+        // x is black, so sweep_object only whitens it: wosize and tag survive,
+        // and `is_vertex_set` puts x outside the tail.
+        sweep_object_self_preserves_wosize g x fp;
         sweep_object_self_preserves_tag g x fp;
         sweep_object_self_fp g x fp;
-        // x ∉ tail objs
         HeapGraph.coerce_mem_lemma (Seq.tail objs) x;
         assert (Seq.mem x (objects zero_addr g'));
-        // Use nonmember helper for tail
-        sweep_aux_preserves_tag_nonmember g' (Seq.tail objs) fp' x
+        sweep_aux_preserves_header_nonmember g' (Seq.tail objs) fp' x;
+        wosize_of_object_spec x g';
+        wosize_of_object_spec x (fst (sweep_aux g' (Seq.tail objs) fp'))
       end else begin
-        // obj ≠ x
         assert (obj <> x);
-        // header preserved via helper
         sweep_object_preserves_other_header g obj fp x;
-        assert (read_word g' (GC.Spec.Heap.hd_address x) == 
+        assert (read_word g' (GC.Spec.Heap.hd_address x) ==
                 read_word g (GC.Spec.Heap.hd_address x));
-        // x still black in g'
+        assert (wosize_of_object x g' == wosize_of_object x g);
         sweep_object_color_locality g obj x fp;
         is_black_iff x g;
         is_black_iff x g';
-        // x ∈ tail objs
         Seq.lemma_mem_inversion objs;
         assert (Seq.mem x (Seq.tail objs));
         assert (Seq.mem x (objects zero_addr g'));
-        if is_white obj g then ()
-        else ();
         assert (fp_in_heap fp' g');
-        sweep_aux_preserves_tag_member g' (Seq.tail objs) fp' x
+        sweep_aux_preserves_header_member g' (Seq.tail objs) fp' x
       end
     end
 #pop-options
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+private let sweep_aux_preserves_wosize_member
+  (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\
+                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
+                    fp_in_heap fp g /\
+                    Seq.mem x (objects zero_addr g) /\
+                    Seq.mem x objs /\
+                    is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
+                    is_black x g)
+          (ensures wosize_of_object x g == wosize_of_object x (fst (sweep_aux g objs fp)))
+  = sweep_aux_preserves_header_member g objs fp x
+
+private let sweep_aux_preserves_tag_member
+  (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
+  : Lemma (requires well_formed_heap g /\
+                    (forall (o: obj_addr). Seq.mem o objs ==> Seq.mem o (objects zero_addr g)) /\
+                    fp_in_heap fp g /\
+                    Seq.mem x (objects zero_addr g) /\
+                    Seq.mem x objs /\
+                    is_vertex_set (HeapGraph.coerce_to_vertex_list objs) /\
+                    is_black x g)
+          (ensures getTag (read_word g (GC.Spec.Heap.hd_address x)) ==
+                   getTag (read_word (fst (sweep_aux g objs fp)) (GC.Spec.Heap.hd_address x)))
+  = sweep_aux_preserves_header_member g objs fp x
+
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_preserves_wosize_black g fp x =
   let g' = fst (sweep g fp) in
   GC.Spec.Heap.hd_address_spec x;
@@ -1248,7 +904,7 @@ let sweep_preserves_wosize_black g fp x =
 #pop-options
 
 /// Sweep preserves tag for black objects
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let sweep_preserves_tag_black g fp x =
   let g' = fst (sweep g fp) in
   GC.Spec.Heap.hd_address_spec x;
@@ -1265,7 +921,7 @@ let sweep_preserves_tag_black g fp x =
 
 /// Helper: show that HeapGraph.get_field is preserved for all field indices
 /// This is needed to prove HeapGraph.get_pointer_fields_aux equality
-#push-options "--z3rlimit 5000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 1250 --fuel 2 --ifuel 1"
 private let sweep_aux_preserves_all_fields
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (i: U64.t)
   : Lemma (requires well_formed_heap g /\
@@ -1292,7 +948,7 @@ private let sweep_aux_preserves_all_fields
 #pop-options
 
 /// Recursive lemma: HeapGraph.get_pointer_fields_aux is preserved when fields are preserved
-#push-options "--z3rlimit 2000 --fuel 3 --ifuel 2"
+#push-options "--z3rlimit 500 --fuel 3 --ifuel 2"
 let rec get_pointer_fields_aux_preserved
   (g: heap) (g': heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1}) (ws: U64.t)
   : Lemma (requires (forall (j: U64.t). U64.v j >= U64.v i /\ U64.v j <= U64.v ws ==>
@@ -1315,7 +971,7 @@ let rec get_pointer_fields_aux_preserved
 #pop-options
 
 /// Helper lemma to establish the quantifier needed by get_pointer_fields_aux_preserved
-#push-options "--z3rlimit 3000 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 750 --fuel 2 --ifuel 1"
 private let sweep_aux_preserves_all_fields_range
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr) (i: U64.t) (ws: U64.t)
   : Lemma (requires well_formed_heap g /\
@@ -1341,7 +997,7 @@ private let sweep_aux_preserves_all_fields_range
 /// Isolated helper: prove get_pointer_fields equality directly
 /// Combines the field range proof with the get_pointer_fields_aux recursive proof.
 /// Specialized to objs = objects zero_addr g (forall o. Seq.mem o objs ==> Seq.mem o (objects zero_addr g) is trivial).
-#push-options "--z3rlimit 3000 --fuel 3 --ifuel 2"
+#push-options "--z3rlimit 750 --fuel 3 --ifuel 2"
 private let sweep_get_pointer_fields_eq
   (g: heap) (fp: U64.t) (x: obj_addr) (ws: U64.t)
   : Lemma (requires well_formed_heap g /\
@@ -1359,7 +1015,7 @@ private let sweep_get_pointer_fields_eq
     get_pointer_fields_aux_preserved g g' x 1UL ws
 #pop-options
 
-#push-options "--z3rlimit 2000 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 500 --fuel 1 --ifuel 1"
 let sweep_preserves_edges g fp x = 
   sweep_preserves_objects g fp;
   let g' = fst (sweep g fp) in

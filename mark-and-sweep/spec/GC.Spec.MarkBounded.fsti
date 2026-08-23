@@ -29,10 +29,6 @@ let bounded_stack_props (g: heap) (st: seq obj_addr) : prop =
   stack_points_to_gray g st /\
   stack_no_dups st
 
-val bounded_from_full (g: heap) (st: seq obj_addr)
-  : Lemma (requires stack_props g st)
-          (ensures bounded_stack_props g st)
-
 /// ---------------------------------------------------------------------------
 /// Counting non-black objects (termination measure)
 /// ---------------------------------------------------------------------------
@@ -353,15 +349,6 @@ val mark_inner_loop_count_decreases
                    Seq.length st > 0 /\ fuel > 0)
           (ensures count_non_black (fst (mark_inner_loop g st cap fuel)) < count_non_black g)
 
-val mark_inner_loop_drains
-  (g: heap) (st: seq obj_addr) (cap: nat) (fuel: nat)
-  : Lemma (requires well_formed_heap g /\ bounded_stack_props g st /\
-                   Seq.length (objects zero_addr g) > 0 /\
-                   SweepInv.heap_objects_dense g /\
-                   fuel >= count_non_black g)
-          (ensures Seq.length (snd (mark_inner_loop g st cap fuel)) = 0)
-          (decreases fuel)
-
 val mark_bounded_preserves_inv (g: heap) (cap: nat{cap > 0}) (fuel: nat)
   : Lemma (requires well_formed_heap g /\
                    Seq.length (objects zero_addr g) > 0 /\
@@ -377,14 +364,6 @@ val mark_bounded_preserves_objects (g: heap) (cap: nat{cap > 0}) (fuel: nat)
                    Seq.length (objects zero_addr g) > 0 /\
                    SweepInv.heap_objects_dense g)
           (ensures objects zero_addr (mark_bounded g cap fuel) == objects zero_addr g)
-          (decreases fuel)
-
-val mark_bounded_count_decreases (g: heap) (cap: nat{cap > 0}) (fuel: nat)
-  : Lemma (requires well_formed_heap g /\
-                   Seq.length (objects zero_addr g) > 0 /\
-                   SweepInv.heap_objects_dense g /\ fuel > 0 /\
-                   Seq.length (rescan_heap g (objects zero_addr g) Seq.empty cap) > 0)
-          (ensures count_non_black (mark_bounded g cap fuel) < count_non_black g)
           (decreases fuel)
 
 val count_non_black_zero_not_gray (g: heap) (obj: obj_addr) (objs: seq obj_addr)

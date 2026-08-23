@@ -1,7 +1,7 @@
 (*
    Pulse GC - Coalesce Module Interface
 
-   Exports the coalesce entry point that merges adjacent free (blue) objects
+   Exports the blue-run flush helper shared with fused_sweep_coalesce
    into larger free blocks, reducing heap fragmentation.
    Called after sweep, before returning the free list pointer.
 *)
@@ -36,23 +36,3 @@ fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
            pure ((s2, snd res) == SpecCoalesce.flush_blue 's fb (U64.v rw) fp /\
                  fst res == 0UL /\
                  Seq.length s2 == heap_size)
-
-/// Coalesce pass: merge adjacent blue (free) objects into larger blocks.
-/// Builds a fresh free list (starting from 0UL/null).
-/// Returns the new free list head pointer.
-///
-/// Precondition: post_sweep heap (well_formed + all objects white or blue)
-///               + objects list is non-empty + heap_objects_dense
-/// Postcondition: coalesced heap matches spec, preserves wf, all objects white or blue
-fn coalesce (heap: heap_t)
-  requires is_heap heap 's **
-           pure (SpecCoalesce.post_sweep_strong 's /\
-                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-                 SI.heap_objects_dense 's)
-  returns new_fp: U64.t
-  ensures exists* s2. is_heap heap s2 **
-    pure (SpecFields.well_formed_heap s2 /\
-          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr s2) ==>
-            (SpecObject.is_white x s2 \/ SpecObject.is_blue x s2)) /\
-          (s2, new_fp) == SpecCoalesce.coalesce 's)
-

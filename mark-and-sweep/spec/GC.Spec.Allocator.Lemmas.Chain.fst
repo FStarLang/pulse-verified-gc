@@ -15,11 +15,11 @@ module Seq = FStar.Seq
 
 open GC.Spec.Allocator.Lemmas.Common
 
-/// Module-level default: all functions get z3rlimit 20 unless overridden
-#push-options "--z3rlimit 20 --z3refresh"
+/// Module-level default: all functions get z3rlimit 10 unless overridden
+#push-options "--z3rlimit 10 --z3refresh"
 
 /// Transfer fl_valid from g to g' with the same fuel
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_valid_transfer (g g': heap) (fp: U64.t) (fuel: nat)
   : Lemma
     (requires fl_valid g fp fuel /\
@@ -67,7 +67,7 @@ let rec fl_valid_transfer (g g': heap) (fp: U64.t) (fuel: nat)
 #pop-options
 
 /// Chain termination: the free-list chain from fp hits a base case within `steps` iterations.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates (g: heap) (fp: U64.t) (steps: nat) : Tot bool (decreases steps) =
   if fp = 0UL then true
   else if U64.v fp < U64.v mword then true
@@ -82,13 +82,11 @@ let rec fl_chain_terminates (g: heap) (fp: U64.t) (steps: nat) : Tot bool (decre
 
 /// Terminal base cases for fl_chain_terminates
 let fl_chain_terminates_terminal (g: heap) (fp: U64.t) (steps: nat)
-  : Lemma (requires fp = 0UL \/ U64.v fp < U64.v mword \/ U64.v fp >= heap_size \/ U64.v fp % U64.v mword <> 0)
-          (ensures fl_chain_terminates g fp steps = true)
   = ()
 
 /// If fl_valid holds AND the chain terminates within fuel steps,
 /// then fl_valid holds for any fuel'.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_valid_any_fuel (g: heap) (fp: U64.t) (fuel fuel': nat)
   : Lemma
     (requires fl_valid g fp fuel /\ fl_chain_terminates g fp fuel)
@@ -129,7 +127,7 @@ let rec fl_valid_any_fuel (g: heap) (fp: U64.t) (fuel fuel': nat)
 #pop-options
 
 /// Chain termination transfers when links are preserved
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_transfer (g g': heap) (fp: U64.t) (steps: nat)
   : Lemma
     (requires fl_chain_terminates g fp steps /\
@@ -170,7 +168,7 @@ let rec fl_chain_terminates_transfer (g g': heap) (fp: U64.t) (steps: nat)
 
 /// Chain termination monotonicity: more steps suffice
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_weaken (g: heap) (fp: U64.t) (s1 s2: nat)
   : Lemma (requires fl_chain_terminates g fp s1 /\ s2 >= s1)
           (ensures fl_chain_terminates g fp s2)
@@ -189,33 +187,14 @@ let rec fl_chain_terminates_weaken (g: heap) (fp: U64.t) (s1 s2: nat)
 
 /// Chain termination introduction: fp → next terminates if next terminates
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let fl_chain_terminates_step (g: heap) (fp: U64.t) (steps: nat)
-  : Lemma (requires steps > 0 /\
-                    U64.v fp >= U64.v mword /\
-                    U64.v fp < heap_size /\
-                    U64.v fp % U64.v mword = 0 /\
-                    (let hd = hd_address (fp <: obj_addr) in
-                     U64.v hd + 16 <= heap_size ==>
-                     fl_chain_terminates g (read_word g (fp <: obj_addr)) (steps - 1)))
-          (ensures fl_chain_terminates g fp steps)
   = ()
 
 let fl_chain_terminates_elim (g: heap) (fp: U64.t) (steps: nat)
-  : Lemma (requires fl_chain_terminates g fp steps /\
-                    steps > 0 /\
-                    U64.v fp >= U64.v mword /\
-                    U64.v fp < heap_size /\
-                    U64.v fp % U64.v mword = 0 /\
-                    U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
-          (ensures fl_chain_terminates g (read_word g (fp <: obj_addr)) (steps - 1) = true)
   = ()
 
 let fl_chain_terminates_valid_zero (g: heap) (fp: U64.t)
-  : Lemma (requires U64.v fp >= U64.v mword /\
-                    U64.v fp < heap_size /\
-                    U64.v fp % U64.v mword = 0)
-          (ensures fl_chain_terminates g fp 0 = false)
   = ()
 #pop-options
 
@@ -227,7 +206,7 @@ let fl_chain_terminates_valid_zero (g: heap) (fp: U64.t)
 
 /// walk_chain: walk n steps following free-list links.
 /// Stops early if the chain reaches a terminal node (null, out-of-bounds, unaligned, or hd+16 > hs).
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec walk_chain (g: heap) (fp: U64.t) (n: nat) : Tot U64.t (decreases n) =
   if n = 0 then fp
   else if fp = 0UL then fp
@@ -241,11 +220,10 @@ let rec walk_chain (g: heap) (fp: U64.t) (n: nat) : Tot U64.t (decreases n) =
 #pop-options
 
 let walk_chain_zero (g: heap) (fp: U64.t)
-  : Lemma (ensures walk_chain g fp 0 = fp)
   = ()
 
 /// walk_chain_valid: all intermediate nodes (positions 0..n-1) are valid (non-terminal).
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec walk_chain_valid (g: heap) (fp: U64.t) (n: nat) : Tot prop (decreases n) =
   if n = 0 then True
   else
@@ -255,11 +233,10 @@ let rec walk_chain_valid (g: heap) (fp: U64.t) (n: nat) : Tot prop (decreases n)
 #pop-options
 
 let walk_chain_valid_zero (g: heap) (fp: U64.t)
-  : Lemma (ensures walk_chain_valid g fp 0)
   = ()
 
 /// walk_chain_valid prefix: if all of first k steps are valid, then first j <= k steps are valid.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_prefix (g: heap) (fp: U64.t) (k j: nat)
   : Lemma (requires walk_chain_valid g fp k /\ j <= k)
           (ensures walk_chain_valid g fp j)
@@ -269,7 +246,7 @@ let rec walk_chain_valid_prefix (g: heap) (fp: U64.t) (k j: nat)
 #pop-options
 
 /// walk_chain_valid_at: position j (< k) in a walk_chain_valid chain is a valid node.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_at (g: heap) (fp: U64.t) (k j: nat)
   : Lemma (requires walk_chain_valid g fp k /\ j < k)
           (ensures (let node = walk_chain g fp j in
@@ -282,7 +259,7 @@ let rec walk_chain_valid_at (g: heap) (fp: U64.t) (k j: nat)
 #pop-options
 
 /// walk_chain_valid_snoc: extend walk_chain_valid by one step if the node at position k is valid.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_snoc (g: heap) (fp: U64.t) (k: nat)
   : Lemma (requires walk_chain_valid g fp k /\
                     (let node = walk_chain g fp k in
@@ -296,7 +273,7 @@ let rec walk_chain_valid_snoc (g: heap) (fp: U64.t) (k: nat)
 #pop-options
 
 /// walk_chain_append: composing walks. Walking m+n steps = walking m steps then n steps from there.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec walk_chain_append (g: heap) (fp: U64.t) (m n: nat)
   : Lemma (requires walk_chain_valid g fp m)
           (ensures walk_chain g fp (m + n) = walk_chain g (walk_chain g fp m) n)
@@ -308,7 +285,7 @@ let rec walk_chain_append (g: heap) (fp: U64.t) (m n: nat)
 /// fl_chain_terminates_unfold_steps: if first n steps are valid (non-terminal),
 /// then fl_chain_terminates g fp fuel = fl_chain_terminates g (walk_chain g fp n) (fuel - n).
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_unfold_steps (g: heap) (fp: U64.t) (n fuel: nat)
   : Lemma (requires n <= fuel /\ walk_chain_valid g fp n)
           (ensures fl_chain_terminates g fp fuel = fl_chain_terminates g (walk_chain g fp n) (fuel - n))
@@ -326,7 +303,7 @@ let rec fl_chain_terminates_unfold_steps (g: heap) (fp: U64.t) (n fuel: nat)
 /// fl_chain_kcycle_not_terminates: a k-cycle (walk_chain g fp k = fp with all valid intermediate
 /// nodes) prevents termination for any fuel.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_chain_kcycle_not_terminates (g: heap) (fp: U64.t) (k fuel: nat)
   : Lemma (requires k > 0 /\ walk_chain g fp k = fp /\ walk_chain_valid g fp k)
           (ensures fl_chain_terminates g fp fuel = false)
@@ -359,7 +336,7 @@ let rec fl_chain_kcycle_not_terminates (g: heap) (fp: U64.t) (k fuel: nat)
 /// If a → b → a (with both valid nodes and hd + 16 <= heap_size), then
 /// fl_chain_terminates g a n = false for all n.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec fl_chain_2cycle_not_terminates
   (g: heap) (a b: U64.t) (n: nat)
   : Lemma (requires U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
@@ -389,69 +366,6 @@ let rec fl_chain_2cycle_not_terminates
 /// The ensures gives `steps + tail_steps` because at the splice point, the
 /// chain "consumes" some prefix steps then uses all tail_steps for the new tail.
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let rec fl_chain_terminates_splice
-  (g g_new: heap) (fp splice_point: U64.t) (steps tail_steps: nat)
-  : Lemma
-    (requires fl_chain_terminates g fp steps /\
-              fl_valid g fp steps /\
-              // Links preserved for non-splice nodes
-              (forall (a: U64.t).
-                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
-                  Seq.mem a (objects zero_addr g)) ==>
-                 (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
-                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size /\
-                  a <> splice_point ==>
-                   read_word g_new (a <: obj_addr) == read_word g (a <: obj_addr))) /\
-              // At splice point, new tail terminates
-              (U64.v splice_point >= U64.v mword /\ U64.v splice_point < heap_size /\
-               U64.v splice_point % U64.v mword = 0 /\
-               U64.v (hd_address (splice_point <: obj_addr)) + 16 <= heap_size ==>
-                fl_chain_terminates g_new (read_word g_new (splice_point <: obj_addr)) tail_steps))
-    (ensures fl_chain_terminates g_new fp (steps + tail_steps))
-    (decreases steps)
-  = if fp = 0UL then ()
-    else if U64.v fp < U64.v mword then ()
-    else if U64.v fp >= heap_size then ()
-    else if U64.v fp % U64.v mword <> 0 then ()
-    else if steps = 0 then begin
-      assert (fl_chain_terminates g fp steps = false);
-      assert False
-    end
-    else begin
-      let hd = hd_address (fp <: obj_addr) in
-      if U64.v hd + 16 > heap_size then ()
-      else begin
-        if fp = splice_point then begin
-          // At splice point: tail terminates in tail_steps.
-          // Need fl_chain_terminates g_new (link_new) (steps + tail_steps - 1)
-          // Have fl_chain_terminates g_new (link_new) tail_steps
-          // steps >= 1 so steps + tail_steps - 1 >= tail_steps ✓
-          fl_chain_terminates_weaken g_new (read_word g_new (splice_point <: obj_addr)) tail_steps (steps + tail_steps - 1);
-          assert (fl_chain_terminates g_new (read_word g_new (fp <: obj_addr)) (steps + tail_steps - 1));
-          fl_chain_terminates_step g_new fp (steps + tail_steps)
-        end
-        else begin
-          let link = read_word g (fp <: obj_addr) in
-          fl_valid_elim g fp steps;
-          assert (Seq.mem fp (objects zero_addr g));
-          assert (U64.v (wosize_of_object (fp <: obj_addr) g) >= 1);
-          assert (fl_valid g link (steps - 1));
-          assert (fl_chain_terminates g link (steps - 1) = true);
-          assert (read_word g_new (fp <: obj_addr) == link);
-          fl_chain_terminates_splice g g_new link splice_point (steps - 1) tail_steps;
-          assert ((steps - 1) + tail_steps == steps + tail_steps - 1);
-          assert (fl_chain_terminates g_new link (steps + tail_steps - 1));
-          assert (fl_chain_terminates g_new (read_word g_new (fp <: obj_addr)) (steps + tail_steps - 1));
-          fl_chain_terminates_step g_new fp (steps + tail_steps)
-          // Gives fl_chain_terminates g_new link ((steps-1) + tail_steps)
-          // = fl_chain_terminates g_new link (steps + tail_steps - 1)
-          // which is exactly what's needed
-        end
-      end
-    end
-#pop-options
-
 /// Writing at a field position (body of an object with wosize >= 1) preserves fl_valid.
 /// The write doesn't change any header, so objects and wosize are preserved.
 /// At the write position, the new link may differ but we require no self-loop.
@@ -471,161 +385,10 @@ let rec fl_chain_terminates_splice
 /// We also require fl_valid g' v tail_fuel (as a separate input) to handle
 /// the case where the chain diverges at p.
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let rec fl_valid_field_write
-  (g: heap) (p: obj_addr) (v: U64.t) (fp: U64.t) (fuel tail_fuel: nat)
-  : Lemma
-    (requires fl_valid g fp fuel /\
-              well_formed_heap g /\
-              Seq.mem p (objects zero_addr g) /\
-              U64.v (wosize_of_object p g) >= 1 /\
-              v <> p /\
-              fl_valid (write_word g (p <: hp_addr) v) v tail_fuel /\
-              tail_fuel >= fuel)
-    (ensures fl_valid (write_word g (p <: hp_addr) v) fp fuel)
-    (decreases fuel)
-  = let g' = write_word g (p <: hp_addr) v in
-    if fuel = 0 then
-      fl_valid_zero g' fp
-    else if fp = 0UL then
-      fl_valid_terminal g' fp fuel
-    else if U64.v fp < U64.v mword then
-      fl_valid_terminal g' fp fuel
-    else if U64.v fp >= heap_size then
-      fl_valid_terminal g' fp fuel
-    else if U64.v fp % U64.v mword <> 0 then
-      fl_valid_terminal g' fp fuel
-    else begin
-      let obj_fp : obj_addr = fp in
-      let hd_fp = hd_address obj_fp in
-      fl_valid_elim g fp fuel;
-      assert (Seq.mem fp (objects zero_addr g));
-      assert (U64.v (wosize_of_object obj_fp g) >= 1);
-      // objects preserved by field write
-      wf_object_size_bound g p;
-      wosize_of_object_bound p g;
-      write_word_preserves_objects g p (p <: hp_addr) v;
-      assert (objects zero_addr g' == objects zero_addr g);
-      assert (Seq.mem fp (objects zero_addr g'));
-      // wosize preserved: hd_fp ≠ p (the write position)
-      hd_address_spec obj_fp;
-      if U64.v fp <> U64.v p then begin
-        if U64.v fp > U64.v p then
-          objects_separated zero_addr g p obj_fp
-        else
-          objects_separated zero_addr g obj_fp p
-      end;
-      read_write_different g (p <: hp_addr) (hd_fp <: hp_addr) v;
-      wosize_of_object_spec obj_fp g;
-      wosize_of_object_spec obj_fp g';
-      assert (U64.v (wosize_of_object obj_fp g') >= 1);
-      if U64.v hd_fp + 16 <= heap_size then begin
-        let link = read_word g obj_fp in
-        assert (link <> fp);
-        assert (fl_valid g link (fuel - 1));
-        if fp = p then begin
-          // At the write point: link = v, v ≠ p ✓
-          read_write_same g (p <: hp_addr) v;
-          // fl_valid g' v (fuel-1) from fl_valid_weaken of tail_fuel
-          fl_valid_weaken g' v tail_fuel (fuel - 1);
-          assert (read_word g' obj_fp == v);
-          assert (read_word g' obj_fp <> fp);
-          assert (fl_valid g' (read_word g' obj_fp) (fuel - 1));
-          fl_valid_step g' fp fuel
-        end else begin
-          // fp ≠ p: link unchanged
-          read_write_different g (p <: hp_addr) (obj_fp <: hp_addr) v;
-          assert (read_word g' obj_fp == link);
-          fl_valid_field_write g p v link (fuel - 1) tail_fuel;
-          assert (fl_valid g' link (fuel - 1));
-          assert (read_word g' obj_fp <> fp);
-          assert (fl_valid g' (read_word g' obj_fp) (fuel - 1));
-          fl_valid_step g' fp fuel
-        end
-      end
-      else
-        fl_valid_step g' fp fuel
-    end
-#pop-options
-
 /// Establish fl_valid g2 v fuel where g2 = write_word g p v, by strong induction.
 /// Breaks the circularity in fl_valid_field_write: at the write point p, the new link
 /// is v, and we need fl_valid g2 v (fuel-1). By strong induction, this is the IH.
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let rec fl_valid_field_write_tail
-  (g: heap) (p: obj_addr) (v: U64.t) (fuel: nat)
-  : Lemma
-    (requires well_formed_heap g /\
-              Seq.mem p (objects zero_addr g) /\
-              U64.v (wosize_of_object p g) >= 1 /\
-              v <> p /\
-              fl_valid g v fuel)
-    (ensures fl_valid (write_word g (p <: hp_addr) v) v fuel)
-    (decreases fuel)
-  = let g' = write_word g (p <: hp_addr) v in
-    if fuel = 0 then
-      fl_valid_zero g' v
-    else if v = 0UL then
-      fl_valid_terminal g' v fuel
-    else if U64.v v < U64.v mword then
-      fl_valid_terminal g' v fuel
-    else if U64.v v >= heap_size then
-      fl_valid_terminal g' v fuel
-    else if U64.v v % U64.v mword <> 0 then
-      fl_valid_terminal g' v fuel
-    else begin
-      let obj_v : obj_addr = v in
-      let hd_v = hd_address obj_v in
-      fl_valid_elim g v fuel;
-      assert (Seq.mem v (objects zero_addr g));
-      assert (U64.v (wosize_of_object obj_v g) >= 1);
-      // objects preserved
-      wf_object_size_bound g p;
-      wosize_of_object_bound p g;
-      write_word_preserves_objects g p (p <: hp_addr) v;
-      assert (objects zero_addr g' == objects zero_addr g);
-      // wosize preserved at v: hd_v ≠ p
-      hd_address_spec obj_v;
-      if U64.v v <> U64.v p then begin
-        if U64.v v > U64.v p then
-          objects_separated zero_addr g p obj_v
-        else
-          objects_separated zero_addr g obj_v p
-      end;
-      read_write_different g (p <: hp_addr) (hd_v <: hp_addr) v;
-      wosize_of_object_spec obj_v g;
-      wosize_of_object_spec obj_v g';
-      assert (U64.v (wosize_of_object obj_v g') >= 1);
-      if U64.v hd_v + 16 <= heap_size then begin
-        // v ≠ p, so link at v unchanged: read_word g' v = read_word g v
-        read_write_different g (p <: hp_addr) (obj_v <: hp_addr) v;
-        let link = read_word g obj_v in
-        assert (read_word g' obj_v == link);
-        // link ≠ v (from fl_valid g v fuel, no self-loop)
-        assert (link <> v);
-        assert (fl_valid g link (fuel - 1));
-        // Need: fl_valid g' link (fuel-1)
-        // Use fl_valid_field_write with tail = fl_valid g' v (fuel-1) from IH
-        // IH: fl_valid g' v (fuel-1) by fl_valid_field_write_tail g p v (fuel-1)
-        //   requires fl_valid g v (fuel-1). Get this from fl_valid_weaken.
-        fl_valid_weaken g v fuel (fuel - 1);
-        fl_valid_field_write_tail g p v (fuel - 1);
-        // Now have fl_valid g' v (fuel-1)
-        // Use fl_valid_field_write to get fl_valid g' link (fuel-1)
-        fl_valid_field_write g p v link (fuel - 1) (fuel - 1);
-        assert (fl_valid g' link (fuel - 1));
-        assert (fl_valid g' (read_word g' obj_v) (fuel - 1));
-        fl_valid_step g' v fuel
-      end
-      else
-        fl_valid_step g' v fuel
-    end
-#pop-options
-
-
-
-
 /// ---------------------------------------------------------------------------
 /// Helper: chain_avoids — the free-list chain from fp does not visit `excl`
 /// ---------------------------------------------------------------------------
@@ -643,43 +406,27 @@ let rec chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool (decreas
     else chain_avoids g (read_word g (fp <: obj_addr)) excl (steps - 1)
 
 let chain_avoids_null (g: heap) (excl: U64.t) (steps: nat)
-  : Lemma (ensures chain_avoids g 0UL excl steps = true)
   = ()
 
 /// chain_avoids_unfold_step: one-step unfolding of chain_avoids.
 /// When fp is a valid non-terminal node, fp ≠ excl, and steps > 0,
 /// chain_avoids reduces to the recursive call on the successor.
 let chain_avoids_unfold_step (g: heap) (fp excl: U64.t) (steps: nat)
-  : Lemma (requires U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                    U64.v fp % U64.v mword = 0 /\
-                    U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size /\
-                    fp <> excl /\ steps > 0)
-          (ensures chain_avoids g fp excl steps =
-                   chain_avoids g (read_word g (fp <: obj_addr)) excl (steps - 1))
   = ()
 
 /// chain_avoids_head_ne: extract fp ≠ excl from chain_avoids = true.
 let chain_avoids_head_ne (g: heap) (fp excl: U64.t) (fuel: nat)
-  : Lemma (requires chain_avoids g fp excl fuel = true /\
-                    U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                    U64.v fp % U64.v mword = 0 /\ fuel > 0)
-          (ensures fp <> excl)
   = ()
 
 /// chain_avoids_tail: one-step decomposition — successor chain also avoids excl.
 let chain_avoids_tail (g: heap) (fp excl: U64.t) (fuel: nat)
-  : Lemma (requires chain_avoids g fp excl fuel = true /\
-                    U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                    U64.v fp % U64.v mword = 0 /\ fuel > 0 /\
-                    U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
-          (ensures chain_avoids g (read_word g (fp <: obj_addr)) excl (fuel - 1) = true)
   = ()
 
 /// chain_avoids_transfer: if chain_avoids holds in heap g, and all link reads along the chain
 /// are preserved in heap g' (for objects in objects(g) with wosize >= 1), then chain_avoids
 /// also holds in g'. Uses fl_valid to know chain nodes are in objects(g).
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\
                     fl_valid g fp fuel /\
@@ -714,7 +461,7 @@ let rec chain_avoids_transfer (g g': heap) (fp excl: U64.t) (fuel: nat)
 #pop-options
 
 #restart-solver
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\
                     fl_valid g fp fuel /\
@@ -766,7 +513,7 @@ let rec chain_avoids_transfer_on_chain (g g': heap) (fp excl: U64.t) (fuel: nat)
 #pop-options
 
 /// chain_avoids_weaken: if chain_avoids holds for fuel steps, it also holds for fewer steps.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
   : Lemma (requires chain_avoids g fp excl fuel = true /\ fuel' <= fuel)
           (ensures chain_avoids g fp excl fuel' = true)
@@ -787,7 +534,7 @@ let rec chain_avoids_weaken (g: heap) (fp excl: U64.t) (fuel fuel': nat)
     end
 #pop-options
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec chain_avoids_strengthen (g: heap) (fp excl: U64.t) (s1 s2: nat)
   : Lemma (requires chain_avoids g fp excl s1 = true /\
                     fl_chain_terminates g fp s1 /\
@@ -814,7 +561,7 @@ let rec chain_avoids_strengthen (g: heap) (fp excl: U64.t) (s1 s2: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer_excl
   (g g': heap) (fp excl: U64.t) (fuel: nat)
   : Lemma
@@ -860,7 +607,7 @@ let rec chain_avoids_transfer_excl
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec chain_avoids_transfer_excl2
   (g g': heap) (fp excl excl2: U64.t) (fuel: nat)
   : Lemma
@@ -911,7 +658,7 @@ let rec chain_avoids_transfer_excl2
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec chain_avoids_unfold_steps (g: heap) (fp excl: U64.t) (n fuel: nat)
   : Lemma (requires n <= fuel /\ walk_chain_valid g fp n /\
                     chain_avoids g fp excl n = true)
@@ -928,7 +675,7 @@ let rec chain_avoids_unfold_steps (g: heap) (fp excl: U64.t) (n fuel: nat)
 
 /// first_hit: if chain_avoids = false (i.e., dst_obj IS in chain), gives the position where
 /// dst_obj first appears.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec first_hit (g: heap) (fp dst_obj: U64.t) (fuel: nat) : Tot nat (decreases fuel) =
   if fuel = 0 then 0
   else if fp = 0UL then 0
@@ -945,7 +692,7 @@ let rec first_hit (g: heap) (fp dst_obj: U64.t) (fuel: nat) : Tot nat (decreases
 /// first_hit_spec: when chain_avoids = false, walk_chain to first_hit gives dst_obj,
 /// the path is walk_chain_valid, and first_hit <= fuel.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec first_hit_spec (g: heap) (fp dst_obj: U64.t) (fuel: nat)
   : Lemma (requires chain_avoids g fp dst_obj fuel = false)
           (ensures walk_chain g fp (first_hit g fp dst_obj fuel) = dst_obj /\
@@ -970,10 +717,6 @@ let rec first_hit_spec (g: heap) (fp dst_obj: U64.t) (fuel: nat)
 
 /// walk_chain_one_step: walking 1 step from a valid node gives read_word.
 let walk_chain_one_step (g: heap) (fp: U64.t)
-  : Lemma (requires U64.v fp >= U64.v mword /\ U64.v fp < heap_size /\
-                    U64.v fp % U64.v mword = 0 /\
-                    U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size)
-          (ensures walk_chain g fp 1 = read_word g (fp <: obj_addr))
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -983,28 +726,9 @@ let walk_chain_one_step (g: heap) (fp: U64.t)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let chain_avoids_prev
   (g: heap) (prev_fp cur_fp next_fp: U64.t) (steps: nat)
-  : Lemma
-    (requires fl_chain_terminates g next_fp steps /\
-              fl_valid g next_fp steps /\
-              U64.v prev_fp >= U64.v mword /\
-              U64.v prev_fp < heap_size /\
-              U64.v prev_fp % U64.v mword = 0 /\
-              Seq.mem prev_fp (objects zero_addr g) /\
-              U64.v (wosize_of_object (prev_fp <: obj_addr) g) >= 1 /\
-              U64.v (hd_address (prev_fp <: obj_addr)) + 16 <= heap_size /\
-              read_word g (prev_fp <: obj_addr) == cur_fp /\
-              U64.v cur_fp >= U64.v mword /\
-              U64.v cur_fp < heap_size /\
-              U64.v cur_fp % U64.v mword = 0 /\
-              Seq.mem cur_fp (objects zero_addr g) /\
-              U64.v (wosize_of_object (cur_fp <: obj_addr) g) >= 1 /\
-              U64.v (hd_address (cur_fp <: obj_addr)) + 16 <= heap_size /\
-              read_word g (cur_fp <: obj_addr) == next_fp /\
-              prev_fp <> cur_fp)
-    (ensures chain_avoids g next_fp prev_fp steps = true)
   = // Proof by contradiction using the walk_chain / cycle machinery.
     // If chain_avoids g next_fp prev_fp steps were false, then prev_fp appears
     // in the chain from next_fp. We extend the walk by 2 more steps
@@ -1053,21 +777,14 @@ let not_in_fl_chain_b (g: heap) (fp: U64.t) (dst_obj: U64.t) (fuel: nat) : Tot b
   chain_avoids g fp dst_obj fuel
 
 let not_in_fl_chain_b_is_chain_avoids (g: heap) (fp dst_obj: U64.t) (fuel: nat)
-  : Lemma (ensures not_in_fl_chain_b g fp dst_obj fuel = chain_avoids g fp dst_obj fuel)
   = ()
 
 /// fl_chain_predecessor_not_in_suffix_b: the main acyclicity theorem (boolean version).
 /// If obj's chain terminates and is fl_valid, then obj does not appear in the chain
 /// starting from its successor.
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let fl_chain_predecessor_not_in_suffix_b (g: heap) (obj: U64.t) (fuel: nat)
-  : Lemma (requires fl_chain_terminates g obj fuel /\
-                    fl_valid g obj fuel /\
-                    U64.v obj >= U64.v mword /\ U64.v obj < heap_size /\ U64.v obj % U64.v mword = 0 /\
-                    U64.v (hd_address (obj <: obj_addr)) + 16 <= heap_size /\
-                    fuel > 0)
-          (ensures chain_avoids g (read_word g (obj <: obj_addr)) obj (fuel - 1) = true)
   = let next = read_word g (obj <: obj_addr) in
     fl_chain_terminates_elim g obj fuel;
     assert (fl_chain_terminates g next (fuel - 1) = true);
@@ -1088,7 +805,7 @@ let fl_chain_predecessor_not_in_suffix_b (g: heap) (obj: U64.t) (fuel: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_terminates_transfer_excl
   (g g': heap) (fp excl: U64.t) (steps: nat)
   : Lemma
@@ -1140,7 +857,7 @@ let rec fl_chain_terminates_transfer_excl
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let rec walk_chain_valid_suffix (g: heap) (fp: U64.t) (j d: nat)
   : Lemma (requires walk_chain_valid g fp d /\ j <= d)
           (ensures walk_chain_valid g (walk_chain g fp j) (d - j))
@@ -1156,7 +873,7 @@ private let rec walk_chain_valid_suffix (g: heap) (fp: U64.t) (j d: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec fl_chain_no_early_repeat (g: heap) (fp: U64.t) (d fuel: nat)
   : Lemma (requires walk_chain_valid g fp d /\ d > 0 /\
                     fl_chain_terminates g fp fuel /\ fl_valid g fp fuel /\ fuel >= d)
@@ -1221,7 +938,7 @@ let rec fl_chain_no_early_repeat (g: heap) (fp: U64.t) (d fuel: nat)
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
   : Lemma
     (requires walk_chain_valid g fp d /\
@@ -1282,55 +999,6 @@ let rec walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
 /// suitable block is still reachable.  Fuel irrelevance says the budget never
 /// binds, so an OOM answer is always the genuine "walked the whole free list and
 /// nothing fits" answer rather than an artefact of the bound.
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
-let rec alloc_search_fuel_irrelevant
-      (g: heap) (head_fp prev_fp cur_fp: U64.t) (requested_wz: nat) (fuel fuel': nat)
-  : Lemma
-    (requires fl_chain_terminates g cur_fp fuel /\ fuel' >= fuel)
-    (ensures alloc_search g head_fp prev_fp cur_fp requested_wz fuel' ==
-             alloc_search g head_fp prev_fp cur_fp requested_wz fuel)
-    (decreases fuel)
-  = if U64.v cur_fp < U64.v zero_addr + U64.v mword
-       || U64.v cur_fp >= heap_size
-       || U64.v cur_fp % U64.v mword <> 0
-    then
-      // `cur_fp` is terminal for alloc_search, which returns the very same OOM
-      // record as its `fuel = 0` branch, so the budget is immaterial here.
-      ()
-    else begin
-      // `cur_fp` is a bona fide object address, so the chain has not terminated
-      // and `fl_chain_terminates` cannot have been satisfied with 0 steps.
-      fl_chain_terminates_valid_zero g cur_fp;
-      assert (fuel > 0);
-      let obj : obj_addr = cur_fp in
-      let hd = hd_address obj in
-      let block_wz = U64.v (getWosize (read_word g hd)) in
-      if block_wz >= requested_wz then
-        // A fitting block is taken immediately; neither side recurses.
-        ()
-      else if U64.v hd + 16 > heap_size then begin
-        // `next_fp` is 0UL, terminal for both the chain and the search.
-        fl_chain_terminates_terminal g 0UL (fuel - 1);
-        alloc_search_fuel_irrelevant g head_fp cur_fp 0UL requested_wz (fuel - 1) (fuel' - 1)
-      end
-      else begin
-        fl_chain_terminates_elim g cur_fp fuel;
-        alloc_search_fuel_irrelevant g head_fp cur_fp (read_word g obj) requested_wz
-                                     (fuel - 1) (fuel' - 1)
-      end
-    end
-#pop-options
-
 /// Corollary: the `heap_words` budget baked into `alloc_spec` never binds.
 /// Any surplus fuel leaves the answer unchanged, so `alloc_spec` reports OOM
 /// only when the free list genuinely holds no block of the requested size.
-#push-options "--z3rlimit 30"
-let alloc_spec_fuel_irrelevant (g: heap) (fp: U64.t) (requested_wz: nat) (extra: nat)
-  : Lemma
-    (requires fl_chain_terminates g fp heap_words)
-    (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
-              alloc_spec g fp requested_wz ==
-              alloc_search g fp 0UL fp wz (heap_words + extra)))
-  = let wz = if requested_wz = 0 then 1 else requested_wz in
-    alloc_search_fuel_irrelevant g fp 0UL fp wz heap_words (heap_words + extra)
-#pop-options

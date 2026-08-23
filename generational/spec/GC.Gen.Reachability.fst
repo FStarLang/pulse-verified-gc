@@ -45,7 +45,7 @@ let minor_successors (ms: minor_state) (obj: U64.t) : GTot (seq U64.t) =
 /// Helper lemma: every element collected is in minor_objects
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 
 let rec collect_minor_successors_valid
   (ms: minor_state)
@@ -78,8 +78,6 @@ let rec collect_minor_successors_valid
 #pop-options
 
 let minor_successors_valid (ms: minor_state) (obj: U64.t) (x: U64.t)
-  : Lemma (requires Seq.mem x (minor_successors ms obj))
-          (ensures Seq.mem x (minor_objects ms))
   =
   collect_minor_successors_valid ms obj 0 (minor_wosize ms obj) x
 
@@ -137,7 +135,7 @@ let minor_reachable (ms: minor_state) (roots: seq U64.t) : GTot (seq U64.t) =
 
 /// Key insight: visited only grows with items from minor_objects.
 /// We maintain the invariant that visited ⊆ minor_objects.
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 
 let rec minor_reachable_aux_subset
   (ms: minor_state)
@@ -173,8 +171,6 @@ let rec minor_reachable_aux_subset
 #pop-options
 
 let minor_reachable_subset (ms: minor_state) (roots: seq U64.t)
-  : Lemma (ensures forall x. Seq.mem x (minor_reachable ms roots) ==>
-                             Seq.mem x (minor_objects ms))
   =
   let aux (x: U64.t)
     : Lemma (requires Seq.mem x (minor_reachable ms roots))
@@ -188,7 +184,7 @@ let minor_reachable_subset (ms: minor_state) (roots: seq U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Helper: anything in visited stays in the output (visited is monotone)
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 
 let rec minor_reachable_aux_mem_visited
   (ms: minor_state)
@@ -222,7 +218,7 @@ let rec minor_reachable_aux_mem_visited
 #pop-options
 
 /// Helper: if the head of the worklist is a valid minor object, it ends up in the output
-#push-options "--z3rlimit 40 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 1"
 
 let minor_reachable_aux_processes_head
   (ms: minor_state)
@@ -255,7 +251,7 @@ let minor_reachable_aux_processes_head
 
 /// Helper: position-based induction — if r is at position `pos` in the worklist,
 /// is a valid minor object, and fuel > pos, then r ends up in the output.
-#push-options "--z3rlimit 60 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
 
 let rec minor_reachable_aux_at_pos
   (ms: minor_state)
@@ -315,8 +311,6 @@ let rec seq_mem_to_index (#a: eqtype) (x: a) (s: seq a)
   end
 
 let minor_reachable_roots (ms: minor_state) (roots: seq U64.t)
-  : Lemma (ensures forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==>
-                             Seq.mem r (minor_reachable ms roots))
   =
   let fuel = minor_reachable_fuel ms roots in
   let aux (r: U64.t)
@@ -356,7 +350,6 @@ let rec collect_minor_successors_length
 
 /// Length of minor_successors bounded by wosize
 let minor_successors_length (ms: minor_state) (obj: U64.t)
-  : Lemma (ensures Seq.length (minor_successors ms obj) <= minor_wosize ms obj)
   = collect_minor_successors_length ms obj 0 (minor_wosize ms obj)
 
 /// Characterization of collect_minor_successors
@@ -367,7 +360,7 @@ let minor_successors_length (ms: minor_state) (obj: U64.t)
 
 /// Peel the first index off a bounded existential.  Proved in an empty context
 /// so the step lemma below only has to do propositional reasoning.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
 private let exists_peel (idx wosize: nat) (p: nat -> prop)
   : Lemma (requires idx < wosize)
           (ensures (exists (i: nat). idx <= i /\ i < wosize /\ p i) <==>
@@ -442,11 +435,6 @@ private let rec collect_minor_successors_char
 #pop-options
 
 let minor_successors_char (ms: minor_state) (x y: U64.t)
-  : Lemma (ensures Seq.mem y (minor_successors ms x) <==>
-                    (exists (i:nat). i < minor_wosize ms x /\
-                                     to_minor_offset (minor_read_field ms x i) == y /\
-                                     is_minor_addr y /\
-                                     Seq.mem y (minor_objects ms)))
   = collect_minor_successors_char ms x 0 (minor_wosize ms x) y
 
 /// For objects in minor_objects, successors length < minor_heap_size
@@ -494,7 +482,7 @@ let rec count_not_mem_positive (objects: seq U64.t) (x: U64.t) (visited: seq U64
   end
 
 /// Adding a fresh element to visited decreases count by at least 1
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 1"
 
 let rec count_not_mem_cons_mem (objects: seq U64.t) (x: U64.t) (visited: seq U64.t)
   : Lemma
@@ -541,7 +529,7 @@ and count_not_mem_monotone (objects: seq U64.t) (x: U64.t) (visited: seq U64.t)
 /// The BFS result is closed under successors for any object x that appears
 /// in the output but NOT in the initial visited set.
 /// Key invariant: fuel >= |worklist| + count_not_mem(minor_objects, visited) * minor_heap_size
-#push-options "--z3rlimit 150 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 75 --fuel 2 --ifuel 1"
 
 let rec minor_reachable_aux_closed_aux
   (ms: minor_state)
@@ -634,12 +622,9 @@ let rec minor_reachable_aux_closed_aux
 #pop-options
 
 /// Top-level closure lemma
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 
 let minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
-  : Lemma (requires Seq.mem x (minor_reachable ms roots) /\
-                    Seq.mem y (minor_successors ms x))
-          (ensures Seq.mem y (minor_reachable ms roots))
   =
   minor_successors_valid ms x y;
   // Initial: visited = empty, so not (mem x empty) is trivially true.
@@ -658,7 +643,7 @@ let minor_reachable_closed (ms: minor_state) (roots: seq U64.t) (x y: U64.t)
 
 /// Helper: if a predicate holds for all visited and worklist members,
 /// and is closed under successors, then it holds for all BFS output.
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
 
 let rec minor_reachable_aux_ind
   (ms: minor_state)
@@ -731,10 +716,5 @@ let rec minor_reachable_aux_ind
 #pop-options
 
 let minor_reachable_ind (ms: minor_state) (roots: seq U64.t) (p: U64.t -> prop) (x: U64.t)
-  : Lemma (requires
-             Seq.mem x (minor_reachable ms roots) /\
-             (forall r. Seq.mem r roots /\ Seq.mem r (minor_objects ms) ==> p r) /\
-             (forall a b. p a /\ Seq.mem b (minor_successors ms a) ==> p b))
-          (ensures p x)
   =
   minor_reachable_aux_ind ms roots Seq.empty (minor_reachable_fuel ms roots) p x

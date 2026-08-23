@@ -19,7 +19,7 @@ module Header = GC.Lib.Header
 module SI = GC.Spec.SweepInv
 module CoalLemmas = GC.Impl.Coalesce.Lemmas
 
-#set-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#set-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 
 /// ---------------------------------------------------------------------------
 /// fused_unfold
@@ -31,7 +31,7 @@ let fused_unfold g = ()
 /// is_black_from_original
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let is_black_from_original g0 g obj start =
   f_address_spec start;
   hd_f_roundtrip start;
@@ -44,7 +44,7 @@ let is_black_from_original g0 g obj start =
 /// makeWhite_suffix_preserved
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 let makeWhite_suffix_preserved g obj bound =
   makeWhite_spec obj g;
   let hd = hd_address obj in
@@ -57,7 +57,7 @@ let makeWhite_suffix_preserved g obj bound =
 /// makeWhite_length
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let makeWhite_length g obj =
   makeWhite_spec obj g
 #pop-options
@@ -66,7 +66,7 @@ let makeWhite_length g obj =
 /// whiten_from_original
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let whiten_from_original g0 g' obj =
   let h_addr = hd_address obj in
   let hdr_g0 = read_word g0 h_addr in
@@ -104,20 +104,6 @@ private let objects_advance (start: hp_addr) (g: heap)
       (next_nat >= heap_size ==>
         Seq.equal (Seq.tail (objects start g)) Seq.empty)))
   = CoalLemmas.objects_advance start g
-
-private let run_words_fits (g0: heap) (start: hp_addr) (objs: seq obj_addr)
-  (first_blue: U64.t) (run_words: nat)
-  : Lemma
-    (requires
-      objs == objects start g0 /\
-      Seq.length g0 == heap_size /\
-      (run_words > 0 ==>
-        U64.v first_blue >= U64.v mword /\
-        U64.v first_blue < heap_size /\
-        U64.v first_blue % U64.v mword == 0 /\
-        U64.v first_blue - U64.v mword + run_words * U64.v mword == U64.v start))
-    (ensures run_words < heap_words /\ run_words < pow2 57)
-  = CoalLemmas.run_words_fits g0 start objs first_blue run_words
 
 private let fused_step_nonblack_helper (g0 g: heap) (start: hp_addr) (objs: seq obj_addr)
   (first_blue: U64.t) (run_words: nat) (fp: U64.t)
@@ -182,7 +168,7 @@ private let fused_step_black_helper (g0 g: heap) (start: hp_addr) (objs: seq obj
 /// nonblack_step_fused_aux_eq
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let nonblack_step_fused_aux_eq g0 g start first_blue run_words fp =
   fused_step_nonblack_helper g0 g start (objects start g0) first_blue run_words fp;
   let wz = getWosize (read_word g0 start) in
@@ -241,7 +227,7 @@ let nonblack_step_fused_aux_eq g0 g start first_blue run_words fp =
 /// flush_blue_suffix_chain (private helper for black_step)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 private let flush_blue_suffix_chain
   (g0 g: heap) (first_blue: U64.t) (run_words: nat) (fp: U64.t)
   (start_val: nat) (addr: hp_addr)
@@ -268,7 +254,7 @@ private let flush_blue_suffix_chain
 /// black_step_fused_aux_eq
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let black_step_fused_aux_eq g0 g start first_blue run_words fp =
   fused_step_black_helper g0 g start (objects start g0) first_blue run_words fp;
   let wz = getWosize (read_word g0 start) in
@@ -321,9 +307,6 @@ let black_step_fused_aux_eq g0 g start first_blue run_words fp =
 /// ---------------------------------------------------------------------------
 /// flush_blue_length (delegate to coalesce lemma)
 /// ---------------------------------------------------------------------------
-
-let flush_blue_length g fb rw fp =
-  CoalLemmas.flush_blue_length g fb rw fp
 
 /// ---------------------------------------------------------------------------
 /// fused_step_empty

@@ -23,7 +23,7 @@ module Alloc = GC.Spec.Allocator
 
 open GC.Spec.SweepCoalesce.Defs
 
-#set-options "--z3rlimit 50 --fuel 2 --ifuel 1 --warn_error -321"
+#set-options "--z3rlimit 12 --fuel 2 --ifuel 1 --warn_error -321"
 
 /// ========================================================================
 /// Predicates
@@ -62,7 +62,7 @@ private let contiguous_head (g: heap) (objs: seq obj_addr)
 /// Helper 1: zero_fields reads 0UL within its range
 /// ========================================================================
 
-#push-options "--z3rlimit 30"
+#push-options "--z3rlimit 10"
 let rec zero_fields_read_within
     (g: heap) (start: U64.t) (n: nat) (addr: hp_addr)
   : Lemma
@@ -93,7 +93,7 @@ let rec zero_fields_read_within
 /// Helper 2: flush_blue produces fp at field 1
 /// ========================================================================
 
-#push-options "--z3rlimit 100 --fuel 2"
+#push-options "--z3rlimit 25 --fuel 2"
 private let flush_blue_field1_spec
     (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t)
   : Lemma
@@ -129,7 +129,7 @@ private let flush_blue_field1_spec
 /// Helper 3: flush_blue produces 0UL at zero-field positions
 /// ========================================================================
 
-#push-options "--z3rlimit 100 --fuel 2"
+#push-options "--z3rlimit 25 --fuel 2"
 private let flush_blue_zero_spec
     (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t) (a: hp_addr)
   : Lemma
@@ -161,7 +161,7 @@ private let flush_blue_zero_spec
 /// Helper 4: flush_blue agrees inside the flush range
 /// ========================================================================
 
-#push-options "--z3rlimit 50 --fuel 2"
+#push-options "--z3rlimit 12 --fuel 2"
 let flush_blue_inside_agree
     (h1 h2: heap) (fb: obj_addr) (rw: nat) (fp: U64.t) (a: hp_addr)
   : Lemma
@@ -197,7 +197,7 @@ let flush_blue_inside_agree
 /// Helper 5: flush_blue preserves outside for a pair of heaps
 /// ========================================================================
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let flush_pair_preserves_outside
     (h1 h2: heap) (fb: U64.t) (rw: nat) (fp: U64.t) (addr: hp_addr)
   : Lemma
@@ -217,23 +217,10 @@ let flush_pair_preserves_outside
 /// Helper 5b: flush_blue preserves outside — specialized for addresses
 /// above the flush range (addr >= fb + rw * 8). Clean precondition
 /// using literal 8 to avoid quantifier issues in complex caller contexts.
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
-private let flush_pair_above
-    (h1 h2: heap) (fb: U64.t) (rw: nat) (fp: U64.t) (addr: hp_addr)
-  : Lemma
-    (requires rw > 0 /\
-      U64.v fb >= U64.v mword /\ U64.v fb < heap_size /\ U64.v fb % U64.v mword == 0 /\
-      U64.v addr >= U64.v fb + rw * 8)
-    (ensures
-      read_word (fst (SpecCoalesce.flush_blue h1 fb rw fp)) addr == read_word h1 addr /\
-      read_word (fst (SpecCoalesce.flush_blue h2 fb rw fp)) addr == read_word h2 addr)
-  = flush_pair_preserves_outside h1 h2 fb rw fp addr
-#pop-options
-
 /// Helper 5c: else-branch proof — address past object body.
 /// Extracted to top-level to avoid quantifier context pollution from
 /// the forall-quantified conditions in black_case_below_ok.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 1"
 private let black_case_past_body
     (g: heap) (h_f h_c: heap) (obj: obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
     (a: hp_addr)
@@ -275,7 +262,7 @@ private let black_case_past_body
 /// ========================================================================
 
 /// Pointwise: for a single address below the new bound, h_f'' and h_c' agree
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let black_case_below_ok
   (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
   (a: hp_addr)
@@ -403,7 +390,7 @@ private let black_case_below_ok
 #pop-options
 
 /// Pointwise: for a single address past all rest objects, h_f'' and h_c' agree
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let black_case_above_ok
   (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
   (a: hp_addr)
@@ -478,7 +465,7 @@ private let black_case_above_ok
 #pop-options
 
 /// Pointwise: for a single black rest object, header match + white in h_c'
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let black_case_rest_headers
   (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
   (x: obj_addr)
@@ -534,7 +521,7 @@ private let black_case_rest_headers
 #pop-options
 
 /// Pointwise: for a single body word of a black rest object, h_f'' and h_c' agree
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let black_case_body_agree_aux
   (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
   (x: obj_addr) (a: hp_addr)
@@ -585,7 +572,7 @@ private let black_case_body_agree_aux
 
 /// For a given black rest object, universalize body agreement over addresses.
 /// Uses forall_intro on the top-level black_case_body_agree_aux (trivial VC).
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let black_case_body_agree
   (g: heap) (h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
   (x: obj_addr)
@@ -622,7 +609,7 @@ private let black_case_body_agree
 /// ========================================================================
 /// Non-black case helper: geometric condition for rest objects
 /// ========================================================================
-#push-options "--z3rlimit 30 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 1"
 private let nonblack_case_geo_ok
     (g: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (x: obj_addr)
   : Lemma
@@ -664,7 +651,7 @@ private let nonblack_case_geo_ok
 /// ========================================================================
 /// Black case concluder: combines IH with one-step unfolding in a clean context
 /// ========================================================================
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let black_case_conclude
     (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)
   : Lemma
@@ -727,7 +714,7 @@ private let tail_len_lt (#a: Type) (s: Seq.seq a)
 /// Main theorem
 /// ========================================================================
 
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 2"
+#push-options "--z3rlimit 50 --fuel 1 --ifuel 2"
 
 let rec combined_proof
   (g gs h_f h_c: heap) (objs: seq obj_addr) (fb: U64.t) (rw: nat) (fp: U64.t)

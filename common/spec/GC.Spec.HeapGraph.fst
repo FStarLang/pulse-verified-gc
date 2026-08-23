@@ -96,13 +96,6 @@ let get_field_addr_eq (g: heap) (obj: obj_addr) (i: U64.t{U64.v i >= 1})
 /// Object fits in heap: header + fields all within bounds
 let object_fits_in_heap (h_addr: obj_addr) (g: heap) : GTot bool =
   U64.v (hd_address h_addr) + U64.v mword + U64.v (wosize_of_object h_addr g) * U64.v mword <= heap_size
-
-/// Intro lemma for object_fits_in_heap (use from outside the module)
-let object_fits_in_heap_intro (h: obj_addr) (g: heap) : Lemma
-  (requires U64.v (hd_address h) + 8 + Prims.op_Star (U64.v (wosize_of_object h g)) 8 <= Seq.length g)
-  (ensures object_fits_in_heap h g) 
-  = assert_norm (U64.v mword == 8)
-
 /// Intro lemma without hd_address: v h + wosize*8 <= Seq.length g suffices
 /// (Since hd_address h = h - 8, we have hd_address h + 8 = h)
 let object_fits_from_bound (h: obj_addr) (g: heap) : Lemma
@@ -185,7 +178,7 @@ let rec coerce_to_vertex_list (s: seq obj_addr) : Tot vertex_list (decreases Seq
   else Seq.cons (Seq.head s) (coerce_to_vertex_list (Seq.tail s))
 
 /// coerce preserves membership
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let rec coerce_mem_lemma (s: seq obj_addr) (x: obj_addr)
   : Lemma (ensures Seq.mem x s <==> Seq.mem x (coerce_to_vertex_list s))
           (decreases Seq.length s)
@@ -197,7 +190,7 @@ let rec coerce_mem_lemma (s: seq obj_addr) (x: obj_addr)
 #pop-options
 
 /// coerce preserves cons structure
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let coerce_cons_lemma (hd: obj_addr) (tl: seq obj_addr)
   : Lemma (coerce_to_vertex_list (Seq.cons hd tl) == Seq.cons hd (coerce_to_vertex_list tl))
   = assert (Seq.length (Seq.cons hd tl) > 0);
@@ -370,7 +363,7 @@ val successors_aux_make_edges_self : (h: vertex_id) -> (succs: seq vertex_id) ->
   Lemma (ensures Seq.equal (successors_aux (make_edges h succs) h) succs)
         (decreases Seq.length succs)
 
-#push-options "--fuel 4 --ifuel 2 --z3rlimit 200"
+#push-options "--fuel 4 --ifuel 2 --z3rlimit 50"
 let rec successors_aux_make_edges_self h succs =
   if Seq.length succs = 0 then ()
   else begin
@@ -392,7 +385,7 @@ val successors_aux_make_edges_other : (h: vertex_id) -> (succs: seq vertex_id) -
         (ensures Seq.equal (successors_aux (make_edges h succs) v) Seq.empty)
         (decreases Seq.length succs)
 
-#push-options "--fuel 4 --ifuel 2 --z3rlimit 200"
+#push-options "--fuel 4 --ifuel 2 --z3rlimit 50"
 let rec successors_aux_make_edges_other h succs v =
   if Seq.length succs = 0 then ()
   else begin
@@ -408,7 +401,7 @@ private val successors_aux_append : (e1: edge_list) -> (e2: edge_list) -> (v: ve
                            (Seq.append (successors_aux e1 v) (successors_aux e2 v)))
         (decreases Seq.length e1)
 
-#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
+#push-options "--z3rlimit 100 --fuel 4 --ifuel 2"
 private let rec successors_aux_append e1 e2 v =
   if Seq.length e1 = 0 then begin
     assert (Seq.equal (Seq.append e1 e2) e2);
@@ -476,7 +469,7 @@ val successors_aux_all_edges : (g: heap) -> (objs: seq obj_addr) -> (x: obj_addr
                            (get_pointer_fields g x))
         (decreases Seq.length objs)
 
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 let rec successors_aux_all_edges g objs x =
   if Seq.length objs = 0 then ()
   else begin

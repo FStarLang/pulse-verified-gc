@@ -9,7 +9,7 @@
 #   make common         Verify common/ only
 #   make mark-and-sweep Verify mark-and-sweep/ + common/
 #   make generational   Verify generational/ + mark-and-sweep/ + common/
-#   make extract        Verify + extract both GCs to C
+#   make extract        Verify + extract the generational GC to C
 #   make clean          Clean all build artifacts
 
 FSTAR_HOME ?= $(CURDIR)/fstar
@@ -217,16 +217,41 @@ $(CACHE_DIR)/%.checked:
 	$(FSTAR) $(EXTRA_FLAGS) $<
 
 # --- Per-module SMT tuning --------------------------------------------------
+#
+# rlimits live in the *source*, never here.
+#
+# This block used to carry five blanket `--z3rlimit` overrides (GC.Lib.Header
+# 20, GC.Impl.Allocator 100, GC.Impl.MarkBounded 300, GC.Gen.Impl 200, and 160
+# across generational/impl).  Every one of them was measured to be dead:
+#
+#   * GC.Impl.MarkBounded.fst and GC.Impl.Allocator.fst both open with a
+#     file-level `#set-options "--z3rlimit ..."` (25 and 12 respectively), which
+#     supersedes the command line for everything after it.  Both verify
+#     unchanged with `--z3rlimit 1` passed here -- 411.9s vs 412.1s/414.3s, and
+#     74.9s vs 75.1s -- so the 300 and the 100 were pure decoration.
+#
+#   * GC.Lib.Header, GC.Gen.Impl, GC.Gen.Impl.{MinorHeap,Promote,UpdatePtrs,
+#     Cheney} have no file-level setting, but every goal in them fits in F*'s
+#     default rlimit of 5; dropping the override changed no verification time
+#     by more than noise (e.g. MinorHeap 802.6s -> 803.1s, Cheney 239.6s ->
+#     230.3s).
+#
+# A blanket set here is invisible from the source and hides which step is
+# actually hard: a local `#push-options "--z3rlimit 50"` inside a file-wide 300
+# reads like a raise but is really a *cut*.  Anything that genuinely needs more
+# than the default should say so at the definition that needs it, where a
+# reader will see it.
+#
+# What remains below are not rlimits: they are the Z3 4.15.3 workarounds
+# (eager-instantiation threshold, fresh-solver, query_stats), which have no
+# in-source equivalent.
 
-# GC.Lib.Header needs a little more rlimit for bitvector mask reasoning.
-HDR_CHECKED       = $(CACHE_DIR)/GC.Lib.Header.fst.checked
 # mark-and-sweep/impl overrides
-MS_ALLOC_CHECKED  = $(CACHE_DIR)/GC.Impl.Allocator.fst.checked
 MS_MARKB_CHECKED  = $(CACHE_DIR)/GC.Impl.MarkBounded.fst.checked
 # generational/spec overrides: --query_stats prevents Z3 context accumulation
 GEN_QSTATS_CHECKED = $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
                      $(CACHE_DIR)/GC.Gen.WriteBodyLemmas.fst.checked
-# generational/impl root: promote_phase needs lemma-driven NL arithmetic
+# generational/impl root
 GEN_ROOT_CHECKED  = $(CACHE_DIR)/GC.Gen.Impl.fst.checked
 
 # Modules that hang at Z3 4.15.3's default eager-instantiation threshold.
@@ -238,7 +263,6 @@ GEN_ROOT_CHECKED  = $(CACHE_DIR)/GC.Gen.Impl.fst.checked
 # GC.Gen.CheneyPreservation.Forwarding: >90 min -> 3m13s.
 EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Spec.Allocator.fst.checked \
-  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.SearchChain.fst.checked \
   $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.Part2.fst.checked \
   $(CACHE_DIR)/GC.Impl.Allocator.fst.checked \
   $(CACHE_DIR)/GC.Gen.Cheney.fst.checked \
@@ -249,57 +273,135 @@ EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Gen.CombinedGraph.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Edges.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Reflection.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.Step.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst.checked \
   $(CACHE_DIR)/GC.Gen.PromoteUpdate.BlueAlloc.fst.checked \
   $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
   $(CACHE_DIR)/GC.Gen.TwoPassEquiv.fst.checked \
   $(CACHE_DIR)/GC.Gen.Impl.Cheney.fst.checked
 
 $(EAGER_QI_CHECKED):   private EXTRA_FLAGS = $(EAGER_QI)
-$(HDR_CHECKED):        private EXTRA_FLAGS = --z3rlimit 20
-$(MS_ALLOC_CHECKED):   private EXTRA_FLAGS = --z3rlimit 100 $(EAGER_QI)
-$(MS_MARKB_CHECKED):   private EXTRA_FLAGS = --z3rlimit 300 --z3refresh
+$(MS_MARKB_CHECKED):   private EXTRA_FLAGS = --z3refresh
 $(GEN_QSTATS_CHECKED): private EXTRA_FLAGS = --query_stats $(EAGER_QI)
-$(GEN_ROOT_CHECKED):   private EXTRA_FLAGS = --z3rlimit 200 --z3refresh
+$(GEN_ROOT_CHECKED):   private EXTRA_FLAGS = --z3refresh
 
 # mark-and-sweep/impl — z3refresh by default
-$(filter-out $(MS_ALLOC_CHECKED) $(MS_MARKB_CHECKED),$(MS_IMPL_CHECKED)): \
+$(filter-out $(MS_MARKB_CHECKED) $(EAGER_QI_CHECKED),$(MS_IMPL_CHECKED)): \
   private EXTRA_FLAGS = --z3refresh
 
-# generational/impl — higher rlimit by default
-$(filter-out $(GEN_ROOT_CHECKED) $(EAGER_QI_CHECKED),$(GEN_IMPL_CHECKED)): \
-  private EXTRA_FLAGS = --z3rlimit 160
+# generational/impl takes no extra flags beyond the two rules above.
 
-$(filter $(GEN_IMPL_CHECKED),$(EAGER_QI_CHECKED)): \
-  private EXTRA_FLAGS = --z3rlimit 160 $(EAGER_QI)
-
-# --- Extraction (mark-and-sweep) --------------------------------------------
+# --- Extraction --------------------------------------------------------------
+#
+# One collector is extracted: the generational one, into generational/snapshot.
+# Its major collections run the mark-and-sweep code verbatim, so every C
+# function the mark-and-sweep directory could emit is already in that snapshot;
+# a second bundle would only be a second thing to keep in sync.
 
 $(OUTPUT_DIR):
 	@mkdir -p $@
 
-MS_EXTRACT_DIR = mark-and-sweep/_extract
+.PHONY: extract
 
-$(MS_EXTRACT_DIR):
-	@mkdir -p $@
-
-.PHONY: extract-mark-and-sweep extract-generational extract
-
-extract: extract-mark-and-sweep extract-generational
-
-extract-mark-and-sweep: mark-and-sweep
-	+$(MAKE) -C mark-and-sweep extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
-
-extract-generational: generational
+extract: generational
 	+$(MAKE) -C generational extract FSTAR_HOME=$(FSTAR_HOME) KRML_HOME=$(KRML_HOME)
 
-# --- Clean ------------------------------------------------------------------
+# --- Dependence graph / unused-definition report -----------------------------
+#
+# `fstar-depgraph` (tools/depgraph) reads the .checked files in $(CACHE_DIR)
+# directly -- no re-verification -- and emits an offline HTML dependence viewer
+# plus a report of definitions that are unreachable from the roots.
+#
+# Roots are the two things we actually want to keep: the **interface** of the
+# single extraction bundle, and the **top-level correctness theorems**.  Anything not
+# reachable from those is dead weight.  SPOT scenario modules are added as roots
+# too (DEPGRAPH_SPOT_ROOTS) because they are part of the repo's build; drop them
+# from the root set to see what only SPOT keeps alive.
+#
+# NOTE on OCAMLPATH: the tool links against the *in-tree* fstar.compiler findlib
+# library and unmarshals .checked files, so the library must be the same F*
+# build that produced them (cache version + OCaml ABI).  $(FSTAR_HOME) is a
+# binary nightly whose .cmi files are compiled against a different OCaml 5.3.0
+# build than a typical local opam switch, so linking against it usually fails
+# with "inconsistent assumptions over interface Stdlib".  In that case build F*
+# from source at the *same commit* as $(FSTAR_HOME) and point DEPGRAPH_OCAMLPATH
+# at its out/lib:
+#
+#   git -C <fstar-checkout> worktree add /tmp/fstar-src $$($(FSTAR_EXE) --version | sed -n 's/^commit=//p')
+#   make -C /tmp/fstar-src stage2 -j FSTAR_USE_KRML_EXE=1 KRML_EXE=$$(command -v krml)
+#   make depgraph DEPGRAPH_OCAMLPATH=/tmp/fstar-src/stage2/out/lib
+#
+# `make depgraph-check` verifies the cache version matches before running.
+
+DEPGRAPH_DIR       = tools/depgraph
+DEPGRAPH_EXE       = $(DEPGRAPH_DIR)/_build/default/src/fstar_depgraph.exe
+DEPGRAPH_OUT      ?= _depgraph
+DEPGRAPH_OCAMLPATH ?= $(FSTAR_HOME)/lib
+
+# The interface: the API surface of the one extraction bundle, i.e. exactly the
+# modules named on the left of `-bundle ...=` in generational/Makefile.  Modules
+# they call (GC.Impl.Heap, GC.Impl.Object, GC.Impl.Stack, GC.Impl.Fields,
+# GC.Impl.Coalesce, GC.Impl.FusedSweepCoalesce, ...) are reached transitively
+# and must NOT be listed here -- listing a module as a root asserts that we want
+# to keep it even if nothing calls it, which is how dead code survived before.
+DEPGRAPH_IFACE_ROOTS = \
+  GC.Impl GC.Impl.Allocator GC.Impl.MarkBounded \
+  GC.Gen.Impl GC.Gen.Impl.Cheney GC.Gen.Impl.MinorHeap GC.Gen.Impl.UpdatePtrs \
+  GC.Gen.Impl.Promote
+
+# The top-level theorems.  These are results, so nothing refers to them; they
+# have to be named explicitly or the whole proof development looks dead.
+DEPGRAPH_THEOREM_ROOTS = \
+  GC.Spec.Correctness GC.Spec.MarkBoundedCorrectness GC.Gen.CheneyCorrectness \
+  GC.Impl.MarkBoundedRootLemmas GC.Spec.FreeList.Sweep
+
+DEPGRAPH_SPOT_ROOTS = $(sort $(basename $(notdir $(wildcard spot/GC.SPOT.*.fst))))
+
+DEPGRAPH_ROOTS ?= $(DEPGRAPH_IFACE_ROOTS) $(DEPGRAPH_THEOREM_ROOTS) $(DEPGRAPH_SPOT_ROOTS)
+
+.PHONY: depgraph depgraph-build depgraph-check depgraph-inventory \
+        depgraph-prune depgraph-clean
+
+depgraph-build:
+	@command -v dune >/dev/null || { echo "ERROR: dune not found; depgraph needs OCaml + dune."; exit 1; }
+	cd $(DEPGRAPH_DIR) && OCAMLPATH=$(abspath $(DEPGRAPH_OCAMLPATH)) dune build 2>&1 | \
+	  sed -e 's/^/  /' ; \
+	  test -x $(abspath $(DEPGRAPH_EXE))
+
+depgraph-check:
+	@want=$$($(FSTAR_EXE) --print_cache_version | grep -oE '[0-9]+$$'); \
+	echo "$(FSTAR_HOME) produces cache version $$want"; \
+	echo "checked files in $(CACHE_DIR): $$(ls $(CACHE_DIR)/*.checked 2>/dev/null | wc -l)"
+
+depgraph: depgraph-build
+	$(DEPGRAPH_EXE) \
+	  $(foreach r,$(DEPGRAPH_ROOTS),--root $(r)) \
+	  --include $(CACHE_DIR) \
+	  --source common --source mark-and-sweep --source generational --source spot \
+	  --out $(DEPGRAPH_OUT)
+	@echo ""
+	@echo "Viewer:  $(DEPGRAPH_OUT)/index.html   (open directly, no web server needed)"
+	@echo "Report:  $(DEPGRAPH_OUT)/unused-report.txt"
+
+# Regenerate docs/dead-code-inventory.md from the last `make depgraph` run.
+DEPGRAPH_INVENTORY ?= docs/dead-code-inventory.md
+
+depgraph-inventory:
+	@test -f $(DEPGRAPH_OUT)/unused-report.txt || { echo "ERROR: run 'make depgraph' first."; exit 1; }
+	python3 $(DEPGRAPH_DIR)/unused_inventory.py $(DEPGRAPH_OUT) $(DEPGRAPH_INVENTORY)
+
+# Delete every definition the last `make depgraph` run reported unreachable.
+# `DEPGRAPH_PRUNE_FLAGS=--dry-run` reports without touching anything.
+depgraph-prune:
+	@test -f $(DEPGRAPH_OUT)/unused-report.txt || { echo "ERROR: run 'make depgraph' first."; exit 1; }
+	python3 $(DEPGRAPH_DIR)/prune.py $(DEPGRAPH_OUT) . $(DEPGRAPH_PRUNE_FLAGS)
+	@echo ""
+	@echo "Now re-verify:  make -k -j24 && make -C spot -j24 && make extract"
+
+depgraph-clean:
+	rm -rf $(DEPGRAPH_OUT) $(DEPGRAPH_DIR)/_build# --- Clean ------------------------------------------------------------------
 
 clean:
 	rm -f .depend .depend.raw
 	rm -rf $(OUTPUT_DIR) $(CACHE_DIR)
 	find common mark-and-sweep generational spot -name '*.checked' -delete 2>/dev/null || true
-	rm -rf mark-and-sweep/_output mark-and-sweep/_extract
+	rm -rf mark-and-sweep/_output
 	rm -rf generational/_output generational/_extract

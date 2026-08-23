@@ -48,28 +48,19 @@ let is_val_addr (a: U64.t) : bool =
   is_hp_addr a && U64.v a >= U64.v mword
 
 let is_val_addr_spec (a: U64.t)
-  : Lemma (ensures is_val_addr a <==>
-                   (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword == 0))
   = ()
 
 /// ---------------------------------------------------------------------------
 /// Address Arithmetic Lemmas (implementations)
 /// ---------------------------------------------------------------------------
 
-let sum_of_aligned_is_aligned (x: U64.t{U64.v x % U64.v mword == 0})
-                               (y: U64.t{U64.v y % U64.v mword == 0})
-  : Lemma (ensures (U64.v x + U64.v y) % U64.v mword == 0) = ()
-
-let mult_mword_aligned (x: U64.t{U64.v x * U64.v mword < pow2 64})
-  : Lemma (ensures U64.v (U64.mul x mword) % U64.v mword == 0) = ()
-
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let mk_hp_addr a =
   assert (a < pow2 64);
   U64.uint_to_t a
 #pop-options
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let aligned_plus_mul8 base k =
   FStar.Math.Lemmas.lemma_mod_add_distr base (k * 8) 8;
   FStar.Math.Lemmas.multiple_modulo_lemma k 8

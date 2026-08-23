@@ -14,9 +14,10 @@ Verified OCaml garbage collector formalized in **F\*** and **Pulse** (concurrent
 - **mark-and-sweep/** — Sequential stop-the-world GC. `spec/` = `GC.Spec.Mark*`,
   `GC.Spec.Sweep*`, `GC.Spec.Coalesce`, `GC.Spec.SweepCoalesce.*`, the free-list
   `GC.Spec.Allocator*` family, and `GC.Spec.Correctness`. `impl/` = the Pulse
-  implementation (`GC.Impl`, `GC.Impl.Mark`, `GC.Impl.Sweep`, `GC.Impl.Allocator`,
-  `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`, `GC.Impl.Closure`).
-  Also has `ocaml-integration/` and a checked-in C `snapshot/`.
+  implementation (`GC.Impl`, `GC.Impl.MarkBounded`, `GC.Impl.Allocator`,
+  `GC.Impl.Coalesce`, `GC.Impl.FusedSweepCoalesce`, `GC.Impl.Fields`).  It has no
+  extraction target of its own: the generational collector runs this code for its
+  major collections, so `generational/snapshot/` is the only checked-in C.
 - **generational/** — Minor/major generational GC with Cheney copying collection.
   `spec/` = `GC.Gen.Base`, `GC.Gen.MinorHeap`, `GC.Gen.Cheney*`,
   `GC.Gen.CheneyPreservation.*`, `GC.Gen.Promote*`, `GC.Gen.MinorCollectForwarding.*`,
@@ -218,6 +219,70 @@ cell it walks, so the requirement is not new — it was simply never stated.
 splitting; the repo currently has only the `⊆` direction
 (`alloc_spec_preserves_objects`), not "objects grows by exactly the remainder".
 
+## Dead-code analysis (`make depgraph`)
+
+`tools/depgraph` is a port of `fstar-depgraph` from FStarLang/FStar. It reads the
+`.checked` files in `_cache` directly — no re-verification — and reports every
+definition unreachable from the roots, plus an offline HTML dependence viewer.
+
+```bash
+make depgraph DEPGRAPH_OCAMLPATH=<dir>/out/lib   # analyse
+make depgraph-inventory                          # regenerate docs/dead-code-inventory.md
+make depgraph-prune DEPGRAPH_PRUNE_FLAGS=--dry-run   # preview the deletions
+make depgraph-prune                              # apply them, then re-verify
+```
+
+**Building it is the hard part.** The tool links F*'s in-tree `fstar.compiler`
+library and unmarshals `.checked` files, so it must be built against *the same
+F\* build* that produced them:
+
+- The cache version must match (`fstar.exe --print_cache_version`). Our
+  nightly-2026-08-15 emits **89**; a current FStar checkout emits 90.
+- Linking against `./fstar/lib` fails with *"inconsistent assumptions over
+  interface Stdlib"*: the binary nightly's `.cmi`s were built against a
+  different OCaml 5.3.0 build than a typical opam switch.
+
+So build F* from source at the same commit and point `DEPGRAPH_OCAMLPATH` at it:
+
+```bash
+git -C <FStar> worktree add /tmp/fstar-v89 ae858eacbd
+cd /tmp/fstar-v89 && make stage2 -j24 FSTAR_USE_KRML_EXE=1 KRML_EXE=$(which krml)
+make setlink-2          # `make stage2` installs to stage2/out, not out
+```
+
+**Roots matter.** A correctness theorem is a *result* — nothing refers to it —
+so the theorems must be named as roots explicitly or the whole proof development
+is reported dead. `DEPGRAPH_ROOTS` is the C interface + the theorems + SPOT.
+Dropping `DEPGRAPH_SPOT_ROOTS` shows what only SPOT keeps alive.
+
+**Pulse `fn` bodies are invisible to the graph.** `Pulse.Main.check_fndefn`
+emits `mk_opaque_let ... (magic ())`, so the `.checked` file records
+`irreducible let f = _` and keeps the elaborated program in
+`sigmeta_extension_data` as a `Tm_lazy` blob holding an OCaml `st_term`, which
+is not an F* term. Only the *type* survives, so slprops and loop invariants
+produce edges but ghost lemma calls do not. The tool compensates by re-reading
+those bodies from the source and over-approximating; without that, 249
+definitions were falsely reported dead. If you ever see a "dead" lemma that is
+plainly called from a `fn`, this is why.
+
+**The unreachable set is closed**, so deleting all of it in one pass is safe:
+code referenced only by unreachable code is itself unreachable and already
+listed. The one thing the graph cannot see is that deleting a definition changes
+the SMT context of every module that `open`s it — so validate by deleting and
+re-verifying, not by re-reading the report.
+
+**`let x : squash p = ...` is a fact, not a callee.** Nothing ever names such a
+definition, so it is always reported unreachable, but its type sits in the SMT
+context of every later proof in the module. `GC.Gen.MinorHeap.minor_pow2_bound`
+is the example that bit us: deleting it broke `minor_chain_valid_extend_aux`,
+which never mentions it. `make depgraph-prune` refuses to touch these (and
+refuses a `let rec ... and ...` group with a live member), which is why the
+report bottoms out at 3 rather than 0. The three survivors carry a comment
+saying so.
+
+The development was trimmed against this report: **616 unreachable definitions
+and 9 entirely-dead modules removed, ~14,000 lines**, with byte-identical C.
+
 ## Key Conventions
 
 ### Naming
@@ -389,7 +454,7 @@ Idioms used in this repository:
 | fuel-driven `while (!go)` | `Prims.op_Addition (U64.v !fuel_ref) (if !go then 1 else 0)` |
 
 For a heap walk the loop body must be shown to *strictly* advance the cursor.  Where the
-body is a separate `fn` (e.g. `GC.Impl.Sweep.sweep_loop_body`) the strict increase has to
+body is a separate `fn` (e.g. `GC.Impl.FusedSweepCoalesce.fused_step`) the strict increase has to
 be added to that function's postcondition (`U64.v v1 > U64.v 'v0`).
 
 **Worklist loops with no concrete counter** (the bounded mark loops in
@@ -414,7 +479,7 @@ nothing happened yet").
 Several loops carry a counter called *fuel*. These are two different things and should
 not be conflated:
 
-* **Proof-only fuel** — `GC.Impl.Mark.mark_loop`. The loop guard is `!go` (the gray
+* **Proof-only fuel** — `GC.Impl.MarkBounded.mark_loop_bounded`. The loop guard is `!go` (the gray
   stack is empty); the fuel is never consulted at runtime. It exists only to index the
   fuel-recursive spec `GC.Spec.Mark.mark_aux` and to serve as the `decreases` measure.
   Exhaustion is *proved impossible*: `mark_aux_fuel_pos` derives `fv > 0` whenever the

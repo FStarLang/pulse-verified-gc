@@ -136,9 +136,6 @@ EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Gen.CombinedGraph.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Edges.fst.checked \
   $(CACHE_DIR)/GC.Gen.MinorCollectForwarding.Reflection.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.ReadOther.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.Step.fst.checked \
-  $(CACHE_DIR)/GC.Gen.PromoteUpdate.PromoteFields.FieldsPres.fst.checked \
   $(CACHE_DIR)/GC.Gen.PromoteUpdate.BlueAlloc.fst.checked \
   $(CACHE_DIR)/GC.Gen.Promote.fst.checked \
   $(CACHE_DIR)/GC.Gen.TwoPassEquiv.fst.checked \
@@ -187,8 +184,8 @@ ALL_KRML_MODS = \
   GC.Gen.Impl GC.Gen.Impl.MinorHeap GC.Gen.Impl.Cheney \
   GC.Gen.Impl.Promote GC.Gen.Impl.UpdatePtrs \
   GC.Gen.Base \
-  GC.Impl GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark \
-  GC.Impl.MarkBounded GC.Impl.Sweep GC.Impl.Coalesce \
+  GC.Impl GC.Impl.Fields \
+  GC.Impl.MarkBounded GC.Impl.Coalesce \
   GC.Impl.FusedSweepCoalesce GC.Impl.Allocator \
   GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
   GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object \

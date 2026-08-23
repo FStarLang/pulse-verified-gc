@@ -49,20 +49,6 @@ let field_offset (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t =
 /// Returns a value that may not be a valid hp_addr without additional constraints
 let field_address_raw (obj_addr: hp_addr) (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t =
   U64.add_mod obj_addr (field_offset field_idx)
-
-/// Field address with proof it's a valid hp_addr
-/// Requires: object at obj_addr has wosize >= field_idx and fits in heap
-let field_address (obj_addr: hp_addr) (field_idx: U64.t{U64.v field_idx < pow2 61})
-  : Pure hp_addr
-    (requires U64.v obj_addr + (U64.v field_idx * 8) < heap_size)
-    (ensures fun r -> U64.v r = U64.v obj_addr + (U64.v field_idx * 8))
-  = 
-  field_offset_bound field_idx;
-  let offset = field_offset field_idx in
-  assert (U64.v obj_addr + U64.v offset < heap_size);
-  assert (U64.v obj_addr + U64.v offset < pow2 64);
-  U64.add obj_addr offset
-
 /// Check if value looks like a pointer (word-aligned, within heap bounds, with room for header)
 let is_pointer (v: U64.t) : bool = 
   U64.v v >= U64.v zero_addr + U64.v mword && U64.v v < heap_size && U64.v v % U64.v mword = 0
@@ -135,7 +121,7 @@ val field_read_implies_exists_pointing : (g: heap) -> (h: obj_addr) -> (wz: U64.
         (ensures exists_field_pointing_to_unchecked g h wz target)
         (decreases U64.v wz)
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let rec field_read_implies_exists_pointing g h wz k target =
   let idx = U64.sub wz 1UL in
   FStar.Math.Lemmas.pow2_lt_compat 61 54;
@@ -190,100 +176,6 @@ let rec efptu_false_if_no_field_matches
       else
         efptu_false_if_no_field_matches g h idx target
     end
-
-/// Helper: check if any field points to target
-/// Requires: object is well-formed (fits in heap)
-let rec exists_field_pointing_to (g: heap) (h: obj_addr) (wz: wosize) (target: obj_addr) 
-  : Ghost bool 
-    (requires well_formed_object g h /\ U64.v wz <= U64.v (wosize_of_object h g))
-    (ensures fun _ -> True)
-    (decreases U64.v wz) =
-  if wz = 0UL then false
-  else begin
-    let idx = U64.sub wz 1UL in
-    wosize_fits_field_index wz;
-    FStar.Math.Lemmas.pow2_lt_compat 61 54;
-    // From well_formed_object: hd_address h + 8 + wz*8 <= heap_size
-    // h = hd_address h + 8, so h + wz*8 <= heap_size
-    // idx = wz - 1, so h + idx*8 < h + wz*8 <= heap_size
-    hd_address_spec h;
-    assert (U64.v h + (U64.v idx * 8) < heap_size);
-    let field_addr = field_address h idx in
-    let field_val = read_word g field_addr in
-    if is_pointer_to field_val target then true
-    else exists_field_pointing_to g h idx target
-  end
-
-/// The checked and unchecked versions are equivalent when object is well-formed
-/// Proof: when well_formed_object g h, all field addresses are valid hp_addrs,
-/// so the unchecked version's bounds check always passes
-let rec exists_field_checked_eq_unchecked (g: heap) (h: obj_addr) (wz: wosize) (target: obj_addr)
-  : Lemma 
-    (requires well_formed_object g h /\ U64.v wz <= U64.v (wosize_of_object h g))
-    (ensures exists_field_pointing_to g h wz target == exists_field_pointing_to_unchecked g h wz target)
-    (decreases U64.v wz)
-  =
-  if wz = 0UL then 
-    ()
-  else begin
-    let idx = U64.sub wz 1UL in
-    wosize_fits_field_index wz;
-    FStar.Math.Lemmas.pow2_lt_compat 61 54;
-    
-    hd_address_spec h;
-    assert (U64.v h + (U64.v idx * 8) < heap_size);
-    
-    // Show mul_mod idx mword = field_offset idx (no overflow for idx < pow2 54)
-    field_offset_bound idx;
-    assert ((U64.v idx * 8) < pow2 64);
-    FStar.Math.Lemmas.modulo_lemma ((U64.v idx * U64.v mword)) (pow2 64);
-    assert (U64.v (U64.mul_mod idx mword) = (U64.v idx * U64.v mword));
-    
-    // Show add_mod h (mul_mod idx mword) = field_address_raw h idx (no overflow)
-    assert (U64.v h + (U64.v idx * 8) < pow2 64);
-    FStar.Math.Lemmas.modulo_lemma (U64.v h + (U64.v idx * 8)) (pow2 64);
-    let far_unchecked = U64.add_mod h (U64.mul_mod idx mword) in
-    let far_raw = field_address_raw h idx in
-    assert (U64.v far_unchecked = U64.v h + (U64.v idx * 8));
-    assert (U64.v far_raw = U64.v h + (U64.v idx * 8));
-    assert (far_unchecked == far_raw);
-    
-    // Bounds checks pass
-    assert (U64.v far_unchecked < heap_size);
-    assert (U64.v h % 8 = 0);
-    assert ((U64.v idx * 8) % 8 = 0);
-    FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v h) ((U64.v idx * 8)) 8;
-    assert (U64.v far_unchecked % 8 = 0);
-    assert (not (U64.v far_unchecked >= heap_size || U64.v far_unchecked % 8 <> 0));
-    
-    // The checked version computes field_address h idx
-    let field_addr_checked = field_address h idx in
-    assert (U64.v field_addr_checked = U64.v far_unchecked);
-    
-    // Both read the same field value
-    let field_val = read_word g (far_unchecked <: hp_addr) in
-    let cmp = is_pointer_to field_val target in
-    
-    // Apply inductive hypothesis to recursive calls
-    exists_field_checked_eq_unchecked g h idx target;
-    ()
-  end
-
-/// Check if object h points to object target
-/// Uses wosize_of_object_bound to ensure valid wosize
-let is_pointer_to_object (g: heap) (h: obj_addr) (target: obj_addr) : GTot bool =
-  let wz = wosize_of_object h g in
-  wosize_of_object_bound h g;
-  exists_field_pointing_to_unchecked g h wz target
-
-/// is_pointer_to_object implies exists_field_pointing_to when well_formed
-let is_pointer_to_object_implies_exists_field (g: heap) (h: obj_addr) (target: obj_addr)
-  : Lemma 
-    (requires well_formed_object g h /\ is_pointer_to_object g h target)
-    (ensures exists_field_pointing_to g h (wosize_of_object_as_wosize h g) target)
-  = let wz = wosize_of_object_as_wosize h g in
-    exists_field_checked_eq_unchecked g h wz target
-
 /// ---------------------------------------------------------------------------
 /// Object Enumeration
 /// ---------------------------------------------------------------------------
@@ -364,11 +256,6 @@ let objects_cons_step_to (start: hp_addr) (g: heap) (next: hp_addr)
   assert (next_start_nat == U64.v next);
   assert (U64.uint_to_t next_start_nat == next);
   ()
-
-/// Get all allocated block addresses
-let allocated_blocks (g: heap) : GTot (Seq.seq obj_addr) =
-  objects zero_addr g
-
 /// Helper: membership in cons
 let mem_cons_lemma (#a:eqtype) (x hd: a) (tl: Seq.seq a)
   : Lemma (Seq.mem x (Seq.cons hd tl) <==> x = hd \/ Seq.mem x tl)
@@ -376,7 +263,7 @@ let mem_cons_lemma (#a:eqtype) (x hd: a) (tl: Seq.seq a)
 
 /// All object addresses in objects are > start
 /// Proof by induction on the structure of objects
-#push-options "--fuel 3 --ifuel 1 --z3rlimit 400"
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 100"
 let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: obj_addr)
   : Lemma (ensures Seq.mem x (objects start g) ==> U64.v x > U64.v start)
           (decreases (Seq.length g - U64.v start))
@@ -423,7 +310,7 @@ let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: obj_addr)
 #pop-options
 
 /// Object address not in later objects (for no-duplicates proof)
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 150"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 37"
 let objects_addr_not_in_rest (start: hp_addr) (g: heap)
   : Lemma (requires U64.v start + 8 < Seq.length g)  // Strict less than
           (ensures (
@@ -458,16 +345,6 @@ let objects_addr_not_in_rest (start: hp_addr) (g: heap)
 #pop-options
 
 /// All objects in objects list have addresses >= 8
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 150"
-let objects_addresses_ge_8 (g: heap) (x: obj_addr)
-  : Lemma (requires Seq.mem x (objects zero_addr g))
-          (ensures U64.v x >= 8)
-          (decreases Seq.length g)
-  = // objects zero_addr g starts at address 0, first object at address 8
-    // All objects have address > 0, and first object is at 0 + 8 = 8
-    objects_addresses_gt_start zero_addr g x
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Objects Separation: later objects start beyond earlier object's fields
 /// ---------------------------------------------------------------------------
@@ -476,7 +353,7 @@ let objects_addresses_ge_8 (g: heap) (x: obj_addr)
 /// and y is any later object, then y > src + wosize(src)*8.
 /// This proves non-overlapping: fields of src are in [src, src+(wz-1)*8],
 /// and hd_address(y) = y - 8 > src + wz*8 - 8 >= src + (wz-1)*8.
-#push-options "--fuel 3 --ifuel 1 --z3rlimit 400"
+#push-options "--fuel 3 --ifuel 1 --z3rlimit 100"
 let rec objects_separated (start: hp_addr) (g: heap) (src y: obj_addr)
   : Lemma (ensures Seq.mem src (objects start g) /\ Seq.mem y (objects start g) /\
                    U64.v src < U64.v y ==>
@@ -563,7 +440,7 @@ let rec seq_filter (#a:Type) (f: a -> GTot bool) (s: Seq.seq a)
 /// ---------------------------------------------------------------------------
 
 /// seq_filter preserves membership for elements satisfying predicate
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 10"
 let rec seq_filter_mem (#a:eqtype) (f: a -> GTot bool) (s: Seq.seq a) (x: a)
   : Lemma 
     (ensures Seq.mem x (seq_filter f s) ==> (Seq.mem x s /\ f x))
@@ -582,60 +459,7 @@ let rec seq_filter_mem (#a:eqtype) (f: a -> GTot bool) (s: Seq.seq a) (x: a)
 #pop-options
 
 /// If seq_filter is empty, predicate is false for all members
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
-let rec seq_filter_empty_implies_not_f (#a:eqtype) (f: a -> GTot bool) (s: Seq.seq a)
-  : Lemma 
-    (requires Seq.length (seq_filter f s) = 0)
-    (ensures forall x. Seq.mem x s ==> not (f x))
-    (decreases Seq.length s)
-  = if Seq.length s = 0 then ()
-    else begin
-      let hd = Seq.head s in
-      let tl = Seq.tail s in
-      if f hd then begin
-        // seq_filter would be Seq.cons hd (seq_filter f tl), length > 0
-        assert (Seq.length (seq_filter f s) > 0)
-      end else begin
-        // seq_filter s = seq_filter f tl
-        seq_filter_empty_implies_not_f f tl;
-        // Now forall x. mem x tl ==> not (f x)
-        // Need to show: forall x. mem x s ==> not (f x)
-        assert (forall x. Seq.mem x s ==> (x = hd \/ Seq.mem x tl));
-        assert (not (f hd))
-      end
-    end
-#pop-options
-
 /// If predicate is false for all members, seq_filter is empty
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 20"
-let rec seq_filter_not_f_implies_empty (#a:eqtype) (f: a -> GTot bool) (s: Seq.seq a)
-  : Lemma 
-    (requires forall x. Seq.mem x s ==> not (f x))
-    (ensures Seq.length (seq_filter f s) = 0)
-    (decreases Seq.length s)
-  = if Seq.length s = 0 then ()
-    else begin
-      let hd = Seq.head s in
-      let tl = Seq.tail s in
-      assert (Seq.mem hd s);
-      assert (not (f hd));
-      assert (forall x. Seq.mem x tl ==> Seq.mem x s);
-      seq_filter_not_f_implies_empty f tl
-    end
-#pop-options
-
-/// Get all black objects
-let black_blocks (g: heap) : GTot (Seq.seq obj_addr) =
-  seq_filter (fun h -> is_black h g) (objects zero_addr g)
-
-/// Get all gray objects
-let gray_blocks (g: heap) : GTot (Seq.seq obj_addr) =
-  seq_filter (fun h -> is_gray h g) (objects zero_addr g)
-
-/// Get all white objects
-let white_blocks (g: heap) : GTot (Seq.seq obj_addr) =
-  seq_filter (fun h -> is_white h g) (objects zero_addr g)
-
 /// Get all blue objects (free-list blocks)
 let blue_blocks (g: heap) : GTot (Seq.seq obj_addr) =
   seq_filter (fun h -> is_blue h g) (objects zero_addr g)
@@ -647,22 +471,6 @@ let blue_blocks (g: heap) : GTot (Seq.seq obj_addr) =
 /// No gray objects remain in heap (mark phase complete)
 let no_gray_objects (g: heap) : prop =
   forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> not (is_gray h g)
-
-/// Equivalent: gray_blocks is empty
-val no_gray_equiv : (g: heap) ->
-  Lemma (no_gray_objects g <==> Seq.length (gray_blocks g) = 0)
-
-let no_gray_equiv g = 
-  // Forward: no_gray_objects g ==> length (gray_blocks g) = 0
-  if Seq.length (gray_blocks g) > 0 then begin
-    // There exists some gray object in gray_blocks
-    seq_filter_mem (fun h -> is_gray h g) (objects zero_addr g) (Seq.head (gray_blocks g))
-  end;
-  // Backward: length (gray_blocks g) = 0 ==> no_gray_objects g
-  if Seq.length (gray_blocks g) = 0 then begin
-    seq_filter_empty_implies_not_f (fun h -> is_gray h g) (objects zero_addr g)
-  end
-
 /// ---------------------------------------------------------------------------
 /// Reachability
 /// ---------------------------------------------------------------------------
@@ -773,19 +581,6 @@ let no_scan_invariant_intro (g: heap) : Lemma
      ~(is_pointer_field (read_word g field_addr)))))
   (ensures no_scan_invariant g)
   = reveal_opaque (`%no_scan_invariant) no_scan_invariant
-
-/// Vacuous introduction: if no object is no_scan, the invariant holds trivially
-let no_scan_invariant_intro_vacuous (g: heap) : Lemma
-  (requires (forall (src: obj_addr). Seq.mem src (objects zero_addr g) ==> ~(is_no_scan src g)))
-  (ensures no_scan_invariant g)
-  = reveal_opaque (`%no_scan_invariant) no_scan_invariant
-
-/// Singleton introduction: if objects == [obj] and obj is not no_scan
-let no_scan_invariant_intro_singleton (g: heap) (obj: obj_addr) : Lemma
-  (requires objects zero_addr g == Seq.cons obj Seq.empty /\ ~(is_no_scan obj g))
-  (ensures no_scan_invariant g)
-  = reveal_opaque (`%no_scan_invariant) no_scan_invariant
-
 /// Pair introduction: if objects == [obj1; obj2] and neither is no_scan
 let no_scan_invariant_intro_pair (g: heap) (obj1 obj2: obj_addr) : Lemma
   (requires objects zero_addr g == Seq.cons obj1 (Seq.cons obj2 Seq.empty) /\
@@ -878,7 +673,7 @@ let points_to_target_in_objects (g: heap) (src dst: obj_addr) : Lemma
 /// if the field value is a pointer, then it targets an object in the objects list.
 /// From this we derive that efptu(g, src, wz, dst) = false for all dst ∉ objects,
 /// which is well_formed_heap_part2.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 1"
 let well_formed_heap_part2_from_field_closure (g: heap)
     (field_closure: (src: obj_addr) -> (j: nat) ->
       Lemma (requires Seq.mem src (objects zero_addr g) /\ j < U64.v (wosize_of_object src g) /\
@@ -975,7 +770,7 @@ let objects_nonempty_next (start: hp_addr) (g: heap) : Lemma
 
 /// Members of objects from a later start are also members of objects from an earlier start
 /// (objects later g ⊆ objects earlier g when later is the next scan position after earlier)
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
 let objects_later_subset (start: hp_addr) (g: heap) (x: obj_addr)
   : Lemma (requires Seq.length (objects start g) > 0)
           (ensures (let wz = getWosize (read_word g start) in
@@ -998,15 +793,6 @@ let objects_later_subset (start: hp_addr) (g: heap) (x: obj_addr)
       end
     end
 #pop-options
-
-/// A header is valid if it has valid color and tag
-/// Note: getColor returns algebraic type (White|Gray|Black) from GC.Lib.Header.color_sem
-let is_valid_header (header: U64.t) : bool =
-  // let c = getColor header in
-  let tag = getTag header in
-  // All possible colors are valid, so just check tag
-  U64.v tag < 256
-
 /// ---------------------------------------------------------------------------
 /// Object Count Bounds
 /// ---------------------------------------------------------------------------
@@ -1015,7 +801,7 @@ let is_valid_header (header: U64.t) : bool =
 
 /// Any member of the objects walk satisfies the size bound:
 /// hd_address(obj) + 8 + wosize * 8 <= Seq.length g
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 25"
 let rec objects_member_size_bound (start: hp_addr) (g: heap) (obj: obj_addr)
   : Lemma
     (requires Seq.mem obj (objects start g))
@@ -1042,7 +828,7 @@ let rec objects_member_size_bound (start: hp_addr) (g: heap) (obj: obj_addr)
 
 
 /// Generalized version: length (objects start g) * 8 <= length g - start
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 50"
+#push-options "--fuel 2 --ifuel 1 --z3rlimit 12"
 let rec objects_count_le_remaining (start: hp_addr) (g: heap)
   : Lemma 
     (ensures (Seq.length (objects start g) * 8) <= Seq.length g - U64.v start)
@@ -1116,17 +902,6 @@ let rec objects_count_le_remaining (start: hp_addr) (g: heap)
       end
     end
 #pop-options
-
-/// Number of objects is bounded by heap size
-val object_count_bound : (g: heap) ->
-  Lemma (Seq.length (objects zero_addr g) <= Seq.length g / 8)
-
-let object_count_bound g = 
-  objects_count_le_remaining zero_addr g;
-  // We have: length (objects zero_addr g) * 8 <= length g - 0 = length g
-  // Therefore: length (objects zero_addr g) <= length g / 8
-  FStar.Math.Lemmas.lemma_div_le ((Seq.length (objects zero_addr g) * 8)) (Seq.length g) 8
-
 /// Helper: colors are exhaustive and mutually exclusive
 let colors_exhaustive_and_exclusive (h: obj_addr) (g: heap)
   : Lemma (
@@ -1147,111 +922,7 @@ let colors_exhaustive_and_exclusive (h: obj_addr) (g: heap)
     ()
 
 /// Helper: partition sequence by 3 mutually exclusive, exhaustive predicates
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 50"
-let rec seq_filter_partition_3 
-  (#a:eqtype)
-  (p1 p2 p3: a -> GTot bool) 
-  (s: Seq.seq a)
-  : Lemma 
-    (requires 
-      (forall x. Seq.mem x s ==> 
-        ((p1 x \/ p2 x \/ p3 x) /\  // exhaustive
-         (not (p1 x && p2 x)) /\
-         (not (p1 x && p3 x)) /\
-         (not (p2 x && p3 x)))))
-    (ensures 
-      Seq.length (seq_filter p1 s) + 
-      Seq.length (seq_filter p2 s) + 
-      Seq.length (seq_filter p3 s) = 
-      Seq.length s)
-    (decreases Seq.length s)
-  = if Seq.length s = 0 then ()
-    else begin
-      let hd = Seq.head s in
-      let tl = Seq.tail s in
-      
-      assert (Seq.mem hd s);
-      assert (p1 hd \/ p2 hd \/ p3 hd);
-      
-      assert (forall x. Seq.mem x tl ==> Seq.mem x s);
-      seq_filter_partition_3 p1 p2 p3 tl;
-      
-      if p1 hd then begin
-        assert (not (p2 hd) && not (p3 hd));
-        ()
-      end else if p2 hd then begin
-        assert (not (p1 hd) && not (p3 hd));
-        ()
-      end else begin
-        assert (p3 hd);
-        assert (not (p1 hd) && not (p2 hd));
-        ()
-      end
-    end
-#pop-options
-
 /// Helper: partition sequence by 4 mutually exclusive, exhaustive predicates
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 50"
-let rec seq_filter_partition_4 
-  (#a:eqtype)
-  (p1 p2 p3 p4: a -> GTot bool) 
-  (s: Seq.seq a)
-  : Lemma 
-    (requires 
-      (forall x. Seq.mem x s ==> 
-        ((p1 x \/ p2 x \/ p3 x \/ p4 x) /\
-         (not (p1 x && p2 x)) /\
-         (not (p1 x && p3 x)) /\
-         (not (p1 x && p4 x)) /\
-         (not (p2 x && p3 x)) /\
-         (not (p2 x && p4 x)) /\
-         (not (p3 x && p4 x)))))
-    (ensures 
-      Seq.length (seq_filter p1 s) + 
-      Seq.length (seq_filter p2 s) + 
-      Seq.length (seq_filter p3 s) + 
-      Seq.length (seq_filter p4 s) = 
-      Seq.length s)
-    (decreases Seq.length s)
-  = if Seq.length s = 0 then ()
-    else begin
-      let hd = Seq.head s in
-      let tl = Seq.tail s in
-      assert (Seq.mem hd s);
-      assert (forall x. Seq.mem x tl ==> Seq.mem x s);
-      seq_filter_partition_4 p1 p2 p3 p4 tl;
-      ()
-    end
-#pop-options
-
-/// Black + gray + white + blue = total objects
-val color_partition : (g: heap) ->
-  Lemma (Seq.length (black_blocks g) + 
-         Seq.length (gray_blocks g) + 
-         Seq.length (white_blocks g) + 
-         Seq.length (blue_blocks g) = 
-         Seq.length (objects zero_addr g))
-
-let color_partition g = 
-  // `Classical.forall_intro` can no longer infer its predicate implicit: it
-  // occurs only in the lemma's postcondition. Introduce the quantifier directly.
-  introduce forall (h: obj_addr).
-      (is_black h g \/ is_white h g \/ is_gray h g \/ is_blue h g) /\
-      (not (is_black h g && is_white h g)) /\
-      (not (is_black h g && is_gray h g)) /\
-      (not (is_black h g && is_blue h g)) /\
-      (not (is_white h g && is_gray h g)) /\
-      (not (is_white h g && is_blue h g)) /\
-      (not (is_gray h g && is_blue h g))
-  with colors_exhaustive_and_exclusive h g;
-  
-  seq_filter_partition_4 
-    (fun h -> is_black h g)
-    (fun h -> is_gray h g)
-    (fun h -> is_white h g)
-    (fun h -> is_blue h g)
-    (objects zero_addr g)
-
 /// ---------------------------------------------------------------------------
 /// Color Change Preservation
 /// ---------------------------------------------------------------------------
@@ -1262,7 +933,7 @@ let color_partition g =
 /// Color changes preserve object enumeration
 /// Key insight: set_object_color only changes color bits in one header word.
 /// objects depends on getWosize at each step, which is in different bits.
-#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
+#push-options "--z3rlimit 100 --fuel 4 --ifuel 2"
 val color_change_preserves_objects_aux : (start: hp_addr) -> (g: heap) -> (obj: obj_addr) -> (c: color) ->
   Lemma (ensures objects start (set_object_color obj g c) == objects start g)
         (decreases (Seq.length g - U64.v start))
@@ -1295,7 +966,7 @@ let color_change_preserves_objects_mem (g: heap) (obj: obj_addr) (c: color) (x: 
 
 /// Past-object phase: addr < all future header positions
 /// Standalone (not mutually recursive)
-#push-options "--z3rlimit 800 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
 private let rec write_word_preserves_objects_past (start: hp_addr) (g: heap) (addr: hp_addr) (v: U64.t)
   : Lemma (requires U64.v addr < U64.v start /\
                     U64.v addr % 8 = 0)
@@ -1339,7 +1010,7 @@ private let rec write_word_preserves_objects_past (start: hp_addr) (g: heap) (ad
 
 /// Write to a word-separated address preserves objects enumeration
 /// Phase tracking: before obj's header, at it, or past it
-#push-options "--z3rlimit 1600 --fuel 4 --ifuel 2"
+#push-options "--z3rlimit 400 --fuel 4 --ifuel 2"
 private val write_word_preserves_objects_aux : (start: hp_addr) -> (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
   Lemma (requires Seq.mem obj (objects start g) /\
                   U64.v addr >= U64.v obj /\
@@ -1417,19 +1088,6 @@ val write_word_preserves_objects : (g: heap) -> (obj: obj_addr) -> (addr: hp_add
 
 let write_word_preserves_objects g obj addr v =
   write_word_preserves_objects_aux zero_addr g obj addr v
-
-/// Field write preserves objects from arbitrary start position
-val write_word_preserves_objects_from : (start: hp_addr) -> (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
-  Lemma (requires well_formed_heap g /\
-                  Seq.mem obj (objects start g) /\
-                  U64.v addr >= U64.v obj /\
-                  U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
-                  U64.v addr % 8 = 0)
-        (ensures objects start (write_word g addr v) == objects start g)
-
-let write_word_preserves_objects_from start g obj addr v =
-  write_word_preserves_objects_aux start g obj addr v
-
 /// Field write preserves objects — variant requiring only well_formed_heap_part1.
 /// Same proof as write_word_preserves_objects but with weaker precondition.
 val write_word_preserves_objects_part1 : (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -> (v: U64.t) ->
@@ -1467,7 +1125,7 @@ private let field_addr_raw_value (h: obj_addr) (idx: U64.t{U64.v idx < pow2 61})
 /// Helper: field address ≠ hd_address for obj_addr when idx < pow2 54
 /// Case 1 (no overflow): h + idx*8 >= h > h - 8 = hd_address
 /// Case 2 (overflow): need idx*8 ≠ 2^64 - 8; since idx < 2^54, idx*8 < 2^57 < 2^64 - 8
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 25"
 private let field_addr_ne_hd (h: obj_addr) (idx: U64.t{U64.v idx < pow2 54})
   : Lemma (requires U64.v (field_address_raw h idx) < heap_size /\
                     U64.v (field_address_raw h idx) % 8 = 0)
@@ -1487,7 +1145,7 @@ private let field_addr_ne_hd (h: obj_addr) (idx: U64.t{U64.v idx < pow2 54})
     end
 #pop-options
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec color_change_preserves_field_pointing_self (g: heap) (h: obj_addr) (c: color)
   (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Lemma (ensures exists_field_pointing_to_unchecked (set_object_color h g c) h wz target
@@ -1530,7 +1188,7 @@ let color_change_preserves_points_to_self (g: heap) (obj: obj_addr) (c: color) (
 
 /// Field addresses of one object don't overlap with header address of another.
 /// Requires idx < wosize for the src < obj case (objects_separated).
-#push-options "--z3rlimit 1000"
+#push-options "--z3rlimit 250"
 private let field_addr_ne_hd_other (g: heap) (src: obj_addr) (obj: obj_addr) 
   (idx: U64.t{U64.v idx < pow2 54})
   : Lemma (requires src <> obj /\
@@ -1561,7 +1219,7 @@ private let field_addr_ne_hd_other (g: heap) (src: obj_addr) (obj: obj_addr)
 
 /// Color change preserves exists_field_pointing for different objects
 /// This handles the case where src ≠ obj (cross-object case)
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 let rec color_change_preserves_field_pointing_other (g: heap) (obj: obj_addr) (c: color)
   (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Lemma (requires src <> obj /\
@@ -1613,7 +1271,7 @@ let color_change_preserves_points_to_other (g: heap) (obj: obj_addr) (c: color)
 /// ---------------------------------------------------------------------------
 
 /// For src ≠ obj: objects don't overlap, so all fields of src are unchanged
-#push-options "--z3rlimit 300 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 75 --fuel 2 --ifuel 1"
 private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (src: obj_addr) (wz: U64.t{U64.v wz < pow2 54}) (target: obj_addr)
   : Lemma (requires src <> obj /\
@@ -1676,7 +1334,7 @@ private let rec write_word_preserves_field_pointing_other (g: heap) (obj: obj_ad
 #pop-options
 
 /// For src = obj: field at addr gets value v, others unchanged
-#push-options "--z3rlimit 800 --fuel 4 --ifuel 2"
+#push-options "--z3rlimit 200 --fuel 4 --ifuel 2"
 private let rec write_word_field_pointing_self_implies (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (wz: U64.t{U64.v wz < pow2 54}) (dst: obj_addr)
   : Lemma (requires Seq.mem obj (objects zero_addr g) /\
@@ -1823,7 +1481,7 @@ val field_write_preserves_wf : (g: heap) -> (obj: obj_addr) -> (addr: hp_addr) -
                   (is_pointer_field v ==> Seq.mem v (objects zero_addr g)))
         (ensures well_formed_heap (write_word g addr v))
 
-#push-options "--z3rlimit 300"
+#push-options "--z3rlimit 75"
 let field_write_preserves_wf g obj addr v =
   reveal_opaque (`%well_formed_heap) well_formed_heap;
   let g' = write_word g addr v in

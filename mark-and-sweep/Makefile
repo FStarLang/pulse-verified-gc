@@ -14,7 +14,6 @@ FSTAR_LIB  := $(shell $(FSTAR_EXE) --locate_lib 2>/dev/null)
 
 C = ../common
 OUTPUT_DIR  = _output
-EXTRACT_DIR = _extract
 
 # Shared checked-file cache (see the root Makefile).  F* writes
 # `M.fst.checked` into --cache_dir, which defaults to the current working
@@ -88,7 +87,7 @@ ALL_SRC  = $(filter-out $(TEST_SRC),$(SPEC_SRC) $(IMPL_SRC))
 # --- Default goal (must precede -include .depend so included targets
 #     don't accidentally become the default goal) -------------------------
 
-.PHONY: all verify verify-spec verify-impl verify-tests extract snapshot clean
+.PHONY: all verify verify-spec verify-impl verify-tests clean
 
 all: verify
 
@@ -133,7 +132,6 @@ MS_MARKB_CHECKED = $(CACHE_DIR)/GC.Impl.MarkBounded.fst.checked
 # Modules that hang at Z3 4.15.3's default eager-instantiation threshold.
 EAGER_QI_CHECKED = \
   $(CACHE_DIR)/GC.Spec.Allocator.fst.checked \
-  $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.SearchChain.fst.checked \
   $(CACHE_DIR)/GC.Spec.Allocator.Lemmas.Part2.fst.checked \
   $(CACHE_DIR)/GC.Impl.Allocator.fst.checked
 
@@ -185,64 +183,17 @@ _output/GC_Spec_ZeroAddr.krml: | $(OUTPUT_DIR)
 	$(FSTAR) --codegen krml --odir $(OUTPUT_DIR) \
 	  --extract_module GC.Spec.ZeroAddr GC.Spec.ZeroAddr.fsti
 
-# --- KaRaMeL bundling (.krml → C) ------------------------------------------
-
-EXTRACT_MODULES = \
-  GC.Impl.Fields GC.Impl.Closure GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
-  GC.Impl.Coalesce \
-  GC.Impl.FusedSweepCoalesce GC.Impl \
-  GC.Impl.Allocator \
-  GC.Impl.ArrayWord GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
-  GC.Spec.ZeroAddr GC.Spec.Base GC.Spec.Heap GC.Spec.Object GC.Lib.Header GC.Lib.Address
-
-ALL_KRML = $(patsubst %,$(OUTPUT_DIR)/%.krml,$(subst .,_,$(EXTRACT_MODULES))) \
-           $(OUTPUT_DIR)/FStar_Pervasives_Native.krml
-
-KRML_FLAGS = \
-  -tmpdir $(EXTRACT_DIR) \
-  -skip-compilation -skip-linking \
-  -bundle 'GC.Impl+GC.Impl.Allocator=GC.Impl.*[rename=GC_Impl]' \
-  -bundle 'FStar.Pervasives.Native' \
-  -bundle 'GC.Spec.ZeroAddr=GC.Spec.ZeroAddr' \
-  -bundle 'GC.Spec.*,GC.Lib.Header,GC.Lib.Address' \
-  $(patsubst %,-no-prefix %,GC.Impl GC.Impl.Mark GC.Impl.MarkBounded GC.Impl.Sweep \
-    GC.Impl.Fields GC.Impl.Closure GC.Impl.Heap GC.Impl.Object GC.Impl.Stack \
-    GC.Impl.ArrayWord GC.Impl.Allocator GC.Impl.FusedSweepCoalesce GC.Impl.Coalesce GC.Spec.ZeroAddr) \
-  -warn-error -2-9-15
-
-$(EXTRACT_DIR):
-	@mkdir -p $@
-
-$(EXTRACT_DIR)/GC_Impl.c: $(ALL_KRML) | $(EXTRACT_DIR)
-	$(KRML) $(KRML_FLAGS) $(ALL_KRML)
-
-extract: verify-impl $(EXTRACT_DIR)/GC_Impl.c
-	@echo "=== Extraction complete: $(EXTRACT_DIR)/GC_Impl.{c,h} ==="
-
-# --- Snapshot ---------------------------------------------------------------
-
-SNAPSHOT_DIR = snapshot
-
-snapshot: extract
-	@echo "=== Creating snapshot ==="
-	@mkdir -p $(SNAPSHOT_DIR)/krmllib/krml/internal $(SNAPSHOT_DIR)/internal
-	@rm -f $(SNAPSHOT_DIR)/internal/*.h
-	@sed -e 's/^uint64_t heap_size_u64;/\/\* heap_size_u64: defined by the application (e.g., main.c) \*\//' \
-	     -e 's/^krml_checked_int_t heap_size;/\/\* heap_size: defined by the application (e.g., main.c) \*\//' \
-	  $(EXTRACT_DIR)/GC_Impl.c > $(SNAPSHOT_DIR)/GC_Impl.c
-	@cp $(EXTRACT_DIR)/GC_Impl.h $(SNAPSHOT_DIR)/
-	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.c $(SNAPSHOT_DIR)/ 2>/dev/null || true
-	@cp $(EXTRACT_DIR)/GC_Spec_GC_Lib_Header_GC_Lib_Address.h $(SNAPSHOT_DIR)/ 2>/dev/null || true
-	@cp $(EXTRACT_DIR)/internal/*.h $(SNAPSHOT_DIR)/internal/ 2>/dev/null || true
-	@cp $(KRML_HOME)/include/krmllib.h $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
-	@cp -r $(KRML_HOME)/krmllib/dist/minimal/* $(SNAPSHOT_DIR)/krmllib/ 2>/dev/null || true
-	@cp $(KRML_HOME)/include/krml/*.h $(SNAPSHOT_DIR)/krmllib/krml/ 2>/dev/null || true
-	@cp $(KRML_HOME)/include/krml/internal/*.h $(SNAPSHOT_DIR)/krmllib/krml/internal/ 2>/dev/null || true
-	@echo "=== Snapshot updated ==="
+# --- Extraction -------------------------------------------------------------
+#
+# There is deliberately no extraction target here.  The generational collector
+# performs its major collections with exactly this mark-and-sweep code, so
+# `make -C generational extract` already emits every C function this directory
+# could produce.  Maintaining a second bundle only created a second snapshot to
+# keep in sync.  See docs/bloat-analysis.md.
 
 # --- Cleanup ----------------------------------------------------------------
 
 clean:
 	rm -f $(ALL_CHECKED)
 	rm -f .depend .depend.raw
-	rm -rf $(OUTPUT_DIR) $(EXTRACT_DIR)
+	rm -rf $(OUTPUT_DIR)

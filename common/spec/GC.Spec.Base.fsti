@@ -54,14 +54,6 @@ let hp_addr = a:U64.t{
   U64.v a < heap_size /\ 
   U64.v a % U64.v mword == 0
 }
-
-/// 32-bit variant for compatibility
-let hp_addr_32 = a:FStar.UInt32.t{
-  FStar.UInt32.v a >= 0 /\ 
-  FStar.UInt32.v a < heap_size /\ 
-  FStar.UInt32.v a % 8 == 0
-}
-
 /// Base address of the heap (abstract — instantiated at deployment).
 /// Must have room for at least one object header after it.
 val zero_addr : a:hp_addr{U64.v a + U64.v mword < heap_size}
@@ -73,10 +65,6 @@ val zero_addr_above_2048 (_:unit) : Lemma (U64.v zero_addr >= 2048)
 /// Object address: hp_addr with room for header before it (>= 8)
 /// Used for all operations that access object headers via hd_address
 type obj_addr = a:hp_addr{U64.v a >= U64.v mword}
-
-/// Alias for backward compatibility
-let val_addr = obj_addr
-
 /// ---------------------------------------------------------------------------
 /// Address Predicates
 /// ---------------------------------------------------------------------------
@@ -96,26 +84,9 @@ val is_val_addr_spec (a: U64.t)
 /// ---------------------------------------------------------------------------
 /// Address Arithmetic Lemmas
 /// ---------------------------------------------------------------------------
-
-/// Sum of word-aligned values is word-aligned
-val sum_of_aligned_is_aligned (x: U64.t{U64.v x % U64.v mword == 0})
-                               (y: U64.t{U64.v y % U64.v mword == 0})
-  : Lemma (ensures (U64.v x + U64.v y) % U64.v mword == 0)
-
-/// Product with mword is word-aligned (when no overflow)
-val mult_mword_aligned (x: U64.t{U64.v x * U64.v mword < pow2 64})
-  : Lemma (ensures U64.v (U64.mul x mword) % U64.v mword == 0)
-
 /// ---------------------------------------------------------------------------
 /// Utility Types
 /// ---------------------------------------------------------------------------
-
-/// Stack-heap pair (result of operations that modify both)
-let stack_heap_pair = seq U64.t & heap
-
-/// Heap with free list pointer
-let heap_fp_pair = heap & hp_addr
-
 /// Build an `hp_addr` from a raw byte offset.  The well-typedness obligations
 /// (`UInt.size a 64` and `U64.v (uint_to_t a) % U64.v mword == 0`) are trivial,
 /// but under the very large contexts of the collector proofs the solver

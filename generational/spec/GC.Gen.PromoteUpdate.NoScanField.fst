@@ -25,7 +25,7 @@ open GC.Gen.PromoteUpdate.Aux
 
 /// Recursive helper: no-scan objects' fields are preserved by update_all_objects_aux.
 /// Identical structure to the blue field version: no-scan objects are skipped just like blue objects.
-#push-options "--z3rlimit 50 --fuel 1"
+#push-options "--z3rlimit 12 --fuel 1"
 private let rec update_all_objects_aux_preserves_no_scan_field
   (major: heap) (objs: seq obj_addr) (fwd: forwarding_map) (idx: nat)
   (h: obj_addr) (j: nat)

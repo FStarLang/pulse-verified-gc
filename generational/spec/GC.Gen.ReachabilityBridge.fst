@@ -45,11 +45,9 @@ private let aligned_gt_ge_plus_mword (x z: nat)
 
 /// The central collection heap shape already contains the stronger
 /// `GenInv.minor_major_fields_no_blue` condition.
-#push-options "--z3rlimit 80 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
 let minor_no_pointer_to_blue_from_collection_shape
   (minor: minor_state) (major: heap) (fp: U64.t)
-  : Lemma (requires GenInv.collection_heap_shape minor major fp)
-          (ensures minor_no_pointer_to_blue minor major)
   =
     GenInv.collection_heap_shape_elim minor major fp;
     let aux (obj: U64.t) (j: nat)
@@ -81,19 +79,9 @@ let minor_no_pointer_to_blue_from_collection_shape
 
 /// Helper: from `major_edge_elim`'s witness, establish `points_to` for
 /// `Mark.no_pointer_to_blue`.
-#push-options "--z3rlimit 80 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 2 --ifuel 0"
 let major_edge_points_to
   (minor: minor_state) (major: heap) (src: obj_addr) (dst: U64.t) (i: nat)
-  : Lemma
-    (requires
-      well_formed_heap major /\
-      Seq.mem src (objects zero_addr major) /\
-      i < U64.v (wosize_of_object src major) /\
-      U64.v src + i * 8 + 8 <= heap_size /\
-      (U64.v src + i * 8) % 8 == 0 /\
-      classify_major_field minor major
-        (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some (MajorV dst))
-    (ensures is_val_addr dst /\ points_to major src dst)
   = let far = U64.uint_to_t (U64.v src + i * 8) in
     let fv = read_word major (far <: hp_addr) in
     classify_major_field_inv_major minor major fv dst;
@@ -111,8 +99,6 @@ let major_edge_points_to
 #push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let major_object_not_minor_pointer
   (major: heap) (obj: obj_addr)
-  : Lemma (requires Seq.mem obj (objects zero_addr major))
-          (ensures ~(is_minor_pointer obj) /\ to_minor_offset obj == obj)
   =
     objects_addresses_gt_start zero_addr major obj;
     zero_addr_above_minor ();
@@ -120,24 +106,9 @@ let major_object_not_minor_pointer
     to_minor_offset_stable_above_minor obj
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 1"
 let reachable_major_valid_nonblue
   (minor: minor_state) (major: heap) (roots: seq U64.t)
-  : Lemma
-    (requires
-      well_formed_heap major /\
-      minor_wf minor /\
-      Mark.no_pointer_to_blue major /\
-      minor_no_pointer_to_blue minor major /\
-      roots_valid_nonblue roots major)
-    (ensures (
-      let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
-      forall (v: U64.t).
-        combined_reachable cg combined_roots (MajorV v) ==>
-        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-        Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-        ~(is_blue (v <: obj_addr) major)))
   = let cg = build_combined_graph minor major in
     let combined_roots = classify_roots roots in
     let p (cv: combined_vertex) : prop =
@@ -202,18 +173,9 @@ let reachable_major_valid_nonblue
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let reachable_major_valid
   (minor: minor_state) (major: heap) (roots: seq U64.t)
-  : Lemma
-    (requires well_formed_heap major /\ minor_wf minor)
-    (ensures (
-      let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
-      forall (v: U64.t).
-        combined_reachable cg combined_roots (MajorV v) ==>
-        U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-        Seq.mem (v <: obj_addr) (objects zero_addr major)))
   = let cg = build_combined_graph minor major in
     let combined_roots = classify_roots roots in
     let p (cv: combined_vertex) : prop =
@@ -259,14 +221,9 @@ private let minor_succ_in_live_set
   = let full_roots = Seq.append roots (minor_roots_from_major major) in
     minor_reachable_closed minor full_roots u v
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let live_set_in_minor_reachable
   (minor: minor_state) (major: heap) (roots: seq U64.t)
-  : Lemma
-    (requires remembered_roots_in_roots major roots)
-    (ensures forall (v: U64.t).
-      Seq.mem v (live_set_of minor major roots) ==>
-      Seq.mem v (minor_reachable minor roots))
   = let remembered = minor_roots_from_major major in
     let full_roots = Seq.append roots remembered in
     let p (x: U64.t) : prop = Seq.mem x (minor_reachable minor roots) in
@@ -296,23 +253,9 @@ let live_set_in_minor_reachable
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 15 --fuel 0 --ifuel 1"
 let reachability_bridge
   (minor: minor_state) (major: heap) (roots: seq U64.t)
-  : Lemma
-    (requires
-      well_formed_heap major /\
-      minor_wf minor /\
-      Mark.no_pointer_to_blue major /\
-      minor_no_pointer_to_blue minor major /\
-      roots_valid_nonblue roots major /\
-      major_field_zero_no_minor minor major)
-    (ensures (
-      let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
-      forall (v: U64.t).
-        combined_reachable cg combined_roots (MinorV v) ==>
-        Seq.mem v (live_set_of minor major roots)))
   = let cg = build_combined_graph minor major in
     let combined_roots = classify_roots roots in
     let full_roots = Seq.append roots (minor_roots_from_major major) in
@@ -400,24 +343,9 @@ let reachability_bridge
     Classical.forall_intro (Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 let combined_minor_reachable_in_minor_reachable
   (minor: minor_state) (major: heap) (roots: seq U64.t)
-  : Lemma
-    (requires
-      well_formed_heap major /\
-      minor_wf minor /\
-      Mark.no_pointer_to_blue major /\
-      minor_no_pointer_to_blue minor major /\
-      roots_valid_nonblue roots major /\
-      major_field_zero_no_minor minor major /\
-      remembered_roots_in_roots major roots)
-    (ensures (
-      let cg = build_combined_graph minor major in
-      let combined_roots = classify_roots roots in
-      forall (v: U64.t).
-        combined_reachable cg combined_roots (MinorV v) ==>
-        Seq.mem v (minor_reachable minor roots)))
   = let cg = build_combined_graph minor major in
     let combined_roots = classify_roots roots in
     reachability_bridge minor major roots;

@@ -27,7 +27,7 @@ module HeapGraph = GC.Spec.HeapGraph
 /// Vertex Set Property for Fields.objects
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 3 --ifuel 1"
 let rec objects_is_vertex_set_aux (start: hp_addr) (g: heap)
   : Lemma (ensures is_vertex_set (HeapGraph.coerce_to_vertex_list (objects start g)))
           (decreases (Seq.length g - U64.v start))
@@ -86,10 +86,3 @@ let graph_vertices_mem (g: heap) (x: obj_addr)
 /// ---------------------------------------------------------------------------
 /// Field Reads Equality (Data Transparency)
 /// ---------------------------------------------------------------------------
-
-let field_reads_equal (g1 g2: heap) : GTot prop =
-  forall (x: obj_addr). Seq.mem x (objects zero_addr g1) ==>
-    (Seq.mem x (objects zero_addr g2) /\
-     wosize_of_object x g1 == wosize_of_object x g2 /\
-     (forall (i: U64.t). 1 <= U64.v i /\ U64.v i <= U64.v (wosize_of_object x g1) ==>
-       HeapGraph.get_field g1 x i == HeapGraph.get_field g2 x i))

@@ -28,7 +28,7 @@ module HeapGraph = GC.Spec.HeapGraph
 module Alloc = GC.Spec.Allocator
 module ML = FStar.Math.Lemmas
 
-#set-options "--z3rlimit 50 --fuel 1 --ifuel 1"
+#set-options "--z3rlimit 12 --fuel 1 --ifuel 1"
 
 /// ===========================================================================
 /// Helper: write_word byte at addr+k depends only on the value v,
@@ -38,7 +38,7 @@ module ML = FStar.Math.Lemmas
 /// After write_word_spec, both write_word results are chains of Seq.upd
 /// writing the same decomposition of v. At position addr+k, the chain
 /// produces the k-th byte of v regardless of the base heap.
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let write_word_byte_at (g1 g2: heap) (addr: hp_addr) (v: U64.t) (k: nat{k < 8})
   : Lemma (Seq.index (write_word g1 addr v) (U64.v addr + k) ==
            Seq.index (write_word g2 addr v) (U64.v addr + k))
@@ -57,7 +57,7 @@ let write_word_byte_at (g1 g2: heap) (addr: hp_addr) (v: U64.t) (k: nat{k < 8})
 /// So Seq.index g (addr+k) == Seq.index (write_word g addr v) (addr+k).
 /// And write_word_byte_at says the byte at addr+k depends only on v.
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let read_word_bytes_agree (h1 h2: heap) (addr: hp_addr) (k: nat{k < 8})
   : Lemma
     (requires read_word h1 addr == read_word h2 addr)
@@ -97,35 +97,6 @@ let heaps_word_agree_implies_equal (h1 h2: heap)
 /// ===========================================================================
 /// Helpers for flush_blue determinism
 /// ===========================================================================
-
-/// Two different hp_addrs are at least 8 bytes apart
-/// (both are multiples of 8, and different multiples differ by >= 8).
-private let aligned_neq_disjoint (x y: hp_addr)
-  : Lemma (requires x <> y)
-          (ensures U64.v x + U64.v mword <= U64.v y \/
-                   U64.v y + U64.v mword <= U64.v x)
-  = assert (U64.v x % 8 == 0 /\ U64.v y % 8 == 0);
-    // x and y are distinct multiples of 8, so |x-y| >= 8
-    ()
-
-/// write_word preserves word-level agreement at any hp_addr a:
-/// if a is the written address, both results have v;
-/// otherwise, the original agreement is preserved.
-private let write_word_agree_at
-    (h1 h2: heap) (addr: hp_addr) (v: U64.t) (a: hp_addr)
-  : Lemma
-    (requires a == addr \/ read_word h1 a == read_word h2 a)
-    (ensures read_word (write_word h1 addr v) a ==
-             read_word (write_word h2 addr v) a)
-  = if a = addr then begin
-      read_write_same h1 addr v;
-      read_write_same h2 addr v
-    end else begin
-      aligned_neq_disjoint a addr;
-      read_write_different h1 addr a v;
-      read_write_different h2 addr a v
-    end
-
 /// ===========================================================================
 /// zero_fields pair agreement
 /// ===========================================================================
@@ -135,68 +106,12 @@ private let write_word_agree_at
 ///
 /// Inside range: both get 0UL (from the write at each position).
 /// Outside range: agreement is preserved through each write_word step.
-#push-options "--z3rlimit 20"
-private let rec zero_fields_agree_pair
-    (h1 h2: heap) (start: U64.t) (n: nat) (a: hp_addr)
-  : Lemma
-    (requires
-      (U64.v start + n * U64.v mword <= heap_size /\
-       U64.v start % U64.v mword == 0 /\
-       U64.v a >= U64.v start /\
-       U64.v a < U64.v start + n * U64.v mword) \/
-      read_word h1 a == read_word h2 a)
-    (ensures read_word (Alloc.zero_fields h1 start n) a ==
-             read_word (Alloc.zero_fields h2 start n) a)
-    (decreases n)
-  = if n = 0 then ()
-    else if U64.v start + 8 > heap_size then ()
-    else if U64.v start >= heap_size then ()
-    else if U64.v start % 8 <> 0 then ()
-    else begin
-      let start_hp : hp_addr = start in
-      let h1' = write_word h1 start_hp 0UL in
-      let h2' = write_word h2 start_hp 0UL in
-      if U64.v start + 8 >= pow2 64 then
-        // zero_fields returns h1'/h2' after one write
-        write_word_agree_at h1 h2 start_hp 0UL a
-      else begin
-        let next = U64.uint_to_t (U64.v start + 8) in
-        if a = start_hp then begin
-          // a == start: both have 0UL after the write
-          read_write_same h1 start_hp 0UL;
-          read_write_same h2 start_hp 0UL;
-          // Now h1' and h2' agree at a; use "outside" path in IH
-          zero_fields_agree_pair h1' h2' next (n - 1) a
-        end else begin
-          // a <> start
-          // Check if a was in the inside range
-          if U64.v start + n * 8 <= heap_size &&
-             U64.v start % 8 = 0 &&
-             U64.v a >= U64.v start &&
-             U64.v a < U64.v start + n * 8
-          then begin
-            // a is inside [start, start+n*8), a <> start, both aligned
-            // => a >= start + 8 = next, and a < start + n*8 = next + (n-1)*8
-            // Use first disjunct in IH
-            zero_fields_agree_pair h1' h2' next (n - 1) a
-          end else begin
-            // a is outside; h1,h2 agree at a
-            // write at start doesn't affect a since a <> start
-            write_word_agree_at h1 h2 start_hp 0UL a;
-            // h1',h2' agree at a; use second disjunct in IH
-            zero_fields_agree_pair h1' h2' next (n - 1) a
-          end
-        end
-      end
-    end
-#pop-options
-
 /// ===========================================================================
 /// zero_fields read within: zeroed position reads 0
 /// (Reproduces private lemma from GC.Spec.Coalesce)
 /// ===========================================================================
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 private let rec my_zero_fields_read_within
     (g: heap) (start: U64.t) (n: nat) (addr: hp_addr)
   : Lemma
@@ -235,7 +150,7 @@ private let rec my_zero_fields_read_within
 /// (Reproduces private lemma from GC.Spec.Coalesce)
 /// ===========================================================================
 
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 private let my_flush_blue_field1
     (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t)
   : Lemma
@@ -272,7 +187,7 @@ private let my_flush_blue_field1
 /// (Reproduces private lemma from GC.Spec.Coalesce)
 /// ===========================================================================
 
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 private let my_flush_blue_field_zero
     (g: heap) (fb: obj_addr) (rw: nat) (fp: U64.t) (a: hp_addr)
   : Lemma
@@ -315,7 +230,7 @@ private let my_flush_blue_field_zero
 /// Inside field 1: my_flush_blue_field1 (both produce fp).
 /// Inside zero range: my_flush_blue_field_zero (both produce 0UL).
 
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 private let flush_blue_word_agree
     (h1 h2: heap) (fb: U64.t) (rw: nat) (fp: U64.t) (a: hp_addr)
   : Lemma
@@ -386,7 +301,7 @@ private let flush_blue_word_agree
 /// - heaps_word_agree_implies_equal (word agreement → heap equality)
 /// - flush_blue_snd_heap_independent (snd is heap-independent)
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 let flush_blue_pair_agree (h1 h2: heap) (fb: U64.t) (rw: nat) (fp: U64.t)
   : Lemma
     (requires

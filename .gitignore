@@ -24,3 +24,10 @@ generational/ocaml-integration/ocaml-4.14-unchanged
 generational/ocaml-integration/tests/gmon.out
 dep.graph
 _cache/
+
+# Scratch caches created by tools/try-module.sh and tools/try-batch.sh
+_scratch/
+_scratch_cache*/
+
+# Dependence-graph viewer output (`make depgraph`)
+_depgraph/

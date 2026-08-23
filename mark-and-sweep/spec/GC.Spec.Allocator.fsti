@@ -284,7 +284,7 @@ val spec_next_fp_eq (g: heap) (obj: obj_addr)
 /// alloc_from_block unfolding lemmas (for Pulse proof)
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 25"
 
 /// Exact fit: leftover < 2
 val alloc_from_block_exact (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
@@ -380,19 +380,6 @@ let alloc_split_normal_result (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) 
 /// Result heap shorthand
 let alloc_split_normal_heap (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) : GTot heap =
   fst (alloc_split_normal_result g obj wz next)
-
-/// The result heap has the same length as the input heap
-val alloc_split_normal_length (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires alloc_split_normal_pre g obj wz)
-          (ensures Seq.length (alloc_split_normal_heap g obj wz next) == Seq.length g)
-
-/// Reading the alloc header: header at hd_address obj == make_header wz white 0
-val alloc_split_normal_read_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires alloc_split_normal_pre g obj wz)
-          (ensures (let g' = alloc_split_normal_heap g obj wz next in
-                    let hd = hd_address obj in
-                    read_word g' hd == make_header (U64.uint_to_t wz) white_bits 0UL))
-
 /// Reading the remainder header: header at rem_hd == make_header rem_wz blue 0
 val alloc_split_normal_read_rem_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
   : Lemma (requires alloc_split_normal_pre g obj wz)
@@ -431,29 +418,3 @@ val alloc_split_normal_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64
 /// ---------------------------------------------------------------------------
 /// Read-level bridge lemmas for alloc_from_block (exact case)
 /// ---------------------------------------------------------------------------
-
-let alloc_exact_pre (g: heap) (obj: obj_addr) (wz: nat) =
-  let hdr = read_word g (hd_address obj) in
-  let bwz = U64.v (getWosize hdr) in
-  bwz >= wz /\ bwz - wz < 2
-
-let alloc_exact_heap (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) : GTot heap =
-  fst (alloc_from_block g obj wz next)
-
-val alloc_exact_read_hd (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires alloc_exact_pre g obj wz)
-          (ensures (let g' = alloc_exact_heap g obj wz next in
-                    let hd = hd_address obj in
-                    let bwz = U64.v (getWosize (read_word g hd)) in
-                    read_word g' hd == make_header (U64.uint_to_t bwz) white_bits 0UL))
-
-val alloc_exact_read_other (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t) (addr: hp_addr)
-  : Lemma (requires alloc_exact_pre g obj wz /\
-                    (let hd = hd_address obj in
-                     U64.v addr + 8 <= U64.v hd \/ U64.v addr >= U64.v hd + 8))
-          (ensures (let g' = alloc_exact_heap g obj wz next in
-                    read_word g' addr == read_word g addr))
-
-val alloc_exact_length (g: heap) (obj: obj_addr) (wz: nat) (next: U64.t)
-  : Lemma (requires alloc_exact_pre g obj wz)
-          (ensures Seq.length (alloc_exact_heap g obj wz next) == Seq.length g)

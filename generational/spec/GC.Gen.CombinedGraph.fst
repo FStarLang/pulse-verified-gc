@@ -21,6 +21,9 @@ open GC.Gen.Promote
 /// Decidable equality for combined_vertex
 /// ---------------------------------------------------------------------------
 
+/// `make depgraph` reports this unreachable and it is: nothing ever names
+/// it. It is a *fact*, not a callee -- its type sits in the SMT context of
+/// every proof below, and deleting it breaks them. Do not prune it.
 let cv_eqtype : squash (hasEq combined_vertex) = ()
 
 /// ---------------------------------------------------------------------------
@@ -30,7 +33,6 @@ let cv_eqtype : squash (hasEq combined_vertex) = ()
 /// From a minor object's field: normalize potential minor pointers first,
 /// matching Cheney scanning and pointer updates.
 let classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
-  : GTot (option combined_vertex)
   = let vo = to_minor_offset v in
     if is_minor_addr vo && Seq.mem vo (minor_objects ms) then
       Some (MinorV vo)
@@ -40,23 +42,14 @@ let classify_minor_field (ms: minor_state) (major: heap) (v: U64.t)
       None
 
 let classify_minor_field_minor (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires (
-             let vo = to_minor_offset v in
-             is_minor_addr vo /\ Seq.mem vo (minor_objects ms)))
-          (ensures classify_minor_field ms major v == Some (MinorV (to_minor_offset v)))
   = ()
 
 let classify_minor_field_major (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
-                    (let vo = to_minor_offset v in
-                     ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms))))
-          (ensures classify_minor_field ms major v == Some (MajorV v))
   = ()
 
 /// From a major object's field: normalize potential minor pointers first,
 /// matching remembered-set scanning and pointer updates.
 let classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
-  : GTot (option combined_vertex)
   = let vo = to_minor_offset v in
     if is_minor_pointer vo && Seq.mem vo (minor_objects ms) then
       Some (MinorV vo)
@@ -66,17 +59,9 @@ let classify_major_field (ms: minor_state) (major: heap) (v: U64.t)
       None
 
 let classify_major_field_major (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires is_val_addr v /\ Seq.mem v (objects zero_addr major) /\
-                    (let vo = to_minor_offset v in
-                     ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
-          (ensures classify_major_field ms major v == Some (MajorV v))
   = ()
 
 let classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires (
-             let vo = to_minor_offset v in
-             is_minor_pointer vo /\ Seq.mem vo (minor_objects ms)))
-          (ensures classify_major_field ms major v == Some (MinorV (to_minor_offset v)))
   = ()
 
 /// ---------------------------------------------------------------------------
@@ -84,30 +69,18 @@ let classify_major_field_is_minor (ms: minor_state) (major: heap) (v: U64.t)
 /// ---------------------------------------------------------------------------
 
 let classify_minor_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  : Lemma (requires classify_minor_field ms major v == Some (MinorV x))
-          (ensures to_minor_offset v == x /\ is_minor_addr x /\ Seq.mem x (minor_objects ms))
   = ()
 
 #push-options "--z3rlimit 10"
 let classify_minor_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  : Lemma (requires classify_minor_field ms major v == Some (MajorV x))
-          (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   (let vo = to_minor_offset v in
-                    ~(is_minor_addr vo /\ Seq.mem vo (minor_objects ms))))
   = is_val_addr_spec v
 #pop-options
 
 let classify_major_field_inv_minor (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  : Lemma (requires classify_major_field ms major v == Some (MinorV x))
-          (ensures to_minor_offset v == x /\ is_minor_pointer x /\ Seq.mem x (minor_objects ms))
   = ()
 
 #push-options "--z3rlimit 10"
 let classify_major_field_inv_major (ms: minor_state) (major: heap) (v: U64.t) (x: U64.t)
-  : Lemma (requires classify_major_field ms major v == Some (MajorV x))
-          (ensures v == x /\ is_val_addr v /\ Seq.mem (v <: obj_addr) (objects zero_addr major) /\
-                   (let vo = to_minor_offset v in
-                    ~(is_minor_pointer vo /\ Seq.mem vo (minor_objects ms))))
   = is_val_addr_spec v
 #pop-options
 
@@ -198,7 +171,6 @@ let rec tag_major (objs: seq obj_addr) (idx: nat)
 /// ---------------------------------------------------------------------------
 
 let build_combined_graph (ms: minor_state) (major: heap)
-  : GTot combined_graph
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let verts = Seq.append (tag_minor minor_objs 0) (tag_major major_objs 0) in
@@ -266,9 +238,6 @@ let rec tag_minor_no_major (objs: seq U64.t) (idx: nat) (a: U64.t)
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let minor_vertex_char (ms: minor_state) (major: heap) (a: U64.t)
-  : Lemma (ensures
-      mem_cv (MinorV a) (build_combined_graph ms major) <==>
-      Seq.mem a (minor_objects ms))
   = let g = build_combined_graph ms major in
     let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
@@ -283,9 +252,6 @@ let minor_vertex_char (ms: minor_state) (major: heap) (a: U64.t)
 
 #push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let major_vertex_char (ms: minor_state) (major: heap) (a: obj_addr)
-  : Lemma (ensures
-      mem_cv (MajorV a) (build_combined_graph ms major) <==>
-      Seq.mem a (objects zero_addr major))
   = let g = build_combined_graph ms major in
     let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
@@ -298,7 +264,7 @@ let major_vertex_char (ms: minor_state) (major: heap) (a: obj_addr)
 /// major_vertex_valid: if MajorV v is a vertex, extract obj_addr refinement.
 /// The proof uses graph well-formedness + edge structure to derive that v
 /// equals some obj_addr in the objects sequence.
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec tag_major_valid (objs: seq obj_addr) (idx: nat) (v: U64.t)
   : Lemma (requires Seq.mem (MajorV v) (tag_major objs idx))
           (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
@@ -318,11 +284,8 @@ private let rec tag_major_valid (objs: seq obj_addr) (idx: nat) (v: U64.t)
     end
 #pop-options
 
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 15"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
-  : Lemma (requires mem_cv (MajorV v) (build_combined_graph ms major))
-          (ensures U64.v v >= U64.v mword /\ U64.v v < heap_size /\ U64.v v % U64.v mword == 0 /\
-                   Seq.mem (v <: obj_addr) (objects zero_addr major))
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     tag_minor_no_major minor_objs 0 v;
@@ -335,7 +298,7 @@ let major_vertex_valid (ms: minor_state) (major: heap) (v: U64.t)
 /// ---------------------------------------------------------------------------
 
 /// Any classified vertex is in the combined graph's vertex set
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let classify_minor_in_graph (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (ensures (
       let g = build_combined_graph ms major in
@@ -361,7 +324,7 @@ private let classify_minor_in_graph (ms: minor_state) (major: heap) (v: U64.t)
     else ()
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let classify_major_in_graph (ms: minor_state) (major: heap) (v: U64.t)
   : Lemma (ensures (
       let g = build_combined_graph ms major in
@@ -387,7 +350,7 @@ private let classify_major_in_graph (ms: minor_state) (major: heap) (v: U64.t)
 #pop-options
 
 /// Every edge from minor_field_edges has endpoints in the combined graph
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec minor_field_edges_wf (ms: minor_state) (major: heap)
   (src: U64.t) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem src (minor_objects ms))
@@ -414,7 +377,7 @@ private let rec minor_field_edges_wf (ms: minor_state) (major: heap)
 #pop-options
 
 /// Every edge from major_field_edges has endpoints in the combined graph
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edges_wf (ms: minor_state) (major: heap)
   (src: obj_addr) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem src (objects zero_addr major))
@@ -444,7 +407,7 @@ private let rec major_field_edges_wf (ms: minor_state) (major: heap)
 #pop-options
 
 /// Every edge from all_minor_edges has endpoints in the combined graph
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec all_minor_edges_wf (ms: minor_state) (major: heap)
   (objs: seq U64.t) (idx: nat) (e: combined_edge)
   : Lemma (requires objs == minor_objects ms)
@@ -467,7 +430,7 @@ private let rec all_minor_edges_wf (ms: minor_state) (major: heap)
 #pop-options
 
 /// Every edge from all_major_edges has endpoints in the combined graph
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec all_major_edges_wf (ms: minor_state) (major: heap)
   (objs: seq obj_addr) (idx: nat) (e: combined_edge)
   : Lemma (requires objs == objects zero_addr major)
@@ -497,10 +460,8 @@ private let rec all_major_edges_wf (ms: minor_state) (major: heap)
 /// Well-Formedness Proof
 /// ---------------------------------------------------------------------------
 
-#push-options "--fuel 0 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 1 --z3rlimit 10"
 let build_combined_graph_wf (ms: minor_state) (major: heap)
-  : Lemma (requires well_formed_heap major /\ minor_wf ms)
-          (ensures combined_graph_wf (build_combined_graph ms major))
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let g = build_combined_graph ms major in
@@ -522,7 +483,7 @@ let build_combined_graph_wf (ms: minor_state) (major: heap)
 
 /// If classify_minor_field produces a target at index i, the edge is in
 /// minor_field_edges from that index onward
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let minor_field_edge_at
   (ms: minor_state) (major: heap) (src: U64.t) (wz: nat) (i: nat)
   (dst: combined_vertex)
@@ -546,7 +507,7 @@ private let minor_field_edge_at
 private let le_ge_eq (a b: nat) : Lemma (requires a <= b /\ b <= a) (ensures a == b) = ()
 #pop-options
 
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec minor_field_edge_later
   (ms: minor_state) (major: heap) (src: U64.t) (wz: nat) (start: nat) (target_idx: nat)
   (dst: combined_vertex)
@@ -580,7 +541,7 @@ private let rec find_index_from (objs: seq U64.t) (src: U64.t) (idx: nat)
     else find_index_from objs src (idx + 1)
 
 /// If e is in all_minor_edges from some index k, then e is in all_minor_edges from 0
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_minor_edges_suffix
   (ms: minor_state) (major: heap) (objs: seq U64.t) (idx: nat) (e: combined_edge)
   : Lemma (requires idx <= Seq.length objs /\
@@ -598,7 +559,7 @@ private let rec all_minor_edges_suffix
 
 /// Given that src appears at index k in objs, and e is in minor_object_edges of src,
 /// then e is in all_minor_edges from 0
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let all_minor_edges_includes_object
   (ms: minor_state) (major: heap) (objs: seq U64.t) (src: U64.t) (k: nat)
   (e: combined_edge)
@@ -615,13 +576,9 @@ private let all_minor_edges_includes_object
 #pop-options
 
 /// Main edge introduction lemma for minor fields
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 0 --ifuel 0 --z3rlimit 10"
 let minor_field_edge_intro (ms: minor_state) (major: heap)
   (src: U64.t) (i: nat) (dst: combined_vertex)
-  : Lemma (requires Seq.mem src (minor_objects ms) /\
-                    i < minor_wosize ms src /\
-                    classify_minor_field ms major (minor_read_field ms src i) == Some dst)
-          (ensures mem_ce (MinorV src, dst) (build_combined_graph ms major))
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let wz = minor_wosize ms src in
@@ -644,7 +601,7 @@ let minor_field_edge_intro (ms: minor_state) (major: heap)
 /// ---------------------------------------------------------------------------
 
 /// If classify produces dst at field i, edge is in major_field_edges from i
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let major_field_edge_at
   (ms: minor_state) (major: heap) (src: obj_addr) (wz: nat) (i: nat)
   (dst: combined_vertex)
@@ -660,7 +617,7 @@ private let major_field_edge_at
 #pop-options
 
 /// If the edge is in major_field_edges from a later index, it's also in from earlier
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edge_later
   (ms: minor_state) (major: heap) (src: obj_addr) (wz: nat) (start: nat) (target_idx: nat)
   (dst: combined_vertex)
@@ -697,7 +654,7 @@ private let rec find_index_from_obj (objs: seq obj_addr) (src: obj_addr) (idx: n
     else find_index_from_obj objs src (idx + 1)
 
 /// If e is in all_major_edges from some index k, then e is in all_major_edges from 0
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_major_edges_suffix
   (ms: minor_state) (major: heap) (objs: seq obj_addr) (idx: nat) (e: combined_edge)
   : Lemma (requires idx <= Seq.length objs /\
@@ -715,7 +672,7 @@ private let rec all_major_edges_suffix
 
 /// Given that src appears at index k in objs, and e is in major_object_edges of src,
 /// then e is in all_major_edges from 0
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let all_major_edges_includes_object
   (ms: minor_state) (major: heap) (objs: seq obj_addr) (src: obj_addr) (k: nat)
   (e: combined_edge)
@@ -729,17 +686,9 @@ private let all_major_edges_includes_object
 #pop-options
 
 /// Main edge introduction lemma for major fields
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 let major_field_edge_intro (ms: minor_state) (major: heap)
   (src: obj_addr) (i: nat) (dst: combined_vertex)
-  : Lemma (requires Seq.mem src (objects zero_addr major) /\
-                    i < U64.v (wosize_of_object src major) /\
-                    ~(is_no_scan src major) /\
-                    U64.v src + i * 8 + 8 <= heap_size /\
-                    (U64.v src + i * 8) % 8 == 0 /\
-                    classify_major_field ms major
-                      (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some dst)
-          (ensures mem_ce (MajorV src, dst) (build_combined_graph ms major))
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let wz = U64.v (wosize_of_object src major) in
@@ -762,7 +711,7 @@ let major_field_edge_intro (ms: minor_state) (major: heap)
 /// ---------------------------------------------------------------------------
 
 /// Source characterization: every edge in minor_field_edges has source MinorV src
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec minor_field_edges_source (ms: minor_state) (major: heap)
   (src: U64.t) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem e (minor_field_edges ms major src wz i))
@@ -783,7 +732,7 @@ private let rec minor_field_edges_source (ms: minor_state) (major: heap)
 #pop-options
 
 /// Source characterization: every edge in major_field_edges has source MajorV src
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edges_source (ms: minor_state) (major: heap)
   (src: obj_addr) (wz: nat) (i: nat) (e: combined_edge)
   : Lemma (requires Seq.mem e (major_field_edges ms major src wz i))
@@ -810,54 +759,9 @@ private let rec major_field_edges_source (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: if edge is in minor_field_edges, there exists a field index with classification
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-private let rec minor_field_edges_elim (ms: minor_state) (major: heap)
-  (src: U64.t) (wz: nat) (i: nat) (dst: combined_vertex)
-  : Lemma (requires Seq.mem (MinorV src, dst) (minor_field_edges ms major src wz i))
-          (ensures exists (k: nat). i <= k /\ k < wz /\
-                    classify_minor_field ms major (minor_read_field ms src k) == Some dst)
-          (decreases (wz - i))
-  = if i >= wz then ()
-    else
-      let v = minor_read_field ms src i in
-      let rest = minor_field_edges ms major src wz (i + 1) in
-      match classify_minor_field ms major v with
-      | Some d ->
-        Seq.mem_cons (MinorV src, d) rest;
-        if (MinorV src, dst) = (MinorV src, d) then ()
-        else minor_field_edges_elim ms major src wz (i + 1) dst
-      | None -> minor_field_edges_elim ms major src wz (i + 1) dst
-#pop-options
-
 /// Helper: if edge is in major_field_edges, there exists a field index with classification
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
-private let rec major_field_edges_elim (ms: minor_state) (major: heap)
-  (src: obj_addr) (wz: nat) (i: nat) (dst: combined_vertex)
-  : Lemma (requires Seq.mem (MajorV src, dst) (major_field_edges ms major src wz i))
-          (ensures exists (k: nat). i <= k /\ k < wz /\
-                    (let field_offset = U64.v src + k * 8 in
-                     field_offset + 8 <= heap_size /\
-                     field_offset % 8 == 0 /\
-                     classify_major_field ms major
-                       (read_word major (U64.uint_to_t field_offset)) == Some dst))
-          (decreases (wz - i))
-  = if i >= wz then ()
-    else
-      let field_offset = U64.v src + i * 8 in
-      if field_offset + 8 > heap_size || field_offset % 8 <> 0 then ()
-      else
-        let v = read_word major (U64.uint_to_t field_offset) in
-        let rest = major_field_edges ms major src wz (i + 1) in
-        match classify_major_field ms major v with
-        | Some d ->
-          Seq.mem_cons (MajorV src, d) rest;
-          if (MajorV src, dst) = (MajorV src, d) then ()
-          else major_field_edges_elim ms major src wz (i + 1) dst
-        | None -> major_field_edges_elim ms major src wz (i + 1) dst
-#pop-options
-
 /// Helper: edges from all_minor_edges can be traced to a specific object
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_minor_edges_to_object
   (ms: minor_state) (major: heap) (objs: seq U64.t) (idx: nat) (e: combined_edge)
   : Lemma (requires Seq.mem e (all_minor_edges ms major objs idx))
@@ -874,7 +778,7 @@ private let rec all_minor_edges_to_object
 #pop-options
 
 /// Helper: edges from all_major_edges can be traced to a specific object
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_major_edges_to_object
   (ms: minor_state) (major: heap) (objs: seq obj_addr) (idx: nat) (e: combined_edge)
   : Lemma (requires Seq.mem e (all_major_edges ms major objs idx))
@@ -891,7 +795,7 @@ private let rec all_major_edges_to_object
 #pop-options
 
 /// Helper: MinorV never appears as first element in major edges
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec major_field_edges_no_minor (ms: minor_state) (major: heap)
   (src: obj_addr) (wz: nat) (i: nat) (a: U64.t) (dst: combined_vertex)
   : Lemma (ensures ~(Seq.mem (MinorV a, dst) (major_field_edges ms major src wz i)))
@@ -920,7 +824,7 @@ private let major_object_edges_no_minor (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: all_major_edges never has MinorV source
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_major_edges_no_minor (ms: minor_state) (major: heap)
   (objs: seq obj_addr) (idx: nat) (a: U64.t) (dst: combined_vertex)
   : Lemma (ensures ~(Seq.mem (MinorV a, dst) (all_major_edges ms major objs idx)))
@@ -935,7 +839,7 @@ private let rec all_major_edges_no_minor (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: MajorV never appears as first element in minor edges
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 private let rec minor_field_edges_no_major (ms: minor_state) (major: heap)
   (src: U64.t) (wz: nat) (i: nat) (a: U64.t) (dst: combined_vertex)
   : Lemma (ensures ~(Seq.mem (MajorV a, dst) (minor_field_edges ms major src wz i)))
@@ -960,7 +864,7 @@ private let minor_object_edges_no_major (ms: minor_state) (major: heap)
 #pop-options
 
 /// Helper: all_minor_edges never has MajorV source
-#push-options "--fuel 1 --ifuel 0 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 0 --z3rlimit 10"
 private let rec all_minor_edges_no_major (ms: minor_state) (major: heap)
   (objs: seq U64.t) (idx: nat) (a: U64.t) (dst: combined_vertex)
   : Lemma (ensures ~(Seq.mem (MajorV a, dst) (all_minor_edges ms major objs idx)))
@@ -979,16 +883,9 @@ private let rec all_minor_edges_no_major (ms: minor_state) (major: heap)
 /// ---------------------------------------------------------------------------
 
 /// Source decomposition
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 let edge_source_decomposition (ms: minor_state) (major: heap)
   (e: combined_edge)
-  : Lemma (requires mem_ce e (build_combined_graph ms major))
-          (ensures
-            (match fst e with
-             | MinorV src -> Seq.mem src (minor_objects ms)
-             | MajorV src ->
-               U64.v src >= U64.v mword /\ U64.v src < heap_size /\ U64.v src % U64.v mword == 0 /\
-               Seq.mem (src <: obj_addr) (objects zero_addr major)))
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     Seq.lemma_mem_append (all_minor_edges ms major minor_objs 0)
@@ -1039,13 +936,9 @@ let edge_source_decomposition (ms: minor_state) (major: heap)
 #pop-options
 
 /// Minor edge elimination
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 let minor_edge_elim (ms: minor_state) (major: heap)
   (src: U64.t) (dst: combined_vertex)
-  : Lemma (requires mem_ce (MinorV src, dst) (build_combined_graph ms major))
-          (ensures Seq.mem src (minor_objects ms) /\
-                   (exists (i: nat). i < minor_wosize ms src /\
-                     classify_minor_field ms major (minor_read_field ms src i) == Some dst))
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let e = (MinorV src, dst) in
@@ -1066,17 +959,9 @@ let minor_edge_elim (ms: minor_state) (major: heap)
 #pop-options
 
 /// Major edge elimination
-#push-options "--fuel 1 --ifuel 1 --z3rlimit 20"
+#push-options "--fuel 1 --ifuel 1 --z3rlimit 10"
 let major_edge_elim (ms: minor_state) (major: heap)
   (src: obj_addr) (dst: combined_vertex)
-  : Lemma (requires mem_ce (MajorV src, dst) (build_combined_graph ms major))
-          (ensures Seq.mem src (objects zero_addr major) /\
-                   ~(is_no_scan src major) /\
-                   (exists (i: nat). i < U64.v (wosize_of_object src major) /\
-                     U64.v src + i * 8 + 8 <= heap_size /\
-                     (U64.v src + i * 8) % 8 == 0 /\
-                     classify_major_field ms major
-                       (read_word major (U64.uint_to_t (U64.v src + i * 8))) == Some dst))
   = let minor_objs = minor_objects ms in
     let major_objs = objects zero_addr major in
     let e = (MajorV src, dst) in
@@ -1110,27 +995,6 @@ type combined_reach (g: combined_graph) (roots: seq combined_vertex)
 /// GC Morphism
 /// ---------------------------------------------------------------------------
 
-#push-options "--ifuel 1"
-let gc_morphism (fwd: forwarding_map) (v: combined_vertex) : GTot combined_vertex =
-  match v with
-  | MinorV a -> if fwd a <> 0UL then MajorV (fwd a) else MinorV a
-  | MajorV a -> MajorV a
-
-let gc_morphism_minor_fwd (fwd: forwarding_map) (v: U64.t)
-  : Lemma (requires fwd v <> 0UL)
-          (ensures gc_morphism fwd (MinorV v) == MajorV (fwd v))
-  = ()
-
-let gc_morphism_minor_stay (fwd: forwarding_map) (v: U64.t)
-  : Lemma (requires fwd v == 0UL)
-          (ensures gc_morphism fwd (MinorV v) == MinorV v)
-  = ()
-
-let gc_morphism_major (fwd: forwarding_map) (v: U64.t)
-  : Lemma (ensures gc_morphism fwd (MajorV v) == MajorV v)
-  = ()
-#pop-options
-
 /// The prop-level predicate: exists a derivation
 let combined_reachable (g: combined_graph) (roots: seq combined_vertex)
                        (v: combined_vertex) : GTot prop =
@@ -1138,15 +1002,11 @@ let combined_reachable (g: combined_graph) (roots: seq combined_vertex)
 
 let combined_reachable_root (g: combined_graph) (roots: seq combined_vertex)
                             (v: combined_vertex)
-  : Lemma (requires Seq.mem v roots /\ mem_cv v g)
-          (ensures combined_reachable g roots v)
   = let witness : combined_reach g roots v = CR_root v in
     assert (combined_reachable g roots v)
 
 let combined_reachable_step (g: combined_graph) (roots: seq combined_vertex)
                             (u v: combined_vertex)
-  : Lemma (requires combined_reachable g roots u /\ mem_ce (u, v) g)
-          (ensures combined_reachable g roots v)
   = // We know there exists a derivation for u
     let open FStar.IndefiniteDescription in
     assert (exists (d: combined_reach g roots u). True);
@@ -1157,11 +1017,6 @@ let combined_reachable_step (g: combined_graph) (roots: seq combined_vertex)
 /// Induction principle
 let combined_reachable_ind (g: combined_graph) (roots: seq combined_vertex)
                            (p: combined_vertex -> prop) (v: combined_vertex)
-  : Lemma (requires
-      combined_reachable g roots v /\
-      (forall r. Seq.mem r roots /\ mem_cv r g ==> p r) /\
-      (forall u w. p u /\ mem_ce (u, w) g ==> p w))
-    (ensures p v)
   = // By induction on the derivation tree
     let open FStar.IndefiniteDescription in
     let d = indefinite_description_ghost (combined_reach g roots v) (fun _ -> True) in
@@ -1180,11 +1035,6 @@ let combined_reachable_ind (g: combined_graph) (roots: seq combined_vertex)
 let combined_reachable_ind_with_reach
   (g: combined_graph) (roots: seq combined_vertex)
   (p: combined_vertex -> prop) (v: combined_vertex)
-  : Lemma (requires
-      combined_reachable g roots v /\
-      (forall r. Seq.mem r roots /\ mem_cv r g ==> p r) /\
-      (forall u w. combined_reachable g roots u /\ p u /\ mem_ce (u, w) g ==> p w))
-    (ensures p v)
   = let open FStar.IndefiniteDescription in
     let d = indefinite_description_ghost (combined_reach g roots v) (fun _ -> True) in
     let rec aux (#v: combined_vertex) (d: combined_reach g roots v)
@@ -1205,10 +1055,6 @@ let combined_reachable_ind_with_reach
 /// ---------------------------------------------------------------------------
 /// Root Classification
 /// ---------------------------------------------------------------------------
-
-let classify_roots_impl (roots: seq U64.t)
-  : GTot (seq combined_vertex)
-  = classify_roots roots
 
 /// ---------------------------------------------------------------------------
 /// classify_roots membership lemmas

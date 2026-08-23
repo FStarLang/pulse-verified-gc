@@ -121,43 +121,6 @@ val fl_chain_2cycle_not_terminates (g: heap) (a b: U64.t) (n: nat)
                     read_word g (b <: obj_addr) = a)
           (ensures fl_chain_terminates g a n = false)
 
-val fl_chain_terminates_splice (g g_new: heap) (fp splice_point: U64.t) (steps tail_steps: nat)
-  : Lemma
-    (requires fl_chain_terminates g fp steps /\
-              GC.Spec.Allocator.Lemmas.Common.fl_valid g fp steps /\
-              (forall (a: U64.t).
-                 (U64.v a >= U64.v mword /\ U64.v a < heap_size /\ U64.v a % U64.v mword = 0 /\
-                  Seq.mem a (objects zero_addr g)) ==>
-                 (U64.v (wosize_of_object (a <: obj_addr) g) >= 1 /\
-                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size /\
-                  a <> splice_point ==>
-                   read_word g_new (a <: obj_addr) == read_word g (a <: obj_addr))) /\
-              (U64.v splice_point >= U64.v mword /\ U64.v splice_point < heap_size /\
-               U64.v splice_point % U64.v mword = 0 /\
-               U64.v (hd_address (splice_point <: obj_addr)) + 16 <= heap_size ==>
-                fl_chain_terminates g_new (read_word g_new (splice_point <: obj_addr)) tail_steps))
-    (ensures fl_chain_terminates g_new fp (steps + tail_steps))
-
-
-val fl_valid_field_write (g: heap) (p: obj_addr) (v: U64.t) (fp: U64.t) (fuel tail_fuel: nat)
-  : Lemma
-    (requires GC.Spec.Allocator.Lemmas.Common.fl_valid g fp fuel /\
-              well_formed_heap g /\
-              Seq.mem p (objects zero_addr g) /\
-              U64.v (wosize_of_object p g) >= 1 /\
-              v <> p /\
-              GC.Spec.Allocator.Lemmas.Common.fl_valid (write_word g (p <: hp_addr) v) v tail_fuel /\
-              tail_fuel >= fuel)
-    (ensures GC.Spec.Allocator.Lemmas.Common.fl_valid (write_word g (p <: hp_addr) v) fp fuel)
-
-val fl_valid_field_write_tail (g: heap) (p: obj_addr) (v: U64.t) (fuel: nat)
-  : Lemma
-    (requires well_formed_heap g /\
-              Seq.mem p (objects zero_addr g) /\
-              U64.v (wosize_of_object p g) >= 1 /\
-              v <> p /\
-              GC.Spec.Allocator.Lemmas.Common.fl_valid g v fuel)
-    (ensures GC.Spec.Allocator.Lemmas.Common.fl_valid (write_word g (p <: hp_addr) v) v fuel)
 val chain_avoids (g: heap) (fp excl: U64.t) (steps: nat) : Tot bool
 
 val chain_avoids_null (g: heap) (excl: U64.t) (steps: nat)
@@ -324,23 +287,3 @@ val walk_chain_valid_preserved (g g2: heap) (fp excl: U64.t) (d fuel: nat)
                  U64.v (hd_address (a <: obj_addr)) + 16 <= heap_size ==>
                    read_word g2 (a <: obj_addr) == read_word g (a <: obj_addr))))
     (ensures walk_chain_valid g2 fp d /\ walk_chain g2 fp d = walk_chain g fp d)
-
-/// The free-list search never bottoms out on its fuel budget: if the chain from
-/// `cur_fp` reaches a terminal within `fuel` steps, then handing `alloc_search`
-/// any larger budget yields exactly the same result.  Hence `alloc_search` never
-/// takes its `fuel = 0` branch, and an OOM answer is always the genuine
-/// "nothing on the free list fits" answer rather than an artefact of the bound.
-val alloc_search_fuel_irrelevant
-      (g: heap) (head_fp prev_fp cur_fp: U64.t) (requested_wz: nat) (fuel fuel': nat)
-  : Lemma
-    (requires fl_chain_terminates g cur_fp fuel /\ fuel' >= fuel)
-    (ensures alloc_search g head_fp prev_fp cur_fp requested_wz fuel' ==
-             alloc_search g head_fp prev_fp cur_fp requested_wz fuel)
-
-/// Corollary: the `heap_words` budget baked into `alloc_spec` never binds.
-val alloc_spec_fuel_irrelevant (g: heap) (fp: U64.t) (requested_wz: nat) (extra: nat)
-  : Lemma
-    (requires fl_chain_terminates g fp heap_words)
-    (ensures (let wz = if requested_wz = 0 then 1 else requested_wz in
-              alloc_spec g fp requested_wz ==
-              alloc_search g fp 0UL fp wz (heap_words + extra)))

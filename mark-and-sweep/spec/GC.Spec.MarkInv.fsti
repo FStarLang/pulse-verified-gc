@@ -27,11 +27,6 @@ val mark_inv (g: heap) (st: seq obj_addr) : prop
 /// Introduction
 /// ---------------------------------------------------------------------------
 
-val mark_inv_intro : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires well_formed_heap g /\ stack_props g st /\
-                  Seq.length (objects zero_addr g) > 0 /\ SweepInv.heap_objects_dense g)
-        (ensures mark_inv g st)
-
 /// ---------------------------------------------------------------------------
 /// Elimination (well_formed_heap)
 /// ---------------------------------------------------------------------------
@@ -39,12 +34,6 @@ val mark_inv_intro : (g: heap) -> (st: seq obj_addr) ->
 val mark_inv_elim_wfh : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
         (ensures well_formed_heap g)
-
-/// Elimination (stack_elements_valid)
-val mark_inv_elim_sev : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires mark_inv g st)
-        (ensures stack_elements_valid g st)
-
 /// Elimination (stack_props)
 val mark_inv_elim_sp : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
@@ -58,47 +47,13 @@ val mark_inv_elim_sp : (g: heap) -> (st: seq obj_addr) ->
 val mark_inv_elim_objects : (g: heap) -> (st: seq obj_addr) ->
   Lemma (requires mark_inv g st)
         (ensures Seq.length (objects zero_addr g) > 0)
-
-/// Stack head is gray and a valid object
-val mark_inv_head_gray : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires mark_inv g st /\ Seq.length st > 0)
-        (ensures is_gray (Seq.head st) g /\
-                 Seq.mem (Seq.head st) (objects zero_addr g))
-
-/// Object in objects list has hd_address + (1+wosize)*mword <= heap_size
-val mark_inv_obj_fields_bound : (g: heap) -> (obj: obj_addr) ->
-  Lemma (requires well_formed_heap g /\ Seq.mem obj (objects zero_addr g))
-        (ensures U64.v (hd_address obj) + U64.v mword +
-                 (U64.v (wosize_of_object obj g) * U64.v mword) <= heap_size)
-
 /// ---------------------------------------------------------------------------
 /// Preservation through mark_step
 /// ---------------------------------------------------------------------------
 
-val mark_inv_step : (g: heap) -> (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) ->
-  Lemma (requires mark_inv g st)
-        (ensures mark_inv (fst (mark_step g st)) (snd (mark_step g st)))
-
-/// When head is no_scan, mark_step just blackens and pops
-val mark_inv_step_no_scan : (g: heap) -> (obj: obj_addr) -> (tl: seq obj_addr) ->
-  Lemma (requires mark_inv g (Seq.cons obj tl) /\ is_no_scan obj g)
-        (ensures mark_inv (makeBlack obj g) tl)
-
-/// When head is scannable, mark_step blackens + push_children
-val mark_inv_step_scan : (g: heap) -> (obj: obj_addr) -> (tl: seq obj_addr) ->
-  Lemma (requires mark_inv g (Seq.cons obj tl) /\ not (is_no_scan obj g))
-        (ensures (let g' = makeBlack obj g in
-                  let wz = wosize_of_object obj g in
-                  mark_inv (fst (push_children g' tl obj 1UL wz))
-                           (snd (push_children g' tl obj 1UL wz))))
-
 /// ---------------------------------------------------------------------------
 /// Objects preservation through mark_step
 /// ---------------------------------------------------------------------------
-
-val mark_inv_step_preserves_objects : (g: heap) -> (st: seq obj_addr{Seq.length st > 0 /\ stack_elements_valid g st}) ->
-  Lemma (requires mark_inv g st)
-        (ensures objects zero_addr (fst (mark_step g st)) == objects zero_addr g)
 
 /// ---------------------------------------------------------------------------
 /// Density elimination and preservation
@@ -111,34 +66,3 @@ val mark_inv_elim_density : (g: heap) -> (st: seq obj_addr) ->
 /// ---------------------------------------------------------------------------
 /// Stack length bound (proof gap — provable from stack_no_dups + stack_elements_valid)
 /// ---------------------------------------------------------------------------
-
-/// The gray stack length is bounded by the number of heap objects.
-/// Proof: stack_no_dups + stack_elements_valid imply the stack is a
-/// duplicate-free subsequence of (objects zero_addr g), hence no longer.
-/// Combined with objects_count * mword <= heap_size, this gives
-/// Seq.length st <= heap_size / mword < heap_size.
-val mark_inv_stack_bound : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires mark_inv g st)
-        (ensures Seq.length st < heap_size)
-
-/// push_children result has bounded stack length
-val mark_inv_push_children_bound : (g: heap) -> (obj: obj_addr) -> (tl: seq obj_addr) ->
-  Lemma (requires mark_inv g (Seq.cons obj tl) /\ not (is_no_scan obj g))
-        (ensures (let g' = makeBlack obj g in
-                  let wz = wosize_of_object obj g in
-                  Seq.length (snd (push_children g' tl obj 1UL wz)) < heap_size))
-
-/// push_children only grows the stack
-val push_children_stack_monotone : (g: heap) -> (st: seq obj_addr) -> (obj: obj_addr) ->
-  (i: U64.t{U64.v i >= 1}) -> (ws: U64.t) ->
-  Lemma (ensures Seq.length st <= Seq.length (snd (push_children g st obj i ws)))
-
-val mark_inv_no_gray : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires mark_inv g st /\ Seq.length st = 0)
-        (ensures SweepInv.no_gray_objects g)
-
-/// Same as mark_inv_no_gray but with Mark.noGreyObjects postcondition
-/// (boolean negation `not` instead of propositional `~`)
-val mark_inv_noGreyObjects : (g: heap) -> (st: seq obj_addr) ->
-  Lemma (requires mark_inv g st /\ Seq.length st = 0)
-        (ensures GC.Spec.Mark.noGreyObjects g)

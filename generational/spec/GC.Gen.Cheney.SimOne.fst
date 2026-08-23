@@ -21,13 +21,9 @@ let queue_valid (minor: minor_state) (q: seq U64.t) : prop =
   forall (j:nat). j < Seq.length q ==> Seq.mem (Seq.index q j) (minor_objects minor)
 
 let queue_valid_intro (minor: minor_state) (q: seq U64.t)
-  : Lemma (requires (forall (j:nat). j < Seq.length q ==> Seq.mem (Seq.index q j) (minor_objects minor)))
-          (ensures queue_valid minor q)
   = ()
 
 let queue_valid_elim (minor: minor_state) (q: seq U64.t)
-  : Lemma (requires queue_valid minor q)
-          (ensures (forall (j:nat). j < Seq.length q ==> Seq.mem (Seq.index q j) (minor_objects minor)))
   = ()
 
 /// Helper: when forward_one appends addr to queue, the extended queue is still valid
@@ -53,112 +49,6 @@ private let forward_one_append_valid
 #pop-options
 
 /// Queue validity: fuel 0, rely on unfold lemmas
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
-
-let fwd_one_preserves_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires queue_valid minor cs.cs_queue)
-          (ensures queue_valid minor (CheneySpec.cheney_forward_one minor cs addr).cs_queue)
-  =
-  if cs.cs_fwd addr <> 0UL then
-    CheneySpec.cheney_forward_one_noop minor cs addr
-  else if is_infix_in_minor minor addr then begin
-    CheneySpec.cheney_forward_one_infix minor cs addr;
-    let parent = infix_parent minor addr in
-    // Forward parent (cheney_forward_normal) — same queue_valid argument
-    if not (Seq.mem parent (minor_objects minor)) || cs.cs_fwd parent <> 0UL then begin
-      CheneySpec.cheney_forward_normal_noop minor cs parent
-    end else begin
-      let wz = minor_wosize minor parent in
-      if wz = 0 then
-        CheneySpec.cheney_forward_normal_noop_wz0 minor cs parent
-      else begin
-        let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
-        if res.new_addr = 0UL then
-          CheneySpec.cheney_forward_normal_noop_oom minor cs parent
-        else begin
-          CheneySpec.cheney_forward_normal_success minor cs parent;
-          let cs' = CheneySpec.cheney_forward_normal minor cs parent in
-          forward_one_append_valid minor cs.cs_queue cs'.cs_queue parent
-        end
-      end
-    end
-    // Infix step doesn't change the queue
-  end
-  else begin
-    CheneySpec.cheney_forward_one_normal minor cs addr;
-    if not (Seq.mem addr (minor_objects minor)) then
-      CheneySpec.cheney_forward_normal_noop minor cs addr
-    else begin
-      let wz = minor_wosize minor addr in
-      if wz = 0 then
-        CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
-      else begin
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-        if res.new_addr = 0UL then
-          CheneySpec.cheney_forward_normal_noop_oom minor cs addr
-        else begin
-          CheneySpec.cheney_forward_normal_success minor cs addr;
-          let cs' = CheneySpec.cheney_forward_normal minor cs addr in
-          forward_one_append_valid minor cs.cs_queue cs'.cs_queue addr
-        end
-      end
-    end
-  end
-
-#pop-options
-
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
-
-let cheney_forward_one_queue_bound
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (ensures (let cs' = CheneySpec.cheney_forward_one minor cs addr in
-                    Seq.length cs'.cs_queue <= Seq.length cs.cs_queue + 1))
-  =
-  if cs.cs_fwd addr <> 0UL then
-    CheneySpec.cheney_forward_one_noop minor cs addr
-  else if is_infix_in_minor minor addr then begin
-    CheneySpec.cheney_forward_one_infix minor cs addr;
-    let parent = infix_parent minor addr in
-    if not (Seq.mem parent (minor_objects minor)) || cs.cs_fwd parent <> 0UL then
-      CheneySpec.cheney_forward_normal_noop minor cs parent
-    else begin
-      let wz = minor_wosize minor parent in
-      if wz = 0 then
-        CheneySpec.cheney_forward_normal_noop_wz0 minor cs parent
-      else begin
-        let res = promote_object minor cs.cs_major parent cs.cs_fp wz in
-        if res.new_addr = 0UL then
-          CheneySpec.cheney_forward_normal_noop_oom minor cs parent
-        else begin
-          CheneySpec.cheney_forward_normal_success minor cs parent;
-          Seq.Base.lemma_len_append cs.cs_queue (Seq.create 1 parent)
-        end
-      end
-    end
-  end
-  else begin
-    CheneySpec.cheney_forward_one_normal minor cs addr;
-    if not (Seq.mem addr (minor_objects minor)) then
-      CheneySpec.cheney_forward_normal_noop minor cs addr
-    else begin
-      let wz = minor_wosize minor addr in
-      if wz = 0 then
-        CheneySpec.cheney_forward_normal_noop_wz0 minor cs addr
-      else begin
-        let res = promote_object minor cs.cs_major addr cs.cs_fp wz in
-        if res.new_addr = 0UL then
-          CheneySpec.cheney_forward_normal_noop_oom minor cs addr
-        else begin
-          CheneySpec.cheney_forward_normal_success minor cs addr;
-          Seq.Base.lemma_len_append cs.cs_queue (Seq.create 1 addr)
-        end
-      end
-    end
-  end
-
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Recursive queue validity proofs
 /// These live in SimOne (where queue_valid's definition is known)
@@ -169,80 +59,6 @@ let cheney_forward_one_queue_bound
 /// we use their equation lemmas (_base/_step) to unfold the recursive
 /// definitions one step at a time.
 /// ---------------------------------------------------------------------------
-
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0"
-
-private let rec forward_fields_qv_aux
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma
-    (requires queue_valid minor cs.cs_queue)
-    (ensures queue_valid minor (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_queue)
-    (decreases (if idx < wosize then wosize - idx else 0))
-  =
-  if idx >= wosize then
-    CheneySpec.cheney_forward_fields_base minor cs parent idx wosize
-  else begin
-    CheneySpec.cheney_forward_fields_step minor cs parent idx wosize;
-    let field_val = to_minor_offset (minor_read_field minor parent idx) in
-    let cs' = CheneySpec.cheney_forward_one minor cs field_val in
-    fwd_one_preserves_queue_valid minor cs field_val;
-    forward_fields_qv_aux minor cs' parent (idx + 1) wosize
-  end
-
-let forward_fields_preserves_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires queue_valid minor cs.cs_queue)
-          (ensures queue_valid minor (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_queue)
-  = forward_fields_qv_aux minor cs parent idx wosize
-
-private let rec forward_roots_qv_aux
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma
-    (requires queue_valid minor cs.cs_queue)
-    (ensures queue_valid minor (CheneySpec.cheney_forward_roots minor cs roots idx).cs_queue)
-    (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
-  =
-  if idx >= Seq.length roots then
-    CheneySpec.cheney_forward_roots_base minor cs roots idx
-  else begin
-    CheneySpec.cheney_forward_roots_step minor cs roots idx;
-    let r = Seq.index roots idx in
-    let cs' = CheneySpec.cheney_forward_one minor cs r in
-    fwd_one_preserves_queue_valid minor cs r;
-    forward_roots_qv_aux minor cs' roots (idx + 1)
-  end
-
-let forward_roots_preserves_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires queue_valid minor cs.cs_queue)
-          (ensures queue_valid minor (CheneySpec.cheney_forward_roots minor cs roots idx).cs_queue)
-  = forward_roots_qv_aux minor cs roots idx
-
-private let rec scan_qv_aux
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma
-    (requires queue_valid minor cs.cs_queue)
-    (ensures queue_valid minor (CheneySpec.cheney_scan minor cs scan fuel).cs_queue)
-    (decreases fuel)
-  =
-  if fuel = 0 || scan >= Seq.length cs.cs_queue then
-    CheneySpec.cheney_scan_base minor cs scan fuel
-  else begin
-    CheneySpec.cheney_scan_step minor cs scan fuel;
-    let obj = Seq.index cs.cs_queue scan in
-    let wz = minor_wosize minor obj in
-    let cs' = CheneySpec.cheney_forward_fields minor cs obj 0 wz in
-    forward_fields_qv_aux minor cs obj 0 wz;
-    scan_qv_aux minor cs' (scan + 1) (fuel - 1)
-  end
-
-let scan_preserves_queue_valid
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires queue_valid minor cs.cs_queue)
-          (ensures queue_valid minor (CheneySpec.cheney_scan minor cs scan fuel).cs_queue)
-  = scan_qv_aux minor cs scan fuel
-
-#pop-options
 
 /// ---------------------------------------------------------------------------
 /// Potential-function based BFS invariant
@@ -261,14 +77,6 @@ let rec count_unforwarded (objs: seq U64.t) (fwd: forwarding_map) (i: nat)
   = if i >= Seq.length objs then 0
     else (if fwd (Seq.index objs i) = 0UL then 1 else 0) +
          count_unforwarded objs fwd (i + 1)
-
-/// count_unforwarded is bounded by the remaining length
-private let rec count_unforwarded_bound (objs: seq U64.t) (fwd: forwarding_map) (i: nat)
-  : Lemma (ensures count_unforwarded objs fwd i <= (if i < Seq.length objs then Seq.length objs - i else 0))
-          (decreases (if i < Seq.length objs then Seq.length objs - i else 0))
-  = if i >= Seq.length objs then ()
-    else count_unforwarded_bound objs fwd (i + 1)
-
 /// With empty_forwarding, every element contributes 1
 private let rec count_unforwarded_empty (objs: seq U64.t) (i: nat)
   : Lemma (ensures count_unforwarded objs empty_forwarding i ==
@@ -350,16 +158,9 @@ let cheney_bfs_inv (minor: minor_state) (cs: CheneySpec.cheney_state) : prop =
 
 let cheney_bfs_inv_fwd_in_queue
   (minor: minor_state) (cs: CheneySpec.cheney_state)
-  : Lemma (requires cheney_bfs_inv minor cs)
-          (ensures forall (x: U64.t).
-            Seq.mem x (minor_objects minor) /\
-            cs.CheneySpec.cs_fwd x <> 0UL ==> Seq.mem x cs.CheneySpec.cs_queue)
   = ()
 
 let cheney_bfs_inv_initial (minor: minor_state) (cs: CheneySpec.cheney_state)
-  : Lemma (requires cs.CheneySpec.cs_queue == Seq.empty /\
-                    cs.CheneySpec.cs_fwd == empty_forwarding)
-          (ensures cheney_bfs_inv minor cs)
   = queue_valid_intro minor Seq.empty;
     count_unforwarded_empty (minor_objects minor) 0;
     let aux_complete (x: U64.t) : Lemma
@@ -372,20 +173,16 @@ let cheney_bfs_inv_initial (minor: minor_state) (cs: CheneySpec.cheney_state)
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux_complete)
 
 let cheney_bfs_inv_bound (minor: minor_state) (cs: CheneySpec.cheney_state)
-  : Lemma (requires cheney_bfs_inv minor cs)
-          (ensures Seq.length cs.CheneySpec.cs_queue <= Seq.length (minor_objects minor))
   = ()  // Direct from the invariant (count_unforwarded >= 0 by type nat)
 
 let cheney_bfs_inv_valid (minor: minor_state) (cs: CheneySpec.cheney_state)
-  : Lemma (requires cheney_bfs_inv minor cs)
-          (ensures queue_valid minor cs.CheneySpec.cs_queue)
   = ()
 
 /// ---------------------------------------------------------------------------
 /// Forward_one preserves BFS invariant
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 60 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
+#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 private let fwd_one_bfs_inv_success
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
@@ -446,7 +243,7 @@ private let fwd_one_bfs_inv_success
 #pop-options
 
 /// Forward_normal preserves BFS invariant (same logic as old forward_one)
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 private let fwd_normal_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
@@ -474,12 +271,10 @@ private let fwd_normal_preserves_bfs_inv
 /// For the infix case: forward parent preserves bfs_inv, then extending
 /// fwd for the infix addr (which is NOT in minor_objects) doesn't change
 /// the queue or count_unforwarded.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0 --using_facts_from '* -GC.Gen.Cheney.cheney_forward_one -GC.Gen.Cheney.cheney_forward_normal'"
 
 let fwd_one_preserves_bfs_inv
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
-          (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_one minor cs addr))
   =
   if cs.cs_fwd addr <> 0UL then
     CheneySpec.cheney_forward_one_noop minor cs addr
@@ -552,74 +347,6 @@ let fwd_one_preserves_bfs_inv
 /// Recursive BFS invariant preservation
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
-
-private let rec forward_fields_bfs_inv_aux
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
-          (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_fields minor cs parent idx wosize))
-          (decreases (if idx < wosize then wosize - idx else 0))
-  = if idx >= wosize then
-      CheneySpec.cheney_forward_fields_base minor cs parent idx wosize
-    else begin
-      CheneySpec.cheney_forward_fields_step minor cs parent idx wosize;
-      let field_val = to_minor_offset (minor_read_field minor parent idx) in
-      let cs' = CheneySpec.cheney_forward_one minor cs field_val in
-      fwd_one_preserves_bfs_inv minor cs field_val;
-      forward_fields_bfs_inv_aux minor cs' parent (idx + 1) wosize
-    end
-
-let forward_fields_preserves_bfs_inv
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (parent: U64.t) (idx: nat) (wosize: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
-          (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_fields minor cs parent idx wosize))
-  = forward_fields_bfs_inv_aux minor cs parent idx wosize
-
-private let rec forward_roots_bfs_inv_aux
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
-          (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_roots minor cs roots idx))
-          (decreases (if idx < Seq.length roots then Seq.length roots - idx else 0))
-  = if idx >= Seq.length roots then
-      CheneySpec.cheney_forward_roots_base minor cs roots idx
-    else begin
-      CheneySpec.cheney_forward_roots_step minor cs roots idx;
-      let r = Seq.index roots idx in
-      let cs' = CheneySpec.cheney_forward_one minor cs r in
-      fwd_one_preserves_bfs_inv minor cs r;
-      forward_roots_bfs_inv_aux minor cs' roots (idx + 1)
-    end
-
-let forward_roots_preserves_bfs_inv
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (roots: seq U64.t) (idx: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
-          (ensures cheney_bfs_inv minor (CheneySpec.cheney_forward_roots minor cs roots idx))
-  = forward_roots_bfs_inv_aux minor cs roots idx
-
-private let rec scan_bfs_inv_aux
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
-          (ensures cheney_bfs_inv minor (CheneySpec.cheney_scan minor cs scan fuel))
-          (decreases fuel)
-  = if fuel = 0 || scan >= Seq.length cs.cs_queue then
-      CheneySpec.cheney_scan_base minor cs scan fuel
-    else begin
-      CheneySpec.cheney_scan_step minor cs scan fuel;
-      let obj = Seq.index cs.cs_queue scan in
-      let wz = minor_wosize minor obj in
-      let cs' = CheneySpec.cheney_forward_fields minor cs obj 0 wz in
-      forward_fields_bfs_inv_aux minor cs obj 0 wz;
-      scan_bfs_inv_aux minor cs' (scan + 1) (fuel - 1)
-    end
-
-let scan_preserves_bfs_inv
-  (minor: minor_state) (cs: CheneySpec.cheney_state) (scan: nat) (fuel: nat)
-  : Lemma (requires cheney_bfs_inv minor cs /\ minor_infix_wf minor /\ minor_wf minor)
-          (ensures cheney_bfs_inv minor (CheneySpec.cheney_scan minor cs scan fuel))
-  = scan_bfs_inv_aux minor cs scan fuel
-
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// BFS invariant: strict room when forwarding an unforwarded object
 /// ---------------------------------------------------------------------------
@@ -635,14 +362,10 @@ private let rec count_unforwarded_positive
     else if fwd (Seq.index objs start) = 0UL then ()
     else count_unforwarded_positive objs fwd (start + 1) k
 
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
 
 let cheney_bfs_inv_strict_room
   (minor: minor_state) (cs: CheneySpec.cheney_state) (addr: U64.t)
-  : Lemma (requires cheney_bfs_inv minor cs /\
-                    Seq.mem addr (minor_objects minor) /\
-                    cs.CheneySpec.cs_fwd addr = 0UL)
-          (ensures Seq.length cs.CheneySpec.cs_queue < Seq.length (minor_objects minor))
   =
   let objs = minor_objects minor in
   let fwd = cs.CheneySpec.cs_fwd in

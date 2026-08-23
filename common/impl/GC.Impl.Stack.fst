@@ -183,20 +183,7 @@ fn is_full (st: gray_stack)
   b
 }
 
-fn stack_len (st: gray_stack)
-  requires is_gray_stack st 's
-  returns n: SZ.t
-  ensures is_gray_stack st 's ** pure (SZ.v n == Seq.length 's)
-{
-  unfold is_gray_stack;
-  with t contents. _;
-  let top_val = B.op_Bang st.top;
-  let n = SZ.sub st.cap top_val;
-  fold (is_gray_stack st 's);
-  n
-}
-
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 fn push (st: gray_stack) (addr: obj_addr)
   requires is_gray_stack st 's ** pure (Seq.length 's < stack_capacity st)
   ensures is_gray_stack st (Seq.cons addr 's)
@@ -212,7 +199,7 @@ fn push (st: gray_stack) (addr: obj_addr)
 }
 #pop-options
 
-#push-options "--z3rlimit 20"
+#push-options "--z3rlimit 10"
 fn pop (st: gray_stack)
   requires is_gray_stack st 's ** pure (Seq.length 's > 0)
   returns v: obj_addr

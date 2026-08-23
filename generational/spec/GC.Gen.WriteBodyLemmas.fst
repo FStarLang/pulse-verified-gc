@@ -32,26 +32,15 @@ let rec copy_fields (minor: minor_state) (major: heap)
 
 let copy_fields_base (minor: minor_state) (major: heap)
                      (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
-  : Lemma (requires i >= n)
-          (ensures copy_fields minor major src_obj dst_obj i n == major) = ()
+          = ()
 
 let copy_fields_step (minor: minor_state) (major: heap)
                      (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
-  : Lemma (requires i < n /\
-                     U64.v dst_obj + i * 8 + 8 <= heap_size /\
-                     (U64.v dst_obj + i * 8) % 8 == 0)
-           (ensures copy_fields minor major src_obj dst_obj i n ==
-                    copy_fields minor
-                      (write_word major (U64.uint_to_t (U64.v dst_obj + i * 8))
-                                       (minor_read_field minor src_obj i))
-                      src_obj dst_obj (i + 1) n) = ()
+                      = ()
 
 let copy_fields_oob (minor: minor_state) (major: heap)
                     (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
-  : Lemma (requires i < n /\
-                     (U64.v dst_obj + i * 8 + 8 > heap_size \/
-                      (U64.v dst_obj + i * 8) % 8 <> 0))
-           (ensures copy_fields minor major src_obj dst_obj i n == major) = ()
+           = ()
 
 /// ---------------------------------------------------------------------------
 /// not_in_fl_chain
@@ -70,7 +59,7 @@ let rec not_in_fl_chain (g: heap) (fp: U64.t) (dst_obj: obj_addr) (fuel: nat)
        U64.v (hd_address (fp <: obj_addr)) + 16 <= heap_size ==>
        not_in_fl_chain g next_fp dst_obj (fuel - 1))
 
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 1"
 let rec chain_avoids_implies_not_in_fl_chain
   (g: heap) (fp: U64.t) (dst_obj: obj_addr) (fuel: nat)
   : Lemma (requires AllocLemmas.chain_avoids g fp dst_obj fuel = true)
@@ -96,7 +85,7 @@ let rec chain_avoids_implies_not_in_fl_chain
 /// write_body_preserves_objects
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 4 --ifuel 2 --z3refresh"
+#push-options "--z3rlimit 12 --fuel 4 --ifuel 2 --z3refresh"
 private let rec write_body_preserves_objects_aux
   (start: hp_addr) (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires
@@ -146,19 +135,14 @@ private let rec write_body_preserves_objects_aux
 
 let write_body_preserves_objects
   (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
-  : Lemma (requires
-      Seq.mem obj (objects zero_addr g) /\
-      U64.v addr >= U64.v obj /\
-      U64.v addr < U64.v obj + (U64.v (wosize_of_object obj g) * 8) /\
-      U64.v addr % 8 = 0)
-    (ensures objects zero_addr (write_word g addr v) == objects zero_addr g) =
+    =
   write_body_preserves_objects_aux zero_addr g obj addr v
 
 /// ---------------------------------------------------------------------------
 /// write_body_preserves_fl_valid_aux
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let rec write_body_preserves_fl_valid_aux_impl
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
@@ -213,21 +197,14 @@ private let rec write_body_preserves_fl_valid_aux_impl
 let write_body_preserves_fl_valid_aux
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
-  : Lemma (requires
-      Seq.mem dst_obj (objects zero_addr g) /\
-      U64.v addr >= U64.v dst_obj /\
-      U64.v addr < U64.v dst_obj + (U64.v (wosize_of_object dst_obj g) * 8) /\
-      U64.v addr % 8 = 0 /\
-      AllocLemmas.fl_valid g fp fuel /\
-      not_in_fl_chain g fp dst_obj fuel)
-    (ensures AllocLemmas.fl_valid (write_word g addr v) fp fuel) =
+    =
   write_body_preserves_fl_valid_aux_impl g dst_obj addr v fp fuel
 
 /// ---------------------------------------------------------------------------
 /// write_body_preserves_not_in_fl_chain
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let rec write_body_preserves_not_in_fl_chain_impl
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
@@ -273,21 +250,14 @@ private let rec write_body_preserves_not_in_fl_chain_impl
 let write_body_preserves_not_in_fl_chain
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
-  : Lemma (requires
-      Seq.mem dst_obj (objects zero_addr g) /\
-      U64.v addr >= U64.v dst_obj /\
-      U64.v addr < U64.v dst_obj + (U64.v (wosize_of_object dst_obj g) * 8) /\
-      U64.v addr % 8 = 0 /\
-      AllocLemmas.fl_valid g fp fuel /\
-      not_in_fl_chain g fp dst_obj fuel)
-    (ensures not_in_fl_chain (write_word g addr v) fp dst_obj fuel) =
+    =
   write_body_preserves_not_in_fl_chain_impl g dst_obj addr v fp fuel
 
 /// ---------------------------------------------------------------------------
 /// write_body_preserves_fl_chain_terminates
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 private let rec write_body_preserves_fl_chain_terminates_impl
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
@@ -340,33 +310,17 @@ private let rec write_body_preserves_fl_chain_terminates_impl
 let write_body_preserves_fl_chain_terminates
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
-  : Lemma (requires
-      Seq.mem dst_obj (objects zero_addr g) /\
-      U64.v addr >= U64.v dst_obj /\
-      U64.v addr < U64.v dst_obj + (U64.v (wosize_of_object dst_obj g) * 8) /\
-      U64.v addr % 8 = 0 /\
-      AllocLemmas.fl_chain_terminates g fp fuel /\
-      not_in_fl_chain g fp dst_obj fuel /\
-      AllocLemmas.fl_valid g fp fuel)
-    (ensures AllocLemmas.fl_chain_terminates (write_word g addr v) fp fuel) =
+    =
   write_body_preserves_fl_chain_terminates_impl g dst_obj addr v fp fuel
 
 /// ---------------------------------------------------------------------------
 /// write_body_preserves_chain_avoids_self
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 12 --fuel 2 --ifuel 1"
 let write_body_preserves_chain_avoids_self
   (g: heap) (dst_obj: obj_addr) (addr: hp_addr) (v: U64.t)
   (fp: U64.t) (fuel: nat)
-  : Lemma (requires
-      Seq.mem dst_obj (objects zero_addr g) /\
-      U64.v addr >= U64.v dst_obj /\
-      U64.v addr < U64.v dst_obj + (U64.v (wosize_of_object dst_obj g) * 8) /\
-      U64.v addr % 8 = 0 /\
-      AllocLemmas.fl_valid g fp fuel /\
-      AllocLemmas.chain_avoids g fp dst_obj fuel = true)
-    (ensures AllocLemmas.chain_avoids (write_word g addr v) fp dst_obj fuel = true)
   = let g' = write_word g addr v in
     let aux (a: obj_addr) : Lemma
       (requires Seq.mem a (objects zero_addr g) /\
@@ -394,7 +348,7 @@ let write_body_preserves_chain_avoids_self
 /// copy_fields_preserves_objects_aux
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 40 --fuel 1"
+#push-options "--z3rlimit 10 --fuel 1"
 let rec copy_fields_preserves_objects_aux
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (i: nat) (n: nat)
@@ -561,7 +515,7 @@ let rec copy_fields_preserves_chain_avoids_self
 /// copy_fields_preserves_other
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 20 --fuel 2"
+#push-options "--z3rlimit 10 --fuel 2"
 let rec copy_fields_preserves_other
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: U64.t) (i: nat) (n: nat)
@@ -598,14 +552,7 @@ let rec copy_fields_preserves_other
 let copy_fields_preserves_wfh_part1
   (minor: minor_state) (major: heap)
   (src_obj: U64.t) (dst_obj: obj_addr) (n: nat)
-  : Lemma (requires
-             well_formed_heap_part1 major /\
-             Seq.mem dst_obj (objects zero_addr major) /\
-             U64.v dst_obj % 8 == 0 /\
-             U64.v (wosize_of_object dst_obj major) >= n /\
-             n > 0)
-          (ensures
-             well_formed_heap_part1 (copy_fields minor major src_obj dst_obj 0 n)) =
+             =
   let g' = copy_fields minor major src_obj dst_obj 0 n in
   copy_fields_preserves_objects_aux minor major src_obj dst_obj 0 n;
   assert (objects zero_addr g' == objects zero_addr major);

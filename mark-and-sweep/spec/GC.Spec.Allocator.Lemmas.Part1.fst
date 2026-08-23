@@ -15,8 +15,8 @@ open GC.Spec.Allocator.Lemmas.Header
 module U64 = FStar.UInt64
 module Seq = FStar.Seq
 
-/// Module-level default: all functions get z3rlimit 20 unless overridden
-#push-options "--z3rlimit 20 --z3refresh"
+/// Module-level default: all functions get z3rlimit 10 unless overridden
+#push-options "--z3rlimit 10 --z3refresh"
 
 /// ===========================================================================
 /// Local helpers (private, not in .fsti)
@@ -58,7 +58,7 @@ private let header_write_same_wosize_preserves_objects
 /// If objects(start, g) is non-empty (contains any h), then f_address start
 /// is also a member (it's the first element).
 #restart-solver
-#push-options "--z3rlimit 20 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 1 --ifuel 0"
 private let objects_nonempty_first_mem
   (start: hp_addr) (g: heap) (h: obj_addr)
   : Lemma (requires Seq.mem h (objects start g))
@@ -83,7 +83,7 @@ private let objects_nonempty_first_mem
 /// If h ∈ objects(later, g) and later is at a reachable object boundary from start
 /// (i.e., f_address later ∈ objects start g), then h ∈ objects(start, g).
 #restart-solver
-#push-options "--z3rlimit 400 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 3 --ifuel 1"
 private let rec objects_later_in_earlier
   (start: hp_addr) (g: heap) (later: hp_addr) (h: obj_addr)
   : Lemma (requires U64.v start <= U64.v later /\
@@ -128,7 +128,7 @@ private let rec objects_later_in_earlier
 #pop-options
 
 /// Part1 variant: same as split_next_hd_objects_eq but only requires well_formed_heap_part1
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 private let split_next_hd_objects_eq_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
   : Lemma (requires well_formed_heap_part1 g /\
@@ -186,7 +186,7 @@ private let split_next_hd_objects_eq_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 3 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 3 --ifuel 1"
 private let rec split_old_mem_in_new_part1
   (start: hp_addr) (g g3: heap)
   (obj: obj_addr) (wz block_wz: nat)
@@ -328,52 +328,9 @@ private let rec split_old_mem_in_new_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_split_facts_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hdr = read_word g (hd_address obj) in
-                     let block_wz = U64.v (getWosize hdr) in
-                     block_wz >= wz /\ block_wz - wz >= 2))
-          (ensures (let hd = hd_address obj in
-                    let hdr = read_word g hd in
-                    let block_wz = U64.v (getWosize hdr) in
-                    let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
-                    let rem_obj_nat = rem_hd_nat + 8 in
-                    let next_hd_nat = U64.v hd + (block_wz + 1) * 8 in
-                    let rem_wz = block_wz - wz - 1 in
-                    rem_hd_nat >= 8 /\
-                    rem_obj_nat >= 16 /\
-                    rem_hd_nat < heap_size /\
-                    rem_obj_nat < heap_size /\
-                    next_hd_nat <= heap_size /\
-                    rem_hd_nat % 8 == 0 /\
-                    rem_obj_nat % 8 == 0 /\
-                    rem_hd_nat < pow2 64 /\
-                    rem_obj_nat < pow2 64 /\
-                    next_hd_nat < pow2 64 /\
-                    wz < pow2 54 /\
-                    rem_wz < pow2 54 /\
-                    getWosize (make_header (U64.uint_to_t wz) white_bits 0UL) == U64.uint_to_t wz /\
-                    getWosize (make_header (U64.uint_to_t rem_wz) blue_bits 0UL) == U64.uint_to_t rem_wz /\
-                    (let alloc_hdr = make_header (U64.uint_to_t wz) white_bits 0UL in
-                     let g1 = write_word g hd alloc_hdr in
-                     let rem_hd : hp_addr = U64.uint_to_t rem_hd_nat in
-                     let rem_hdr = make_header (U64.uint_to_t rem_wz) blue_bits 0UL in
-                     let g2 = write_word g1 rem_hd rem_hdr in
-                     let rem_obj : hp_addr = U64.uint_to_t rem_obj_nat in
-                     let g3 = write_word g2 rem_obj next_fp in
-                     alloc_from_block g obj wz next_fp == (g3, rem_obj) /\
-                     Seq.length g3 == Seq.length g /\
-                     read_word g3 hd == alloc_hdr /\
-                     read_word g3 rem_hd == rem_hdr /\
-                     getWosize (read_word g3 hd) == U64.uint_to_t wz /\
-                     getWosize (read_word g3 rem_hd) == U64.uint_to_t rem_wz /\
-                     (next_hd_nat < heap_size ==>
-                       (let next_hd_hp : hp_addr = U64.uint_to_t next_hd_nat in
-                        objects next_hd_hp g3 ==
-                        objects next_hd_hp g)))))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
@@ -411,22 +368,9 @@ let alloc_split_facts_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
 let alloc_split_g3_agrees_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (p: hp_addr)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hd = hd_address obj in
-                     let hdr = read_word g hd in
-                     let block_wz = U64.v (getWosize hdr) in
-                     block_wz >= wz /\ block_wz - wz >= 2 /\
-                     (let rem_hd_nat = U64.v hd + (1 + wz) * 8 in
-                      let rem_obj_nat = rem_hd_nat + 8 in
-                      U64.v p <> U64.v hd /\
-                      U64.v p <> rem_hd_nat /\
-                      U64.v p <> rem_obj_nat)))
-          (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                    read_word g3 p == read_word g p))
   = let hd = hd_address obj in
     let hdr = read_word g hd in
     let block_wz = U64.v (getWosize hdr) in
@@ -457,17 +401,9 @@ let alloc_split_g3_agrees_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 50 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 0 --ifuel 0"
 let alloc_split_old_in_new_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t) (h: obj_addr)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hdr = read_word g (hd_address obj) in
-                     let block_wz = U64.v (getWosize hdr) in
-                     block_wz >= wz /\ block_wz - wz >= 2) /\
-                    Seq.mem h (objects zero_addr g))
-          (ensures (let (g3, _) = alloc_from_block g obj wz next_fp in
-                    Seq.mem h (objects zero_addr g3)))
   = alloc_split_facts_part1 g obj wz next_fp;
     let hd = hd_address obj in
     let hdr = read_word g hd in
@@ -500,15 +436,9 @@ let alloc_split_old_in_new_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 let alloc_from_block_objects_facts_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hdr = read_word g (hd_address obj) in
-                     U64.v (getWosize hdr) >= wz))
-          (ensures (let (g', rem_fp) = alloc_from_block g obj wz next_fp in
-                    (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
   = let hdr = read_word g (hd_address obj) in
     let block_wz = U64.v (getWosize hdr) in
     let (g', rem_fp) = alloc_from_block g obj wz next_fp in
@@ -534,7 +464,7 @@ let alloc_from_block_objects_facts_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 40 --fuel 2 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 2 --ifuel 0"
 let rec write_body_preserves_objects_local
   (start: hp_addr) (g: heap) (obj: obj_addr) (addr: hp_addr) (v: U64.t)
   : Lemma (requires
@@ -587,15 +517,9 @@ let rec write_body_preserves_objects_local
 /// alloc_from_block_preserves_objects_part1
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 let alloc_from_block_preserves_objects_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hdr = read_word g (hd_address obj) in
-                     U64.v (getWosize hdr) >= wz))
-          (ensures (let (g', _) = alloc_from_block g obj wz next_fp in
-                    (forall (h: obj_addr). Seq.mem h (objects zero_addr g) ==> Seq.mem h (objects zero_addr g'))))
   = alloc_from_block_objects_facts_part1 g obj wz next_fp
 #pop-options
 
@@ -604,17 +528,9 @@ let alloc_from_block_preserves_objects_part1
 /// ---------------------------------------------------------------------------
 
 #restart-solver
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 0"
 let alloc_from_block_rem_in_objects_part1
   (g: heap) (obj: obj_addr) (wz: nat) (next_fp: U64.t)
-  : Lemma (requires well_formed_heap_part1 g /\
-                    Seq.mem obj (objects zero_addr g) /\
-                    (let hdr = read_word g (hd_address obj) in
-                     let bwz = U64.v (getWosize hdr) in
-                     bwz >= wz /\ bwz - wz >= 2))
-          (ensures (let (g', rem_fp) = alloc_from_block g obj wz next_fp in
-                    is_pointer_field rem_fp /\
-                    Seq.mem rem_fp (objects zero_addr g')))
   = alloc_split_facts_part1 g obj wz next_fp;
     let hd = hd_address obj in
     let hdr = read_word g hd in

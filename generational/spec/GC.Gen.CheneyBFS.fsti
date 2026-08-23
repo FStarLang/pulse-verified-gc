@@ -82,12 +82,6 @@ val forward_fields_fwd_monotone
   : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
           (ensures (CheneySpec.cheney_forward_fields minor cs parent idx wosize).cs_fwd x <> 0UL)
 
-val forward_roots_fwd_monotone
-  (minor: minor_state) (cs: CheneySpec.cheney_state)
-  (roots: seq U64.t) (idx: nat) (x: U64.t)
-  : Lemma (requires cs.cs_fwd x <> 0UL /\ minor_infix_wf minor)
-          (ensures (CheneySpec.cheney_forward_roots minor cs roots idx).cs_fwd x <> 0UL)
-
 val scan_fwd_monotone
   (minor: minor_state) (cs: CheneySpec.cheney_state)
   (scan: nat) (fuel: nat) (x: U64.t)

@@ -34,32 +34,12 @@ let infix_tag_val () : Lemma (infix_tag == U64.uint_to_t 249) = ()
 /// Header Masks and Shifts (kept for wosize extraction)
 /// ---------------------------------------------------------------------------
 
-let color_mask : U64.t = 0x300UL  // bits 8-9
-let color_shift : U32.t = 8ul     // shift amount for color
 let tag_mask : U64.t = 0xFFUL     // bits 0-7
 let wosize_shift : U32.t = 10ul   // shift amount for wosize
 
 /// ---------------------------------------------------------------------------
 /// Header Field Extraction
 /// ---------------------------------------------------------------------------
-
-/// Helper: prove multiplication bound
-private let field_offset_bound (field_idx: U64.t{U64.v field_idx < pow2 61}) : Lemma 
-  (FStar.UInt.size (U64.v field_idx * 8) 64)
-= 
-  FStar.Math.Lemmas.pow2_plus 61 3;
-  assert ((pow2 61 * pow2 3) == pow2 64);
-  assert ((U64.v field_idx * 8) < pow2 64)
-
-/// Convert address to field offset
-let field_offset (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t = 
-  field_offset_bound field_idx;
-  U64.mul field_idx mword
-
-/// Field address calculation
-let field_address (obj_addr: U64.t) (field_idx: U64.t{U64.v field_idx < pow2 61}) : U64.t =
-  U64.add_mod obj_addr (field_offset field_idx)
-
 /// Get color from header word (using Header.fst)
 let getColor (header: U64.t) : color =
   get_color_bound (U64.v header);
@@ -71,24 +51,16 @@ let getColor (header: U64.t) : color =
 
 /// getColor characterization in terms of raw color bits
 let getColor_raw (hdr: U64.t)
-  : Lemma (
-      let c = get_color (U64.v hdr) in
-      (c = 0 ==> getColor hdr = White) /\
-      (c = 1 ==> getColor hdr = Gray) /\
-      (c = 2 ==> getColor hdr = Blue) /\
-      (c = 3 ==> getColor hdr = Black))
   = get_color_bound (U64.v hdr)
 
 let getColor_spec hdr = ()
 
 /// Gray or Black headers are always valid (have valid color bits)
 let gray_or_black_valid (hdr: U64.t)
-  : Lemma (requires getColor hdr == Gray \/ getColor hdr == Black)
-          (ensures valid_header64 hdr)
   = valid_color_unpack (get_color (U64.v hdr))
 
 /// Get tag from header word
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 12"
 let getTag (header: U64.t) : (t:U64.t{U64.v t < 256}) =
   get_tag_bound (U64.v header);
   mask_tag_value ();
@@ -144,7 +116,6 @@ let all_headers_valid (hdr: U64.t) : Lemma (valid_header64 hdr) =
 
 /// colorHeader definition exposed for bridging
 let colorHeader_spec (hdr: U64.t) (c: color)
-  : Lemma (colorHeader hdr c == set_color64 hdr (U64.uint_to_t (pack_color c)))
   = ()
 
 /// setColor for backwards compatibility (takes packed color)
@@ -154,12 +125,6 @@ let setColor (hdr: U64.t) (c: U64.t{U64.v c < 4}) : U64.t =
 /// ---------------------------------------------------------------------------
 /// Core Bitwise Lemmas (now proven via Header.fst!)
 /// ---------------------------------------------------------------------------
-
-/// setColor followed by getColor returns the color
-let getColor_setColor_packed (hdr: U64.t) (c: U64.t{U64.v c < 4}) 
-  : Lemma (get_color (U64.v (setColor hdr c)) == U64.v c) = 
-  getColor_setColor (U64.v hdr) (U64.v c)
-
 /// colorHeader followed by getColor returns the color
 let colorHeader_getColor (hdr: U64.t) (c: color)
   : Lemma (getColor (colorHeader hdr c) == c) =
@@ -196,7 +161,7 @@ private let getTag_Header (hdr: U64.t)
     assert (U64.v tag_mask == GC.Lib.Header.mask_tag)
 
 /// setColor preserves wosize (fully proven!)
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 25"
 let setColor_preserves_wosize_lemma (hdr: U64.t) (c: U64.t{U64.v c < 4}) 
   : Lemma (getWosize (setColor hdr c) == getWosize hdr) = 
   // Step 1: Connect setColor to Header.set_color
@@ -219,7 +184,7 @@ let setColor_preserves_wosize_lemma (hdr: U64.t) (c: U64.t{U64.v c < 4})
 #pop-options
 
 /// setColor preserves tag (fully proven!)
-#push-options "--z3rlimit 100"
+#push-options "--z3rlimit 25"
 let setColor_preserves_tag_lemma (hdr: U64.t) (c: U64.t{U64.v c < 4}) 
   : Lemma (getTag (setColor hdr c) == getTag hdr) = 
   // Step 1: Connect setColor to Header.set_color  
@@ -241,28 +206,11 @@ let colorHeader_preserves_wosize (hdr: U64.t) (c: color)
   : Lemma (getWosize (colorHeader hdr c) == getWosize hdr) =
   let packed_c = U64.uint_to_t (pack_color c) in
   setColor_preserves_wosize_lemma hdr packed_c
-
-/// colorHeader preserves getTag (exposed via .fsti for use in Fields)
-let colorHeader_preserves_tag (hdr: U64.t) (c: color)
-  : Lemma (getTag (colorHeader hdr c) == getTag hdr) =
-  let packed_c = U64.uint_to_t (pack_color c) in
-  setColor_preserves_tag_lemma hdr packed_c
-
 /// makeHeader from extracted fields with new color == colorHeader
 /// Requires valid header (color field < 3)
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
-let makeHeader_eq_colorHeader (hdr: U64.t) (c: color)
-  : Lemma (requires valid_header64 hdr)
-          (ensures makeHeader (getWosize hdr) c (getTag hdr) == colorHeader hdr c)
-  = getWosize_Header hdr;
-    getTag_Header hdr;
-    repack_set_color64 hdr c
-#pop-options
-
 /// makeHeader roundtrip: getWosize recovers the wosize
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let makeHeader_getWosize (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
-  : Lemma (getWosize (makeHeader wz c tag) == wz)
   = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
     get_wosize_pack_header h;
     assert (get_wosize (pack_header h) == U64.v wz);
@@ -275,9 +223,8 @@ let makeHeader_getWosize (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
 #pop-options
 
 /// makeHeader roundtrip: getColor recovers the color
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let makeHeader_getColor (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
-  : Lemma (getColor (makeHeader wz c tag) == c)
   = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
     get_color_pack_header h;
     all_headers_valid (makeHeader wz c tag);
@@ -287,9 +234,8 @@ let makeHeader_getColor (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
 #pop-options
 
 /// makeHeader roundtrip: getTag recovers the tag
-#push-options "--z3rlimit 100 --fuel 1 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 1 --ifuel 1"
 let makeHeader_getTag (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
-  : Lemma (getTag (makeHeader wz c tag) == tag)
   = let h : header_sem = { wosize = U64.v wz; color = c; tag = U64.v tag } in
     get_tag_pack_header h;
     let hdr = makeHeader wz c tag in
@@ -300,12 +246,11 @@ let makeHeader_getTag (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
 
 /// makeHeader definition: exposes connection to pack_header64 for bridging
 let makeHeader_is_pack_header64 (wz: wosize) (c: color) (tag: U64.t{U64.v tag < 256})
-  : Lemma (makeHeader wz c tag == pack_header64 { wosize = U64.v wz; color = c; tag = U64.v tag })
   = ()
 
 /// Helper: word-aligned addresses that differ are separated by >= 8 bytes
 /// This makes the "else" branch unreachable in read_write_different proofs
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 12"
 private let word_aligned_separate (a b: hp_addr)
   : Lemma (requires a <> b)
           (ensures U64.v a + 8 <= U64.v b \/ U64.v b + 8 <= U64.v a)
@@ -418,25 +363,12 @@ let is_blue_iff (h_addr: obj_addr) (g: heap)
 /// Color Disjointness Lemmas (trivial with algebraic color type!)
 /// ---------------------------------------------------------------------------
 
-let white_gray_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_white x g /\ is_gray y g)
-          (ensures x <> y) = ()
-
-let white_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_white x g /\ is_black y g)
-          (ensures x <> y) = ()
-
 let gray_black_disjoint (x: obj_addr) (y: obj_addr) (g: heap)
-  : Lemma (requires is_gray x g /\ is_black y g)
-          (ensures x <> y) = ()
+          = ()
 
 /// Color depends only on header word
 let color_of_header_eq (obj: obj_addr) (g1 g2: heap)
-  : Lemma (requires read_word g1 (hd_address obj) == read_word g2 (hd_address obj))
-          (ensures is_gray obj g1 == is_gray obj g2 /\
-                   is_white obj g1 == is_white obj g2 /\
-                   is_black obj g1 == is_black obj g2 /\
-                   is_blue obj g1 == is_blue obj g2) = ()
+                   = ()
 
 /// ---------------------------------------------------------------------------
 /// Tag Predicates
@@ -514,9 +446,6 @@ let makeBlack_spec (obj: obj_addr) (g: heap)
 let makeGray_spec (obj: obj_addr) (g: heap)
   : Lemma (makeGray obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Gray)) = ()
 
-let makeBlue_spec (obj: obj_addr) (g: heap)
-  : Lemma (makeBlue obj g == write_word g (hd_address obj) (colorHeader (read_word g (hd_address obj)) Blue)) = ()
-
 /// ---------------------------------------------------------------------------
 /// Pointer Field Predicates
 /// ---------------------------------------------------------------------------
@@ -524,48 +453,6 @@ let makeBlue_spec (obj: obj_addr) (g: heap)
 /// Check if value looks like a pointer (word-aligned and non-null)
 let is_pointer (v: U64.t) : bool = 
   U64.rem v 2UL = 0UL && v <> 0UL
-
-/// Check if field value looks like a pointer
-let is_pointer_field (field_val: U64.t) : bool =
-  is_pointer field_val
-
-/// Helper lemma: wosize is always < pow2 61
-let wosize_fits_field_index (wz: wosize) 
-  : Lemma (U64.v wz < pow2 61)
-  = FStar.Math.Lemmas.pow2_lt_compat 61 54
-
-/// Helper: check if any field points to target
-/// Iterates through field indices 0 to wz-1 (wz is remaining count to check)
-let rec exists_field_pointing_to (g: heap) (h: obj_addr) (wz: wosize) (target: obj_addr) 
-  : GTot bool (decreases U64.v wz) =
-  if wz = 0UL then false
-  else begin
-    // Use wz-1 as the field index (0-based indexing)
-    let idx = U64.sub wz 1UL in
-    wosize_fits_field_index wz;
-    // idx < wz < pow2 54 < pow2 61
-    FStar.Math.Lemmas.pow2_lt_compat 61 54;
-    let field_addr_raw = field_address h idx in
-    // Check field address validity (instead of assuming)
-    if U64.v field_addr_raw >= heap_size || U64.v field_addr_raw % U64.v mword <> 0 then false
-    else begin
-      let field_addr : hp_addr = field_addr_raw in
-      let field_val = read_word g field_addr in
-      // Check if field_val is a valid pointer >= 8 to compare headers
-      if is_pointer_field field_val && U64.v field_val >= U64.v mword 
-         && U64.v field_val < heap_size && U64.v field_val % U64.v mword = 0 then (
-        if hd_address field_val = hd_address target then true
-        else exists_field_pointing_to g h idx target
-      ) else exists_field_pointing_to g h idx target
-    end
-  end
-
-/// Check if object h points to object target
-let is_pointer_to_object (g: heap) (h: obj_addr) (target: obj_addr) : GTot bool =
-  wosize_of_object_bound h g;
-  let wz : wosize = wosize_of_object h g in
-  exists_field_pointing_to g h wz target
-
 /// ---------------------------------------------------------------------------
 /// Color Change Preservation Lemmas
 /// ---------------------------------------------------------------------------
@@ -674,125 +561,12 @@ let rec objects (start: hp_addr) (g: heap) : GTot (Seq.seq hp_addr) (decreases (
       let next_start : hp_addr = next_start_raw in
       Seq.cons obj_addr (objects next_start g)
     end
-
-/// Get all allocated block addresses (as hp_addr)
-let allocated_blocks (g: heap) : GTot (Seq.seq hp_addr) =
-  objects zero_addr g
-
-/// Coerce hp_addr to obj_addr when >= 8 is known
-/// Used to convert addresses from objects list to obj_addr
-let hp_to_obj (h: hp_addr{U64.v h >= U64.v mword}) : obj_addr = h
-
 /// All object addresses in objects are > start (strictly greater, using f_address)
 /// Key insight: f_address start = start + 8, so objects start at start + 8 or later
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
-let rec objects_addresses_gt_start (start: hp_addr) (g: heap) (x: hp_addr)
-  : Lemma (ensures Seq.mem x (objects start g) ==> U64.v x > U64.v start)
-          (decreases (Seq.length g - U64.v start))
-  = if U64.v start + 8 >= Seq.length g then ()
-    else begin
-      let header = read_word g start in
-      let wz = getWosize header in
-      let obj_addr_raw = f_address start in
-      f_address_spec start;
-      let obj_addr : hp_addr = obj_addr_raw in
-      let obj_size_nat = U64.v wz + 1 in
-      let next_start_nat = U64.v start + (obj_size_nat * 8) in
-      if next_start_nat > Seq.length g || next_start_nat >= pow2 64 then ()
-      else if next_start_nat >= heap_size then (
-        // objects start g = cons obj_addr empty
-        let obj_addr_hp : hp_addr = obj_addr in
-        if Seq.mem x (Seq.cons obj_addr_hp Seq.empty) then (
-          FStar.Seq.Properties.mem_cons obj_addr_hp Seq.empty;
-          assert (x = obj_addr_hp);
-          assert (U64.v obj_addr = U64.v start + 8);
-          assert (U64.v obj_addr > U64.v start)
-        )
-      )
-      else begin
-        let next_start_raw = U64.uint_to_t next_start_nat in
-        // Prove next_start is valid (same as in objects)
-        assert (U64.v next_start_raw = next_start_nat);
-        assert (next_start_nat < heap_size);
-        FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v start) (obj_size_nat * 8) 8;
-        assert (U64.v next_start_raw % U64.v mword == 0);
-        let next_start : hp_addr = next_start_raw in
-        let rest = objects next_start g in
-        let obj_addr_hp : hp_addr = obj_addr in
-        if Seq.mem x (Seq.cons obj_addr_hp rest) then (
-          FStar.Seq.Properties.mem_cons obj_addr_hp rest;
-          if x = obj_addr_hp then (
-            // obj_addr = start + 8 > start
-            assert (U64.v obj_addr = U64.v start + 8);
-            assert (U64.v obj_addr > U64.v start)
-          ) else (
-            // x is in rest
-            objects_addresses_gt_start next_start g x;
-            assert (U64.v x > U64.v next_start);
-            assert (U64.v next_start >= U64.v start + 8);
-            assert (U64.v x > U64.v start)
-          )
-        )
-      end
-    end
-#pop-options
-
 /// Object address not in later objects (for no-duplicates proof)
-#push-options "--fuel 2 --ifuel 1 --z3rlimit 100"
-let objects_addr_not_in_rest (start: hp_addr) (g: heap)
-  : Lemma (requires U64.v start + 8 < Seq.length g)
-          (ensures (
-            let header = read_word g start in
-            let wz = getWosize header in
-            let obj_addr = f_address start in
-            let obj_size_nat = U64.v wz + 1 in
-            let next_start_nat = U64.v start + (obj_size_nat * 8) in
-            next_start_nat <= Seq.length g /\ next_start_nat < pow2 64 ==>
-            (U64.v (U64.uint_to_t next_start_nat) < heap_size /\ U64.v (U64.uint_to_t next_start_nat) % U64.v mword == 0 ==>
-             U64.v obj_addr < heap_size /\ U64.v obj_addr % U64.v mword == 0 ==>
-             ~(Seq.mem (obj_addr <: hp_addr) (objects ((U64.uint_to_t next_start_nat) <: hp_addr) g)))))
-  = let header = read_word g start in
-    let wz = getWosize header in
-    let obj_addr = f_address start in
-    let obj_size_nat = U64.v wz + 1 in
-    let next_start_nat = U64.v start + (obj_size_nat * 8) in
-    if next_start_nat <= Seq.length g && next_start_nat < pow2 64 then (
-      let next_start_raw = U64.uint_to_t next_start_nat in
-      assert (U64.v next_start_raw = next_start_nat);
-      // The ensures clause gives us these facts as assumptions when needed
-      // Just need to use them when the hypotheses are satisfied
-      if next_start_nat < heap_size && U64.v obj_addr < heap_size && U64.v obj_addr % U64.v mword = 0 then (
-        FStar.Math.Lemmas.lemma_mod_plus_distr_l (U64.v start) (obj_size_nat * 8) 8;
-        assert (U64.v next_start_raw % U64.v mword == 0);
-        let next_start : hp_addr = next_start_raw in
-        let obj_addr_hp : hp_addr = obj_addr in
-        // Use objects_addresses_gt_start: all objects in (objects next_start g) have addr > next_start
-        // obj_addr = start + 8
-        // next_start >= start + 8 (since obj_size >= 1)
-        // If obj_addr in (objects next_start g), then obj_addr > next_start (by the lemma)
-        // But obj_addr = start + 8 and next_start >= start + 8, so obj_addr <= next_start
-        // Contradiction, so obj_addr not in (objects next_start g)
-        objects_addresses_gt_start next_start g obj_addr_hp;
-        assert (Seq.mem obj_addr_hp (objects next_start g) ==> U64.v obj_addr > U64.v next_start);
-        f_address_spec start;
-        assert (U64.v obj_addr = U64.v start + 8);
-        assert (U64.v next_start >= U64.v start + 8);
-        assert (U64.v obj_addr <= U64.v next_start)
-      )
-    )
-#pop-options
-
 /// All objects in objects list have addresses >= 8
 /// Proof: objects_addresses_gt_start gives x > zero_addr >= 0,
 /// so x >= 1, and since x is word-aligned (hp_addr), x >= 8.
-#push-options "--fuel 0 --ifuel 0 --z3rlimit 20"
-let objects_addresses_ge_8 (g: heap) (x: hp_addr)
-  : Lemma (requires Seq.mem x (objects zero_addr g))
-          (ensures U64.v x >= U64.v zero_addr + U64.v mword)
-  = objects_addresses_gt_start zero_addr g x
-    // U64.v x > U64.v zero_addr, both divisible by 8, so U64.v x >= U64.v zero_addr + 8
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Color Mutation Correctness Lemmas (now trivial with Header.fst!)
 /// ---------------------------------------------------------------------------
@@ -816,8 +590,6 @@ let makeBlue_is_blue (h_addr: obj_addr) (g: heap)
 
 /// set_object_color with non-Blue color preserves ~(is_blue x) for all x
 let set_color_preserves_not_blue (obj: obj_addr) (x: obj_addr) (g: heap) (c: color)
-  : Lemma (requires c <> Blue /\ ~(is_blue x g))
-          (ensures ~(is_blue x (set_object_color obj g c)))
   = if x = obj then colorHeader_getColor (read_header g obj) c
     else begin
       hd_address_injective obj x;
@@ -835,8 +607,7 @@ let set_object_color_length (h_addr: obj_addr) (g: heap) (c: color)
   ()
 
 let set_object_color_preserves_getWosize_at_hd (obj: obj_addr) (g: heap) (c: color)
-  : Lemma (getWosize (read_word (set_object_color obj g c) (hd_address obj)) ==
-           getWosize (read_word g (hd_address obj))) =
+           =
   wosize_of_object_spec obj g;
   wosize_of_object_spec obj (set_object_color obj g c);
   color_change_preserves_wosize g obj c
@@ -850,13 +621,11 @@ let color_preserves_tag (obj_addr: obj_addr) (g: heap) (c: color)
   color_change_preserves_tag g obj_addr c
 
 let color_change_locality (obj_addr1: hp_addr{U64.v obj_addr1 >= U64.v mword}) (obj_addr2: hp_addr{U64.v obj_addr2 >= U64.v mword}) (g: heap) (c: color)
-  : Lemma (requires hd_address obj_addr1 <> hd_address obj_addr2)
-          (ensures color_of_object obj_addr2 (set_object_color obj_addr1 g c) == color_of_object obj_addr2 g) =
+          =
   color_change_other_object g obj_addr1 obj_addr2 c
 
 let color_change_header_locality (obj_addr: obj_addr) (addr: hp_addr) (g: heap) (c: color)
-  : Lemma (requires hd_address obj_addr <> addr)
-          (ensures read_word (set_object_color obj_addr g c) addr == read_word g addr) =
+          =
   // set_object_color writes at hd_address obj_addr
   // We need: hd_address obj_addr <> addr and they don't overlap
   let hd = hd_address obj_addr in
@@ -874,8 +643,7 @@ let color_change_header_locality (obj_addr: obj_addr) (addr: hp_addr) (g: heap) 
   )
 
 let color_preserves_field (obj_addr: obj_addr) (g: heap) (c: color) (i: U64.t{U64.v i >= 1}) (field_addr: hp_addr{U64.v field_addr == U64.v (hd_address obj_addr) + U64.v mword * U64.v i})
-  : Lemma (requires U64.v (hd_address obj_addr) + U64.v mword * (U64.v i + 1) <= heap_size)
-          (ensures read_word (set_object_color obj_addr g c) field_addr == read_word g field_addr) =
+          =
   let hd = hd_address obj_addr in
   assert (U64.v field_addr >= U64.v hd + U64.v mword);
   read_write_different g hd field_addr (colorHeader (read_word g hd) c)
@@ -883,11 +651,6 @@ let color_preserves_field (obj_addr: obj_addr) (g: heap) (c: color) (i: U64.t{U6
 /// Combined SMT pattern: when the solver encounters read_word after set_object_color,
 /// it automatically gets the key facts for proving objects enumeration preservation
 let set_object_color_read_word (obj: obj_addr) (start: hp_addr) (g: heap) (c: color)
-  : Lemma (ensures 
-    Seq.length (set_object_color obj g c) == Seq.length g /\
-    (hd_address obj <> start ==> read_word (set_object_color obj g c) start == read_word g start) /\
-    (hd_address obj = start ==> getWosize (read_word (set_object_color obj g c) start) == getWosize (read_word g start)))
-  [SMTPat (read_word (set_object_color obj g c) start)]
   =
   set_object_color_length obj g c;
   if hd_address obj = start then
@@ -900,14 +663,12 @@ let color_preserves_is_no_scan (obj_addr: obj_addr) (g: heap) (c: color)
   color_preserves_tag obj_addr g c
 
 let color_change_preserves_other_is_no_scan (obj1: obj_addr) (obj2: obj_addr) (g: heap) (c: color)
-  : Lemma (requires obj1 <> obj2)
-          (ensures is_no_scan obj2 (set_object_color obj1 g c) == is_no_scan obj2 g) =
+          =
   hd_address_injective obj1 obj2;
   color_change_header_locality obj1 (hd_address obj2) g c
 
 let color_change_preserves_other_wosize (obj1: hp_addr{U64.v obj1 >= U64.v mword}) (obj2: hp_addr{U64.v obj2 >= U64.v mword}) (g: heap) (c: color)
-  : Lemma (requires obj1 <> obj2)
-          (ensures wosize_of_object obj2 (set_object_color obj1 g c) == wosize_of_object obj2 g) =
+          =
   // wosize is read from header at hd_address obj2
   // set_object_color writes at hd_address obj1
   // obj1 <> obj2 implies hd_address obj1 <> hd_address obj2 (by injectivity)
@@ -915,13 +676,11 @@ let color_change_preserves_other_wosize (obj1: hp_addr{U64.v obj1 >= U64.v mword
   color_change_header_locality obj1 (hd_address obj2) g c
 
 let color_change_preserves_other_read (obj1: hp_addr{U64.v obj1 >= U64.v mword}) (addr: hp_addr) (g: heap) (c: color)
-  : Lemma (requires hd_address obj1 <> addr)
-          (ensures read_word (set_object_color obj1 g c) addr == read_word g addr) =
+          =
   color_change_header_locality obj1 addr g c
 
 let color_change_preserves_other_color (obj1: hp_addr{U64.v obj1 >= U64.v mword}) (obj2: hp_addr{U64.v obj2 >= U64.v mword}) (g: heap) (c: color)
-  : Lemma (requires obj1 <> obj2)
-          (ensures color_of_object obj2 (set_object_color obj1 g c) == color_of_object obj2 g) =
+          =
   hd_address_injective obj1 obj2;
   color_change_locality obj1 obj2 g c
 
@@ -937,8 +696,6 @@ let parent_closure_addr_nat (infix_obj: obj_addr) (g: heap) : GTot int =
   U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8)
 
 let parent_closure_addr_nat_spec (infix_obj: obj_addr) (g: heap)
-  : Lemma (parent_closure_addr_nat infix_obj g ==
-           U64.v infix_obj - 8 - (U64.v (wosize_of_object infix_obj g) * 8))
   = ()
 
 /// Resolve: if infix with valid parent, return parent; otherwise return self.
@@ -951,14 +708,10 @@ let resolve_object (addr: obj_addr) (g: heap) : GTot obj_addr =
   else addr
 
 let resolve_non_infix (addr: obj_addr) (g: heap)
-  : Lemma (requires ~(is_infix addr g))
-          (ensures resolve_object addr g == addr) = ()
+          = ()
 
 let resolve_infix_spec (addr: obj_addr) (g: heap)
-  : Lemma (requires is_infix addr g /\
-                    (let p = parent_closure_addr_nat addr g in
-                     p >= 8 /\ p < heap_size /\ p % 8 == 0))
-          (ensures resolve_object addr g == U64.uint_to_t (parent_closure_addr_nat addr g)) = ()
+          = ()
 
 /// Infix well-formedness: every infix object has a valid parent closure in the objects list
 let infix_wf (g: heap) (objs: seq obj_addr) : prop =
@@ -969,11 +722,6 @@ let infix_wf (g: heap) (objs: seq obj_addr) : prop =
      is_closure (U64.uint_to_t p) g)
 
 let infix_wf_elim (g: heap) (objs: seq obj_addr) (h: obj_addr)
-  : Lemma (requires infix_wf g objs /\ Seq.mem h objs /\ is_infix h g)
-          (ensures (let p = parent_closure_addr_nat h g in
-                    p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
-                    Seq.mem (U64.uint_to_t p) objs /\
-                    is_closure (U64.uint_to_t p) g))
   = ()
 
 let infix_wf_intro (g: heap) (objs: seq obj_addr)
@@ -982,12 +730,10 @@ let infix_wf_intro (g: heap) (objs: seq obj_addr)
                                         p >= 8 /\ p < heap_size /\ p % 8 == 0 /\
                                         Seq.mem (U64.uint_to_t p) objs /\
                                         is_closure (U64.uint_to_t p) g))))
-  : Lemma (ensures infix_wf g objs)
   = FStar.Classical.forall_intro (FStar.Classical.move_requires pf)
 
 /// Color change preserves is_infix (tag is unchanged)
 let color_change_preserves_is_infix (obj: obj_addr) (addr: obj_addr) (g: heap) (c: color)
-  : Lemma (ensures is_infix addr (set_object_color obj g c) == is_infix addr g)
   = if obj = addr then color_preserves_tag addr g c
     else begin
       hd_address_injective obj addr;
@@ -996,7 +742,6 @@ let color_change_preserves_is_infix (obj: obj_addr) (addr: obj_addr) (g: heap) (
 
 /// Color change preserves is_closure (identical structure to is_infix)
 let color_change_preserves_is_closure (obj: obj_addr) (addr: obj_addr) (g: heap) (c: color)
-  : Lemma (ensures is_closure addr (set_object_color obj g c) == is_closure addr g)
   = if obj = addr then color_preserves_tag addr g c
     else begin
       hd_address_injective obj addr;
@@ -1005,7 +750,6 @@ let color_change_preserves_is_closure (obj: obj_addr) (addr: obj_addr) (g: heap)
 
 /// Color change preserves resolve_object
 let color_change_preserves_resolve (obj: obj_addr) (addr: obj_addr) (g: heap) (c: color)
-  : Lemma (ensures resolve_object addr (set_object_color obj g c) == resolve_object addr g)
   = color_change_preserves_is_infix obj addr g c;
     if is_infix addr g then begin
       // wosize is preserved: both at same header and at different headers
@@ -1038,8 +782,6 @@ private let wosize_preserved_parent_preserved (obj h: obj_addr) (g: heap) (c: co
 
 /// Color change preserves infix_wf
 let color_change_preserves_infix_wf (obj: obj_addr) (g: heap) (c: color) (objs: seq obj_addr)
-  : Lemma (requires infix_wf g objs)
-          (ensures infix_wf (set_object_color obj g c) objs)
   = let g' = set_object_color obj g c in
     let aux (h: obj_addr)
       : Lemma (requires Seq.mem h objs /\ is_infix h g')
@@ -1067,8 +809,6 @@ let color_change_preserves_infix_wf (obj: obj_addr) (g: heap) (c: color) (objs: 
 
 /// resolve_object maps into the same objects list (under infix_wf)
 let resolve_object_in_objects (addr: obj_addr) (g: heap) (objs: seq obj_addr)
-  : Lemma (requires Seq.mem addr objs /\ infix_wf g objs)
-          (ensures Seq.mem (resolve_object addr g) objs)
   = if is_infix addr g then begin
       let p = parent_closure_addr_nat addr g in
       assert (p >= 8 /\ p < heap_size /\ p % 8 == 0);
@@ -1081,11 +821,3 @@ let resolve_object_in_objects (addr: obj_addr) (g: heap) (objs: seq obj_addr)
 /// ---------------------------------------------------------------------------
 /// Aggregate Color Predicates
 /// ---------------------------------------------------------------------------
-
-/// No grey objects in address list (admits >= 8)
-let rec noGreyObjects_aux (g: heap) (addrs: seq hp_addr) : GTot bool (decreases Seq.length addrs) =
-  if Seq.length addrs = 0 then true
-  else 
-    let x = Seq.head addrs in
-    if U64.v x >= U64.v mword && is_gray x g then false
-    else noGreyObjects_aux g (Seq.tail addrs)

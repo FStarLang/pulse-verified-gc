@@ -42,7 +42,7 @@ module Header = GC.Lib.Header
 /// (already public in Sweep: sweep_object_preserves_self_wosize)
 
 /// Inductive: sweep_aux preserves wosize for ANY member regardless of color
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_wosize_any
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
@@ -94,7 +94,7 @@ private let rec sweep_aux_preserves_wosize_any
 #pop-options
 
 /// Top-level: sweep preserves wosize for ALL objects
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let sweep_preserves_wosize_all
   (g: heap) (fp: U64.t) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
@@ -110,7 +110,7 @@ private let sweep_preserves_wosize_all
 /// Color correspondence: is_black x g ↔ ¬(is_blue x gs) for all objects
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let sweep_color_correspondence
   (g: heap) (fp: U64.t) (gs: heap) (x: obj_addr)
   : Lemma
@@ -156,7 +156,7 @@ private let sweep_color_correspondence
 
 /// For a black object x, after sweep, read_word at any body address is preserved.
 /// This bridges from sweep_aux_preserves_field_member to the condition 7 format.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let sweep_preserves_body_read_black
   (g: heap) (fp: U64.t) (x: obj_addr) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -178,7 +178,7 @@ private let sweep_preserves_body_read_black
 /// ---------------------------------------------------------------------------
 
 /// From objects_separated, derive the recursive objs_well_separated predicate
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let rec objects_well_separated_lemma
   (start: hp_addr) (g: heap)
   : Lemma (requires Seq.length g == heap_size)
@@ -231,7 +231,7 @@ private let rec objects_well_separated_lemma
 #pop-options
 
 /// From objects walk, derive the recursive objs_contiguous predicate
-#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 25 --fuel 2 --ifuel 1"
 private let rec objects_contiguous_lemma
   (start: hp_addr) (g: heap)
   : Lemma (requires Seq.length g == heap_size)
@@ -278,7 +278,7 @@ private let rec objects_contiguous_lemma
 /// Objects fit in heap
 /// ---------------------------------------------------------------------------
 
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let objects_fit_lemma
   (g: heap) (x: obj_addr)
   : Lemma (requires Seq.mem x (objects zero_addr g))
@@ -294,7 +294,7 @@ private let objects_fit_lemma
 
 /// An address past all objects in the heap is not within any object's range
 /// (neither header nor body), so sweep_aux doesn't modify it.
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_past_all
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -379,7 +379,7 @@ private let rec sweep_aux_preserves_past_all
 
 /// sweep_aux preserves reads at addresses below zero_addr
 /// (sweep only writes at hd_address(obj) >= zero_addr and obj >= zero_addr + mword)
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1"
 private let rec sweep_aux_preserves_below_zero
   (g: heap) (objs: seq obj_addr) (fp: U64.t) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -434,7 +434,7 @@ private let rec sweep_aux_preserves_below_zero
       sweep_aux_preserves_below_zero g' (Seq.tail objs) fp' a
     end
 #pop-options
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let sweep_preserves_past_all_objects
   (g: heap) (fp: U64.t) (a: hp_addr)
   : Lemma (requires well_formed_heap g /\
@@ -452,7 +452,7 @@ private let sweep_preserves_past_all_objects
 
 /// For black objects, the header getWosize/getTag are preserved through sweep.
 /// This follows from sweep_preserves_wosize_black and sweep_preserves_tag_black.
-#push-options "--z3rlimit 50 --fuel 1 --ifuel 0"
+#push-options "--z3rlimit 12 --fuel 1 --ifuel 0"
 private let sweep_preserves_header_parts_black
   (g: heap) (fp: U64.t) (gs: heap) (x: obj_addr)
   : Lemma (requires well_formed_heap g /\
@@ -479,7 +479,7 @@ private let sweep_preserves_header_parts_black
 ///   h_f = g, h_c = gs, objs = objects zero_addr g, fb = 0UL, rw = 0, fp = 0UL
 /// where gs = fst (sweep g fp).
 
-#push-options "--z3rlimit 400 --fuel 2 --ifuel 1"
+#push-options "--z3rlimit 100 --fuel 2 --ifuel 1"
 let fused_eq_sweep_coalesce (g: heap) (fp: U64.t)
   : Lemma
     (requires well_formed_heap g /\

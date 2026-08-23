@@ -10,7 +10,7 @@ module GC.Impl.Coalesce
 
 #lang-pulse
 
-#set-options "--z3rlimit 100"
+#set-options "--z3rlimit 25"
 open Pulse.Lib.Pervasives
 open GC.Impl.Heap
 open GC.Impl.Object
@@ -28,22 +28,12 @@ module Alloc = GC.Spec.Allocator
 module Header = GC.Lib.Header
 module SI = GC.Spec.SweepInv
 open GC.Impl.Coalesce.Lemmas
-
-/// Extract the pure length fact from is_heap
-ghost fn coalesce_heap_length (h: heap_t)
-  requires is_heap h 's
-  ensures is_heap h 's ** pure (Seq.length 's == heap_size)
-{
-  unfold is_heap;
-  fold (is_heap h 's)
-}
-
 /// ---------------------------------------------------------------------------
 /// flush_blue implementation
 /// ---------------------------------------------------------------------------
 
 /// Write the merged header for a blue run
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn flush_blue_write_header (heap: heap_t) (fb: obj_addr) (rw: U64.t{U64.v rw >= 1 /\ U64.v rw < pow2 54})
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size)
@@ -64,7 +54,7 @@ fn flush_blue_write_header (heap: heap_t) (fb: obj_addr) (rw: U64.t{U64.v rw >= 
 #pop-options
 
 /// Write free list link to field 1 of merged block
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn flush_blue_write_link (heap: heap_t) (fb: hp_addr) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -78,7 +68,7 @@ fn flush_blue_write_link (heap: heap_t) (fb: hp_addr) (fp: U64.t)
 #pop-options
 
 /// Zero a range of fields starting at addr, n words
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -121,7 +111,7 @@ fn zero_fields_loop (heap: heap_t) (start_addr: U64.t) (n: U64.t)
 #pop-options
 
 /// Full flush_blue implementation
-#push-options "--z3rlimit 200 --fuel 2 --ifuel 1 --z3refresh"
+#push-options "--z3rlimit 50 --fuel 2 --ifuel 1 --z3refresh"
 fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
   requires is_heap heap 's **
            pure (Seq.length 's == heap_size /\
@@ -167,235 +157,5 @@ fn flush_blue_impl (heap: heap_t) (fb: U64.t) (rw: U64.t) (fp: U64.t)
       (0UL, fp)
     }
   }
-}
-#pop-options
-
-/// ---------------------------------------------------------------------------
-/// Main coalesce loop
-/// ---------------------------------------------------------------------------
-
-/// Spec-related invariant predicate.
-/// Uses if/then/else guards (not ==>) so F*'s typechecker propagates guards
-/// into branches, ensuring `objects` (which requires hp_addr) is well-typed.
-noextract unfold
-let coalesce_spec_inv (g0: heap_state) (g: heap_state)
-  (v_nat: nat) (fb: U64.t) (rw_nat: nat) (fv: U64.t) : prop =
-  if v_nat < heap_size && v_nat % 8 = 0 then
-    let start : hp_addr = U64.uint_to_t v_nat in
-    let objs = SpecFields.objects start g0 in
-    (if v_nat + U64.v mword < heap_size then
-      Seq.length objs > 0 /\
-      SI.obj_in_objects (U64.uint_to_t (v_nat + U64.v mword)) g0
-    else True) /\
-    SpecCoalesce.coalesce_aux g0 g objs fb rw_nat fv == SpecCoalesce.coalesce g0
-  else
-    SpecCoalesce.coalesce_aux g0 g Seq.empty fb rw_nat fv == SpecCoalesce.coalesce g0
-
-/// The main coalesce entry point
-#push-options "--z3rlimit 800 --fuel 2 --ifuel 1 --z3refresh"
-fn coalesce (heap: heap_t)
-  requires is_heap heap 's **
-           pure (SpecCoalesce.post_sweep_strong 's /\
-                 Seq.length (SpecFields.objects zero_addr 's) > 0 /\
-                 SI.heap_objects_dense 's)
-  returns new_fp: U64.t
-  ensures exists* s2. is_heap heap s2 **
-    pure (SpecFields.well_formed_heap s2 /\
-          (forall (x: obj_addr). Seq.mem x (SpecFields.objects zero_addr s2) ==>
-            (SpecObject.is_white x s2 \/ SpecObject.is_blue x s2)) /\
-          (s2, new_fp) == SpecCoalesce.coalesce 's)
-{
-  coalesce_heap_length heap;
-  coalesce_unfold 's;
-  // Pre-loop: establish initial objects walk facts
-  objects_mem_at_zero 's;
-  SI.obj_in_objects_intro (SpecHeap.f_address zero_addr) 's;
-  SpecHeap.f_address_spec zero_addr;
-
-  let mut current = (zero_addr <: U64.t);
-  let mut fb_ref = 0UL;
-  let mut rw_ref = 0UL;
-  let mut fp_ref = 0UL;
-
-  while (U64.lt (U64.add !current mword) heap_size_u64)
-    invariant exists* v fb rw fv s.
-      pts_to current v **
-      pts_to fb_ref fb **
-      pts_to rw_ref rw **
-      pts_to fp_ref fv **
-      is_heap heap s **
-      pure (U64.v v % 8 == 0 /\
-            U64.v v <= heap_size /\
-            U64.v v + 8 < pow2 64 /\
-            Seq.length s == heap_size /\
-            // Suffix preservation
-            (forall (addr: hp_addr). U64.v addr >= U64.v v ==>
-              SpecHeap.read_word s addr == SpecHeap.read_word 's addr) /\
-            // Run geometry
-            (U64.v rw > 0 ==>
-              U64.v rw < pow2 54 /\
-              U64.v fb >= U64.v mword /\
-              U64.v fb < heap_size /\
-              U64.v fb % U64.v mword == 0 /\
-              U64.v fb - U64.v mword + U64.v rw * U64.v mword == U64.v v) /\
-            // Spec equivalence and walk validity (guarded for well-typedness)
-            coalesce_spec_inv 's s (U64.v v) fb (U64.v rw) fv)
-    decreases (Prims.op_Subtraction heap_size (U64.v !current))
-  {
-    let cur = !current;
-    let cur_fb = !fb_ref;
-    let cur_rw = !rw_ref;
-    let cur_fv = !fp_ref;
-    with s. assert (is_heap heap s);
-
-    // Read header from current heap
-    let hdr = read_word heap cur;
-    let wz = getWosize hdr;
-    let obj : obj_addr = SpecHeap.f_address cur;
-
-    // Bridge: suffix preservation → reading from s == reading from 's
-    is_blue_from_original 's s obj cur;
-
-    // Bridge impl getWosize to spec getWosize
-    GC.Impl.Object.getWosize_eq hdr;
-
-    // Advance computation (using original heap)
-    objects_advance cur 's;
-    let ws_plus_1 = U64.add wz 1UL;
-    lemma_object_size_no_overflow (U64.v wz);
-    let offset = U64.mul ws_plus_1 mword;
-    lemma_address_add_no_overflow (U64.v cur) (U64.v offset);
-    let next = U64.add cur offset;
-
-    // Convert obj_in_objects → Seq.mem (f_address cur) for density lemmas
-    SI.obj_in_objects_elim (U64.uint_to_t (U64.v cur + U64.v mword)) 's;
-    SpecHeap.f_address_spec cur;
-
-    // Propagate objects density for next iteration
-    SI.objects_dense_step cur 's;
-    SI.objects_dense_obj_in cur 's;
-
-    // Bridge impl getColor to spec getColor
-    GC.Impl.Object.getColor_eq hdr;
-
-    // Check if blue
-    let clr = getColor hdr;
-    if Header.Blue? clr {
-      // Blue case: accumulate run (no writes to heap)
-      let new_fb = (if U64.eq cur_rw 0UL then obj else cur_fb);
-      let new_rw = U64.add cur_rw ws_plus_1;
-
-      current := next;
-      fb_ref := new_fb;
-      rw_ref := new_rw;
-
-      // Step lemma: unfold coalesce_aux one step for blue
-      SpecHeap.hd_f_roundtrip cur;
-      SpecObject.color_of_object_spec obj s;
-      SpecObject.is_blue_iff obj s;
-
-      assert (pure (SpecObject.is_blue obj s));
-      assert (pure (SpecObject.is_blue obj 's));
-      assert (pure (Seq.head (SpecFields.objects cur 's) == obj));
-
-      // Bridge lemma: produces all facts needed for the new invariant
-      blue_step_coalesce_aux_eq 's s cur
-        cur_fb (U64.v cur_rw) cur_fv;
-
-      // Arithmetic facts from bridge lemma
-      assert (pure (U64.v next % 8 == 0));
-      assert (pure (U64.v next <= heap_size));
-      assert (pure (U64.v next + 8 < pow2 64));
-      assert (pure (U64.v new_rw == U64.v cur_rw + U64.v wz + 1));
-      assert (pure (U64.v new_rw > 0));
-      assert (pure (U64.v new_rw < pow2 54));
-      assert (pure (U64.v new_fb >= U64.v mword));
-      assert (pure (U64.v new_fb < heap_size));
-      assert (pure (U64.v new_fb % U64.v mword == 0));
-      assert (pure (U64.v new_fb - U64.v mword + U64.v new_rw * U64.v mword == U64.v next));
-
-      // Suffix preservation: next >= cur, so forall addr >= next follows from forall addr >= cur
-      assert (pure (U64.v next >= U64.v cur));
-      assert (pure (forall (addr: hp_addr). U64.v addr >= U64.v next ==>
-        SpecHeap.read_word s addr == SpecHeap.read_word 's addr));
-
-      // coalesce_spec_inv at next: assert the two cases from bridge lemma
-      assert (pure (
-        U64.v next < heap_size ==>
-          SpecCoalesce.coalesce_aux 's s
-            (SpecFields.objects (U64.uint_to_t (U64.v next)) 's)
-            new_fb (U64.v new_rw) cur_fv == SpecCoalesce.coalesce 's));
-      assert (pure (
-        U64.v next >= heap_size ==>
-          SpecCoalesce.coalesce_aux 's s Seq.empty
-            new_fb (U64.v new_rw) cur_fv == SpecCoalesce.coalesce 's));
-      ()
-    } else {
-      // White case: flush pending run, then advance
-      let (new_rw, new_fv) = flush_blue_impl heap cur_fb cur_rw cur_fv;
-      with s_post. assert (is_heap heap s_post);
-
-      current := next;
-      fb_ref := 0UL;
-      rw_ref := new_rw;
-      fp_ref := new_fv;
-
-      // Bridge: connect impl getColor to spec is_blue for the not-blue precondition
-      SpecHeap.hd_f_roundtrip cur;
-      SpecObject.color_of_object_spec obj s;
-      SpecObject.is_blue_iff obj s;
-      // Query splitting no longer carries these bridging facts over from
-      // sibling goals, so spell them out for the precondition below.
-      SpecFields.objects_nonempty_head cur 's;
-      assert (pure (Seq.head (SpecFields.objects cur 's) == obj));
-      assert (pure (~(SpecObject.is_blue obj 's)));
-
-      // Bridge lemma: produces all facts needed for the new invariant
-      white_step_coalesce_aux_eq 's s cur
-        cur_fb (U64.v cur_rw) cur_fv;
-
-      // Arithmetic facts from bridge lemma
-      assert (pure (U64.v next % 8 == 0));
-      assert (pure (U64.v next <= heap_size));
-      assert (pure (U64.v next + 8 < pow2 64));
-
-      // new_rw = 0UL from flush_blue_impl, so run geometry is trivially satisfied
-      assert (pure (U64.v new_rw == 0));
-
-      // Suffix preservation: chained through flush
-      assert (pure (forall (addr: hp_addr). U64.v addr >= U64.v next ==>
-        SpecHeap.read_word s_post addr == SpecHeap.read_word 's addr));
-
-      // coalesce_spec_inv at next: assert the two cases from bridge lemma
-      assert (pure (
-        U64.v next < heap_size ==>
-          SpecCoalesce.coalesce_aux 's s_post
-            (SpecFields.objects (U64.uint_to_t (U64.v next)) 's)
-            0UL (U64.v new_rw) new_fv == SpecCoalesce.coalesce 's));
-      assert (pure (
-        U64.v next >= heap_size ==>
-          SpecCoalesce.coalesce_aux 's s_post Seq.empty
-            0UL (U64.v new_rw) new_fv == SpecCoalesce.coalesce 's));
-      ()
-    }
-  };
-
-  // After loop: v + 8 >= heap_size, so objects v 's is empty (or else branch)
-  // Either way: coalesce_aux 's s_exit Seq.empty fb rw fv == coalesce 's
-  let final_fb = !fb_ref;
-  let final_rw = !rw_ref;
-  let final_fv = !fp_ref;
-  with s_exit. assert (is_heap heap s_exit);
-
-  // Bridge: coalesce_aux with Seq.empty = flush_blue
-  coalesce_step_empty 's s_exit final_fb (U64.v final_rw) final_fv;
-
-  let (_, result_fp) = flush_blue_impl heap final_fb final_rw final_fv;
-  with s2. assert (is_heap heap s2);
-
-  // Establish well_formed_heap and all-white-or-blue from spec lemmas
-  SpecCoalesce.coalesce_preserves_wf 's;
-  SpecCoalesce.coalesce_all_white_or_blue 's;
-  result_fp
 }
 #pop-options

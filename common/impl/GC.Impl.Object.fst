@@ -64,7 +64,6 @@ let pack_color (c: color) : (r:U64.t{U64.v r == Header.pack_color c}) =
 /// Special tag values
 /// ---------------------------------------------------------------------------
 
-let closure_tag  : tag = 247UL
 let infix_tag    : tag = 249UL
 let no_scan_tag  : tag = 251UL
 
@@ -113,12 +112,7 @@ let makeHeader (wz: wosize) (c: color) (t: tag) : U64.t =
 /// equality bit-by-bit using logor_definition + nth_lemma.
 
 module UInt = FStar.UInt
-
-/// Local proof that logor #64 1 2 == 3 (Header.fst's copy is private)
-private let logor_1_2_is_3 () : Lemma (UInt.logor #64 1 2 == 3) =
-  UInt.logor_disjoint #64 2 1 1; UInt.logor_commutative #64 1 2
-
-#push-options "--z3rlimit 100 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 25 --fuel 0 --ifuel 0"
 
 /// U64.v (makeHeader wz c t) == pack_header {wosize=U64.v wz; color=c; tag=U64.v t}
 let makeHeader_eq_pack_header (wz: wosize) (c: color) (t: tag)
@@ -144,40 +138,12 @@ let makeHeader_eq_pack_header (wz: wosize) (c: color) (t: tag)
 #pop-options
 
 /// Header roundtrip: makeHeader then getWosize
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
-let makeHeader_getWosize (wz: wosize) (c: color) (t: tag)
-  : Lemma (getWosize (makeHeader wz c t) == wz)
-  = let h : Header.header_sem = {Header.wosize=U64.v wz; Header.color=c; Header.tag=U64.v t} in
-    makeHeader_eq_pack_header wz c t;
-    Header.get_wosize_pack_header h
-#pop-options
-
 /// Header roundtrip: makeHeader then getColor
-#push-options "--z3rlimit 200 --fuel 1 --ifuel 1"
-let makeHeader_getColor (wz: wosize) (c: color) (t: tag)
-  : Lemma (getColor (makeHeader wz c t) == c)
-  = let h : Header.header_sem = {Header.wosize=U64.v wz; Header.color=c; Header.tag=U64.v t} in
-    makeHeader_eq_pack_header wz c t;
-    Header.get_color_pack_header h;
-    Header.pack_unpack_color c;
-    logor_1_2_is_3 ();
-    Header.mask_tag_value ()
-#pop-options
-
 /// Header roundtrip: makeHeader then getTag
-#push-options "--z3rlimit 200 --fuel 0 --ifuel 0"
-let makeHeader_getTag (wz: wosize) (c: color) (t: tag)
-  : Lemma (getTag (makeHeader wz c t) == t)
-  = let h : Header.header_sem = {Header.wosize=U64.v wz; Header.color=c; Header.tag=U64.v t} in
-    makeHeader_eq_pack_header wz c t;
-    Header.get_tag_pack_header h;
-    Header.mask_tag_value ()
-#pop-options
-
 /// makeHeader from extracted fields with new color == set_color64
 /// This is the key bridge: extracting wosize/tag and reconstructing with a new color
 /// equals the bitwise set_color64 operation.
-#push-options "--z3rlimit 600 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 150 --fuel 0 --ifuel 0"
 let makeHeader_eq_set_color64 (hdr: U64.t) (c: color)
   : Lemma (requires Header.valid_header64 hdr)
           (ensures makeHeader (getWosize hdr) c (getTag hdr) ==
@@ -221,86 +187,16 @@ let is_black_object (hdr: U64.t) : bool =
 /// Object predicates (slprops)
 /// ---------------------------------------------------------------------------
 
-let is_object (heap: heap_t) (h: hp_addr) 
-              (wz: wosize) (c: color) (t: tag) 
-    : slprop =
-  exists* (s: heap_state).
-    is_heap heap s **
-    pure (
-      getWosize (spec_read_word s (U64.v h)) == wz /\
-      getColor (spec_read_word s (U64.v h)) == c /\
-      getTag (spec_read_word s (U64.v h)) == t
-    )
-
-let isWhiteObject (heap: heap_t) (h: hp_addr) : slprop =
-  exists* wz t. is_object heap h wz white t
-
-let isGrayObject (heap: heap_t) (h: hp_addr) : slprop =
-  exists* wz t. is_object heap h wz gray t
-
-let isBlackObject (heap: heap_t) (h: hp_addr) : slprop =
-  exists* wz t. is_object heap h wz black t
-
 /// ---------------------------------------------------------------------------
 /// Color operations
 /// ---------------------------------------------------------------------------
-
-/// Ghost helper: package is_heap + pure facts into is_object  
-ghost fn package_is_object (heap: heap_t) (h: hp_addr) 
-                             (wz: wosize) (c: color) (t: tag)
-                             (new_hdr: U64.t) (old_s: heap_state)
-  requires is_heap heap (SpecHeap.write_word old_s h new_hdr) ** 
-           pure (getWosize new_hdr == wz /\
-                 getColor new_hdr == c /\
-                 getTag new_hdr == t /\
-                 U64.v h + 8 <= heap_size)
-  ensures is_object heap h wz c t
-{
-  SpecHeap.read_write_same old_s h new_hdr;
-  spec_read_word_eq (SpecHeap.write_word old_s h new_hdr) h;
-  fold (is_object heap h wz c t)
-}
-
-#push-options "--z3rlimit 200"
-fn colorHeader (heap: heap_t) (h: hp_addr) (new_color: color)
-  requires is_object heap h 'wz 'old_color 't
-  ensures is_object heap h 'wz new_color 't
-{
-  unfold is_object;
-  with old_s. _;
-  hp_addr_plus_8 h;
-  let hdr = read_word heap h;
-  spec_read_word_eq old_s h;
-  let wz = getWosize hdr;
-  let t = getTag hdr;
-  let new_hdr = makeHeader wz new_color t;
-  makeHeader_getWosize wz new_color t;
-  makeHeader_getColor wz new_color t;
-  makeHeader_getTag wz new_color t;
-  write_word heap h new_hdr;
-  package_is_object heap h wz new_color t new_hdr old_s;
-  rewrite (is_object heap h wz new_color t)
-       as (is_object heap h 'wz new_color 't)
-}
-#pop-options
-
 /// ---------------------------------------------------------------------------
 /// Pointer detection
 /// ---------------------------------------------------------------------------
-
-inline_for_extraction
-let isPointer (v: U64.t) : bool =
-  U64.gte v mword &&
-  U64.lt v heap_size_u64 &&
-  U64.rem v mword = 0UL
-
 /// ---------------------------------------------------------------------------
 /// Semantic aliases
 /// ---------------------------------------------------------------------------
 
-let get_color = color_of_object
-let get_wosize = getWosize
-let get_tag = getTag
 let is_black = is_black_object
 let is_white = is_white_object
 let is_gray = is_gray_object
@@ -318,7 +214,7 @@ let getTag_eq (hdr: U64.t) : Lemma (getTag hdr == SpecObject.getTag hdr) =
   SpecObject.getTag_spec hdr
 
 /// Lib.getColor == Spec.getColor (both extract bits 8-9)
-#push-options "--z3rlimit 50"
+#push-options "--z3rlimit 12"
 let getColor_eq (hdr: U64.t) : Lemma (getColor hdr == SpecObject.getColor hdr) =
   Header.get_color_val (U64.v hdr);
   Header.get_color_bound (U64.v hdr);

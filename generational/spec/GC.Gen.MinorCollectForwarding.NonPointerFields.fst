@@ -48,7 +48,7 @@ private let combined_vertex_cases (v: CG.combined_vertex)
 /// This chains fwd_noninfix_targets_valid -> well_formed_heap_part4 ->
 /// fwd_noninfix_sources_in_minor_objects in a clean, isolated context so that
 /// the three forall instantiations run cheaply at low rlimit.
-#push-options "--z3rlimit 30 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 1"
 private let fwd_minor_source_in_minor_objects
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (x: U64.t)
@@ -72,7 +72,7 @@ private let fwd_minor_source_in_minor_objects
     CheneyInj.cheney_promote_fwd_noninfix_sources_in_minor_objects minor major fp roots
 #pop-options
 
-#push-options "--z3rlimit 80 --fuel 0 --ifuel 1"
+#push-options "--z3rlimit 20 --fuel 0 --ifuel 1"
 private let major_non_pointer_field_preserved
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (src: obj_addr) (j: nat)
@@ -180,18 +180,6 @@ private let minor_non_pointer_field_preserved
 let normal_post_non_pointer_fields_preserved
   (minor: minor_state) (major: heap) (fp: U64.t)
   (roots slots: seq U64.t) (n: nat)
-  : Lemma
-    (requires
-      GenInv.collection_heap_shape minor major fp /\
-      RBridge.major_field_zero_no_minor minor major /\
-      UpdatePtrs.ref_table_covers_minor_ptrs major slots n /\
-      remembered_targets_in_roots major roots slots n /\
-      Mark.no_pointer_to_blue major /\
-      RBridge.minor_no_pointer_to_blue minor major /\
-      RBridge.roots_valid_nonblue roots major /\
-      roots_valid_for_minor_collection minor major roots /\
-      CheneyBFS.cheney_no_oom minor major fp roots)
-    (ensures normal_post_non_pointer_fields_preserved_prop minor major fp roots)
   =
     let prom = cheney_promote minor major fp roots in
     GenInv.collection_heap_shape_elim minor major fp;
@@ -303,17 +291,10 @@ let normal_post_non_pointer_fields_preserved
     FStar.Classical.forall_intro (FStar.Classical.move_requires aux)
 #pop-options
 
-#push-options "--z3rlimit 20 --fuel 0 --ifuel 0"
+#push-options "--z3rlimit 10 --fuel 0 --ifuel 0"
 let normal_post_non_pointer_fields_preserved_to_result
   (minor: minor_state) (major: heap) (fp: U64.t) (roots: seq U64.t)
   (post_major: heap)
-  : Lemma
-    (requires
-      post_major == (cheney_collect_spec minor major fp roots).mc_major /\
-      normal_post_non_pointer_fields_preserved_prop minor major fp roots)
-    (ensures
-      normal_result_non_pointer_fields_preserved_prop
-        minor major fp roots post_major)
   =
     let prom = cheney_promote minor major fp roots in
     let aux (u: CG.combined_vertex) : Lemma
